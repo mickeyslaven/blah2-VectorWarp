@@ -25,6 +25,7 @@ TARGETS = {
     ("deb", "ubuntu", "22.04"): ("jammy", {"amd64", "arm64"}),
     ("deb", "ubuntu", "24.04"): ("noble", {"amd64", "arm64"}),
     ("deb", "ubuntu", "26.04"): ("resolute", {"amd64", "arm64"}),
+    ("deb", "debian", "13"): ("trixie", {"amd64", "arm64"}),
     ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
 }
 
@@ -79,7 +80,7 @@ def load_manifest(file, packages):
             raise ValueError(f"Unexpected package release: {filename}")
         if entry.get("name") != "vectorwarp" or not filename.endswith("." + entry["format"]):
             raise ValueError(f"Wrong package name or extension: {filename}")
-        identity = (entry["format"], entry["distro_version"], entry["arch"], version, release)
+        identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
         if identity in identities:
             raise ValueError("Duplicate package target/version")
         identities.add(identity)

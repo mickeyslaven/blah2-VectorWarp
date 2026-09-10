@@ -31,12 +31,16 @@ Variables**. Only the public `.asc` file belongs in Git.
 
 ## Release process
 
-The intended build matrix is Ubuntu 22.04/24.04/26.04 amd64+arm64 DEBs and
-Fedora 44 x86_64+aarch64 RPMs. Ubuntu 22.04 and 26.04 are built in their own
+The intended build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13
+amd64+arm64 DEBs, plus Fedora 44 x86_64+aarch64 RPMs: ten packages.
+Ubuntu 22.04/26.04 and Debian 13 are built in their own
 pinned userspaces; the containers are build conveniences only and are never a
 VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
 selection through `/etc/os-release`; it is not an independently built or
-boot-tested DragonOS target. The default package supports the Kraken/Heimdall
+boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
+ARM64 package; its installation and Pi hardware performance need separate
+validation. No 32-bit or custom SD-card image is produced.
+The default package supports the Kraken/Heimdall
 network receiver and CPU processing with Vulkan auto-detection where available.
 
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
@@ -46,7 +50,7 @@ network receiver and CPU processing with Vulkan auto-detection where available.
    `release-signing` before any release tag. Use the immutable
    `vMAJOR.MINOR.PATCH` tag for a draft release; its manual version input is
    dry-run only.
-2. Confirm the eight package assets, `SHA256SUMS`, `package-manifest.json` and
+2. Confirm the ten package assets, `SHA256SUMS`, `package-manifest.json` and
    `repository-manifest.json`. The tag creates a draft release for review; it
    does not publish packages.
 3. After review, publish that release and run `Publish verified package
@@ -58,10 +62,29 @@ network receiver and CPU processing with Vulkan auto-detection where available.
 5. Only then change the user documentation from **pending first release** to
    published, with the verified release version and actual validation evidence.
 
-The planned Pages layout is `/apt/dists/jammy|noble|resolute` for APT,
+The planned Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public
 key. It is a contract for the release workflow, not proof that those endpoints
 currently exist.
+
+## Unsigned test packages
+
+Before signing is configured, a maintainer may publish an explicitly unsigned
+GitHub prerelease for local testing. It must not update the APT/DNF repository:
+
+1. Merge passing CI, then manually run the package workflow on that exact
+   `main` commit with a new numeric package version.
+2. Require every native build/install check to pass. Download only that run's
+   artifacts and verify every package against its manifest and checksum.
+3. Publish under a `test-` tag, never a `v` tag, as a prerelease that is not
+   marked latest. Include checksums, the exact source commit and workflow run,
+   and clearly label it **unsigned, local-test-only**.
+4. Reserve that package version. A later stable release must use the identical
+   package bytes or a higher version; do not replace published files in place.
+
+Do not disable repository signature checks to install a test package. Update
+the README separately for downloadable test packages and the signed repository;
+publishing one does not make the other available.
 
 ## Renewal
 

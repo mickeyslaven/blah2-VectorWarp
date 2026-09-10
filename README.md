@@ -28,17 +28,8 @@ They become available only after the first verified GitHub Actions release and
 GitHub Pages publication. Until that happens, use the advanced source build
 below. Do not treat a planned URL or unsigned third-party package as official.
 
-Once the first signed release is published, supported systems will install from
-the single maintained repository and receive normal APT/DNF updates:
-
-- Ubuntu 22.04, 24.04 or 26.04, amd64 or arm64
-- DragonOS editions whose `/etc/os-release` identifies one of those Ubuntu
-  bases, amd64 or arm64
-- Fedora 44, x86_64 or aarch64
-
-DragonOS is selected through its Ubuntu base metadata, not its independent ISO
-release label. The installer has metadata-fixture coverage, but no DragonOS ISO
-has been boot-tested here; see [DragonOS notes](docs/DRAGONOS.md).
+Once the first signed release is published, the systems listed under
+[OS support](#os-support) will receive normal APT/DNF updates from our repository.
 
 The verified repository bootstrap will be published at
 `https://mickeyslaven.github.io/blah2-VectorWarp/install.sh`.
@@ -65,10 +56,6 @@ sudo apt install ./vectorwarp_<version>-1_ubuntu24.04_amd64.deb
 sudo dnf install ./vectorwarp-<version>-1.fc44.x86_64.rpm
 ```
 
-Other Linux distributions are not packaged or release-tested, but may use the
-source-build route when their dependencies are compatible. macOS and Windows
-are browser clients, not VectorWarp processor hosts.
-
 After installation, follow the short [first-run guide](docs/INSTALL.md): open
 the browser, select the receiver, check the saved settings, then Save & Restart.
 Receiver drivers, radio permissions and physical cabling remain host-specific.
@@ -91,6 +78,27 @@ The build produces `build/native/artifact`; the installer creates a versioned
 native install under `/opt/vectorwarp` and does not start services. For all four
 receiver SDKs, GPU choices, dependencies and staging installs, see
 [advanced setup](docs/SETUP.md).
+
+## OS support
+
+Package targets are listed below and are still being validated. Release
+packages and the signed repository are **not published yet**.
+
+| Operating system | Versions | Architectures | Package |
+| --- | --- | --- | --- |
+| Ubuntu | 22.04, 24.04, 26.04 | amd64, arm64 | DEB for the matching Ubuntu version |
+| Debian | 13 (Trixie) | amd64, arm64 | Debian 13 DEB |
+| Fedora | 44 | x86_64, aarch64 | Fedora 44 RPM |
+| DragonOS | Ubuntu 22.04, 24.04 or 26.04 base | amd64, arm64 | Matching Ubuntu DEB, selected from OS metadata |
+| Raspberry Pi OS | Trixie, 64-bit | arm64 | Debian 13 ARM64 DEB |
+
+DragonOS ISO installation and Raspberry Pi OS/hardware remain unverified.
+See [DragonOS notes](docs/DRAGONOS.md), [Pi setup](docs/INSTALL.md#raspberry-pi),
+and [current validation evidence](docs/UPSTREAM_COMPARISON.md).
+
+Other Linux distributions may build from source but are not package-tested
+targets. There are no 32-bit packages. macOS and Windows can use the browser UI;
+they are not supported processor hosts.
 
 ## Receiver support
 

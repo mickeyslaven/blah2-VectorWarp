@@ -53,6 +53,14 @@ class ManifestTests(unittest.TestCase):
                  "sha256": repository.sha256(package)}
         self.assertEqual(self.load([entry]), [entry])
 
+    def test_debian_trixie_target_is_valid(self):
+        package = self.root / "vectorwarp_1.2.3-1_debian13_amd64.deb"
+        package.write_bytes(b"trixie manifest fixture, not a DEB")
+        entry = {**self.entry, "distro": "debian", "distro_version": "13", "codename": "trixie",
+                 "filename": package.name, "size": package.stat().st_size,
+                 "sha256": repository.sha256(package)}
+        self.assertEqual(self.load([entry]), [entry])
+
     def test_bad_document_shapes(self):
         for document in ([], None, 1, "text", {"schema": 2, "packages": []},
                          {"schema": 1, "packages": []}, {"schema": 1, "packages": [None]}):
@@ -134,8 +142,10 @@ class SignedRepositoryTests(unittest.TestCase):
         cls.packages = cls.root / "packages"
         cls.packages.mkdir()
         cls.entries = []
-        for codename, version, arch in (("jammy", "22.04", "amd64"), ("noble", "24.04", "arm64"),
-                                        ("resolute", "26.04", "amd64")):
+        for codename, distro, version, arch in (("jammy", "ubuntu", "22.04", "amd64"),
+                                                ("noble", "ubuntu", "24.04", "arm64"),
+                                                ("resolute", "ubuntu", "26.04", "amd64"),
+                                                ("trixie", "debian", "13", "amd64")):
             stage = cls.root / f"deb-{codename}"
             (stage / "DEBIAN").mkdir(parents=True)
             (stage / "DEBIAN/control").write_text(
@@ -145,7 +155,7 @@ class SignedRepositoryTests(unittest.TestCase):
             (stage / "usr/share/vectorwarp/test.txt").write_text("Not an application package.\n")
             package = cls.packages / f"vectorwarp_1.2.3-1_{codename}_{arch}.deb"
             repository.run(["dpkg-deb", "--build", "--root-owner-group", str(stage), str(package)])
-            cls.entries.append(cls.entry(package, "deb", "ubuntu", version, arch, codename))
+            cls.entries.append(cls.entry(package, "deb", distro, version, arch, codename))
         top = cls.root / "rpmbuild"
         top.mkdir()
         rpm_arch = {"x86_64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(platform.machine())
@@ -186,8 +196,8 @@ class SignedRepositoryTests(unittest.TestCase):
         original_hashes = {file.name: repository.sha256(file) for file in self.packages.iterdir()}
         document = repository.build(args)
         site = Path(args.output)
-        self.assertEqual(len(document["packages"]), 4)
-        for codename in ("jammy", "noble", "resolute"):
+        self.assertEqual(len(document["packages"]), 5)
+        for codename in ("jammy", "noble", "resolute", "trixie"):
             self.assertIn("Valid-Until:", (site / f"apt/dists/{codename}/Release").read_text())
             self.assertTrue((site / f"apt/dists/{codename}/InRelease").is_file())
         self.assertIn(self.fingerprint, (site / "install.sh").read_text())
@@ -199,8 +209,9 @@ class SignedRepositoryTests(unittest.TestCase):
         (apt_state / "cache/archives/partial").mkdir(parents=True)
         (apt_state / "status").touch()
         sources = apt_state / "sources.list"
-        sources.write_text(f"deb [arch=amd64 signed-by={site}/keys/vectorwarp.gpg] "
-                           f"file://{site}/apt resolute main\n")
+        sources.write_text("".join(
+            f"deb [arch=amd64 signed-by={site}/keys/vectorwarp.gpg] file://{site}/apt {codename} main\n"
+            for codename in ("jammy", "noble", "resolute", "trixie")))
         repository.run(["apt-get", "-o", f"Dir::Etc::sourcelist={sources}",
                         "-o", "Dir::Etc::sourceparts=-", "-o", f"Dir::State={apt_state}",
                         "-o", f"Dir::State::status={apt_state}/status", "-o", f"Dir::Cache={apt_state}/cache",

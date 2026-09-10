@@ -38,8 +38,8 @@ need_command() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 # Pure platform selection, also exercised by the offline installer tests.
 # DragonOS uses its Ubuntu base, never its independent ISO release number.
 detect_platform() {
-  local os_id=$1 os_version=$2 ubuntu_codename=$3 version_codename=$4 machine=$5
-  local base_version= base_codename= dragon=false
+  local os_id=$1 os_version=$2 ubuntu_codename=$3 version_codename=$4 machine=$5 dpkg_arch=${6:-} variant_id=${7:-}
+  local base_version= base_codename= dragon=false pi=false family=ubuntu
   case "$machine" in
     x86_64) deb_arch=amd64; rpm_arch=x86_64 ;;
     aarch64|arm64) deb_arch=arm64; rpm_arch=aarch64 ;;
@@ -51,6 +51,14 @@ detect_platform() {
       manager=dnf; codename=; package_arch=$rpm_arch
       platform_description="Fedora 44 ($package_arch RPM)"; return ;;
     ubuntu) base_version=$os_version ;;
+    debian)
+      family=debian; base_version=$os_version
+      case "$variant_id" in raspbian|raspios) pi=true ;; esac ;;
+    raspbian)
+      family=debian; pi=true
+      [[ $os_version == 13 && $version_codename == trixie ]] ||
+        die 'Raspberry Pi OS is packaged only for 64-bit Trixie (Debian 13)'
+      base_version=13 ;;
     dragonos|dragonos-*)
       dragon=true
       base_codename=${ubuntu_codename:-$version_codename}
@@ -70,31 +78,45 @@ detect_platform() {
         22.04|24.04|26.04)
           [[ $os_version == "$base_version" ]] || die 'conflicting DragonOS Ubuntu version and codename in /etc/os-release' ;;
       esac ;;
-    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 44, Ubuntu 22.04/24.04/26.04 and matching DragonOS editions" ;;
+    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 44, Debian 13, Ubuntu 22.04/24.04/26.04, matching DragonOS editions and 64-bit Raspberry Pi OS Trixie" ;;
   esac
-  case "$base_version" in
-    22.04) codename=jammy ;;
-    24.04) codename=noble ;;
-    26.04) codename=resolute ;;
-    *) die "Ubuntu $base_version is not packaged; supported versions are 22.04, 24.04 and 26.04" ;;
-  esac
-  [[ -z $ubuntu_codename || $ubuntu_codename == "$codename" ]] ||
-    die 'conflicting Ubuntu version and UBUNTU_CODENAME in /etc/os-release'
-  if $dragon && [[ -n $ubuntu_codename ]]; then
-    # DragonOS may use its own VERSION_CODENAME. Only a second recognizable
-    # Ubuntu base can contradict its authoritative UBUNTU_CODENAME.
-    case "$version_codename" in
-      jammy|noble|resolute|focal)
-        [[ $version_codename == "$codename" ]] ||
-          die 'conflicting Ubuntu base and VERSION_CODENAME in /etc/os-release' ;;
-    esac
-  else
-    [[ -z $version_codename || $version_codename == "$codename" ]] ||
-      die 'conflicting Ubuntu version and VERSION_CODENAME in /etc/os-release'
+  if $pi; then
+    [[ $machine == aarch64 || $machine == arm64 ]] ||
+      die 'Raspberry Pi OS packages require a 64-bit arm64 userspace'
   fi
+  if [[ $family == ubuntu ]]; then
+    case "$base_version" in
+      22.04) codename=jammy ;;
+      24.04) codename=noble ;;
+      26.04) codename=resolute ;;
+      *) die "Ubuntu $base_version is not packaged; supported versions are 22.04, 24.04 and 26.04" ;;
+    esac
+    [[ -z $ubuntu_codename || $ubuntu_codename == "$codename" ]] ||
+      die 'conflicting Ubuntu version and UBUNTU_CODENAME in /etc/os-release'
+    if $dragon && [[ -n $ubuntu_codename ]]; then
+      # DragonOS may use its own VERSION_CODENAME. Only a second recognizable
+      # Ubuntu base can contradict its authoritative UBUNTU_CODENAME.
+      case "$version_codename" in
+        jammy|noble|resolute|focal)
+          [[ $version_codename == "$codename" ]] ||
+            die 'conflicting Ubuntu base and VERSION_CODENAME in /etc/os-release' ;;
+      esac
+    else
+      [[ -z $version_codename || $version_codename == "$codename" ]] ||
+        die 'conflicting Ubuntu version and VERSION_CODENAME in /etc/os-release'
+    fi
+  else
+    [[ $base_version == 13 && $version_codename == trixie && -z $ubuntu_codename ]] ||
+      die 'Debian packages require unambiguous Debian 13 (Trixie) metadata'
+    codename=trixie
+  fi
+  [[ $dpkg_arch == "$deb_arch" ]] ||
+    die "package-manager architecture '$dpkg_arch' does not match supported $deb_arch userspace"
   manager=apt; package_arch=$deb_arch
   platform_description="Ubuntu $base_version / $codename ($package_arch DEB)"
+  if [[ $family == debian ]]; then platform_description="Debian $base_version / $codename ($package_arch DEB)"; fi
   if $dragon; then platform_description="DragonOS using $platform_description"; fi
+  if $pi; then platform_description="Raspberry Pi OS using $platform_description"; fi
 }
 
 # Sourcing exposes only the detector to bounded tests, never installation.
@@ -119,7 +141,8 @@ done
 [[ -r /etc/os-release ]] || die 'cannot identify this distribution'
 # shellcheck disable=SC1091
 . /etc/os-release
-detect_platform "${ID:-}" "${VERSION_ID:-}" "${UBUNTU_CODENAME:-}" "${VERSION_CODENAME:-}" "$(uname -m)"
+dpkg_arch=$(dpkg --print-architecture 2>/dev/null || true)
+detect_platform "${ID:-}" "${VERSION_ID:-}" "${UBUNTU_CODENAME:-}" "${VERSION_CODENAME:-}" "$(uname -m)" "$dpkg_arch" "${VARIANT_ID:-}"
 say "platform: $platform_description"
 if $DETECT_PLATFORM_ONLY; then exit 0; fi
 

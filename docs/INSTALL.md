@@ -5,11 +5,30 @@ repository is planned but **not published** until its first verified release.
 Use its bootstrap only after that release is announced; until then, use the
 [advanced source build](SETUP.md).
 
-The planned APT targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), and 26.04
-(Resolute), on amd64 and arm64. DragonOS may use the matching APT package when
+The planned APT targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), 26.04
+(Resolute), and Debian 13 (Trixie), on amd64 and arm64. Fedora 44 uses RPMs
+for x86_64 and aarch64. DragonOS may use the matching Ubuntu package when
 its `/etc/os-release` metadata identifies one of those Ubuntu bases. It is not
 an independently built DragonOS package and no DragonOS ISO boot/install has
 been validated. See [DragonOS notes](DRAGONOS.md).
+
+## Raspberry Pi
+
+Choose the package for the installed operating system, not just the board:
+
+| Operating system | VectorWarp package |
+| --- | --- |
+| Fedora 44, 64-bit | Fedora 44 aarch64 RPM |
+| Supported Ubuntu, 64-bit | Matching Ubuntu arm64 DEB |
+| Debian 13 or Raspberry Pi OS Trixie, 64-bit | Debian 13 arm64 DEB |
+
+Raspberry Pi OS Trixie is based on Debian 13. Its 32-bit edition is not a
+supported package target. See the [official OS documentation](https://www.raspberrypi.com/documentation/computers/os.html).
+
+No custom VectorWarp SD-card image is needed. The installer checks OS metadata
+and package architecture; it does not configure the Pi's boot firmware or Wi-Fi.
+Raspberry Pi OS installation, sustained radar throughput and Pi GPU acceleration
+have not been hardware-tested. Hosted ARM builds do not establish those results.
 
 ## 1. Install and open settings
 

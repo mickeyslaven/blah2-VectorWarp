@@ -1,10 +1,12 @@
 # Native release packaging
 
 Release packages are built inside the operating system named by the asset:
-Ubuntu 22.04, 24.04 and 26.04 produce Debian packages; Fedora 44 produces RPMs.
+Ubuntu 22.04/24.04/26.04 and Debian 13 produce DEBs; Fedora 44 produces RPMs.
 Both x86-64 and ARM64 are supported. An Ubuntu binary is never relabeled as
 Fedora. DragonOS uses the matching Ubuntu repository selection at install time;
 it is not a separately built DragonOS package or an ISO-tested claim.
+Raspberry Pi OS Trixie selects the Debian 13 ARM64 package. This requires
+64-bit userspace and does not imply Pi hardware or OS-image validation.
 
 Published packages use the Kraken-only compile mode. That mode supports live
 Kraken/Heimdall input and replay of all four recording formats; it does not

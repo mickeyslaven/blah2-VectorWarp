@@ -6,7 +6,7 @@ the release package. VectorWarp runs natively; it has no Docker deployment.
 
 ## Build a Kraken artifact
 
-Build as a normal user. Ubuntu 24.04 needs:
+Build as a normal user. Ubuntu 24.04 and Debian 13 need:
 
 ```bash
 sudo apt update
@@ -49,7 +49,7 @@ through the installer metadata check, but this is not a DragonOS ISO validation
 or a claim that every DragonOS SDR setup is supported.
 
 For a Vulkan build, install `libvulkan-dev glslang-dev glslang-tools` on Ubuntu
-or `vulkan-loader-devel glslang-devel vulkan-tools` on Fedora. GPU drivers remain
+or Debian, or `vulkan-loader-devel glslang-devel vulkan-tools` on Fedora. GPU drivers remain
 the operating system/vendor's responsibility. See [GPU acceleration](GPU_ACCELERATION.md)
 for behavior and fallback.
 

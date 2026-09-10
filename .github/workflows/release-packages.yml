@@ -100,8 +100,8 @@ jobs:
         run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
       - name: Run repository generator unit and ephemeral integration tests
         run: |
-          python3 -m unittest -v test/packaging/test_repository.py
-          VECTORWARP_REPOSITORY_INTEGRATION=1 python3 -m unittest -v test/packaging/test_repository.py
+          python3 test/packaging/test_repository.py -v
+          VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
       - name: Run API and UI unit tests
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
@@ -154,6 +154,8 @@ jobs:
           - { runner: ubuntu-24.04-arm, distro: ubuntu24.04, format: deb, arch: arm64, node_arch: arm64 }
           - { runner: ubuntu-24.04, distro: ubuntu26.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
           - { runner: ubuntu-24.04-arm, distro: ubuntu26.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
+          - { runner: ubuntu-24.04, distro: debian13, format: deb, arch: amd64, node_arch: x64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
+          - { runner: ubuntu-24.04-arm, distro: debian13, format: deb, arch: arm64, node_arch: arm64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
           - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
           - { runner: ubuntu-24.04-arm, distro: fedora44, format: rpm, arch: aarch64, node_arch: arm64 }
     runs-on: ${{ matrix.runner }}
@@ -172,7 +174,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential cmake curl dpkg-dev git pkg-config sudo tar unzip xz-utils zip \
+            build-essential ca-certificates cmake curl dpkg-dev file git pkg-config sudo tar unzip util-linux xz-utils zip \
             libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev
           sha_var="NODE_SHA_${NODE_ARCH^^}"
           node_sha=${!sha_var}
@@ -187,8 +189,8 @@ jobs:
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
-      - name: Build native Ubuntu 22.04 or 26.04 Debian package in pinned isolated userspace
-        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04'
+      - name: Build native Ubuntu 22.04/26.04 or Debian 13 package in pinned isolated userspace
+        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -204,7 +206,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install --yes --no-install-recommends \
-                build-essential cmake curl dpkg-dev git pkg-config sudo tar unzip xz-utils zip \
+                build-essential ca-certificates cmake curl dpkg-dev file git pkg-config sudo tar unzip util-linux xz-utils zip \
                 libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
@@ -232,7 +234,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
             bash -euo pipefail -c '
-              dnf --assumeyes install gcc-c++ cmake curl git pkgconf-pkg-config sudo tar unzip xz zip \
+              dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git pkgconf-pkg-config sudo tar unzip util-linux xz zip \
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
@@ -295,8 +297,8 @@ jobs:
           python3 - <<'PY'
           import datetime, json, pathlib
           manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
-          if len(manifests) != 8:
-              raise SystemExit(f'expected eight package manifests, found {len(manifests)}')
+          if len(manifests) != 10:
+              raise SystemExit(f'expected ten package manifests, found {len(manifests)}')
           entries = [json.loads(path.read_text()) for path in manifests]
           required = {'name', 'version', 'release', 'format', 'distro', 'distro_version',
                       'arch', 'filename', 'sha256', 'size', 'backend', 'gpu', 'node_version'}
@@ -347,7 +349,7 @@ jobs:
           cp repository/repository-manifest.json release-assets/package-manifest.json
           cp repository/repository-manifest.json release-assets/repository-manifest.json
           cp release-review/upstream-diff.txt release-review/UPSTREAM_BASELINE.json release-assets/
-          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 8
+          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 10
       - name: Create draft release for maintainer review
         env:
           GH_TOKEN: ${{ github.token }}
