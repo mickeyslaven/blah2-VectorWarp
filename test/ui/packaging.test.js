@@ -170,6 +170,17 @@ for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md'
 }
 assert.match(releaseWorkflow, /expected ten package manifests/);
 assert.match(releaseWorkflow, /-eq 10/);
+assert.match(releaseWorkflow, /Stable tags must point to the exact current main commit/);
+assert.match(releaseWorkflow, /Unsigned test packages must be built from the exact current main commit/);
+assert.match(releaseWorkflow, /'version': version, 'source_commit': source_commit\.lower\(\)/);
+assert.match(releaseWorkflow, /--expected-source-commit .*--require-release-matrix/s);
+assert.match(releaseWorkflow, /SHA256SUMS\.asc/);
+assert.match(releaseWorkflow, /gpgv --keyring repository\/keys\/vectorwarp\.gpg/);
+const publishWorkflow = read('.github/workflows/publish-package-repository.yml');
+assert.match(publishWorkflow, /Release assets do not match the immutable release tag/);
+assert.match(publishWorkflow, /--expected-version .*--expected-source-commit .*--require-release-matrix/s);
+assert.match(publishWorkflow, /cmp packages\/vectorwarp-archive-key\.asc packaging\/keys\/vectorwarp\.asc/);
+assert.match(publishWorkflow, /gpgv --keyring .*SHA256SUMS\.asc packages\/SHA256SUMS/s);
 
 assert.match(nodePin, /^NODE_VERSION=24\.21\.0$/m);
 assert.match(nodePin, /^NODE_X64_SHA256=[0-9a-f]{64}$/m);

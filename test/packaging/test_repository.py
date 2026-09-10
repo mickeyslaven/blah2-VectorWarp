@@ -39,8 +39,10 @@ class ManifestTests(unittest.TestCase):
 
     def load(self, entries=None, document=None):
         self.manifest.write_text(json.dumps(document if document is not None else
-                                           {"schema": 1, "packages": entries or [self.entry]}))
-        return repository.load_manifest(self.manifest, self.root)
+                                           {"schema": 1, "version": "1.2.3",
+                                            "source_commit": "a" * 40,
+                                            "packages": entries or [self.entry]}))
+        return repository.load_manifest(self.manifest, self.root)[1]
 
     def test_valid_entry(self):
         self.assertEqual(self.load(), [self.entry])
@@ -69,6 +71,26 @@ class ManifestTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     repository.load_manifest(self.manifest, self.root)
 
+    def test_manifest_requires_source_and_single_version(self):
+        for document in ({"schema": 1, "version": "1.2.3", "packages": [self.entry]},
+                         {"schema": 1, "version": "1.2.3", "source_commit": "short",
+                          "packages": [self.entry]},
+                         {"schema": 1, "version": "9.9.9", "source_commit": "a" * 40,
+                          "packages": [self.entry]}):
+            with self.subTest(document=document), self.assertRaises(ValueError):
+                self.load(document=document)
+
+    def test_release_matrix_requires_every_target_once(self):
+        entries = []
+        for format, distro, version, arch in repository.RELEASE_TARGETS:
+            entries.append({"format": format, "distro": distro, "distro_version": version,
+                            "arch": arch})
+        repository.verify_release_matrix(entries)
+        with self.assertRaisesRegex(ValueError, "matrix"):
+            repository.verify_release_matrix(entries[:-1])
+        with self.assertRaisesRegex(ValueError, "matrix"):
+            repository.verify_release_matrix(entries + [entries[0]])
+
     def test_path_traversal_and_duplicate_names(self):
         for name in ("../a.deb", "/tmp/a.deb", "a/b.deb", "-a.deb", "a\nb.deb"):
             with self.subTest(name=name), self.assertRaises(ValueError):
@@ -84,6 +106,12 @@ class ManifestTests(unittest.TestCase):
     def test_target_and_version_mismatch(self):
         for update in ({"arch": "riscv64"}, {"codename": "jammy"}, {"version": "1.2.3-rc1"},
                        {"name": "another-package"}, {"release": "2"}, {"distro_version": "26.04"}):
+            with self.subTest(update=update), self.assertRaises(ValueError):
+                self.load([{**self.entry, **update}])
+
+    def test_filename_and_build_profile_are_immutable(self):
+        for update in ({"filename": "renamed.deb"}, {"backend": "all"}, {"gpu": "off"},
+                       {"node_version": "25.0.0"}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 self.load([{**self.entry, **update}])
 
@@ -126,19 +154,43 @@ class SignedRepositoryTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="vectorwarp-signed-repository-test-")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name)
-        cls.keyhome = cls.root / "gnupg"
+        # Model the production custody plan: a certification-only primary stays
+        # offline while CI imports an export containing only its signing subkey.
+        offline_home = cls.root / "offline-gnupg"
+        offline_home.mkdir(mode=0o700)
+        cls.addClassCleanup(lambda: subprocess.run(
+            ["gpgconf", "--homedir", str(offline_home), "--kill", "gpg-agent"],
+            capture_output=True, timeout=10))
+        with patch.dict(os.environ, {"GNUPGHOME": str(offline_home)}):
+            repository.run(["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                            "--quick-generate-key", "VectorWarp ephemeral test <test@example.invalid>",
+                            "rsa2048", "cert", "1d"])
+            cls.public = cls.root / "public.asc"
+            cls.public.write_bytes(repository.run(["gpg", "--batch", "--armor", "--export"]))
+            cls.fingerprint = repository.public_fingerprint(cls.public)
+            repository.run(["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                            "--quick-add-key", cls.fingerprint, "rsa2048", "sign", "1d"])
+            cls.public.write_bytes(repository.run(["gpg", "--batch", "--armor", "--export",
+                                                   cls.fingerprint]))
+            subkeys = repository.run(["gpg", "--batch", "--armor", "--export-secret-subkeys",
+                                      cls.fingerprint])
+        cls.keyhome = cls.root / "ci-gnupg"
         cls.keyhome.mkdir(mode=0o700)
         cls.environment = patch.dict(os.environ, {"GNUPGHOME": str(cls.keyhome)})
         cls.environment.start()
         cls.addClassCleanup(cls.environment.stop)
-        cls.addClassCleanup(lambda: subprocess.run(["gpgconf", "--kill", "all"],
-                                                   capture_output=True, timeout=10))
-        repository.run(["gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
-                        "--quick-generate-key", "VectorWarp ephemeral test <test@example.invalid>",
-                        "ed25519", "sign", "1d"])
-        cls.public = cls.root / "public.asc"
-        cls.public.write_bytes(repository.run(["gpg", "--batch", "--armor", "--export"]))
-        cls.fingerprint = repository.public_fingerprint(cls.public)
+        cls.addClassCleanup(lambda: subprocess.run(
+            ["gpgconf", "--homedir", str(cls.keyhome), "--kill", "gpg-agent"],
+            capture_output=True, timeout=10))
+        subprocess.run(["gpg", "--batch", "--import"], input=subkeys, check=True,
+                       capture_output=True, timeout=180)
+        records = repository.run(["gpg", "--batch", "--with-colons", "--list-secret-keys"]).decode().splitlines()
+        primary_records = [record.split(":") for record in records if record.startswith("sec:")]
+        subkey_records = [record.split(":") for record in records if record.startswith("ssb:")]
+        if (len(primary_records) != 1 or primary_records[0][14] != "#" or
+                len(subkey_records) != 1 or subkey_records[0][11] != "s" or
+                subkey_records[0][14] != "+"):
+            raise RuntimeError("CI fixture must contain only a usable signing subkey, not the primary secret")
         cls.packages = cls.root / "packages"
         cls.packages.mkdir()
         cls.entries = []
@@ -153,7 +205,8 @@ class SignedRepositoryTests(unittest.TestCase):
                 "Maintainer: Test <test@example.invalid>\nDescription: Repository test only\n")
             (stage / "usr/share/vectorwarp").mkdir(parents=True)
             (stage / "usr/share/vectorwarp/test.txt").write_text("Not an application package.\n")
-            package = cls.packages / f"vectorwarp_1.2.3-1_{codename}_{arch}.deb"
+            distro_label = "debian13" if distro == "debian" else f"ubuntu{version}"
+            package = cls.packages / f"vectorwarp_1.2.3-1_{distro_label}_{arch}.deb"
             repository.run(["dpkg-deb", "--build", "--root-owner-group", str(stage), str(package)])
             cls.entries.append(cls.entry(package, "deb", distro, version, arch, codename))
         top = cls.root / "rpmbuild"
@@ -173,7 +226,9 @@ class SignedRepositoryTests(unittest.TestCase):
         shutil.copyfile(rpm, package)
         cls.entries.append(cls.entry(package, "rpm", "fedora", "44", rpm_arch))
         cls.manifest = cls.root / "manifest.json"
-        cls.manifest.write_text(json.dumps({"schema": 1, "packages": cls.entries}))
+        cls.manifest.write_text(json.dumps({"schema": 1, "version": "1.2.3",
+                                           "source_commit": "a" * 40,
+                                           "packages": cls.entries}))
 
     @staticmethod
     def entry(file, format, distro, version, arch, codename=None):
@@ -189,7 +244,9 @@ class SignedRepositoryTests(unittest.TestCase):
         return argparse.Namespace(packages=str(self.packages), manifest=str(self.manifest),
                                   output=str(self.root / output), public_key=str(self.public),
                                   fingerprint=self.fingerprint, signing_key=self.fingerprint,
-                                  installer_template=str(ROOT / "script/install-release.sh"))
+                                  installer_template=str(ROOT / "script/install-release.sh"),
+                                  expected_version="1.2.3", expected_source_commit="a" * 40,
+                                  require_release_matrix=False)
 
     def test_signed_site_and_refresh_preserve_packages(self):
         args = self.args("signed-site")
@@ -254,6 +311,20 @@ class SignedRepositoryTests(unittest.TestCase):
             repository.build(args)
         self.assertFalse(Path(args.output).exists())
 
+    def test_release_selection_and_full_matrix_fail_closed(self):
+        args = self.args("wrong-version-site")
+        args.expected_version = "9.9.9"
+        with self.assertRaisesRegex(ValueError, "version"):
+            repository.build(args)
+        args = self.args("wrong-source-site")
+        args.expected_source_commit = "b" * 40
+        with self.assertRaisesRegex(ValueError, "source commit"):
+            repository.build(args)
+        args = self.args("partial-matrix-site")
+        args.require_release_matrix = True
+        with self.assertRaisesRegex(ValueError, "matrix"):
+            repository.build(args)
+
     def test_real_metadata_mismatch_and_tampering(self):
         entry = deepcopy(self.entries[0])
         entry["version"] = "9.9.9"
@@ -261,7 +332,8 @@ class SignedRepositoryTests(unittest.TestCase):
             repository.verify_metadata(entry, self.packages / entry["filename"])
         args = self.args("tampered-site")
         bad = self.root / "tampered-manifest.json"
-        bad.write_text(json.dumps({"schema": 1, "packages": [{**self.entries[0], "sha256": "0" * 64}]}))
+        bad.write_text(json.dumps({"schema": 1, "version": "1.2.3", "source_commit": "a" * 40,
+                                   "packages": [{**self.entries[0], "sha256": "0" * 64}]}))
         args.manifest = str(bad)
         with self.assertRaisesRegex(ValueError, "checksum"):
             repository.build(args)

@@ -47,7 +47,8 @@ jobs:
             git show-ref --verify --quiet "refs/tags/${tag}"
             [[ $(git rev-list -n 1 "${tag}") == "${GITHUB_SHA}" ]]
             git show-ref --verify --quiet refs/remotes/origin/main
-            git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main
+            [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
+              echo 'Stable tags must point to the exact current main commit.' >&2; exit 1; }
           elif [[ ${GITHUB_EVENT_NAME} == pull_request ]]; then
             # PR packaging is unsigned smoke coverage only; it cannot reach
             # the signing job or its environment-scoped signing secret.
@@ -55,6 +56,10 @@ jobs:
             tagged_release=false
           else
             [[ ${GITHUB_EVENT_NAME} == workflow_dispatch ]]
+            [[ ${GITHUB_REF_TYPE} == branch && ${GITHUB_REF_NAME} == main ]]
+            git show-ref --verify --quiet refs/remotes/origin/main
+            [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
+              echo 'Unsigned test packages must be built from the exact current main commit.' >&2; exit 1; }
             tag="v$INPUT_VERSION"
             tagged_release=false
           fi
@@ -292,10 +297,11 @@ jobs:
       - name: Create and validate aggregate package manifest
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import datetime, json, pathlib
+          import datetime, json, os, pathlib, re
           manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
           if len(manifests) != 10:
               raise SystemExit(f'expected ten package manifests, found {len(manifests)}')
@@ -304,8 +310,30 @@ jobs:
                       'arch', 'filename', 'sha256', 'size', 'backend', 'gpu', 'node_version'}
           if any(not required.issubset(entry) for entry in entries):
               raise SystemExit('package manifest is incomplete')
+          version = os.environ['VERSION']
+          source_commit = os.environ['SOURCE_COMMIT']
+          if not re.fullmatch(r'[0-9a-fA-F]{40}', source_commit):
+              raise SystemExit('source commit must be a full Git object ID')
+          if any(entry['version'] != version for entry in entries):
+              raise SystemExit('every package must match the immutable tag version')
+          expected = {
+              ('deb', 'ubuntu', '22.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'ubuntu', '24.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'ubuntu', '26.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'debian', '13', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('rpm', 'fedora', '44', arch) for arch in ('x86_64', 'aarch64')
+          }
+          actual = {(entry['format'], entry['distro'], entry['distro_version'], entry['arch'])
+                    for entry in entries}
+          if actual != expected:
+              raise SystemExit(f'package target matrix mismatch: missing={expected-actual}, extra={actual-expected}')
           pathlib.Path('packages/package-manifest.json').write_text(json.dumps({
               'schema': 1, 'generated_at': datetime.datetime.now(datetime.UTC).isoformat(),
+              'version': version, 'source_commit': source_commit.lower(),
               'packages': entries}, indent=2) + '\n')
           PY
       - name: Install repository signing tools
@@ -334,21 +362,33 @@ jobs:
           python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
             --output repository --public-key packaging/keys/vectorwarp.asc \
             --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
-            --installer-template script/install-release.sh
+            --installer-template script/install-release.sh \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --expected-source-commit "${{ github.sha }}" --require-release-matrix
           test -f repository/repository-manifest.json
           test $(du -sm repository | awk '{print $1}') -le 900
       - name: Collect final signed release assets and checksums
+        env:
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
           mkdir -p release-assets
           cp packages/*.deb release-assets/
           find repository/rpm -type f -name 'vectorwarp-*.rpm' -exec cp {} release-assets/ \;
-          (cd release-assets && sha256sum *.deb *.rpm > SHA256SUMS)
           # Repository RPM signatures change the package bytes. Publish only
           # the post-signing package identities and checksums from the signed tree.
           cp repository/repository-manifest.json release-assets/package-manifest.json
           cp repository/repository-manifest.json release-assets/repository-manifest.json
+          cp packaging/keys/vectorwarp.asc release-assets/vectorwarp-archive-key.asc
+          cp repository/keys/fingerprint.txt release-assets/signing-fingerprint.txt
           cp release-review/upstream-diff.txt release-review/UPSTREAM_BASELINE.json release-assets/
+          (cd release-assets && sha256sum *.deb *.rpm package-manifest.json repository-manifest.json \
+            upstream-diff.txt UPSTREAM_BASELINE.json vectorwarp-archive-key.asc signing-fingerprint.txt \
+            > SHA256SUMS)
+          gpg --batch --yes --pinentry-mode error --local-user "$FINGERPRINT" --armor --detach-sign \
+            --output release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
+          gpgv --keyring repository/keys/vectorwarp.gpg \
+            release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
           test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 10
       - name: Create draft release for maintainer review
         env:
@@ -359,7 +399,8 @@ jobs:
           set -euo pipefail
           gh release view "$TAG" >/dev/null 2>&1 && { echo "Release already exists: $TAG" >&2; exit 1; }
           gh release create "$TAG" --draft --verify-tag --title "VectorWarp $VERSION" \
-            --notes "Automated native package build. RPM assets are signed; review checksums and provenance before publishing." \
-            release-assets/*.deb release-assets/*.rpm release-assets/SHA256SUMS \
+            --notes "Automated native package build. RPM assets and SHA256SUMS are signed; review checksums and provenance before publishing." \
+            release-assets/*.deb release-assets/*.rpm release-assets/SHA256SUMS release-assets/SHA256SUMS.asc \
+            release-assets/vectorwarp-archive-key.asc release-assets/signing-fingerprint.txt \
             release-assets/package-manifest.json release-assets/repository-manifest.json \
             release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json

@@ -62,13 +62,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.validate-release.outputs.tag }}
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
           mkdir packages
           gh release download "$TAG" --dir packages --pattern 'vectorwarp_*.deb' \
-            --pattern 'vectorwarp-*.rpm' --pattern SHA256SUMS --pattern package-manifest.json
+            --pattern 'vectorwarp-*.rpm' --pattern SHA256SUMS --pattern SHA256SUMS.asc \
+            --pattern vectorwarp-archive-key.asc --pattern signing-fingerprint.txt \
+            --pattern package-manifest.json --pattern repository-manifest.json \
+            --pattern upstream-diff.txt --pattern UPSTREAM_BASELINE.json
+          cmp packages/vectorwarp-archive-key.asc packaging/keys/vectorwarp.asc
+          release_fingerprint=$(tr -d '[:space:]' < packages/signing-fingerprint.txt)
+          [[ $FINGERPRINT =~ ^[A-Fa-f0-9]{40}$ && ${release_fingerprint^^} == ${FINGERPRINT^^} ]]
+          gpg --batch --yes --dearmor --output "$RUNNER_TEMP/vectorwarp-release-keyring.gpg" \
+            packages/vectorwarp-archive-key.asc
+          gpgv --keyring "$RUNNER_TEMP/vectorwarp-release-keyring.gpg" \
+            packages/SHA256SUMS.asc packages/SHA256SUMS
           (cd packages && sha256sum --check --strict SHA256SUMS)
           test -f packages/package-manifest.json
+          git fetch --no-tags origin "refs/tags/${TAG}:refs/vectorwarp-release-candidate/${TAG}"
+          tag_commit=$(git rev-parse "refs/vectorwarp-release-candidate/${TAG}^{commit}")
+          manifest_version=$(jq -er '.version | select(type == "string")' packages/package-manifest.json)
+          manifest_commit=$(jq -er '.source_commit | select(type == "string")' packages/package-manifest.json)
+          [[ $manifest_version == "${TAG#v}" && ${manifest_commit,,} == ${tag_commit,,} ]] || {
+            echo 'Release assets do not match the immutable release tag.' >&2; exit 1; }
+          printf 'RELEASE_VERSION=%s\nRELEASE_COMMIT=%s\n' "$manifest_version" "$tag_commit" >> "$GITHUB_ENV"
       - name: Install repository signing tools
         run: |
           sudo apt-get update
@@ -95,7 +113,9 @@ jobs:
           python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
             --output repository --public-key packaging/keys/vectorwarp.asc \
             --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
-            --installer-template script/install-release.sh
+            --installer-template script/install-release.sh \
+            --expected-version "$RELEASE_VERSION" --expected-source-commit "$RELEASE_COMMIT" \
+            --require-release-matrix
           test -f repository/repository-manifest.json -a -f repository/install.sh
           test $(du -sm repository | awk '{print $1}') -le 900
       - name: Stage fresh repository for protected Pages deployment

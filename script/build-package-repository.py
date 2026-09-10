@@ -28,6 +28,11 @@ TARGETS = {
     ("deb", "debian", "13"): ("trixie", {"amd64", "arm64"}),
     ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
 }
+RELEASE_TARGETS = {
+    (format, distro, version, arch)
+    for (format, distro, version), (_, architectures) in TARGETS.items()
+    for arch in architectures
+}
 
 
 def run(command, **kwargs):
@@ -56,6 +61,12 @@ def load_manifest(file, packages):
     entries = manifest.get("packages")
     if manifest.get("schema") != 1 or not isinstance(entries, list) or not 1 <= len(entries) <= 64:
         raise ValueError("Expected schema 1 with 1–64 packages")
+    version = manifest.get("version")
+    source_commit = manifest.get("source_commit")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Package manifest must bind one stable numeric version")
+    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9A-Fa-f]{40}", source_commit):
+        raise ValueError("Package manifest must bind one full source commit")
     names = set()
     identities = set()
     total = 0
@@ -76,10 +87,22 @@ def load_manifest(file, packages):
         release = entry.get("release", "")
         if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
             raise ValueError("Repository publication requires a stable numeric version")
+        if version != manifest["version"]:
+            raise ValueError("Package version disagrees with aggregate manifest")
         if release != ("1.fc44" if entry["format"] == "rpm" else "1"):
             raise ValueError(f"Unexpected package release: {filename}")
         if entry.get("name") != "vectorwarp" or not filename.endswith("." + entry["format"]):
             raise ValueError(f"Wrong package name or extension: {filename}")
+        if entry["format"] == "deb":
+            distro_label = "debian13" if entry["distro"] == "debian" else "ubuntu" + entry["distro_version"]
+            expected_filename = (f"vectorwarp_{version}-{release}_{distro_label}_{entry['arch']}.deb")
+        else:
+            expected_filename = f"vectorwarp-{version}-{release}.{entry['arch']}.rpm"
+        if filename != expected_filename:
+            raise ValueError(f"Package filename disagrees with its immutable identity: {filename}")
+        if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
+                "kraken", "auto", "24.21.0"):
+            raise ValueError(f"Unexpected package build profile: {filename}")
         identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
         if identity in identities:
             raise ValueError("Duplicate package target/version")
@@ -95,7 +118,16 @@ def load_manifest(file, packages):
         total += size
     if total > MAX_BYTES:
         raise ValueError("Packages exceed the 900-MiB repository budget; reduce retained versions")
-    return entries
+    return manifest, entries
+
+
+def verify_release_matrix(entries):
+    actual = {(entry["format"], entry["distro"], entry["distro_version"], entry["arch"])
+              for entry in entries}
+    if actual != RELEASE_TARGETS or len(entries) != len(RELEASE_TARGETS):
+        missing = sorted(RELEASE_TARGETS - actual)
+        extra = sorted(actual - RELEASE_TARGETS)
+        raise ValueError(f"Release matrix is incomplete or inconsistent (missing={missing}, extra={extra})")
 
 
 def verify_metadata(entry, file):
@@ -157,7 +189,16 @@ def build(args):
     packages = Path(args.packages).resolve(strict=True)
     if not packages.is_dir():
         raise ValueError("Packages must be a directory")
-    entries = load_manifest(Path(args.manifest), packages)
+    manifest, entries = load_manifest(Path(args.manifest), packages)
+    expected_version = getattr(args, "expected_version", None)
+    expected_source_commit = getattr(args, "expected_source_commit", None)
+    if expected_version is not None and manifest["version"] != expected_version:
+        raise ValueError("Package manifest version does not match the selected release")
+    if (expected_source_commit is not None and
+            manifest["source_commit"].lower() != expected_source_commit.lower()):
+        raise ValueError("Package manifest source commit does not match the selected release tag")
+    if getattr(args, "require_release_matrix", False):
+        verify_release_matrix(entries)
     public_key = Path(args.public_key).resolve(strict=True)
     if public_fingerprint(public_key) != fingerprint:
         raise ValueError("Public key fingerprint does not match the pinned release key")
@@ -247,6 +288,7 @@ def build(args):
             signature = sign(metadata, signer)
             run(["gpgv", "--keyring", str(keys / "vectorwarp.gpg"), str(signature), str(metadata)])
         document = {"schema": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "version": manifest["version"], "source_commit": manifest["source_commit"].lower(),
                     "signing_fingerprint": fingerprint, "packages": published}
         (site / "repository-manifest.json").write_text(json.dumps(document, indent=2) + "\n")
         if args.installer_template:
@@ -268,6 +310,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("packages", "manifest", "output", "public-key", "fingerprint", "signing-key"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--expected-version")
+    parser.add_argument("--expected-source-commit")
+    parser.add_argument("--require-release-matrix", action="store_true")
     parser.add_argument("--installer-template")
     args = parser.parse_args()
     try:

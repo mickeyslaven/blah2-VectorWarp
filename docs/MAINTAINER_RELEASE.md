@@ -9,9 +9,10 @@ completed successfully.
 1. Enable Actions in this fork, choose **Settings → Pages → Source: GitHub
    Actions**, and protect the `github-pages` environment. See
    [GitHub's Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
-2. Create the archive signing key in the approved offline/maintainer process.
-   Add it as `VECTORWARP_ARCHIVE_SIGNING_KEY` only in the protected
-   `release-signing` environment; never commit a private key.
+2. Create the archive primary and signing subkey in the approved
+   maintainer-controlled process. Export only the signing subkey for CI and add it
+   as `VECTORWARP_ARCHIVE_SIGNING_KEY` in the protected `release-signing`
+   environment; never upload or commit the primary private key.
 3. Commit only its public key at `packaging/keys/vectorwarp.asc`, and set the
    matching 40-hex `VECTORWARP_ARCHIVE_KEY_FINGERPRINT` repository variable.
    Publication must fail closed while that value is absent or invalid.
@@ -21,13 +22,23 @@ completed successfully.
    test host before exposing Pages as an installation source.
 
 Use a dedicated package-signing key, not a personal authentication key. The
-current workflow expects an ASCII-armored secret-key export usable without an
-interactive passphrase; GitHub stores it as the protected environment secret.
+configured trust anchor is certification-only RSA4096 primary fingerprint
+`A306 3601 F4C8 309F 2853 62AC CC75 9324 8896 A175`, expiring 2028-09-09.
+Its RSA4096 signing subkey is
+`342D C7F7 B525 BE15 431B 2434 1856 5937 18CE 92B9`, expiring 2027-09-10.
+The workflow expects the ASCII-armored output of `gpg --export-secret-subkeys`
+for that primary, usable without an interactive passphrase. A clean import must
+show an unavailable/stub primary secret (`sec#`) and the sole usable signing
+subkey (`ssb` with signing capability); it must not contain the primary
+secret. GitHub stores that subkey export as the protected environment secret.
 Keep its backup outside the source tree, and never paste it into issues or chat.
+The current backup is root-only on the maintainer host, not an encrypted,
+off-host or air-gapped backup.
 Add the secret under **Settings → Environments → release-signing → Environment
 secrets**, as described in [GitHub's secret guide](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
-The fingerprint is public and goes under **Secrets and variables → Actions →
-Variables**. Only the public `.asc` file belongs in Git.
+The full 40-hex primary fingerprint (without spaces) is public and goes under
+**Secrets and variables → Actions → Variables**. Export the public key only
+after adding the signing subkey. Only that public `.asc` file belongs in Git.
 
 ## Release process
 
@@ -96,9 +107,10 @@ stable release. The renewal checksum-verifies published release assets before
 generating and signing a fresh repository; it leaves the existing Pages content
 unchanged if release selection, signing or generation fails.
 
-An unattended renewal needs an environment policy that permits the scheduled
-deployment. Requiring a reviewer gives an explicit human gate but turns the
-weekly job into a pending approval; choose deliberately and record that policy.
+The configured policy permits only `main` and `v*` tags in `release-signing`
+and `github-pages`, without required environment reviewers. The owner approves
+new releases by publishing reviewed drafts; weekly metadata renewal is
+unattended after the publication workflow is merged and a stable release exists.
 
 APT metadata expires after 30 days. Watch failed/disabled renewal runs: GitHub
 can delay scheduled jobs and disables schedules after 60 days of inactivity in
@@ -106,10 +118,25 @@ a public repository. Re-enable the workflow and run a manual renewal if needed;
 do not disable APT signature or expiry checks. See
 [GitHub's schedule limits](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
+Calendar signing-subkey rotation well before 2027-09-10 and primary renewal
+before 2028-09-09. The current repository does not automatically refresh the
+static APT keyring already installed on client hosts. Before switching to a new
+subkey, keep the old signer valid, publish the new public export through
+protected `main`, and deliver it while metadata is still signed by the old
+subkey (for example by requiring users to rerun the fingerprint-pinned installer
+or by first adding a reviewed keyring-package upgrade). Prove the overlap on an
+existing install before changing CI to the new signer. Rotation also requires a
+matching CI subkey export and isolated APT/RPM verification. Never extend
+service by removing fingerprint, repository-signature or APT-expiry checks.
+Renewal requires the release-carried public key to exactly match trusted `main`;
+coordinate the public-key update with a reviewed release carrying that export.
+Do not leave scheduled renewal pointed at a release with the old key export.
+
 ## Never claim
 
-- Do not say the repository, packages, signing fingerprint or a GitHub Release
-  exists before a verified workflow proves it.
+- Do not describe packages or the repository as published before publication
+  and install checks prove it. A locally verified public signing fingerprint
+  does not prove that a release or package repository is available.
 - Do not describe Ubuntu/Debian/Fedora inclusion as automatic; this project
   maintains its own APT/DNF repository.
 - Do not make package publishing or GitHub Pages part of an ordinary source build.
