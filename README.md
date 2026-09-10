@@ -1,12 +1,12 @@
 # blah2
 
-A real-time radar which can support various SDR platforms. See a live instance at [http://radar4.30hours.dev](http://radar4.30hours.dev).
+A real-time radar which can support various SDR platforms.
 
 ![blah2 example display](./example.png "blah2")
 
 ## Features
 
-- 2 channel processing for a reference and surveillance signal.
+- 2-8 channel processing for a reference and surveillance signal.
 - Designed to be used with external RF source (for passive radar or active radar).
 - Outputs delay-Doppler maps to a web front-end.
 - Record raw IQ data by pressing spacebar on the web front-end.
@@ -18,7 +18,7 @@ A real-time radar which can support various SDR platforms. See a live instance a
 - [USRP](https://www.ettus.com/products/) (only tested on the B210).
 - 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
 - 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation.
-- [KrakenSDR](https://www.krakenrf.com/) with 2x channels only.
+- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels.
 
 ## Services
 
