@@ -1,16 +1,14 @@
 # blah2Fast
 
-A fast real-time radar which can support various SDR platforms.
-
-![blah2 example display](./example.png "blah2")
+A CPU multithreaded and GPU Accelerated real-time radar which can support various SDR platforms. This is a faster processing fork of the original blah2 program by 30hours. 
 
 ## Features
 
-- 2-8 channel processing for a reference and surveillance signal.
-- Designed to be used with external RF source (for passive radar or active radar).
-- Outputs delay-Doppler maps to a web front-end.
-- Record raw IQ data by pressing spacebar on the web front-end.
-- Saves delay-Doppler maps in a JSON array.
+- All features from normal blah2 plus the following additions:
+  - Full krakenSDR Support
+  - Full UI rewrite with a new clean modern look
+  - Web configuration and radar restart right from the browser
+  - Easy recording and replay. Simply select the file and play back that once in a lifetime radar catch again and again!
 
 ## SDR Support
 
@@ -18,7 +16,7 @@ A fast real-time radar which can support various SDR platforms.
 - [USRP](https://www.ettus.com/products/) (only tested on the B210).
 - 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
 - 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation.
-- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels using the kraken V2 software (8 Channel support cant be tested, as their 8 channel device isn't available.
+- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels using the kraken V2 software (8 Channel support cant be tested, as their 8 channel device isn't available).
 
 ## Services
 
@@ -39,7 +37,7 @@ Building the code using the following instructions;
 - Run the docker-compose command.
 
 ```bash
-sudo git clone http://github.com/30hours/blah2 /opt/blah2
+sudo git clone http://github.com/mickeyslaven/blah2Fast /opt/blah2
 cd /opt/blah2
 sudo chown -R $USER .
 sudo chmod a+x ./lib/sdrplay-3.15.2/SDRplay_RSP_API-Linux-3.15.2.run
@@ -50,23 +48,12 @@ sudo systemctl enable docker
 sudo docker compose up -d --build
 ```
 
-Alternatively avoid building and use the pre-built Docker packages;
-
-```bash
-sudo docker pull ghcr.io/30hours/blah2:latest
-vim docker-compose.yml
---- build: .
-+++ image: ghcr.io/30hours/blah2:latest
-sudo docker compose up -d
-```
-
 The radar processing output is available on [http://localhost:49152](http://localhost:49152).
 
 ## Future Work
 
-- Add a tracker in delay-Doppler space.
-- Support for the HackRF/RTL-SDR using a front-end mixer, to sample 2 RF channels in 1 stream.
-- Add [SoapySDR](https://github.com/pothosware/SoapySDR) support for the [C++ API](https://github.com/pothosware/SoapySDR/wiki/Cpp_API_Example) to include a wide range of SDR platforms.
+- Utilizing the krakenSDR for bearing to be able to plot planes onto a map. Alternatively you can use 3lips which utilizes elipses and multiple reciever locations [3lips](https://github.com/30hours/3lips).
+- 
 
 ## FAQ
 
@@ -74,13 +61,11 @@ The radar processing output is available on [http://localhost:49152](http://loca
 
 ## Contributing
 
-Pull requests are welcome, however this fork is meant to be a efficient and fast version of blah2. Pull requests introducing slower processing without large gains in another dimension will likely not be merged. 
-
-- Upstream issue where the USRP B210 is timing out after 5-10 mins and crashes the code. Convinced it's an issue with my usage of the API - contact me for more info.
+Pull requests are welcome :)
 
 ## Links
 
-- Join the [Discord](https://discord.gg/ewNQbeK5Zn) chat for sharing results and support. Keep in mind this discord is for blah2 and not everyone will be familiar with this specific fork. 
+- Join the [Discord](https://discord.gg/ewNQbeK5Zn) chat for sharing results and support. Keep in mind this discord is for blah2 and not everyone will be familiar with this specific fork.
 
 ## License
 
