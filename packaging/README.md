@@ -1,8 +1,10 @@
 # Native release packaging
 
-Release packages are built inside the operating system named by the asset:
+The release workflow builds inside the operating system named by the asset:
 Ubuntu 22.04/24.04/26.04 and Debian 13 produce DEBs; Fedora 44 produces RPMs.
-Both x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64) are supported.
+It targets both x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64).
+Release packages are not published yet. Successful build/install checks in CI
+are not proof of installation on every physical target host.
 The x86-64 aliases both support Intel and AMD CPUs. DEB metadata uses `amd64`
 or `arm64`; RPM metadata uses `x86_64` or `aarch64`. Keep those native names
 in asset filenames and commands. An Ubuntu binary is never relabeled as Fedora.

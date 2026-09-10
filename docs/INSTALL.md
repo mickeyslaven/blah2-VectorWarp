@@ -1,11 +1,11 @@
 # First install
 
-This is the package-first path for a supported Linux host. The signed package
+This is the planned package-first path for a target Linux host. The signed package
 repository is planned but **not published** until its first verified release.
 Use its bootstrap only after that release is announced; until then, use the
 [advanced source build](SETUP.md).
 
-The planned APT targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), 26.04
+The planned package targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), 26.04
 (Resolute), and Debian 13 (Trixie). Fedora 44 uses RPMs. All target
 x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). The x86-64 package supports
 both Intel and AMD CPUs; the aliases do not indicate different chip support.

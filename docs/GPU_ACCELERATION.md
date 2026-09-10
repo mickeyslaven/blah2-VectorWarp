@@ -1,8 +1,11 @@
 # GPU acceleration
 
-The delay–Doppler processor can use a Vulkan GPU. The same backend supports AMD,
-Intel and NVIDIA; it does not require CUDA or ROCm. Capture, reference synthesis,
-clutter removal, detection and tracking remain on the CPU.
+The delay–Doppler processor can use a Vulkan GPU. The implementation targets AMD,
+Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
+verification is limited to the devices and driver versions in
+[GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
+Capture, reference synthesis, clutter removal, detection and tracking remain on
+the CPU.
 
 ## Selection
 

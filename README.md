@@ -1,20 +1,33 @@
 # VectorWarp
 
 VectorWarp is a native Linux, CPU-multithreaded and optionally
-GPU-accelerated real-time radar. It is a faster-processing fork of
+GPU-accelerated real-time radar fork of
 [blah2](https://github.com/30hours/blah2) by 30hours. Performance depends on
-the host and configuration.
+the host, configuration and workload.
 
 ## Highlights
 
 - KrakenSDR Suite V2 network input with 2–8-channel processing.
-- Browser configurable, allowing for on the fly changes, and even replaying old recordings right in browser. 
+- Browser configuration, recording and replay controls. Apply settings with
+  **Save & Restart**; replay does not open a receiver.
 - Dedicated-reference processing for RSPduo, USRP and dual HackRF; coherent
   Kraken array-reference synthesis and map fusion.
-- Optional Vulkan/VkFFT acceleration with automatic CPU fallback.
+- Optional Vulkan/VkFFT acceleration for the delay–Doppler stage, with
+  automatic CPU fallback.
 - Built-in ADS-B display/evaluation projection, with local decoder discovery
   or a remote tar1090 endpoint. ADS-B never informs
   detection or tracking.
+
+### Verification
+
+Automated coverage includes 2–8-channel parsing/unit/replay cases, API/browser
+tests and offline GPU comparisons. Physical checks cover five-channel Kraken
+input and the devices listed in [GPU hardware tests](docs/GPU_HARDWARE_TESTS.md).
+A Fedora 44 x86-64 native installation and live smoke test have also passed;
+this is not installation proof for every target OS or physical eight-channel
+receiver validation. Raspberry Pi and DragonOS device tests remain pending.
+Release packages and the signed repository are not yet published. See the
+[upstream comparison](docs/UPSTREAM_COMPARISON.md) for the detailed evidence.
 
 ## Install on Linux
 
@@ -63,7 +76,7 @@ Receiver drivers, radio permissions and physical cabling remain host-specific.
 
 ## Advanced: build from source
 
-Source builds are for development or for the all-receiver SDK build. They are
+Source builds are for development or for the all-receiver build. They are
 not required for the release package's Kraken/Heimdall network receiver path.
 
 ```bash
@@ -82,8 +95,9 @@ receiver SDKs, GPU choices, dependencies and staging installs, see
 
 ## OS support
 
-Package targets are listed below and are still being validated. Release
-packages and the signed repository are **not published yet**.
+All ten Ubuntu, Debian and Fedora OS/architecture builds passed hosted build
+and installation checks. Physical-device testing remains narrower, as noted
+below. Release packages and the signed repository are **not published yet**.
 
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
@@ -107,6 +121,11 @@ targets. There are no 32-bit packages. macOS and Windows can use the browser UI;
 they are not supported processor hosts.
 
 ## Receiver support
+
+The current package build contains only the Kraken/Heimdall live backend.
+Source builds can select the following backends with their external SDKs and
+host permissions. This lists implemented support, not physical verification of
+every receiver:
 
 - [KrakenSDR](https://www.krakenrf.com/) Suite V2 / Heimdall network stream
 - [SDRplay RSPduo](https://www.sdrplay.com/rspduo/)
