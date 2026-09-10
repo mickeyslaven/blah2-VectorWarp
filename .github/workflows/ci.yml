@@ -95,7 +95,7 @@ jobs:
           assert 'script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json' in release
           for workflow in ('ci.yml', 'release-packages.yml'):
               text = pathlib.Path('.github/workflows', workflow).read_text()
-              assert 'NODE_PATH: ${{ github.workspace }}/api/node_modules' in text
+              assert 'NODE_PATH: $' + '{{ github.workspace }}/api/node_modules' in text
               assert 'npm run test:dom --prefix api' in text and 'node test/ui/deployment.test.js' in text
           helper = pathlib.Path('script/upstream-diff.py').read_text()
           assert 'git diff --stat' in helper and 'git diff --name-status' in helper
