@@ -176,7 +176,8 @@ endif()
                 self.assertIn(f"receivers={receivers}", result.stdout)
                 for name, flag in zip(("RSPDUO", "USRP", "HACKRF"), flags):
                     self.assertIn(f"-DBLAH2_ENABLE_{name}={flag}", result.stdout)
-                self.assertIn("cmake -G Ninja", result.stdout)
+                self.assertIn(
+                    "env CMAKE_POLICY_VERSION_MINIMUM=3.5 cmake -G Ninja", result.stdout)
                 self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
                 calls = log.read_text(encoding="utf-8")
                 self.assertEqual("libhackrf" in calls, backend in {"hackrf", "all"})
@@ -200,7 +201,9 @@ endif()
                     "--build-dir", str(self.temp / f"build-{architecture}"),
                 ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("env VCPKG_FORCE_SYSTEM_BINARIES=1 cmake -G Ninja", result.stdout)
+                self.assertIn(
+                    "env CMAKE_POLICY_VERSION_MINIMUM=3.5 "
+                    "VCPKG_FORCE_SYSTEM_BINARIES=1 cmake -G Ninja", result.stdout)
 
     def make_artifact(self, backend: str, compiled_receivers: str | None) -> Path:
         artifact = self.temp / f"artifact-{backend}-{len(list(self.temp.glob('artifact-*')))}"

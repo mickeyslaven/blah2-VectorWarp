@@ -171,12 +171,16 @@ else
   KRAKEN_ONLY=OFF
 fi
 
-vcpkg_cmake_prefix=()
+# RapidJSON's fixed 2023 snapshot still declares a pre-3.5 CMake floor. CMake
+# 4 removed that compatibility mode, so scope its official policy floor to the
+# configure process that performs the pinned vcpkg manifest install. The blah2
+# project declares its own newer minimum and is unaffected.
+vcpkg_cmake_prefix=(env CMAKE_POLICY_VERSION_MINIMUM=3.5)
 case "$BUILD_ARCH" in
   arm*|aarch64|s390x|ppc64le|riscv*)
     # vcpkg has no downloadable helper-tool bundle for these architectures.
     # The build preflight already requires its system CMake and Ninja tools.
-    vcpkg_cmake_prefix=(env VCPKG_FORCE_SYSTEM_BINARIES=1)
+    vcpkg_cmake_prefix+=(VCPKG_FORCE_SYSTEM_BINARIES=1)
     ;;
 esac
 
