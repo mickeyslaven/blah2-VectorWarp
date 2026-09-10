@@ -116,8 +116,9 @@ target_link_libraries(blah2 PRIVATE
   ${CMAKE_DL_LIBS}
   ${BLAH2_CAPTURE_LIBRARIES}
 )
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16)
-  # GCC 16 misdiagnoses cpp-httplib's inlined polymorphic compressor allocation.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+  # GCC 13+ can misdiagnose cpp-httplib's inlined std::regex bookkeeping.
+  # Keep this external-header warning visible without making it fatal.
   target_compile_options(blah2 PRIVATE -Wno-error=array-bounds)
 endif()
 

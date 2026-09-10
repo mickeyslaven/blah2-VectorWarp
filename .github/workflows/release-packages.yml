@@ -114,7 +114,7 @@ jobs:
         run: node test/ui/packaging.test.js
       - name: Syntax-check every workflow shell block and release script
         run: |
-          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh
+          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
           python3 -m py_compile script/build-package-repository.py
           python3 - <<'PY'
           import pathlib, subprocess, tempfile, yaml
@@ -186,6 +186,7 @@ jobs:
           script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
+          bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
       - name: Build native Ubuntu 22.04 or 26.04 Debian package in pinned isolated userspace
         if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04'
         env:
@@ -215,6 +216,7 @@ jobs:
               script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
+              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
             '
       - name: Build native Fedora RPM in isolated Fedora userspace
         if: matrix.format == 'rpm'
@@ -242,6 +244,7 @@ jobs:
               script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro fedora44 --output-dir dist
+              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
             '
       - name: Require package metadata from the packager
         run: |

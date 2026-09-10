@@ -74,7 +74,7 @@ jobs:
         run: node test/ui/packaging.test.js
       - name: Syntax-check every workflow shell block and release script
         run: |
-          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh
+          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
           python3 -m py_compile script/build-package-repository.py
           python3 - <<'PY'
           import pathlib, subprocess, tempfile, yaml

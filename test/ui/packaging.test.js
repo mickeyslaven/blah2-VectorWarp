@@ -24,6 +24,7 @@ assert.ok(read('.github/workflows/ci.yml').includes(
 for (const relative of [
   'script/package-native.sh',
   'script/install-release.sh',
+  'script/smoke-native-package.sh',
   'script/build-native.sh',
   'packaging/deb/postinst',
   'packaging/deb/prerm',
@@ -52,6 +53,21 @@ assert.match(packageScript, /api\/node_modules\/\.bin/);
 assert.match(packageScript, /refusing to replace existing output/);
 assert.match(packageScript, /ln "\$WORK_DIR\/\$ASSET" "\$OUTPUT_DIR\/\$ASSET"/);
 assert.doesNotMatch(packageScript, /apt(-get)? install|dnf install|curl |wget /);
+
+const packageSmoke = read('script/smoke-native-package.sh');
+assert.match(packageSmoke, /apt-get --yes install/);
+assert.match(packageSmoke, /dnf --assumeyes install/);
+assert.match(packageSmoke, /opt\/vectorwarp\/runtime\/node\/bin\/node/);
+assert.match(packageSmoke, /\/api\/system\/status/);
+assert.match(packageSmoke, /\/api\/config\/capabilities/);
+assert.match(packageSmoke, /runuser --user vectorwarp-api/);
+assert.match(packageSmoke, /--supp-group vectorwarp-config/);
+assert.match(packageSmoke, /exec sudo -- bash "\$0" "\$@"/);
+assert.match(packageSmoke, /\/display\/configuration\//);
+assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
+const releaseWorkflow = read('.github/workflows/release-packages.yml');
+assert.equal((releaseWorkflow.match(/bash script\/smoke-native-package\.sh/g) || []).length, 3,
+  'the Ubuntu 24, Ubuntu 22/26, and Fedora target groups must smoke every native package');
 
 assert.match(nodePin, /^NODE_VERSION=24\.21\.0$/m);
 assert.match(nodePin, /^NODE_X64_SHA256=[0-9a-f]{64}$/m);
