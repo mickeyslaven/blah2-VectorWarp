@@ -18,8 +18,8 @@ Last acceptance review: 2026-09-10. Uncommitted development is not a published r
 | ADS-B | Separate adsb2dd converter for delay/Doppler overlays | Integrated converter; local decoder discovery or a configured remote tar1090 feed | WGS84, timestamps, derivatives, stale/invalid data, warmup, cache and integration tests. Explicit remote feeds never fall back silently to local data. ADS-B never enters detection/tracking inference. |
 | Recording/replay | Receiver-specific recording; incomplete replay coverage | Portable `.blah2iq` for 2–8 channels, legacy readers, common paced replay, EOF/loop/error reporting, acknowledged recording controls | 13 full-processor replay cases in release and AddressSanitizer builds; the extracted Fedora package also passes these plus three invalid-startup checks. Physical recording evidence remains five-channel Kraken. |
 | Tracking/math | Original tracking/spectrum/detection implementations | Bounded histories, corrected association/kinematics, spectrum axes/levels, boundary and nonfinite-value repairs | Focused C++ tests; not proof of real-aircraft tracker accuracy or reliable bearing. |
-| Deployment | Container-oriented setup | Native build/install and isolated service accounts; no container runtime required to run VectorWarp | Staged install, configuration preservation and Node 24 deployment tests. Fedora 44 x86-64 native installation and five-channel live smoke check alongside the unchanged older installation. Full-power Strix run stopped at its thermal cutoff; reduced-power UI review passed. |
-| Package distribution | No VectorWarp packages | Ten native DEB/RPM targets across Ubuntu, Debian and Fedora; release automation and one signed APT/DNF repository implementation | All ten hosted native build/install-smoke jobs pass. Format/signature fixtures and Jammy/Noble/Resolute/Trixie APT indexes pass. Debian/Pi/DragonOS selector fixtures pass, including 32-bit-userland rejection. Pi/DragonOS physical validation remains pending. **No published repository or release yet.** |
+| Deployment | Container-oriented setup | Native build/install and isolated service accounts; no container runtime required to run VectorWarp | Staged install, configuration preservation and Node 24 deployment tests. Fedora 44 x86-64 native installation and five-channel live smoke check alongside the unchanged older installation. Fedora 44 ARM64 RPM installed on Raspberry Pi 4; 16/16 offline replay/startup cases passed with services disabled/inactive. Full-power Strix run stopped at its thermal cutoff; reduced-power UI review passed. |
+| Package distribution | No VectorWarp packages | Ten native DEB/RPM targets across Ubuntu, Debian and Fedora; release automation and one signed APT/DNF repository implementation | All ten hosted native build/install-smoke jobs pass. Format/signature fixtures and Jammy/Noble/Resolute/Trixie APT indexes pass. Debian/Pi/DragonOS selector fixtures pass, including 32-bit-userland rejection. Fedora-on-Pi package evidence is recorded; Raspberry Pi OS and DragonOS physical validation remain pending. **No published repository or release yet.** |
 
 At commit `9cfc783ca133308d28b73ef06cb66f89c9b3d367`, both architecture legs of
 [CI](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34534957702)
@@ -44,6 +44,14 @@ was 1.305× upstream CPU throughput. Its five-channel GPU profile was slower tha
 fork CPU. Strix and HP results are partial thermal-stop observations, not full
 replicated matrices. Those measurements predate later math/recording/selection
 repairs; do not describe them as performance measurements of every current change.
+
+The [Fedora 44 / Raspberry Pi 4 check](PI4_VALIDATION_20260910.md) recorded
+917.031 ms/CPI upstream versus 902.441 ms/CPI VectorWarp for a two-channel CPU
+run. The 1.6% timing difference is not an accepted speedup: detection SNR differed
+in all ten frames despite matching maps and detection positions. Across three
+two-core repeats, the upstream median was about 0.9% above VectorWarp's. The five-channel VectorWarp
+run took 3748.025 ms/CPI with no upstream equivalent. Neither profile met its
+200 ms CPI, and Pi GPU attempts fell back to CPU.
 
 Acceptable: “Optional GPU acceleration, with measured gains for some workloads
 and automatic CPU fallback.” Not supported: “Faster on every GPU,” “all processing

@@ -25,7 +25,9 @@ tests and offline GPU comparisons. Physical checks cover five-channel Kraken
 input and the devices listed in [GPU hardware tests](docs/GPU_HARDWARE_TESTS.md).
 A Fedora 44 x86-64 native installation and live smoke test have also passed;
 this is not installation proof for every target OS or physical eight-channel
-receiver validation. Raspberry Pi and DragonOS device tests remain pending.
+receiver validation. A Raspberry Pi 4 running Fedora 44 installed the ARM64 RPM
+and passed 16 offline replay/startup cases; the tested processing profiles were
+not real-time. Raspberry Pi OS and DragonOS device tests remain pending.
 Release packages and the signed repository are not yet published. See the
 [upstream comparison](docs/UPSTREAM_COMPARISON.md) for the detailed evidence.
 
@@ -57,7 +59,8 @@ sudo bash install.sh --start-web
 
 The installer will validate the published `keys/vectorwarp.asc` key and the
 configured signing fingerprint before adding the APT or DNF repository. The
-fingerprint is not configured until the release signing key exists. `--start-web`
+[public signing key](packaging/keys/vectorwarp.asc) and its trust fingerprint
+are now configured; publication is still pending. `--start-web`
 is optional and starts only the API/settings page; it never starts the processor
 or radio.
 
@@ -112,7 +115,9 @@ support. Likewise, `arm64` and `aarch64` mean 64-bit ARM. Package filenames and
 commands retain the names required by each distribution; choose the package
 for your installed OS as well as your architecture.
 
-DragonOS ISO installation and Raspberry Pi OS/hardware remain unverified.
+Fedora 44 package/replay validation on Raspberry Pi 4 is
+[recorded here](docs/PI4_VALIDATION_20260910.md). DragonOS ISO installation and
+Raspberry Pi OS remain unverified.
 See [DragonOS notes](docs/DRAGONOS.md), [Pi setup](docs/INSTALL.md#raspberry-pi),
 and [current validation evidence](docs/UPSTREAM_COMPARISON.md).
 

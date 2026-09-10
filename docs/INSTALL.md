@@ -30,8 +30,11 @@ supported package target. See the [official OS documentation](https://www.raspbe
 
 No custom VectorWarp SD-card image is needed. The installer checks OS metadata
 and package architecture; it does not configure the Pi's boot firmware or Wi-Fi.
-Raspberry Pi OS installation, sustained radar throughput and Pi GPU acceleration
-have not been hardware-tested. Hosted ARM builds do not establish those results.
+The Fedora 44 ARM64 RPM was installed on a Raspberry Pi 4 with SELinux enforcing;
+all 16 offline replay/startup cases passed. Services remained disabled/inactive.
+The tested two- and five-channel profiles were not real-time, and GPU attempts
+timed out into CPU fallback. Raspberry Pi OS installation remains unverified.
+See the [Pi validation results and limits](PI4_VALIDATION_20260910.md).
 
 ## 1. Install and open settings
 
