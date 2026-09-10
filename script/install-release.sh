@@ -35,6 +35,59 @@ quote_command() { printf ' %q' "$@"; printf '\n'; }
 run() { if $DRY_RUN; then printf '+'; quote_command "$@"; else "$@"; fi; }
 need_command() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 
+validate_repository_url() {
+  local url=$1 remainder authority port=
+  [[ $url == https://* && $url != *[[:space:][:cntrl:]]* &&
+    $url != *'?'* && $url != *'#'* && $url != *'\'* ]] ||
+    die 'repository URL must be a plain HTTPS origin/path without credentials, query, fragment or whitespace'
+  remainder=${url#https://}
+  authority=${remainder%%/*}
+  [[ -n $authority && $authority != *@* ]] ||
+    die 'repository URL must contain a host and must not embed credentials'
+  [[ $authority =~ ^([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?)(:([0-9]{1,5}))?$ ]] ||
+    die 'repository URL has an invalid host or port'
+  port=${BASH_REMATCH[4]:-}
+  if [[ -n $port ]] && ((10#$port < 1 || 10#$port > 65535)); then
+    die 'repository URL port must be between 1 and 65535'
+  fi
+}
+
+validate_public_key() {
+  local key_file=$1 expected=$2 records type validity expires field10 capabilities rest
+  local now primary_count=0 primary_fingerprint= primary_usable=false signing_subkey=false last_key=
+  records=$(gpg --batch --show-keys --with-colons "$key_file" 2>/dev/null) ||
+    die 'repository key is not valid OpenPGP data'
+  [[ -n $records ]] || die 'repository key is empty'
+  now=$(date +%s)
+  while IFS=: read -r type validity _ _ _ _ expires _ _ field10 _ capabilities rest; do
+    case "$type" in
+      sec|ssb) die 'repository public key must not contain secret key material' ;;
+      pub)
+        ((primary_count += 1))
+        last_key=pub
+        if [[ $validity != r && $validity != e && $validity != d && $validity != i &&
+          (-z $expires || 10#$expires -gt now) ]]; then
+          primary_usable=true
+        fi ;;
+      sub)
+        last_key=sub
+        if [[ $validity != r && $validity != e && $validity != d && $validity != i &&
+          $capabilities == *s* &&
+          (-z $expires || 10#$expires -gt now) ]]; then
+          signing_subkey=true
+        fi ;;
+      fpr)
+        if [[ $last_key == pub ]]; then primary_fingerprint=$field10; fi
+        last_key= ;;
+      *) last_key= ;;
+    esac
+  done <<<"$records"
+  [[ $primary_count -eq 1 && $primary_fingerprint == "$expected" ]] ||
+    die 'repository key fingerprint does not match the single pinned maintainer key'
+  $primary_usable || die 'repository primary key is expired, revoked, disabled or invalid'
+  $signing_subkey || die 'repository key has no unexpired, non-revoked signing subkey'
+}
+
 # Pure platform selection, also exercised by the offline installer tests.
 # DragonOS uses its Ubuntu base, never its independent ISO release number.
 detect_platform() {
@@ -136,12 +189,16 @@ while (($#)); do
   esac
 done
 
-[[ $REPOSITORY_URL == https://* && $REPOSITORY_URL != *[[:space:]]* ]] ||
-  die 'repository URL must use HTTPS and contain no whitespace'
+validate_repository_url "$REPOSITORY_URL"
 [[ -r /etc/os-release ]] || die 'cannot identify this distribution'
 # shellcheck disable=SC1091
 . /etc/os-release
-dpkg_arch=$(dpkg --print-architecture 2>/dev/null || true)
+dpkg_arch=
+case "${ID:-}" in
+  ubuntu|debian|raspbian|dragonos|dragonos-*)
+    need_command dpkg
+    dpkg_arch=$(dpkg --print-architecture) ;;
+esac
 detect_platform "${ID:-}" "${VERSION_ID:-}" "${UBUNTU_CODENAME:-}" "${VERSION_CODENAME:-}" "$(uname -m)" "$dpkg_arch" "${VARIANT_ID:-}"
 say "platform: $platform_description"
 if $DETECT_PLATFORM_ONLY; then exit 0; fi
@@ -151,9 +208,20 @@ EXPECTED_FINGERPRINT=${EXPECTED_FINGERPRINT^^}
 [[ $EXPECTED_FINGERPRINT =~ ^[0-9A-F]{40}$ ]] ||
   die 'the repository signing fingerprint has not been configured (40 hex characters required)'
 
-for command in gpg install mktemp; do need_command "$command"; done
-if [[ -z $KEY_FILE ]]; then need_command curl; else [[ -r $KEY_FILE ]] || die "cannot read key: $KEY_FILE"; fi
-if [[ $manager == apt ]]; then need_command apt-get; else need_command dnf; fi
+for command in date gpg install mktemp stat; do need_command "$command"; done
+if [[ -z $KEY_FILE ]]; then
+  need_command curl
+else
+  [[ -r $KEY_FILE && -f $KEY_FILE && ! -L $KEY_FILE ]] || die "cannot read a regular key file: $KEY_FILE"
+  key_size=$(stat -c %s "$KEY_FILE")
+  [[ $key_size -gt 0 && $key_size -le 1048576 ]] || die 'repository key must be between 1 byte and 1 MiB'
+fi
+if [[ $manager == apt ]]; then
+  need_command apt-get
+else
+  need_command dnf
+fi
+if $START_WEB; then need_command systemctl; fi
 
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
@@ -164,13 +232,13 @@ if [[ -n $KEY_FILE ]]; then
   cp "$KEY_FILE" "$downloaded_key"
 else
   curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location \
-    "$REPOSITORY_URL/keys/vectorwarp.asc" --output "$downloaded_key"
+    --connect-timeout 10 --max-time 60 --max-filesize 1048576 \
+    "$REPOSITORY_URL/keys/vectorwarp.asc" --output "$downloaded_key" ||
+    die 'could not download the bounded repository public key; no system configuration was changed'
 fi
-
-mapfile -t fingerprints < <(gpg --batch --show-keys --with-colons "$downloaded_key" 2>/dev/null |
-  awk -F: '$1 == "pub" { primary = 1; next } primary && $1 == "fpr" { print toupper($10); primary = 0 }')
-[[ ${#fingerprints[@]} -eq 1 && ${fingerprints[0]} == "$EXPECTED_FINGERPRINT" ]] ||
-  die 'repository key fingerprint does not match the pinned maintainer key'
+key_size=$(stat -c %s "$downloaded_key")
+[[ $key_size -gt 0 && $key_size -le 1048576 ]] || die 'repository key must be between 1 byte and 1 MiB'
+validate_public_key "$downloaded_key" "$EXPECTED_FINGERPRINT"
 say "verified signing key $EXPECTED_FINGERPRINT"
 
 if $PREFLIGHT_ONLY; then say 'preflight passed; no repository or package was changed'; exit 0; fi
@@ -190,10 +258,14 @@ if [[ $manager == apt ]]; then
   } >"$source_file"
   [[ ! -L /usr/share/keyrings/vectorwarp-archive-keyring.gpg ]] || die 'refusing symlink keyring destination'
   [[ ! -L /etc/apt/sources.list.d/vectorwarp.sources ]] || die 'refusing symlink repository destination'
-  run install -m 0644 "$keyring" /usr/share/keyrings/vectorwarp-archive-keyring.gpg
-  run install -m 0644 "$source_file" /etc/apt/sources.list.d/vectorwarp.sources
-  run apt-get update
-  run apt-get install vectorwarp
+  run install -m 0644 "$keyring" /usr/share/keyrings/vectorwarp-archive-keyring.gpg ||
+    die 'could not install the APT keyring; no package manager was run'
+  run install -m 0644 "$source_file" /etc/apt/sources.list.d/vectorwarp.sources ||
+    die 'could not install the APT source; the keyring may have been updated and a retry is safe'
+  run apt-get update ||
+    die 'APT metadata refresh failed; repository configuration was retained for a safe retry'
+  run apt-get install vectorwarp ||
+    die 'APT package installation failed; repository configuration was retained for a safe retry'
 else
   repo_file="$TEMP_DIR/vectorwarp.repo"
   {
@@ -206,15 +278,17 @@ else
     printf 'gpgkey=%s/keys/vectorwarp.asc\n' "$REPOSITORY_URL"
   } >"$repo_file"
   [[ ! -L /etc/yum.repos.d/vectorwarp.repo ]] || die 'refusing symlink repository destination'
-  run install -m 0644 "$repo_file" /etc/yum.repos.d/vectorwarp.repo
-  run dnf install vectorwarp
+  run install -m 0644 "$repo_file" /etc/yum.repos.d/vectorwarp.repo ||
+    die 'could not install the DNF repository file; no package manager was run'
+  run dnf install vectorwarp ||
+    die 'DNF package installation failed; repository configuration was retained for a safe retry'
 fi
 
 if $START_WEB; then
-  need_command systemctl
-  run systemctl enable --now vectorwarp-api.service
-  say 'web API enabled and started; radar processor remains disabled and stopped'
+  run systemctl enable --now vectorwarp-api.service ||
+    die 'package installation succeeded but enabling or starting the web API failed; installer did not start radar; existing service state was not verified'
+  say 'web API enabled and started; installer did not start radar; existing radar service state was not verified'
 else
-  say 'package installed; both services remain disabled and stopped'
+  say 'package installed; installer did not start radar; existing service state was not verified'
 fi
 say 'review /etc/vectorwarp/config.yml before explicitly starting radar processing'
