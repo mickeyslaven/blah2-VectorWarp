@@ -19,6 +19,7 @@ const nodePin = read('packaging/node-runtime.env');
 assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
 assert.match(buildScript, /VCPKG_FORCE_SYSTEM_BINARIES=1/);
+assert.match(buildScript, /vcpkg_cmake_prefix=\(env CMAKE_POLICY_VERSION_MINIMUM=3\.5\)/);
 assert.doesNotMatch(read('cmake/RapidJson.cmake'), /Wno-error=template-body/);
 for (const manifestName of ['lib/vcpkg.json', 'lib/vcpkg-kraken.json']) {
   const manifest = JSON.parse(read(manifestName));
@@ -112,6 +113,12 @@ function nativeTarget(entry) {
   if (entry.distro === 'fedora44') return {os: 'Fedora', version: '44', format: 'rpm'};
   throw new Error(`release target ${entry.distro} has no README support-table mapping`);
 }
+const architectureLabels = Object.freeze({
+  amd64: 'x86-64 (amd64 / x86_64)',
+  x86_64: 'x86-64 (amd64 / x86_64)',
+  arm64: 'ARM64 (arm64 / aarch64)',
+  aarch64: 'ARM64 (arm64 / aarch64)'
+});
 function assertMatrixDocumented(entries, rows) {
   assert.ok(entries.length, 'release package matrix must not be empty');
   assert.equal(new Set(entries.map(entry => `${entry.distro}/${entry.format}/${entry.arch}`)).size, entries.length,
@@ -121,7 +128,9 @@ function assertMatrixDocumented(entries, rows) {
     const row = rows.find(candidate => candidate.os === target.os);
     assert.ok(row, `README lacks an OS support row for ${target.os}`);
     assert.ok(row.versions.includes(target.version), `README lacks ${target.os} ${target.version}`);
-    assert.ok(row.architectures.includes(entry.arch), `README lacks ${target.os} ${entry.arch}`);
+    assert.ok(Object.hasOwn(architectureLabels, entry.arch) &&
+      row.architectures.includes(architectureLabels[entry.arch]),
+    `README lacks ${target.os} ${entry.arch}`);
     assert.match(row.package, target.format === 'deb' ? /DEB/ : /RPM/,
       `README package column disagrees with ${entry.distro} format`);
   }
@@ -136,8 +145,26 @@ assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0]
   /lacks Ubuntu riscv64/);
 assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.filter(row => row.os !== 'Debian')),
   /lacks an OS support row for Debian/);
-assert.match(read('README.md'), /\| Raspberry Pi OS \| Trixie, 64-bit \| arm64 \| Debian 13 ARM64 DEB \|/);
-assert.match(read('README.md'), /\| DragonOS \| Ubuntu 22\.04, 24\.04 or 26\.04 base \| amd64, arm64 \|/);
+for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
+  assert.deepEqual(readmeRows.find(row => row.os === os)?.architectures,
+    [architectureLabels.amd64, architectureLabels.arm64],
+    `${os} must use the same public architecture labels`);
+const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
+assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
+assert.deepEqual(piRow.versions, ['Trixie', '64-bit']);
+assert.match(piRow.package, /Debian 13 ARM64 DEB/);
+assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
+  arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
+})), readmeRows);
+assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+  row.os === 'Fedora' ? {...row, architectures: ['x86_64', 'aarch64']} : row)),
+  /lacks Fedora/, 'Native-only labels must not reintroduce inconsistent documentation');
+for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
+  'packaging/README.md', 'docs/UPSTREAM_COMPARISON.md']) {
+  const document = read(file);
+  assert.ok(document.includes(architectureLabels.amd64), `${file}: explain both x86-64 aliases`);
+  assert.ok(document.includes(architectureLabels.arm64), `${file}: explain both ARM64 aliases`);
+}
 assert.match(releaseWorkflow, /expected ten package manifests/);
 assert.match(releaseWorkflow, /-eq 10/);
 

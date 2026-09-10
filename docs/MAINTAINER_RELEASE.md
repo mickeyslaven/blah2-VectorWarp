@@ -31,14 +31,17 @@ Variables**. Only the public `.asc` file belongs in Git.
 
 ## Release process
 
-The intended build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13
-amd64+arm64 DEBs, plus Fedora 44 x86_64+aarch64 RPMs: ten packages.
+The intended build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13 DEBs,
+plus Fedora 44 RPMs, each for x86-64 (amd64 / x86_64) and
+ARM64 (arm64 / aarch64): ten packages. The x86-64 aliases both cover Intel
+and AMD CPUs. Preserve distribution-native architecture names in package
+metadata, filenames and commands.
 Ubuntu 22.04/26.04 and Debian 13 are built in their own
 pinned userspaces; the containers are build conveniences only and are never a
 VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
 selection through `/etc/os-release`; it is not an independently built or
 boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
-ARM64 package; its installation and Pi hardware performance need separate
+ARM64 (arm64 / aarch64) package; its installation and Pi hardware performance need separate
 validation. No 32-bit or custom SD-card image is produced.
 The default package supports the Kraken/Heimdall
 network receiver and CPU processing with Vulkan auto-detection where available.

@@ -87,11 +87,16 @@ packages and the signed repository are **not published yet**.
 
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04, 24.04, 26.04 | amd64, arm64 | DEB for the matching Ubuntu version |
-| Debian | 13 (Trixie) | amd64, arm64 | Debian 13 DEB |
-| Fedora | 44 | x86_64, aarch64 | Fedora 44 RPM |
-| DragonOS | Ubuntu 22.04, 24.04 or 26.04 base | amd64, arm64 | Matching Ubuntu DEB, selected from OS metadata |
-| Raspberry Pi OS | Trixie, 64-bit | arm64 | Debian 13 ARM64 DEB |
+| Ubuntu | 22.04, 24.04, 26.04 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | DEB for the matching Ubuntu version |
+| Debian | 13 (Trixie) | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Debian 13 DEB |
+| Fedora | 44 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Fedora 44 RPM |
+| DragonOS | Ubuntu 22.04, 24.04 or 26.04 base | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Matching Ubuntu DEB, selected from OS metadata |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 (arm64 / aarch64) | Debian 13 ARM64 DEB |
+
+`amd64` and `x86_64` mean the same 64-bit Intel/AMD architecture—not AMD-only
+support. Likewise, `arm64` and `aarch64` mean 64-bit ARM. Package filenames and
+commands retain the names required by each distribution; choose the package
+for your installed OS as well as your architecture.
 
 DragonOS ISO installation and Raspberry Pi OS/hardware remain unverified.
 See [DragonOS notes](docs/DRAGONOS.md), [Pi setup](docs/INSTALL.md#raspberry-pi),

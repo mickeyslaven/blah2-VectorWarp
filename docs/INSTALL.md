@@ -6,8 +6,11 @@ Use its bootstrap only after that release is announced; until then, use the
 [advanced source build](SETUP.md).
 
 The planned APT targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), 26.04
-(Resolute), and Debian 13 (Trixie), on amd64 and arm64. Fedora 44 uses RPMs
-for x86_64 and aarch64. DragonOS may use the matching Ubuntu package when
+(Resolute), and Debian 13 (Trixie). Fedora 44 uses RPMs. All target
+x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). The x86-64 package supports
+both Intel and AMD CPUs; the aliases do not indicate different chip support.
+Package filenames retain each distribution's native architecture name.
+DragonOS may use the matching Ubuntu package when
 its `/etc/os-release` metadata identifies one of those Ubuntu bases. It is not
 an independently built DragonOS package and no DragonOS ISO boot/install has
 been validated. See [DragonOS notes](DRAGONOS.md).
@@ -18,9 +21,9 @@ Choose the package for the installed operating system, not just the board:
 
 | Operating system | VectorWarp package |
 | --- | --- |
-| Fedora 44, 64-bit | Fedora 44 aarch64 RPM |
-| Supported Ubuntu, 64-bit | Matching Ubuntu arm64 DEB |
-| Debian 13 or Raspberry Pi OS Trixie, 64-bit | Debian 13 arm64 DEB |
+| Fedora 44, 64-bit | Fedora 44 ARM64 (arm64 / aarch64) RPM |
+| Supported Ubuntu, 64-bit | Matching Ubuntu ARM64 (arm64 / aarch64) DEB |
+| Debian 13 or Raspberry Pi OS Trixie, 64-bit | Debian 13 ARM64 (arm64 / aarch64) DEB |
 
 Raspberry Pi OS Trixie is based on Debian 13. Its 32-bit edition is not a
 supported package target. See the [official OS documentation](https://www.raspberrypi.com/documentation/computers/os.html).

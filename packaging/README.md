@@ -2,10 +2,13 @@
 
 Release packages are built inside the operating system named by the asset:
 Ubuntu 22.04/24.04/26.04 and Debian 13 produce DEBs; Fedora 44 produces RPMs.
-Both x86-64 and ARM64 are supported. An Ubuntu binary is never relabeled as
-Fedora. DragonOS uses the matching Ubuntu repository selection at install time;
+Both x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64) are supported.
+The x86-64 aliases both support Intel and AMD CPUs. DEB metadata uses `amd64`
+or `arm64`; RPM metadata uses `x86_64` or `aarch64`. Keep those native names
+in asset filenames and commands. An Ubuntu binary is never relabeled as Fedora.
+DragonOS uses the matching Ubuntu repository selection at install time;
 it is not a separately built DragonOS package or an ISO-tested claim.
-Raspberry Pi OS Trixie selects the Debian 13 ARM64 package. This requires
+Raspberry Pi OS Trixie selects the Debian 13 ARM64 (arm64 / aarch64) package. This requires
 64-bit userspace and does not imply Pi hardware or OS-image validation.
 
 Published packages use the Kraken-only compile mode. That mode supports live
