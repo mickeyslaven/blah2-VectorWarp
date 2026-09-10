@@ -16,6 +16,12 @@ const debPostinst = read('packaging/deb/postinst');
 const rpmSpec = read('packaging/rpm/vectorwarp.spec.in');
 const nodePin = read('packaging/node-runtime.env');
 
+assert.match(buildScript, /cmake -G Ninja/);
+assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
+assert.match(buildScript, /VCPKG_FORCE_SYSTEM_BINARIES=1/);
+assert.match(read('cmake/RapidJson.cmake'),
+  /CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15/);
+
 const receiverBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});
 assert.equal(receiverBuildCheck.status, 0,

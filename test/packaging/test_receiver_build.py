@@ -36,6 +36,7 @@ class ReceiverBuildContractTest(unittest.TestCase):
         self.tools.mkdir()
         executable(self.tools / "node", "#!/bin/sh\nprintf '24\\n'\n")
         executable(self.tools / "npm")
+        executable(self.tools / "uname", "#!/bin/sh\nprintf '%s\\n' \"${FAKE_UNAME:-x86_64}\"\n")
         for name in ("cmake", "git", "curl", "tar", "zip", "unzip", "c++", "ninja"):
             executable(self.tools / name)
         executable(self.tools / "pkg-config", """#!/bin/sh
@@ -159,6 +160,8 @@ endif()
                 self.assertIn(f"receivers={receivers}", result.stdout)
                 for name, flag in zip(("RSPDUO", "USRP", "HACKRF"), flags):
                     self.assertIn(f"-DBLAH2_ENABLE_{name}={flag}", result.stdout)
+                self.assertIn("cmake -G Ninja", result.stdout)
+                self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
                 calls = log.read_text(encoding="utf-8")
                 self.assertEqual("libhackrf" in calls, backend in {"hackrf", "all"})
                 self.assertEqual("BLAH2_SDRPLAY_INCLUDE_DIR" in result.stdout,
@@ -169,6 +172,19 @@ endif()
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn("kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+
+    def test_non_x86_vcpkg_configure_uses_required_system_tools(self):
+        for architecture in ("aarch64", "arm64", "armv7l", "s390x", "ppc64le", "riscv64"):
+            with self.subTest(architecture=architecture):
+                environment = self.build_environment(False)
+                environment["FAKE_UNAME"] = architecture
+                result = subprocess.run([
+                    "bash", str(BUILD_SCRIPT), "--backend", "kraken", "--gpu", "off",
+                    "--dry-run", "--jobs", "1", "--deps-dir", str(self.dependencies),
+                    "--build-dir", str(self.temp / f"build-{architecture}"),
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("env VCPKG_FORCE_SYSTEM_BINARIES=1 cmake -G Ninja", result.stdout)
 
     def make_artifact(self, backend: str, compiled_receivers: str | None) -> Path:
         artifact = self.temp / f"artifact-{backend}-{len(list(self.temp.glob('artifact-*')))}"

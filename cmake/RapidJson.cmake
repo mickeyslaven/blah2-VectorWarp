@@ -8,9 +8,9 @@ if(NOT TARGET blah2RapidJson)
   target_include_directories(blah2RapidJson SYSTEM INTERFACE
     "${RAPIDJSON_INCLUDE_DIRS}")
   if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND
-      CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16)
+      CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
     # Pinned RapidJSON 1.1.0 has an unused string-reference assignment
-    # template diagnosed by GCC 16 even in SYSTEM headers. Keep the warning
+    # template diagnosed by GCC 15+ even in SYSTEM headers. Keep the warning
     # visible while allowing this external-header compatibility case.
     target_compile_options(blah2RapidJson INTERFACE
       -Wno-error=template-body)

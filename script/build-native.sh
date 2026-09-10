@@ -81,6 +81,7 @@ esac
 [[ $JOBS =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
 BUILD_DIR=$(realpath -m "$BUILD_DIR")
 DEPS_DIR=$(realpath -m "$DEPS_DIR")
+BUILD_ARCH=$(uname -m)
 [[ $BUILD_DIR != / && $DEPS_DIR != / ]] || die 'refusing to use / as a work directory'
 [[ $BUILD_DIR != "$SOURCE_DIR" && $DEPS_DIR != "$SOURCE_DIR" ]] ||
   die 'build and dependency directories must not replace the source tree'
@@ -170,7 +171,16 @@ else
   KRAKEN_ONLY=OFF
 fi
 
-cmake_args=(cmake -S "$SOURCE_DIR" -B "$CMAKE_DIR"
+vcpkg_cmake_prefix=()
+case "$BUILD_ARCH" in
+  arm*|aarch64|s390x|ppc64le|riscv*)
+    # vcpkg has no downloadable helper-tool bundle for these architectures.
+    # The build preflight already requires its system CMake and Ninja tools.
+    vcpkg_cmake_prefix=(env VCPKG_FORCE_SYSTEM_BINARIES=1)
+    ;;
+esac
+
+cmake_args=("${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR"
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
   -DBLAH2_KRAKEN_ONLY="$KRAKEN_ONLY" -DBLAH2_GPU="$GPU"
   -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO"
@@ -238,7 +248,7 @@ if ! $DRY_RUN; then
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
   printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$GPU" "$build_os_id" "$build_os_version" "$(uname -m)" \
+    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"
