@@ -1,7 +1,19 @@
+function ensureBrandFavicon() {
+  if (!document.head || !document.createElement) return;
+  const existing = document.querySelector('link[rel~="icon"]');
+  if (existing) return;
+  const favicon = document.createElement('link');
+  favicon.rel = 'icon';
+  favicon.href = '/favicon/vectorwarp-vw.svg';
+  favicon.type = 'image/svg+xml';
+  document.head.appendChild(favicon);
+}
+
 function renderAppHeader(active) {
+  ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/favicon-128x128.png" alt="30hours"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div>`;
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
