@@ -19,8 +19,14 @@ const nodePin = read('packaging/node-runtime.env');
 assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
 assert.match(buildScript, /VCPKG_FORCE_SYSTEM_BINARIES=1/);
-assert.match(read('cmake/RapidJson.cmake'),
-  /CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15/);
+assert.doesNotMatch(read('cmake/RapidJson.cmake'), /Wno-error=template-body/);
+for (const manifestName of ['lib/vcpkg.json', 'lib/vcpkg-kraken.json']) {
+  const manifest = JSON.parse(read(manifestName));
+  assert.deepEqual(manifest.dependencies.find(({name}) => name === 'rapidjson'),
+    {name: 'rapidjson', 'version>=': '2023-07-17'});
+  assert.deepEqual(manifest.overrides.find(({name}) => name === 'rapidjson'),
+    {name: 'rapidjson', 'version-date': '2023-07-17'});
+}
 
 const receiverBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});

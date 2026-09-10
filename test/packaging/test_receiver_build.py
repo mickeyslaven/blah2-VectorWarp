@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -54,6 +55,21 @@ exit 0
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_manifests_pin_the_gcc_compatible_rapidjson_snapshot(self):
+        for relative in ("lib/vcpkg.json", "lib/vcpkg-kraken.json"):
+            with self.subTest(manifest=relative):
+                manifest = json.loads((ROOT / relative).read_text(encoding="utf-8"))
+                dependency = next(item for item in manifest["dependencies"]
+                                  if item["name"] == "rapidjson")
+                override = next(item for item in manifest["overrides"]
+                                if item["name"] == "rapidjson")
+                self.assertEqual(dependency, {
+                    "name": "rapidjson", "version>=": "2023-07-17"
+                })
+                self.assertEqual(override, {
+                    "name": "rapidjson", "version-date": "2023-07-17"
+                })
 
     def build_environment(self, with_uhd: bool) -> dict:
         uhd_tools = self.temp / "uhd-tools"
