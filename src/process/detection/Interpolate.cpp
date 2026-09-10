@@ -94,6 +94,8 @@ std::unique_ptr<Detection> Interpolate::process(Detection *x, Map<std::complex<d
           if (intSnr[1] < intSnr[0] || intSnr[1] < intSnr[2]) rejectNonPeak = true;
           else if (peakOffset(intSnr, offset, peak)) {
             intDoppler = doppler[i] + (indexDoppler[row + 1] - indexDoppler[row]) * offset;
+            // Keep the delay-axis peak: upstream overwrote intSnrDelay here,
+            // losing the larger delay estimate when both axes were enabled.
             intSnrDoppler = peak;
           }
         }

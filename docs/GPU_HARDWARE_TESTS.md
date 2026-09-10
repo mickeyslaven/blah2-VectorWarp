@@ -47,3 +47,14 @@ benchmarks. This verification does not start or deploy a live radar service.
 
 See [GPU acceleration](GPU_ACCELERATION.md) for configuration, reproducible test
 commands, driver requirements and worker recovery limits.
+
+## Raspberry Pi 4 follow-up
+
+Fedora 44 / Mesa 26.0.3-4 on the Pi's V3D 4.2.14.0 passed six small GPU frames
+against an independent direct CPU correlation/DFT calculation, with worst
+relative RMS error `1.37223e-7`. This was a separate source-built diagnostic,
+not the full matrix above or installed-package GPU acceptance. Production-size
+recorded-IQ initialization still exceeded the 30-second deadline during driver
+pipeline creation and safely fell back to CPU. No Pi GPU speedup is established.
+The [Pi report](PI4_VALIDATION_20260910.md) records versions, geometry and limits;
+[GPU diagnostics](GPU_DIAGNOSTICS.md) describes the opt-in test.

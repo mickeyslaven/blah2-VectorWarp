@@ -282,6 +282,12 @@ target_link_libraries(testDetectionMath PRIVATE Catch2::Catch2WithMain blah2Rapi
 set_target_properties(testDetectionMath PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testDetectionMath COMMAND testDetectionMath)
+add_executable(testInterpolationSnr test/unit/process/detection/TestInterpolationSnr.cpp
+  src/process/detection/Interpolate.cpp src/data/Detection.cpp src/data/Map.cpp)
+target_link_libraries(testInterpolationSnr PRIVATE blah2RapidJson)
+set_target_properties(testInterpolationSnr PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+add_test(NAME testInterpolationSnr COMMAND testInterpolationSnr)
 add_test(NAME testHammingNumber COMMAND testHammingNumber)
 add_test(NAME testKrakenMultiChannel COMMAND testKrakenMultiChannel)
 endif()

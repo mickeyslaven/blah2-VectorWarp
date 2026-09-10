@@ -7,10 +7,12 @@ verification is limited to the devices and driver versions in
 Capture, reference synthesis, clutter removal, detection and tracking remain on
 the CPU.
 
-On a Raspberry Pi 4 running Fedora 44, the real V3DV GPU attempts in both
-Automatic and GPU modes hit the 30-second startup timeout and fell back to CPU,
-with zero GPU-processed frames. This verifies fallback for that test, not usable
-Pi GPU acceleration. See the [Pi validation report](PI4_VALIDATION_20260910.md).
+On a Raspberry Pi 4 running Fedora 44, production-size attempts in Automatic
+and GPU modes timed out during driver pipeline creation and fell back to CPU.
+A separate source-built diagnostic verified six small frames on its real V3D
+GPU against an independent CPU reference. Production-size Pi GPU processing
+and speedup remain unverified. See the [Pi validation report](PI4_VALIDATION_20260910.md)
+and [startup diagnostics](GPU_DIAGNOSTICS.md).
 
 ## Selection
 

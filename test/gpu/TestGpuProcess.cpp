@@ -27,6 +27,13 @@ int main() {
         check(output.front() == reference.front(), "Worker reused a stale frame");
       } catch (const std::runtime_error& error) {
         failed = true;
+        const std::string reason = error.what();
+        if (mode == "hang-init")
+          check(reason.find("startup timed out after 300 ms") != std::string::npos,
+            "Startup timeout lost its phase/deadline");
+        if (mode == "hang-frame")
+          check(reason.find("frame execution timed out after 150 ms") != std::string::npos,
+            "Frame timeout lost its phase/deadline");
         std::cout << "Recovered " << mode << ": " << error.what() << '\n';
       }
       check(failed == (mode != "ok"), "Worker failure expectation differs");

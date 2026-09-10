@@ -45,16 +45,37 @@ median pipeline time was about 0.9% above VectorWarp's. Both tested profiles exc
 CPI, so neither demonstrated real-time processing. These short offline runs do
 not establish sustained live acquisition throughput.
 
-Pair map comparison reported zero relative RMS/peak error. Detection delay and
-Doppler positions matched, but detection SNR differed in all ten frames. Track
-outputs matched; no active tracks had matured during the ten-frame window.
-The SNR discrepancy remains under separate diagnosis. Do not interpret these
-timings as a correctness-qualified speedup or tracker-accuracy result.
+Pair maps matched at their stored `complex<float>` precision, and detection
+positions matched at saved JSON precision. Detection SNR differed in all ten
+frames because upstream overwrites the delay-interpolated peak with the Doppler
+peak; VectorWarp already preserves both. Of 60 detections, 29 increased by up to
+0.61 legacy display-scale units and 31 were unchanged. These values are not
+conventional physical SNR in dB or evidence of increased detection sensitivity.
+The regression test passes VectorWarp and fails the pinned upstream negative
+control. Track arrays were empty; matching tentative counts do not verify
+established-track equivalence. Short, overlapping timing runs do not demonstrate
+a reliable speedup, even with the numerical discrepancy explained.
 
 The real V3DV GPU attempts in `auto` and `gpu` modes both reached the 30-second
 startup timeout, logged CPU fallback and reported `gpu_frames: 0`. This is a
 fallback result, not successful Pi GPU acceleration; the approximately 40-second
 wall times include that failed startup.
+
+A separate diagnostic source build localized the timeout to driver pipeline
+creation for the first VkFFT plan (3000 points × 321 batches). Device creation,
+buffers and shader-module creation completed, but `vkCreateComputePipelines`
+did not return before the unchanged deadline. This does not establish an
+infinite loop or identify a particular Mesa compiler defect.
+
+The same Pi's V3D 4.2.14.0 GPU computed six small synthetic frames across two
+three-frame tests (range 16, Doppler 9, five delay bins, one surveillance path).
+An independent CPU correlation/DFT reference found worst relative RMS error
+`1.37223e-7` and peak-relative error `1.50091e-7`. No CPU fallback could pass
+these tests. This proves small-geometry GPU computation only: production-size
+recorded-IQ GPU processing and a Pi GPU speedup remain unverified. The diagnostic
+build used Mesa 26.0.3-4, Vulkan loader 1.4.341.0, glslang 16.2.0 and the existing
+pinned VkFFT source on Fedora 44; it does not extend installed-RPM acceptance.
+See [GPU diagnostics](GPU_DIAGNOSTICS.md) for the opt-in checks.
 
 Guard logs reached 47.225 °C (47.2 °C rounded) and reported zero kernel alerts.
 Firmware throttling telemetry was unavailable, so absence of throttling is not
@@ -66,3 +87,10 @@ Small evidence files reviewed: `package-replay-acceptance.txt`, the `full-cpu`,
 guard JSONL and the two pair output JSONL files. The latter confirm ten SNR
 disagreement frames, zero detection-location/track disagreement frames and zero
 active tracks. No benchmark was rerun for this documentation update.
+
+Follow-up evidence is under `/var/tmp/vectorwarp-pi-investigation-20260910`
+on the Pi and Strix: `REPORT.md`, `REPRODUCE.md`, and the `evidence/` logs,
+per-detection reconstruction and checksums. The additional SNR and fallback
+regressions passed; the upstream negative control failed as intended. The
+follow-up peak temperature was 44.3 °C. Installed packages, shared source,
+services and hardware configuration were unchanged by that investigation.

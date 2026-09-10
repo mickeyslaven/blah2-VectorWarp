@@ -47,11 +47,15 @@ repairs; do not describe them as performance measurements of every current chang
 
 The [Fedora 44 / Raspberry Pi 4 check](PI4_VALIDATION_20260910.md) recorded
 917.031 ms/CPI upstream versus 902.441 ms/CPI VectorWarp for a two-channel CPU
-run. The 1.6% timing difference is not an accepted speedup: detection SNR differed
-in all ten frames despite matching maps and detection positions. Across three
-two-core repeats, the upstream median was about 0.9% above VectorWarp's. The five-channel VectorWarp
-run took 3748.025 ms/CPI with no upstream equivalent. Neither profile met its
-200 ms CPI, and Pi GPU attempts fell back to CPU.
+run. The 1.6% timing difference is not a reliable speedup claim from these short
+runs. Detection SNR differs because VectorWarp already corrects an upstream
+peak-interpolation assignment bug; this is not evidence of greater sensitivity.
+Maps and positions matched at their saved precision, but track arrays were empty.
+Across three two-core repeats, the upstream median was about 0.9% above
+VectorWarp's, with overlapping run ranges. The five-channel VectorWarp run took
+3748.025 ms/CPI with no upstream equivalent. Neither profile met its 200 ms CPI.
+Production-size Pi GPU attempts fell back to CPU; six small diagnostic GPU
+frames passed an independent CPU comparison, without establishing speedup.
 
 Acceptable: “Optional GPU acceleration, with measured gains for some workloads
 and automatic CPU fallback.” Not supported: “Faster on every GPU,” “all processing

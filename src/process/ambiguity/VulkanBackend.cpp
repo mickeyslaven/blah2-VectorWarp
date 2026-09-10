@@ -12,6 +12,7 @@ extern "C" const glslang_resource_t* glslang_default_resource(void);
 #endif
 #include <vkFFT.h>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <iostream>
@@ -22,6 +23,11 @@ extern "C" const glslang_resource_t* glslang_default_resource(void);
 
 namespace blah2 {
 namespace {
+void startupTrace(const char* stage) {
+  if (!std::getenv("BLAH2_GPU_DIAGNOSTICS")) return;
+  std::cerr << "GPU startup " << std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::steady_clock::now().time_since_epoch()).count() << " ms: " << stage << std::endl;
+}
 void check(VkResult result, const char* operation) {
   if (result != VK_SUCCESS)
     throw std::runtime_error(std::string("GPU ") + operation + " failed (" +
@@ -38,7 +44,9 @@ struct Instance {
     app.pApplicationName = "blah2"; app.apiVersion = VK_API_VERSION_1_0;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &app;
+    startupTrace("vkCreateInstance begin");
     check(vkCreateInstance(&info, nullptr, &handle), "driver initialization");
+    startupTrace("vkCreateInstance complete");
   }
   ~Instance() { if (handle) vkDestroyInstance(handle, nullptr); }
 };
@@ -49,6 +57,7 @@ struct Candidate {
   uint32_t queue;
 };
 std::vector<Candidate> enumerate(Instance& instance) {
+  startupTrace("device enumeration begin");
   uint32_t count = 0;
   check(vkEnumeratePhysicalDevices(instance.handle, &count, nullptr), "device discovery");
   std::vector<VkPhysicalDevice> devices(count);
@@ -92,6 +101,7 @@ std::vector<Candidate> enumerate(Instance& instance) {
       return rank(a.properties.deviceType) < rank(b.properties.deviceType);
     return a.info.memoryBytes > b.info.memoryBytes;
   });
+  startupTrace("device enumeration complete");
   return result;
 }
 struct Context {
@@ -111,14 +121,19 @@ struct Context {
       queueInfo.queueCount = 1; queueInfo.pQueuePriorities = &priority;
       VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
       info.queueCreateInfoCount = 1; info.pQueueCreateInfos = &queueInfo;
+      startupTrace(candidate.info.name.c_str());
+      startupTrace("vkCreateDevice begin");
       check(vkCreateDevice(candidate.physical, &info, nullptr, &device), "device initialization");
+      startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
       VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
       poolInfo.queueFamilyIndex = candidate.queue;
       check(vkCreateCommandPool(device, &poolInfo, nullptr, &pool), "command allocation");
       VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
       check(vkCreateFence(device, &fenceInfo, nullptr, &fence), "fence allocation");
+      startupTrace("glslang initialization begin");
       compiler = glslang_initialize_process();
+      startupTrace("glslang initialization complete");
       if (!compiler) throw std::runtime_error("GPU shader compiler is unavailable");
     } catch (...) { release(); throw; }
   }
@@ -182,7 +197,9 @@ struct Plan {
     // Binding during initialization can leave descriptors pointing at null LUTs.
     config.bufferSize = &buffer.bytes;
     config.isCompilerInitialized = 1;
+    startupTrace(("VkFFT plan begin length=" + std::to_string(length) + " batches=" + std::to_string(batches)).c_str());
     const auto result = initializeVkFFT(&app, config);
+    startupTrace(("VkFFT plan complete result=" + std::to_string(result)).c_str());
     if (result != VKFFT_SUCCESS) { deleteVkFFT(&app); checkFft(result); }
   }
   ~Plan() { deleteVkFFT(&app); }
@@ -336,15 +353,19 @@ public:
         limits.maxComputeWorkGroupSize[0] < 128 || limits.maxComputeWorkGroupCount[0] < 65535 ||
         std::max(range * g.channels, doppler) * sizeof(std::complex<float>) > limits.maxStorageBufferRange)
       throw std::runtime_error("GPU capacity is too small for these radar settings; using CPU");
+    startupTrace("buffer allocations begin");
     reference_ = std::make_unique<Buffer>(context_, range * 8, false);
     surveillance_ = std::make_unique<Buffer>(context_, range * g.channels * 8, false);
     doppler_ = std::make_unique<Buffer>(context_, doppler * 8, false);
     input_ = std::make_unique<Buffer>(context_, reference_->bytes + surveillance_->bytes, true);
     output_ = std::make_unique<Buffer>(context_, doppler_->bytes, true);
+    startupTrace("buffer allocations complete");
     referencePlan_ = std::make_unique<Plan>(context_, *reference_, g.range, g.doppler);
     rangePlan_ = std::make_unique<Plan>(context_, *surveillance_, g.range, g.doppler * g.channels);
     dopplerPlan_ = std::make_unique<Plan>(context_, *doppler_, g.doppler, g.delays * g.channels);
+    startupTrace("multiply kernel begin");
     multiply_ = std::make_unique<Kernel>(context_, multiplySource, std::vector<Buffer*>{reference_.get(), surveillance_.get()});
+    startupTrace("gather kernel begin");
     gather_ = std::make_unique<Kernel>(context_, gatherSource, std::vector<Buffer*>{surveillance_.get(), doppler_.get()});
     VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     allocation.commandPool = context_.pool; allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -372,6 +393,7 @@ public:
     vkCmdPipelineBarrier(command_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
     check(vkEndCommandBuffer(command_), "command recording");
+    startupTrace("backend ready");
   }
   GpuDevice device() const override { return context_.candidate.info; }
   void process(const std::vector<std::complex<float>>& reference,

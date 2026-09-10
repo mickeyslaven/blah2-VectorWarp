@@ -8,6 +8,11 @@ file(MAKE_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 include_directories(${PROJECT_ROOT}/src)
 include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
 include(${PROJECT_ROOT}/cmake/GpuAcceleration.cmake)
+add_executable(testVulkanSmall TestVulkanSmall.cpp)
+target_link_libraries(testVulkanSmall PRIVATE blah2GpuProcess)
+if(TARGET blah2GpuWorker)
+  add_dependencies(testVulkanSmall blah2GpuWorker)
+endif()
 foreach(name IN ITEMS Acceleration AccelerationFallback)
   add_executable(test${name} ${PROJECT_ROOT}/test/unit/process/ambiguity/Test${name}.cpp
     ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp

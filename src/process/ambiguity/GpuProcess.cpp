@@ -57,11 +57,12 @@ void sendMessage(int fd, const Message& message) {
   while (count < 0 && errno == EINTR);
   if (count != sizeof(message)) throw std::runtime_error("GPU worker connection failed; using CPU");
 }
-Message receiveMessage(int fd, unsigned timeoutMs) {
+Message receiveMessage(int fd, unsigned timeoutMs, const char* phase) {
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
   for (;;) {
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
-    if (left <= 0) throw std::runtime_error("GPU worker timed out; using CPU");
+    if (left <= 0) throw std::runtime_error(std::string("GPU worker ") + phase +
+      " timed out after " + std::to_string(timeoutMs) + " ms; using CPU");
     pollfd descriptor{fd, POLLIN, 0};
     const int result = poll(&descriptor, 1, std::min<int64_t>(left, INT_MAX));
     if (result < 0 && errno == EINTR) continue;
@@ -168,7 +169,7 @@ public:
       Message init; init.operation = initialize; init.geometry = geometry;
       std::snprintf(init.id, sizeof(init.id), "%s", device.c_str());
       sendMessage(socket_, init);
-      const auto response = receiveMessage(socket_, options_.startupMs);
+      const auto response = receiveMessage(socket_, options_.startupMs, "startup");
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence)
         throw std::runtime_error("GPU worker initialization response is invalid; using CPU");
@@ -192,7 +193,7 @@ public:
       std::memcpy(shared_ + layout_.reference, surveillance.data(), surveillance.size() * sizeof(Complex));
       Message request; request.operation = frame; request.sequence = ++sequence_;
       sendMessage(socket_, request);
-      const auto response = receiveMessage(socket_, options_.frameMs);
+      const auto response = receiveMessage(socket_, options_.frameMs, "frame execution");
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong frame; using CPU");
@@ -222,7 +223,7 @@ int runGpuWorker(const GpuFactory& factory) {
   void* mapping = MAP_FAILED;
   size_t bytes = 0;
   try {
-    const auto init = receiveMessage(3, 30000);
+    const auto init = receiveMessage(3, 30000, "initialization request");
     if (init.operation != initialize || init.sequence) throw std::runtime_error("Invalid GPU worker initialization");
     const Layout layout(init.geometry);
     struct stat metadata{};
@@ -243,7 +244,7 @@ int runGpuWorker(const GpuFactory& factory) {
     uint64_t sequence = 0;
     for (;;) {
       // Idle waits are not GPU work. Parent death closes the socket or kills us.
-      const auto request = receiveMessage(3, INT_MAX);
+      const auto request = receiveMessage(3, INT_MAX, "idle request");
       if (request.operation == quit) break;
       if (request.operation != frame || request.sequence != ++sequence)
         throw std::runtime_error("Invalid GPU worker frame request");
