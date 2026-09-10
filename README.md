@@ -8,17 +8,12 @@ the host and configuration.
 ## Highlights
 
 - KrakenSDR Suite V2 network input with 2–8-channel processing.
-- Browser setup, health, recording, replay, detections and delay ellipses.
-- Portable `.blah2iq` recording and replay for all supported receiver profiles.
+- Browser configurable, allowing for on the fly changes, and even replaying old recordings right in browser. 
 - Dedicated-reference processing for RSPduo, USRP and dual HackRF; coherent
   Kraken array-reference synthesis and map fusion.
 - Optional Vulkan/VkFFT acceleration with automatic CPU fallback.
 - Built-in raw ADS-B display/evaluation projection. ADS-B never informs
   detection or tracking.
-
-Five-channel Kraken hardware has been tested. Two through eight channels pass
-recording/replay tests; that is not a claim that an eight-channel radio was
-physically tested. Replay runs without opening receiver hardware.
 
 ## Install on Linux
 
