@@ -5,6 +5,12 @@ repository is planned but **not published** until its first verified release.
 Use its bootstrap only after that release is announced; until then, use the
 [advanced source build](SETUP.md).
 
+The planned APT targets are Ubuntu 22.04 (Jammy), 24.04 (Noble), and 26.04
+(Resolute), on amd64 and arm64. DragonOS may use the matching APT package when
+its `/etc/os-release` metadata identifies one of those Ubuntu bases. It is not
+an independently built DragonOS package and no DragonOS ISO boot/install has
+been validated. See [DragonOS notes](DRAGONOS.md).
+
 ## 1. Install and open settings
 
 After the repository is live, download its bootstrap, inspect it, then install:

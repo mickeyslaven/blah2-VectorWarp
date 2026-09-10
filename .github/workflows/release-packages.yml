@@ -1,6 +1,8 @@
 name: Build release packages
 
 on:
+  pull_request:
+    branches: [main]
   push:
     # The validation job below enforces exact vMAJOR.MINOR.PATCH semantics;
     # keep the event filter broad so valid tags are never lost to glob syntax.
@@ -44,6 +46,13 @@ jobs:
             tagged_release=true
             git show-ref --verify --quiet "refs/tags/${tag}"
             [[ $(git rev-list -n 1 "${tag}") == "${GITHUB_SHA}" ]]
+            git show-ref --verify --quiet refs/remotes/origin/main
+            git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main
+          elif [[ ${GITHUB_EVENT_NAME} == pull_request ]]; then
+            # PR packaging is unsigned smoke coverage only; it cannot reach
+            # the signing job or its environment-scoped signing secret.
+            tag=v0.0.0
+            tagged_release=false
           else
             [[ ${GITHUB_EVENT_NAME} == workflow_dispatch ]]
             tag="v$INPUT_VERSION"
@@ -139,10 +148,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04, distro: ubuntu22.04, format: deb, arch: amd64, node_arch: x64 }
-          - { runner: ubuntu-24.04-arm, distro: ubuntu22.04, format: deb, arch: arm64, node_arch: arm64 }
+          - { runner: ubuntu-24.04, distro: ubuntu22.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
+          - { runner: ubuntu-24.04-arm, distro: ubuntu22.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
           - { runner: ubuntu-24.04, distro: ubuntu24.04, format: deb, arch: amd64, node_arch: x64 }
           - { runner: ubuntu-24.04-arm, distro: ubuntu24.04, format: deb, arch: arm64, node_arch: arm64 }
+          - { runner: ubuntu-24.04, distro: ubuntu26.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
+          - { runner: ubuntu-24.04-arm, distro: ubuntu26.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
           - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
           - { runner: ubuntu-24.04-arm, distro: fedora44, format: rpm, arch: aarch64, node_arch: arm64 }
     runs-on: ${{ matrix.runner }}
@@ -175,8 +186,8 @@ jobs:
           script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
-      - name: Build native Ubuntu 22.04 Debian package in isolated Jammy userspace
-        if: matrix.distro == 'ubuntu22.04'
+      - name: Build native Ubuntu 22.04 or 26.04 Debian package in pinned isolated userspace
+        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -187,7 +198,7 @@ jobs:
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
             -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
-            docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 \
+            ${{ matrix.image }} \
             bash -euo pipefail -c '
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
@@ -203,7 +214,7 @@ jobs:
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
               script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
-                --version "$VERSION" --distro ubuntu22.04 --output-dir dist
+                --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
             '
       - name: Build native Fedora RPM in isolated Fedora userspace
         if: matrix.format == 'rpm'
@@ -247,7 +258,11 @@ jobs:
   sign-and-draft-release:
     name: Sign RPMs and create reviewable draft release
     needs: [validate, package]
-    if: needs.validate.outputs.tagged_release == 'true'
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.validate.outputs.tagged_release == 'true'
     runs-on: ubuntu-24.04
     environment: release-signing
     permissions:
@@ -277,8 +292,8 @@ jobs:
           python3 - <<'PY'
           import datetime, json, pathlib
           manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
-          if len(manifests) != 6:
-              raise SystemExit(f'expected six package manifests, found {len(manifests)}')
+          if len(manifests) != 8:
+              raise SystemExit(f'expected eight package manifests, found {len(manifests)}')
           entries = [json.loads(path.read_text()) for path in manifests]
           required = {'name', 'version', 'release', 'format', 'distro', 'distro_version',
                       'arch', 'filename', 'sha256', 'size', 'backend', 'gpu', 'node_version'}
@@ -329,7 +344,7 @@ jobs:
           cp repository/repository-manifest.json release-assets/package-manifest.json
           cp repository/repository-manifest.json release-assets/repository-manifest.json
           cp release-review/upstream-diff.txt release-review/UPSTREAM_BASELINE.json release-assets/
-          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 6
+          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 8
       - name: Create draft release for maintainer review
         env:
           GH_TOKEN: ${{ github.token }}

@@ -9,6 +9,7 @@ if(NOT EXISTS "${UPSTREAM_ROOT}/src/process/ambiguity/Ambiguity.cpp")
   message(FATAL_ERROR "Set UPSTREAM_ROOT to an unmodified upstream checkout")
 endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
 include(${PROJECT_ROOT}/cmake/GpuAcceleration.cmake)
 set(DSP_FILES process/ambiguity/Ambiguity.cpp process/clutter/WienerHopf.cpp
   process/detection/CfarDetector1D.cpp process/detection/Centroid.cpp
@@ -29,7 +30,7 @@ foreach(engine IN ITEMS upstream fast)
   # comes from the fork; all baseline processing/data classes remain upstream.
   target_include_directories(bench-${engine} PRIVATE "${SOURCE_ROOT}/src" "${PROJECT_ROOT}/src" ${ARMADILLO_INCLUDE_DIRS})
   target_compile_features(bench-${engine} PRIVATE cxx_std_17)
-  target_link_libraries(bench-${engine} PRIVATE fftw3 fftw3_threads ${ARMADILLO_LIBRARIES} Threads::Threads)
+  target_link_libraries(bench-${engine} PRIVATE blah2RapidJson fftw3 fftw3_threads ${ARMADILLO_LIBRARIES} Threads::Threads)
   if(engine STREQUAL "fast")
     target_compile_definitions(bench-${engine} PRIVATE BLAH2_BENCH_FAST=1)
     target_sources(bench-${engine} PRIVATE

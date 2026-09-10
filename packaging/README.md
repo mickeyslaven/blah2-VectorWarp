@@ -1,8 +1,10 @@
 # Native release packaging
 
 Release packages are built inside the operating system named by the asset:
-Ubuntu 22.04 and 24.04 produce Debian packages; Fedora 44 produces RPMs. Both
-x86-64 and ARM64 are supported. An Ubuntu binary is never relabeled as Fedora.
+Ubuntu 22.04, 24.04 and 26.04 produce Debian packages; Fedora 44 produces RPMs.
+Both x86-64 and ARM64 are supported. An Ubuntu binary is never relabeled as
+Fedora. DragonOS uses the matching Ubuntu repository selection at install time;
+it is not a separately built DragonOS package or an ISO-tested claim.
 
 Published packages use the Kraken-only compile mode. That mode supports live
 Kraken/Heimdall input and replay of all four recording formats; it does not

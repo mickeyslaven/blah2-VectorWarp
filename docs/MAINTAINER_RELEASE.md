@@ -31,14 +31,22 @@ Variables**. Only the public `.asc` file belongs in Git.
 
 ## Release process
 
-The intended build matrix is Ubuntu 22.04/24.04 amd64+arm64 DEBs and Fedora 44
-x86_64+aarch64 RPMs. The default package supports the Kraken/Heimdall network
-receiver and CPU processing with Vulkan auto-detection where available.
+The intended build matrix is Ubuntu 22.04/24.04/26.04 amd64+arm64 DEBs and
+Fedora 44 x86_64+aarch64 RPMs. Ubuntu 22.04 and 26.04 are built in their own
+pinned userspaces; the containers are build conveniences only and are never a
+VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
+selection through `/etc/os-release`; it is not an independently built or
+boot-tested DragonOS target. The default package supports the Kraken/Heimdall
+network receiver and CPU processing with Vulkan auto-detection where available.
 
-1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests. Use
-   the immutable `vMAJOR.MINOR.PATCH` tag with `Build release packages`; its
-   manual version input is dry-run only.
-2. Confirm the six package assets, `SHA256SUMS`, `package-manifest.json` and
+1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
+   `Build release packages` also performs unsigned `0.0.0` packaging smoke
+   builds on pull requests targeting `main`; that path has no signing job and
+   does not consume an environment-scoped signing secret. Configure and protect
+   `release-signing` before any release tag. Use the immutable
+   `vMAJOR.MINOR.PATCH` tag for a draft release; its manual version input is
+   dry-run only.
+2. Confirm the eight package assets, `SHA256SUMS`, `package-manifest.json` and
    `repository-manifest.json`. The tag creates a draft release for review; it
    does not publish packages.
 3. After review, publish that release and run `Publish verified package
@@ -50,7 +58,7 @@ receiver and CPU processing with Vulkan auto-detection where available.
 5. Only then change the user documentation from **pending first release** to
    published, with the verified release version and actual validation evidence.
 
-The planned Pages layout is `/apt/dists/jammy|noble` for APT,
+The planned Pages layout is `/apt/dists/jammy|noble|resolute` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public
 key. It is a contract for the release workflow, not proof that those endpoints
 currently exist.

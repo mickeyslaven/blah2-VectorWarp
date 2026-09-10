@@ -6,6 +6,7 @@ get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 file(MAKE_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 include_directories(${PROJECT_ROOT}/src)
+include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
 include(${PROJECT_ROOT}/cmake/GpuAcceleration.cmake)
 foreach(name IN ITEMS Acceleration AccelerationFallback)
   add_executable(test${name} ${PROJECT_ROOT}/test/unit/process/ambiguity/Test${name}.cpp
@@ -14,7 +15,7 @@ foreach(name IN ITEMS Acceleration AccelerationFallback)
     ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
     ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp)
   target_compile_features(test${name} PRIVATE cxx_std_17)
-  target_link_libraries(test${name} PRIVATE blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
+  target_link_libraries(test${name} PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
   if(TARGET blah2GpuVulkan)
     add_dependencies(test${name} blah2GpuWorker)
   endif()

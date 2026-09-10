@@ -24,6 +24,7 @@ FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*\Z")
 TARGETS = {
     ("deb", "ubuntu", "22.04"): ("jammy", {"amd64", "arm64"}),
     ("deb", "ubuntu", "24.04"): ("noble", {"amd64", "arm64"}),
+    ("deb", "ubuntu", "26.04"): ("resolute", {"amd64", "arm64"}),
     ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
 }
 

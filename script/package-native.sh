@@ -19,7 +19,7 @@ Usage: script/package-native.sh [options]
 Build a distro-native VectorWarp release package from a native artifact.
 
   --format deb|rpm        Package format
-  --distro NAME           ubuntu22.04, ubuntu24.04 or fedora44
+  --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04 or fedora44
   --version X.Y.Z         Stable release version (without v)
   --artifact PATH         Artifact made by build-native.sh
   --node-runtime PATH     Extracted official Node.js 24.21.0 Linux archive
@@ -84,11 +84,15 @@ case "$DISTRO" in
     [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 24.04 ]] ||
       die 'ubuntu24.04 DEBs must be built on Ubuntu 24.04'
     DISTRO_NAME=ubuntu; DISTRO_VERSION=24.04; CODENAME=noble; PACKAGE_ARCH=$DEB_ARCH ;;
+  ubuntu26.04)
+    [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 26.04 ]] ||
+      die 'ubuntu26.04 DEBs must be built on Ubuntu 26.04'
+    DISTRO_NAME=ubuntu; DISTRO_VERSION=26.04; CODENAME=resolute; PACKAGE_ARCH=$DEB_ARCH ;;
   fedora44)
     [[ $FORMAT == rpm && ${ID:-} == fedora && ${VERSION_ID:-} == 44 ]] ||
       die 'fedora44 RPMs must be built in Fedora 44 userspace'
     DISTRO_NAME=fedora; DISTRO_VERSION=44; CODENAME=; PACKAGE_ARCH=$RPM_ARCH ;;
-  *) die '--distro must be ubuntu22.04, ubuntu24.04 or fedora44' ;;
+  *) die '--distro must be ubuntu22.04, ubuntu24.04, ubuntu26.04 or fedora44' ;;
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done

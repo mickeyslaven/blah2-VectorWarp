@@ -31,8 +31,14 @@ below. Do not treat a planned URL or unsigned third-party package as official.
 Once the first signed release is published, supported systems will install from
 the single maintained repository and receive normal APT/DNF updates:
 
-- Ubuntu 22.04 or 24.04, amd64 or arm64
+- Ubuntu 22.04, 24.04 or 26.04, amd64 or arm64
+- DragonOS editions whose `/etc/os-release` identifies one of those Ubuntu
+  bases, amd64 or arm64
 - Fedora 44, x86_64 or aarch64
+
+DragonOS is selected through its Ubuntu base metadata, not its independent ISO
+release label. The installer has metadata-fixture coverage, but no DragonOS ISO
+has been boot-tested here; see [DragonOS notes](docs/DRAGONOS.md).
 
 The verified repository bootstrap will be published at
 `https://mickeyslaven.github.io/blah2-VectorWarp/install.sh`.
@@ -99,6 +105,7 @@ selectable in this fork.
 ## Documentation
 
 - [First install and browser setup](docs/INSTALL.md)
+- [DragonOS package-selection notes](docs/DRAGONOS.md)
 - [Advanced source build and receiver setup](docs/SETUP.md)
 - [GPU acceleration](docs/GPU_ACCELERATION.md)
 - [Recorded-IQ benchmark](docs/RECORDED_IQ_BENCHMARK.md)

@@ -20,7 +20,7 @@ if(NOT TARGET asio::asio)
   target_compile_definitions(asio_system INTERFACE ASIO_STANDALONE)
   add_library(asio::asio ALIAS asio_system)
 endif()
-find_path(RAPIDJSON_INCLUDE_DIRS "rapidjson/allocators.h")
+include(cmake/RapidJson.cmake)
 find_package(ryml CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(Armadillo REQUIRED)
@@ -106,6 +106,7 @@ add_executable(blah2
 
 target_link_libraries(blah2 PRIVATE 
   Threads::Threads
+  blah2RapidJson
   asio::asio
   ryml::ryml
   httplib::httplib
@@ -115,16 +116,9 @@ target_link_libraries(blah2 PRIVATE
   ${CMAKE_DL_LIBS}
   ${BLAH2_CAPTURE_LIBRARIES}
 )
-# Treat the external RapidJSON headers as system headers, not project source.
-# In particular, GCC 16 diagnoses unused template bodies in upstream 1.1.0.
-target_include_directories(blah2 SYSTEM PRIVATE "${RAPIDJSON_INCLUDE_DIRS}")
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 16)
   # GCC 16 misdiagnoses cpp-httplib's inlined polymorphic compressor allocation.
   target_compile_options(blah2 PRIVATE -Wno-error=array-bounds)
-  # Pinned RapidJSON 1.1.0 has an unused string-reference assignment template
-  # diagnosed by GCC 16 even in SYSTEM headers. Keep the warning visible while
-  # allowing this external-header compatibility case; other warnings stay fatal.
-  target_compile_options(blah2 PRIVATE -Wno-error=template-body)
 endif()
 
 if(BUILD_TESTING)
@@ -143,7 +137,7 @@ add_executable(testAcceleration
   src/process/ambiguity/Ambiguity.cpp
   src/process/meta/HammingNumber.cpp
   src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAcceleration PRIVATE blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(testAcceleration PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
 if(TARGET blah2GpuVulkan)
   add_dependencies(testAcceleration blah2GpuWorker)
 endif()
@@ -151,7 +145,7 @@ add_executable(testAccelerationFallback
   test/unit/process/ambiguity/TestAccelerationFallback.cpp
   src/process/ambiguity/Acceleration.cpp src/process/ambiguity/Ambiguity.cpp
   src/process/meta/HammingNumber.cpp src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAccelerationFallback PRIVATE blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
 add_test(NAME testAccelerationFallback COMMAND testAccelerationFallback)
 
 # unit tests
@@ -174,6 +168,7 @@ add_executable(testAmbiguity
 )
 target_link_libraries(testAmbiguity PRIVATE 
   Catch2::Catch2WithMain 
+  blah2RapidJson
   fftw3 
   fftw3_threads
 )
@@ -188,6 +183,7 @@ add_executable(testTracker
 )
 target_link_libraries(testTracker PRIVATE 
   Catch2::Catch2WithMain
+  blah2RapidJson
 )
 set_target_properties(testTracker PROPERTIES 
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
@@ -214,6 +210,7 @@ add_executable(testKrakenMultiChannel
 )
 target_link_libraries(testKrakenMultiChannel PRIVATE
   Catch2::Catch2WithMain
+  blah2RapidJson
 )
 set_target_properties(testKrakenMultiChannel PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
@@ -224,7 +221,7 @@ add_test(NAME testTracker COMMAND testTracker)
 add_executable(testSpectrum
   test/unit/process/spectrum/TestSpectrum.cpp
   src/process/spectrum/SpectrumAnalyser.cpp src/data/IqData.cpp)
-target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain fftw3 Threads::Threads)
+target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain blah2RapidJson fftw3 Threads::Threads)
 set_target_properties(testSpectrum PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testSpectrum COMMAND testSpectrum)
@@ -234,7 +231,7 @@ set_target_properties(testSocket PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testSocket COMMAND testSocket)
 add_executable(testMapData test/unit/process/spectrum/TestMapData.cpp src/data/Map.cpp)
-target_link_libraries(testMapData PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(testMapData PRIVATE Catch2::Catch2WithMain blah2RapidJson)
 set_target_properties(testMapData PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testMapData COMMAND testMapData)
@@ -242,7 +239,7 @@ add_executable(testDetectionMath test/unit/process/detection/TestDetectionMath.c
   src/process/detection/CfarDetector1D.cpp
   src/process/detection/Centroid.cpp src/process/detection/Interpolate.cpp
   src/data/Detection.cpp src/data/Map.cpp)
-target_link_libraries(testDetectionMath PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(testDetectionMath PRIVATE Catch2::Catch2WithMain blah2RapidJson)
 set_target_properties(testDetectionMath PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testDetectionMath COMMAND testDetectionMath)

@@ -35,6 +35,7 @@ for (const relative of [
 
 assert.match(packageScript, /Ubuntu 22\.04/);
 assert.match(packageScript, /Ubuntu 24\.04/);
+assert.match(packageScript, /Ubuntu 26\.04/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
@@ -79,5 +80,59 @@ assert.doesNotMatch(releaseInstaller, /trusted=yes|no-gpg-check|gpgcheck=0/);
 assert.match(releaseInstaller, /--start-web/);
 assert.match(releaseInstaller, /systemctl enable --now vectorwarp-api\.service/);
 assert.doesNotMatch(releaseInstaller, /systemctl enable --now vectorwarp-processor\.service/);
+
+// These are os-release metadata fixtures, not DragonOS ISO boots. Sourcing is
+// deliberate: install-release.sh returns before parsing arguments or touching
+// the host when it is not its own process.
+function detectPlatform(id, version, ubuntuCodename, versionCodename, machine) {
+  const command = [
+    'source "$1"',
+    'detect_platform "$2" "$3" "$4" "$5" "$6"',
+    'printf "%s/%s/%s" "$manager" "$codename" "$package_arch"'
+  ].join('; ');
+  return spawnSync('bash', ['-c', command, 'packaging-detector',
+    path.join(root, 'script/install-release.sh'), id, version, ubuntuCodename,
+    versionCodename, machine], {encoding: 'utf8'});
+}
+
+for (const [id, version, ubuntuCodename, versionCodename, machine, expected] of [
+  ['ubuntu', '22.04', 'jammy', 'jammy', 'x86_64', 'apt/jammy/amd64'],
+  ['ubuntu', '22.04', 'jammy', 'jammy', 'aarch64', 'apt/jammy/arm64'],
+  ['ubuntu', '24.04', 'noble', 'noble', 'x86_64', 'apt/noble/amd64'],
+  ['ubuntu', '24.04', 'noble', 'noble', 'arm64', 'apt/noble/arm64'],
+  ['ubuntu', '26.04', 'resolute', 'resolute', 'x86_64', 'apt/resolute/amd64'],
+  ['ubuntu', '26.04', 'resolute', 'resolute', 'arm64', 'apt/resolute/arm64'],
+  ['fedora', '44', '', '', 'x86_64', 'dnf//x86_64'],
+  ['fedora', '44', '', '', 'aarch64', 'dnf//aarch64'],
+  ['dragonos-focalx', 'FocalX', 'jammy', 'jammy', 'x86_64', 'apt/jammy/amd64'],
+  ['dragonos-focalx', 'FocalX', 'jammy', 'jammy', 'arm64', 'apt/jammy/arm64'],
+  ['dragonos-noble', 'Noble', 'noble', 'noble', 'x86_64', 'apt/noble/amd64'],
+  ['dragonos-noble', 'Noble', 'noble', 'noble', 'arm64', 'apt/noble/arm64'],
+  ['dragonos-resolute', 'R1', 'noble', 'dragonos-r1', 'x86_64', 'apt/noble/amd64'],
+  ['dragonos', 'R1', 'resolute', '', 'x86_64', 'apt/resolute/amd64'],
+  ['dragonos-resolute', 'R1', '', 'resolute', 'arm64', 'apt/resolute/arm64'],
+  ['dragonos-noble', '24.04', '', '', 'x86_64', 'apt/noble/amd64']
+]) {
+  const actual = detectPlatform(id, version, ubuntuCodename, versionCodename, machine);
+  assert.equal(actual.status, 0, `${id}/${version}: ${actual.stderr}`);
+  assert.equal(actual.stdout, expected);
+}
+for (const fixture of [
+  ['ubuntu', '20.04', 'focal', 'focal', 'x86_64'],
+  ['ubuntu', '27.04', 'questing', 'questing', 'x86_64'],
+  ['linuxmint', '22', 'noble', 'noble', 'x86_64'],
+  ['dragonos', 'R1', 'focal', '', 'x86_64'],
+  ['dragonos-resolute', 'R1', '', '', 'x86_64'],
+  ['dragonos-resolute', 'R1', 'r1', '', 'x86_64'],
+  ['dragonos', '26.04', 'noble', '', 'x86_64'],
+  ['dragonos', 'R1', 'resolute', 'noble', 'x86_64'],
+  ['ubuntu', '24.04', 'jammy', 'jammy', 'x86_64'],
+  ['fedora', '44', '', '', 'riscv64']
+]) {
+  const actual = detectPlatform(...fixture);
+  assert.notEqual(actual.status, 0, `unexpected supported fixture: ${fixture.join('/')}`);
+  assert.equal(actual.stdout, '', `rejected fixture wrote stdout: ${fixture.join('/')}`);
+  assert.match(actual.stderr, /install-release: .+/, `missing rejection: ${fixture.join('/')}`);
+}
 
 console.log('Native package acceptance passed: native distro checks, pinned runtime, preserved config, signed repositories and no automatic radar start.');

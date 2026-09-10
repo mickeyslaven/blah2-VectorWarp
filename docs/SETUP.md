@@ -44,7 +44,9 @@ installed.
 
 Other Linux distributions can use this source route when their compiler,
 dependencies and receiver SDKs are compatible, but they are not packaged or
-release-tested targets.
+release-tested targets. DragonOS users may select a matching Ubuntu package
+through the installer metadata check, but this is not a DragonOS ISO validation
+or a claim that every DragonOS SDR setup is supported.
 
 For a Vulkan build, install `libvulkan-dev glslang-dev glslang-tools` on Ubuntu
 or `vulkan-loader-devel glslang-devel vulkan-tools` on Fedora. GPU drivers remain
