@@ -1,6 +1,6 @@
-# blah2
+# blah2Fast
 
-A real-time radar which can support various SDR platforms.
+A fast real-time radar which can support various SDR platforms.
 
 ![blah2 example display](./example.png "blah2")
 
@@ -18,7 +18,7 @@ A real-time radar which can support various SDR platforms.
 - [USRP](https://www.ettus.com/products/) (only tested on the B210).
 - 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
 - 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation.
-- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels.
+- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels using the kraken V2 software (8 Channel support cant be tested, as their 8 channel device isn't available.
 
 ## Services
 
@@ -62,15 +62,10 @@ sudo docker compose up -d
 
 The radar processing output is available on [http://localhost:49152](http://localhost:49152).
 
-## Documentation
-
-- See `doxygen` pages hosted at [http://doc.30hours.dev/blah2](http://doc.30hours.dev/blah2).
-
 ## Future Work
 
 - Add a tracker in delay-Doppler space.
 - Support for the HackRF/RTL-SDR using a front-end mixer, to sample 2 RF channels in 1 stream.
-- Support for the Kraken SDR with all 5 channels.
 - Add [SoapySDR](https://github.com/pothosware/SoapySDR) support for the [C++ API](https://github.com/pothosware/SoapySDR/wiki/Cpp_API_Example) to include a wide range of SDR platforms.
 
 ## FAQ
@@ -79,15 +74,13 @@ The radar processing output is available on [http://localhost:49152](http://loca
 
 ## Contributing
 
-Pull requests are welcome - especially for adding support for a new SDR. 
+Pull requests are welcome, however this fork is meant to be a efficient and fast version of blah2. Pull requests introducing slower processing without large gains in another dimension will likely not be merged. 
 
-- Currently have an issue where the USRP B210 is timing out after 5-10 mins and crashes the code. Convinced it's an issue with my usage of the API - contact me for more info.
+- Upstream issue where the USRP B210 is timing out after 5-10 mins and crashes the code. Convinced it's an issue with my usage of the API - contact me for more info.
 
 ## Links
 
-- Join the [Discord](https://discord.gg/ewNQbeK5Zn) chat for sharing results and support.
-
-- Watch a [Youtube video](https://www.youtube.com/watch?v=FF2n28qoTQM) showing the hardware and software setup.
+- Join the [Discord](https://discord.gg/ewNQbeK5Zn) chat for sharing results and support. Keep in mind this discord is for blah2 and not everyone will be familiar with this specific fork. 
 
 ## License
 
