@@ -20,6 +20,9 @@ assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
 assert.match(buildScript, /VCPKG_FORCE_SYSTEM_BINARIES=1/);
 assert.match(buildScript, /vcpkg_cmake_prefix=\(env CMAKE_POLICY_VERSION_MINIMUM=3\.5\)/);
+assert.match(buildScript, /native-compiler-aliases/);
+assert.match(buildScript, /-dumpmachine/);
+assert.match(buildScript, /does not match host/);
 assert.doesNotMatch(read('cmake/RapidJson.cmake'), /Wno-error=template-body/);
 for (const manifestName of ['lib/vcpkg.json', 'lib/vcpkg-kraken.json']) {
   const manifest = JSON.parse(read(manifestName));

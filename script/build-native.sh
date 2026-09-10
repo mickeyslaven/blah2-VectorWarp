@@ -86,7 +86,7 @@ BUILD_ARCH=$(uname -m)
 [[ $BUILD_DIR != "$SOURCE_DIR" && $DEPS_DIR != "$SOURCE_DIR" ]] ||
   die 'build and dependency directories must not replace the source tree'
 
-for command in cmake git node npm curl tar zip unzip pkg-config c++ ninja; do need_command "$command"; done
+for command in cmake git node npm curl tar zip unzip pkg-config cc c++ ninja; do need_command "$command"; done
 node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
 ((node_major >= 22)) || die 'Node.js 22 or newer is required'
 for file in CMakeLists.txt lib/vcpkg.json lib/vcpkg-kraken.json api/package.json html/index.html; do
@@ -171,6 +171,37 @@ else
   KRAKEN_ONLY=OFF
 fi
 
+vcpkg_tool_path=$PATH
+vcpkg_compiler_prefix=
+case "$BUILD_ARCH" in
+  aarch64|arm64)
+    vcpkg_compiler_prefix=aarch64-linux-gnu
+    compiler_machine_pattern='^(aarch64|arm64)'
+    ;;
+  arm*)
+    vcpkg_compiler_prefix=arm-linux-gnueabihf
+    compiler_machine_pattern='^arm'
+    ;;
+esac
+if [[ -n $vcpkg_compiler_prefix ]]; then
+  native_cc=$(command -v cc)
+  native_cxx=$(command -v c++)
+  native_cc_machine=$("$native_cc" -dumpmachine)
+  native_cxx_machine=$("$native_cxx" -dumpmachine)
+  [[ $native_cc_machine =~ $compiler_machine_pattern ]] ||
+    die "native C compiler target $native_cc_machine does not match host $BUILD_ARCH"
+  [[ $native_cxx_machine =~ $compiler_machine_pattern ]] ||
+    die "native C++ compiler target $native_cxx_machine does not match host $BUILD_ARCH"
+  # Pinned vcpkg's Linux ARM toolchain unconditionally requests Debian-style
+  # compiler names, which native Fedora does not provide. Supply verified
+  # aliases only inside the freshly recreated build tree and only to vcpkg.
+  compiler_alias_dir="$CMAKE_DIR/native-compiler-aliases"
+  run mkdir -p "$compiler_alias_dir"
+  run ln -s "$native_cc" "$compiler_alias_dir/$vcpkg_compiler_prefix-gcc"
+  run ln -s "$native_cxx" "$compiler_alias_dir/$vcpkg_compiler_prefix-g++"
+  vcpkg_tool_path="$compiler_alias_dir:$PATH"
+fi
+
 # RapidJSON's fixed 2023 snapshot still declares a pre-3.5 CMake floor. CMake
 # 4 removed that compatibility mode, so scope its official policy floor to the
 # configure process that performs the pinned vcpkg manifest install. The blah2
@@ -183,6 +214,9 @@ case "$BUILD_ARCH" in
     vcpkg_cmake_prefix+=(VCPKG_FORCE_SYSTEM_BINARIES=1)
     ;;
 esac
+if [[ $vcpkg_tool_path != "$PATH" ]]; then
+  vcpkg_cmake_prefix+=("PATH=$vcpkg_tool_path")
+fi
 
 cmake_args=("${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR"
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF

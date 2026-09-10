@@ -38,7 +38,15 @@ class ReceiverBuildContractTest(unittest.TestCase):
         executable(self.tools / "node", "#!/bin/sh\nprintf '24\\n'\n")
         executable(self.tools / "npm")
         executable(self.tools / "uname", "#!/bin/sh\nprintf '%s\\n' \"${FAKE_UNAME:-x86_64}\"\n")
-        for name in ("cmake", "git", "curl", "tar", "zip", "unzip", "c++", "ninja"):
+        compiler = """#!/bin/sh
+if [ "${1:-}" = -dumpmachine ]; then
+  printf '%s\\n' "${FAKE_COMPILER_MACHINE:-x86_64-linux-gnu}"
+fi
+exit 0
+"""
+        executable(self.tools / "cc", compiler)
+        executable(self.tools / "c++", compiler)
+        for name in ("cmake", "git", "curl", "tar", "zip", "unzip", "ninja"):
             executable(self.tools / name)
         executable(self.tools / "pkg-config", """#!/bin/sh
 printf '%s\\n' "$*" >>"$PKG_CONFIG_LOG"
@@ -195,15 +203,40 @@ endif()
             with self.subTest(architecture=architecture):
                 environment = self.build_environment(False)
                 environment["FAKE_UNAME"] = architecture
+                if architecture in {"aarch64", "arm64"}:
+                    environment["FAKE_COMPILER_MACHINE"] = "aarch64-linux-gnu"
+                elif architecture == "armv7l":
+                    environment["FAKE_COMPILER_MACHINE"] = "arm-linux-gnueabihf"
                 result = subprocess.run([
                     "bash", str(BUILD_SCRIPT), "--backend", "kraken", "--gpu", "off",
                     "--dry-run", "--jobs", "1", "--deps-dir", str(self.dependencies),
                     "--build-dir", str(self.temp / f"build-{architecture}"),
                 ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn(
-                    "env CMAKE_POLICY_VERSION_MINIMUM=3.5 "
-                    "VCPKG_FORCE_SYSTEM_BINARIES=1 cmake -G Ninja", result.stdout)
+                expected = ("env CMAKE_POLICY_VERSION_MINIMUM=3.5 "
+                            "VCPKG_FORCE_SYSTEM_BINARIES=1")
+                if architecture in {"aarch64", "arm64", "armv7l"}:
+                    self.assertIn("native-compiler-aliases", result.stdout)
+                    self.assertIn("-gcc", result.stdout)
+                    self.assertIn("-g++", result.stdout)
+                    self.assertIn("PATH=", result.stdout)
+                    self.assertIn(f"{expected} PATH=", result.stdout)
+                else:
+                    self.assertIn(f"{expected} cmake -G Ninja", result.stdout)
+
+    def test_arm_aliases_reject_a_non_native_compiler(self):
+        environment = self.build_environment(False)
+        environment.update({
+            "FAKE_UNAME": "aarch64",
+            "FAKE_COMPILER_MACHINE": "x86_64-linux-gnu",
+        })
+        result = subprocess.run([
+            "bash", str(BUILD_SCRIPT), "--backend", "kraken", "--gpu", "off",
+            "--dry-run", "--jobs", "1", "--deps-dir", str(self.dependencies),
+            "--build-dir", str(self.temp / "build-wrong-compiler"),
+        ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("does not match host aarch64", result.stderr)
 
     def make_artifact(self, backend: str, compiled_receivers: str | None) -> Path:
         artifact = self.temp / f"artifact-{backend}-{len(list(self.temp.glob('artifact-*')))}"
