@@ -89,7 +89,7 @@ const CONFIG_META = {
   'network.ports.config': ['Configuration port', 'Reserved for configuration control; it must remain unique.'],
   'truth.adsb': ['ADS-B planes', 'Aircraft overlay and comparison feed'],
   'truth.adsb.enabled': ['Show ADS-B planes', 'Show configured aircraft overlays'],
-  'truth.adsb.tar1090': ['ADS-B feed address', 'Aircraft positions. Enter host:port or an HTTP(S) address.'],
+  'truth.adsb.tar1090': ['ADS-B source', 'Discover a local decoder or connect to a tar1090 server on another device.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
@@ -590,6 +590,32 @@ function arrayInput(value, path) {
 function typedInput(value, path) {
   const key = path.join('.');
   const rule = capabilities.fieldRules?.[key] || {};
+  if (key === 'truth.adsb.tar1090' && Array.isArray(rule.sourceChoices)) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'config-source-input';
+    const local = rule.sourceChoices.some(item => item.value === value);
+    let serverAddress = local ? '' : String(value ?? '');
+    const endpoint = document.createElement('input');
+    endpoint.type = 'text';
+    endpoint.value = serverAddress;
+    endpoint.placeholder = 'http://192.168.1.50/tar1090';
+    endpoint.setAttribute('aria-label', 'tar1090 server address');
+    endpoint.hidden = local;
+    endpoint.required = !local;
+    const mode = selectInput([...rule.sourceChoices,
+      {value: 'server', label: 'Server endpoint'}], local ? value : 'server', selected => {
+      endpoint.hidden = selected !== 'server';
+      endpoint.required = selected === 'server';
+      setValue(path, selected === 'server' ? serverAddress : selected);
+    });
+    mode.setAttribute('aria-label', 'ADS-B source');
+    endpoint.addEventListener('input', () => {
+      serverAddress = endpoint.value;
+      if (mode.value === 'server') setValue(path, serverAddress);
+    });
+    wrapper.append(mode, endpoint);
+    return wrapper;
+  }
   if (typeof value === 'boolean' || rule.type === 'boolean') {
     const label = document.createElement('label');
     label.className = 'switch';

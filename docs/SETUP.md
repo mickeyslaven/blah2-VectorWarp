@@ -108,6 +108,24 @@ coordinates for display/evaluation geometry.
 
 ## Recording, replay and browser access
 
+### ADS-B source
+
+In **Settings → ADS-B planes**, choose **Discover locally** to find a running
+readsb/dump1090 feed on the VectorWarp host, or **Server endpoint** to use
+tar1090 on another computer (for example `http://192.168.1.50/tar1090`).
+Existing server addresses are preserved; a failed remote source reports an
+error instead of switching to local data. If several local decoders are found,
+select one explicitly. The selected source is stored in `truth.adsb.tar1090`;
+`auto` enables discovery and the `local:` choices select standard decoder files.
+
+VectorWarp includes the delay/Doppler converter. It does not need the tar1090
+web interface when a local decoder already provides `aircraft.json`. A decoder
+and its ADS-B receiver or network feed are still needed. Discovery does not
+install or start a decoder, take over a radar SDR, or scan other computers.
+Live ADS-B is disabled during recording replay and preview.
+
+### Recording replay
+
 Portable `.blah2iq` recordings carry channel-major complex-float32 samples,
 sample rate, centre frequency and channel count. Replay validates those values
 and runs without opening a receiver. Legacy RSPduo int16, Kraken MCHQ, USRP

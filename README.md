@@ -12,7 +12,8 @@ the host and configuration.
 - Dedicated-reference processing for RSPduo, USRP and dual HackRF; coherent
   Kraken array-reference synthesis and map fusion.
 - Optional Vulkan/VkFFT acceleration with automatic CPU fallback.
-- Built-in raw ADS-B display/evaluation projection. ADS-B never informs
+- Built-in ADS-B display/evaluation projection, with local decoder discovery
+  or a remote tar1090 endpoint. ADS-B never informs
   detection or tracking.
 
 ## Install on Linux

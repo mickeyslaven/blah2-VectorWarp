@@ -3,6 +3,8 @@
 const http = require('http');
 const https = require('https');
 const {DelayDopplerHistory} = require('./adsb-geometry');
+const {classifyAdsbSource, discoverLocalAdsb, selectLocalAdsb,
+  validateAircraftData} = require('./adsb-discovery');
 
 function sourceAddress(value) {
   if (typeof value !== 'string' || !value || /[\s\\]/.test(value)) throw new Error('Invalid source address');
@@ -60,27 +62,57 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
   });
 }
 
-function createAdsbSource(config, {preview = false, fetchJson = readJson, now = Date.now} = {}) {
+function createAdsbSource(config, {preview = false, fetchJson = readJson, now = Date.now,
+  discover = discoverLocalAdsb, selectLocal = selectLocalAdsb,
+  discoveryCacheMs = 30000} = {}) {
   const cache = new Map();
   const geometry = new DelayDopplerHistory(config);
   let warmup = [];
+  let discoveryEntry;
+  let explicitUrl;
+  const configured = config.truth?.adsb?.tar1090;
+  const classification = classifyAdsbSource(configured);
+  let sourceState = classification.mode === 'explicit' ?
+    {mode: 'explicit', kind: 'http', state: 'configured'} :
+    {mode: classification.mode, state: 'configured'};
   const pollMs = Number.isFinite(config.truth?.adsb?.poll_interval) ?
     Math.max(100, Math.min(60000, config.truth.adsb.poll_interval * 1000)) : 1000;
+  const discoveryOptions = {fetchJson, now, maxAgeSeconds: geometry.maxAge};
+  async function resolveSource() {
+    if (classification.mode === 'explicit') {
+      explicitUrl ||= aircraftUrl(config);
+      sourceState = {...sourceState, endpoint: explicitUrl.href};
+      return {source: sourceState, read: () => fetchJson(explicitUrl)};
+    }
+    if (discoveryEntry && now() - discoveryEntry.at < discoveryCacheMs)
+      return discoveryEntry.promise;
+    const entry = {at: now()};
+    sourceState = {mode: classification.mode, state: 'discovering'};
+    entry.promise = (classification.mode === 'auto' ? discover(discoveryOptions) :
+      selectLocal(configured, discoveryOptions)).then(selection => {
+      sourceState = {...selection.source, mode: classification.mode, state: 'active'};
+      return selection;
+    }, error => {
+      sourceState = {mode: classification.mode, state: 'error', message: error.message,
+        ...(error.sources?.length ? {candidates: error.sources} : {})};
+      throw error;
+    });
+    discoveryEntry = entry;
+    return entry.promise;
+  }
   async function rawAircraft() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = fetchJson(aircraftUrl(config)).then(data => {
-      if (!Number.isFinite(data?.now) || !Array.isArray(data?.aircraft)) throw new Error('Invalid aircraft data');
-      if (now() / 1000 - data.now > geometry.maxAge || data.now - now() / 1000 > geometry.maxAge)
-        throw new Error('ADS-B aircraft data is stale or its clock is incorrect');
-      return data;
-    }).finally(() => { entry.pending = false; entry.at = now(); });
+    entry.promise = resolveSource().then(selection => selection.read()).then(data =>
+      validateAircraftData(data, {now, maxAgeSeconds: geometry.maxAge}))
+      .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }
   async function get(kind) {
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
     if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
     const previous = cache.get(kind);
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
@@ -93,15 +125,25 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     return entry.promise;
   }
   async function status() {
-    if (!config.truth?.adsb?.enabled) return {enabled: false, online: false};
+    if (!config.truth?.adsb?.enabled) return {enabled: false, online: false,
+      source: {...sourceState, state: 'disabled'}};
     const results = await Promise.allSettled([get('aircraft'), get('delayDoppler')]);
     const feeds = results.map(result => result.status === 'fulfilled' ? {available: true} :
       {available: false, message: result.reason.message});
-    return {enabled: true, online: feeds.every(feed => feed.available), aircraft: feeds[0],
+    const online = feeds.every(feed => feed.available);
+    if (online) {
+      const {message, candidates, ...activeSource} = sourceState;
+      sourceState = {...activeSource, state: 'active'};
+    }
+    else if (!preview && !config.capture?.replay?.state && sourceState.state !== 'error')
+      sourceState = {...sourceState, state: 'error', message: feeds.find(feed => !feed.available)?.message};
+    else if (preview || config.capture?.replay?.state)
+      sourceState = {...sourceState, state: 'inactive', message: feeds[0].message};
+    return {enabled: true, online, source: sourceState, aircraft: feeds[0],
       delayDoppler: {...feeds[1], warming: warmup.length,
         message: feeds[1].available && warmup.length ? 'Feed online; waiting for motion updates.' : feeds[1].message}};
   }
-  return {get, status, clear: () => { cache.clear(); geometry.clear(); }};
+  return {get, status, clear: () => { cache.clear(); geometry.clear(); discoveryEntry = undefined; }};
 }
 
 module.exports = {sourceAddress, aircraftUrl, readJson, createAdsbSource};

@@ -4,6 +4,7 @@ const yaml = require('js-yaml');
 const net = require('net');
 const FIELD_RULES = require('./config-rules');
 const {sourceAddress} = require('./adsb-source');
+const {classifyAdsbSource} = require('./adsb-discovery');
 
 const KRAKEN_MAX_CHANNELS = 8;
 const UINT32_MAX = 4294967295;
@@ -512,9 +513,13 @@ function validateConfig(config, baseline = null) {
   const ais = requireObject(truth.ais, 'truth.ais');
   boolean(adsb.enabled, 'truth.adsb.enabled');
   string(adsb.tar1090, 'truth.adsb.tar1090');
-  for (const name of ['tar1090']) {
-    try { sourceAddress(adsb[name]); }
-    catch (_) { errors.push(`truth.adsb.${name}: use a hostname, host:port or HTTP(S) address without credentials or a query`); }
+  if (classifyAdsbSource(adsb.tar1090).mode === 'explicit') {
+    try {
+      if (typeof adsb.tar1090 === 'string' && /^local:(?!\d+(?:\/|$))/.test(adsb.tar1090))
+        throw new Error('Unknown local source');
+      sourceAddress(adsb.tar1090);
+    }
+    catch (_) { errors.push('truth.adsb.tar1090: select a local source or enter a hostname, host:port or HTTP(S) address without credentials or a query'); }
   }
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});

@@ -4,6 +4,7 @@
 // checks live in config-manager; these are processor limits, not radio detection.
 const integer = (min, max) => ({type: 'number', integer: true, min, max});
 const numeric = (min, max) => ({type: 'number', min, max});
+const {SOURCE_CHOICES} = require('./adsb-discovery');
 const rules = {
   'capture.fs': integer(1, 4294967295),
   'capture.fc': integer(1, 4294967295),
@@ -73,5 +74,6 @@ for (const name of ['capture.device.surveillance_channels','capture.device.seria
   'capture.device.amp_enable','process.reference_synthesis.channels'])
   rules[name] = {type: 'array'};
 for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
+rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
 
 module.exports = rules;

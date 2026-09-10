@@ -10,6 +10,7 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   location: {rx: {latitude: 1, longitude: 2, altitude: 3}, tx: {latitude: 4, longitude: 5, altitude: 6}}};
   assert.equal(aircraftUrl(config).href, 'http://receiver.local:8080/data/aircraft.json');
   assert.equal(sourceAddress('https://receiver.example/tar1090').href, 'https://receiver.example/tar1090/');
+  assert.equal(sourceAddress('[::1]:8080/tar1090').href, 'http://[::1]:8080/tar1090/');
   for (const address of ['file:///etc/passwd', 'ftp://receiver', 'http://name:password@receiver', 'receiver?url=other', 'receiver#bad', 'bad host'])
     assert.throws(() => sourceAddress(address), undefined, address);
 
@@ -51,6 +52,61 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   const preview = createAdsbSource(config, {...options, preview: true});
   assert.equal((await preview.status()).online, false);
   assert.equal(reads.length, count, 'Disabled/preview must not contact upstream services');
+
+  let discoveries = 0;
+  let explicitOnline = false;
+  const explicitFailure = createAdsbSource(config, {now: () => clock,
+    fetchJson: async () => {
+      if (!explicitOnline) throw new Error('configured endpoint offline');
+      return {now: clock / 1000, aircraft: []};
+    },
+    discover: async () => { discoveries += 1; throw new Error('must not discover'); }});
+  await assert.rejects(explicitFailure.get('aircraft'), /configured endpoint offline/);
+  assert.equal(discoveries, 0, 'An explicit remote endpoint never falls back to local discovery');
+  assert.equal((await explicitFailure.status()).source.mode, 'explicit');
+  explicitOnline = true;
+  clock += 1001;
+  const recoveredStatus = await explicitFailure.status();
+  assert.equal(recoveredStatus.online, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(recoveredStatus.source, 'message'), false,
+    'Recovered source status does not retain a stale error');
+
+  let autoReads = 0;
+  const autoConfig = {...config, truth: {adsb: {...config.truth.adsb, tar1090: 'auto'}}};
+  const automatic = createAdsbSource(autoConfig, {now: () => clock, discoveryCacheMs: 30000,
+    discover: async () => {
+      discoveries += 1;
+      return {source: {mode: 'auto', kind: 'file', value: 'local:readsb',
+        label: 'Local readsb', path: '/run/readsb/aircraft.json'},
+      read: async () => { autoReads += 1; return {now: clock / 1000, aircraft: []}; }};
+    }});
+  assert.deepEqual((await automatic.get('aircraft')).aircraft, []);
+  const automaticStatus = await automatic.status();
+  assert.equal(automaticStatus.source.mode, 'auto');
+  assert.equal(automaticStatus.source.value, 'local:readsb');
+  assert.equal(discoveries, 1);
+  assert.equal(autoReads, 1, 'Raw result cache is shared by automatic-source clients');
+
+  const replay = createAdsbSource({...autoConfig, capture: {...autoConfig.capture,
+    replay: {state: true}}}, {now: () => clock,
+    discover: async () => { discoveries += 1; throw new Error('must not discover'); }});
+  const replayStatus = await replay.status();
+  assert.equal(replayStatus.online, false);
+  assert.equal(replayStatus.source.state, 'inactive');
+  assert.equal(discoveries, 1, 'Replay must not probe live ADS-B sources');
+
+  let localSelections = 0;
+  const localConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    tar1090: 'local:readsb'}}};
+  const local = createAdsbSource(localConfig, {now: () => clock,
+    selectLocal: async value => {
+      localSelections += 1;
+      assert.equal(value, 'local:readsb');
+      throw new Error('Selected local readsb is offline');
+    }, discover: async () => { discoveries += 1; throw new Error('must not discover'); }});
+  await assert.rejects(local.get('aircraft'), /readsb is offline/);
+  assert.equal(localSelections, 1);
+  assert.equal(discoveries, 1, 'A selected local source never falls back to auto discovery');
 
   const server = http.createServer((req, res) => {
     if (req.url === '/stall') { res.writeHead(200); res.write('{'); return; }

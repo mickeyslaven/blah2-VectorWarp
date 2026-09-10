@@ -29,6 +29,20 @@ sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74
 assert.equal(validateConfig(sixChannel).valid, true);
 
 const clone = value => JSON.parse(JSON.stringify(value));
+for (const source of ['auto', 'local:readsb', 'local:dump1090-fa',
+  'local:dump1090', 'local:dump1090-mutability', '192.0.2.10:8080',
+  'https://adsb.example/tar1090', '[2001:db8::1]:8080/tar1090']) {
+  const value = clone(sixChannel);
+  value.truth.adsb.tar1090 = source;
+  assert.equal(validateConfig(value).valid, true, `ADS-B source: ${source}`);
+  assert.equal(value.truth.adsb.tar1090, source, 'Validation must not replace the selected source');
+}
+for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
+  'file:///run/readsb/aircraft.json', 'https://user:pass@adsb.example']) {
+  const value = clone(sixChannel);
+  value.truth.adsb.tar1090 = source;
+  assert.equal(validateConfig(value).valid, false, `Reject ADS-B source: ${source}`);
+}
 for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
   for (const mode of ['auto', 'cpu', 'gpu', 'cuda', '', 1, true, null]) {
     const value = load(name);

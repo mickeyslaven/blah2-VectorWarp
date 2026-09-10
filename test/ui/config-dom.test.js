@@ -129,6 +129,29 @@ function change(input, value, event = 'input') {
     assert.equal(writes, 1);
     assert.equal(window.document.getElementById('config-save').disabled, true);
 
+    // Existing remote endpoints stay selected and survive local discovery edits.
+    const adsb = query('truth.adsb.tar1090');
+    const sourceMode = adsb.querySelector('select');
+    const sourceEndpoint = adsb.querySelector('input');
+    const remoteEndpoint = saved.truth.adsb.tar1090;
+    assert.equal(sourceMode.value, 'server');
+    assert.equal(sourceEndpoint.hidden, false);
+    assert.equal(sourceEndpoint.value, remoteEndpoint);
+    change(sourceMode, 'auto', 'change');
+    assert.equal(sourceEndpoint.hidden, true);
+    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(saved.truth.adsb.tar1090, remoteEndpoint, 'Changing source mode must not save automatically');
+    change(sourceMode, 'local:readsb', 'change');
+    assert.equal(await window.validateActiveConfiguration(), true);
+    change(sourceMode, 'server', 'change');
+    assert.equal(sourceEndpoint.hidden, false);
+    assert.equal(sourceEndpoint.value, remoteEndpoint, 'Returning to server mode retains the typed endpoint');
+    change(sourceEndpoint, 'https://other-device.example/tar1090');
+    assert.equal(await window.validateActiveConfiguration(), true);
+    window.document.getElementById('config-reset').click();
+    assert.equal(query('truth.adsb.tar1090').querySelector('input').value, remoteEndpoint);
+    assert.equal(await window.validateActiveConfiguration(), true);
+
     // A stale valid response must not unlock Save after a newer invalid edit.
     change(frequency[0], '206');
     holdValidation = true;
