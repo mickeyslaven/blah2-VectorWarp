@@ -1,0 +1,103 @@
+# GPU acceleration
+
+The delay–Doppler processor can use a Vulkan GPU. The same backend supports AMD,
+Intel and NVIDIA; it does not require CUDA or ROCm. Capture, reference synthesis,
+clutter removal, detection and tracking remain on the CPU.
+
+## Selection
+
+Settings → Processing → Acceleration provides:
+
+- **Automatic** (default): check the GPU against the CPU for three frames, then
+  use it only if the measured delay–Doppler stage is at least 5% faster, including
+  worker transfers and map conversion. Those first frames use
+  CPU results.
+  After selection, automatic mode also checks successive groups of five complete GPU frames, including
+  input retirement, and returns to CPU if sustained processing loses that margin.
+  This is an ambiguity-stage safeguard, not a whole-pipeline speed guarantee.
+- **CPU**: do not open a GPU device.
+- **GPU**: use the GPU after accuracy checks, even if the CPU is faster. Reported
+  initialization, capacity, invalid-output and device errors still fall back to CPU.
+
+The file setting is `process.performance.acceleration`: `auto`, `cpu` or `gpu`.
+Omitting it selects `auto`. Settings shows the backend reported by the running
+processor, not the computer displaying the browser.
+
+GPU results must agree with the CPU's complex-valued map before detection sees
+them. The input remains available for same-frame CPU recovery. Software Vulkan
+renderers such as lavapipe are not treated as GPUs.
+
+## Drivers and older hardware
+
+Use a working Vulkan driver for the processing host. The application requests
+Vulkan 1.0 and uses single-precision compute; it does not require ray tracing,
+tensor cores, double-precision shaders or a modern RDNA-only instruction set.
+Device limits and allocation failures are checked. Large configurations can use
+CPU fallback on cards with limited memory.
+
+On Linux, Mesa RADV supports AMD GCN and RDNA hardware. Some early GCN systems
+need a different kernel-driver configuration before RADV can expose their GPU;
+follow the [Mesa driver documentation](https://docs.mesa3d.org/drivers/radv.html).
+VectorWarp does not change kernel drivers or boot settings automatically.
+
+The native processor account needs access to the selected GPU device. AMD/Intel
+normally use `/dev/dri` and the host's Mesa Vulkan driver; NVIDIA uses its host
+driver and Vulkan libraries. Add `vectorwarp` only to the required `render` or
+`video` group after reviewing the host device ownership. The installer does not
+change device permissions or drivers. A missing module, driver or usable GPU
+leaves automatic selection on CPU.
+
+Hardware test results do not guarantee every driver version or GPU model. Keep
+automatic selection enabled on older machines unless measuring a particular GPU.
+
+## Build and verify
+
+Keep both `blah2-gpu-vulkan.so` and `blah2-gpu-worker` beside the `blah2` executable.
+`BLAH2_GPU=ON` requires Vulkan/glslang development packages and `VKFFT_ROOT`
+pointing to VkFFT 1.3.4 (commit `066a17c17068c0f11c9298d848c2976c71fad1c1`).
+`BLAH2_GPU=AUTO` builds without it if dependencies are missing;
+`BLAH2_GPU=OFF` produces a CPU-only build.
+
+The native build wrapper fetches that exact VkFFT commit and passes the correct
+CMake paths:
+
+```sh
+script/build-native.sh --backend kraken --gpu auto  # GPU when available, CPU fallback otherwise
+script/build-native.sh --backend kraken --gpu off   # CPU-only artifact
+script/build-native.sh --backend all --gpu on       # require GPU plus all four receiver SDKs
+```
+
+Building creates an artifact only; it neither installs drivers nor changes the
+active service. See [SETUP.md](SETUP.md) for the separate preflight/install step.
+
+Standalone processing checks do not require an SDR or modify live configuration:
+
+```sh
+cmake -S test/gpu -B build/gpu-checks -DBLAH2_GPU=ON -DVKFFT_ROOT=/path/to/VkFFT
+cmake --build build/gpu-checks
+build/gpu-checks/bin/testAcceleration --list
+build/gpu-checks/bin/testAcceleration auto --quick
+build/gpu-checks/bin/testAcceleration auto --matrix
+build/gpu-checks/bin/testAcceleration --limits
+build/gpu-checks/bin/testAccelerationFallback
+```
+
+Replace `auto` with an ID from `--list` to check each GPU separately. IDs are
+session-local diagnostics, not persistent hardware identifiers. Test fixtures
+stay offline and are never sent to live radar pages.
+
+The matrix checks 1–8 surveillance paths, 50–500 ms frames, offset Doppler windows
+and prime-length FFTs against independent CPU processing. Timing numbers from
+resource-limited checks are not whole-radar performance benchmarks.
+
+## Driver recovery
+
+GPU drivers run in a separate worker process. Startup has a 30-second deadline;
+individual GPU frames have a five-second deadline. A timeout, worker crash or
+invalid response disables GPU use and retries the same frame on CPU. These are
+failure deadlines, not promises that a failed frame meets real-time cadence.
+The processor does not repeatedly restart a failed worker. A restart of VectorWarp
+allows a fresh GPU attempt.
+
+This isolates user-space driver faults. It cannot reset a broken kernel driver
+or recover a host-wide GPU/kernel failure. CPU mode does not start the worker.

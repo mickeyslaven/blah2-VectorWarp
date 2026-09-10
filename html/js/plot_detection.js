@@ -1,29 +1,16 @@
-var timestamp;
-var nRows = 3;
-var host = window.location.hostname;
-var isLocalHost = is_localhost(host);
+var plotted = false;
 var range_x = [];
 var range_y = [];
 
 // setup API
-var urlTimestamp;
-var urlDetection;
-if (isLocalHost) {
-  urlTimestamp = '//' + host + ':3000/api/timestamp';
-} else {
-  urlTimestamp = '//' + host + '/api/timestamp';
-}
-if (isLocalHost) {
-  urlDetection = '//' + host + ':3000/stash/detection';
-} else {
-  urlDetection = '//' + host + '/stash/detection';
-}
+var urlDetection = liveApiUrl('/stash/detection');
 
 // setup plotly
 var layout = {
-  autosize: false,
+  font: {color: '#f3eee9'},
+  autosize: true,
   margin: {
-    l: 50,
+    l: 92,
     r: 50,
     b: 50,
     t: 10,
@@ -32,17 +19,16 @@ var layout = {
   hoverlabel: {
     namelength: 0
   },
-  width: document.getElementById('data').offsetWidth,
-  height: document.getElementById('data').offsetHeight,
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
   displayModeBar: false,
   xaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: xTitle,
       font: {
-        size: 24
+        size: 18
       }
     },
     showgrid: false,
@@ -50,20 +36,21 @@ var layout = {
     side: 'bottom'
   },
   yaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: yTitle,
       font: {
-        size: 24
+        size: 18
       }
     },
     showgrid: false,
     ticks: '',
     ticksuffix: ' ',
-    autosize: false,
     categoryorder: "total descending"
   }
 };
 var config = {
+  responsive: true,
   displayModeBar: false,
   scrollZoom: true
 }
@@ -80,68 +67,45 @@ var data = [
 Plotly.newPlot('data', data, layout, config);
 
 // callback function
-var intervalId = window.setInterval(function () {
+var radarUpdates = startRadarPlot(urlDetection, async function (data) {
 
-  // check if timestamp is updated
-  var timestampData = $.get(urlTimestamp, function () { })
+  // case draw new plot
+  if (!plotted) {
 
-    .done(function (data) {
-      if (timestamp != data) {
-        timestamp = data;
-
-        // get new data
-        var apiData = $.getJSON(urlDetection, function () { })
-          .done(function (data) {
-
-            // case draw new plot
-            if (data.nRows != nRows) {
-              nRows = data.nRows;
-
-              // timestamp posix to js
-              if (xVariable === "timestamp")
-              {
-                for (i = 0; i < data[xVariable].length; i++)
-                {
-                  data[xVariable][i] = new Date(data[xVariable][i]);
-                }
-              }
-
-              var trace1 = {
-                  x: data[xVariable],
-                  y: data[yVariable],
-                  mode: 'markers',
-                  type: 'scatter'
-              };
-              
-              var data_trace = [trace1];
-              Plotly.newPlot('data', data_trace, layout, config);
-            }
-            // case update plot
-            else {
-              // timestamp posix to js
-              if (xVariable === "timestamp")
-              {
-                for (i = 0; i < data[xVariable].length; i++)
-                {
-                  data[xVariable][i] = new Date(data[xVariable][i]);
-                }
-              }
-              var trace_update = {
-                x: [data[xVariable]],
-                y: [data[yVariable]]
-              };
-              Plotly.update('data', trace_update);
-            }
-
-          })
-          .fail(function () {
-          })
-          .always(function () {
-          });
+    // timestamp posix to js
+    if (xVariable === "timestamp")
+    {
+      for (let i = 0; i < data[xVariable].length; i++)
+      {
+        data[xVariable][i] = new Date(data[xVariable][i]);
       }
-    })
-    .fail(function () {
-    })
-    .always(function () {
-    });
-}, 100);
+    }
+
+    var trace1 = {
+        x: data[xVariable],
+        y: data[yVariable],
+        mode: 'markers',
+        type: 'scatter'
+    };
+
+    var data_trace = [trace1];
+    await Plotly.newPlot('data', data_trace, layout, config);
+    plotted = true;
+  }
+  // case update plot
+  else {
+    // timestamp posix to js
+    if (xVariable === "timestamp")
+    {
+      for (let i = 0; i < data[xVariable].length; i++)
+      {
+        data[xVariable][i] = new Date(data[xVariable][i]);
+      }
+    }
+    var trace_update = {
+      x: [data[xVariable]],
+      y: [data[yVariable]]
+    };
+    await Plotly.update('data', trace_update);
+  }
+});

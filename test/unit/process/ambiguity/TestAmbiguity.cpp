@@ -115,6 +115,26 @@ TEST_CASE("Constructor_Round", "[constructor]")
     CHECK(ambiguity.get_nfft() == 6750);
 }
 
+TEST_CASE("Doppler buffer can exceed range FFT", "[process][regression]")
+{
+    const int high = GENERATE(530, 2600);
+    constexpr uint32_t samples = 4800;
+    Ambiguity ambiguity(-2, 4, -high, high, 48000, samples, false);
+    REQUIRE(ambiguity.get_n_doppler_bins() > ambiguity.get_nfft());
+    std::deque<std::complex<double>> reference(samples, {1, 0});
+    IqData surveillance(samples);
+    for (unsigned i = 0; i < samples; ++i) surveillance.push_back({1, 0});
+    const auto* result = ambiguity.process(reference, &surveillance);
+    const unsigned bins = ambiguity.get_n_doppler_bins();
+    for (unsigned d = 0; d < bins; ++d)
+      for (unsigned r = 0; r < result->delay.size(); ++r) {
+        const double expected = d == bins / 2 ?
+          (ambiguity.get_n_corr() - std::abs(result->delay[r])) * bins : 0;
+        CHECK_THAT(std::abs(result->data[d][r] - expected),
+          Catch::Matchers::WithinAbs(0, 1e-8));
+      }
+}
+
 /// @brief Test simple ambiguity processing.
 TEST_CASE("Process_Simple", "[process]")
 {

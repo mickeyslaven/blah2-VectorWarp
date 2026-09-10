@@ -7,5 +7,17 @@ bin/*
 .vscode/
 doc/html/*
 doc/latex/*
-!doc/html/example.png
 save/*
+__pycache__/
+*.py[cod]
+*.mchq
+*.mchq.partial
+# Private implementation ledger; keep it local to this workspace.
+docs/GPU_ACCELERATION_WORK.md
+# Local recorded-IQ campaign outputs and operational receipts are not source.
+bench/results/
+bench/*.csv
+bench/*.jsonl
+bench/*.maps
+bench/*receipt*.json
+bench/*session*.json

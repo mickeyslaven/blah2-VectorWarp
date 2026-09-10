@@ -1,4 +1,5 @@
 #include "RspDuo.h"
+#include "SampleSequence.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <unordered_map>
 #include <iostream>
+#include <mutex>
 
 // class static constants
 const double RspDuo::MAX_FREQUENCY_NR = 2000000000;
@@ -29,15 +31,19 @@ sdrplay_api_CallbackFnsT cbFns;
 sdrplay_api_RxChannelParamsT *chParams;
 
 // global variables
-FILE *file_replay = NULL;
 short *buffer_16_ar = NULL;
-std::string file;
+unsigned int buffer_16_samples = 0;
+unsigned int buffer_16_first_sample = 0;
+uint32_t expected_first_sample = 0;
+bool expected_first_sample_valid = false;
+std::mutex buffer_16_mutex;
+constexpr unsigned int MAX_CALLBACK_SAMPLES = 262144;
+
 short max_a_nr = 0;
 short max_b_nr = 0;
-bool run_fg = true;
+std::atomic<bool> run_fg{true};
 bool stats_fg = true;
-bool *capture_fg;
-std::ofstream* saveIqFileLocal;
+Source* recordingSource = nullptr;
 IqData *buffer1;
 IqData *buffer2;
 
@@ -78,8 +84,7 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
   bwType = ifBandwidthMap[fs];
   ifType = ifModeMap[fs];
   usb_bulk_fg = false;
-  capture_fg = saveIq;
-  saveIqFileLocal = &saveIqFile;
+  recordingSource = this;
   agc_bandwidth_nr = _bandwidthNumber;
   agc_set_point_nr = _agcSetPoint;
   // gain_reduction_nr = _gainReduction;
@@ -100,6 +105,7 @@ void RspDuo::start()
 
 void RspDuo::stop()
 {
+  run_fg = false;
   uninitialise_device();
 }
 
@@ -144,37 +150,6 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
       max_b_nr = 0;
     }
     sleep(1);
-  }
-}
-
-void RspDuo::replay(IqData *_buffer1, IqData *_buffer2, std::string _file, bool _loop)
-{
-  buffer1 = _buffer1;
-  buffer2 = _buffer2;
-
-  short i1, q1, i2, q2;
-  int rv;
-  file_replay = fopen(_file.c_str(), "rb");
-
-  while (true)
-  {
-    rv = fread(&i1, 1, sizeof(short), file_replay);
-    if (rv != sizeof(short)) break; 
-    rv = fread(&q1, 1, sizeof(short), file_replay);
-    if (rv != sizeof(short)) break; 
-    rv = fread(&i2, 1, sizeof(short), file_replay);
-    if (rv != sizeof(short)) break; 
-    rv = fread(&q2, 1, sizeof(short), file_replay);
-    if (rv != sizeof(short)) break; 
-    buffer1->lock();
-    buffer2->lock();
-    if (buffer1->get_length() < buffer1->get_n())
-    {
-      buffer1->push_back({(double)i1, (double)q1});
-      buffer2->push_back({(double)i2, (double)q2});
-    }
-    buffer1->unlock();
-    buffer2->unlock();
   }
 }
 
@@ -225,7 +200,6 @@ void RspDuo::validate() {
     std::cerr << "[RspDuo] Print config" << std::endl;
     std::cerr << "fc (Hz)                       : " << fc << std::endl;
     std::cerr << "fs (Hz)                       : " << fs << std::endl;
-    std::cerr << "file                          : " << file.c_str() << std::endl;
     std::cerr << "agc_bandwidth_nr (Hz)         : " << agc_bandwidth_nr << std::endl;
     std::cerr << "agc_set_point_nr (dBfs)       : " << agc_set_point_nr << std::endl;
     std::cerr << "gain_reduction_nr_a (dB)      : " << gain_reduction_nr_a << std::endl;
@@ -451,6 +425,21 @@ void RspDuo::stream_a_callback(short *xi, short *xq,
 sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
 unsigned int reset, void *cbContext)
 {
+  std::lock_guard<std::mutex> lock(buffer_16_mutex);
+  if (reset || !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES ||
+      (expected_first_sample_valid && !rspduo_sequence::continues(expected_first_sample, params->firstSampleNum))) {
+    if (buffer_16_ar) { free(buffer_16_ar); buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0; }
+    expected_first_sample_valid = false;
+    if (recordingSource) recordingSource->recording_discontinuity(
+      "RSPduo stream A reset, invalid sample count, or sample sequence discontinuity");
+    return;
+  }
+  if (buffer_16_ar) {
+    free(buffer_16_ar); buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
+    expected_first_sample_valid = false;
+    if (recordingSource) recordingSource->recording_discontinuity("RSPduo callback pairing gap before stream A");
+    return;
+  }
   unsigned int i = 0;
   unsigned int j = 0;
 
@@ -460,9 +449,12 @@ unsigned int reset, void *cbContext)
   if (buffer_16_ar == NULL)
   {
     std::cout << "Error: stream_a_callback, malloc failed" << std::endl;
+    if (recordingSource) recordingSource->recording_discontinuity("RSPduo stream A allocation failed");
     run_fg = false;
     return;
   }
+  buffer_16_samples = numSamples;
+  buffer_16_first_sample = params->firstSampleNum;
 
   // IIQQxxxx
   for (i = 0; i < numSamples; i++)
@@ -494,6 +486,24 @@ void RspDuo::stream_b_callback(short *xi, short *xq,
 sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
 unsigned int reset, void *cbContext)
 {
+  short* paired = NULL;
+  {
+    std::lock_guard<std::mutex> lock(buffer_16_mutex);
+    if (reset || !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES ||
+        !buffer_16_ar || buffer_16_samples != numSamples ||
+        buffer_16_first_sample != params->firstSampleNum) {
+      if (buffer_16_ar) free(buffer_16_ar);
+      buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
+      expected_first_sample_valid = false;
+      if (recordingSource) recordingSource->recording_discontinuity(
+        "RSPduo callback pairing reset, gap, sample-count, or epoch mismatch");
+      return;
+    }
+    paired = buffer_16_ar;
+    buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
+    expected_first_sample = rspduo_sequence::next(params->firstSampleNum, numSamples);
+    expected_first_sample_valid = true;
+  }
   unsigned int i = 0;
   unsigned int j = 0;
 
@@ -504,8 +514,8 @@ unsigned int reset, void *cbContext)
     j++;
     j++;
     // add tuner B data
-    buffer_16_ar[j++] = xi[i];
-    buffer_16_ar[j++] = xq[i];
+    paired[j++] = xi[i];
+    paired[j++] = xq[i];
   }
 
   // write data to IqData
@@ -513,28 +523,22 @@ unsigned int reset, void *cbContext)
   buffer2->lock();
   for (i = 0; i < numSamples*4; i+=4)
   {
-    buffer1->push_back({(double)buffer_16_ar[i], (double)buffer_16_ar[i+1]});
-    buffer2->push_back({(double)buffer_16_ar[i+2], (double)buffer_16_ar[i+3]});
+    buffer1->push_back({(double)paired[i], (double)paired[i+1]});
+    buffer2->push_back({(double)paired[i+2], (double)paired[i+3]});
   }
   buffer1->unlock();
   buffer2->unlock();
 
   // write data to file
-  if (*capture_fg)
-  {
-    saveIqFileLocal->write(reinterpret_cast<char*>(buffer_16_ar), 
-      sizeof(short) * numSamples * 4);
-    
-    if (!(*saveIqFileLocal))
-    {
-      std::cout << "Error: stream_b_callback, not enough samples received" << std::endl;
-      free(buffer_16_ar);
-      run_fg = false;
-      return;
-    }
+  if (recordingSource && recordingSource->is_recording() && numSamples) {
+    blah2::IqBlock block(2, std::vector<std::complex<float>>(numSamples));
+    for (unsigned sample=0; sample<numSamples; ++sample)
+      for (unsigned ch=0; ch<2; ++ch)
+        block[ch][sample] = {float(paired[sample*4+ch*2]), float(paired[sample*4+ch*2+1])};
+    recordingSource->record_block(block);
   }
 
-  free(buffer_16_ar);
+  free(paired);
 
   // find max for stats
   if (stats_fg)

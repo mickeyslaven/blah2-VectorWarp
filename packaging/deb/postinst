@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+if command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf
+fi
+if getent group vectorwarp-config >/dev/null 2>&1 &&
+    getent passwd vectorwarp-api >/dev/null 2>&1; then
+  chown root:vectorwarp-config /etc/vectorwarp
+  chown vectorwarp-api:vectorwarp-config /etc/vectorwarp/config.yml
+fi
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+  systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
+fi
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload >/dev/null || true
+fi
+
+# Deliberately do not enable or start either service. A radar receiver must not
+# be activated by package installation or upgrade.
+exit 0

@@ -1,0 +1,136 @@
+name: Publish verified package repository
+
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Already-published latest stable release tag to republish'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-repository
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    name: Verify latest published stable release
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          releases=$(gh release list --limit 100 --json tagName,isDraft,isPrerelease)
+          latest=$(jq -r '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName' <<<"$releases" |
+            grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n 1)
+          [[ -n $latest ]]
+          if [[ $GITHUB_EVENT_NAME == release ]]; then tag=$EVENT_TAG
+          elif [[ $GITHUB_EVENT_NAME == schedule ]]; then tag="v$latest"
+          else tag=$INPUT_TAG; fi
+          [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          selected=$(jq -r --arg tag "$tag" '.[] | select(.tagName == $tag) | select(.isDraft == false and .isPrerelease == false) | .tagName' <<<"$releases")
+          [[ $selected == "$tag" ]]
+          [[ -n $latest && $tag == "v$latest" ]] || {
+            echo 'Refusing to roll the repository back from its latest stable release.' >&2; exit 1; }
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+  rebuild-repository:
+    name: Rebuild signed repository from reviewed assets
+    needs: validate-release
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    steps:
+      - name: Check out trusted default-branch repository generator
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: main
+      - name: Download and verify reviewed release package assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir packages
+          gh release download "$TAG" --dir packages --pattern 'vectorwarp_*.deb' \
+            --pattern 'vectorwarp-*.rpm' --pattern SHA256SUMS --pattern package-manifest.json
+          (cd packages && sha256sum --check --strict SHA256SUMS)
+          test -f packages/package-manifest.json
+      - name: Install repository signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends apt-utils createrepo-c gnupg rpm
+      - name: Fail closed unless repository signing is configured
+        env:
+          SIGNING_KEY: ${{ secrets.VECTORWARP_ARCHIVE_SIGNING_KEY }}
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          [[ -n $SIGNING_KEY && $FINGERPRINT =~ ^[A-Fa-f0-9]{40}$ ]]
+          [[ -f packaging/keys/vectorwarp.asc && -f script/build-package-repository.py && -f script/install-release.sh ]]
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 0700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          actual=$(gpg --batch --with-colons --fingerprint "$FINGERPRINT" | awk -F: '$1 == "fpr" { print $10; exit }')
+          [[ ${actual^^} == ${FINGERPRINT^^} ]]
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Rebuild fresh metadata and signed repository tree
+        env:
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
+            --output repository --public-key packaging/keys/vectorwarp.asc \
+            --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
+            --installer-template script/install-release.sh
+          test -f repository/repository-manifest.json -a -f repository/install.sh
+          test $(du -sm repository | awk '{print $1}') -le 900
+      - name: Stage fresh repository for protected Pages deployment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reviewed-package-repository
+          path: repository/
+          if-no-files-found: error
+          retention-days: 1
+  publish-pages:
+    name: Publish signed repository to GitHub Pages
+    needs: rebuild-repository
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Download freshly rebuilt repository
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-package-repository
+          path: repository
+      - name: Validate deployment input
+        run: |
+          set -euo pipefail
+          test -f repository/repository-manifest.json -a -f repository/install.sh
+          test $(du -sm repository | awk '{print $1}') -le 900
+      - name: Upload bounded signed repository artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: repository
+      - id: deployment
+        name: Deploy reviewed repository
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

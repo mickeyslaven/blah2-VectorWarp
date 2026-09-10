@@ -9,12 +9,12 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include <ryml/ryml.hpp>
-#include <ryml/ryml_std.hpp> // optional header, provided for std:: interop
+#include "data/Yaml.h"
 #include <c4/format.hpp> // needed for the examples below
 
 #include "data/IqData.h"
 #include "capture/Source.h"
+#include "capture/Replay.h"
 
 class Capture
 {
@@ -36,8 +36,19 @@ private:
 
   /// @brief Absolute path of file to replay.
   std::string file;
+  blah2::ReplayOptions replayOptions;
+  mutable std::mutex statusMutex;
+  blah2::ReplayProgress replayProgress;
+  std::string captureError;
+  uint64_t recordingRequestId = 0;
 
 public:
+  std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
+  std::atomic<uint64_t> replayGeneration{0};
+  void request_stop() { inputStopped.store(true); stopping.store(true); }
+  void request_input_stop() { inputStopped.store(true); }
+  std::string status_json() const;
+  void processing_error(const std::string& error);
 
   /// @brief Sampling frequency (Hz).
   uint32_t fs;
@@ -66,17 +77,23 @@ public:
   /// @param ip_capture IP address of capture API.
   /// @param port_capture Port of capture API.
   /// @return Void.
-  void process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 
+  void process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config,
     std::string ip_capture, uint16_t port_capture);
 
-  std::unique_ptr<Source> factory_source(const std::string& type, 
-    c4::yml::NodeRef config);
+  void process(const std::vector<IqData *>& buffers,
+    c4::yml::NodeRef config, std::string ip_capture, uint16_t port_capture,
+    uint32_t frameSamples = 0);
+
+  /// @brief Construct a capture source for the configured input channels.
+  std::unique_ptr<Source> factory_source(const std::string& type,
+    c4::yml::NodeRef config, std::size_t channelCount = 2);
 
   /// @brief Set parameters to enable file replay.
   /// @param loop True if replay file should loop when complete.
   /// @param file Absolute path of file to replay.
   /// @return Void.
-  void set_replay(bool loop, std::string file);
+  void set_replay(bool loop, std::string file, std::string format = "auto",
+    uint32_t legacyBlockSamples = 0);
 
 };
 

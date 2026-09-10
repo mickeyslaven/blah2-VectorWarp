@@ -14,11 +14,9 @@
 class Socket 
 {
 private:
-    /// @brief Common io_context for all socket objects.
-    static asio::io_context io_context;
-
-    /// @brief Common MTU size for all socket objects.
-    static const uint32_t MTU;
+    /// @brief Owned context must outlive this socket, including at program exit.
+    /// Members are destroyed in reverse declaration order.
+    asio::io_context io_context;
 
     /// @brief The ASIO endpoint.
     asio::ip::tcp::endpoint endpoint;

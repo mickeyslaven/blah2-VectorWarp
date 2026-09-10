@@ -1,83 +1,29 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta charset="UTF-8">
-  <title>blah2</title>
-  <!-- load lib js -->
-  <script src="../lib/bootstrap-5.2.3.min.js"></script>
-  <script src="../lib/plotly-2.20.0.min.js"></script>
-  <script src="../lib/jquery-3.6.4.min.js"></script>
-  <!-- load lib css -->
-  <link rel="stylesheet" href="../lib/bootstrap-5.2.3.min.css">
-  <link rel="stylesheet" href="../lib/blah2.css">
-  <style>
-  </style>
-</head>
-<body>
-  <div class="container-fluid">
-    <div class="row align-items-center d-flex">
-    <nav class="navbar navbar-light navbar-expand text-center pb-5">
-      <!-- Links -->
-      <ul class="navbar-nav mx-auto justify-content-center">
-        <li class="nav-item px-3 px-md-4">
-          <a class="navbar-brand mx-0 menu" href="/">RADAR</a>
-        </li>
-        <li class="nav-item px-3 px-md-4">
-          <a class="navbar-brand mx-0 menu text-decoration-underline" href="/controller">CONTROLLER</a>
-        </li>
-      </ul>
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>VectorWarp · Displays</title><link rel="stylesheet" href="../lib/blah2.css?v=config-audit-10"></head>
+<body><main class="app-shell controller-shell"><header class="app-header"></header>
+  <section class="controller-intro"><div><h1>Displays &amp; data</h1></div><p id="runtime-summary">Reading receiver configuration…</p></section>
+  <section class="controller-section" aria-label="Operational views"><h2>Understand the radar</h2>
+    <nav class="display-list">
+      <a href="/display/overview"><span>Overview</span><small id="display-overview-meta">Reading active system…</small><b>→</b></a>
+      <a href="/display/detections"><span>Current detections</span><small id="display-detections-meta">Reading detector settings…</small><b>→</b></a>
+      <a href="/display/tracks"><span>Tracks</span><small id="display-tracks-meta">Reading tracker settings…</small><b>→</b></a>
+      <a href="/display/health"><span>System health</span><small id="display-health-meta">Reading processing settings…</small><b>→</b></a>
+      <a href="/display/activity"><span>Activity timeline</span><small>Detections, tracks, signal strength, and processing load</small><b>→</b></a>
+      <a href="/display/site"><span>Site geometry</span><small id="display-site-meta">Reading configured sites…</small><b>→</b></a>
+      <a href="/display/locations"><span>Possible locations</span><small id="display-locations-meta">Reading delay geometry…</small><b>→</b></a>
+      <a href="/display/evaluation"><span>ADS-B evaluation</span><small id="display-evaluation-meta">Reading evaluation settings…</small><b>→</b></a>
     </nav>
-    <div class="col-sm-12 col-md-12">
-      <ul class="list-unstyled text-center label">
-        <li class="py-1 title">Display</li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/map">Delay-Doppler map</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/maxhold">Max-hold delay Doppler map</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/detection/delay">Detections in delay over time</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/detection/doppler">Detections in Doppler over time</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/detection/delay-doppler">Detections in delay-Doppler over time</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/spectrum">Spectrum reference</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/display/timing">Timing display</a></li>
-      </ul>
-    </div>
-    <div class="col-sm-12 col-md-12">
-      <ul class="list-unstyled text-center label">
-        <li class="py-1 title">API</li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/map">Map data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/detection">Detection data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/tracker">Tracker data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/timing">Timing data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/iqdata">IQ metadata</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/api/timestamp">Latest timestamp</a></li>
-      </ul>
-    </div>
-    <div class="col-sm-12 col-md-12">
-      <ul class="list-unstyled text-center label">
-        <li class="py-1 title">Stash</li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/stash/map">Map data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/stash/detection">Detection data</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/stash/iqdata">IqData metadata</a></li>
-        <li class="py-1"><a class="text-reset text-decoration-none" href="/stash/timing">Timing data</a></li>
-      </ul>
-    </div>
-  </div>
-  </div>
-</body>
-<script src="../js/common.js"></script>
-<script>
-  window.onload = function() {
-  var host = window.location.hostname;
-  var isLocalHost = is_localhost(host);
-  var anchors = document.getElementsByTagName("a");
-  if (isLocalHost) {
-    for (var i = 0; i < anchors.length; i++) {
-      if (anchors[i].href.includes('/api/') || anchors[i].href.includes('/stash/')) {
-        console.log(anchors[i].href);
-        anchors[i].href = anchors[i].href.split(":49152")[0] + ":3000" + anchors[i].href.split(":49152")[1];
-        console.log(anchors[i].href);
-      }
-    }
-  }
-}
-</script>
-</html>
+  </section>
+  <section class="controller-section" aria-label="Radar plots"><h2>Radar plots</h2>
+    <nav class="display-list">
+      <a href="/"><span>Live delay–Doppler</span><small id="display-live-meta">Reading active receiver…</small><b>→</b></a>
+      <a href="/display/maxhold"><span>Decaying max-hold</span><small id="display-maxhold-meta">Reading search window…</small><b>→</b></a>
+      <a href="/display/spectrum"><span>Reference spectrum</span><small id="display-spectrum-meta">Reading reference settings…</small><b>→</b></a>
+      <a href="/display/detection/delay"><span>Bistatic range history</span><small id="display-range-meta">Reading site configuration…</small><b>→</b></a>
+      <a href="/display/detection/doppler"><span>Bistatic Doppler history</span><small id="display-doppler-meta">Reading Doppler window…</small><b>→</b></a>
+      <a href="/display/detection/delay-doppler"><span>Detection scatter</span><small id="display-scatter-meta">Reading search window…</small><b>→</b></a>
+      <a href="/display/timing"><span>Pipeline timing</span><small id="display-timing-meta">Reading frame timing…</small><b>→</b></a>
+    </nav>
+  </section>
+  <section class="controller-section" aria-label="API endpoints"><h2>Data API</h2><div class="api-list"><a href="/api/map">/api/map</a><a href="/api/detection">/api/detection</a><a href="/api/tracker">/api/tracker</a><a href="/api/timing">/api/timing</a><a href="/api/iqdata">/api/iqdata</a><a href="/api/timestamp">/api/timestamp</a></div></section>
+</main><script src="../js/common.js?v=config-audit-10"></script><script>renderAppHeader('controller');renderRuntimeSummary();</script></body></html>

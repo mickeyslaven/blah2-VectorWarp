@@ -1,66 +1,21 @@
-var timestamp = -1;
-var nRows = 3;
-var host = window.location.hostname;
-var isLocalHost = is_localhost(host);
+var gridSignature = '';
 var range_x = [];
 var range_y = [];
 
 // setup API
-var urlTimestamp;
-var urlDetection;
-var urlAdsb;
-var urlAdsbLink;
-var urlConfig;
-if (isLocalHost) {
-  urlTimestamp = '//' + host + ':3000/api/timestamp';
-} else {
-  urlTimestamp = '//' + host + '/api/timestamp';
-}
-if (isLocalHost) {
-  urlDetection = '//' + host + ':3000/api/detection';
-} else {
-  urlDetection = '//' + host + '/api/detection';
-}
-if (isLocalHost) {
-  urlMap = '//' + host + ':3000' + urlMap;
-} else {
-  urlMap = '//' + host + urlMap;
-}
-if (isLocalHost) {
-  urlAdsbLink = '//' + host + ':3000/api/adsb2dd';
-} else {
-  urlAdsbLink = '//' + host + '/api/adsb2dd';
-}
-if (isLocalHost) {
-  urlConfig = '//' + host + ':3000/api/config';
-} else {
-  urlConfig = '//' + host + '/api/config';
-}
-
-// get truth flag
-var isTruth = false;
-$.getJSON(urlConfig, function () { })
-.done(function (data_config) {
-  if (data_config.truth.adsb.enabled === true) {
-    isTruth = true;
-    $.getJSON(urlAdsbLink, function () { })
-    .done(function (data) {
-      urlAdsb = data.url;
-      if (!is_localhost(new URL(urlAdsb).hostname)) {
-        urlAdsb = urlAdsb.replace(/^http:/, 'https:');
-      }
-    })
-  }
-});
+var urlDetection = liveApiUrl('/api/detection');
+urlMap = liveApiUrl(urlMap);
+var urlAdsbData = liveApiUrl('/api/adsb/delay-doppler');
 
 // setup plotly
 var layout = {
+  font: {color: '#f3eee9'},
   autosize: true,
   margin: {
-    l: 50,
-    r: 50,
+    l: 92,
+    r: 132,
     b: 50,
-    t: 10,
+    t: 36,
     pad: 0
   },
   hoverlabel: {
@@ -71,25 +26,26 @@ var layout = {
   annotations: [],
   displayModeBar: false,
   xaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: 'Bistatic Range (km)',
       font: {
-        size: 24
+        size: 18
       }
     },
     ticks: '',
     side: 'bottom'
   },
   yaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: 'Bistatic Doppler (Hz)',
       font: {
-        size: 24
+        size: 18
       }
     },
     ticks: '',
     ticksuffix: ' ',
-    autosize: false,
     categoryorder: "total descending"
   },
   showlegend: false
@@ -110,112 +66,108 @@ var data = [
 ];
 var detection = [];
 var adsb = {};
+var adsbCache = null;
+var adsbReadAt = -Infinity;
+var adsbPending = false;
+
+function currentAdsbOverlay(enabled) {
+  if (!enabled) return null;
+  if (!adsbPending && Date.now() - adsbReadAt >= 1000) {
+    adsbPending = true;
+    adsbReadAt = Date.now();
+    // An optional, slower truth service must not hold up radar frames.
+    fetchRadarJson(urlAdsbData)
+      .then(data => { adsbCache = data; })
+      .catch(() => { adsbCache = null; })
+      .finally(() => { adsbPending = false; });
+  }
+  return adsbCache;
+}
 
 Plotly.newPlot('data', data, layout, config);
 
 // callback function
-var intervalId = window.setInterval(function () {
-
-  // check if timestamp is updated
-  $.get(urlTimestamp, function () { })
-
-    .done(function (data) {
-      if (timestamp != data) {
-        timestamp = data;
-
-        // get detection data (no detection lag)
-        $.getJSON(urlDetection, function () { })
-          .done(function (data_detection) {
-            detection = data_detection;
-          });
-
-        // get ADS-B data if enabled in config
-        if (isTruth) {
-          $.getJSON(urlAdsb, function () { })
-            .done(function (data_adsb) {
-              adsb['delay'] = [];
-              adsb['doppler'] = [];
-              adsb['flight'] = [];
-              for (const aircraft in data_adsb) {
-                if ('doppler' in data_adsb[aircraft]) {
-                  adsb['delay'].push(data_adsb[aircraft]['delay'])
-                  adsb['doppler'].push(data_adsb[aircraft]['doppler'])
-                  adsb['flight'].push(data_adsb[aircraft]['flight'])
-                }
-              }
-            });
-        }
-
-        // get new map data
-        $.getJSON(urlMap, function () { })
-          .done(function (data) {
-
-            // case draw new plot
-            if (data.nRows != nRows) {
-              nRows = data.nRows;
-
-              // lock range before other trace
-              var layout_update = {
-                'xaxis.range': [data.delay[0], data.delay.slice(-1)[0]],
-                'yaxis.range': [data.doppler[0], data.doppler.slice(-1)[0]]
-              };
-              Plotly.relayout('data', layout_update);
-
-              var trace1 = {
-                  z: data.data,
-                  x: data.delay,
-                  y: data.doppler,
-                  colorscale: 'Viridis',
-                  zauto: false,
-                  zmin: 0,
-                  zmax: Math.max(13, data.maxPower),
-                  type: 'heatmap'
-              };
-              var trace2 = {
-                  x: detection.delay,
-                  y: detection.doppler,
-                  mode: 'markers',
-                  type: 'scatter',
-                  marker: {
-                    size: 16,
-                    opacity: 0.6
-                  }
-              };
-              var trace3 = {
-                x: adsb.delay,
-                y: adsb.doppler,
-                mode: 'markers',
-                type: 'scatter',
-                marker: {
-                  size: 16,
-                  opacity: 0.6
-                }
-            };
-              
-              var data_trace = [trace1, trace2, trace3];
-              Plotly.newPlot('data', data_trace, layout, config);
-            }
-            // case update plot
-            else {
-              var trace_update = {
-                x: [data.delay, detection.delay, adsb.delay],
-                y: [data.doppler, detection.doppler, adsb.doppler],
-                z: [data.data, [], []],
-                zmax: [Math.max(13, data.maxPower), [], []],
-                text: [[], [], adsb.flight]
-              };
-              Plotly.update('data', trace_update);
-            }
-
-          })
-          .fail(function () {
-          })
-          .always(function () {
-          });
+var radarUpdates = startRadarPlot(urlMap, async function (data) {
+  const runningConfig = await getRadarRuntimeConfig();
+  const detected = runningConfig.process?.detection?.enable !== false ?
+    await fetchRadarJson(urlDetection).catch(() => null) : null;
+  // Separate TCP streams may arrive at different times; never put old
+  // detections onto a newly arrived map.
+  detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
+  adsb = {delay: [], doppler: [], flight: []};
+  const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true);
+  if (data_adsb) {
+    for (const aircraft of Object.values(data_adsb)) {
+      if (aircraft && 'doppler' in aircraft) {
+        adsb.delay.push(aircraft.delay);
+        adsb.doppler.push(aircraft.doppler);
+        adsb.flight.push(aircraft.flight);
       }
-    })
-    .fail(function () {
-    })
-    .always(function () {
-    });
-}, 100);
+    }
+  }
+
+  // case draw new plot
+  const gridKey = JSON.stringify([data.delay, data.doppler]);
+  if (gridKey !== gridSignature) {
+
+    // lock range before other trace
+    var layout_update = {
+      'xaxis.range': [data.delay[0], data.delay.slice(-1)[0]],
+      'yaxis.range': [data.doppler[0], data.doppler.slice(-1)[0]]
+    };
+    await Plotly.relayout('data', layout_update);
+
+    var trace1 = {
+        z: data.data,
+        x: data.delay,
+        y: data.doppler,
+        colorscale: 'Viridis',
+        zauto: false,
+        zmin: 0,
+        zmax: Math.max(13, data.maxPower),
+        colorbar: {
+          title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 13}},
+          tickfont: {color: '#f3eee9', size: 11},
+          outlinecolor: '#47362e',
+          thickness: 14
+        },
+        type: 'heatmap'
+    };
+    var trace2 = {
+        x: detection.delay,
+        y: detection.doppler,
+        mode: 'markers',
+        type: 'scatter',
+        marker: {
+          size: 16,
+          opacity: 0.6
+        }
+    };
+    var trace3 = {
+      x: adsb.delay,
+      y: adsb.doppler,
+      mode: 'markers',
+      type: 'scatter',
+      marker: {
+        size: 16,
+        opacity: 0.6
+      }
+  };
+
+    var data_trace = [trace1, trace2, trace3];
+    await Plotly.newPlot('data', data_trace, layout, config);
+    gridSignature = gridKey;
+  }
+  // case update plot
+  else {
+    var trace_update = {
+      x: [data.delay, detection.delay, adsb.delay],
+      y: [data.doppler, detection.doppler, adsb.doppler],
+      z: [data.data, [], []],
+      zmax: [Math.max(13, data.maxPower), [], []],
+      text: [[], [], adsb.flight]
+    };
+    await Plotly.update('data', trace_update);
+  }
+  return runningConfig.process?.detection?.enable === false || detected?.timestamp === data.timestamp;
+});

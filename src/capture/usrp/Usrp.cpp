@@ -25,6 +25,7 @@ void Usrp::start()
 
 void Usrp::stop()
 {
+  stopRequested = true;
 }
 
 void Usrp::process(IqData *buffer1, IqData *buffer2)
@@ -72,7 +73,7 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     streamCmd.time_spec  = usrp->get_time_now() + uhd::time_spec_t(0.05);
     rxStreamer->issue_stream_cmd(streamCmd);
 
-    while(true)
+    while(!stopRequested)
     {
       // receive samples
       size_t nReceived = rxStreamer->recv(buff_ptrs, samps_per_buff, metadata);
@@ -80,6 +81,7 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       // print errors
       if (metadata.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
           std::cerr << "Error: " << metadata.strerror() << std::endl;
+          recording_discontinuity("USRP receive discontinuity: " + metadata.strerror());
       }
 
       buffer1->lock();
@@ -93,19 +95,11 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       buffer2->unlock();
 
       // save IQ data to file
-      if (*saveIq)
-      {
-        for (const auto& bufferPtr : buff_ptrs) 
-        {
-        // Write the buffer data to the file
-          saveIqFile.write(reinterpret_cast<const char*>(
-            bufferPtr), samps_per_buff * sizeof(std::complex<float>));
-        }
+      if (is_recording() && nReceived) {
+        blah2::IqBlock block(2);
+        for (unsigned ch=0; ch<2; ++ch)
+          block[ch].assign(buff_ptrs[ch], buff_ptrs[ch]+nReceived);
+        record_block(block);
       }
     }
-}
-
-void Usrp::replay(IqData *buffer1, IqData *buffer2, std::string _file, bool _loop)
-{
-  return;
 }

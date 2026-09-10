@@ -1,72 +1,143 @@
-# blah2Fast
+# VectorWarp
 
-A CPU multithreaded and GPU Accelerated real-time radar which can support various SDR platforms. This is a faster processing fork of the original blah2 program by 30hours. 
+VectorWarp is a native Linux, CPU-multithreaded and optionally
+GPU-accelerated real-time radar. It is a faster-processing fork of
+[blah2](https://github.com/30hours/blah2) by 30hours. Performance depends on
+the host and configuration.
 
-## Features
+## Highlights
 
-- All features from normal blah2 plus the following additions:
-  - Full krakenSDR Support
-  - Full UI rewrite with a new clean modern look
-  - Web configuration and radar restart right from the browser
-  - Easy recording and replay. Simply select the file and play back that once in a lifetime radar catch again and again!
+- KrakenSDR Suite V2 network input with 2–8-channel processing.
+- Browser setup, health, recording, replay, detections and delay ellipses.
+- Portable `.blah2iq` recording and replay for all supported receiver profiles.
+- Dedicated-reference processing for RSPduo, USRP and dual HackRF; coherent
+  Kraken array-reference synthesis and map fusion.
+- Optional Vulkan/VkFFT acceleration with automatic CPU fallback.
+- Built-in raw ADS-B display/evaluation projection. ADS-B never informs
+  detection or tracking.
 
-## SDR Support
+Five-channel Kraken hardware has been tested. Two through eight channels pass
+recording/replay tests; that is not a claim that an eight-channel radio was
+physically tested. Replay runs without opening receiver hardware.
 
-- [SDRplay RSPDuo](https://www.sdrplay.com/rspduo/).
-- [USRP](https://www.ettus.com/products/) (only tested on the B210).
-- 2x [HackRF](https://greatscottgadgets.com/hackrf/) with clock synchronisation and hardware trigger.
-- 2x [RTL-SDR](https://www.rtl-sdr.com/) with clock synchronisation.
-- [KrakenSDR](https://www.krakenrf.com/) with 2-8x channels using the kraken V2 software (8 Channel support cant be tested, as their 8 channel device isn't available).
+## Install on Linux
 
-## Services
+VectorWarp has no Docker deployment. The package install includes its private
+Node 24 runtime and serves both the browser UI and API on port 3000 by default;
+no separate web server is required.
 
-The build environment consists of a docker-compose.yml file running the following services;
+### Signed package repository — pending first release
 
-- The radar processor responsible for IQ capture and processing.
-- The API middleware responsible for reading TCP ports for delay-Doppler map data, and exposing this on a REST API.
-- The web front-end displaying processed radar data.
+The automatic signed repository and release packages are **not published yet**.
+They become available only after the first verified GitHub Actions release and
+GitHub Pages publication. Until that happens, use the advanced source build
+below. Do not treat a planned URL or unsigned third-party package as official.
 
-## Usage
+Once the first signed release is published, supported systems will install from
+the single maintained repository and receive normal APT/DNF updates:
 
-Building the code using the following instructions; 
+- Ubuntu 22.04 or 24.04, amd64 or arm64
+- Fedora 44, x86_64 or aarch64
 
-- Install docker and docker-compose on the host machine.
-- Clone this repository to some directory.
-- Install SDRplay API to run service on host.
-- Edit the `config/config.yml` for desired processing parameters.
-- Run the docker-compose command.
+The verified repository bootstrap will be published at
+`https://mickeyslaven.github.io/blah2-VectorWarp/install.sh`.
+Download it, inspect it, then run it as root—never pipe it directly to a shell:
 
 ```bash
-sudo git clone http://github.com/mickeyslaven/blah2Fast /opt/blah2
-cd /opt/blah2
-sudo chown -R $USER .
-sudo chmod a+x ./lib/sdrplay-3.15.2/SDRplay_RSP_API-Linux-3.15.2.run
-sudo ./lib/sdrplay-3.15.2/SDRplay_RSP_API-Linux-3.15.2.run --tar -xvf -C ./lib/sdrplay-3.15.2
-cd lib/sdrplay-3.15.2/ && sudo ./install_lib.sh && cd ../../
-sudo docker network create blah2
-sudo systemctl enable docker
-sudo docker compose up -d --build
+curl -fLO https://mickeyslaven.github.io/blah2-VectorWarp/install.sh
+less install.sh
+sudo bash install.sh --start-web
 ```
 
-The radar processing output is available on [http://localhost:49152](http://localhost:49152).
+The installer will validate the published `keys/vectorwarp.asc` key and the
+configured signing fingerprint before adding the APT or DNF repository. The
+fingerprint is not configured until the release signing key exists. `--start-web`
+is optional and starts only the API/settings page; it never starts the processor
+or radio.
 
-## Future Work
+Local release files, once published, can instead be installed with the normal
+package manager:
 
-- Utilizing the krakenSDR for bearing to be able to plot planes onto a map. Alternatively you can use 3lips which utilizes elipses and multiple reciever locations [3lips](https://github.com/30hours/3lips).
-- 
+```bash
+sudo apt install ./vectorwarp_<version>-1_ubuntu24.04_amd64.deb
+# or
+sudo dnf install ./vectorwarp-<version>-1.fc44.x86_64.rpm
+```
 
-## FAQ
+Other Linux distributions are not packaged or release-tested, but may use the
+source-build route when their dependencies are compatible. macOS and Windows
+are browser clients, not VectorWarp processor hosts.
 
-- If the SDRplay RSPduo does not capture data, restart the API service (on the host) using the script `sudo ./script/blah2_rspduo_restart.bash`.
+After installation, follow the short [first-run guide](docs/INSTALL.md): open
+the browser, select the receiver, check the saved settings, then Save & Restart.
+Receiver drivers, radio permissions and physical cabling remain host-specific.
 
-## Contributing
+## Advanced: build from source
 
-Pull requests are welcome :)
+Source builds are for development or for the all-receiver SDK build. They are
+not required for the release package's Kraken/Heimdall network receiver path.
 
-## Links
+```bash
+git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
+cd blah2-VectorWarp
+script/build-native.sh --preflight --backend kraken --gpu auto
+script/build-native.sh --backend kraken --gpu auto
+sudo script/install-native.sh --preflight
+sudo script/install-native.sh
+```
 
-- Join the [Discord](https://discord.gg/ewNQbeK5Zn) chat for sharing results and support. Keep in mind this discord is for blah2 and not everyone will be familiar with this specific fork.
+The build produces `build/native/artifact`; the installer creates a versioned
+native install under `/opt/vectorwarp` and does not start services. For all four
+receiver SDKs, GPU choices, dependencies and staging installs, see
+[advanced setup](docs/SETUP.md).
+
+## Receiver support
+
+- [KrakenSDR](https://www.krakenrf.com/) Suite V2 / Heimdall network stream
+- [SDRplay RSPduo](https://www.sdrplay.com/rspduo/)
+- [USRP](https://www.ettus.com/products/) (upstream B210 coverage)
+- Two synchronized [HackRF](https://greatscottgadgets.com/hackrf/) devices
+
+RTL-SDR is retained only as an upstream compatibility reference and is not
+selectable in this fork.
+
+## Documentation
+
+- [First install and browser setup](docs/INSTALL.md)
+- [Advanced source build and receiver setup](docs/SETUP.md)
+- [GPU acceleration](docs/GPU_ACCELERATION.md)
+- [Recorded-IQ benchmark](docs/RECORDED_IQ_BENCHMARK.md)
+- [Upstream comparison, math audit and validation evidence](docs/UPSTREAM_COMPARISON.md)
+- [Maintainer release guide](docs/MAINTAINER_RELEASE.md)
+
+The recorded-IQ benchmark is frozen evidence from before later detector/math
+fixes; it is useful baseline data, not a claim that those later fixes were
+measured by that run.
+
+For the exact change boundary, see the comparison against upstream blah2 and
+the integration baseline in [UPSTREAM_COMPARISON.md](docs/UPSTREAM_COMPARISON.md).
+
+## Security
+
+The settings UI has no login. Keep it on a trusted LAN/VPN or behind an
+authenticated gateway. Native services use unprivileged accounts; Save & Restart
+is limited to the VectorWarp units and is not general shell access.
+
+## Community and credit
+
+VectorWarp preserves required blah2 wire/configuration compatibility. Upstream
+authorship and the orange 30hours credit remain with
+[30hours/blah2](https://github.com/30hours/blah2). For upstream discussion, see
+the [blah2 Discord](https://discord.gg/ewNQbeK5Zn).
+
+Contributions are welcome.
+
+## Future work
+
+Reliable Kraken bearing could eventually help locate returns on a map. It is
+not reliable enough to influence this tracker. For multi-receiver location work,
+see the upstream [3lips](https://github.com/30hours/3lips) project.
 
 ## License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+[MIT](LICENSE)

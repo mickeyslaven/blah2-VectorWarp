@@ -1,1 +1,0 @@
-The top level Dockerfile supports every SDR supported by the software. This folder contains a minimal/specific Dockerfile for each SDR platform. These specific Dockerfiles build from source where applicable.

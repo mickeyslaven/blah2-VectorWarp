@@ -1,0 +1,31 @@
+[Unit]
+Description=VectorWarp web interface and API
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vectorwarp-api
+Group=vectorwarp-api
+SupplementaryGroups=vectorwarp-config
+WorkingDirectory=@PREFIX@/current
+Environment=NODE_ENV=production
+Environment="BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@"
+Environment="BLAH2_CONFIG_RESTART_COMMAND=[\"/usr/bin/sudo\",\"-n\",\"/usr/bin/systemctl\",\"--no-block\",\"start\",\"vectorwarp-restart.service\"]"
+ExecStart=/usr/bin/node @PREFIX@/current/api/server.js @SYSCONFDIR@/config.yml
+Restart=on-failure
+RestartSec=3s
+UMask=0007
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=@SYSCONFDIR@ /var/lib/vectorwarp-api
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

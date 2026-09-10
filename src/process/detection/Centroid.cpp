@@ -2,6 +2,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
 
 // constructor
 Centroid::Centroid(uint16_t _nDelay, uint16_t _nDoppler, double _resolutionDoppler)
@@ -25,22 +26,27 @@ std::unique_ptr<Detection> Centroid::process(Detection *x)
   snr = x->get_snr();
 
   // centroid data
-  uint16_t delayMin, delayMax;
+  double delayMin, delayMax;
   double dopplerMin, dopplerMax;
   bool isCentroid;
   std::vector<double> delay2, doppler2, snr2;
 
   // loop over every detection
-  for (size_t i = 0; i < snr.size(); i++)
+  const size_t nDetections = std::min(delay.size(), std::min(doppler.size(), snr.size()));
+  for (size_t i = 0; i < nDetections; i++)
   {
-    delayMin = (int)(delay[i]) - nDelay;
-    delayMax = (int)(delay[i]) + nDelay;
+    if (!std::isfinite(delay[i]) || !std::isfinite(doppler[i]) || !std::isfinite(snr[i]))
+      continue;
+    // Keep bounds signed/double: uint16 underflow previously made a detection
+    // near delay zero immune to nearby stronger detections.
+    delayMin = delay[i] - static_cast<double>(nDelay);
+    delayMax = delay[i] + static_cast<double>(nDelay);
     dopplerMin = doppler[i] - (nDoppler * resolutionDoppler);
     dopplerMax = doppler[i] + (nDoppler * resolutionDoppler);
     isCentroid = true;
     
     // find detections to keep
-    for (size_t j = 0; j < snr.size(); j++)
+    for (size_t j = 0; j < nDetections; j++)
     {
       // skip same detection
       if (j == i)
@@ -48,6 +54,8 @@ std::unique_ptr<Detection> Centroid::process(Detection *x)
         continue;
       }
       // search detections close by
+      if (!std::isfinite(delay[j]) || !std::isfinite(doppler[j]) || !std::isfinite(snr[j]))
+        continue;
       if (delay[j] > delayMin && delay[j] < delayMax &&
         doppler[j] > dopplerMin && doppler[j] < dopplerMax)
         {

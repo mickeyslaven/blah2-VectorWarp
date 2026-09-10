@@ -1,14 +1,22 @@
 {
-  "name": "blah2-api",
+  "name": "vectorwarp-api",
   "version": "1.0.0",
-  "description": "blah2-api",
+  "description": "VectorWarp radar API",
   "author": "github.com/30hours",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node config-manager.test.js && node processor-status.test.js && node upstream-status.test.js && node dependency-security.test.js && node adsb-geometry.test.js && node adsb-source.test.js && node network-check.test.js && node stash/frame-history.test.js && node config-server.test.js && node config-recovery.test.js && node ../test/ui/config-ui.test.js && node ../test/ui/common.test.js && node ../test/ui/frame-updates.test.js && node ../test/ui/plots.test.js",
+    "test:dom": "node ../test/ui/config-dom.test.js"
   },
   "dependencies": {
     "express": "^4.16.1",
     "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "jsdom": "22.1.0"
+  },
+  "overrides": {
+    "qs": "6.16.0"
   }
 }

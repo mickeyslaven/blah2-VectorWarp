@@ -6,6 +6,7 @@
 #include <numeric>
 #include <math.h>
 #include <chrono>
+#include <stdexcept>
 
 // constructor
 Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax, 
@@ -69,7 +70,9 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   dataXi.resize(nfft);
   dataYi.resize(nfft);
   dataZi.resize(nfft);
-  dataDoppler.resize(nfft);
+  // This transform runs across time batches, not range samples. Wide Doppler
+  // windows can have more bins than the range FFT and must not overrun storage.
+  dataDoppler.resize(nDopplerBins);
   fftXi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataXi.data()),
                            reinterpret_cast<fftw_complex *>(dataXi.data()), FFTW_FORWARD, FFTW_ESTIMATE);
   fftYi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataYi.data()),
@@ -91,23 +94,28 @@ Ambiguity::~Ambiguity()
 
 Map<std::complex<double>> *Ambiguity::process(IqData *x, IqData *y)
 {
-  // shift reference if not 0 centered
-  if (dopplerMiddle != 0)
-  {
-    std::complex<double> j = {0, 1};
-    for (uint32_t i = 0; i < x->get_length(); i++)
-    {
-      x->push_back(x->pop_front() * std::exp(1.0 * j * 2.0 * M_PI * dopplerMiddle * ((double)i / fs)));
-    }
-  }
+  return process(x->view_data(), y);
+}
+
+Map<std::complex<double>> *Ambiguity::process(
+  const std::deque<Complex>& x, IqData *y)
+{
+  if (x.size() < nDopplerBins * nCorr)
+    throw std::runtime_error("Reference CPI is shorter than ambiguity input");
 
   // range processing
   nSamples = nDopplerBins * nCorr;
+  uint32_t referenceIndex = 0;
+  const std::complex<double> imaginary = {0, 1};
   for (uint16_t i = 0; i < nDopplerBins; i++)
   {
     for (uint16_t j = 0; j < nCorr; j++)
     {
-      dataXi[j] = x->pop_front();
+      dataXi[j] = x[referenceIndex];
+      if (dopplerMiddle != 0)
+        dataXi[j] *= std::exp(imaginary * 2.0 * M_PI * dopplerMiddle *
+          (static_cast<double>(referenceIndex) / fs));
+      referenceIndex++;
       dataYi[j] = y->pop_front();
     }
 
@@ -197,4 +205,15 @@ uint32_t Ambiguity::get_nfft() const {
 
 uint32_t Ambiguity::get_n_samples() const {
   return nSamples;
+}
+
+Map<Ambiguity::Complex>* Ambiguity::import_gpu(const std::complex<float>* output) {
+  for (uint16_t delay = 0; delay < nDelayBins; ++delay) {
+    corr.resize(nDopplerBins);
+    for (uint16_t d = 0; d < nDopplerBins; ++d)
+      corr[d] = output[delay * nDopplerBins +
+        (d + nDopplerBins / 2 + 1) % nDopplerBins];
+    map->set_col(delay, corr);
+  }
+  return map.get();
 }
