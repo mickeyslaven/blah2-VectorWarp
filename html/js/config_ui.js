@@ -1,3 +1,5 @@
+const geometryEditor = typeof module !== 'undefined' && module.exports ?
+  require('./kraken_geometry') : window.KrakenGeometry;
 const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],
@@ -9,6 +11,7 @@ const CONFIG_META = {
   'capture.fc': ['Center frequency', 'Tuned frequency, split into MHz, kHz and Hz to prevent digit mistakes.'],
   'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
   'capture.device.type': ['Receiver type', 'Receiver backends built into this VectorWarp version.'],
+  'capture.device.array_geometry': ['Antenna layout', 'Optional operator record; physical agreement unverified.'],
   'capture.device.channel_count': ['Input channels', 'Coherent Kraken channels sent by HeIMDALL. Allowed: 2–8.'],
   'capture.device.reference_channel': ['Reference channel', 'Input carrying the direct transmitter signal in dedicated mode.'],
   'capture.device.surveillance_channels': ['Radar inputs', 'Inputs searched for reflected signals. Select at least one.'],
@@ -398,15 +401,21 @@ function metadata(path) {
 }
 
 function setValue(path, value) {
+  const geometryContext = geometryEditor?.context(activeConfig);
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
+  if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig)) {
+    geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
+    refreshGeometryEditor();
+  }
   scheduleValidation();
 }
 
 function normalizeKrakenChannels(config, previousCount = null) {
   if (config.capture?.device?.type !== 'Kraken') return config;
   const device = config.capture.device;
+  geometryEditor?.invalidate(device.array_geometry);
   const synthesis = config.process?.reference_synthesis;
   const count = device.channel_count;
   if (!Number.isInteger(count) || count < 2 || count > 8 || !synthesis)
@@ -434,8 +443,11 @@ function normalizeKrakenChannels(config, previousCount = null) {
 }
 
 function applyDeviceProfile(config, profile) {
+  const geometry = config.capture?.device?.array_geometry;
   const acceleration = config.process?.performance?.acceleration ?? 'auto';
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
+  if (geometry !== undefined) config.capture.device.array_geometry = geometryEditor ?
+    geometryEditor.invalidate(geometry) : geometry;
   config.capture.fs = profile.sampleRate;
   for (const key of ['performance', 'reference_synthesis']) {
     if (profile.process?.[key] !== undefined)
@@ -832,6 +844,7 @@ function group(key, value, path, topLevel = false) {
     if (capabilities.fieldRules?.[childPath.join('.')]?.readOnly) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
     if (dotted === 'capture.device' && childKey === 'type') return;
+    if (dotted === 'capture.device' && childKey === 'array_geometry') return;
     if (kraken && dotted === 'capture.device' && childKey === 'reference_channel') return;
     if (kraken && dotted === 'process' && childKey === 'reference_synthesis') return;
     if (kraken && dotted === 'process.reference_synthesis' && !['mode', 'channels'].includes(childKey)) {
@@ -855,8 +868,27 @@ function group(key, value, path, topLevel = false) {
     content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
   if (kraken && dotted === 'capture.device' && activeConfig.process?.reference_synthesis)
     content.appendChild(group('reference_synthesis', activeConfig.process.reference_synthesis, ['process']));
+  if (dotted === 'capture.device' && geometryEditor &&
+      (kraken || activeConfig.capture?.device?.array_geometry !== undefined))
+    content.appendChild(makeGeometryEditor());
   details.append(summary, content);
   return details;
+}
+
+function makeGeometryEditor() {
+  return geometryEditor.render(document, activeConfig, rebuild => {
+    if (rebuild) refreshGeometryEditor();
+    scheduleValidation();
+  }, () => Boolean(capabilities.editable && !saveInProgress && !restartInProgress));
+}
+
+function refreshGeometryEditor() {
+  const old = document.querySelector('.kraken-geometry');
+  if (old && geometryEditor) {
+    if (activeConfig.capture?.device?.type === 'Kraken' || activeConfig.capture?.device?.array_geometry !== undefined)
+      old.replaceWith(makeGeometryEditor());
+    else old.remove();
+  }
 }
 
 function updateDirtyState() {
@@ -893,6 +925,7 @@ async function validateActiveConfiguration() {
     });
     const result = await response.json();
     if (sequence !== validationSequence || snapshot !== serializeConfig(activeConfig)) return false;
+    geometryEditor?.showAssessment(document, result.arrayGeometry);
     const nativeErrors = Array.from(document.querySelectorAll('#config-fields input, #config-fields select'))
       .filter(input => !input.disabled && !input.checkValidity()).map(input =>
         `${input.closest('.config-field').dataset.path}: ${input.validationMessage}`);
@@ -1251,7 +1284,8 @@ async function saveConfiguration() {
     saved = true;
     rememberSites();
     configRevision = result.revision;
-    originalConfig = snapshot;
+    if (result.config) activeConfig = result.config;
+    originalConfig = serializeConfig(activeConfig);
     capabilities.setupRequired = false;
     pendingLiveConfig = null;
     restartRetry = false;
@@ -1277,6 +1311,7 @@ async function saveConfiguration() {
   } finally {
     saveInProgress = false;
     restartInProgress = false;
+    refreshGeometryEditor();
     document.querySelectorAll('#config-fields input, #config-fields select').forEach(input => {
       input.disabled = input.dataset.originalDisabled === 'true';
     });

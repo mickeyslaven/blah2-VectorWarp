@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig, writeConfigAtomically} = require('./config-manager');
+const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 
 // Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
@@ -139,7 +140,14 @@ function saveConfig(filename, candidate, expectedRevision) {
     error.status = 409;
     throw error;
   }
-  writeConfigAtomically(filename, candidate);
+  const metadataErrors = recordErrors(candidate?.capture?.device?.array_geometry);
+  if (metadataErrors.length) {
+    const error = new Error(metadataErrors.join(' '));
+    error.status = 422;
+    throw error;
+  }
+  const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  writeConfigAtomically(filename, prepared);
   return readConfig(filename);
 }
 

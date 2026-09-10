@@ -299,7 +299,7 @@ app.put('/api/config', async (req, res) => {
     if (restartState.state === 'running' || restartState.state === 'scheduled')
       return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
     const saved = saveConfig(configFile, req.body, req.get('If-Match').replace(/^"|"$/g, ''));
-    res.json({ok: true, restarting: wantsRestart, revision: saved.revision,
+    res.json({ok: true, restarting: wantsRestart, revision: saved.revision, config: saved.config,
       message: wantsRestart ? 'Configuration saved. Restart requested.' :
         'Configuration saved. Restart VectorWarp processing and its API to apply it.'});
     if (wantsRestart) {

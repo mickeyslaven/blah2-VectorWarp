@@ -5,6 +5,8 @@ const net = require('net');
 const FIELD_RULES = require('./config-rules');
 const {sourceAddress} = require('./adsb-source');
 const {classifyAdsbSource} = require('./adsb-discovery');
+const {recordErrors} = require('../html/js/kraken_geometry');
+const {evaluateKrakenArray} = require('./kraken-array');
 
 const KRAKEN_MAX_CHANNELS = 8;
 const UINT32_MAX = 4294967295;
@@ -88,6 +90,7 @@ function validateConfig(config, baseline = null) {
   const notices = [];
   const advise = (field, message) => notices.push({field, message});
   const inspectKeys = (value, name = 'configuration') => {
+    if (name === 'configuration.capture.device.array_geometry') return;
     if (Array.isArray(value)) {
       value.forEach((item, index) => inspectKeys(item, `${name}[${index}]`));
       return;
@@ -149,6 +152,8 @@ function validateConfig(config, baseline = null) {
   // file must be repairable; an optional supported setting may be added.
   const inspectFields = (value, keys = []) => {
     const key = keys.join('.');
+    // Optional operator metadata has its own bounded schema, including drafts.
+    if (key === 'capture.device.array_geometry') return;
     // Former external converter address: ignored during migration and never
     // emitted by the in-process VectorWarp converter.
     if (key === 'truth.adsb.adsb2dd') return;
@@ -199,13 +204,24 @@ function validateConfig(config, baseline = null) {
   else {
     const allowed = new Set(Object.keys(profile.device));
     Object.keys(device).forEach(key => {
-      if (!allowed.has(key))
+      // Keep a dormant Kraken record when switching receiver profiles.
+      if (!allowed.has(key) && key !== 'array_geometry')
         errors.push(`capture.device.${key} is not valid for ${device.type}`);
     });
     allowed.forEach(key => {
       if (!Object.prototype.hasOwnProperty.call(device, key))
         errors.push(`capture.device.${key} is required for ${device.type}`);
     });
+  }
+  const geometryErrors = recordErrors(device.array_geometry);
+  errors.push(...geometryErrors);
+  let arrayGeometry = null;
+  if (device.type === 'Kraken' && device.array_geometry !== undefined && !geometryErrors.length) {
+    const assessment = evaluateKrakenArray(root);
+    arrayGeometry = assessment;
+    advise('capture.device.array_geometry', assessment.valid ?
+      'Layout record complete; physical agreement unverified. Bearing unavailable.' :
+      'Layout record incomplete or needs review. Passive radar may still be configured; bearing is unavailable.');
   }
   boolean(replay.state, 'capture.replay.state');
   boolean(replay.loop, 'capture.replay.loop');
@@ -532,7 +548,7 @@ function validateConfig(config, baseline = null) {
   string(save.path, 'save.path');
   if (typeof save.path === 'string' && (!path.isAbsolute(save.path) || !save.path.endsWith('/')))
     errors.push('save.path must be a full directory path ending in /');
-  return {valid: errors.length === 0, errors: [...new Set(errors)], notices,
+  return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
     warnings: notices.map(notice => notice.message),
     estimatedMemoryBytes: Number.isFinite(estimatedBytes) ? estimatedBytes : null};
 }
