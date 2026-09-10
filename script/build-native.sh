@@ -10,6 +10,8 @@ JOBS=4
 OFFLINE=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
+SDRPLAY_INCLUDE_DIR=${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}
+SDRPLAY_LIBRARY=${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}
 
 VCPKG_COMMIT=c8696863d371ab7f46e213d8f5ca923c4aef2a00
 VKFFT_COMMIT=066a17c17068c0f11c9298d848c2976c71fad1c1
@@ -20,7 +22,7 @@ Usage: script/build-native.sh [options]
 
 Build a relocatable VectorWarp artifact without installing it.
 
-  --backend kraken|all    Kraken-only (default) or all four receiver SDKs
+  --backend NAME          kraken (default), rspduo, usrp, hackrf or all
   --gpu auto|on|off       Optional Vulkan worker selection (default: auto)
   --build-dir PATH        Build/output directory (default: build/native)
   --deps-dir PATH         Pinned source dependency cache
@@ -57,7 +59,24 @@ while (($#)); do
   esac
 done
 
-[[ $BACKEND == kraken || $BACKEND == all ]] || die '--backend must be kraken or all'
+case "$BACKEND" in
+  kraken)
+    ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
+    COMPILED_RECEIVERS=Kraken ;;
+  rspduo)
+    ENABLE_RSPDUO=ON; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
+    COMPILED_RECEIVERS=RspDuo,Kraken ;;
+  usrp)
+    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=OFF
+    COMPILED_RECEIVERS=Usrp,Kraken ;;
+  hackrf)
+    ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=ON
+    COMPILED_RECEIVERS=HackRF,Kraken ;;
+  all)
+    ENABLE_RSPDUO=ON; ENABLE_USRP=ON; ENABLE_HACKRF=ON
+    COMPILED_RECEIVERS=RspDuo,Usrp,HackRF,Kraken ;;
+  *) die '--backend must be kraken, rspduo, usrp, hackrf or all' ;;
+esac
 [[ $GPU =~ ^(AUTO|ON|OFF)$ ]] || die '--gpu must be auto, on or off'
 [[ $JOBS =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
 BUILD_DIR=$(realpath -m "$BUILD_DIR")
@@ -66,7 +85,7 @@ DEPS_DIR=$(realpath -m "$DEPS_DIR")
 [[ $BUILD_DIR != "$SOURCE_DIR" && $DEPS_DIR != "$SOURCE_DIR" ]] ||
   die 'build and dependency directories must not replace the source tree'
 
-for command in cmake git node npm curl tar zip unzip pkg-config c++; do need_command "$command"; done
+for command in cmake git node npm curl tar zip unzip pkg-config c++ ninja; do need_command "$command"; done
 node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
 ((node_major >= 22)) || die 'Node.js 22 or newer is required'
 for file in CMakeLists.txt lib/vcpkg.json lib/vcpkg-kraken.json api/package.json html/index.html; do
@@ -75,14 +94,18 @@ done
 pkg-config --exists fftw3 || die 'FFTW3 development files are required'
 pkg-config --exists armadillo || die 'Armadillo development files are required'
 
-if [[ $BACKEND == all ]]; then
-  [[ -r /usr/local/include/sdrplay_api.h ]] ||
-    die 'all-backend build needs the SDRplay 3.15 headers under /usr/local/include'
-  [[ -r /usr/local/lib/libsdrplay_api.so.3.15 ]] ||
-    die 'all-backend build needs /usr/local/lib/libsdrplay_api.so.3.15'
-  pkg-config --exists libhackrf || die 'all-backend build needs the HackRF development package'
+if [[ $ENABLE_RSPDUO == ON ]]; then
+  [[ -r $SDRPLAY_INCLUDE_DIR/sdrplay_api.h ]] ||
+    die "rspduo backend needs the SDRplay 3.15 header at $SDRPLAY_INCLUDE_DIR/sdrplay_api.h"
+  [[ -r $SDRPLAY_LIBRARY ]] ||
+    die "rspduo backend needs the SDRplay 3.15 library at $SDRPLAY_LIBRARY"
+fi
+if [[ $ENABLE_HACKRF == ON ]]; then
+  pkg-config --exists libhackrf || die 'hackrf backend needs the HackRF development package'
+fi
+if [[ $ENABLE_USRP == ON ]]; then
   command -v uhd_config_info >/dev/null 2>&1 ||
-    die 'all-backend build needs UHD 4.8 development files and uhd_config_info'
+    die 'usrp backend needs UHD 4.8 development files and uhd_config_info'
 fi
 
 if [[ $GPU == ON ]]; then
@@ -92,11 +115,11 @@ if [[ $GPU == ON ]]; then
 fi
 
 if $PREFLIGHT_ONLY; then
-  say "preflight passed for backend=$BACKEND gpu=${GPU,,}"
+  say "preflight passed for backend=$BACKEND receivers=$COMPILED_RECEIVERS gpu=${GPU,,}"
   exit 0
 fi
 if $DRY_RUN; then
-  say "dry run for backend=$BACKEND gpu=${GPU,,}"
+  say "dry run for backend=$BACKEND receivers=$COMPILED_RECEIVERS gpu=${GPU,,}"
 fi
 
 ensure_checkout() {
@@ -122,7 +145,11 @@ if [[ ! -x $DEPS_DIR/vcpkg/vcpkg ]]; then
   $OFFLINE && die 'vcpkg is not bootstrapped in the offline dependency cache'
   # The pinned historical wrapper uses `#!/bin/sh -e`, which some current
   # Fedora execution policies reject when invoked directly.
-  run /bin/sh "$DEPS_DIR/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+  # The pinned vcpkg bootstrap sources predate CMake 4. Scope CMake's official
+  # compatibility floor to this wrapper only; project configuration remains
+  # subject to its own policy declarations.
+  run env CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    /bin/sh "$DEPS_DIR/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 fi
 if [[ $GPU != OFF ]]; then
   ensure_checkout https://github.com/DTolm/VkFFT.git "$DEPS_DIR/VkFFT" "$VKFFT_COMMIT"
@@ -146,10 +173,17 @@ fi
 cmake_args=(cmake -S "$SOURCE_DIR" -B "$CMAKE_DIR"
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
   -DBLAH2_KRAKEN_ONLY="$KRAKEN_ONLY" -DBLAH2_GPU="$GPU"
+  -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO"
+  -DBLAH2_ENABLE_USRP="$ENABLE_USRP"
+  -DBLAH2_ENABLE_HACKRF="$ENABLE_HACKRF"
   -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"
   -DCMAKE_TOOLCHAIN_FILE="$DEPS_DIR/vcpkg/scripts/buildsystems/vcpkg.cmake"
   -DVCPKG_MANIFEST_DIR="$MANIFEST_DIR"
   -DVCPKG_INSTALLED_DIR="$BUILD_DIR/vcpkg_installed")
+if [[ $ENABLE_RSPDUO == ON ]]; then
+  cmake_args+=("-DBLAH2_SDRPLAY_INCLUDE_DIR=$SDRPLAY_INCLUDE_DIR"
+    "-DBLAH2_SDRPLAY_LIBRARY=$SDRPLAY_LIBRARY")
+fi
 if [[ $GPU != OFF ]]; then cmake_args+=("-DVKFFT_ROOT=$DEPS_DIR/VkFFT"); fi
 run "${cmake_args[@]}"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
@@ -203,8 +237,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nbackend=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$BACKEND" "$GPU" "$build_os_id" "$build_os_version" "$(uname -m)" \
+  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$GPU" "$build_os_id" "$build_os_version" "$(uname -m)" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

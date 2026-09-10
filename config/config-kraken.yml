@@ -9,6 +9,7 @@ capture:
     heimdall:
       host: "127.0.0.1"
       port: 8091
+      control_port: 8092
     # Must match the number of channels streamed by the Suite.
     channel_count: 5
     reference_channel: 0
@@ -19,6 +20,7 @@ capture:
     state: false
     loop: false
     file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
 
 process:
   performance:

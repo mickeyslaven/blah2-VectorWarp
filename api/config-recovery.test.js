@@ -26,6 +26,14 @@ function request(port, url) {
   let child;
   const conflict = net.createServer();
   try {
+    for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml',
+      'config-kraken.yml']) {
+      const shipped = readConfig(path.join(__dirname, '..', 'config', name));
+      assert.deepEqual(shipped.suppliedDefaults, [],
+        `${name} omits required defaults: ${shipped.suppliedDefaults.join(', ')}`);
+      if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
+        `${name} should be a complete first-run example`);
+    }
     const missing = readConfig(file);
     assert.equal(missing.setupRequired, true);
     assert.equal(writable(file), true);

@@ -10,14 +10,14 @@ Build as a normal user. Ubuntu 24.04 and Debian 13 need:
 
 ```bash
 sudo apt update
-sudo apt install build-essential cmake git curl tar zip unzip pkg-config \
+sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config \
   libfftw3-dev libarmadillo-dev
 ```
 
 Fedora needs:
 
 ```bash
-sudo dnf install gcc-c++ cmake make git curl tar zip unzip pkgconf-pkg-config \
+sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config \
   fftw-devel armadillo-devel
 ```
 
@@ -53,7 +53,13 @@ or Debian, or `vulkan-loader-devel glslang-devel vulkan-tools` on Fedora. GPU dr
 the operating system/vendor's responsibility. See [GPU acceleration](GPU_ACCELERATION.md)
 for behavior and fallback.
 
-## All receiver SDK build
+## Other receiver builds
+
+Select `--backend rspduo`, `--backend usrp` or `--backend hackrf` to include
+one receiver SDK without installing the other vendors' SDKs. Each artifact also
+supports Kraken and recording replay. The installer reports the exact compiled
+live receivers to the browser; installing a driver alone does not add a backend
+to an existing artifact.
 
 The source-only all-backend artifact includes RSPduo, USRP, dual HackRF and
 Kraken after their SDKs are installed:

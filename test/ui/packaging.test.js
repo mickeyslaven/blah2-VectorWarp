@@ -16,6 +16,11 @@ const debPostinst = read('packaging/deb/postinst');
 const rpmSpec = read('packaging/rpm/vectorwarp.spec.in');
 const nodePin = read('packaging/node-runtime.env');
 
+const receiverBuildCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});
+assert.equal(receiverBuildCheck.status, 0,
+  `receiver build/install contract: ${receiverBuildCheck.stdout}${receiverBuildCheck.stderr}`);
+
 // Matrix jobs must not upload immutable artifacts under the same name.
 assert.ok(read('.github/workflows/ci.yml').includes(
   'name: upstream-diff-${{ matrix.runner }}-${{ github.sha }}'
@@ -43,6 +48,9 @@ assert.match(packageScript, /artifact was not built natively on this exact distr
 assert.match(packageScript, /dpkg-shlibdeps/);
 assert.match(packageScript, /rpmbuild/);
 assert.match(packageScript, /dpkg-deb --build --root-owner-group/);
+assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Package/);
+assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Version/);
+assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Architecture/);
 assert.match(packageScript, /rpm -qp --qf/);
 assert.match(packageScript, /install-native\.sh.*--artifact.*--destdir/s);
 assert.match(packageScript, /visudo -cf/);
@@ -127,6 +135,8 @@ assert.match(nodePin, /^NODE_ARM64_SHA256=[0-9a-f]{64}$/m);
 assert.match(buildScript, /build_os_id=/);
 assert.match(buildScript, /build_os_version=/);
 assert.match(buildScript, /build_arch=/);
+assert.match(buildScript, /for command in .*ninja/);
+assert.match(buildScript, /env CMAKE_POLICY_VERSION_MINIMUM=3\.5/);
 assert.match(buildScript, /licenses\/VkFFT\.txt/);
 assert.match(buildScript, /find .*api.*-name '\*\.test\.js' -delete/);
 assert.match(buildScript, /UI_CONFIG_REVIEW\.md/);

@@ -11,6 +11,7 @@ capture:
     state: false
     loop: false
     file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
 
 process:
   data:

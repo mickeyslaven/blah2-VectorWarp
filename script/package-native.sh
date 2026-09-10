@@ -226,8 +226,8 @@ if [[ $FORMAT == deb ]]; then
   install -m 0755 "$SOURCE_DIR/packaging/deb/postrm" "$CONTROL/postrm"
   ASSET="vectorwarp_${VERSION}-${PACKAGE_RELEASE}_${DISTRO}_${DEB_ARCH}.deb"
   dpkg-deb --build --root-owner-group "$STAGE" "$WORK_DIR/$ASSET"
-  deb_identity=$(dpkg-deb -f "$WORK_DIR/$ASSET" Package Version Architecture | tr '\n' ' ')
-  [[ $deb_identity == "vectorwarp $VERSION-$PACKAGE_RELEASE $DEB_ARCH " ]] ||
+  deb_identity="$(dpkg-deb -f "$WORK_DIR/$ASSET" Package) $(dpkg-deb -f "$WORK_DIR/$ASSET" Version) $(dpkg-deb -f "$WORK_DIR/$ASSET" Architecture)"
+  [[ $deb_identity == "vectorwarp $VERSION-$PACKAGE_RELEASE $DEB_ARCH" ]] ||
     die "Debian package identity mismatch: $deb_identity"
   MANIFEST_RELEASE=$PACKAGE_RELEASE
 else

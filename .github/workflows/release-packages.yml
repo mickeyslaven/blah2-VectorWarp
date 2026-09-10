@@ -174,8 +174,8 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential ca-certificates cmake curl dpkg-dev file git pkg-config sudo tar unzip util-linux xz-utils zip \
-            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev
+            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
           sha_var="NODE_SHA_${NODE_ARCH^^}"
           node_sha=${!sha_var}
           archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
@@ -206,8 +206,8 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install --yes --no-install-recommends \
-                build-essential ca-certificates cmake curl dpkg-dev file git pkg-config sudo tar unzip util-linux xz-utils zip \
-                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev
+                build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -234,7 +234,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
             bash -euo pipefail -c '
-              dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git pkgconf-pkg-config sudo tar unzip util-linux xz zip \
+              dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"

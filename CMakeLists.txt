@@ -8,6 +8,18 @@ include(CMakePrintHelpers)
 include(CTest)
 
 option(BLAH2_KRAKEN_ONLY "Build only the Kraken capture backend" OFF)
+# Keep the historical CMake behavior unless a caller explicitly selects the
+# individual live backends. Kraken remains the always-available baseline.
+set(BLAH2_OPTIONAL_RECEIVER_DEFAULT ON)
+if(BLAH2_KRAKEN_ONLY)
+  set(BLAH2_OPTIONAL_RECEIVER_DEFAULT OFF)
+endif()
+option(BLAH2_ENABLE_RSPDUO "Build the SDRplay RSPduo live capture backend"
+  ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
+option(BLAH2_ENABLE_USRP "Build the Ettus USRP live capture backend"
+  ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
+option(BLAH2_ENABLE_HACKRF "Build the HackRF live capture backend"
+  ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
 
@@ -28,9 +40,14 @@ if(BUILD_TESTING)
   find_package(Catch2 3 CONFIG REQUIRED)
 endif()
 
-if(NOT BLAH2_KRAKEN_ONLY)
+if(BLAH2_ENABLE_USRP)
   set(CMAKE_PREFIX_PATH "/opt/uhd" ${CMAKE_PREFIX_PATH})
   find_package(UHD "4.8.0.0" CONFIG REQUIRED)
+endif()
+
+if(BLAH2_ENABLE_HACKRF)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(HACKRF REQUIRED IMPORTED_TARGET libhackrf)
 endif()
 
 set(PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
@@ -47,15 +64,26 @@ message("Binary test path: ${PROJECT_BINARY_TEST_DIR}")
 
 # include from top-level src dir
 include_directories(src)
-if(NOT BLAH2_KRAKEN_ONLY)
+if(BLAH2_ENABLE_USRP)
   include_directories(${UHD_INCLUDE_DIRS})
 endif()
 
 # TODO: create FindSdrplay.cmake for this
-if(NOT BLAH2_KRAKEN_ONLY)
-  add_library(sdrplay /usr/local/include/sdrplay_api.h)
-  set_target_properties(sdrplay PROPERTIES LINKER_LANGUAGE C)
-  target_link_libraries(sdrplay PUBLIC /usr/local/lib/libsdrplay_api.so.3.15)
+if(BLAH2_ENABLE_RSPDUO)
+  set(BLAH2_SDRPLAY_INCLUDE_DIR "/usr/local/include" CACHE PATH
+    "Directory containing sdrplay_api.h")
+  set(BLAH2_SDRPLAY_LIBRARY "/usr/local/lib/libsdrplay_api.so.3.15" CACHE FILEPATH
+    "SDRplay API 3.15 shared library")
+  if(NOT EXISTS "${BLAH2_SDRPLAY_INCLUDE_DIR}/sdrplay_api.h")
+    message(FATAL_ERROR "SDRplay header not found: ${BLAH2_SDRPLAY_INCLUDE_DIR}/sdrplay_api.h")
+  endif()
+  if(NOT EXISTS "${BLAH2_SDRPLAY_LIBRARY}")
+    message(FATAL_ERROR "SDRplay library not found: ${BLAH2_SDRPLAY_LIBRARY}")
+  endif()
+  add_library(blah2Sdrplay UNKNOWN IMPORTED)
+  set_target_properties(blah2Sdrplay PROPERTIES
+    IMPORTED_LOCATION "${BLAH2_SDRPLAY_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${BLAH2_SDRPLAY_INCLUDE_DIR}")
 endif()
 
 set(BLAH2_CAPTURE_SOURCES
@@ -63,17 +91,17 @@ set(BLAH2_CAPTURE_SOURCES
   src/capture/kraken/HeimdallFrame.cpp
 )
 set(BLAH2_CAPTURE_LIBRARIES)
-if(NOT BLAH2_KRAKEN_ONLY)
-  list(APPEND BLAH2_CAPTURE_SOURCES
-    src/capture/rspduo/RspDuo.cpp
-    src/capture/usrp/Usrp.cpp
-    src/capture/hackrf/HackRf.cpp
-  )
-  list(APPEND BLAH2_CAPTURE_LIBRARIES
-    ${UHD_LIBRARIES}
-    sdrplay
-    hackrf
-  )
+if(BLAH2_ENABLE_RSPDUO)
+  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/rspduo/RspDuo.cpp)
+  list(APPEND BLAH2_CAPTURE_LIBRARIES blah2Sdrplay)
+endif()
+if(BLAH2_ENABLE_USRP)
+  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/usrp/Usrp.cpp)
+  list(APPEND BLAH2_CAPTURE_LIBRARIES ${UHD_LIBRARIES})
+endif()
+if(BLAH2_ENABLE_HACKRF)
+  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/hackrf/HackRf.cpp)
+  list(APPEND BLAH2_CAPTURE_LIBRARIES PkgConfig::HACKRF)
 endif()
 
 # TODO: Move to separate src/CMakeLists.txt
@@ -125,8 +153,18 @@ endif()
 if(BUILD_TESTING)
   include(cmake/RecordingTests.cmake)
 endif()
-if(BLAH2_KRAKEN_ONLY)
+if(BLAH2_KRAKEN_ONLY AND NOT BLAH2_ENABLE_RSPDUO AND
+    NOT BLAH2_ENABLE_USRP AND NOT BLAH2_ENABLE_HACKRF)
   target_compile_definitions(blah2 PRIVATE BLAH2_KRAKEN_ONLY=1)
+endif()
+if(BLAH2_ENABLE_RSPDUO)
+  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_RSPDUO=1)
+endif()
+if(BLAH2_ENABLE_USRP)
+  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_USRP=1)
+endif()
+if(BLAH2_ENABLE_HACKRF)
+  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_HACKRF=1)
 endif()
 
 include(cmake/GpuAcceleration.cmake)

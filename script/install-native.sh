@@ -61,14 +61,64 @@ for file in .vectorwarp-build bin/blah2 api/server.js html/index.html config-exa
   [[ -e $ARTIFACT/$file ]] || die "artifact is incomplete: $file"
 done
 [[ -x $ARTIFACT/bin/blah2 ]] || die 'artifact processor is not executable'
-build_id=$(sed -n 's/^build_id=//p' "$ARTIFACT/.vectorwarp-build")
+read_manifest_field() {
+  local field=$1 output=$2 count value
+  count=$(grep -c "^${field}=" "$ARTIFACT/.vectorwarp-build" || true)
+  [[ $count == 1 ]] || die "artifact manifest must contain exactly one $field"
+  value=$(sed -n "s/^${field}=//p" "$ARTIFACT/.vectorwarp-build")
+  printf -v "$output" '%s' "$value"
+}
+
+read_manifest_field build_id build_id
 [[ $build_id =~ ^[A-Za-z0-9._:-]+$ ]] || die 'artifact has an invalid build_id'
-backend=$(sed -n 's/^backend=//p' "$ARTIFACT/.vectorwarp-build")
+read_manifest_field backend backend
 case "$backend" in
-  kraken) RECEIVER_TYPES=Kraken; initial_config=config-kraken.yml ;;
-  all) RECEIVER_TYPES=RspDuo,Usrp,HackRF,Kraken; initial_config=config.yml ;;
+  kraken) expected_receivers=Kraken; initial_config=config-kraken.yml ;;
+  rspduo) expected_receivers=RspDuo,Kraken; initial_config=config.yml ;;
+  usrp) expected_receivers=Usrp,Kraken; initial_config=config-usrp.yml ;;
+  hackrf) expected_receivers=HackRF,Kraken; initial_config=config-hackrf.yml ;;
+  all) expected_receivers=RspDuo,Usrp,HackRF,Kraken; initial_config=config.yml ;;
   *) die 'artifact has an invalid backend' ;;
 esac
+
+# New artifacts state their exact live receiver set. Accept the two historical
+# backend manifests without this field, but never infer or pass through unknown
+# receiver names from a manifest that does provide it.
+compiled_count=$(grep -c '^compiled_receivers=' "$ARTIFACT/.vectorwarp-build" || true)
+((compiled_count <= 1)) || die 'artifact manifest has duplicate compiled_receivers fields'
+if ((compiled_count == 0)); then
+  [[ $backend == kraken || $backend == all ]] ||
+    die 'selected-backend artifact lacks compiled_receivers'
+  RECEIVER_TYPES=$expected_receivers
+else
+  read_manifest_field compiled_receivers compiled_receivers
+  [[ $compiled_receivers =~ ^(RspDuo|Usrp|HackRF|Kraken)(,(RspDuo|Usrp|HackRF|Kraken))*$ ]] ||
+    die 'artifact has an invalid compiled_receivers list'
+  seen_rspduo=false; seen_usrp=false; seen_hackrf=false; seen_kraken=false
+  IFS=, read -r -a receiver_items <<<"$compiled_receivers"
+  for receiver in "${receiver_items[@]}"; do
+    case "$receiver" in
+      RspDuo) $seen_rspduo && die 'artifact has duplicate compiled receiver RspDuo'; seen_rspduo=true ;;
+      Usrp) $seen_usrp && die 'artifact has duplicate compiled receiver Usrp'; seen_usrp=true ;;
+      HackRF) $seen_hackrf && die 'artifact has duplicate compiled receiver HackRF'; seen_hackrf=true ;;
+      Kraken) $seen_kraken && die 'artifact has duplicate compiled receiver Kraken'; seen_kraken=true ;;
+      *) die 'artifact has an unknown compiled receiver' ;;
+    esac
+  done
+  RECEIVER_TYPES=
+  for receiver in RspDuo Usrp HackRF Kraken; do
+    case "$receiver" in
+      RspDuo) present=$seen_rspduo ;; Usrp) present=$seen_usrp ;;
+      HackRF) present=$seen_hackrf ;; Kraken) present=$seen_kraken ;;
+    esac
+    if $present; then
+      [[ -z $RECEIVER_TYPES ]] || RECEIVER_TYPES+=,
+      RECEIVER_TYPES+=$receiver
+    fi
+  done
+  [[ $RECEIVER_TYPES == "$expected_receivers" ]] ||
+    die 'artifact backend and compiled_receivers disagree'
+fi
 
 if $WITH_SYSTEMD; then
   [[ -f $ARTIFACT/config-examples/$initial_config ]] || die "artifact lacks $initial_config"

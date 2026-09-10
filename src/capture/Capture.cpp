@@ -1,7 +1,11 @@
 #include "Capture.h"
-#ifndef BLAH2_KRAKEN_ONLY
+#ifdef BLAH2_ENABLE_RSPDUO
 #include "rspduo/RspDuo.h"
+#endif
+#ifdef BLAH2_ENABLE_USRP
 #include "usrp/Usrp.h"
+#endif
+#ifdef BLAH2_ENABLE_HACKRF
 #include "hackrf/HackRf.h"
 #endif
 #include "kraken/Kraken.h"
@@ -176,7 +180,7 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type,
     }
 
     // SDRplay RSPduo
-#ifndef BLAH2_KRAKEN_ONLY
+#ifdef BLAH2_ENABLE_RSPDUO
     if (type == VALID_TYPE[0])
     {
         int agcSetPoint, bandwidthNumber, gainReductionA, gainReductionB, lnaState;
@@ -192,8 +196,10 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type,
           agcSetPoint, bandwidthNumber, gainReductionA, gainReductionB, lnaState,
           dabNotch, rfNotch);
     }
+#endif
     // Usrp
-    else if (type == VALID_TYPE[1])
+#ifdef BLAH2_ENABLE_USRP
+    if (type == VALID_TYPE[1])
     {
         std::string address, subdev;
         std::vector<std::string> antenna;
@@ -213,8 +219,10 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type,
         return std::make_unique<Usrp>(type, fc, fs, path, &saveIq, 
           address, subdev, antenna, gain);
     }
+#endif
     // HackRF
-    else if (type == VALID_TYPE[2])
+#ifdef BLAH2_ENABLE_HACKRF
+    if (type == VALID_TYPE[2])
     {
       std::vector<std::string> serial;
       std::vector<uint32_t> gainLna, gainVga;
