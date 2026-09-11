@@ -21,7 +21,7 @@ Fedora:
 
 ```bash
 sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config \
-  fftw-devel armadillo-devel uhd-devel boost-devel libhackrf-devel libusb1-devel
+  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel
 ```
 
 Boost headers are required by UHD's public API, and HackRF's `pkg-config`

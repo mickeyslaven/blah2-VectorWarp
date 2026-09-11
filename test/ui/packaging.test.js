@@ -100,7 +100,8 @@ assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
 const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
 const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
-const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\blibhackrf-devel\b/.test(line));
+const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
+assert.doesNotMatch(releaseWorkflow, /\blibhackrf-devel\b/, 'Fedora calls its SDK package hackrf-devel');
 assert.equal(debHackrfInstalls.length, 3, 'Verifier and both Debian-family package paths need the complete SDK');
 assert.equal(rpmHackrfInstalls.length, 1, 'The Fedora package path needs the complete SDK');
 for (const command of debHackrfInstalls) {
@@ -117,7 +118,8 @@ for (const command of rpmHackrfInstalls) {
 const sourceSetup = read('docs/SETUP.md').replace(/\\\n\s*/g, ' ');
 assert.match(sourceSetup, /sudo apt install[^\n]*\blibuhd-dev\b[^\n]*\blibboost-dev\b[^\n]*\blibhackrf-dev\b[^\n]*\blibusb-1\.0-0-dev\b/,
   'The source quickstart must include both SDK header dependencies');
-assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\blibhackrf-devel\b[^\n]*\blibusb1-devel\b/);
+assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\bhackrf-devel\b[^\n]*\blibusb1-devel\b/);
+assert.doesNotMatch(sourceSetup, /\blibhackrf-devel\b/);
 assert.equal((releaseWorkflow.match(/bash script\/smoke-native-package\.sh/g) || []).length, 3,
   'the Ubuntu 24, Ubuntu 22/26, and Fedora target groups must smoke every native package');
 function matrixEntries(workflow) {
