@@ -27,23 +27,23 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ('200 ms processing deadline', '147.5 ms on CPU',
-                         '138.7 ms on GPU', '238.8 ms on CPU', '162.3 ms on GPU',
-                         '32% less processing time', '76.1 ms on CPU', '62.0 ms on GPU',
-                         '19% less processing time', '256 delay bins', '±800 Hz',
-                         'Regular blah2 cannot safely process this configuration',
-                         'Ryzen AI Max+ 395', 'eight CPU cores', '2.4 MS/s',
-                         '27 steady frames', 'RTX 4050 Laptop', 'four CPU cores',
-                         'same IQ and settings', 'two repeats',
-                         'sample-clock-paced DSP replay', 'LIVE_CAPACITY_20260910.md'):
+        for required in ('Matched 200 ms processing workloads', '240.1 ms',
+                         '239.5 ms', '127.8 ms', '308.1 ms', '303.2 ms',
+                         '174.6 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
+                         'Same recorded IQ at its original rate', 'Same CPU budget',
+                         '23 of 24', 'Periodic accuracy checks',
+                         'clutter FFT/filtering', 'small FP64 coefficient solve',
+                         'cannot safely represent the requested geometry',
+                         'NVIDIA, AMD and Intel GPU checks',
+                         'GPU_BENCHMARK_20260911.md'):
             self.assertIn(required, page)
 
         # The front page selects examples; the linked report must keep the
         # full comparison, including slower configurations and test boundaries.
-        report = (ROOT / 'docs/LIVE_CAPACITY_20260910.md').read_text()
-        for required in ('427.68', '27/27', 'not endurance tests',
-                         'No live\nupstream executable was run',
-                         'full output equivalence is\nnot claimed'):
+        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
+        for required in ('240.118', '127.770', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
+                         '1e-4', 'not a live radar or\nendurance test',
+                         'not bit-exact outputs'):
             self.assertIn(required, report)
 
     def test_page_has_accessible_layout_and_current_repository(self):

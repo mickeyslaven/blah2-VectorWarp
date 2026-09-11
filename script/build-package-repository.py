@@ -71,26 +71,24 @@ and browser controls for live displays, settings, recording and replay.</p>
 </section>
 <section class="panel" aria-labelledby="results">
 <h2 id="results">Faster than regular blah2</h2>
-<p>Same recorded signal. Same settings. Same CPU allocation on each machine.</p>
+<p>Same recorded IQ at its original rate. Same CPU budget on each host.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Regular blah2 and VectorWarp processing comparison">
-<table><caption>200 ms processing deadline, ±800 Hz Doppler</caption>
-<thead><tr><th scope="col">Hardware</th><th scope="col">Regular blah2</th><th scope="col">VectorWarp</th></tr></thead>
+<table><caption>Matched 200 ms processing workloads; lower is better</caption>
+<thead><tr><th scope="col">Hardware and workload</th><th scope="col">Regular blah2 CPU</th><th scope="col">VectorWarp CPU</th><th scope="col">VectorWarp GPU</th></tr></thead>
 <tbody>
-<tr><th scope="row">RTX 4050 Laptop</th><td>238.8 ms on CPU</td><td>162.3 ms on GPU — 32% less processing time</td></tr>
-<tr><th scope="row">Ryzen AI Max+ 395 / Radeon 8060S</th><td>76.1 ms on CPU</td><td>62.0 ms on GPU — 19% less processing time</td></tr>
+<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>240.1 ms</td><td>239.5 ms</td><td>127.8 ms</td></tr>
+<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>308.1 ms</td><td>303.2 ms</td><td>174.6 ms</td></tr>
 </tbody></table></div>
-<p>On the RTX 4050, VectorWarp GPU met all <strong>34 steady-frame deadlines</strong>;
-regular blah2 missed 33.</p>
-<p class="scope">Measured DSP means: same IQ and settings, two repeats of
-sample-clock-paced DSP replay; four CPU cores on the laptop, eight CPU cores on the Ryzen system.</p>
+<p>On the RTX 4050 workload, regular blah2 missed 23 of 24 measured intervals;
+VectorWarp GPU missed 2. Periodic accuracy checks can still overrun an interval.</p>
+<p class="scope">GPU acceleration covers clutter FFT/filtering and delay–Doppler work;
+the small FP64 coefficient solve and other radar stages remain on CPU.</p>
 <h2>More radar per frame</h2>
-<p><strong>Five-channel live radar at 147.5 ms on CPU.</strong> Synthesized reference
-and five surveillance maps within a 200 ms frame, beyond regular blah2's two-channel path.</p>
-<p><strong>Live ±4000 Hz at 138.7 ms on GPU.</strong> Within a 200 ms frame, at
-2.4 MS/s with 256 delay bins. <strong>Regular blah2 cannot safely process this configuration.</strong></p>
-<p class="scope">Live examples: Ryzen AI Max+ 395 / Radeon 8060S, eight CPU cores,
-2.4 MS/s; means over 27 steady frames. The five-channel example uses CPU at ±800 Hz.</p>
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Full configurations, results and methodology →</a>
+<p>VectorWarp also completes wider and five-channel configurations where regular
+blah2 has no equivalent mode or cannot safely represent the requested geometry.</p>
+<p class="scope">Physical NVIDIA, AMD and Intel GPU checks compare complex maps to a
+CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
