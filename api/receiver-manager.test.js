@@ -134,6 +134,30 @@ async function expectReject(promise, pattern) {
   assert.equal(runtimeMissing.plan({receiverType: 'RspDuo'}, runtimeMissingDiscovery).actions
     .find(item => item.id === 'backend').execution, 'runtime-unavailable');
 
+  for (const cacheState of ['unknown', 'missing']) for (const serviceState of ['running', 'stopped']) {
+    const localSdk = createReceiverManager({probes: {
+      usbInventory: async () => [],
+      dependencyInventory: async () => ({RspDuo: {state: cacheState}}),
+      nativeReceiverStatus: async () => ({
+        Kraken: {builtIn: true, compiled: true, moduleLoadable: true, error: ''},
+        RspDuo: {builtIn: false, compiled: true, moduleLoadable: true, error: ''},
+        Usrp: {builtIn: false, compiled: false, moduleLoadable: false, error: 'Not built.'},
+        HackRF: {builtIn: false, compiled: false, moduleLoadable: false, error: 'Not built.'}
+      }),
+      serviceStatus: async () => ({state: serviceState})
+    }});
+    const discovery = await localSdk.discover({config: {capture: {device: {type: 'RspDuo'}}},
+      compiledLiveTypes: []});
+    const receiver = discovery.receivers.find(item => item.type === 'RspDuo');
+    assert.equal(receiver.dependencies.state, 'installed', 'Native loadability overrides an incomplete linker cache');
+    assert.equal(receiver.capabilities.possible, true);
+    assert.equal(receiver.capabilities.detected, false, 'An SDK is not a detected receiver');
+    assert.equal(receiver.managedService.state, serviceState, 'Loadability does not prove the vendor service is running');
+    const plan = localSdk.plan({receiverType: 'RspDuo'}, discovery);
+    assert.equal(plan.actions.find(item => item.id === 'dependency').status, 'not-required');
+    assert.ok(!plan.errors.some(item => item.code === 'LICENSE_ACCEPTANCE_REQUIRED'));
+  }
+
   let remoteServiceCalled = false;
   const remoteManager = createReceiverManager({timeoutMs: 100, probes: {
     usbInventory: async () => [], dependencyInventory: async () => ({}),

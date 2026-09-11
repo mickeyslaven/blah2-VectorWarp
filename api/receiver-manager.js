@@ -574,6 +574,13 @@ function createReceiverManager(options = {}) {
       // a conservative fallback while upgrading installations.
       const liveCompiled = native ? native.compiled : request.compiledLiveTypes.has(type);
       const runtimeLoadable = native ? native.moduleLoadable : null;
+      // Successful loading resolves the adapter's actual SDK dependencies. A
+      // local licensed SDRplay API need not appear in ldconfig's cache; this
+      // evidence establishes software presence, never a device or running API.
+      if (type !== 'Kraken' && liveCompiled && runtimeLoadable === true &&
+          dependency.state !== 'installed')
+        dependency = {state: 'installed', installed: [DEFINITIONS[type].dependency],
+          missing: [], unknown: []};
       const possible = liveCompiled && runtimeLoadable !== false && dependency.state !== 'missing';
       const serviceId = DEFINITIONS[type].service;
       const service = serviceId ? {

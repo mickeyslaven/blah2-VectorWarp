@@ -17,9 +17,12 @@ is selected following an adapter failure.
 - Core/main have no vendor SDK dependency. Modules use only fixed executable-
   adjacent paths, `RTLD_LOCAL|RTLD_NOW`, factory ABI1 and a compiler/interface-
   fingerprint check. This is a private same-package ABI, not a user plugin API.
-- Main/common/module runtime paths are `$ORIGIN`; RSPduo additionally searches
-  `/usr/local/lib`, the standard local vendor installation directory. Temporary
-  build-SDK paths must never remain in published binaries.
+- Main/common/module runtime paths are `$ORIGIN` only. If an RSPduo module cannot
+  load normally, its loader can open only the exact root-owned, non-group/world-
+  writable regular file `/usr/local/lib/libsdrplay_api.so.3.15`; symlinks and
+  special files are refused. The checked inode and SDK handle stay bound through
+  adapter destruction. No environment path, global loader configuration or
+  temporary build-SDK path is added to published binaries.
 - The module handle outlives the derived deleting destructor. No proxy Source is
   used: shared recording state and IQ buffers remain the actual capture object.
 

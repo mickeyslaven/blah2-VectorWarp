@@ -1,4 +1,5 @@
 #include "ReceiverLoader.h"
+#include "ReceiverLibrary.h"
 #include "ReceiverCohort.h"
 #include <array>
 #include <cstring>
@@ -44,14 +45,18 @@ LoadedModule open_module(const ModuleSpec& module) {
     throw std::runtime_error(std::string(module.receiver) +
       " adapter was not compiled into this build. Install the unified VectorWarp package or build with this adapter enabled.");
   const auto path = executable_directory() + "/" + module.filename;
-  void* handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!handle) {
-    const char* detail = dlerror();
+  // Fedora does not put the vendor's standard /usr/local/lib installation in
+  // its loader cache. No configurable path, environment search or sibling SDK
+  // preload is permitted; only this exact root-owned SDK file is a fallback.
+  auto library = open_receiver_library(path, std::strcmp(module.receiver, "RspDuo") == 0 ?
+    "/usr/local/lib/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3");
+  if (!library.handle) {
     throw std::runtime_error(std::string(module.receiver) +
-      " adapter could not load: " + (detail ? detail : "unknown loader error") +
+      " adapter could not load: " + library.error +
       ". " + module.remedy + " No other receiver was selected.");
   }
-  LoadedModule loaded{std::shared_ptr<void>(handle, [](void* value) { dlclose(value); }), nullptr};
+  void* handle = library.handle.get();
+  LoadedModule loaded{std::move(library.handle), nullptr};
   dlerror();
   auto entry = reinterpret_cast<Blah2ReceiverEntry>(dlsym(handle, "blah2_receiver_api_v1"));
   const char* symbolError = dlerror();

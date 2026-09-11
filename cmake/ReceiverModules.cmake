@@ -56,10 +56,8 @@ endif()
 if(BLAH2_ENABLE_RSPDUO)
   blah2_add_receiver(blah2ReceiverRspduo rspduo BLAH2_MODULE_RSPDUO
     ${PROJECT_ROOT}/src/capture/rspduo/RspDuo.cpp blah2Sdrplay)
-  # Standard vendor installer uses /usr/local/lib. Never retain the temporary
-  # licensed build SDK path or copy its runtime into the application package.
-  set_target_properties(blah2ReceiverRspduo PROPERTIES
-    INSTALL_RPATH "$ORIGIN;/usr/local/lib")
+  # Vendor-local lookup is scoped to the RSPduo loader, not an absolute RUNPATH.
+  # Never retain a temporary SDK path or redistribute the licensed runtime.
 endif()
 
 if(BUILD_TESTING)

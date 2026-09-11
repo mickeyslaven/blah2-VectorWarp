@@ -43,6 +43,13 @@ assert.equal(sdkBuildCheck.status, 0,
 assert.match(packageScript, /all receiver adapters in one build/);
 assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
 assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
+const receiverModules = read('cmake/ReceiverModules.cmake');
+assert.doesNotMatch(receiverModules, /INSTALL_RPATH[^\n]*\/usr\/local\/lib/);
+assert.doesNotMatch(rpmSpec, /QA_RPATHS|__brp_check_rpaths/,
+  'Universal packages must retain the normal RPM RPATH checks');
+assert.match(read('src/capture/ReceiverLoader.cpp'),
+  /open_receiver_library\(path, std::strcmp\(module.receiver, "RspDuo"\) == 0 \?\s*"\/usr\/local\/lib\/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3"\)/,
+  'Only RSPduo may use the exact fixed vendor-library fallback');
 
 // Matrix jobs must not upload immutable artifacts under the same name.
 assert.ok(read('.github/workflows/ci.yml').includes(

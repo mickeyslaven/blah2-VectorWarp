@@ -16,6 +16,7 @@ set_target_properties(testReceiverModule PROPERTIES BUILD_WITH_INSTALL_RPATH TRU
   INSTALL_RPATH "$ORIGIN" RUNTIME_OUTPUT_DIRECTORY "${receiver_fixture_dir}")
 add_library(receiverFixtureRuntime SHARED ${PROJECT_ROOT}/test/capture/ReceiverModuleRuntimeFake.cpp)
 set_target_properties(receiverFixtureRuntime PROPERTIES OUTPUT_NAME receiver-fixture-runtime
+  VERSION 3.15 SOVERSION 3
   LIBRARY_OUTPUT_DIRECTORY "${receiver_fixture_dir}")
 foreach(fixture valid badAbi badCohort hackrf createError missingRuntime)
   add_library(receiverFixture_${fixture} MODULE ${PROJECT_ROOT}/test/capture/ReceiverModuleFake.cpp)
