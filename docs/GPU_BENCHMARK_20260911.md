@@ -16,15 +16,15 @@ CPIs for that row; misses are steady CPI deadlines.
 
 | Host and two-channel workload | CPI | Regular blah2 mean / p95 / misses | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses |
 | --- | ---: | --- | --- | --- |
-| Strix, ±800 Hz | 200 ms | 79.775 / 83.396 / 0/24 | 79.669 / 82.014 / 0/24 | **39.915 / 82.630 / 0/24** |
-| Strix, ±2400 Hz | 200 ms | 137.802 / 140.530 / 0/24 | 135.374 / 142.546 / 0/24 | **77.268 / 137.339 / 0/24** |
-| Strix, ±800 Hz | 100 ms | 43.126 / 45.590 / 0/24 | 41.538 / 43.610 / 0/24 | **22.439 / 42.416 / 0/24** |
-| RTX 4050 Laptop, ±800 Hz | 200 ms | 218.679 / 234.160 / 23/24 | 210.487 / 223.833 / 23/24 | **109.153 / 232.294 / 2/24** |
-| RTX 4050 Laptop, ±2400 Hz | 200 ms | 345.106 / 377.519 / 24/24 | 337.309 / 371.747 / 24/24 | **236.549 / 454.478 / 23/24** |
-| Pavilion Intel HD 630, ±800 Hz | 200 ms | 204.727 / 208.260 / 24/24 | 204.131 / 206.111 / 24/24 | **115.533 / 236.249 / 2/24** |
-| Pavilion AMD Polaris 12, ±800 Hz | 200 ms | 204.727 / 208.260 / 24/24 | 204.131 / 206.111 / 24/24 | **106.998 / 228.246 / 2/24** |
-| Pavilion Intel HD 630, ±2400 Hz | 200 ms | 309.947 / 329.557 / 24/24 | 301.840 / 308.012 / 24/24 | **179.449 / 324.859 / 2/24** |
-| Pavilion AMD Polaris 12, ±2400 Hz | 200 ms | 309.947 / 329.557 / 24/24 | 301.840 / 308.012 / 24/24 | **174.882 / 320.329 / 2/24** |
+| Strix, ±800 Hz | 200 ms | 80.526 / 83.511 / 0/24 | 79.557 / 83.755 / 0/24 | **38.539 / 43.526 / 0/24** |
+| Strix, ±2400 Hz | 200 ms | 135.308 / 140.326 / 0/24 | 132.219 / 139.336 / 0/24 | **70.458 / 73.149 / 0/24** |
+| Strix, ±800 Hz | 100 ms | 42.591 / 44.801 / 0/24 | 42.499 / 46.006 / 0/24 | **23.257 / 25.507 / 0/24** |
+| RTX 4050 Laptop, ±800 Hz | 200 ms | 225.574 / 261.179 / 23/24 | 220.020 / 241.017 / 22/24 | **112.968 / 146.959 / 0/24** |
+| RTX 4050 Laptop, ±2400 Hz | 200 ms | 338.925 / 370.456 / 24/24 | 334.922 / 384.891 / 24/24 | **211.915 / 236.245 / 22/24** |
+| Pavilion Intel HD 630, ±800 Hz | 200 ms | 205.172 / 207.411 / 24/24 | 204.815 / 208.980 / 24/24 | **101.340 / 105.986 / 0/24** |
+| Pavilion AMD Polaris 12, ±800 Hz | 200 ms | 205.172 / 207.411 / 24/24 | 204.815 / 208.980 / 24/24 | **94.841 / 101.504 / 0/24** |
+| Pavilion Intel HD 630, ±2400 Hz | 200 ms | 310.520 / 332.024 / 24/24 | 303.218 / 306.132 / 24/24 | **165.852 / 171.800 / 0/24** |
+| Pavilion AMD Polaris 12, ±2400 Hz | 200 ms | 310.520 / 332.024 / 24/24 | 303.218 / 306.132 / 24/24 | **157.501 / 158.585 / 0/24** |
 
 ## Strix capacity at the same full delay range
 
@@ -34,10 +34,10 @@ is unsafe or it has no equivalent five-channel array mode. They remain the same
 
 | Workload | CPI | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses |
 | --- | ---: | --- | --- |
-| Two-channel pair, ±4800 Hz | 200 ms | 231.237 / 234.783 / 24/24 | **127.858 / 227.881 / 2/24** |
-| Five-channel array, ±800 Hz | 200 ms | 175.428 / 179.069 / 0/24 | **98.963 / 200.895 / 2/24** |
-| Two-channel pair, ±4800 Hz | 1 s | 1192.768 / 1212.540 / 24/24 | **650.484 / 1185.861 / 2/24** |
-| Five-channel array, ±2400 Hz | 1 s | 1418.515 / 1442.808 / 24/24 | **807.401 / 1580.066 / 2/24** |
+| Two-channel pair, ±4800 Hz | 200 ms | 230.185 / 236.385 / 24/24 | **117.240 / 120.332 / 0/24** |
+| Five-channel array, ±800 Hz | 200 ms | 174.950 / 179.930 / 0/24 | **89.388 / 93.132 / 0/24** |
+| Two-channel pair, ±4800 Hz | 1 s | 1175.055 / 1190.119 / 24/24 | **587.160 / 592.492 / 0/24** |
+| Five-channel array, ±2400 Hz | 1 s | 1411.773 / 1439.856 / 24/24 | **714.872 / 726.324 / 0/24** |
 
 ## Older GPUs: same-range capacity
 
@@ -48,22 +48,26 @@ speedups.
 
 | Host and workload | CPI | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses | GPU delay–Doppler / clutter frames |
 | --- | ---: | --- | --- | --- |
-| RTX 4050 Laptop pair, ±4800 Hz | 200 ms | 533.311 / 598.044 / 24/24 | **361.641 / 604.565 / 24/24** | 22/24 / 24/24 |
-| RTX 4050 Laptop five-channel array, ±800 Hz | 200 ms | 550.953 / 577.119 / 24/24 | **326.723 / 607.102 / 24/24** | **16/24** / 24/24 |
-| Pavilion Intel HD 630 pair, ±4800 Hz | 200 ms | 482.085 / 486.700 / 24/24 | **284.123 / 496.815 / 24/24** | 22/24 / 24/24 |
-| Pavilion AMD Polaris 12 pair, ±4800 Hz | 200 ms | 482.085 / 486.700 / 24/24 | **279.698 / 494.282 / 24/24** | 22/24 / 24/24 |
-| Pavilion Intel HD 630 five-channel array, ±800 Hz | 200 ms | 568.039 / 582.264 / 24/24 | **322.726 / 686.567 / 24/24** | 22/24 / 24/24 |
-| Pavilion AMD Polaris 12 five-channel array, ±800 Hz | 200 ms | 568.039 / 582.264 / 24/24 | **285.875 / 642.224 / 24/24** | 22/24 / 24/24 |
+| RTX 4050 Laptop pair, ±4800 Hz | 200 ms | 513.808 / 574.362 / 24/24 | **336.965 / 360.754 / 24/24** | 24/24 / 24/24 |
+| RTX 4050 Laptop five-channel array, ±800 Hz | 200 ms | 594.061 / 623.846 / 24/24 | **264.195 / 298.467 / 24/24** | **17/24** / 24/24 |
+| Pavilion Intel HD 630 pair, ±4800 Hz | 200 ms | 481.153 / 492.768 / 24/24 | **262.696 / 269.221 / 24/24** | 24/24 / 24/24 |
+| Pavilion AMD Polaris 12 pair, ±4800 Hz | 200 ms | 481.153 / 492.768 / 24/24 | **258.156 / 265.001 / 24/24** | 24/24 / 24/24 |
+| Pavilion Intel HD 630 five-channel array, ±800 Hz | 200 ms | 564.084 / 573.625 / 24/24 | **281.021 / 289.367 / 24/24** | 22/24 / 24/24 |
+| Pavilion AMD Polaris 12 five-channel array, ±800 Hz | 200 ms | 564.084 / 573.625 / 24/24 | **246.557 / 248.690 / 24/24** | 24/24 / 24/24 |
 
-The NVIDIA array's Automatic mode used GPU clutter on all 24 steady CPIs but
-GPU delay–Doppler on 16/24; it is reported as measured, not as a fully GPU
-delay–Doppler result. The other Automatic GPU rows used 22 GPU delay–Doppler
-CPIs and two periodic CPU-oracle CPIs. Those oracle checks mean a low average
-does not guarantee that every interval completes on time.
+Every Automatic GPU row used GPU clutter on all 24 steady CPIs, with no CPU
+accuracy oracles. GPU delay–Doppler ran on 24/24 except the NVIDIA five-channel
+array (17/24) and Intel five-channel array (22/24). Their retained AUTO cost
+selection chose CPU ambiguity for the remaining frames; these are mixed-stage
+results, not fully GPU delay–Doppler results. Heavier workloads still miss CPI
+deadlines, as shown above; removing accuracy recomputation is not a universal
+real-time guarantee.
 
-## Native live processor
+## Earlier native live processor measurements
 
-Six short native runs used live Kraken input at 527 MHz and 2.4 MS/s on Strix
+These historical measurements used the version with recurring CPU accuracy
+checks. They were not rerun for the startup-only change. Six short native runs
+used live Kraken input at 527 MHz and 2.4 MS/s on Strix
 (eight physical CPUs, 800% CPU budget), with the same full 256-bin delay range.
 Pair rows process two channels selected from the five-channel receiver; only
 the array row processes all five channels. Each run has 40 frames with eight
@@ -94,18 +98,18 @@ changes. For the Strix two-channel, 200 ms, ±2400 Hz workload:
 
 | Processing stage | VectorWarp CPU | VectorWarp GPU mode |
 | --- | ---: | ---: |
-| Clutter filtering | 21.914 ms | 12.555 ms |
-| Delay–Doppler | 62.341 ms | 15.887 ms |
-| Complete pipeline | 135.374 ms | 77.268 ms |
+| Clutter filtering | 21.867 ms | 10.861 ms |
+| Delay–Doppler | 59.454 ms | 11.421 ms |
+| Complete pipeline | 132.219 ms | 70.458 ms |
 
-These averages include the periodic CPU accuracy checks. Shared inputs, batched
+These replay averages exclude startup qualification and contain no recurring
+CPU accuracy oracles. Shared inputs, batched
 GPU work and lower-copy transfers are implemented, but this campaign does not
 separately measure the contribution of each optimization.
 
 The remaining CPU work is worth investigating next: map JSON output averaged
-24.344 ms and detection 15.366 ms in that GPU profile. Reducing output conversion
-cost and checking whether accuracy verification can run without blocking the
-next frame are future optimization candidates, not demonstrated improvements.
+23.501 ms and detection 15.486 ms in that GPU profile. Reducing output conversion
+cost is a future optimization candidate, not a demonstrated improvement.
 The [wider-Doppler algorithm](FUTURE_WIDE_DOPPLER.md) is also deferred.
 
 ## Method, accuracy, and evidence
@@ -116,13 +120,21 @@ paced from the recording sample clock, not live RF or browser timing. The 82
 timed runs (41 paired groups, 1,640 complete CPIs) passed processing acceptance;
 all GPU complex maps were within `1e-4` of the CPU reference. That validates
 the tested maps, not bit-exact output or identical detection SNR.
+The benchmark's independent CPU comparisons remain enabled outside the timed
+pipeline. Production retains three initial and five composed-stage startup
+qualification frames, every-frame finite/precision/error/timeout protections,
+CPU fallback and sustained AUTO cost selection. It does not periodically
+recompute CPU clutter or complex maps on accepted steady GPU frames, or
+continuously revalidate later signal conditions against a full CPU reference.
 Each repeat consumes two seconds for a 100 ms CPI, four seconds for a 200 ms
 CPI, or twenty seconds for a one-second CPI. These short runs are not an
 endurance test.
 
-The campaign used the v8 source freeze
-`8ceb110d4b71854a653789696b17fd7a57a318ab58f6c27212f9899422b666c3`.
-Its expanded allocation cap did not change DSP math from v6. GPU work covers
+The campaign used the startup-only source freeze
+`2239b08347ef1b2466e7f9a10a269ed397939cc3bcea2aa5acc29d68b32fc9bc`,
+with the qualification change integrated as `9039d73`. FFT math and startup
+numerical gates are unchanged from v8; recurring CPU accuracy recomputation was
+removed. GPU work covers
 clutter FFT/filtering and delay–Doppler; the small FP64 clutter coefficient
 solve, capture, reference synthesis, detection, tracking and output handling
 remain CPU work.

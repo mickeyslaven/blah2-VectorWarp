@@ -35,30 +35,33 @@ mode checks accuracy before retaining GPU work.
 
 | Two channels, same IQ and CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
 | --- | ---: | ---: | ---: |
-| Strix, 200 ms CPI, ±800 Hz | 79.8 ms | 79.7 ms | **39.9 ms** |
-| RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 218.7 ms | 210.5 ms | **109.2 ms** |
-| Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 309.9 ms | 301.8 ms | **174.9 ms** |
+| Strix, 200 ms CPI, ±800 Hz | 80.5 ms | 79.6 ms | **38.5 ms** |
+| RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 225.6 ms | 220.0 ms | **113.0 ms** |
+| Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 310.5 ms | 303.2 ms | **157.5 ms** |
 
 The comparison used actual [30hours/blah2 at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de)
 and VectorWarp on each host, replaying the same recorded signal at its original
 rate. Every comparison used 527 MHz, 2.4 MS/s, delays −10…245 (256 bins; 30.604
-km maximum excess path), and the stated channel count. Periodic accuracy checks can still
-overrun an interval; [full timing distributions and method](docs/GPU_BENCHMARK_20260911.md)
+km maximum excess path), and the stated channel count. Accuracy qualification
+runs at startup; accepted GPU frames do not repeat the full CPU calculation.
+[Full timing distributions and method](docs/GPU_BENCHMARK_20260911.md)
 are available before sizing a live system.
 
 The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its small
 FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
 settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
-**Live proof:** at 527 MHz and 2.4 MS/s, a five-channel Kraken array GPU run
+**Earlier live proof:** at 527 MHz and 2.4 MS/s, a five-channel Kraken array GPU run
 at ±800 Hz and 200 ms CPI averaged **95.5 ms**. This is capacity evidence, not
-a matched upstream speed comparison.
+a matched upstream speed comparison. It used the prior version with recurring
+CPU accuracy checks; the refreshed measurements above are recorded-IQ replays.
 
 ## Equal-range Doppler tests
 
-At this same full range and **±4800 Hz**, Strix GPU processing averaged **127.9 ms
-per 200 ms CPI**, or **650.5 ms per one-second CPI**. VectorWarp CPU took 231.2 ms
-and 1192.8 ms respectively. Original blah2's Doppler buffer is too small for
+At this same full range and **±4800 Hz**, Strix GPU processing averaged **117.2 ms
+per 200 ms CPI**, or **587.2 ms per one-second CPI**, with no misses in either
+24-frame steady sample. VectorWarp CPU took 230.2 ms and 1175.1 ms respectively.
+Original blah2's Doppler buffer is too small for
 these settings; it was not run with unsafe buffer sizes.
 
 ## Install on Linux

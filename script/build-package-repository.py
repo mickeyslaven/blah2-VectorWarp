@@ -76,17 +76,19 @@ and browser controls for live displays, settings, recording and replay.</p>
 <table><caption>Matched 200 ms processing workloads; lower is better</caption>
 <thead><tr><th scope="col">Hardware and workload</th><th scope="col">Regular blah2 CPU</th><th scope="col">VectorWarp CPU</th><th scope="col">VectorWarp GPU</th></tr></thead>
 <tbody>
-<tr><th scope="row">Strix, ±800 Hz</th><td>79.8 ms</td><td>79.7 ms</td><td>39.9 ms</td></tr>
-<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>218.7 ms</td><td>210.5 ms</td><td>109.2 ms</td></tr>
-<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>309.9 ms</td><td>301.8 ms</td><td>174.9 ms</td></tr>
+<tr><th scope="row">Strix, ±800 Hz</th><td>80.5 ms</td><td>79.6 ms</td><td>38.5 ms</td></tr>
+<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>225.6 ms</td><td>220.0 ms</td><td>113.0 ms</td></tr>
+<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>310.5 ms</td><td>303.2 ms</td><td>157.5 ms</td></tr>
 </tbody></table></div>
 <p>On the RTX 4050 workload, regular blah2 missed 23 of 24 measured intervals;
-VectorWarp GPU missed 2. Periodic accuracy checks can still overrun an interval.</p>
+VectorWarp GPU missed none. Accuracy qualification runs at startup; accepted
+steady GPU frames do not repeat CPU clutter or complex-map accuracy calculations.</p>
 <p class="scope">GPU acceleration covers clutter FFT/filtering and delay–Doppler work;
 the small FP64 coefficient solve and other radar stages remain on CPU.</p>
-<p><strong>Live array proof:</strong> at 527 MHz and 2.4 MS/s, a five-channel
+<p><strong>Earlier live array proof:</strong> at 527 MHz and 2.4 MS/s, a five-channel
 array GPU run at ±800 Hz and 200 ms CPI averaged 95.5 ms. This is live capacity
-evidence, not a matched upstream ratio.</p>
+evidence from the prior version with recurring CPU checks, not a new live run
+or a matched upstream ratio.</p>
 <h2>More radar per frame</h2>
 <p>VectorWarp also completes wider and five-channel configurations where regular
 blah2 has no equivalent mode or cannot safely represent the requested geometry.</p>
@@ -94,8 +96,12 @@ blah2 has no equivalent mode or cannot safely represent the requested geometry.<
 CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
 <h2>Equal-range Doppler tests</h2>
-<p>Current public comparisons retain the standard 256-bin, 30.604 km excess-path
-window at 527 MHz and 2.4 MS/s. Equal-range wide-Doppler reruns are in progress.</p>
+<p>All comparisons retain the standard 256-bin, 30.604 km excess-path
+window at 527 MHz and 2.4 MS/s. At this full range and ±4800 Hz, Strix GPU
+processing averaged 117.2 ms per 200 ms CPI and 587.2 ms per one-second CPI,
+with no misses in either 24-frame steady sample. VectorWarp CPU took 230.2 ms
+and 1175.1 ms respectively. These are capacity results where upstream's
+Doppler buffer cannot safely represent the configuration.</p>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>

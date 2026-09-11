@@ -49,14 +49,17 @@ renderers such as lavapipe are not treated as GPUs.
 ## Measured performance
 
 On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
-recorded-IQ replay from 218.679 ms/CPI in regular blah2 to 109.153 ms/CPI in
-VectorWarp: 50.1% less processing time. This fixed-range comparison used the
+recorded-IQ replay from 225.574 ms/CPI in regular blah2 to 112.968 ms/CPI in
+VectorWarp: 49.9% less processing time. This fixed-range comparison used the
 same 527 MHz, 2.4 MS/s recording, delays −10…245 (256 bins; 30.604 km maximum
 excess path), and clutter −10…200 for both engines. It accelerates clutter
 FFT/filtering and delay–Doppler work; the small FP64 coefficient solve and
 other pipeline stages remain CPU work. The
 [GPU benchmark report](GPU_BENCHMARK_20260911.md) has the comparison, accuracy
 checks, deadline counts and method.
+The GPU missed none of the 24 measured steady CPI deadlines, versus 23 for
+regular blah2. These replay measurements use startup-only qualification; the
+report separately labels earlier native live measurements with recurring checks.
 
 ## Drivers and older hardware
 
