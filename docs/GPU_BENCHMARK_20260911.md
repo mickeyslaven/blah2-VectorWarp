@@ -78,6 +78,42 @@ apply. GPU maps passed the same 1e-4 relative RMS/peak acceptance tolerance;
 they are not bit-exact outputs and this timing campaign does not claim identical
 detection SNR.
 
+## Wide-Doppler capacity
+
+The Strix v8 campaign demonstrates computational capacity for much wider
+Doppler windows using the same recorded 527 MHz, 2.4 MS/s IQ. It is not a
+measurement of satellite-TV, LEO, Starlink or Ku-band reception, and it does
+not add RF bandwidth, a higher-frequency frontend, moving-illuminator
+compensation, a link budget, or aircraft-detection evidence. Doppler span and
+RF carrier frequency/bandwidth are different quantities.
+
+| Workload | VectorWarp CPU mean | VectorWarp GPU mean | GPU p95 | GPU misses |
+| --- | ---: | ---: | ---: | ---: |
+| ±40 kHz, 50 ms CPI | 187.646 ms | **46.135 ms** | 107.772 ms | 2/24 |
+| ±40 kHz, 100 ms CPI | 372.311 ms | **87.368 ms** | 209.785 ms | 2/24 |
+| ±40 kHz, 200 ms CPI | 740.301 ms | **170.719 ms** | 410.317 ms | 2/24 |
+| ±40 kHz, 500 ms CPI | 1862.562 ms | **419.176 ms** | 1009.335 ms | 2/24 |
+| ±20 kHz, 1 s CPI | 2580.833 ms | **769.310 ms** | 1535.162 ms | 2/24 |
+
+Each row is a two-repeat, 24-frame steady aggregate. Eleven frames in each
+12-frame GPU window use GPU clutter and ambiguity processing; one periodic CPU
+oracle checks accuracy. That oracle creates the two deadline misses, so a mean
+below the CPI is useful capacity evidence, not a guarantee that every frame
+will meet cadence. Regular upstream blah2 was excluded: its geometry is unsafe
+for all one-second stress profiles, so no upstream timing is invented here.
+
+The wide spans deliberately trade range gates for processing size. ±40 kHz uses
+32 delay bins from −10 to 21, up to **2.623 km** excess path. ±20 kHz uses 64
+bins from −10 to 53, up to **6.620 km**. The 1 s ±2400 Hz full-coverage pair
+retains 256 bins (up to **30.604 km** excess path) and measured 551.091 ms GPU
+versus 1005.935 ms VectorWarp CPU; its GPU p95 was 776.886 ms with 2/24 misses.
+
+Higher carrier frequencies cause proportionally larger Doppler shifts for the
+same relative motion. That makes the demonstrated headroom relevant to future
+experiments with higher-frequency illuminators, including satellite-TV and LEO
+downlinks. It is only a processing result. For broader passive-radar context,
+see the [Fraunhofer publication](https://publica.fraunhofer.de/entities/publication/9f079ad1-1f9e-4f87-a228-eeb7a5e67332).
+
 ## What was compared
 
 - **Baseline:** unmodified `30hours/blah2` commit

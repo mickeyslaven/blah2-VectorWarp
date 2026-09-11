@@ -55,6 +55,24 @@ The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its sm
 FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
 settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
+## Wide Doppler for higher-frequency experiments
+
+VectorWarp processed a recorded 527 MHz signal across **±40 kHz** at 100, 200
+and 500 ms CPIs in **87, 171 and 419 ms** on the GPU; a ±20 kHz, one-second CPI
+took **769 ms**. This is demonstrated processing capacity, not a claim that
+every frame meets its deadline: each GPU result had two periodic CPU accuracy
+checks outside its budget.
+
+Higher RF carrier frequencies create larger Doppler shifts for the same motion,
+so this headroom can support experiments with higher-frequency illuminators such
+as satellite-TV or LEO downlinks. It does not add an RF frontend or establish
+support for Starlink, Ku-band IQ, moving-illuminator compensation, link budget,
+or aircraft detection. Doppler span is not receiver bandwidth or carrier
+frequency. The tradeoff is range coverage: ±40 kHz used 32 delay bins (up to
+2.623 km excess path), while ±20 kHz used 64 (up to 6.620 km).
+
+[Wide-Doppler capacity, tails, and experimental context →](docs/GPU_BENCHMARK_20260911.md#wide-doppler-capacity)
+
 ## Install on Linux
 
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).

@@ -35,6 +35,8 @@ class HomepageTests(unittest.TestCase):
                          'clutter FFT/filtering', 'small FP64 coefficient solve',
                          'cannot safely represent the requested geometry',
                          'NVIDIA, AMD and Intel GPU checks',
+                         'Wide Doppler, practical capacity', '±40 kHz', '769 ms',
+                         'satellite-TV or LEO downlinks', 'not RF bandwidth or carrier frequency',
                          'GPU_BENCHMARK_20260911.md'):
             self.assertIn(required, page)
 
@@ -42,7 +44,8 @@ class HomepageTests(unittest.TestCase):
         # full comparison, including slower configurations and test boundaries.
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
         for required in ('240.118', '127.770', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
-                         '1e-4', 'not a live radar or\nendurance test',
+                         '1e-4', '±40 kHz', '769.310', '2.623 km', '6.620 km',
+                         'not a live radar or\nendurance test',
                          'not bit-exact outputs'):
             self.assertIn(required, report)
 
