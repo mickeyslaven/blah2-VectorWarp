@@ -78,6 +78,10 @@ public:
   /// @brief Remove and return a block from the front of the queue.
   std::deque<std::complex<double>> drain_front(uint32_t count);
 
+  /// @brief Discard a processed block without returning or copying samples.
+  /// @warning Caller must prevent concurrent mutation.
+  void discard_front(uint32_t count);
+
   /// @brief Replace all samples with an existing block.
   void replace(std::deque<std::complex<double>>&& samples);
 

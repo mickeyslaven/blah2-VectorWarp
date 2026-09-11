@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#include <algorithm>
 
 using Complex = std::complex<double>;
 void check(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
@@ -14,6 +15,7 @@ struct State {
   std::string fault;
   unsigned calls = 0, clutterCalls = 0;
   std::vector<std::complex<float>> output;
+  std::vector<std::complex<float>> expectedReference, expectedSurveillance;
 };
 struct Backend : blah2::GpuBackend {
   std::shared_ptr<State> state;
@@ -46,10 +48,20 @@ struct FrameBackend : blah2::GpuBackend, blah2::GpuFrameBackend {
     throw std::runtime_error("Legacy vector path used for shared-frame backend");
   }
   blah2::GpuFrameBuffers frameBuffers() override {
+    // Poison reusable storage so a missing sample/padding write cannot pass
+    // just because the first allocation happened to contain zeros.
+    std::fill(reference.begin(), reference.end(), std::complex<float>{123, -456});
+    std::fill(surveillance.begin(), surveillance.end(), std::complex<float>{789, -123});
     return {reference.data(), reference.size(), surveillance.data(), surveillance.size(),
       output.data(), output.size()};
   }
-  void processFrame() override { ++state->calls; output = state->output; }
+  void processFrame() override {
+    if (!state->expectedReference.empty()) {
+      check(reference == state->expectedReference, "Packed reference or FFT padding changed");
+      check(surveillance == state->expectedSurveillance, "Packed channel order or FFT padding changed");
+    }
+    ++state->calls; output = state->output;
+  }
 };
 struct CombinedBackend : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
   blah2::GpuGeometry geometry;
@@ -85,8 +97,75 @@ struct CombinedBackend : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
     return true;
   }
 };
+void testPackedFrames() {
+  constexpr unsigned samples = 4800, fs = 48000;
+  for (unsigned channels : {1, 4, 8}) for (int middle : {0, 110, -110}) {
+    std::vector<std::unique_ptr<Ambiguity>> processors;
+    std::vector<std::unique_ptr<IqData>> storage;
+    std::vector<Ambiguity*> cpu;
+    std::vector<IqData*> inputs;
+    for (unsigned channel = 0; channel < channels; ++channel) {
+      processors.push_back(std::make_unique<Ambiguity>(-5, 20,
+        middle - 100, middle + 100, fs, samples, true));
+      storage.push_back(std::make_unique<IqData>(samples));
+      cpu.push_back(processors.back().get()); inputs.push_back(storage.back().get());
+    }
+    auto state = std::make_shared<State>();
+    auto factory = [state](const blah2::GpuGeometry& geometry, const std::string&)
+      -> std::unique_ptr<blah2::GpuBackend> { return std::make_unique<FrameBackend>(state, geometry); };
+    const unsigned range = cpu[0]->get_nfft(), doppler = cpu[0]->get_n_doppler_bins();
+    const unsigned correlation = cpu[0]->get_n_corr(), delays = cpu[0]->get_n_delay_bins();
+    blah2::Acceleration acceleration("gpu", {range, doppler, delays, channels, -5},
+      correlation, fs, middle, "auto", factory);
+    unsigned cpuCalls = 0;
+    for (unsigned frame = 0; frame < 5; ++frame) {
+      std::deque<Complex> reference;
+      for (unsigned i = 0; i < samples; ++i)
+        reference.emplace_back(std::sin(i * .37 + frame), std::cos(i * .61 - frame));
+      std::vector<std::deque<Complex>> raw(channels);
+      state->output.resize(size_t(doppler) * delays * channels);
+      for (unsigned channel = 0; channel < channels; ++channel) {
+        for (unsigned i = 0; i < samples; ++i)
+          raw[channel].emplace_back(std::sin(i * .41 + channel + frame),
+            std::cos(i * .17 - channel - frame));
+        storage[channel]->replace(std::deque<Complex>(raw[channel]));
+        cpu[channel]->process(reference, inputs[channel]);
+        for (unsigned d = 0; d < doppler; ++d) for (unsigned r = 0; r < delays; ++r)
+          state->output[(size_t(channel) * delays + r) * doppler +
+            (d + doppler / 2 + 1) % doppler] = cpu[channel]->result()->data[d][r];
+        storage[channel]->replace(std::deque<Complex>(raw[channel]));
+      }
+      state->expectedReference.assign(size_t(range) * doppler, {});
+      state->expectedSurveillance.assign(size_t(range) * doppler * channels, {});
+      // Independent scalar producer matching the former channel-interleaved path.
+      for (unsigned d = 0; d < doppler; ++d) for (unsigned r = 0; r < correlation; ++r) {
+        const size_t sample = size_t(d) * correlation + r;
+        const size_t target = size_t(d) * range + r;
+        auto value = reference[sample];
+        if (middle != 0) value *= std::polar(1.0, 2 * std::acos(-1.0) * middle * sample / fs);
+        state->expectedReference[target] = value;
+        for (unsigned channel = 0; channel < channels; ++channel)
+          state->expectedSurveillance[size_t(channel) * range * doppler + target] = raw[channel][sample];
+      }
+      acceleration.process(reference, inputs, cpu, [&] {
+        ++cpuCalls;
+        for (unsigned channel = 0; channel < channels; ++channel)
+          cpu[channel]->process(reference, inputs[channel]);
+      });
+      check(acceleration.status().state != "fallback", "Shared-frame producer failed qualification");
+      for (unsigned channel = 0; channel < channels; ++channel) {
+        const auto& tail = storage[channel]->view_data();
+        check(tail == std::deque<Complex>(raw[channel].begin() + correlation * doppler,
+          raw[channel].end()), "Bulk retirement changed the unprocessed IQ tail");
+      }
+    }
+    check(cpuCalls == 3 && state->calls == 5, "Packed frames repeated CPU work after qualification");
+  }
+  std::cout << "PASS packed shared frames: channels=1/4/8, positive/zero/negative offset\n";
+}
 int main(int argc, char**) {
   try {
+    testPackedFrames();
     for (const std::string mode : {"cpu", "auto", "gpu"}) {
       bool rejected = false;
       try {

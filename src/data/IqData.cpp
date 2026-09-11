@@ -58,10 +58,23 @@ std::deque<std::complex<double>> IqData::drain_front(uint32_t count)
   {
     throw std::runtime_error("Attempting to drain past the end of a deque");
   }
+  if (count == data->size())
+  {
+    std::deque<std::complex<double>> samples;
+    samples.swap(*data);
+    return samples;
+  }
   auto end = data->begin() + count;
   std::deque<std::complex<double>> samples(data->begin(), end);
   data->erase(data->begin(), end);
   return samples;
+}
+
+void IqData::discard_front(uint32_t count)
+{
+  if (count > data->size())
+    throw std::runtime_error("Attempting to discard past the end of a deque");
+  data->erase(data->begin(), data->begin() + count);
 }
 
 void IqData::replace(std::deque<std::complex<double>>&& samples)
@@ -125,10 +138,7 @@ void IqData::print()
 
 void IqData::clear()
 {
-  while (!data->empty())
-  {
-    data->pop_front();
-  }
+  data->clear();
 }
 
 void IqData::update_spectrum(std::vector<std::complex<double>> _spectrum)

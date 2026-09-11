@@ -325,12 +325,28 @@ int main(int argc, char** argv) try {
     const auto begin=Clock::now(); auto mark=begin;
     std::vector<double> times;
     auto tick=[&] { const auto now=Clock::now(); times.push_back(ms(mark, now)); mark=now; };
+#ifdef BLAH2_BENCH_FAST
+    // Keep decoded IQ immutable for the independent oracle. Model the native
+    // consumer's block ownership, including synthesis's final read before the
+    // same surveillance blocks pass to conditioning without another copy.
+    if (array) for (unsigned i=0; i<channels; ++i)
+      capture[i]->replace(std::deque<Complex>(decoded[i]));
+    else {
+      reference->replace(std::deque<Complex>(decoded[referenceChannel]));
+      surveillance[0]->replace(std::deque<Complex>(decoded[surveillanceChannel]));
+    }
+#else
     if (array) for (unsigned i=0; i<channels; ++i) fill(*capture[i], decoded[i]);
     else fill(*reference, decoded[referenceChannel]);
     for (unsigned i=0; i<pathCount; ++i) fill(*surveillance[i], decoded[array ? i : surveillanceChannel]);
+#endif
     tick();
 #ifdef BLAH2_BENCH_FAST
-    if (array) reference=synthesizer.process(capPointers);
+    if (array) {
+      reference=synthesizer.process(capPointers);
+      for (unsigned i=0; i<pathCount; ++i)
+        surveillance[i]->replace(capture[i]->drain_front(samples));
+    }
 #endif
     tick(); spectrum.process(reference.get()); tick();
     bool clutterGpuExecuted=false, clutterCpuExecuted=true;

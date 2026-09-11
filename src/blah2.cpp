@@ -513,11 +513,7 @@ try
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
           if (!arrayReference)
-            referenceData->replace(captureData[referenceChannel]->get_data());
-          for (std::size_t pathIndex = 0;
-               pathIndex < surveillanceChannels.size(); pathIndex++)
-            surveillanceData[pathIndex]->replace(
-              captureData[surveillanceChannels[pathIndex]]->get_data());
+            referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time, "extract_buffer");
 
           std::vector<IqData *> surveillancePointers;
@@ -549,6 +545,12 @@ try
               reportedReferenceUpdate = metrics.updates;
             }
           }
+          // Synthesis is the last reader of the captured channels. Transfer
+          // complete sample blocks to conditioning instead of copying a CPI.
+          for (std::size_t pathIndex = 0;
+               pathIndex < surveillanceChannels.size(); pathIndex++)
+            surveillanceData[pathIndex]->replace(
+              captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time,
             "reference_synthesis");
           

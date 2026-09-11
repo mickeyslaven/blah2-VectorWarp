@@ -25,6 +25,8 @@ Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
     timeSource_(std::move(timeSource)) {
   if (mode != "auto" && mode != "cpu" && mode != "gpu")
     throw std::invalid_argument("Acceleration must be auto, cpu or gpu");
+  if (correlation > geometry.range)
+    throw std::invalid_argument("Correlation input exceeds the GPU FFT length");
   if (!correlation || !geometry.delays ||
       geometry.delayMin <= -static_cast<int64_t>(correlation) ||
       static_cast<int64_t>(geometry.delayMin) + geometry.delays - 1 >= correlation)
@@ -325,25 +327,39 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
         throw std::runtime_error("GPU shared-frame dimensions changed; using CPU");
       referenceData = frame.reference;
       surveillanceData = frame.surveillance;
-      std::fill_n(referenceData, rangeElements, std::complex<float>{});
-      std::fill_n(surveillanceData, surveillanceElements, std::complex<float>{});
     } else {
-      reference_.assign(rangeElements, {});
-      surveillance_.assign(surveillanceElements, {});
+      reference_.resize(rangeElements);
+      surveillance_.resize(surveillanceElements);
       referenceData = reference_.data();
       surveillanceData = surveillance_.data();
     }
-    for (uint32_t d = 0; d < geometry_.doppler; ++d)
+    // Fill each channel sequentially and zero only its FFT padding. The old
+    // producer zeroed live samples before immediately overwriting them and
+    // interleaved writes across every surveillance channel.
+    auto referenceSample = reference.begin();
+    for (uint32_t d = 0; d < geometry_.doppler; ++d) {
+      const size_t offset = size_t(d) * geometry_.range;
       for (uint32_t r = 0; r < correlation_; ++r) {
         const size_t sample = size_t(d) * correlation_ + r;
-        const size_t target = size_t(d) * geometry_.range + r;
-        auto value = reference[sample];
+        auto value = *referenceSample++;
         if (middle_ != 0)
           value *= std::polar(1.0, 2 * std::acos(-1.0) * middle_ * sample / sampleRate_);
-        referenceData[target] = value;
-        for (size_t channel = 0; channel < surveillance.size(); ++channel)
-          surveillanceData[channel * rangeElements + target] = surveillance[channel]->view_data()[sample];
+        referenceData[offset + r] = value;
       }
+      std::fill(referenceData + offset + correlation_,
+        referenceData + offset + geometry_.range, std::complex<float>{});
+    }
+    for (size_t channel = 0; channel < surveillance.size(); ++channel) {
+      auto source = surveillance[channel]->view_data().begin();
+      auto* destination = surveillanceData + channel * rangeElements;
+      for (uint32_t d = 0; d < geometry_.doppler; ++d) {
+        const size_t offset = size_t(d) * geometry_.range;
+        std::copy_n(source, correlation_, destination + offset);
+        source += correlation_;
+        std::fill(destination + offset + correlation_,
+          destination + offset + geometry_.range, std::complex<float>{});
+      }
+    }
     const std::complex<float>* outputData;
     size_t outputCount;
     if (frameBackend) {
@@ -460,7 +476,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
     }
     inputRetired = true; // No CPU retry once any input retirement has begun.
     for (auto* input : surveillance)
-      for (uint64_t n = 0; n < samples; ++n) input->pop_front();
+      input->discard_front(static_cast<uint32_t>(samples));
     // Qualification measures GPU transform/import before retirement because
     // CPU owns those frames for accuracy comparison. AUTO additionally checks
     // the complete accepted GPU path below; it is not a whole-pipeline tuner.
