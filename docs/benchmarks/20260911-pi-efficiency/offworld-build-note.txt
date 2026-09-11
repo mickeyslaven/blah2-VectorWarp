@@ -1,0 +1,1 @@
+Unmodified offworldlabs/blah2-arm DSP in the shared recorded-IQ adapter; explicit -O3 -march=armv8-a+simd, matching its build target. All three link the same installed FFTW 3.3.10 NEON library. No Docker, SDK, acquisition or network timing. The adapter engine field is upstream for both external source builds; filenames and the variant field identify OffWorld explicitly.

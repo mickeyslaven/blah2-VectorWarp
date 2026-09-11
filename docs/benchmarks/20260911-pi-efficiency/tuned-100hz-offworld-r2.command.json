@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/build-offworld/bin/bench-upstream",
+    "/var/tmp/vectorwarp-pi-20260910/input/recording.mchq",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/tuned-100hz.profile.json",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/tuned-100hz-offworld-r2",
+    "pair",
+    "cpu",
+    "20",
+    "compare",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/tuned-100hz.maps"
+  ],
+  "binary_sha256": "a9c274ff800148d4c838dda8e141d2bee6680c40c75f08389b14960e6c468359",
+  "input_sha256": "4188cd03768cf356b31e26759c1a75ec83ffc3c83ecfdc16bbb3e9bfc242d744",
+  "environment": {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "BLAH2_BENCH_PACE": "1"
+  }
+}

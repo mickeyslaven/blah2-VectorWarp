@@ -108,6 +108,25 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(scope, ' '.join(report.split()))
         self.assertIn('2a9bfdf', report)
 
+    def test_pi_three_way_results_keep_baselines_and_limits(self):
+        report = (ROOT / 'docs/PI4_PERFORMANCE_20260911.md').read_text()
+        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-pi-efficiency/comparison.json').read_text())
+        self.assertEqual((cohort['runs'], cohort['complete_cpis'], len(cohort['rows'])), (24, 480, 12))
+        self.assertEqual({row['variant'] for row in cohort['rows']},
+                         {'regular-blah2', 'offworld-blah2-arm', 'vectorwarp-cpu'})
+        self.assertEqual(cohort['contract']['offworld_commit'], '1d37e29c9f788bed2bc95b1b320ccf6478430111')
+        self.assertTrue(cohort['contract']['host']['fftw_neon_symbols'])
+        for row in cohort['rows']:
+            self.assertEqual((row['frames'], row['deadline_misses'], row['cpi_ms']), (24, 24, 200))
+            self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833333)
+            self.assertIn(f"{row['mean_ms']:.3f} / {row['p95_ms']:.3f}", report)
+            if row['case'] == 'standard-800hz':
+                self.assertIn(f"{row['mean_ms']:.1f} ms", repository.repository_homepage())
+                self.assertIn(f"{row['mean_ms']:.1f} ms", (ROOT / 'README.md').read_text())
+        for text in ('NEON-enabled FFTW', '24/24', 'not live RF', '7.5–12.6%',
+                     '6.7–11.9%', '199 taps instead of 210', 'no GPU radar-processing path'):
+            self.assertIn(text, ' '.join(report.split()))
+
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
         for required in ('lang="en"', 'name="viewport"', '<caption>',

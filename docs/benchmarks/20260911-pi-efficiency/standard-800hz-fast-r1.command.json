@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/build/bin/bench-fast",
+    "/var/tmp/vectorwarp-pi-20260910/input/recording.mchq",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/standard-800hz.profile.json",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/standard-800hz-fast-r1",
+    "pair",
+    "cpu",
+    "20",
+    "compare",
+    "/var/tmp/vectorwarp-pi-efficiency-20260911.MJQNfT/cpu-threeway-results/standard-800hz.maps"
+  ],
+  "binary_sha256": "4a6a90e2cfcf713403c2c842a50fbb79c33d77595dc3af186a866202dfe01c1e",
+  "input_sha256": "4188cd03768cf356b31e26759c1a75ec83ffc3c83ecfdc16bbb3e9bfc242d744",
+  "environment": {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "BLAH2_BENCH_PACE": "1"
+  }
+}

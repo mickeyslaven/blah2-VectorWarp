@@ -93,10 +93,12 @@ the post-fusion magnitude map. Detection delay, Doppler and SNR fields and track
 outputs remain in JSON for separate comparison; a known SNR-field difference
 must not be mislabeled as a complex-map mismatch or sensitivity gain.
 
-Reduced-load Pi profiles must retain the recording's real 2.4-MS/s sample rate
-unless both binaries receive genuinely filtered/decimated samples. Reduce the
-matched delay/clutter/Doppler work instead; changing only a profile header is not
-valid decimation. Pi results compare upstream and VectorWarp on that same Pi,
+Reduced-load Pi profiles must retain the standard excess-path window and the
+recording's real 2.4-MS/s sample rate. A different sample rate requires genuinely
+filtered/decimated samples for both binaries, never just a changed header.
+Narrower Doppler or a different clutter window must be identical between
+engines and disclosed beside the results, with the standard configuration kept
+as a control. Pi results compare upstream and VectorWarp on that same Pi,
 never against another host.
 
 `run_matrix.py` takes an explicit recording, profile and verified checksum. It

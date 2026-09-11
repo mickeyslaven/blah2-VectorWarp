@@ -65,6 +65,13 @@ full CPU reference. Do not claim universal GPU
 speedup, all-GPU processing, loss-free acquisition or verified high-frequency
 receiver support from these measurements.
 
+The [current Pi 4 comparison](PI4_PERFORMANCE_20260911.md) separately tests
+original blah2, Off World Labs' `blah2-arm` and VectorWarp CPU on identical
+settings with NEON FFTW enabled for all three. VectorWarp uses 7.5–12.6% less
+processing time than original blah2 and 6.7–11.9% less than the ARM fork;
+none of those 2.4 MS/s profiles meets its 200 ms budget. This is not Pi GPU
+performance or a Pi 5/RSPduo deployment comparison.
+
 ## Release wording checklist
 
 For every release:
