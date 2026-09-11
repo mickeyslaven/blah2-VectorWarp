@@ -50,6 +50,7 @@ exit 0
             executable(self.tools / name)
         executable(self.tools / "pkg-config", """#!/bin/sh
 printf '%s\\n' "$*" >>"$PKG_CONFIG_LOG"
+if [ "$*" = "--exists ${FAKE_MISSING_PKG:-}" ]; then exit 1; fi
 exit 0
 """)
         self.dependencies = self.temp / "deps"
@@ -197,6 +198,7 @@ endif()
                 self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
                 calls = log.read_text(encoding="utf-8")
                 self.assertEqual("libhackrf" in calls, backend in {"hackrf", "all"})
+                self.assertEqual("libusb-1.0" in calls, backend in {"hackrf", "all"})
                 self.assertEqual("BLAH2_SDRPLAY_INCLUDE_DIR" in result.stdout,
                                  backend in {"rspduo", "all"})
 
@@ -205,6 +207,20 @@ endif()
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn("kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+
+    def test_missing_hackrf_transitive_headers_fail_before_dependency_build(self):
+        for backend in ("hackrf", "all"):
+            with self.subTest(backend=backend):
+                environment = self.build_environment(backend == "all")
+                environment["FAKE_MISSING_PKG"] = "libusb-1.0"
+                result = subprocess.run([
+                    "bash", str(BUILD_SCRIPT), "--backend", backend, "--gpu", "off",
+                    "--preflight", "--deps-dir", str(self.dependencies),
+                    "--build-dir", str(self.temp / f"missing-usb-{backend}"),
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("libusb development files", result.stderr)
+                self.assertNotIn("vcpkg_cmake_prefix", result.stdout)
 
     def test_non_x86_vcpkg_configure_uses_required_system_tools(self):
         for architecture in ("aarch64", "arm64", "armv7l", "s390x", "ppc64le", "riscv64"):

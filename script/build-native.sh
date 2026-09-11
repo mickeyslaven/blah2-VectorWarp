@@ -103,6 +103,10 @@ if [[ $ENABLE_RSPDUO == ON ]]; then
 fi
 if [[ $ENABLE_HACKRF == ON ]]; then
   pkg-config --exists libhackrf || die 'hackrf backend needs the HackRF development package'
+  # Some native libhackrf .pc files expose libusb headers without declaring the
+  # development package dependency. Fail preflight before a long vcpkg build.
+  pkg-config --exists libusb-1.0 ||
+    die 'hackrf backend needs libusb development files (libusb-1.0-0-dev or libusb1-devel)'
 fi
 if [[ $ENABLE_USRP == ON ]]; then
   command -v uhd_config_info >/dev/null 2>&1 ||

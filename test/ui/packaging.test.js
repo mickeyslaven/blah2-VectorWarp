@@ -98,6 +98,15 @@ assert.match(packageSmoke, /exec sudo -- bash "\$0" "\$@"/);
 assert.match(packageSmoke, /\/display\/configuration\//);
 assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
+const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
+const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
+const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\blibhackrf-devel\b/.test(line));
+assert.equal(debHackrfInstalls.length, 3, 'Verifier and both Debian-family package paths need the complete SDK');
+assert.equal(rpmHackrfInstalls.length, 1, 'The Fedora package path needs the complete SDK');
+for (const command of debHackrfInstalls)
+  assert.match(command, /\blibusb-1\.0-0-dev\b/, 'HackRF pkg-config exposes libusb headers on Debian-family builds');
+for (const command of rpmHackrfInstalls)
+  assert.match(command, /\blibusb1-devel\b/, 'Fedora must also declare the transitive development dependency');
 assert.equal((releaseWorkflow.match(/bash script\/smoke-native-package\.sh/g) || []).length, 3,
   'the Ubuntu 24, Ubuntu 22/26, and Fedora target groups must smoke every native package');
 function matrixEntries(workflow) {
