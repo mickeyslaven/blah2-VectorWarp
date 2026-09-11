@@ -29,27 +29,32 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-a
 
 ## Faster processing in practice
 
-Same recorded signal, same settings, and the same CPU allocation on each machine.
-These are processing times per 200 ms radar frame (CPI); lower is better.
+On a 6 GiB RTX 4050 Laptop GPU, VectorWarp cut matched processing time by
+**46.8%** for a useful two-channel radar workload. The GPU is optional: CPU mode
+remains available, and Automatic mode checks accuracy and stays on CPU when that
+is the better choice.
 
-| Hardware | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU | GPU time saved vs blah2 |
-| --- | ---: | ---: | ---: | ---: |
-| RTX 4050 Laptop | **239 ms** | **221 ms** | **162 ms** | **32%** |
-| Ryzen AI Max+ 395 / Radeon 8060S | **76 ms** | **74 ms** | **62 ms** | **19%** |
+| Same recorded-IQ workload | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
+| --- | ---: | ---: | ---: |
+| 200 ms CPI, ±800 Hz Doppler | 240.118 ms/CPI | 239.479 ms/CPI | **127.770 ms/CPI** |
 
-On the RTX 4050 laptop, VectorWarp GPU met **all 34** steady-frame deadlines;
-regular blah2 missed **33**. That is the difference between keeping up with this
-200 ms signal stream and falling behind.
+The comparison used actual [30hours/blah2 at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de)
+and VectorWarp on the same i7-12650H laptop, with four physical P-cores, the
+same four seconds of five-channel recorded IQ, and two alternating repeats.
+After excluding eight startup frames from each 20-frame run, regular blah2 and
+VectorWarp CPU each missed 23 of 24 200 ms deadlines; VectorWarp GPU missed 2
+of 24. This shows a real improvement for this paced replay, not a promise that
+every 200 ms configuration is real time.
 
-**A wider live example:** VectorWarp processed **±4000 Hz Doppler in 139 ms per
-200 ms frame** on the Ryzen system, at 2.4 MS/s with 256 delay bins. Regular
-blah2 cannot safely process that configuration because of its buffer sizing.
+VectorWarp also completed configurations that the upstream processor cannot
+safely represent: a ±4000 Hz pair took 319.268 ms/CPI on the GPU, while upstream
+was excluded because its Doppler scratch allocation is too small. A five-channel
+array took 302.140 ms/CPI on the GPU. Those workloads are VectorWarp-only, so
+they are capacity results rather than speedups over blah2.
 
-The table times signal processing during replay at the original sample rate:
-two repeats at ±800 Hz, with four CPU cores on the laptop and eight on the Ryzen
-system. The live example averages 27 steady frames. GPU results here accelerate
-the delay–Doppler stage.
-[Full settings, results, and test method →](docs/LIVE_CAPACITY_20260910.md)
+The GPU performs delay–Doppler work; clutter solving and the rest of the radar
+pipeline still use the CPU. [Full method, settings, deadline counts, accuracy
+checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
 ## Install on Linux
 

@@ -1,0 +1,15 @@
+case,variant,device,repeats,steady_frames,mean_ms,p95_ms,deadline_misses,gpu_frames_per_run,cpu_frames_per_run,clutter_gpu_frames_per_run,clutter_cpu_solve_frames_per_run,ambiguity_ms,clutter_ms,detection_ms,peak_rss_kib,map_rms_max,map_peak_max
+pair-standard,regular-blah2,CPU,2,24,204.887,208.465,24,0,20,0,0,77.958,72.907,14.367,198528,0,0
+pair-standard,vectorwarp-cpu,CPU,2,24,204.343,207.135,24,0,20,0,0,75.757,75.807,11.778,182768,0,0
+pair-standard,vectorwarp-auto,Intel-HD-630,2,24,114.540,175.390,2,11,9,20,20,24.613,42.238,12.154,212972,0.000004336,0.000018234
+pair-standard,vectorwarp-auto,AMD-Radeon-500,2,24,108.215,168.061,2,11,9,20,20,23.151,37.565,12.047,213292,0.000005740,0.000033106
+pair-wide,regular-blah2,CPU,2,24,308.096,312.916,24,0,20,0,0,120.127,72.853,42.005,201760,0,0
+pair-wide,vectorwarp-cpu,CPU,2,24,303.164,309.900,24,0,20,0,0,117.673,75.241,34.531,185976,0,0
+pair-wide,vectorwarp-auto,Intel-HD-630,2,24,183.244,256.497,2,11,9,20,20,36.404,42.619,34.757,216864,0.000003580,0.000018390
+pair-wide,vectorwarp-auto,AMD-Radeon-500,2,24,174.629,246.385,2,11,9,20,20,33.521,37.491,34.560,216804,0.000004493,0.000033026
+pair-extra-wide,vectorwarp-cpu,CPU,2,24,442.701,452.988,24,0,20,0,0,199.158,75.298,57.690,189496,0,0
+pair-extra-wide,vectorwarp-auto,Intel-HD-630,2,24,253.263,353.100,24,11,9,20,20,49.146,43.056,57.409,221060,0.000003389,0.000018386
+pair-extra-wide,vectorwarp-auto,AMD-Radeon-500,2,24,247.161,347.458,24,11,9,20,20,48.110,37.716,57.662,220976,0.000004179,0.000033287
+array-standard,vectorwarp-cpu,CPU,2,24,563.478,572.800,24,0,20,0,0,74.500,379.931,11.595,624592,0,0
+array-standard,vectorwarp-auto,Intel-HD-630,2,24,321.475,496.136,24,11,9,20,20,72.282,146.152,11.535,715680,0.000005563,0.000022344
+array-standard,vectorwarp-auto,AMD-Radeon-500,2,24,285.746,461.258,24,11,9,20,20,68.695,114.454,11.603,715596,0.000008685,0.000033652

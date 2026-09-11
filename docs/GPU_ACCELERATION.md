@@ -37,6 +37,15 @@ GPU results must agree with the CPU's complex-valued map before detection sees
 them. The input remains available for same-frame CPU recovery. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
 
+## Measured performance
+
+On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
+recorded-IQ replay from 240.118 ms/CPI in regular blah2 to 127.770 ms/CPI in
+VectorWarp: 46.8% less processing time. This is a measured delay–Doppler
+benefit, not a claim that the whole radar pipeline is on the GPU or that every
+profile meets a 200 ms deadline. The [GPU benchmark report](GPU_BENCHMARK_20260911.md)
+has the full comparison, accuracy checks, deadline counts and method.
+
 ## Drivers and older hardware
 
 Use a working Vulkan driver for the processing host. The application requests
