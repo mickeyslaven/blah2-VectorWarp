@@ -42,24 +42,30 @@ complex-map accuracy computations. Every-frame finite-output, numerical-solve,
 worker-error and timeout protections remain, as does AUTO's sustained GPU timing
 comparison against the CPU cost measured at startup. This does not continuously
 revalidate accuracy against changing signal conditions; independent benchmark
-comparisons remain separate. The input remains available for same-frame CPU
-recovery. Software Vulkan
+comparisons remain separate. Before accepting GPU output, input remains
+available for same-frame CPU recovery. Once validated clutter output is committed
+in place, an unexpected exception aborts the frame rather than retrying CPU
+filtering on already changed IQ. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
 
 ## Measured performance
 
 On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
-recorded-IQ replay from 225.574 ms/CPI in regular blah2 to 112.968 ms/CPI in
-VectorWarp: 49.9% less processing time. This fixed-range comparison used the
-same 527 MHz, 2.4 MS/s recording, delays −10…245 (256 bins; 30.604 km maximum
+recorded-IQ replay from 230.457 ms/CPI in regular blah2 to 63.638 ms/CPI in
+VectorWarp: 72.4% less processing time. VectorWarp CPU averaged 180.855 ms/CPI.
+This fixed-range comparison used the same 527 MHz, 2.4 MS/s recording,
+delays −10…245 (256 bins; 30.604 km maximum
 excess path), and clutter −10…200 for both engines. It accelerates clutter
 FFT/filtering and delay–Doppler work; the small FP64 coefficient solve and
 other pipeline stages remain CPU work. The
 [GPU benchmark report](GPU_BENCHMARK_20260911.md) has the comparison, accuracy
 checks, deadline counts and method.
-The GPU missed none of the 24 measured steady CPI deadlines, versus 23 for
+The GPU missed none of the 24 measured steady CPI deadlines, versus 22 for
 regular blah2. These replay measurements use startup-only qualification; the
 report separately labels earlier native live measurements with recurring checks.
+The same-campaign before/after table separates the combined efficiency changes
+from the original-blah2 comparison. CPU-only processing also improved: the
+200 ms, ±2400 Hz cases use 25.1–25.9% less time than upstream on the tested hosts.
 
 ## Drivers and older hardware
 
