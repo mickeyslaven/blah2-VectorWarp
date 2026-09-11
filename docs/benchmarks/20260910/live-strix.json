@@ -1,0 +1,2081 @@
+{
+  "schema": 1,
+  "source_base": "f1345ba84a3f0da5efa505747dc884ae27b2c5b6",
+  "native_binary_sha256": "6ada88fb2fb0051b6540a9341234c88dc916190c0815ed9ede547bb7bfa931c5",
+  "host": "Strix: Ryzen AI Max+ 395 / Radeon 8060S",
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "cpu_quota_percent": 800,
+  "stock_frequency_limits_unchanged": true,
+  "memory_max_gib": 12,
+  "sample_rate": 2400000,
+  "frequency": 527000000,
+  "requested_benchmark_cutoff_c": 100,
+  "legacy_native_guard_cutoff_c": 82,
+  "thermal_note": "The existing receiver dependency also kept its legacy 82 C guard active; observed peak 81.5 C was below both. No 100 C/throttling acceptance claim.",
+  "method": "Sequential live RF runs; same settings, different arriving samples. First 3 CPIs excluded; no hardware drop counter.",
+  "native_sources_patch_sha256": "208c0be24a5ec83d925d63124402580f0ebd49f42a2c8e6b5fe38570149d43dc",
+  "scope": "Only delay geometry fix and signed extraction differ from source_base in native DSP; benchmark pacing instrumentation is separate.",
+  "configurations": [
+    {
+      "label": "pair100-wide",
+      "mode": "cpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 100.0,
+      "meanMs": 52.04592592592593,
+      "p95Ms": 55.243,
+      "maxMs": 57.93,
+      "misses": 0,
+      "meanArrivalIntervalMs": 100.22843638468588,
+      "observedCpiRate": 9.977208425779574,
+      "gpuFrames": 0,
+      "peakC": 49.625,
+      "acceleration": {
+        "requested": "cpu",
+        "active": "cpu",
+        "device": "",
+        "state": "selected",
+        "reason": "",
+        "cpuMs": 0.0,
+        "gpuMs": 0.0
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 3.408888888888889,
+        "reference_synthesis": 0.0,
+        "spectrum": 2.1944444444444446,
+        "clutter_filter": 14.08851851851852,
+        "ambiguity_processing": 18.717777777777776,
+        "detector": 4.257407407407407,
+        "tracker": 0.2759259259259259,
+        "output_radar_data": 9.073703703703703,
+        "cpi": 52.04592592592593
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair100-wide-cpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.1,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -1600,
+            "dopplerMax": 1600
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 45451,
+            "map": 44117,
+            "detection": 36451,
+            "track": 38893,
+            "timestamp": 38921,
+            "timing": 39515,
+            "iqdata": 44367
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair100-wide-cpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.1,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -1600,
+        "doppler_max": 1600,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "pair100-wide",
+      "mode": "gpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 100.0,
+      "meanMs": 42.58259259259259,
+      "p95Ms": 44.428,
+      "maxMs": 44.63,
+      "misses": 0,
+      "meanArrivalIntervalMs": 99.91995423031487,
+      "observedCpiRate": 10.008010989426658,
+      "gpuFrames": 27,
+      "peakC": 43.25,
+      "acceleration": {
+        "requested": "gpu",
+        "active": "vulkan",
+        "device": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)",
+        "state": "ready",
+        "reason": "",
+        "cpuMs": 22.93,
+        "gpuMs": 7.53
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 3.4185185185185185,
+        "reference_synthesis": 0.0,
+        "spectrum": 2.1666666666666665,
+        "clutter_filter": 14.334814814814814,
+        "ambiguity_processing": 9.223333333333333,
+        "detector": 4.311481481481481,
+        "tracker": 0.2707407407407407,
+        "output_radar_data": 8.830370370370371,
+        "cpi": 42.58259259259259
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair100-wide-gpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.1,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -1600,
+            "dopplerMax": 1600
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 46215,
+            "map": 44481,
+            "detection": 41965,
+            "track": 43147,
+            "timestamp": 35991,
+            "timing": 32779,
+            "iqdata": 41147
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair100-wide-gpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.1,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -1600,
+        "doppler_max": 1600,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "pair200-wide",
+      "mode": "cpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 116.86555555555555,
+      "p95Ms": 120.876,
+      "maxMs": 122.59,
+      "misses": 0,
+      "meanArrivalIntervalMs": 199.9885299228481,
+      "observedCpiRate": 5.000286768375075,
+      "gpuFrames": 0,
+      "peakC": 55.625,
+      "acceleration": {
+        "requested": "cpu",
+        "active": "cpu",
+        "device": "",
+        "state": "selected",
+        "reason": "",
+        "cpuMs": 0.0,
+        "gpuMs": 0.0
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 7.122592592592593,
+        "reference_synthesis": 0.0,
+        "spectrum": 4.448888888888889,
+        "clutter_filter": 28.055925925925926,
+        "ambiguity_processing": 36.882962962962964,
+        "detector": 13.455185185185185,
+        "tracker": 0.7040740740740741,
+        "output_radar_data": 26.166666666666668,
+        "cpi": 116.86555555555556
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-wide-cpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -2400,
+            "dopplerMax": 2400
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 34921,
+            "map": 37661,
+            "detection": 41155,
+            "track": 40077,
+            "timestamp": 37619,
+            "timing": 41813,
+            "iqdata": 41025
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-wide-cpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -2400,
+        "doppler_max": 2400,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "pair200-wide",
+      "mode": "gpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 100.04296296296296,
+      "p95Ms": 104.11,
+      "maxMs": 105.46,
+      "misses": 0,
+      "meanArrivalIntervalMs": 199.93869957677538,
+      "observedCpiRate": 5.001532980442365,
+      "gpuFrames": 27,
+      "peakC": 52.375,
+      "acceleration": {
+        "requested": "gpu",
+        "active": "vulkan",
+        "device": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)",
+        "state": "ready",
+        "reason": "",
+        "cpuMs": 31.03,
+        "gpuMs": 15.37
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 7.228518518518518,
+        "reference_synthesis": 0.0,
+        "spectrum": 4.227777777777778,
+        "clutter_filter": 26.86740740740741,
+        "ambiguity_processing": 21.667037037037037,
+        "detector": 13.03,
+        "tracker": 0.7114814814814815,
+        "output_radar_data": 26.282592592592593,
+        "cpi": 100.04296296296296
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-wide-gpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -2400,
+            "dopplerMax": 2400
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 46751,
+            "map": 46623,
+            "detection": 44313,
+            "track": 34443,
+            "timestamp": 44103,
+            "timing": 33317,
+            "iqdata": 46113
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-wide-gpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -2400,
+        "doppler_max": 2400,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "array200",
+      "mode": "cpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 147.5274074074074,
+      "p95Ms": 151.04500000000002,
+      "maxMs": 151.59,
+      "misses": 0,
+      "meanArrivalIntervalMs": 199.77622784622676,
+      "observedCpiRate": 5.005600570102502,
+      "gpuFrames": 0,
+      "peakC": 71.875,
+      "acceleration": {
+        "requested": "cpu",
+        "active": "cpu",
+        "device": "",
+        "state": "selected",
+        "reason": "",
+        "cpuMs": 0.0,
+        "gpuMs": 0.0
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 8.677777777777777,
+        "reference_synthesis": 10.65925925925926,
+        "spectrum": 6.218518518518518,
+        "clutter_filter": 86.26481481481481,
+        "ambiguity_processing": 22.154074074074074,
+        "detector": 4.347407407407407,
+        "tracker": 0.007407407407407408,
+        "output_radar_data": 9.165925925925926,
+        "cpi": 147.5274074074074
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array200-cpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 5,
+            "fft_threads": 1,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -800,
+            "dopplerMax": 800
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "array_eigenbeam",
+            "channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 38011,
+            "map": 37721,
+            "detection": 36265,
+            "track": 42163,
+            "timestamp": 45403,
+            "timing": 43829,
+            "iqdata": 34739
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array200-cpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 5,
+        "benchmark_fft_threads": 1,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -800,
+        "doppler_max": 800,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "array200",
+      "mode": "gpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 158.01555555555555,
+      "p95Ms": 160.717,
+      "maxMs": 161.52,
+      "misses": 0,
+      "meanArrivalIntervalMs": 199.7582666153903,
+      "observedCpiRate": 5.006050647833141,
+      "gpuFrames": 27,
+      "peakC": 70.125,
+      "acceleration": {
+        "requested": "gpu",
+        "active": "vulkan",
+        "device": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)",
+        "state": "ready",
+        "reason": "",
+        "cpuMs": 14.24,
+        "gpuMs": 23.76
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 8.546296296296296,
+        "reference_synthesis": 10.693703703703704,
+        "spectrum": 6.227407407407408,
+        "clutter_filter": 86.3425925925926,
+        "ambiguity_processing": 32.28259259259259,
+        "detector": 4.326666666666667,
+        "tracker": 0.031111111111111114,
+        "output_radar_data": 9.533333333333333,
+        "cpi": 158.01555555555555
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array200-gpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 5,
+            "fft_threads": 1,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -800,
+            "dopplerMax": 800
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "array_eigenbeam",
+            "channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 44287,
+            "map": 38177,
+            "detection": 41429,
+            "track": 38869,
+            "timestamp": 40321,
+            "timing": 46417,
+            "iqdata": 40031
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array200-gpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 5,
+        "benchmark_fft_threads": 1,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -800,
+        "doppler_max": 800,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "pair200-extra-wide",
+      "mode": "cpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 167.3037037037037,
+      "p95Ms": 173.832,
+      "maxMs": 181.38,
+      "misses": 0,
+      "meanArrivalIntervalMs": 199.73852046174355,
+      "observedCpiRate": 5.0065455460882555,
+      "gpuFrames": 0,
+      "peakC": 64.0,
+      "acceleration": {
+        "requested": "cpu",
+        "active": "cpu",
+        "device": "",
+        "state": "selected",
+        "reason": "",
+        "cpuMs": 0.0,
+        "gpuMs": 0.0
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 7.062962962962963,
+        "reference_synthesis": 0.0,
+        "spectrum": 5.228888888888889,
+        "clutter_filter": 26.807777777777776,
+        "ambiguity_processing": 60.91111111111111,
+        "detector": 21.592222222222222,
+        "tracker": 1.1874074074074075,
+        "output_radar_data": 44.485925925925926,
+        "cpi": 167.3037037037037
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-extra-wide-cpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -4000,
+            "dopplerMax": 4000
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 42407,
+            "map": 32813,
+            "detection": 46115,
+            "track": 40875,
+            "timestamp": 39297,
+            "timing": 45571,
+            "iqdata": 44963
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-extra-wide-cpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -4000,
+        "doppler_max": 4000,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "pair200-extra-wide",
+      "mode": "gpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 200.0,
+      "meanMs": 138.7014814814815,
+      "p95Ms": 142.696,
+      "maxMs": 144.67,
+      "misses": 0,
+      "meanArrivalIntervalMs": 200.0761396154233,
+      "observedCpiRate": 4.998097233993777,
+      "gpuFrames": 27,
+      "peakC": 57.875,
+      "acceleration": {
+        "requested": "gpu",
+        "active": "vulkan",
+        "device": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)",
+        "state": "ready",
+        "reason": "",
+        "cpuMs": 49.73,
+        "gpuMs": 20.48
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 6.970370370370371,
+        "reference_synthesis": 0.0,
+        "spectrum": 4.968518518518518,
+        "clutter_filter": 28.364444444444445,
+        "ambiguity_processing": 31.661851851851853,
+        "detector": 21.534444444444443,
+        "tracker": 0.987037037037037,
+        "output_radar_data": 44.1862962962963,
+        "cpi": 138.7014814814815
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-extra-wide-gpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -4000,
+            "dopplerMax": 4000
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 43217,
+            "map": 40947,
+            "detection": 39251,
+            "track": 45449,
+            "timestamp": 34753,
+            "timing": 39993,
+            "iqdata": 36105
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/pair200-extra-wide-gpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -4000,
+        "doppler_max": 4000,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "array400-wide",
+      "mode": "cpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 400.0,
+      "meanMs": 368.1551851851852,
+      "p95Ms": 378.783,
+      "maxMs": 379.45,
+      "misses": 0,
+      "meanArrivalIntervalMs": 398.2349109618763,
+      "observedCpiRate": 2.5110807025548083,
+      "gpuFrames": 0,
+      "peakC": 81.5,
+      "acceleration": {
+        "requested": "cpu",
+        "active": "cpu",
+        "device": "",
+        "state": "selected",
+        "reason": "",
+        "cpuMs": 0.0,
+        "gpuMs": 0.0
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 17.05,
+        "reference_synthesis": 21.37333333333333,
+        "spectrum": 15.142222222222223,
+        "clutter_filter": 196.04037037037037,
+        "ambiguity_processing": 63.9,
+        "detector": 18.111851851851853,
+        "tracker": 0.018518518518518517,
+        "output_radar_data": 36.48925925925926,
+        "cpi": 368.1551851851852
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array400-wide-cpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 5,
+            "fft_threads": 1,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.4,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -1600,
+            "dopplerMax": 1600
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "array_eigenbeam",
+            "channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 41323,
+            "map": 35377,
+            "detection": 37447,
+            "track": 32791,
+            "timestamp": 41561,
+            "timing": 42667,
+            "iqdata": 35229
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array400-wide-cpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.4,
+        "benchmark_workers": 5,
+        "benchmark_fft_threads": 1,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -1600,
+        "doppler_max": 1600,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    },
+    {
+      "label": "array400-wide",
+      "mode": "gpu",
+      "frames": 30,
+      "steadyFrames": 27,
+      "cpiMs": 400.0,
+      "meanMs": 427.68296296296296,
+      "p95Ms": 437.16900000000004,
+      "maxMs": 445.1,
+      "misses": 27,
+      "meanArrivalIntervalMs": 427.4034165002656,
+      "observedCpiRate": 2.3397098885833976,
+      "gpuFrames": 27,
+      "peakC": 77.625,
+      "acceleration": {
+        "requested": "gpu",
+        "active": "vulkan",
+        "device": "AMD Radeon 8060S Graphics (RADV STRIX_HALO)",
+        "state": "ready",
+        "reason": "",
+        "cpuMs": 31.38,
+        "gpuMs": 91.09
+      },
+      "receiver": {
+        "settings": {
+          "center_freq": 527000000,
+          "gain": 49.6,
+          "sample_rate": 2400000,
+          "rtl_tcp_channel": 0
+        },
+        "num_channels": 5,
+        "max_elements": 5,
+        "reconfiguring": false,
+        "operating_mode": "coherent",
+        "wideband_enabled": false,
+        "cooldown_active": false,
+        "cooldown_remaining_ms": 0,
+        "channel_comp": [
+          {
+            "amp_db": 0,
+            "phase_deg": 0
+          },
+          {
+            "amp_db": -0.207764,
+            "phase_deg": 14.3633
+          },
+          {
+            "amp_db": 0.153321,
+            "phase_deg": 92.2942
+          },
+          {
+            "amp_db": -1.57667,
+            "phase_deg": 107.713
+          },
+          {
+            "amp_db": -0.0298023,
+            "phase_deg": -153.165
+          }
+        ],
+        "coherence_events": 0,
+        "recovering": false
+      },
+      "stages": {
+        "extract_buffer": 17.058518518518518,
+        "reference_synthesis": 21.358888888888888,
+        "spectrum": 9.993703703703703,
+        "clutter_filter": 198.49037037037036,
+        "ambiguity_processing": 127.45481481481481,
+        "detector": 17.383703703703706,
+        "tracker": 0.00962962962962963,
+        "output_radar_data": 35.89851851851852,
+        "cpi": 427.68296296296296
+      },
+      "config": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "heimdall": {
+              "host": "127.0.0.1",
+              "port": 8091
+            }
+          },
+          "replay": {
+            "state": false,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array400-wide-gpu/unused.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 5,
+            "fft_threads": 1,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.4,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -1600,
+            "dopplerMax": 1600
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "array_eigenbeam",
+            "channels": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 44925,
+            "map": 41517,
+            "detection": 35355,
+            "track": 42099,
+            "timestamp": 33503,
+            "timing": 34251,
+            "iqdata": 41043
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB/array400-wide-gpu"
+        }
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.4,
+        "benchmark_workers": 5,
+        "benchmark_fft_threads": 1,
+        "round_hamming": true,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -1600,
+        "doppler_max": 1600,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001
+      }
+    }
+  ]
+}

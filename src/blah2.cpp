@@ -119,6 +119,7 @@ bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
 }
 
 int main(int argc, char **argv)
+try
 {
   // input handling
   signal(SIGTERM, signal_callback_handler);
@@ -669,6 +670,10 @@ int main(int argc, char **argv)
   t1.join();
 
   return 0;
+}
+catch (const std::exception& error) {
+  std::cerr << "Radar startup failed: " << error.what() << '\n';
+  return 1;
 }
 
 void signal_callback_handler(int signum) {

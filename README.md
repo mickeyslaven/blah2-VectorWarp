@@ -20,62 +20,39 @@ the host, configuration and workload.
 
 ## Processing performance
 
-On an RTX 4050 Laptop, VectorWarp GPU used **28% less processing time per CPI**
-than upstream blah2 in the matched 200 ms / ±800 Hz test: **163 vs 228 ms/CPI**.
-At that setting the GPU finished all 51 measured warm frames within the 200 ms
-budget; upstream exceeded it in 50. Lower milliseconds means more processing
-headroom—not a guarantee for every radio, computer or configuration.
+**Live five-channel processing and wider Doppler that keeps pace.** On a Ryzen
+AI Max+ 395 / Radeon 8060S, with eight physical CPU cores available, the actual
+processor measured the following with live five-input Kraken RF at 2.4 MS/s:
 
-| CPI / Doppler span | Upstream CPU | VectorWarp CPU | VectorWarp GPU |
+| Processed workload | Frame deadline | CPU ms/CPI | GPU ms/CPI |
 | --- | ---: | ---: | ---: |
-| 200 ms / ±800 Hz | 228 ms/CPI | 224 ms/CPI | 163 ms/CPI |
-| 200 ms / ±1200 Hz | 247 ms/CPI | 244 ms/CPI | 186 ms/CPI |
-| 50 ms / ±1600 Hz | 79 ms/CPI | 86 ms/CPI | 59 ms/CPI |
+| Reference/surveillance pair, ±1600 Hz | 100 ms | 52.0 | 42.6 |
+| Reference/surveillance pair, ±2400 Hz | 200 ms | 116.9 | 100.0 |
+| Five-channel synthesized-reference array, ±800 Hz | 200 ms | 147.5 | 158.0 |
+| Reference/surveillance pair, ±4000 Hz | 200 ms | 167.3 | 138.7 |
+| Five-channel synthesized-reference array, ±1600 Hz | 400 ms | 368.2 | 427.7 |
 
-These are three-repeat instrumented DSP measurements on the **same laptop**,
-using identical real recorded IQ, settings, one reference/surveillance pair,
-four CPU cores and four FFT threads. The ±1200 Hz GPU test still missed 3/51
-deadlines; the 50 ms test did not keep up. CPU-only and Pi tests do not establish
-a reliable speedup. Upstream output differences from documented detection and
-tracking fixes are disclosed in the [full results](docs/PER_CPI_BENCHMARK_20260910.md).
+Each mode ran 30 CPIs; the table averages the last 27. Every listed mode met all
+27 processing deadlines **except** the 400 ms five-channel GPU case, which
+missed all 27. CPU was better for these five-channel workloads. The ±4000 Hz
+case uses 256 delay bins and exceeds regular blah2's safe Doppler buffer size.
+These short live runs are not a long-duration, loss-free acquisition guarantee.
 
-Separately, the **actual VectorWarp processor's CPI timing stream** measured
-239 ms on CPU versus 180 ms on GPU in sample-rate-paced replay of the same
-200 ms / ±800 Hz setup. GPU missed 1/17 warm deadlines, CPU 17/17. This includes
-the application's processing/output path, but **is not a live-radio test** or
-an upstream full-application comparison. See the report for startup costs,
-deadline counts, provenance and limitations.
+**Matched live-speed replay also shows useful GPU headroom.** On an RTX 4050
+Laptop, the same recorded IQ and 200 ms / ±800 Hz pair workload averaged
+**239 ms/CPI for regular blah2, 220 ms for VectorWarp CPU, and 162 ms for
+VectorWarp GPU** in two alternating sample-clock-paced repeats. GPU used about
+**32% less processing time** than upstream and met all 34 warm processing
+deadlines; upstream missed 33. A heavier 250 ms / ±2000 Hz case was faster on
+GPU but still missed every deadline. This comparison uses unchanged upstream
+DSP, not its native acquisition service; documented detection/tracking fixes
+mean full outputs are not identical.
 
-### Five-channel CPU scaling and wider Doppler
-
-Channel workers **do** help the full five-channel array. At 200 ms CPI / ±800 Hz,
-moving from one to four workers with one FFT thread each reduced processing
-from **1075 to 568 ms/CPI: 47% less time**, within the same four-core budget.
-That is a gain over VectorWarp's sequential five-channel path, not over blah2.
-
-Giving both programs six physical performance cores produced:
-
-| Workload | Processing time |
-| --- | ---: |
-| Regular blah2, two-channel pair, CPU | 210 ms/CPI |
-| VectorWarp, five-channel array, CPU | 376 ms/CPI |
-| VectorWarp, five-channel array, GPU | 414 ms/CPI |
-
-These are three-repeat medians on the same laptop. Five channels did **not**
-match the two-channel time, and neither five-channel mode kept up with 200 ms.
-GPU is not faster for every workload; AUTO can fall back to CPU.
-Separately, the actual processor's four-core paced-replay check measured
-**539 ms CPU / 592 ms GPU** for all five channels, missing every warm 200 ms
-deadline. These are not live-RF measurements.
-
-VectorWarp also completed **±2500 and ±4000 Hz** at 2.4 MS/s, 200 ms CPI and
-256 delay bins, configurations where regular blah2's Doppler buffer is too
-small. At ±4000 Hz, instrumented CPU/GPU timing was **477/332 ms/CPI**; the
-actual processor's paced-replay timing was **501/369 ms/CPI**. This is broader
-configuration support, **not real-time wide-Doppler performance** on this host.
-An extreme ±6000-Hz case exposed invalid delay mapping and is excluded from
-usable-coverage claims; its settings-validation gap remains to be fixed.
-See [all capacity, worker, native-timing and boundary results](docs/ARRAY_CAPACITY_20260910.md).
+See [live timings, matched replay, per-CPI data and limitations](docs/LIVE_CAPACITY_20260910.md).
+Earlier tests also measured [47% less five-channel CPU time from channel workers](docs/ARRAY_CAPACITY_20260910.md)
+and [three-repeat GPU results](docs/PER_CPI_BENCHMARK_20260910.md). CPU-only
+comparisons do not establish a broad speedup, and Pi tests did not achieve
+real time. Unsupported signed-delay windows are now rejected before processing.
 
 ### Verification
 

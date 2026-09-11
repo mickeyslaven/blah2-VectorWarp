@@ -7,6 +7,13 @@ acquisition, API/network transport, browser rendering or end-to-end real-time
 queue behavior. Per-frame deadline counts are offline processing deadlines, not
 measured dropped live frames.
 
+Set `BLAH2_BENCH_PACE=1` for sample-clock-paced replay. Each complete CPI is
+released at its scheduled sample time; an overloaded processor falls behind
+instead of silently dropping input. The summary records pacing and final lag
+past the next CPI deadline (including read/validation overhead). DSP timing
+still excludes pacing waits. This is lossless scheduled replay, not a hardware
+capture/drop simulation or proof of sustained live acquisition.
+
 `bench-upstream` compiles unchanged DSP/data sources from an explicitly selected
 upstream checkout. `bench-fast` compiles this fork's sources. Both use the same
 MCHQ adapter, input normalization, configuration, compiler and DSP libraries.

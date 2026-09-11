@@ -18,6 +18,8 @@
 #include <numeric>
 #include <algorithm>
 #include <sstream>
+#include <thread>
+#include <cstdlib>
 #include <sys/resource.h>
 #ifdef BLAH2_BENCH_FAST
 #include "process/ambiguity/Acceleration.h"
@@ -139,6 +141,9 @@ Geometry inspectGeometry(const rapidjson::Document& cfg, bool array) {
   value.nCorr=value.samples/value.dopplerBins;
   if (!value.nCorr || value.nCorr > UINT16_MAX)
     throw std::invalid_argument("Correlation length exceeds the DSP representation");
+  if (value.delayMin <= -static_cast<int64_t>(value.nCorr) ||
+      value.delayMax >= static_cast<int64_t>(value.nCorr))
+    throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
   value.roundHamming=boolean(cfg,"round_hamming");
   value.nfft=2*value.nCorr-1;
   if (value.roundHamming) value.nfft=next_hamming(value.nfft);
@@ -150,7 +155,9 @@ Geometry inspectGeometry(const rapidjson::Document& cfg, bool array) {
   value.fftThreads=wholeNumber(cfg,"benchmark_fft_threads",1,256);
   if ((!array && value.workers != 1) || value.workers > value.pathCount)
     throw std::invalid_argument("Worker count must be one for pair or no greater than array paths");
-  value.upstreamSafe=value.dopplerBins <= value.nfft;
+  // Upstream also copies one extra positive-lag sample when the requested
+  // delay window occupies the entire unrounded range FFT.
+  value.upstreamSafe=value.dopplerBins <= value.nfft && value.delayBins < value.nfft;
   return value;
 }
 
@@ -287,8 +294,20 @@ int main(int argc, char** argv) try {
   std::vector<double> pipelineValues;
   constexpr unsigned SteadyStartFrame=3;
   const double startupMs=ms(started, Clock::now());
+  const char* paceSetting = std::getenv("BLAH2_BENCH_PACE");
+  if (paceSetting && std::string(paceSetting) != "0" && std::string(paceSetting) != "1")
+    throw std::invalid_argument("BLAH2_BENCH_PACE must be 0 or 1");
+  const bool paced = paceSetting && std::string(paceSetting) == "1";
+  const auto paceStart = Clock::now();
+  double finalScheduleLagMs = 0;
+  double peakScheduleLagMs = 0;
   std::vector<std::deque<Complex>> decoded;
   while (!limit || frame < limit) {
+    // Lossless scheduled replay, not a live queue/drop simulation. Inputs are
+    // released on the original sample clock; slow processing falls behind it.
+    const auto release = paceStart + std::chrono::duration_cast<Clock::duration>(
+      std::chrono::duration<double>((frame + 1) * geometry.requestedCpi));
+    if (paced) std::this_thread::sleep_until(release);
     const auto beforeRead=Clock::now();
     if (!reader.read(samples, decoded)) break;
     const auto begin=Clock::now(); auto mark=begin;
@@ -399,6 +418,10 @@ int main(int argc, char** argv) try {
     else if (active == "cpu") ++cpuFrames;
     else throw std::runtime_error("Benchmark reported an unknown processing backend");
     pipelineValues.push_back(pipeline);
+    if (paced) {
+      finalScheduleLagMs = std::max(0.0, ms(release, Clock::now()) - geometry.requestedCpi * 1000);
+      peakScheduleLagMs = std::max(peakScheduleLagMs, finalScheduleLagMs);
+    }
     totalPipeline+=pipeline; totalRead+=readMs; totalValidation+=validationMs; ++frame;
     if (frame % 50 == 0) std::cerr << "frames=" << frame << " backend=" << active << " processing_ms=" << totalPipeline/frame << '\n';
   }
@@ -437,6 +460,9 @@ int main(int argc, char** argv) try {
     << ",\"steady_dsp_max_ms\":" << jsonNumberOrNull(steady,steady.empty()?0:*std::max_element(steady.begin(),steady.end()))
     << ",\"steady_dsp_deadline_misses\":" << countDeadline(steady)
     << ",\"read_ms\":" << totalRead
+    << ",\"sample_clock_paced\":" << (paced ? "true" : "false")
+    << ",\"final_schedule_lag_ms\":" << finalScheduleLagMs
+    << ",\"peak_schedule_lag_ms\":" << peakScheduleLagMs
     << ",\"validation_ms\":" << totalValidation << ",\"wall_ms\":" << ms(started,Clock::now())
     << ",\"gpu_frames\":" << gpuFrames << ",\"cpu_frames\":" << cpuFrames
     << ",\"forced_gpu_verified\":" << (mode=="gpu"?"true":"null")

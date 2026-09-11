@@ -6,7 +6,6 @@
 /// @author 30hours
 /// @todo Ambiguity maps are still offset by 1 bin.
 /// @todo Write a performance test for hamming assisted ambiguity processing.
-/// @todo If delayMin > delayMax = trouble, what's the exception policy?
 
 #pragma once
 #include "data/IqData.h"
@@ -111,7 +110,6 @@ private:
   std::vector<Complex> dataXi;
   std::vector<Complex> dataYi;
   std::vector<Complex> dataZi;
-  std::vector<Complex> dataCorr;
   std::vector<Complex> dataDoppler;
   /// @}
 

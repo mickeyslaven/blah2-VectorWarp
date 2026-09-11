@@ -131,7 +131,7 @@ for the tested configurations, **not real-time performance or unlimited span**.
 The full five-channel ±2500-Hz workload also completed: CPU **672.34 ms/CPI**,
 GPU **762.54 ms/CPI**, both 9/9 warm deadline misses. Saved outputs matched.
 
-### Excluded extreme profile and remaining validation issue
+### Excluded extreme profile and subsequent validation fix
 
 The ±6000-Hz / 256-delay-bin stress case completed numerically at 645.59 ms CPU
 and 445.76 ms GPU, both 9/9 warm deadline misses, but **is excluded from usable
@@ -155,6 +155,15 @@ sufficient delay-window check. Reject unsupported signed lags or correct the
 extraction before accepting such combinations. No production DSP/validation
 change was made during this measurement campaign. Reducing the delay window
 would be a different profile, not evidence for the one tested here.
+
+Subsequent fix: browser validation, native ambiguity/acceleration construction
+and benchmark preflight now reject delays outside `-(nCorr-1)..+(nCorr-1)`.
+CPU extraction indexes signed lags directly, avoiding an extra out-of-bounds
+read for a full unrounded correlation window. Independent impulse tests cover
+positive/negative boundary lags with and without FFT rounding; invalid native
+startup reports the reason and exits normally before acquisition. This fixes
+acceptance of the invalid configuration; it does not make the excluded timing
+row physically valid or change the frozen campaign's results.
 
 ## Actual processor CPI timing, not just the benchmark harness
 

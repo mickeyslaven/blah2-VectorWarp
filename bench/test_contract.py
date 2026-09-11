@@ -8,6 +8,8 @@ import subprocess
 import struct
 import sys
 import tempfile
+import os
+import time
 
 
 def run(*command):
@@ -40,6 +42,25 @@ def main():
     assert inspected["fftThreads"] == profile["benchmark_fft_threads"]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
+        full = dict(profile, sample_rate=100, cpi=.08, doppler_min=-1,
+                    doppler_max=1, delay_min=-7, delay_max=7, round_hamming=False)
+        full_path = root/'full-delay.json'
+        full_path.write_text(json.dumps(full))
+        for engine, supported in [(fast, True), (upstream, False)]:
+            checked = run(engine, '--inspect-geometry', str(full_path), 'pair')
+            assert checked.returncode == 0, checked.stderr
+            assert json.loads(checked.stdout)['supported'] == supported
+        for delay_min, delay_max, accepted in [(-198, 198, True), (-199, 198, False),
+                                               (-198, 199, False), (-10, 245, False)]:
+            geometry = dict(profile, sample_rate=2400000, cpi=.2,
+                            doppler_min=-6000, doppler_max=6000,
+                            delay_min=delay_min, delay_max=delay_max)
+            boundary_path = root / "boundary.json"
+            boundary_path.write_text(json.dumps(geometry))
+            checked = run(fast, "--inspect-geometry", str(boundary_path), "pair")
+            assert (checked.returncode == 0) == accepted, checked.stderr
+            if not accepted:
+                assert "Delay limits exceed the correlation block" in checked.stderr
         unsafe_profile = root / "unsafe.json"
         unsafe = dict(profile, cpi=0.5, doppler_min=-1600, doppler_max=1600)
         unsafe_profile.write_text(json.dumps(unsafe))
@@ -90,6 +111,16 @@ def main():
         assert len(rows) == 5 and all(None not in row for row in rows)
         assert all(row["pipeline_ms"] == row["dsp_ms"] for row in rows)
         assert all(float(row["fusion_ms"]) >= 0 for row in rows)
+        paced_prefix = root / "paced"
+        started = time.monotonic()
+        paced = subprocess.run([fast, str(recording), str(smoke_profile), str(paced_prefix),
+                                "pair", "cpu", "5", "none", str(golden)],
+                               env=dict(os.environ, BLAH2_BENCH_PACE="1"),
+                               text=True, capture_output=True, timeout=10)
+        assert paced.returncode == 0, paced.stderr
+        assert time.monotonic() - started >= .25, 'Paced input ran faster than its sample clock'
+        receipt = json.loads(Path(str(paced_prefix)+'.summary.json').read_text())
+        assert receipt['sample_clock_paced'] and receipt['final_schedule_lag_ms'] >= 0
     print("benchmark geometry contract passed")
 
 

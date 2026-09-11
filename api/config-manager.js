@@ -397,6 +397,9 @@ function validateConfig(config, baseline = null) {
       errors.push('process.ambiguity.dopplerMax: Doppler span creates too many bins for this CPI');
     else {
       const correlationSamples = Math.floor(cpiSamples / dopplerBins);
+      if (delayMin !== null && delayMax !== null &&
+          (delayMin <= -correlationSamples || delayMax >= correlationSamples))
+        errors.push(`process.ambiguity.delayMax: delay limits must be within ${1 - correlationSamples} to ${correlationSamples - 1} samples; reduce the delay range or narrow the Doppler span`);
       ambiguityCpi = correlationSamples * dopplerBins / sampleRate;
       // FFT rounding matches next_hamming (factors 2, 3 and 5). Never loop
       // through user-sized ranges: only bounded candidate lengths are searched.

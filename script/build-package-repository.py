@@ -52,7 +52,22 @@ caption{text-align:left;font-weight:600;margin-bottom:.5rem}.table-scroll{overfl
 <p>Native Linux passive radar with browser setup, recording, replay and optional GPU acceleration.</p>
 <p><a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Installation guide</a>
  · <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Source and receiver support</a></p>
-<h2>Measured processing headroom</h2>
+<h2>Live radar that keeps pace</h2>
+<p>On a Ryzen AI Max+ 395 / Radeon 8060S with eight physical cores available,
+live five-channel Kraken processing averaged 147.5 ms per 200 ms CPI on CPU.
+A live reference/surveillance pair at ±4000 Hz averaged 138.7 ms on GPU,
+meeting all 27 measured 200 ms processing deadlines. That configuration exceeds
+regular blah2's safe Doppler buffer size.</p>
+<p>Five configurations, CPU and GPU, 300 live CPIs total. These are short runs,
+not an endurance or loss-free acquisition guarantee. Parallel CPU was faster
+for the five-channel workloads; the 400 ms / ±1600 Hz five-channel GPU case
+missed all 27 measured deadlines.</p>
+<p>A separate identical-IQ, sample-clock-paced RTX 4050 comparison averaged
+239 ms/CPI upstream versus 162 ms on VectorWarp GPU at 200 ms / ±800 Hz:
+about 32% less processing time, with 33/34 versus 0/34 warm deadline misses.
+The heavier 250 ms / ±2000 Hz profile did not keep pace in any mode.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Live and paced results, per-CPI evidence and limitations</a></p>
+<h2>Earlier matched processing measurements</h2>
 <p>In the September 10, 2026 matched test, VectorWarp GPU used 28% less processing
 time per CPI than upstream blah2 on an RTX 4050 Laptop.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Per-CPI benchmark results">
@@ -74,8 +89,8 @@ That check used sample-rate-paced replay, not live RF or the upstream full appli
 under the same four-core budget. With six performance cores available to both
 programs, five-channel VectorWarp CPU took 376 ms versus 210 ms for regular
 blah2's two-channel pair. Five-channel processing has not matched pair timing.</p>
-<p>VectorWarp completed ±2500/±4000 Hz configurations that exceed upstream's
-Doppler buffer size. These wide profiles did not meet their 200 ms deadlines;
+<p>On that laptop, VectorWarp completed ±2500/±4000 Hz configurations that exceed upstream's
+Doppler buffer size. Those wide profiles did not meet their 200 ms deadlines;
 an extreme ±6000 Hz full-delay profile is excluded due to a delay-mapping issue.</p>
 <p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/ARRAY_CAPACITY_20260910.md">Channel scaling, actual processor timings and wider-Doppler limits</a></p>
 <h2>Signed Linux packages</h2>

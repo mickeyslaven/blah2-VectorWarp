@@ -29,6 +29,15 @@ struct Backend : blah2::GpuBackend {
 };
 int main(int argc, char**) {
   try {
+    for (const std::string mode : {"cpu", "auto", "gpu"}) {
+      bool rejected = false;
+      try {
+        blah2::Acceleration invalid(mode, {400, 2401, 256, 1, -10}, 199, 2400000, 0);
+      } catch (const std::invalid_argument& error) {
+        rejected = std::string(error.what()).find("Delay limits exceed the correlation block") != std::string::npos;
+      }
+      check(rejected, "Acceleration accepted a signed delay outside its correlation block");
+    }
     for (const std::string fault : {"throw", "wrong", "nan", "shape", "later", "slow", "init", "cpu", "missing"}) {
       if (fault == "missing" && argc == 1) continue; // Explicit no-driver run only.
       constexpr unsigned samples = 4800;

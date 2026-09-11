@@ -226,6 +226,17 @@ wide.process.ambiguity.delayMin = -2;
 wide.process.ambiguity.delayMax = 20;
 const wideResult = validateConfig(wide);
 assert.equal(wideResult.valid, true, `Independent Doppler buffer: ${wideResult.errors.join('; ')}`);
+for (const [minimum, maximum, valid] of [[-198, 198, true], [-199, 198, false],
+  [-198, 199, false], [-10, 245, false]]) {
+  const boundary = clone(sixChannel);
+  boundary.capture.fs = 2400000;
+  boundary.process.data.cpi = .2;
+  Object.assign(boundary.process.ambiguity, {delayMin: minimum, delayMax: maximum,
+    dopplerMin: -6000, dopplerMax: 6000});
+  const result = validateConfig(boundary);
+  assert.equal(result.valid, valid, `Signed lag ${minimum}..${maximum}: ${result.errors.join('; ')}`);
+  if (!valid) assert(result.errors.some(error => error.includes('delay limits must be within -198 to 198')));
+}
 const guardZero = clone(sixChannel);
 guardZero.process.detection.nGuard = 0;
 guardZero.process.reference_synthesis.diagonal_loading = 0;

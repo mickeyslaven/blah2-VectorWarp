@@ -33,6 +33,10 @@ class HomepageTests(unittest.TestCase):
                          "376 ms versus 210 ms", "has not matched pair timing",
                          "ARRAY_CAPACITY_20260910.md", "excluded due to a delay-mapping issue"):
             self.assertIn(required, page)
+        for required in ('147.5 ms', '138.7 ms', '300 live CPIs', 'not an endurance',
+                         '33/34 versus 0/34', 'LIVE_CAPACITY_20260910.md',
+                         'did not keep pace in any mode'):
+            self.assertIn(required, page)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()

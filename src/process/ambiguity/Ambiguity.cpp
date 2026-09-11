@@ -7,12 +7,17 @@
 #include <math.h>
 #include <chrono>
 #include <stdexcept>
+#include <limits>
 
 // constructor
 Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax, 
   int32_t _dopplerMin, int32_t _dopplerMax, uint32_t _fs, 
   uint32_t _n, bool _roundHamming)
 {
+  const int64_t delayBins = static_cast<int64_t>(_delayMax) - _delayMin + 1;
+  if (!_fs || !_n || _dopplerMin > _dopplerMax || delayBins < 1 ||
+      delayBins > std::numeric_limits<uint16_t>::max())
+    throw std::invalid_argument("Invalid delay-Doppler geometry");
   // init
   delayMin = _delayMin;
   delayMax = _delayMax;
@@ -20,8 +25,8 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   dopplerMax = _dopplerMax;
   fs = _fs;
   nSamples = _n;
-  nDelayBins = static_cast<uint16_t>(_delayMax - _delayMin + 1);
-  dopplerMiddle = (_dopplerMin + _dopplerMax) / 2.0;
+  nDelayBins = static_cast<uint16_t>(delayBins);
+  dopplerMiddle = (static_cast<int64_t>(_dopplerMin) + _dopplerMax) / 2.0;
   
   // doppler calculations
   std::deque<double> doppler;
@@ -30,6 +35,8 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   int i = 1;
   while (dopplerMiddle + (i * resolutionDoppler) <= dopplerMax)
   {
+    if (doppler.size() + 2 > std::numeric_limits<uint16_t>::max())
+      throw std::invalid_argument("Doppler bin count exceeds the processor limit");
     doppler.push_back(dopplerMiddle + (i * resolutionDoppler));
     doppler.push_front(dopplerMiddle - (i * resolutionDoppler));
     i++;
@@ -37,7 +44,19 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   nDopplerBins = doppler.size();
 
   // batches constants
-  nCorr = _n / nDopplerBins;
+  const uint32_t correlationSamples = _n / nDopplerBins;
+  if (!correlationSamples || correlationSamples > std::numeric_limits<uint16_t>::max())
+    throw std::invalid_argument("Correlation length exceeds the processor limit");
+  // A zero-padded block correlation represents only -(N-1)..+(N-1).
+  // A lag can fit in the FFT allocation yet alias the opposite signed lag.
+  if (static_cast<int64_t>(delayMin) <= -static_cast<int64_t>(correlationSamples) ||
+      static_cast<int64_t>(delayMax) >= correlationSamples)
+    throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
+  nCorr = correlationSamples;
+  nfft = 2 * nCorr - 1;
+  if (_roundHamming) nfft = next_hamming(nfft);
+  if (nfft > std::numeric_limits<uint16_t>::max())
+    throw std::invalid_argument("Correlation FFT exceeds the processor limit; widen the Doppler span");
   cpi = (static_cast<double>(nCorr) * nDopplerBins) / fs;
 
   // update doppler bins to true cpi time
@@ -58,13 +77,6 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
     map->doppler.push_front(dopplerMiddle - (i * resolutionDoppler));
     i++;
   }
-
-  // other setup
-  nfft = 2 * nCorr - 1;
-  if (_roundHamming) {
-    nfft = next_hamming(nfft);
-  }
-  dataCorr.resize(2 * nDelayBins + 1);
 
   // compute FFTW plans in constructor
   dataXi.resize(nfft);
@@ -136,21 +148,13 @@ Map<std::complex<double>> *Ambiguity::process(
 
     fftw_execute(fftZi);
 
-    // extract center of corr
-    for (uint16_t j = 0; j < nDelayBins; j++)
-    {
-      dataCorr[j] = dataZi[nfft - nDelayBins + j];
-    }
-    for (uint16_t j = 0; j < nDelayBins + 1; j++)
-    {
-      dataCorr[j + nDelayBins] = dataZi[j];
-    }
-
-    // cast from std::complex to std::vector
+    // Extract signed lags directly, including the full unrounded FFT window.
     corr.clear();
     for (uint16_t j = 0; j < nDelayBins; j++)
     {
-      corr.push_back(dataCorr[nDelayBins + delayMin + j - 1 + 1]);
+      const int32_t lag = delayMin + j;
+      const uint32_t index = lag < 0 ? static_cast<int64_t>(nfft) + lag : lag;
+      corr.push_back(dataZi[index]);
     }
 
     map->set_row(i, corr);

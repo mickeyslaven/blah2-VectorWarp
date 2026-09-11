@@ -25,6 +25,10 @@ Acceleration::Acceleration(std::string mode, GpuGeometry geometry,
     timeSource_(std::move(timeSource)) {
   if (mode != "auto" && mode != "cpu" && mode != "gpu")
     throw std::invalid_argument("Acceleration must be auto, cpu or gpu");
+  if (!correlation || !geometry.delays ||
+      geometry.delayMin <= -static_cast<int64_t>(correlation) ||
+      static_cast<int64_t>(geometry.delayMin) + geometry.delays - 1 >= correlation)
+    throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
   status_.requested = mode;
   if (mode == "cpu") { status_.state = "selected"; return; }
   try {
