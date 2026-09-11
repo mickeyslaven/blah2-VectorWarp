@@ -4,8 +4,8 @@ The delay–Doppler processor can use a Vulkan GPU. The implementation targets A
 Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
 verification is limited to the devices and driver versions in
 [GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
-Capture, reference synthesis, clutter removal, detection and tracking remain on
-the CPU.
+Capture, reference synthesis, the small FP64 clutter coefficient solve,
+detection and tracking remain on the CPU.
 
 On a Raspberry Pi 4 running Fedora 44, production-size attempts in Automatic
 and GPU modes timed out during driver pipeline creation and fell back to CPU.

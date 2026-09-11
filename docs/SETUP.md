@@ -57,15 +57,21 @@ script/build-native.sh --backend all --gpu auto
 
 Install `libhackrf-dev libuhd-dev uhd-host libusb-1.0-0-dev` on Ubuntu, or
 `hackrf-devel uhd-devel libusb1-devel` on Fedora. USRP needs UHD 4.8+.
-RSPduo needs SDRplay API 3.15.2 from the vendor. Grant the `vectorwarp` account
-only the required device groups and verify radio, clock, and cabling separately.
-The browser validates saved settings; it does not prove hardware health.
+RSPduo needs SDRplay API 3.15.2 from the vendor. Qualified add-only dependency
+plans for USRP and HackRF require local enrollment, one-use approval and a
+compiled backend; they do not install arbitrary drivers. Grant the `vectorwarp`
+account only the required device groups and verify radio, clock, and cabling
+separately. The browser validates saved settings; it does not prove hardware health.
 
 ## KrakenSDR Suite V2
 
 VectorWarp consumes the calibrated TCP stream from
-[KrakenSDR Suite V2](https://github.com/krakenrf/krakensdr_suite). Start
-`heimdall_v2`, configure frequency and gain there, then match VectorWarp:
+[KrakenSDR Suite V2](https://github.com/krakenrf/krakensdr_suite). Keep the
+Kraken installation and USB driver under Suite V2's control. VectorWarp can
+enroll, reuse and start an already-installed allowlisted local service, or use
+a remote endpoint; it does not install Kraken drivers. Apply the browser
+frequency and active channel prefix, then verify the receiver's readback at
+processor startup:
 
 ```yaml
 capture:

@@ -40,7 +40,9 @@ VectorWarp CPU-only build.
 | Pair, ±2400 Hz p95 | 312.916 | 309.900 | 256.497 | 246.385 |
 | Pair, ±2400 Hz misses | 24/24 | 24/24 | 2/24 | 2/24 |
 
-These are the means of two alternating 12-frame steady windows, in ms/CPI.
+These are the means of two alternating 12-frame steady windows, in ms/CPI;
+each p95 is the mean of the two per-run p95 values rather than a pooled-frame
+percentile.
 The GPUs saved about 41–47% on the standard pair and 41–43% on the wider pair
 relative to actual upstream blah2. A periodic CPU oracle occupied one of each
 12-frame GPU steady window; it explains the two deadline misses and should not
@@ -95,7 +97,8 @@ RF carrier frequency/bandwidth are different quantities.
 | ±40 kHz, 500 ms CPI | 1862.562 ms | **419.176 ms** | 1009.335 ms | 2/24 |
 | ±20 kHz, 1 s CPI | 2580.833 ms | **769.310 ms** | 1535.162 ms | 2/24 |
 
-Each row is a two-repeat, 24-frame steady aggregate. Eleven frames in each
+Each row is a two-repeat, 24-frame steady aggregate; p95 is the mean of the two
+per-run p95 values. Eleven frames in each
 12-frame GPU window use GPU clutter and ambiguity processing; one periodic CPU
 oracle checks accuracy. That oracle creates the two deadline misses, so a mean
 below the CPI is useful capacity evidence, not a guarantee that every frame
@@ -117,11 +120,13 @@ see the [Fraunhofer publication](https://publica.fraunhofer.de/entities/publicat
 
 ## Native live processor
 
-Seven short native runs used live five-channel Kraken input at 527 MHz and
-2.4 MS/s on Strix (eight physical CPUs, 800% CPU budget). Each run has 40
-frames with eight startup frames excluded. These runs include actual receiver
-ingress and the native processor timer; they are not matched RF comparisons
-between modes, so the paired-replay tables remain the upstream speed evidence.
+Seven short native runs used live Kraken input at 527 MHz and 2.4 MS/s on Strix
+(eight physical CPUs, 800% CPU budget). Pair rows process two channels selected
+from the five-channel receiver; only the array row processes all five channels.
+Each run has 40 frames with eight startup frames excluded. These runs include
+actual receiver ingress and the native processor timer; their p95 is the usual
+32-frame percentile. They are not matched RF comparisons between modes, so the
+paired-replay tables remain the upstream speed evidence.
 
 | Live workload | Mode | Mean ms | p95 ms | Max ms | Misses |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -210,5 +215,6 @@ Precision, thermal and preflight receipts remain in the parent directory. This
 repository records the human-readable result; the machine-local evidence retains
 the raw timing and command receipts.
 
-The publishable Pavilion aggregate, profiles and provenance are checked in at
+The publishable NVIDIA v6 per-run summary, Pavilion/Strix aggregates, profiles
+and v8 confirmation provenance are checked in at
 [`docs/benchmarks/20260911`](benchmarks/20260911/).

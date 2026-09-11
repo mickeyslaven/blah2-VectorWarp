@@ -14,7 +14,7 @@ Last acceptance review: 2026-09-10. Uncommitted development is not a published r
 | Acceleration | CPU/FFTW processing | Optional isolated Vulkan/VkFFT ambiguity worker; automatic selection and CPU fallback | NVIDIA RTX 4050 Laptop, AMD Radeon 8060S and Radeon 540/550, Intel HD 630 functional matrices. The later sustained-cost safeguard has deterministic tests, not a new hardware benchmark. |
 | CPU scheduling | Fixed FFT threading | Affinity/quota-aware automatic worker and FFT-team sizing; manual overrides | Unit tests. Automatic sizing is conservative, not guaranteed maximum throughput. |
 | Web interface | Original radar/display pages | Redesigned navigation, readable views, fullscreen, configuration, health and recording/replay controls | API and browser-DOM tests; no claim that every browser/GPU combination has been tested. |
-| Configuration | File-based setup | Validated browser editing, disk revision checks, atomic backups, startup recovery, save/restart flow | Active settings validated for all four processor receiver types. Physical tuning/driver limits still depend on the installed receiver and host. |
+| Configuration | File-based setup | Validated browser editing, disk revision checks, atomic backups, receiver enrollment/readback and save/restart flow | Browser frequency and active-channel prefix synchronize with an enrolled receiver and are checked at startup. Kraken Suite/USB drivers and proprietary SDRplay installation remain external. |
 | ADS-B | Separate adsb2dd converter for delay/Doppler overlays | Integrated converter; local decoder discovery or a configured remote tar1090 feed | WGS84, timestamps, derivatives, stale/invalid data, warmup, cache and integration tests. Explicit remote feeds never fall back silently to local data. ADS-B never enters detection/tracking inference. |
 | Recording/replay | Receiver-specific recording; incomplete replay coverage | Portable `.blah2iq` for 2–8 channels, legacy readers, common paced replay, EOF/loop/error reporting, acknowledged recording controls | 13 full-processor replay cases in release and AddressSanitizer builds; the extracted Fedora package also passes these plus three invalid-startup checks. Physical recording evidence remains five-channel Kraken. |
 | Tracking/math | Original tracking/spectrum/detection implementations | Bounded histories, corrected association/kinematics, spectrum axes/levels, boundary and nonfinite-value repairs | Focused C++ tests; not proof of real-aircraft tracker accuracy or reliable bearing. |
@@ -38,57 +38,20 @@ and adsb2dd PRs to the actual implementation and regression coverage.
 
 ## Performance wording
 
-The [capacity follow-up](ARRAY_CAPACITY_20260910.md) isolates channel-worker
-scaling: one-to-four workers at one FFT thread each reduced five-channel time
-1074.93→568.03 ms under the same four-core budget. With six physical P-cores
-available to both programs, upstream's pair took 210.32 ms and VectorWarp's full
-five-channel CPU array 376.32 ms (GPU 414.22 ms). Five-channel/two-channel parity
-has **not** been demonstrated. These are different channel workloads.
+Direct upstream claims come only from the matched recorded-IQ replays in the
+[2026-09-11 GPU benchmark report](GPU_BENCHMARK_20260911.md): same recording,
+same host and CPU budget, pinned `30hours/blah2` baseline. Examples include the
+RTX 4050 standard profile (240.118 ms/CPI upstream, 239.479 VectorWarp CPU,
+127.770 GPU) and the Pavilion AMD wide profile (308.096, 303.164 and 174.629
+ms/CPI respectively). The GPU runs clutter FFT/filtering and ambiguity/
+delay–Doppler work; the small FP64 coefficient solve remains CPU work.
 
-At 200 ms CPI, 2.4 MS/s and delay −10…245, VectorWarp also completed ±2500/±4000 Hz
-profiles that exceed upstream's incorrectly sized Doppler buffer. Native
-±4000-Hz timing was 501.06 ms CPU/368.58 ms GPU; neither met 200 ms. Support is not
-real-time speed. The ±6000-Hz full-delay stress case exposed lag relabeling and
-is excluded; its remaining validation gap is documented rather than promoted.
-
-Use the [current per-CPI report](PER_CPI_BENCHMARK_20260910.md) for the latest
-matched measurements. At 200 ms CPI / ±800 Hz on the RTX 4050 Laptop, the median
-of three warm-run means was 228.11 ms upstream CPU, 223.91 ms VectorWarp CPU,
-164.72 ms AUTO and 163.38 ms explicit GPU. GPU used 28.4% less processing time
-than upstream under the same four-core/four-FFT-thread controls. Explicit GPU
-missed 0/51 warm deadlines; upstream missed 50/51. Wider and shorter-CPI tests
-still missed deadlines. Corrected edge detections, SNR and track association
-mean upstream outputs are not universally identical; VectorWarp CPU/GPU saved
-outputs agreed. No CPU-only or Pi speedup claim is established.
-
-A separate actual-processor timing check at the standard setting measured
-239.46 ms CPU versus 180.31 ms GPU, with 17/17 versus 1/17 warm deadline misses.
-That is VectorWarp sample-rate-paced replay, not an upstream full-application
-comparison or live RF verification. Do not substitute offline DSP times for
-the processor timing stream or promise sustained acquisition from a short run.
-
-The earlier [recorded-IQ report](RECORDED_IQ_BENCHMARK.md) retains its frozen source
-hashes. In that earlier campaign, the RTX 4050 Laptop's matching two-channel AUTO median
-was 1.305× upstream CPU throughput. Its five-channel GPU profile was slower than
-fork CPU. Strix and HP results are partial thermal-stop observations, not full
-replicated matrices. Those measurements predate later math/recording/selection
-repairs; do not describe them as performance measurements of every current change.
-
-The [Fedora 44 / Raspberry Pi 4 check](PI4_VALIDATION_20260910.md) recorded
-917.031 ms/CPI upstream versus 902.441 ms/CPI VectorWarp for a two-channel CPU
-run. The 1.6% timing difference is not a reliable speedup claim from these short
-runs. Detection SNR differs because VectorWarp already corrects an upstream
-peak-interpolation assignment bug; this is not evidence of greater sensitivity.
-Maps and positions matched at their saved precision, but track arrays were empty.
-Across three two-core repeats, the upstream median was about 0.9% above
-VectorWarp's, with overlapping run ranges. The five-channel VectorWarp run took
-3748.025 ms/CPI with no upstream equivalent. Neither profile met its 200 ms CPI.
-Production-size Pi GPU attempts fell back to CPU; six small diagnostic GPU
-frames passed an independent CPU comparison, without establishing speedup.
-
-Acceptable: “Optional GPU acceleration, with measured gains for some workloads
-and automatic CPU fallback.” Not supported: “Faster on every GPU,” “all processing
-runs on GPU,” “all channels tested on physical hardware,” or “zero-copy raw ADC.”
+Native live results and wide-Doppler stress demonstrate VectorWarp processing
+capacity, but are not upstream ratios because the RF/input conditions differ or
+the upstream geometry is unsupported. Use the benchmark report for matched
+comparisons, deadline distributions and exclusions. Do not claim universal GPU
+speedup, all-GPU processing, loss-free acquisition or verified high-frequency
+receiver support from these measurements.
 
 ## Release wording checklist
 
