@@ -107,9 +107,7 @@ class FedoraSession:
         require(len(roots) == 1 and set(roots[0]) == {'name', 'version'} and roots[0]['name'] == ROOTS[receiver_type],
                 'INVALID_TRANSACTION', 'Receiver package is outside the fixed allowlist.')
         if receiver_type == 'Usrp':
-            version = re.match(r'(?:[0-9]+:)?([0-9]+)\.([0-9]+)', roots[0]['version'])
-            require(version and (int(version[1]), int(version[2])) >= (4, 8),
-                    'UHD_VERSION_UNSUPPORTED', 'The backend requires UHD 4.8 or newer.')
+            common.require_uhd_version(roots[0]['version'])
         require(not installed or all(pkg.get_evr() == roots[0]['version'] for pkg in installed),
                 'INCOMPATIBLE_INSTALLED_VERSION', 'An existing receiver package would be replaced; review locally.')
         goal = lib.base.Goal(self.base)

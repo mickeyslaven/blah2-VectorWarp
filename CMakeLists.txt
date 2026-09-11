@@ -42,7 +42,9 @@ endif()
 
 if(BLAH2_ENABLE_USRP)
   set(CMAKE_PREFIX_PATH "/opt/uhd" ${CMAKE_PREFIX_PATH})
-  find_package(UHD "4.8.0.0" CONFIG REQUIRED)
+  # Current capture/setter/getter API is compile-qualified against Ubuntu 22.04
+  # UHD 4.1.0.5 as well as Fedora's UHD 4.9; no private newer UHD is required.
+  find_package(UHD "4.1.0.0" CONFIG REQUIRED)
 endif()
 
 if(BLAH2_ENABLE_HACKRF)
@@ -64,9 +66,6 @@ message("Binary test path: ${PROJECT_BINARY_TEST_DIR}")
 
 # include from top-level src dir
 include_directories(src)
-if(BLAH2_ENABLE_USRP)
-  include_directories(${UHD_INCLUDE_DIRS})
-endif()
 
 # TODO: create FindSdrplay.cmake for this
 if(BLAH2_ENABLE_RSPDUO)
@@ -86,32 +85,14 @@ if(BLAH2_ENABLE_RSPDUO)
     INTERFACE_INCLUDE_DIRECTORIES "${BLAH2_SDRPLAY_INCLUDE_DIR}")
 endif()
 
-set(BLAH2_CAPTURE_SOURCES
-  src/capture/kraken/Kraken.cpp
-  src/capture/kraken/HeimdallFrame.cpp
-)
-set(BLAH2_CAPTURE_LIBRARIES)
-if(BLAH2_ENABLE_RSPDUO)
-  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/rspduo/RspDuo.cpp)
-  list(APPEND BLAH2_CAPTURE_LIBRARIES blah2Sdrplay)
-endif()
-if(BLAH2_ENABLE_USRP)
-  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/usrp/Usrp.cpp)
-  list(APPEND BLAH2_CAPTURE_LIBRARIES ${UHD_LIBRARIES})
-endif()
-if(BLAH2_ENABLE_HACKRF)
-  list(APPEND BLAH2_CAPTURE_SOURCES src/capture/hackrf/HackRf.cpp)
-  list(APPEND BLAH2_CAPTURE_LIBRARIES PkgConfig::HACKRF)
-endif()
+include(cmake/ReceiverModules.cmake)
 
 # TODO: Move to separate src/CMakeLists.txt
 add_executable(blah2
   src/blah2.cpp
   src/capture/Capture.cpp
-  src/capture/Source.cpp
-  src/capture/Recording.cpp
   src/capture/Replay.cpp
-  ${BLAH2_CAPTURE_SOURCES}
+  src/capture/kraken/Kraken.cpp
   src/process/ambiguity/Ambiguity.cpp
   src/process/ambiguity/Acceleration.cpp
   src/process/clutter/WienerHopf.cpp
@@ -125,7 +106,6 @@ add_executable(blah2
   src/process/meta/HammingNumber.cpp
   src/process/utility/Socket.cpp
   src/process/utility/ProcessingThreads.cpp
-  src/data/IqData.cpp
   src/data/Map.cpp
   src/data/Detection.cpp
   src/data/Track.cpp
@@ -142,8 +122,15 @@ target_link_libraries(blah2 PRIVATE
   fftw3
   fftw3_threads
   ${CMAKE_DL_LIBS}
-  ${BLAH2_CAPTURE_LIBRARIES}
+  blah2ReceiverLoader
 )
+set_target_properties(blah2 PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+  BUILD_WITH_INSTALL_RPATH TRUE)
+foreach(receiver blah2ReceiverUsrp blah2ReceiverHackrf blah2ReceiverRspduo)
+  if(TARGET ${receiver})
+    add_dependencies(blah2 ${receiver})
+  endif()
+endforeach()
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
   # GCC 13+ can misdiagnose cpp-httplib's inlined std::regex bookkeeping.
   # Keep this external-header warning visible without making it fatal.
@@ -156,15 +143,6 @@ endif()
 if(BLAH2_KRAKEN_ONLY AND NOT BLAH2_ENABLE_RSPDUO AND
     NOT BLAH2_ENABLE_USRP AND NOT BLAH2_ENABLE_HACKRF)
   target_compile_definitions(blah2 PRIVATE BLAH2_KRAKEN_ONLY=1)
-endif()
-if(BLAH2_ENABLE_RSPDUO)
-  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_RSPDUO=1)
-endif()
-if(BLAH2_ENABLE_USRP)
-  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_USRP=1)
-endif()
-if(BLAH2_ENABLE_HACKRF)
-  target_compile_definitions(blah2 PRIVATE BLAH2_ENABLE_HACKRF=1)
 endif()
 
 include(cmake/GpuAcceleration.cmake)

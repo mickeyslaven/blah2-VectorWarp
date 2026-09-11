@@ -60,8 +60,8 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
   int _agcSetPoint, int _bandwidthNumber, 
   int _gainReductionA, int _gainReductionB, 
   int _lnaState,
-  bool _dabNotch, bool _rfNotch)
-  : Source(_type, _fc, _fs, _path, _saveIq)
+  bool _dabNotch, bool _rfNotch, std::string serial)
+  : Source(_type, _fc, _fs, _path, _saveIq), requestedSerial(std::move(serial))
 {
   std::unordered_map<int, int> decimationMap = {
     {2000000, 1},
@@ -253,29 +253,33 @@ void RspDuo::get_device()
     throw std::runtime_error("[RspDuo] No receiver found. Check USB connection and permissions.");
   }
 
-  // pick first RSPduo
+  // Select exactly the requested unit. A family choice does not authorize
+  // silently choosing the first physical receiver when several are present.
+  unsigned int matching = 0;
   for (i = 0; i < ndev; i++)
   {
-    if (devs[i].hwVer == SDRPLAY_RSPduo_ID)
+    if (devs[i].hwVer == SDRPLAY_RSPduo_ID &&
+        (requestedSerial.empty() || requestedSerial == devs[i].SerNo))
     {
       chosenIdx = i;
-      break;
+      ++matching;
     }
   }
 
-  if (i == ndev)
+  if (matching == 0)
   {
-    std::cerr << "Error: Could not find RSPduo device to open" << std::endl;
-    throw std::runtime_error("[RspDuo] No RSPduo found among the connected SDRplay receivers.");
+    throw std::runtime_error("[RspDuo] No matching RSPduo found; check the selected serial and USB connection.");
   }
+  if (matching != 1)
+    throw std::runtime_error("[RspDuo] Multiple RSPduos found; select one serial in Receiver settings before starting.");
 
   chosenDevice = &devs[chosenIdx];
   chosenDevice->tuner = sdrplay_api_Tuner_Both;
   chosenDevice->rspDuoMode = sdrplay_api_RspDuoMode_Dual_Tuner;
 
   std::cerr << "[RspDuo] Device ID " << chosenIdx << std::endl;
-  std::cerr << "[RspDuo] Serial Number " << devs[i].SerNo << std::endl;
-  std::cerr << "[RspDuo] Hardware Version " << std::to_string(devs[i].hwVer) << std::endl;
+  std::cerr << "[RspDuo] Serial Number " << chosenDevice->SerNo << std::endl;
+  std::cerr << "[RspDuo] Hardware Version " << std::to_string(chosenDevice->hwVer) << std::endl;
   std::cerr << "[RspDuo] Tuner " << std::hex << chosenDevice->tuner << std::dec << std::endl;
   std::cerr << "[RspDuo] RspDuoMode " << std::hex << chosenDevice->rspDuoMode << std::dec << std::endl;
 

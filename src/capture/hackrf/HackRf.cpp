@@ -53,6 +53,7 @@ void HackRf::check_status(uint8_t status, std::string message)
 
 void HackRf::start()
 {
+  try {
   // global hackrf config
   int status;
   status = hackrf_init();
@@ -99,6 +100,10 @@ void HackRf::start()
   check_status(status, "Failed to set LNA gain.");
   status = hackrf_set_vga_gain(dev[0], gainVga[0]);
   check_status(status, "Failed to set VGA gain.");
+  } catch (...) {
+    stop();
+    throw;
+  }
 }
 
 void HackRf::stop()

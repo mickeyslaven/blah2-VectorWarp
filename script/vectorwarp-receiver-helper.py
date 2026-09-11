@@ -196,7 +196,7 @@ def load_policy(path=POLICY):
                 require(allowed_package, 'INVALID_POLICY', 'Package is outside the fixed UHD/HackRF dependency allowlist.')
                 if action['receiverType'] == 'Usrp':
                     version = re.match(r'(?:[0-9]+:)?([0-9]+)\.([0-9]+)', package['version'])
-                    require(version and (int(version[1]), int(version[2])) >= (4, 8), 'INVALID_POLICY', 'This backend requires reviewed UHD 4.8 or newer.')
+                    require(version and (int(version[1]), int(version[2])) >= (4, 1), 'INVALID_POLICY', 'This backend requires reviewed UHD 4.1 or newer.')
     return policy
 
 

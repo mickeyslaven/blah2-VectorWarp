@@ -87,6 +87,13 @@ def configure(apt_pkg):
     apt_pkg.init_system()
 
 
+def require_uhd_version(value):
+    # Actual capture source is compile-qualified against native Ubuntu UHD4.1.
+    version = re.match(r'(?:[0-9]+:)?([0-9]+)\.([0-9]+)', value)
+    require(version and (int(version[1]), int(version[2])) >= (4, 1),
+            'UHD_VERSION_UNSUPPORTED', 'This VectorWarp backend requires UHD 4.1 or newer.')
+
+
 def resolve(cache, receiver_type, host, roots=None):
     require(receiver_type in ROOTS, 'UNSUPPORTED_RECEIVER', 'Only UHD and HackRF distro dependencies are qualified.')
     require(not cache.broken_count and not cache.dpkg_journal_dirty, 'PACKAGE_DATABASE_UNHEALTHY',
@@ -104,9 +111,7 @@ def resolve(cache, receiver_type, host, roots=None):
         versions = [value for value in package.versions if value.version == root['version']]
         require(len(versions) == 1, 'PACKAGE_UNAVAILABLE', 'The exact approved receiver package version is unavailable.')
         if receiver_type == 'Usrp':
-            version = re.match(r'(?:[0-9]+:)?([0-9]+)\.([0-9]+)', root['version'])
-            require(version and (int(version[1]), int(version[2])) >= (4, 8),
-                    'UHD_VERSION_UNSUPPORTED', 'This VectorWarp backend requires UHD 4.8 or newer; use the guided source installation on older distributions.')
+            require_uhd_version(root['version'])
         package.candidate = versions[0]
         package.mark_install(auto_fix=False, auto_inst=True)
     require(not cache.broken_count and not cache.delete_count, 'UNSUPPORTED_TRANSACTION', 'The proposed dependency transaction is broken or removes packages.')

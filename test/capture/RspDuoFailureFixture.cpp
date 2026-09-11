@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+extern std::atomic<bool> run_fg;
 
 namespace {
 std::string failAt;
@@ -12,14 +13,16 @@ unsigned opened, closed, locked, unlocked, selected, released, initialized, unin
 sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
-bool nullParameters = false, removeOnInit = false;
+bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
+std::string selectedSerial;
 void* callbackContext = nullptr;
 sdrplay_api_ErrT result(const char* stage) { return failAt == stage ? sdrplay_api_Fail : sdrplay_api_Success; }
 void reset() {
   opened = closed = locked = unlocked = selected = released = initialized = uninitialized = 0;
   deviceParameters = {}; tunerA = {}; tunerB = {};
   parameters = {&deviceParameters, &tunerA, &tunerB};
-  failAt.clear(); nullParameters = removeOnInit = false; callbackContext = nullptr;
+  failAt.clear(); nullParameters = removeOnInit = multipleDevices = stopAfterGain = false;
+  selectedSerial.clear(); callbackContext = nullptr;
 }
 }
 
@@ -29,13 +32,16 @@ sdrplay_api_ErrT sdrplay_api_ApiVersion(float* version) { *version = failAt == "
 sdrplay_api_ErrT sdrplay_api_LockDeviceApi() { if (result("lock") == sdrplay_api_Success) ++locked; return result("lock"); }
 sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi() { ++unlocked; return sdrplay_api_Success; }
 sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT* devices, unsigned* count, unsigned) {
-  *count = failAt == "none" ? 0 : 1;
+  *count = failAt == "none" ? 0 : (multipleDevices ? 2 : 1);
   devices[0] = {}; devices[0].hwVer = failAt == "wrong-model" ? SDRPLAY_RSP1_ID : SDRPLAY_RSPduo_ID;
   std::strcpy(devices[0].SerNo, "mock-only");
+  if (multipleDevices) { devices[1] = devices[0]; std::strcpy(devices[1].SerNo, "mock-second"); }
   return result("enumerate");
 }
 sdrplay_api_ErrT sdrplay_api_SelectDevice(sdrplay_api_DeviceT* device) {
   assert(device->tuner == sdrplay_api_Tuner_Both);
+  assert(device->rspDuoMode == sdrplay_api_RspDuoMode_Dual_Tuner);
+  selectedSerial = device->SerNo;
   if (result("select") == sdrplay_api_Success) ++selected;
   return result("select");
 }
@@ -54,6 +60,7 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
 sdrplay_api_ErrT sdrplay_api_Uninit(HANDLE) { ++uninitialized; return sdrplay_api_Success; }
 sdrplay_api_ErrT sdrplay_api_Update(HANDLE, sdrplay_api_TunerSelectT tuner,
     sdrplay_api_ReasonForUpdateT, sdrplay_api_ReasonForUpdateExtension1T) {
+  if (stopAfterGain && tuner == sdrplay_api_Tuner_B) run_fg = false;
   return result(tuner == sdrplay_api_Tuner_A ? "gain-a" : "gain-b");
 }
 // No IQ buffers are used by this fixture; these satisfy the linked callback
@@ -64,6 +71,45 @@ void IqData::push_back(std::complex<double>) { assert(false); }
 
 int main() {
   bool record = false;
+  for (uint32_t rate : {2000000u, 1000000u, 500000u, 250000u, 125000u, 62500u}) {
+    for (int agc : {0, 5, 50, 100}) {
+      reset(); multipleDevices = true; stopAfterGain = true;
+      RspDuo receiver("RspDuo", 527000000, rate, "/unused", &record,
+        -37, agc, 25, 47, 5, agc != 0, agc == 0, "mock-second");
+      receiver.start();
+      assert(selectedSerial == "mock-second");
+      for (auto* tuner : {&tunerA, &tunerB}) {
+        assert(tuner->tunerParams.rfFreq.rfHz == 527000000);
+        assert(tuner->tunerParams.gain.LNAstate == 5);
+        assert(tuner->tunerParams.ifType == sdrplay_api_IF_1_620);
+        assert(tuner->ctrlParams.decimation.enable == 1);
+        assert(tuner->ctrlParams.decimation.decimationFactor == 2000000 / rate);
+        const auto expectedAgc = agc == 0 ? sdrplay_api_AGC_DISABLE :
+          (agc == 5 ? sdrplay_api_AGC_5HZ : (agc == 50 ? sdrplay_api_AGC_50HZ : sdrplay_api_AGC_100HZ));
+        assert(tuner->ctrlParams.agc.enable == expectedAgc);
+        if (agc) assert(tuner->ctrlParams.agc.setPoint_dBfs == -37);
+        assert(tuner->rspDuoTunerParams.rfNotchEnable == (agc == 0));
+        assert(tuner->rspDuoTunerParams.rfDabNotchEnable == (agc != 0));
+      }
+      assert(tunerA.tunerParams.gain.gRdB == 25 && tunerB.tunerParams.gain.gRdB == 47);
+      receiver.process(nullptr, nullptr); // Fake SDK stops the test loop after both accepted Updates.
+      assert(initialized == 1 && callbackContext == &receiver);
+      receiver.stop(); receiver.stop();
+      assert(opened == closed && locked == unlocked && selected == released && initialized == uninitialized);
+    }
+  }
+  for (const std::string serial : {"", "not-present"}) {
+    reset(); multipleDevices = true;
+    RspDuo receiver("RspDuo", 527000000, 2000000, "/unused", &record,
+      -30, 50, 30, 31, 3, true, true, serial);
+    bool failed = false;
+    try { receiver.start(); } catch (const std::exception&) { failed = true; }
+    assert(failed && selected == 0 && opened == closed && locked == unlocked);
+  }
+  reset();
+  RspDuo tooFast("RspDuo", 527000000, 6000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
+  try { tooFast.start(); assert(false); } catch (const std::exception&) {}
+  assert(opened == 0); // Six-MS/s output is not offered by this dual-tuner adapter.
   for (const auto& stage : {"open", "version", "version-mismatch", "lock", "enumerate", "none", "wrong-model", "select", "debug", "parameters"}) {
     reset(); failAt = stage;
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
@@ -93,5 +139,5 @@ int main() {
     receiver.stop(); receiver.stop();
     assert(opened == closed && locked == unlocked && selected == released && initialized == uninitialized);
   }
-  std::cout << "RSPduo mocked API: 15 failure stages, dual-tuner assignments, callback context and idempotent cleanup passed. No hardware opened.\n";
+  std::cout << "RSPduo mocked API: 24 complete dual-tuner setting tuples, exact serial/multiple-device refusal, unsupported6MS/s refusal, 15 failure stages and idempotent cleanup passed. No hardware opened.\n";
 }

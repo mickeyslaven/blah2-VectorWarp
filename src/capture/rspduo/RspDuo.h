@@ -31,6 +31,7 @@
 class RspDuo : public Source
 {
 private:
+  std::string requestedSerial;
   std::mutex lifecycleMutex;
   bool apiOpened = false;
   bool apiLocked = false;
@@ -170,7 +171,7 @@ public:
   RspDuo(std::string type, uint32_t fc, uint32_t fs, 
     std::string path, bool *saveIq, int agcSetPoint, 
     int bandwidthNumber, int gainReductionA, int gainReductionB, 
-    int lnaState, bool dabNotch, bool rfNotch);
+    int lnaState, bool dabNotch, bool rfNotch, std::string serial = "");
 
   /// @brief Implement capture function on RSPduo.
   /// @param buffer1 Pointer to reference buffer.

@@ -40,6 +40,14 @@ class Session:
 
 
 class DnfTest(unittest.TestCase):
+    def test_shared_native_uhd_floor_is_41(self):
+        for version in ['4.1.0.5-3', '4.6.0.0-2', '1:4.9.0.1-1.fc44']:
+            adapter.common.require_uhd_version(version)
+        for version in ['4.0.0.0', '3.15.0', 'unavailable']:
+            with self.assertRaises(adapter.Refused) as caught:
+                adapter.common.require_uhd_version(version)
+            self.assertEqual(caught.exception.code, 'UHD_VERSION_UNSUPPORTED')
+
     def setUp(self):
         self.session = Session()
         transaction = copy.deepcopy(self.session.transaction)

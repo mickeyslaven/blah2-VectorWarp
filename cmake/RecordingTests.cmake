@@ -19,6 +19,17 @@ target_include_directories(testUsrpReadback PRIVATE ${PROJECT_ROOT}/src)
 target_compile_options(testUsrpReadback PRIVATE -UNDEBUG)
 add_test(NAME usrpAppliedReadback COMMAND testUsrpReadback)
 
+if(BLAH2_ENABLE_HACKRF)
+  add_executable(testHackRfSettings ${PROJECT_ROOT}/test/capture/HackRfSettingsFixture.cpp
+    ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp)
+  target_compile_features(testHackRfSettings PRIVATE cxx_std_17)
+  target_include_directories(testHackRfSettings PRIVATE ${HACKRF_INCLUDE_DIRS})
+  target_compile_options(testHackRfSettings PRIVATE -UNDEBUG)
+  # The fixture supplies SDK functions. Never link/open the actual USB runtime.
+  target_link_libraries(testHackRfSettings PRIVATE blah2CaptureCore Threads::Threads)
+  add_test(NAME hackrfAppliedSettings COMMAND testHackRfSettings)
+endif()
+
 # Licensed headers are supplied only by an opted-in RSPduo source build. The
 # fixture provides every SDK function itself; never link the vendor runtime.
 if(BLAH2_ENABLE_RSPDUO)

@@ -1,5 +1,6 @@
 #include "Usrp.h"
-#include "UsrpReadback.h"
+#include "UsrpSettings.h"
+#include "UsrpStream.h"
 
 #include <string.h>
 #include <iostream>
@@ -39,29 +40,8 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     uhd::usrp::multi_usrp::sptr usrp = 
       uhd::usrp::multi_usrp::make(address);
 
-    usrp->set_rx_subdev_spec(uhd::usrp::subdev_spec_t(subdev), 0);
-    if (usrp->get_rx_num_channels() < 2)
-      throw std::runtime_error("[USRP] The selected subdevices do not provide two receive channels.");
-
-    usrp->set_rx_antenna(antenna[0], 0);
-    usrp->set_rx_antenna(antenna[1], 1);
-
-    // set sample rate across all channels
-    usrp->set_rx_rate((double(fs)));
-
-    // set the center frequency
-    double centerFrequency = (double)fc;
-    usrp->set_rx_freq(centerFrequency, 0);
-    usrp->set_rx_freq(centerFrequency, 1);
-
-    // set the gain
-    usrp->set_rx_gain(gain[0], 0);
-    usrp->set_rx_gain(gain[1], 1);
-
-    // UHD setters may coerce unsupported values. Read every configured channel
-    // back before opening its IQ stream; configured-value telemetry alone is
-    // never evidence that the receiver applied those values.
-    verify_usrp_readback(*usrp, fc, fs, gain, antenna, uhd::usrp::subdev_spec_t(subdev).to_string());
+    // Set and independently read back both channels before opening the stream.
+    apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
 
     // create a receive streamer
     uhd::stream_args_t streamArgs("fc32", "sc16");
@@ -70,6 +50,7 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
 
     // allocate buffers to receive with samples (one buffer per channel)
     const size_t samps_per_buff = rxStreamer->get_max_num_samps();
+    verify_usrp_receive_capacity(samps_per_buff);
     std::vector<std::complex<float>> usrpBuffer1(samps_per_buff);
     std::vector<std::complex<float>> usrpBuffer2(samps_per_buff);
 
@@ -84,16 +65,26 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     streamCmd.stream_now = false;
     streamCmd.time_spec  = usrp->get_time_now() + uhd::time_spec_t(0.05);
     rxStreamer->issue_stream_cmd(streamCmd);
+    struct StopStream {
+      uhd::rx_streamer::sptr stream;
+      ~StopStream() {
+        try { stream->issue_stream_cmd(uhd::stream_cmd_t(uhd::stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS)); }
+        catch (...) {} // Do not replace the original receive/processing error.
+      }
+    } stopStream{rxStreamer};
 
     while(!stopRequested)
     {
       // receive samples
       size_t nReceived = rxStreamer->recv(buff_ptrs, samps_per_buff, metadata);
-
-      // print errors
-      if (metadata.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE) {
-          std::cerr << "Error: " << metadata.strerror() << std::endl;
-          recording_discontinuity("USRP receive discontinuity: " + metadata.strerror());
+      if (stopRequested) break;
+      // Do not silently splice discontinuous IQ into a coherent CPI. This is
+      // fail-closed error handling, not a claimed fix for unqualified B210
+      // hardware/USB endurance failures reported by the upstream project.
+      try { verify_usrp_receive(metadata, nReceived, samps_per_buff); }
+      catch (const std::exception& error) {
+        recording_discontinuity(error.what());
+        throw;
       }
 
       buffer1->lock();

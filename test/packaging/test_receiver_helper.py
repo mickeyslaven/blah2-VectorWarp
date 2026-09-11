@@ -1,6 +1,7 @@
 """Offline broker failure injection: never call systemctl, packages or hardware."""
 import importlib.util
 import hashlib
+import json
 import os
 import pathlib
 import socket
@@ -43,6 +44,20 @@ class FakeInspector:
 
 
 class BrokerTest(unittest.TestCase):
+    def test_reviewed_package_policy_uses_qualified_uhd_41_floor(self):
+        policy = {'schemaVersion': 1, 'apiUser': 'vectorwarp-api', 'configPath': '/fixture/config.yml',
+                  'artifactManifest': '/fixture/manifest', 'actions': [
+                      {'id': 'install-uhd', 'receiverType': 'Usrp', 'kind': 'install-packages',
+                       'review': 'offline fixture', 'artifactSha256': 'a' * 64, 'platform': 'ubuntu:22.04',
+                       'manager': 'apt', 'packages': [{'name': 'uhd-host', 'version': '4.1.0.5-3'}]}]}
+        with mock.patch.object(helper, 'trusted_path'), mock.patch.object(helper, 'parse_manifest'), \
+             mock.patch.object(helper, 'bounded_read', side_effect=lambda *_: json.dumps(policy).encode()):
+            self.assertEqual(helper.load_policy('/fixture/policy'), policy)
+            policy['actions'][0]['packages'][0]['version'] = '4.0.0'
+            with self.assertRaises(helper.Refused) as caught:
+                helper.load_policy('/fixture/policy')
+            self.assertEqual(caught.exception.code, 'INVALID_POLICY')
+
     def setUp(self):
         self.now = 0
         self.revision = 'a' * 64

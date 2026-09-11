@@ -153,12 +153,17 @@ class AptTest(unittest.TestCase):
         self.refused('PACKAGE_DATABASE_UNHEALTHY', lambda: self.run_transaction('plan'))
 
     def test_old_uhd_and_arbitrary_roots_refuse(self):
-        self.cache['uhd-host'] = Package('uhd-host', '4.6.0')
+        self.cache['uhd-host'] = Package('uhd-host', '4.0.0')
         with self.assertRaises(adapter.Refused) as caught:
             adapter.resolve(self.cache, 'Usrp', {'id': 'ubuntu', 'version': '24.04'})
         self.assertEqual(caught.exception.code, 'UHD_VERSION_UNSUPPORTED')
         self.enroll(); self.action['packages'] = [{'name': 'bash', 'version': '1.0'}]
         self.refused('INVALID_TRANSACTION', lambda: self.run_transaction('inspect'))
+
+    def test_native_ubuntu_22_uhd_41_is_qualified(self):
+        self.cache['uhd-host'] = Package('uhd-host', '4.1.0.5-3')
+        transaction = adapter.resolve(self.cache, 'Usrp', {'id': 'ubuntu', 'version': '22.04'})
+        self.assertEqual(transaction['packages'], [{'name': 'uhd-host', 'version': '4.1.0.5-3'}])
 
     def test_healthy_installed_dependencies_are_reused(self):
         for package in self.cache.values():

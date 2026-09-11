@@ -1,13 +1,4 @@
 #include "Capture.h"
-#ifdef BLAH2_ENABLE_RSPDUO
-#include "rspduo/RspDuo.h"
-#endif
-#ifdef BLAH2_ENABLE_USRP
-#include "usrp/Usrp.h"
-#endif
-#ifdef BLAH2_ENABLE_HACKRF
-#include "hackrf/HackRf.h"
-#endif
 #include "kraken/Kraken.h"
 #include <iostream>
 #include <thread>
@@ -165,7 +156,7 @@ std::string Capture::status_json() const {
   document.Accept(writer); return buffer.GetString();
 }
 
-std::unique_ptr<Source> Capture::factory_source(const std::string& type,
+blah2::ReceiverSource Capture::factory_source(const std::string& type,
   c4::yml::NodeRef config, std::size_t channelCount)
 {
     if (type == VALID_TYPE[3])
@@ -177,89 +168,58 @@ std::unique_ptr<Source> Capture::factory_source(const std::string& type,
         config["heimdall"]["host"] >> heimdallHost;
         config["heimdall"]["port"] >> heimdallPort;
       }
-      return std::make_unique<Kraken>(type, fc, fs, path, &saveIq,
-        channelCount, heimdallHost, heimdallPort);
+      return blah2::ReceiverSource(new Kraken(type, fc, fs, path, &saveIq,
+        channelCount, heimdallHost, heimdallPort));
     }
 
-    // SDRplay RSPduo
-#ifdef BLAH2_ENABLE_RSPDUO
+    Blah2ReceiverConfig settings;
+    settings.frequency = fc;
+    settings.sampleRate = fs;
+    settings.channels = channelCount;
+    settings.recordingPath = path.c_str();
+    settings.saveIq = &saveIq;
+    // Adapter constructors copy these strings during the synchronous call.
+    std::string address, subdev, antenna[2], serial[2], rspduoSerial;
     if (type == VALID_TYPE[0])
     {
-        int agcSetPoint, bandwidthNumber, gainReductionA, gainReductionB, lnaState;
+        if (config.has_child("serial")) config["serial"] >> rspduoSerial;
+        settings.rspduoSerial = rspduoSerial.c_str();
         bool dabNotch, rfNotch;
-        config["agcSetPoint"] >> agcSetPoint;
-        config["bandwidthNumber"] >> bandwidthNumber;
-        config["gainReduction"][0] >> gainReductionA;
-        config["gainReduction"][1] >> gainReductionB;
-        config["lnaState"] >> lnaState;
+        config["agcSetPoint"] >> settings.agcSetPoint;
+        config["bandwidthNumber"] >> settings.bandwidthNumber;
+        config["gainReduction"][0] >> settings.gainReduction[0];
+        config["gainReduction"][1] >> settings.gainReduction[1];
+        config["lnaState"] >> settings.lnaState;
         config["dabNotch"] >> dabNotch;
         config["rfNotch"] >> rfNotch;
-        return std::make_unique<RspDuo>(type, fc, fs, path, &saveIq,
-          agcSetPoint, bandwidthNumber, gainReductionA, gainReductionB, lnaState,
-          dabNotch, rfNotch);
+        settings.dabNotch = dabNotch;
+        settings.rfNotch = rfNotch;
     }
-#endif
-    // Usrp
-#ifdef BLAH2_ENABLE_USRP
-    if (type == VALID_TYPE[1])
+    else if (type == VALID_TYPE[1])
     {
-        std::string address, subdev;
-        std::vector<std::string> antenna;
-        std::vector<double> gain;
-        std::string _antenna;
-        double _gain;
         config["address"] >> address;
         config["subdev"] >> subdev;
-        config["antenna"][0] >> _antenna;
-        antenna.push_back(_antenna);
-        config["antenna"][1] >> _antenna;
-        antenna.push_back(_antenna);
-        config["gain"][0] >> _gain;
-        gain.push_back(_gain);
-        config["gain"][1] >> _gain;
-        gain.push_back(_gain);
-        return std::make_unique<Usrp>(type, fc, fs, path, &saveIq, 
-          address, subdev, antenna, gain);
+        settings.address = address.c_str();
+        settings.subdev = subdev.c_str();
+        for (unsigned i = 0; i < 2; ++i) {
+          config["antenna"][i] >> antenna[i];
+          settings.antenna[i] = antenna[i].c_str();
+          config["gain"][i] >> settings.gain[i];
+        }
     }
-#endif
-    // HackRF
-#ifdef BLAH2_ENABLE_HACKRF
-    if (type == VALID_TYPE[2])
+    else if (type == VALID_TYPE[2])
     {
-      std::vector<std::string> serial;
-      std::vector<uint32_t> gainLna, gainVga;
-      std::vector<bool> ampEnable;
-      std::string _serial;
-      uint32_t gain;
-      int _gain;
-      bool _ampEnable;
-      config["serial"][0] >> _serial;
-      serial.push_back(_serial);
-      config["serial"][1] >> _serial;
-      serial.push_back(_serial);
-      config["gain_lna"][0] >> _gain;
-      gain = static_cast<uint32_t> (_gain);
-      gainLna.push_back(gain);
-      config["gain_lna"][1] >> _gain;
-      gain = static_cast<uint32_t>(_gain);
-      gainLna.push_back(gain);
-      config["gain_vga"][0] >> _gain;
-      gain = static_cast<uint32_t>(_gain);
-      gainVga.push_back(gain);
-      config["gain_vga"][1] >> _gain;
-      gain = static_cast<uint32_t>(_gain);
-      gainVga.push_back(gain);
-      config["amp_enable"][0] >> _ampEnable;
-      ampEnable.push_back(_ampEnable);
-      config["amp_enable"][1] >> _ampEnable;
-      ampEnable.push_back(_ampEnable);
-      return std::make_unique<HackRf>(type, fc, fs, path, &saveIq,
-        serial, gainLna, gainVga, ampEnable);
+      for (unsigned i = 0; i < 2; ++i) {
+        bool ampEnable;
+        config["serial"][i] >> serial[i];
+        settings.serial[i] = serial[i].c_str();
+        config["gain_lna"][i] >> settings.gainLna[i];
+        config["gain_vga"][i] >> settings.gainVga[i];
+        config["amp_enable"][i] >> ampEnable;
+        settings.ampEnable[i] = ampEnable;
+      }
     }
-#endif
-    // handle unknown type
-    std::cerr << "Error: Source type does not exist." << std::endl;
-    return nullptr;
+    return blah2::load_receiver(type, settings);
 }
 
 void Capture::set_replay(bool _loop, std::string _file, std::string format,

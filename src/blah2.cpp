@@ -121,6 +121,12 @@ bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
 int main(int argc, char **argv)
 try
 {
+  // This read-only command checks adapter/runtime ABI without creating a
+  // receiver, opening hardware, reading a configuration or starting a service.
+  if (argc == 2 && std::string(argv[1]) == "--receiver-status") {
+    std::cout << blah2::receiver_module_status_json() << '\n';
+    return 0;
+  }
   // input handling
   signal(SIGTERM, signal_callback_handler);
   signal(SIGINT, signal_callback_handler);
