@@ -109,6 +109,7 @@ bool Acceleration::processClutter(const IqData& reference,
     if (!channel || channel->view_data().size() < samples)
       throw std::invalid_argument("Surveillance CPI is shorter than GPU clutter input");
   const double gpuStart = now_ms();
+  bool inputCommitted = false;
   try {
     auto frame = backend->clutterBuffers();
     if (!frame.reference || !frame.surveillance || !frame.output ||
@@ -141,6 +142,21 @@ bool Acceleration::processClutter(const IqData& reference,
     if (!std::all_of(frame.output, frame.output + frame.outputCount, [](auto value) {
           return std::isfinite(value.real()) && std::isfinite(value.imag());
         })) throw std::runtime_error("GPU returned invalid clutter data; using CPU");
+    const bool qualifying = clutterChecks_ < ClutterQualificationFrames;
+    const bool combinedQualifying = !qualifying &&
+      combinedChecks_ < CombinedQualificationFrames;
+    if (!qualifying && !combinedQualifying) {
+      // The complete estimate and every input shape were checked above. Keep
+      // FP64 cancellation, but reuse owned IQ storage instead of constructing
+      // another full-CPI deque solely to swap it into place.
+      inputCommitted = true;
+      for (size_t channel = 0; channel < surveillance.size(); ++channel)
+        surveillance[channel]->subtract_clutter(frame.output + channel * samples,
+          static_cast<uint32_t>(samples));
+      clutterTiming_.acceptMs = now_ms() - acceptStart;
+      clutterStatus_.gpuMs = now_ms() - gpuStart;
+      return true;
+    }
     std::vector<std::deque<std::complex<double>>> candidate(surveillance.size());
     for (size_t channel = 0; channel < surveillance.size(); ++channel) {
       const auto& original = surveillance[channel]->view_data();
@@ -150,9 +166,6 @@ bool Acceleration::processClutter(const IqData& reference,
     }
     clutterTiming_.acceptMs = now_ms() - acceptStart;
     const double gpuMs = now_ms() - gpuStart;
-    const bool qualifying = clutterChecks_ < ClutterQualificationFrames;
-    const bool combinedQualifying = !qualifying &&
-      combinedChecks_ < CombinedQualificationFrames;
     // Full CPU comparisons are startup qualification for this instance's
     // device and geometry, never recurring work on accepted steady frames.
     if (qualifying || combinedQualifying) {
@@ -229,7 +242,7 @@ bool Acceleration::processClutter(const IqData& reference,
   } catch (const std::exception& error) {
     // A startup CPU oracle may have already mutated part of the
     // frame before throwing. It is not safe to run that callback a second time.
-    if (clutterTiming_.cpuExecuted) throw;
+    if (clutterTiming_.cpuExecuted || inputCommitted) throw;
     fallback(error.what());
     return runCpu();
   }

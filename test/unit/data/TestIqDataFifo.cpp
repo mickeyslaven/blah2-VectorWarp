@@ -44,6 +44,19 @@ int main() {
         "Append lost newest-samples contract");
       data.clear();
     }
+    data.replace({{100000000.25, 100000000.5}, {3, 4}, {5, 6}});
+    const auto* owned = &data.view_data().front();
+    const std::complex<float> estimate[] = {{100000000, 100000000}, {1, 2}};
+    const auto unmodified = data.get_data();
+    rejects([&] { data.subtract_clutter(nullptr, 2); });
+    rejects([&] { data.subtract_clutter(estimate, 4); });
+    require(data.view_data() == unmodified, "Rejected clutter estimate changed input");
+    data.subtract_clutter(estimate, 2);
+    require(&data.view_data().front() == owned && data.get_length() == 2,
+      "Clutter subtraction copied the block or retained unfiltered samples");
+    require(data.view_data()[0] == std::complex<double>(.25, .5) &&
+      data.view_data()[1] == std::complex<double>(2, 2),
+      "Clutter subtraction lost FP64 cancellation precision");
     std::cout << "IQ FIFO ownership and retirement fixtures passed\n";
     return 0;
   } catch (const std::exception& error) {

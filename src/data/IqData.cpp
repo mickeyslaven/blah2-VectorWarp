@@ -77,6 +77,17 @@ void IqData::discard_front(uint32_t count)
   data->erase(data->begin(), data->begin() + count);
 }
 
+void IqData::subtract_clutter(const std::complex<float>* estimate, uint32_t count)
+{
+  if ((!estimate && count) || count > data->size())
+    throw std::runtime_error("Clutter estimate does not match the IQ block");
+  auto sample = data->begin();
+  for (uint32_t i = 0; i < count; ++i, ++sample)
+    *sample -= std::complex<double>(estimate[i]);
+  // Match the filter's existing contract: publish only the conditioned CPI.
+  data->erase(sample, data->end());
+}
+
 void IqData::replace(std::deque<std::complex<double>>&& samples)
 {
   if (samples.size() > n)
