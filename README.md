@@ -2,13 +2,14 @@
 
 # VectorWarp
 
-VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-assisted processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native Linux installation. Set up your radar, watch it run, and record or replay signals from the same interface.
+VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native Linux installation. Set up your radar, watch it run, and record or replay signals from the same interface.
 
 [Install](docs/INSTALL.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md)
 
 ## What you get beyond blah2
 
 - **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.
+- **Faster without a GPU, too:** less copying, repeated detector work and output conversion; CPU-only processing took 18–26% less time in the matched tests below.
 - **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the equal-range results below.
 - **Automatic CPU threading:** size channel workers and FFT threads to the CPU capacity available, with manual controls when you need them.
 - **Settings in your browser:** edit receiver, processing, display, recording, and ADS-B settings in organized sections.
@@ -34,6 +35,10 @@ up where regular blah2 falls behind. CPU mode remains available, and Automatic
 mode checks accuracy before retaining GPU work. At 200 ms CPI and ±2400 Hz,
 these hosts used **about 25% less CPU-only processing time**, or **64–71% less
 with GPU acceleration**, than original blah2.
+
+On the older Pavilion CPU alone, the ±800 Hz workload dropped from 205.7 to
+167.8 ms. Original blah2 missed all 24 measured 200 ms deadlines; VectorWarp
+met all 24 without a GPU.
 
 | Two channels, same IQ and CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
 | --- | ---: | ---: | ---: |
