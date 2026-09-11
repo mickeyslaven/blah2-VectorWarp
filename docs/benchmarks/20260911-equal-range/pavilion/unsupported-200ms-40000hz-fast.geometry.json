@@ -1,0 +1,5 @@
+{
+  "supported": false,
+  "rejection": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span",
+  "returncode": 1
+}

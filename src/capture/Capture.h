@@ -14,6 +14,7 @@
 
 #include "data/IqData.h"
 #include "capture/Source.h"
+#include "capture/ReceiverLoader.h"
 #include "capture/Replay.h"
 
 class Capture
@@ -60,7 +61,7 @@ public:
   std::string path;
 
   /// @brief Pointer to capture device.
-  std::unique_ptr<Source> device;
+  blah2::ReceiverSource device;
 
   /// @brief Constructor.
   /// @param type The capture device type.
@@ -85,7 +86,7 @@ public:
     uint32_t frameSamples = 0);
 
   /// @brief Construct a capture source for the configured input channels.
-  std::unique_ptr<Source> factory_source(const std::string& type,
+  blah2::ReceiverSource factory_source(const std::string& type,
     c4::yml::NodeRef config, std::size_t channelCount = 2);
 
   /// @brief Set parameters to enable file replay.

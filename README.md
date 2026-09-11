@@ -8,8 +8,8 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-a
 
 ## What you get beyond blah2
 
-- **GPU acceleration:** use a compatible GPU for delay–Doppler processing, with automatic selection and CPU fallback.
-- **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the live example below.
+- **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.
+- **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the equal-range results below.
 - **Automatic CPU threading:** size channel workers and FFT threads to the CPU capacity available, with manual controls when you need them.
 - **Settings in your browser:** edit receiver, processing, display, recording, and ADS-B settings in organized sections.
 - **Checked inputs:** dropdowns, range checks, and short explanations help catch invalid settings before they reach the processor.
@@ -29,34 +29,51 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-a
 
 ## Faster processing in practice
 
-Same recorded signal, same settings, and the same CPU allocation on each machine.
-These are processing times per 200 ms radar frame (CPI); lower is better.
+VectorWarp's optional Vulkan GPU path can make a practical radar workload keep
+up where regular blah2 falls behind. CPU mode remains available, and Automatic
+mode checks accuracy before retaining GPU work.
 
-| Hardware | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU | GPU time saved vs blah2 |
-| --- | ---: | ---: | ---: | ---: |
-| RTX 4050 Laptop | **239 ms** | **221 ms** | **162 ms** | **32%** |
-| Ryzen AI Max+ 395 / Radeon 8060S | **76 ms** | **74 ms** | **62 ms** | **19%** |
+| Two channels, same IQ and CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
+| --- | ---: | ---: | ---: |
+| Strix, 200 ms CPI, ±800 Hz | 80.5 ms | 79.6 ms | **38.5 ms** |
+| RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 225.6 ms | 220.0 ms | **113.0 ms** |
+| Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 310.5 ms | 303.2 ms | **157.5 ms** |
 
-On the RTX 4050 laptop, VectorWarp GPU met **all 34** steady-frame deadlines;
-regular blah2 missed **33**. That is the difference between keeping up with this
-200 ms signal stream and falling behind.
+The comparison used actual [30hours/blah2 at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de)
+and VectorWarp on each host, replaying the same recorded signal at its original
+rate. Every comparison used 527 MHz, 2.4 MS/s, delays −10…245 (256 bins; 30.604
+km maximum excess path), and the stated channel count. Accuracy qualification
+runs at startup; accepted GPU frames do not repeat the full CPU calculation.
+[Full timing distributions and method](docs/GPU_BENCHMARK_20260911.md)
+are available before sizing a live system.
 
-**A wider live example:** VectorWarp processed **±4000 Hz Doppler in 139 ms per
-200 ms frame** on the Ryzen system, at 2.4 MS/s with 256 delay bins. Regular
-blah2 cannot safely process that configuration because of its buffer sizing.
+The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its small
+FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
+settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
-The table times signal processing during replay at the original sample rate:
-two repeats at ±800 Hz, with four CPU cores on the laptop and eight on the Ryzen
-system. The live example averages 27 steady frames. GPU results here accelerate
-the delay–Doppler stage.
-[Full settings, results, and test method →](docs/LIVE_CAPACITY_20260910.md)
+**Earlier live proof:** at 527 MHz and 2.4 MS/s, a five-channel Kraken array GPU run
+at ±800 Hz and 200 ms CPI averaged **95.5 ms**. This is capacity evidence, not
+a matched upstream speed comparison. It used the prior version with recurring
+CPU accuracy checks; the refreshed measurements above are recorded-IQ replays.
+
+## Equal-range Doppler tests
+
+At this same full range and **±4800 Hz**, Strix GPU processing averaged **117.2 ms
+per 200 ms CPI**, or **587.2 ms per one-second CPI**, with no misses in either
+24-frame steady sample. VectorWarp CPU took 230.2 ms and 1175.1 ms respectively.
+Original blah2's Doppler buffer is too small for
+these settings; it was not run with unsafe buffer sizes.
 
 ## Install on Linux
 
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
 
-- **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps. Included in package builds.
-- **SDRplay RSPduo, USRP, and dual HackRF:** source builds with the receiver's required SDK.
+One package per OS and architecture includes every supported receiver adapter.
+Choose your receiver in the web settings—no SDR-specific VectorWarp download.
+
+- **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
+- **USRP (including B210) and dual HackRF:** receiver settings are passed to UHD or libhackrf when processing starts.
+- **SDRplay RSPduo:** uses your locally installed SDRplay API; Settings checks whether it needs installation or startup.
 
 The Kraken multi-channel foundation is also offered to blah2 in
 [our upstream PR #45](https://github.com/30hours/blah2/pull/45).

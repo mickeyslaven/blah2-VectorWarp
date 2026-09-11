@@ -42,8 +42,9 @@ In **Settings**:
 1. Select a receiver profile and enter its connection details.
 2. Set frequency, sample rate, receiver/transmitter coordinates, and a writable
    recording directory.
-3. For Kraken, match Heimdall host, ports, channel count, and reference mode.
-   Set frequency and gain in Suite V2.
+3. For Kraken, confirm the Heimdall host, ports, channel count and reference
+   mode. Applying settings synchronizes the browser frequency and active-channel
+   prefix with the receiver, then reads them back at processor startup.
 4. Correct validation errors, then choose **Save & Restart**. This starts the
    processor with the saved configuration.
 
@@ -57,9 +58,12 @@ Keep the UI on a trusted LAN/VPN: it has no login.
 
 ## Limits
 
-- Published packages will support live Kraken/Heimdall input and replay. They
-  do not install Kraken USB drivers or configure Suite V2.
-- Live RSPduo, USRP, and dual-HackRF require the [source build](SETUP.md) and
-  their vendor SDKs.
+- Each package includes Kraken, USRP, dual-HackRF and RSPduo adapters. Kraken
+  Suite and its USB drivers remain external: VectorWarp can enroll, reuse and
+  start an already-installed allowlisted local service, or use a remote endpoint.
+- UHD and libhackrf are installed as native package dependencies. RSPduo still
+  needs the vendor's locally installed SDRplay API. Settings checks whether it
+  is running; starting a local service requires enrollment and one-use local
+  approval. That is not an unconditional one-click driver installer.
 - Replay does not open radio hardware. macOS and Windows are browser clients,
   not processor hosts.

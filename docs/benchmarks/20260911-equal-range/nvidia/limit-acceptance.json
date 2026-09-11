@@ -1,0 +1,33 @@
+{
+  "acceptance": "expected full-range rejection; no timed processing attempted",
+  "checks": [
+    {
+      "engine": "upstream",
+      "supported": false,
+      "rejection_verified": true,
+      "command": [
+        "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/bin/bench-upstream",
+        "--inspect-geometry",
+        "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/results/unsupported-200ms-40000hz.profile.json",
+        "pair"
+      ],
+      "binary_sha256": "c21761bf1025f69493455929a4e2d1a1555485b032411486b4755b0032240230",
+      "returncode": 1,
+      "stderr": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span"
+    },
+    {
+      "engine": "fast",
+      "supported": false,
+      "rejection_verified": true,
+      "command": [
+        "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/bin/bench-fast",
+        "--inspect-geometry",
+        "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/results/unsupported-200ms-40000hz.profile.json",
+        "pair"
+      ],
+      "binary_sha256": "72a14248f87321d226a0d8ff4e4b7324301d5eff6a9aa8a8c5a28e251914416e",
+      "returncode": 1,
+      "stderr": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span"
+    }
+  ]
+}

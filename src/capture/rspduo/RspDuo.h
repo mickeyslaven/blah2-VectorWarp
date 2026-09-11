@@ -31,6 +31,14 @@
 class RspDuo : public Source
 {
 private:
+  std::string requestedSerial;
+  std::mutex lifecycleMutex;
+  bool apiOpened = false;
+  bool apiLocked = false;
+  bool deviceSelected = false;
+  bool deviceInitialized = false;
+  std::atomic<bool> deviceRemoved{false};
+  void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)
   int agc_bandwidth_nr;
   /// @brief AGC set point (dBfs)
@@ -163,7 +171,7 @@ public:
   RspDuo(std::string type, uint32_t fc, uint32_t fs, 
     std::string path, bool *saveIq, int agcSetPoint, 
     int bandwidthNumber, int gainReductionA, int gainReductionB, 
-    int lnaState, bool dabNotch, bool rfNotch);
+    int lnaState, bool dabNotch, bool rfNotch, std::string serial = "");
 
   /// @brief Implement capture function on RSPduo.
   /// @param buffer1 Pointer to reference buffer.

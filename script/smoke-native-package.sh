@@ -59,11 +59,26 @@ as_root runuser --user vectorwarp-api --group vectorwarp-api --supp-group vector
 receiver_types=$(sed -n 's/^Environment="BLAH2_RECEIVER_TYPES=\(.*\)"$/\1/p' \
   /usr/lib/systemd/system/vectorwarp-api.service)
 [[ -n $receiver_types ]] || die 'installed API service lacks receiver-type build metadata'
+# This command loads adapter libraries only; it creates no receiver and opens
+# no hardware. Missing SDRplay software must not stop the core or other radios.
+/opt/vectorwarp/current/bin/blah2 --receiver-status | "$node" -e '
+  let body=""; process.stdin.on("data", data => { body += data; });
+  process.stdin.on("end", () => {
+    const report = JSON.parse(body);
+    if (report.schema !== 1 || report.hardwareProbed !== false || report.receivers?.length !== 4) process.exit(1);
+    const names = new Set(report.receivers.map(item => item.receiver));
+    if (["Kraken", "RspDuo", "Usrp", "HackRF"].some(name => !names.has(name))) process.exit(1);
+    for (const item of report.receivers) {
+      if (!item.compiled || (item.receiver !== "RspDuo" && !item.moduleLoadable)) process.exit(1);
+    }
+  });
+' || die 'installed universal receiver adapters did not load correctly'
 
 # This is a directly launched package-local API/static-web smoke process, never
 # a system service; BLAH2_PREVIEW prevents external truth polling.
 setsid runuser --user vectorwarp-api --group vectorwarp-api --supp-group vectorwarp-config -- \
   env BLAH2_PREVIEW=true BLAH2_SETUP_PORT=39080 BLAH2_RECEIVER_TYPES="$receiver_types" \
+  BLAH2_RECEIVER_STATUS_EXECUTABLE=/opt/vectorwarp/current/bin/blah2 \
   "$node" "$api" "$config" >"$log" 2>&1 &
 api_pid=$!
 for _ in $(seq 1 300); do

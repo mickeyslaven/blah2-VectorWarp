@@ -3,6 +3,8 @@ capture:
   fc: 204640000
   device:
     type: "RspDuo"
+    # Leave blank only when exactly one RSPduo is connected.
+    serial: ""
     agcSetPoint: -20
     # 0 to disable AGC
     #bandwidthNumber: 0

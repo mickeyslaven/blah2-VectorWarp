@@ -1,5 +1,9 @@
 # Raspberry Pi 4 / Fedora 44 validation — 2026-09-10
 
+Package and correctness evidence remains relevant. Timings below are historical,
+not part of the [current fixed-range comparison](GPU_BENCHMARK_20260911.md), and
+do not establish a Pi speedup over blah2.
+
 The Fedora 44 ARM64 RPM installed on a Raspberry Pi 4 Model B Rev 1.5 with
 SELinux enforcing. All 16 offline processor replay/startup cases passed.
 VectorWarp services remained disabled/inactive. This is Fedora-on-Pi package

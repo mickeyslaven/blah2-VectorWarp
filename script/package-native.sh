@@ -101,6 +101,8 @@ esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
 for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so \
+  bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
+  bin/blah2-receiver-hackrf.so bin/blah2-receiver-rspduo.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
   [[ -e $ARTIFACT/$file ]] || die "release artifact is incomplete: $file"
 done
@@ -114,10 +116,16 @@ gpu=$(sed -n 's/^gpu=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_version=$(sed -n 's/^build_os_version=//p' "$ARTIFACT/.vectorwarp-build")
 build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
-[[ $backend == kraken ]] || die 'published packages require the Kraken live backend'
+[[ $backend == all ]] || die 'published packages require all receiver adapters in one build'
+[[ $(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build") == RspDuo,Usrp,HackRF,Kraken ]] ||
+  die 'published package receiver manifest is incomplete'
 [[ $gpu == AUTO ]] || die 'published packages require the CPU plus Vulkan AUTO build'
 [[ $build_os_id == "${ID:-}" && $build_os_version == "${VERSION_ID:-}" && $build_arch == "$(uname -m)" ]] ||
   die 'artifact was not built natively on this exact distribution and architecture'
+# SDRplay remains user-installed licensed software. Only our adapter may ship.
+if find "$ARTIFACT" \( -iname '*libsdrplay*' -o -iname 'sdrplay_api*.h' -o -iname 'SDRplay*.run' \) -print -quit | grep -q .; then
+  die 'release artifact must not contain the SDRplay vendor SDK or runtime'
+fi
 
 processor_file=$(file -Lb "$ARTIFACT/bin/blah2")
 case "$NODE_ARCH" in
@@ -177,10 +185,14 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 # Node. Binary release packages instead use the verified private runtime.
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service"
+sed -i 's|ExecStartPre=/usr/bin/node |ExecStartPre=/opt/vectorwarp/runtime/node/bin/node |' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service"
 sed -i 's|^/usr/bin/node /opt/vectorwarp/|/opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/|' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
 grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API unit to private Node'
+grep -q '^ExecStartPre=/opt/vectorwarp/runtime/node/bin/node ' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service" || die 'could not bind receiver startup check to private Node'
 grep -q '^/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart" || die 'could not bind restart helper to private Node'
 visudo -cf "$STAGE/etc/sudoers.d/vectorwarp" >/dev/null
@@ -206,21 +218,33 @@ if [[ $FORMAT == deb ]]; then
   # derives the exact ABI package names of this distribution from the ELF set.
   printf 'Source: vectorwarp\nSection: hamradio\nPriority: optional\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nStandards-Version: 4.6.2\n\nPackage: vectorwarp\nArchitecture: %s\nDescription: VectorWarp\n' \
     "$DEB_ARCH" >"$WORK_DIR/debian/control"
+  printf 'libblah2-capture-core 1 vectorwarp (= %s-%s)\n' \
+    "$VERSION" "$PACKAGE_RELEASE" >"$WORK_DIR/debian/shlibs.local"
   binaries=(
     "$STAGE/opt/vectorwarp/current/bin/blah2"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-vulkan.so"
+    "$STAGE/opt/vectorwarp/current/bin/libblah2-capture-core.so.1"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-usrp.so"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-hackrf.so"
     "$STAGE/opt/vectorwarp/runtime/node/bin/node"
   )
   shlib_args=()
   for binary in "${binaries[@]}"; do shlib_args+=("-e$binary"); done
-  shlibs_output=$(cd "$WORK_DIR" && dpkg-shlibdeps -O "${shlib_args[@]}")
+  # Our private capture ABI is provided inside this same package. The optional
+  # RSPduo module additionally needs the separately licensed vendor API, so it
+  # must not make that unavailable library a mandatory package dependency.
+  shlibs_output=$(cd "$WORK_DIR" && dpkg-shlibdeps -O -xvectorwarp \
+    -l"$STAGE/opt/vectorwarp/current/bin" "${shlib_args[@]}")
   shlibs=${shlibs_output#shlibs:Depends=}
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n VectorWarp supports live Kraken/Heimdall input and replay of recordings from\n all four receiver formats. Radar processing is never started by installation.\n' \
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n One package includes Kraken, USRP, dual HackRF and RSPduo adapters.\n RSPduo needs the separately installed SDRplay API. Installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
+  if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
+    printf '/etc/vectorwarp-management/receivers.json\n' >>"$CONTROL/conffiles"
+  fi
   install -m 0755 "$SOURCE_DIR/packaging/deb/postinst" "$CONTROL/postinst"
   install -m 0755 "$SOURCE_DIR/packaging/deb/prerm" "$CONTROL/prerm"
   install -m 0755 "$SOURCE_DIR/packaging/deb/postrm" "$CONTROL/postrm"
@@ -267,7 +291,8 @@ manifest="$WORK_DIR/$ASSET.manifest.json"
   printf '  "filename": "%s",\n' "$ASSET"
   printf '  "sha256": "%s",\n' "$sha256"
   printf '  "size": %s,\n' "$size"
-  printf '  "backend": "kraken",\n'
+  printf '  "backend": "all",\n'
+  printf '  "compiled_receivers": ["Kraken", "RspDuo", "Usrp", "HackRF"],\n'
   printf '  "gpu": "auto",\n'
   printf '  "node_version": "24.21.0"\n'
   printf '}\n'

@@ -71,26 +71,37 @@ and browser controls for live displays, settings, recording and replay.</p>
 </section>
 <section class="panel" aria-labelledby="results">
 <h2 id="results">Faster than regular blah2</h2>
-<p>Same recorded signal. Same settings. Same CPU allocation on each machine.</p>
+<p>Same recorded IQ at its original rate. Same CPU budget on each host.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Regular blah2 and VectorWarp processing comparison">
-<table><caption>200 ms processing deadline, ±800 Hz Doppler</caption>
-<thead><tr><th scope="col">Hardware</th><th scope="col">Regular blah2</th><th scope="col">VectorWarp</th></tr></thead>
+<table><caption>Matched 200 ms processing workloads; lower is better</caption>
+<thead><tr><th scope="col">Hardware and workload</th><th scope="col">Regular blah2 CPU</th><th scope="col">VectorWarp CPU</th><th scope="col">VectorWarp GPU</th></tr></thead>
 <tbody>
-<tr><th scope="row">RTX 4050 Laptop</th><td>238.8 ms on CPU</td><td>162.3 ms on GPU — 32% less processing time</td></tr>
-<tr><th scope="row">Ryzen AI Max+ 395 / Radeon 8060S</th><td>76.1 ms on CPU</td><td>62.0 ms on GPU — 19% less processing time</td></tr>
+<tr><th scope="row">Strix, ±800 Hz</th><td>80.5 ms</td><td>79.6 ms</td><td>38.5 ms</td></tr>
+<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>225.6 ms</td><td>220.0 ms</td><td>113.0 ms</td></tr>
+<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>310.5 ms</td><td>303.2 ms</td><td>157.5 ms</td></tr>
 </tbody></table></div>
-<p>On the RTX 4050, VectorWarp GPU met all <strong>34 steady-frame deadlines</strong>;
-regular blah2 missed 33.</p>
-<p class="scope">Measured DSP means: same IQ and settings, two repeats of
-sample-clock-paced DSP replay; four CPU cores on the laptop, eight CPU cores on the Ryzen system.</p>
+<p>On the RTX 4050 workload, regular blah2 missed 23 of 24 measured intervals;
+VectorWarp GPU missed none. Accuracy qualification runs at startup; accepted
+steady GPU frames do not repeat CPU clutter or complex-map accuracy calculations.</p>
+<p class="scope">GPU acceleration covers clutter FFT/filtering and delay–Doppler work;
+the small FP64 coefficient solve and other radar stages remain on CPU.</p>
+<p><strong>Earlier live array proof:</strong> at 527 MHz and 2.4 MS/s, a five-channel
+array GPU run at ±800 Hz and 200 ms CPI averaged 95.5 ms. This is live capacity
+evidence from the prior version with recurring CPU checks, not a new live run
+or a matched upstream ratio.</p>
 <h2>More radar per frame</h2>
-<p><strong>Five-channel live radar at 147.5 ms on CPU.</strong> Synthesized reference
-and five surveillance maps within a 200 ms frame, beyond regular blah2's two-channel path.</p>
-<p><strong>Live ±4000 Hz at 138.7 ms on GPU.</strong> Within a 200 ms frame, at
-2.4 MS/s with 256 delay bins. <strong>Regular blah2 cannot safely process this configuration.</strong></p>
-<p class="scope">Live examples: Ryzen AI Max+ 395 / Radeon 8060S, eight CPU cores,
-2.4 MS/s; means over 27 steady frames. The five-channel example uses CPU at ±800 Hz.</p>
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Full configurations, results and methodology →</a>
+<p>VectorWarp also completes wider and five-channel configurations where regular
+blah2 has no equivalent mode or cannot safely represent the requested geometry.</p>
+<p class="scope">Physical NVIDIA, AMD and Intel GPU checks compare complex maps to a
+CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
+<h2>Equal-range Doppler tests</h2>
+<p>All comparisons retain the standard 256-bin, 30.604 km excess-path
+window at 527 MHz and 2.4 MS/s. At this full range and ±4800 Hz, Strix GPU
+processing averaged 117.2 ms per 200 ms CPI and 587.2 ms per one-second CPI,
+with no misses in either 24-frame steady sample. VectorWarp CPU took 230.2 ms
+and 1175.1 ms respectively. These are capacity results where upstream's
+Doppler buffer cannot safely represent the configuration.</p>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
@@ -104,8 +115,9 @@ and five surveillance maps within a 200 ms frame, beyond regular blah2's two-cha
 <section class="panel" aria-labelledby="install">
 <h2 id="install">Native Linux. Normal package updates.</h2>
 <p>Signed APT and DNF packages for Ubuntu, Debian and Fedora, with matching
-packages for DragonOS and 64-bit Raspberry Pi OS. Kraken live input is included;
-RSPduo, USRP and dual HackRF are available through source builds with their SDKs.</p>
+packages for DragonOS and 64-bit Raspberry Pi OS. Each package includes Kraken,
+USRP, dual HackRF and RSPduo adapters. Choose your receiver in Settings;
+RSPduo needs the separately installed SDRplay API.</p>
 <a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">Installation guide</a>
 </section>
 </main>
@@ -180,8 +192,10 @@ def load_manifest(file, packages):
         if filename != expected_filename:
             raise ValueError(f"Package filename disagrees with its immutable identity: {filename}")
         if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
-                "kraken", "auto", "24.21.0"):
+                "all", "auto", "24.21.0"):
             raise ValueError(f"Unexpected package build profile: {filename}")
+        if entry.get("compiled_receivers") != ["Kraken", "RspDuo", "Usrp", "HackRF"]:
+            raise ValueError(f"Package must contain every receiver adapter: {filename}")
         identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
         if identity in identities:
             raise ValueError("Duplicate package target/version")

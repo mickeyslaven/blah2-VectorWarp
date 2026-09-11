@@ -1,5 +1,8 @@
 # Recorded-IQ benchmark report — completed 2026-09-10 campaign
 
+Historical evidence only; not the current performance comparison. Use the
+[fixed-range results](GPU_BENCHMARK_20260911.md) for current speed claims.
+
 ## Scope and evidence
 
 This report covers completed runs only. Campaign evidence includes the raw IQ,

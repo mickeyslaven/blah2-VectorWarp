@@ -4,8 +4,8 @@ The delay–Doppler processor can use a Vulkan GPU. The implementation targets A
 Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
 verification is limited to the devices and driver versions in
 [GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
-Capture, reference synthesis, clutter removal, detection and tracking remain on
-the CPU.
+Capture, reference synthesis, the small FP64 clutter coefficient solve,
+detection and tracking remain on the CPU.
 
 On a Raspberry Pi 4 running Fedora 44, production-size attempts in Automatic
 and GPU modes timed out during driver pipeline creation and fell back to CPU.
@@ -18,7 +18,9 @@ and [startup diagnostics](GPU_DIAGNOSTICS.md).
 
 Settings → Processing → Acceleration provides:
 
-- **Automatic** (default): check the GPU against the CPU for three frames, then
+- **Automatic** (default): check GPU accuracy before selecting it. Delay–Doppler
+  qualification takes three frames; GPU clutter adds five combined-stage checks.
+  Then
   use it only if the measured delay–Doppler stage is at least 5% faster, including
   worker transfers and map conversion. Those first frames use
   CPU results.
@@ -33,9 +35,31 @@ The file setting is `process.performance.acceleration`: `auto`, `cpu` or `gpu`.
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.
 
+Startup qualification is per processor instance, selected device and geometry:
 GPU results must agree with the CPU's complex-valued map before detection sees
-them. The input remains available for same-frame CPU recovery. Software Vulkan
+them. After qualification, accepted GPU frames do not repeat CPU clutter or
+complex-map accuracy computations. Every-frame finite-output, numerical-solve,
+worker-error and timeout protections remain, as does AUTO's sustained GPU timing
+comparison against the CPU cost measured at startup. This does not continuously
+revalidate accuracy against changing signal conditions; independent benchmark
+comparisons remain separate. The input remains available for same-frame CPU
+recovery. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
+
+## Measured performance
+
+On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
+recorded-IQ replay from 225.574 ms/CPI in regular blah2 to 112.968 ms/CPI in
+VectorWarp: 49.9% less processing time. This fixed-range comparison used the
+same 527 MHz, 2.4 MS/s recording, delays −10…245 (256 bins; 30.604 km maximum
+excess path), and clutter −10…200 for both engines. It accelerates clutter
+FFT/filtering and delay–Doppler work; the small FP64 coefficient solve and
+other pipeline stages remain CPU work. The
+[GPU benchmark report](GPU_BENCHMARK_20260911.md) has the comparison, accuracy
+checks, deadline counts and method.
+The GPU missed none of the 24 measured steady CPI deadlines, versus 23 for
+regular blah2. These replay measurements use startup-only qualification; the
+report separately labels earlier native live measurements with recurring checks.
 
 ## Drivers and older hardware
 

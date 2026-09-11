@@ -1,10 +1,11 @@
 'use strict';
 
-// Native deployment acceptance: one API/static-web process on port 3000.
+// Native deployment acceptance: one API/static-web process on a disposable port.
 // It uses only a temporary config and local fixture, never receiver hardware.
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
@@ -44,6 +45,19 @@ function fetchHttp(url, options = {}) {
   await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
   const config = setupDefaults();
   config.network.ip = '127.0.0.1';
+  // Reserve all fixture ports together, then release immediately before spawn.
+  // Never connect to or alter a real preview/API at the default service ports.
+  const reservations = [];
+  for (const name of Object.keys(config.network.ports)) {
+    const reservation = net.createServer();
+    await new Promise((resolve, reject) => {
+      reservation.once('error', reject);
+      reservation.listen(0, '127.0.0.1', resolve);
+    });
+    reservations.push(reservation);
+    config.network.ports[name] = reservation.address().port;
+  }
+  const base = `http://127.0.0.1:${config.network.ports.api}`;
   config.truth.adsb = {enabled: true, tar1090: `127.0.0.1:${fixture.address().port}`,
     poll_interval: 0.1, smoothing_window: 2, max_position_age: 30};
   const file = path.join(directory, 'config.yml');
@@ -52,6 +66,7 @@ function fetchHttp(url, options = {}) {
   delete env.BLAH2_PREVIEW;
   delete env.BLAH2_CONFIG_RESTART_COMMAND;
   delete env.BLAH2_SETUP_PORT;
+  await Promise.all(reservations.map(server => new Promise(resolve => server.close(resolve))));
   const child = spawn(process.execPath, ['api/server.js', file], {cwd: path.resolve(__dirname, '../..'), env, stdio: 'pipe'});
   let logs = '';
   child.stderr.on('data', chunk => { logs += chunk; });
@@ -59,11 +74,16 @@ function fetchHttp(url, options = {}) {
   try {
     let ready = false;
     for (let i = 0; i < 50 && !ready; i++) {
-      try { ready = (await fetchHttp('http://127.0.0.1:3000/api/system/status')).ok; }
+      try {
+        const response = await fetchHttp(base + '/api/system/status');
+        const status = await response.json();
+        ready = response.ok && typeof status.serverId === 'string' &&
+          status.serverId.startsWith(`${child.pid}-`);
+      }
       catch (_) { await new Promise(resolve => setTimeout(resolve, 40)); }
     }
     assert.ok(ready, logs || 'Isolated API did not start');
-    for (const origin of ['http://127.0.0.1:3000']) {
+    for (const origin of [base]) {
       const html = await fetchHttp(origin + '/display/configuration/');
       assert.equal(html.status, 200, origin);
       assert.ok((await html.text()).includes('renderConfiguration'));
@@ -97,7 +117,7 @@ function fetchHttp(url, options = {}) {
     }
     unavailable = true;
     await new Promise(resolve => setTimeout(resolve, 1100));
-    const failed = await fetchHttp('http://127.0.0.1:3000/api/adsb');
+    const failed = await fetchHttp(base + '/api/adsb');
     assert.equal(failed.status, 503, 'native API must preserve upstream errors');
     assert.ok((await failed.json()).error);
 

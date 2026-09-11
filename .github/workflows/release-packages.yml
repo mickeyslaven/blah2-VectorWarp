@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Maintainer approval covers SDK build use only, never runtime redistribution.
+  VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED: ${{ vars.VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED }}
+
 concurrency:
   group: release-packages-${{ github.ref }}
   cancel-in-progress: false
@@ -84,7 +88,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
-            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm
+            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
+      - name: Prepare approved SDRplay build inputs without installing vendor software
+        run: |
+          script/prepare-sdrplay-build-sdk.sh --output-dir build/ci-sdrplay-sdk
       - name: Bootstrap pinned vcpkg manifest dependencies
         run: |
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
@@ -96,7 +103,9 @@ jobs:
       - name: Configure and test without GPU hardware
         run: |
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
-            -DBLAH2_KRAKEN_ONLY=ON -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
+            -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
+            -DBLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/ci-sdrplay-sdk/inc" \
+            -DBLAH2_SDRPLAY_LIBRARY="$PWD/build/ci-sdrplay-sdk/amd64/libsdrplay_api.so.3.15" \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
           cmake --build build/ci --parallel 2
@@ -180,7 +189,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
-            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
+            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
           sha_var="NODE_SHA_${NODE_ARCH^^}"
           node_sha=${!sha_var}
           archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
@@ -190,7 +199,11 @@ jobs:
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
           node_root="$RUNNER_TEMP/${archive%.tar.xz}"
           export PATH="$node_root/bin:$PATH"
-          script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+          script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
+          case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
+          export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
+          export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
@@ -204,7 +217,7 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -e VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
@@ -212,7 +225,7 @@ jobs:
               apt-get update
               apt-get install --yes --no-install-recommends \
                 build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
-                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
+                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -220,7 +233,11 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+              script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
+              case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
+              export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
+              export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
@@ -235,12 +252,12 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -e VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
             bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
-                fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build
+                fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -248,7 +265,11 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+              script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
+              case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
+              export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
+              export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro fedora44 --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"

@@ -7,10 +7,19 @@ DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
 and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
 or hardware validation.
 
-Published packages are Kraken-only: they support live Kraken/Heimdall input and
-all replay formats. They do not install Kraken USB drivers or Heimdall. Live
-RSPduo, USRP, and dual-HackRF require a source build with the applicable vendor
-SDKs and licences; no vendor runtime is bundled.
+Every release package includes Kraken, RSPduo, USRP and dual-HackRF adapters,
+plus all replay formats. UHD and libhackrf are native package dependencies.
+SDRplay's licensed API is installed separately; only our adapter is packaged.
+Kraken still needs Heimdall and its USB setup. Settings can check and reuse
+receiver software, or offer supported setup actions.
+
+Release builders need `VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` after
+the maintainer accepts SDRplay's SDK license for build use. The pinned
+`prepare-sdrplay-build-sdk.sh` extracts only headers and a link library into a
+private build directory. It never runs the vendor installer; no SDK, vendor
+runtime or service is copied into release packages. Locally supplied licensed
+SDKs can instead be selected with `BLAH2_SDRPLAY_INCLUDE_DIR` and
+`BLAH2_SDRPLAY_LIBRARY`.
 
 `package-native.sh` uses an already extracted, checksum-verified official Node
 runtime from `node-runtime.env`; it never downloads one. It packages required

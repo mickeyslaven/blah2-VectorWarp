@@ -127,6 +127,22 @@ if $WITH_SYSTEMD; then
   done
   [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js ]] ||
     die 'restart helpers are missing'
+  if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
+    [[ -f $ARTIFACT/libexec/vectorwarp-receiver-apt.py ]] || die 'receiver package adapter is missing'
+    [[ -f $ARTIFACT/libexec/vectorwarp-receiver-dnf.py ]] || die 'receiver DNF adapter is missing'
+    for file in vectorwarp-receiver.service.in vectorwarp-receiver.socket vectorwarp-receiver-policy.json.in; do
+      [[ -f $ARTIFACT/systemd/$file ]] || die "receiver management artifact is incomplete: $file"
+    done
+    management_policy_dir="$DESTDIR/etc/vectorwarp-management"
+    [[ ! -L $management_policy_dir && ! -L $management_policy_dir/receivers.json ]] ||
+      die 'receiver management policy must not be a symlink'
+    if [[ -z $DESTDIR && -d $management_policy_dir ]]; then
+      policy_owner=$(stat -c %u "$management_policy_dir")
+      policy_mode=$(stat -c %a "$management_policy_dir")
+      [[ $policy_owner == 0 && $((8#$policy_mode & 0022)) -eq 0 ]] ||
+        die 'receiver management policy directory must be root-owned and not writable by other users'
+    fi
+  fi
   if [[ -z $DESTDIR && $EUID -ne 0 ]]; then die 'system integration requires root (or use --destdir)'; fi
 fi
 if [[ -z $DESTDIR ]]; then
@@ -214,6 +230,28 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
+  if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
+    render "$ARTIFACT/systemd/vectorwarp-receiver.service.in" "$temporary/vectorwarp-receiver.service"
+    render "$ARTIFACT/systemd/vectorwarp-receiver-policy.json.in" "$temporary/receivers.json"
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-receiver-helper" "$target_prefix/libexec/vectorwarp-receiver-helper"
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-receiver-apt.py" "$target_prefix/libexec/vectorwarp-receiver-apt.py"
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-receiver-dnf.py" "$target_prefix/libexec/vectorwarp-receiver-dnf.py"
+    run install -m 0644 "$temporary/vectorwarp-receiver.service" "$unit_dir/vectorwarp-receiver.service"
+    run install -m 0644 "$ARTIFACT/systemd/vectorwarp-receiver.socket" "$unit_dir/vectorwarp-receiver.socket"
+    # The API can write its config directory, so privileged policy must live
+    # outside it. Existing reviewed policy is preserved on every upgrade.
+    management_policy_dir="$DESTDIR/etc/vectorwarp-management"
+    [[ ! -L $management_policy_dir && ! -L $management_policy_dir/receivers.json ]] ||
+      die 'receiver management policy must not be a symlink'
+    run install -d -m 0755 "$management_policy_dir"
+    if [[ ! -e $management_policy_dir/receivers.json ]]; then
+      run install -m 0644 "$temporary/receivers.json" "$management_policy_dir/receivers.json"
+    fi
+    # Socket activation enables read-only discovery. Every mutation still needs
+    # an installed reviewed policy plus an exact one-use local administrator grant.
+    run install -d -m 0755 "$unit_dir/vectorwarp-api.service.wants"
+    run ln -sfn ../vectorwarp-receiver.socket "$unit_dir/vectorwarp-api.service.wants/vectorwarp-receiver.socket"
+  fi
   if [[ -z $DESTDIR && $EUID -eq 0 ]]; then run chown -R root:root "$target_prefix/libexec"; fi
   if [[ -z $DESTDIR ]]; then
     run systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf

@@ -14,6 +14,9 @@ HackRf::HackRf(std::string _type, uint32_t _fc, uint32_t _fs,
 {
   serial = _serial;
   ampEnable = _ampEnable;
+  if (serial.size() != 2 || _gainLna.size() != 2 || _gainVga.size() != 2 ||
+      ampEnable.size() != 2 || serial[0].empty() || serial[1].empty() || serial[0] == serial[1])
+    throw std::invalid_argument("[HackRF] Two distinct serials and two gain/amplifier values are required.");
 
   // validate LNA gain
   std::unordered_set<uint32_t> validLna;
@@ -34,7 +37,7 @@ HackRf::HackRf(std::string _type, uint32_t _fc, uint32_t _fs,
   }
   for (uint32_t gain : _gainVga) {
     if (validVga.find(gain) == validVga.end()) {
-      throw std::invalid_argument("Invalid LNA gain value");
+      throw std::invalid_argument("Invalid VGA gain value");
     }
   }
   gainVga = _gainVga;
@@ -50,6 +53,7 @@ void HackRf::check_status(uint8_t status, std::string message)
 
 void HackRf::start()
 {
+  try {
   // global hackrf config
   int status;
   status = hackrf_init();
@@ -57,7 +61,9 @@ void HackRf::start()
   apiStarted = true;
   hackrf_device_list_t *list;
   list = hackrf_device_list();
-  if (!list || list->devicecount < 2)
+  const bool haveTwo = list && list->devicecount >= 2;
+  if (list) hackrf_device_list_free(list);
+  if (!haveTwo)
   {
     check_status(-1, "Failed to find 2 HackRF devices.");
   }
@@ -94,6 +100,10 @@ void HackRf::start()
   check_status(status, "Failed to set LNA gain.");
   status = hackrf_set_vga_gain(dev[0], gainVga[0]);
   check_status(status, "Failed to set VGA gain.");
+  } catch (...) {
+    stop();
+    throw;
+  }
 }
 
 void HackRf::stop()

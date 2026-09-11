@@ -17,6 +17,7 @@
 #include <iostream>
 #include <numeric>
 #include <algorithm>
+#include <atomic>
 #include <sstream>
 #include <thread>
 #include <cstdlib>
@@ -226,6 +227,10 @@ int main(int argc, char** argv) try {
   const unsigned referenceChannel=geometry.referenceChannel, surveillanceChannel=geometry.surveillanceChannel;
   const double fc=geometry.fc, cpi=geometry.requestedCpi;
   const unsigned samples=geometry.samples, pathCount=geometry.pathCount;
+  const int32_t clutterMin=number("clutter_min"), clutterMax=number("clutter_max");
+  const int64_t clutterBins=int64_t(clutterMax)-clutterMin;
+  if (clutterBins <= 0 || clutterBins > UINT32_MAX)
+    throw std::invalid_argument("Clutter delay range must be a non-empty half-open interval");
 #ifndef BLAH2_BENCH_FAST
   if (!geometry.upstreamSafe)
     throw std::invalid_argument("UNSAFE_UPSTREAM_GEOMETRY: Doppler bins exceed the upstream scratch FFT; case must be reported, not run");
@@ -250,7 +255,7 @@ int main(int argc, char** argv) try {
     surveillance.push_back(std::make_unique<IqData>(samples));
     ambiguity.push_back(std::make_unique<Ambiguity>(geometry.delayMin, geometry.delayMax,
       geometry.dopplerMin, geometry.dopplerMax, fs, samples, geometry.roundHamming));
-    filters.push_back(std::make_unique<WienerHopf>(number("clutter_min"), number("clutter_max"), samples));
+    filters.push_back(std::make_unique<WienerHopf>(clutterMin, clutterMax, samples));
     ambPointers.push_back(ambiguity.back().get()); surPointers.push_back(surveillance.back().get());
   }
   if (ambiguity[0]->get_nfft() != geometry.nfft ||
@@ -260,7 +265,9 @@ int main(int argc, char** argv) try {
     throw std::runtime_error("DSP geometry differs from the inspected benchmark contract");
 #ifdef BLAH2_BENCH_FAST
   blah2::Acceleration acceleration(mode,
-    {ambiguity[0]->get_nfft(), ambiguity[0]->get_n_doppler_bins(), ambiguity[0]->get_n_delay_bins(), pathCount, int(number("delay_min"))},
+    {ambiguity[0]->get_nfft(), ambiguity[0]->get_n_doppler_bins(),
+      ambiguity[0]->get_n_delay_bins(), pathCount, int(number("delay_min")),
+      samples, uint32_t(clutterBins), clutterMin},
     ambiguity[0]->get_n_corr(), fs, ambiguity[0]->get_doppler_middle(),
     std::getenv("BLAH2_GPU_DEVICE") ? std::getenv("BLAH2_GPU_DEVICE") : "auto");
   ArrayReferenceSynthesizer::Config refConfig;
@@ -286,13 +293,18 @@ int main(int argc, char** argv) try {
     golden.open(argv[8], std::ios::binary | (goldenMode == "write" ? std::ios::out | std::ios::trunc : std::ios::in));
     if (!golden) throw std::runtime_error("Cannot open correctness map file");
   }
-  frames << "frame,phase,sample_start,sample_count,read_ms,extract_ms,reference_ms,spectrum_ms,clutter_ms,ambiguity_ms,fusion_ms,detection_ms,tracker_ms,json_ms,pipeline_ms,dsp_ms,validation_ms,backend,state,detections,tracks,map_rms_relative,map_peak_relative,fusion_rms_relative,fusion_peak_relative\n";
+  frames << "frame,phase,sample_start,sample_count,read_ms,extract_ms,reference_ms,spectrum_ms,clutter_ms,ambiguity_ms,fusion_ms,detection_ms,tracker_ms,json_ms,clutter_prepare_ms,clutter_dispatch_ms,clutter_accept_ms,clutter_gpu_executed,clutter_cpu_executed,clutter_backend,clutter_state,pipeline_ms,dsp_ms,validation_ms,backend,state,detections,tracks,map_rms_relative,map_peak_relative,fusion_rms_relative,fusion_peak_relative\n";
   frames << std::setprecision(10);
   unsigned frame=0; double totalPipeline=0, totalRead=0, totalValidation=0, worstRms=0, worstPeak=0;
   double worstFusionRms=0, worstFusionPeak=0;
   unsigned gpuFrames=0, cpuFrames=0; uint64_t jsonBytes=0;
+  unsigned clutterGpuFrames=0, clutterCpuFrames=0;
+  double totalClutterPrepare=0, totalClutterDispatch=0, totalClutterAccept=0;
   std::vector<double> pipelineValues;
-  constexpr unsigned SteadyStartFrame=3;
+  constexpr unsigned SteadyStartFrame=8;
+#ifdef BLAH2_BENCH_FAST
+  static_assert(SteadyStartFrame == blah2::Acceleration::TotalQualificationFrames);
+#endif
   const double startupMs=ms(started, Clock::now());
   const char* paceSetting = std::getenv("BLAH2_BENCH_PACE");
   if (paceSetting && std::string(paceSetting) != "0" && std::string(paceSetting) != "1")
@@ -321,9 +333,37 @@ int main(int argc, char** argv) try {
     if (array) reference=synthesizer.process(capPointers);
 #endif
     tick(); spectrum.process(reference.get()); tick();
-    paths(pathCount, workers, [&](unsigned i) {
-      if (!filters[i]->process(reference.get(), surveillance[i].get())) throw std::runtime_error("Clutter filter rejected a frame");
+    bool clutterGpuExecuted=false, clutterCpuExecuted=true;
+    double clutterPrepare=0, clutterDispatch=0, clutterAccept=0;
+    std::string clutterBackend="cpu", clutterState="upstream";
+#ifdef BLAH2_BENCH_FAST
+    const bool clutterSuccess=acceleration.processClutter(*reference, surPointers, [&] {
+      std::atomic<bool> success{true};
+      paths(pathCount, workers, [&](unsigned i) {
+        if (!filters[i]->process(reference.get(), surveillance[i].get())) success.store(false);
+      });
+      return success.load();
     });
+    if (!clutterSuccess) throw std::runtime_error("Clutter filter rejected a frame");
+    const auto& clutterTiming=acceleration.clutterTiming();
+    clutterGpuExecuted=clutterTiming.gpuExecuted;
+    clutterCpuExecuted=clutterTiming.cpuExecuted;
+    clutterPrepare=clutterTiming.prepareMs;
+    clutterDispatch=clutterTiming.dispatchMs;
+    clutterAccept=clutterTiming.acceptMs;
+    clutterBackend=clutterGpuExecuted ?
+      (clutterCpuExecuted ? "vulkan_fft+cpu_solve+cpu_oracle" :
+        "vulkan_fft+cpu_solve") : "cpu";
+    clutterState=acceleration.clutterStatus().state;
+    if (mode == "gpu" && frame >= SteadyStartFrame &&
+        (!clutterGpuExecuted || acceleration.clutterStatus().active != "vulkan"))
+      throw std::runtime_error("FORCED_GPU_CLUTTER_FALLBACK: explicit GPU case did not execute clutter on Vulkan");
+#else
+    paths(pathCount, workers, [&](unsigned i) {
+      if (!filters[i]->process(reference.get(), surveillance[i].get()))
+        throw std::runtime_error("Clutter filter rejected a frame");
+    });
+#endif
     tick();
     std::vector<Map<Complex>*> maps(pathCount);
     Map<Complex>* map=nullptr;
@@ -384,7 +424,14 @@ int main(int argc, char** argv) try {
     }
     const double rms=std::sqrt(errorPower/std::max(signalPower,1e-30)), peak=maxError/std::max(maxSignal,1e-30);
     worstRms=std::max(worstRms,rms); worstPeak=std::max(worstPeak,peak);
-    if (rms > 1e-4 || peak > 1e-4) throw std::runtime_error("CPU/GPU complex map agreement failed");
+    if (rms > 1e-4 || peak > 1e-4) {
+      std::ostringstream reason;
+      reason << "CPU/GPU complex map agreement failed frame=" << frame
+        << " rms=" << rms << " peak=" << peak << " ambiguity_backend=" << active
+        << " ambiguity_state=" << state << " clutter_backend=" << clutterBackend
+        << " clutter_state=" << clutterState;
+      throw std::runtime_error(reason.str());
+    }
     double fusionErrorPower=0, fusionSignalPower=0, fusionMaxError=0, fusionMaxSignal=0;
 #ifdef BLAH2_BENCH_FAST
     for (size_t d=0; d<map->data.size(); ++d)
@@ -409,6 +456,9 @@ int main(int argc, char** argv) try {
       (mode == "cpu" ? (frame == 0 ? "cold" : "warmup") : "gpu_qualification");
     frames << frame << ',' << phase << ',' << uint64_t(frame)*samples << ',' << samples << ',' << readMs;
     for (double value : times) frames << ',' << value;
+    frames << ',' << clutterPrepare << ',' << clutterDispatch << ',' << clutterAccept
+      << ',' << (clutterGpuExecuted?1:0) << ',' << (clutterCpuExecuted?1:0)
+      << ',' << clutterBackend << ',' << clutterState;
     frames << ',' << pipeline << ',' << pipeline << ',' << validationMs << ',' << active << ',' << state << ','
       << detections->get_nDetections() << ',' << tracks->get_n() << ',' << rms << ',' << peak
       << ',' << fusionRms << ',' << fusionPeak << '\n';
@@ -417,6 +467,11 @@ int main(int argc, char** argv) try {
     if (active == "vulkan") ++gpuFrames;
     else if (active == "cpu") ++cpuFrames;
     else throw std::runtime_error("Benchmark reported an unknown processing backend");
+    if (clutterGpuExecuted) ++clutterGpuFrames;
+    if (clutterCpuExecuted) ++clutterCpuFrames;
+    totalClutterPrepare += clutterPrepare;
+    totalClutterDispatch += clutterDispatch;
+    totalClutterAccept += clutterAccept;
     pipelineValues.push_back(pipeline);
     if (paced) {
       finalScheduleLagMs = std::max(0.0, ms(release, Clock::now()) - geometry.requestedCpi * 1000);
@@ -465,6 +520,12 @@ int main(int argc, char** argv) try {
     << ",\"peak_schedule_lag_ms\":" << peakScheduleLagMs
     << ",\"validation_ms\":" << totalValidation << ",\"wall_ms\":" << ms(started,Clock::now())
     << ",\"gpu_frames\":" << gpuFrames << ",\"cpu_frames\":" << cpuFrames
+    << ",\"clutter_gpu_frames\":" << clutterGpuFrames
+    << ",\"clutter_cpu_solve_frames\":" << clutterGpuFrames
+    << ",\"clutter_cpu_frames\":" << clutterCpuFrames
+    << ",\"clutter_prepare_ms\":" << totalClutterPrepare
+    << ",\"clutter_dispatch_ms\":" << totalClutterDispatch
+    << ",\"clutter_accept_ms\":" << totalClutterAccept
     << ",\"forced_gpu_verified\":" << (mode=="gpu"?"true":"null")
     << ",\"workers\":" << workers << ",\"fft_threads\":" << fftThreads
     << ",\"round_hamming\":" << (geometry.roundHamming?"true":"false")

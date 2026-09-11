@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "apiUser": "vectorwarp-api",
+  "configPath": "@SYSCONFDIR@/config.yml",
+  "artifactManifest": "@PREFIX@/current/.vectorwarp-build",
+  "actions": []
+}

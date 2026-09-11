@@ -36,6 +36,20 @@ const receiverBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});
 assert.equal(receiverBuildCheck.status, 0,
   `receiver build/install contract: ${receiverBuildCheck.stdout}${receiverBuildCheck.stderr}`);
+const sdkBuildCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_sdrplay_build_sdk.py')], {encoding: 'utf8'});
+assert.equal(sdkBuildCheck.status, 0,
+  `build-only SDK consent/extraction: ${sdkBuildCheck.stdout}${sdkBuildCheck.stderr}`);
+assert.match(packageScript, /all receiver adapters in one build/);
+assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
+assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
+const receiverModules = read('cmake/ReceiverModules.cmake');
+assert.doesNotMatch(receiverModules, /INSTALL_RPATH[^\n]*\/usr\/local\/lib/);
+assert.doesNotMatch(rpmSpec, /QA_RPATHS|__brp_check_rpaths/,
+  'Universal packages must retain the normal RPM RPATH checks');
+assert.match(read('src/capture/ReceiverLoader.cpp'),
+  /open_receiver_library\(path, std::strcmp\(module.receiver, "RspDuo"\) == 0 \?\s*"\/usr\/local\/lib\/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3"\)/,
+  'Only RSPduo may use the exact fixed vendor-library fallback');
 
 // Matrix jobs must not upload immutable artifacts under the same name.
 assert.ok(read('.github/workflows/ci.yml').includes(
@@ -91,6 +105,28 @@ assert.match(packageSmoke, /exec sudo -- bash "\$0" "\$@"/);
 assert.match(packageSmoke, /\/display\/configuration\//);
 assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
+const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
+const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
+const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
+assert.doesNotMatch(releaseWorkflow, /\blibhackrf-devel\b/, 'Fedora calls its SDK package hackrf-devel');
+assert.equal(debHackrfInstalls.length, 3, 'Verifier and both Debian-family package paths need the complete SDK');
+assert.equal(rpmHackrfInstalls.length, 1, 'The Fedora package path needs the complete SDK');
+for (const command of debHackrfInstalls) {
+  assert.match(command, /\blibusb-1\.0-0-dev\b/, 'HackRF pkg-config exposes libusb headers on Debian-family builds');
+  assert.match(command, /\blibuhd-dev\b/);
+  assert.match(command, /\buhd-host\b/, 'The native build preflight also requires uhd_config_info');
+  assert.match(command, /\blibboost-dev\b/, 'UHD public headers require the Boost development headers');
+}
+for (const command of rpmHackrfInstalls) {
+  assert.match(command, /\blibusb1-devel\b/, 'Fedora must also declare the transitive development dependency');
+  assert.match(command, /\buhd-devel\b/);
+  assert.match(command, /\bboost-devel\b/, 'Fedora UHD builds require the Boost development headers');
+}
+const sourceSetup = read('docs/SETUP.md').replace(/\\\n\s*/g, ' ');
+assert.match(sourceSetup, /sudo apt install[^\n]*\blibuhd-dev\b[^\n]*\blibboost-dev\b[^\n]*\blibhackrf-dev\b[^\n]*\blibusb-1\.0-0-dev\b/,
+  'The source quickstart must include both SDK header dependencies');
+assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\bhackrf-devel\b[^\n]*\blibusb1-devel\b/);
+assert.doesNotMatch(sourceSetup, /\blibhackrf-devel\b/);
 assert.equal((releaseWorkflow.match(/bash script\/smoke-native-package\.sh/g) || []).length, 3,
   'the Ubuntu 24, Ubuntu 22/26, and Fedora target groups must smoke every native package');
 function matrixEntries(workflow) {

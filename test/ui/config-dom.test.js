@@ -31,6 +31,7 @@ window.fetch = async (url, options = {}) => {
     }
   } else if (url.startsWith('/api/config?')) {
     assert.equal(options.headers['If-Match'], `"${revision}"`);
+    assert.equal(options.headers['X-VectorWarp-Receiver-Sync'], 'synchronize-v1');
     saved = JSON.parse(options.body);
     writes++;
     revision = `save-${writes}`;
@@ -61,6 +62,11 @@ function change(input, value, event = 'input') {
   try {
     await window.renderConfiguration();
     await window.validateActiveConfiguration();
+    const optionalSerial = query('capture.device.serial').querySelector('input');
+    assert.equal(optionalSerial.value, '');
+    assert.equal(optionalSerial.required, false, 'One unambiguous RSPduo does not require an explicit serial');
+    assert.equal(optionalSerial.checkValidity(), true);
+    assert.equal(query('capture.device.serial').querySelector('label').textContent, 'RSPduo serial');
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 6);
     assert.equal(window.document.getElementById('config-warnings'), null);
     const siteAdvice = window.document.querySelector('.config-advice');
@@ -188,6 +194,7 @@ function change(input, value, event = 'input') {
     assert.equal(await window.validateActiveConfiguration(), false,
       'Placeholder serials must not pass validation');
     const serials = query('capture.device.serial').querySelectorAll('input');
+    assert.equal(query('capture.device.serial').querySelector('label').textContent, 'HackRF serial numbers');
     change(serials[0], '0001');
     change(serials[1], '0002');
     const amps = query('capture.device.amp_enable').querySelectorAll('select');
@@ -201,6 +208,24 @@ function change(input, value, event = 'input') {
     assert.equal(query('capture.replay.format').querySelector('select').value, 'auto');
 
     window.switchDevice('Kraken');
+    const gainControl = query('capture.device.heimdall.gain');
+    const gainMode = gainControl.querySelector('select');
+    const manualGain = gainControl.querySelector('input');
+    assert.equal(gainMode.value, 'keep');
+    change(gainMode, 'manual', 'change');
+    change(manualGain, '49.6');
+    assert.equal(await window.validateActiveConfiguration(), true);
+    change(manualGain, '51');
+    assert.equal(await window.validateActiveConfiguration(), false);
+    change(gainMode, '-1', 'change');
+    assert.equal(manualGain.hidden, true);
+    assert.equal(manualGain.disabled, true, 'Inactive invalid manual gain must not block automatic gain');
+    assert.equal(await window.validateActiveConfiguration(), true);
+    const restoredAutomatic = window.typedInput(-1, ['capture', 'device', 'heimdall', 'gain']);
+    assert.equal(restoredAutomatic.querySelector('select').value, '-1');
+    assert.equal(restoredAutomatic.querySelector('input').hidden, true,
+      'Saved automatic gain must not reopen as manual -1 dB');
+    change(gainMode, 'keep', 'change');
     const reference = query('process.reference_synthesis.mode');
     assert.equal(reference.closest('[role=tabpanel]').id, 'settings-panel-capture');
     assert.equal(reference.closest('[data-config-group="capture.device"]').querySelector('summary strong').textContent, 'KrakenSDR Suite V2');
@@ -282,6 +307,14 @@ function change(input, value, event = 'input') {
       for (const key of ['gain', 'gainReduction', 'gain_lna', 'gain_vga', 'serial', 'antenna', 'amp_enable']) {
         const field = query(`capture.device.${key}`);
         if (!field) continue;
+        if (profile.type === 'RspDuo' && key === 'serial') {
+          const serial = field.querySelector('input');
+          assert.equal(serial.value, '', 'An unselected RSPduo has no serial restriction');
+          assert.equal(serial.required, false, 'The serial is optional when one RSPduo is connected');
+          assert.equal(field.querySelector('.array-inputs'), null,
+            'One RSPduo serial identifies the device containing both tuner roles');
+          continue;
+        }
         assert.deepEqual([...field.querySelectorAll('.array-inputs label > span')].map(label => label.textContent),
           ['Reference', 'Surveillance'], `${profile.type}: ${key} must identify the two receiver roles`);
       }

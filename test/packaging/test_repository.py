@@ -27,24 +27,42 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ('200 ms processing deadline', '147.5 ms on CPU',
-                         '138.7 ms on GPU', '238.8 ms on CPU', '162.3 ms on GPU',
-                         '32% less processing time', '76.1 ms on CPU', '62.0 ms on GPU',
-                         '19% less processing time', '256 delay bins', '±800 Hz',
-                         'Regular blah2 cannot safely process this configuration',
-                         'Ryzen AI Max+ 395', 'eight CPU cores', '2.4 MS/s',
-                         '27 steady frames', 'RTX 4050 Laptop', 'four CPU cores',
-                         'same IQ and settings', 'two repeats',
-                         'sample-clock-paced DSP replay', 'LIVE_CAPACITY_20260910.md'):
+        for required in ('Matched 200 ms processing workloads', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
+                         'Earlier live array proof', '95.5 ms',
+                         'Same recorded IQ at its original rate', 'Same CPU budget',
+                         'clutter FFT/filtering', 'small FP64 coefficient solve',
+                         'cannot safely represent the requested geometry',
+                         'NVIDIA, AMD and Intel GPU checks',
+                         'Equal-range Doppler tests', '30.604 km excess-path',
+                         'GPU_BENCHMARK_20260911.md'):
             self.assertIn(required, page)
 
         # The front page selects examples; the linked report must keep the
         # full comparison, including slower configurations and test boundaries.
-        report = (ROOT / 'docs/LIVE_CAPACITY_20260910.md').read_text()
-        for required in ('427.68', '27/27', 'not endurance tests',
-                         'No live\nupstream executable was run',
-                         'full output equivalence is\nnot claimed'):
-            self.assertIn(required, report)
+        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
+        plain_report = ' '.join(report.split())
+        for required in ('c821bee3f0d27cf20c8447f3d908ef722905a4de',
+                         '1e-4', '30.604 km', '41 paired groups',
+                         'not an endurance test', 'not bit-exact output', 'future work'):
+            self.assertIn(required, plain_report)
+        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-equal-range/comparison.json').read_text())
+        self.assertEqual(len(cohort['rows']), 41)
+        readme = (ROOT / 'README.md').read_text()
+        for row in cohort['rows']:
+            self.assertEqual(row['delay_bins'], 256)
+            self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
+            self.assertEqual(row['frames'], 24)
+            self.assertIn(f"{row['mean_ms']:.3f}", report)
+            self.assertIn(f"{row['p95_ms']:.3f}", report)
+            self.assertIn(f"{row['deadline_misses']}/24", report)
+            if row['variant'] == 'vectorwarp-auto':
+                self.assertEqual(row['cpu_oracle_frames'], 0)
+            selected = ((row['host'] in ('strix', 'nvidia') and row['case'] == 'pair-200ms-800hz') or
+                        (row['host'] == 'pavilion' and row['case'] == 'pair-200ms-2400hz' and
+                         row['device'] in ('auto', '4098:27039:1')))
+            if selected:
+                self.assertIn(f"{row['mean_ms']:.1f} ms", page)
+                self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
@@ -59,14 +77,20 @@ class HomepageTests(unittest.TestCase):
         # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('first signed APT/DNF release is being prepared', readme)
-        self.assertIn('times signal processing during replay at the original sample rate', readme)
-        self.assertIn('same CPU allocation', readme)
+        self.assertIn('replaying the same recorded signal at its original rate', readme)
+        self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
-        self.assertIn('source builds with the receiver', readme)
+        self.assertIn('one package', readme.lower())
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
-                      '**239 ms**', '**162 ms**', '**32%**', '**19%**',
-                      'Regular blah2 cannot safely process that configuration because of its buffer sizing.'):
+                      'clutter FFT/filtering', 'startup',
+                      'docs/GPU_BENCHMARK_20260911.md',
+                      'Wider Doppler coverage'):
             self.assertIn(claim, readme)
+        # Numeric findings belong to the linked report rather than an old
+        # README headline; editorial changes must not resurrect obsolete runs.
+        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
+        self.assertIn('c821bee3f0d27cf20c8447f3d908ef722905a4de', report)
+        self.assertIn('1e-4', report)
         self.assertTrue((ROOT / 'html/favicon/vectorwarp-vw.svg').is_file())
         for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
             document = ROOT / name
@@ -94,7 +118,8 @@ class ManifestTests(unittest.TestCase):
         self.entry = dict(name="vectorwarp", version="1.2.3", release="1", format="deb",
                           distro="ubuntu", distro_version="24.04", codename="noble", arch="amd64",
                           filename=self.package.name, size=self.package.stat().st_size,
-                          sha256=repository.sha256(self.package), backend="kraken", gpu="auto",
+                          sha256=repository.sha256(self.package), backend="all", gpu="auto",
+                          compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"],
                           node_version="24.21.0")
         self.manifest = self.root / "manifest.json"
 
@@ -107,6 +132,13 @@ class ManifestTests(unittest.TestCase):
 
     def test_valid_entry(self):
         self.assertEqual(self.load(), [self.entry])
+
+    def test_receiver_specific_or_incomplete_packages_are_rejected(self):
+        for changes in ({"backend": "kraken"},
+                        {"compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
+                        {"compiled_receivers": ["Kraken", "RspDuo", "Usrp", "Usrp"]}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.load([{**self.entry, **changes}])
 
     def test_resolute_target_is_valid(self):
         package = self.root / "vectorwarp_1.2.3-1_ubuntu26.04_amd64.deb"
@@ -171,7 +203,7 @@ class ManifestTests(unittest.TestCase):
                 self.load([{**self.entry, **update}])
 
     def test_filename_and_build_profile_are_immutable(self):
-        for update in ({"filename": "renamed.deb"}, {"backend": "all"}, {"gpu": "off"},
+        for update in ({"filename": "renamed.deb"}, {"backend": "kraken"}, {"gpu": "off"},
                        {"node_version": "25.0.0"}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 self.load([{**self.entry, **update}])
@@ -296,7 +328,8 @@ class SignedRepositoryTests(unittest.TestCase):
         result = dict(name="vectorwarp", version="1.2.3", release="1.fc44" if format == "rpm" else "1",
                       format=format, distro=distro, distro_version=version, arch=arch,
                       filename=file.name, sha256=repository.sha256(file), size=file.stat().st_size,
-                      backend="kraken", gpu="auto", node_version="24.21.0")
+                      backend="all", gpu="auto", node_version="24.21.0",
+                      compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"])
         if codename:
             result["codename"] = codename
         return result

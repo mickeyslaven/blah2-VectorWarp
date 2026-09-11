@@ -50,6 +50,7 @@ exit 0
             executable(self.tools / name)
         executable(self.tools / "pkg-config", """#!/bin/sh
 printf '%s\\n' "$*" >>"$PKG_CONFIG_LOG"
+if [ "$*" = "--exists ${FAKE_MISSING_PKG:-}" ]; then exit 1; fi
 exit 0
 """)
         self.dependencies = self.temp / "deps"
@@ -115,7 +116,7 @@ exit 0
         (uhd / "UHDConfig.cmake").write_text(
             "set(UHD_FOUND TRUE)\nset(UHD_INCLUDE_DIRS \"\")\nset(UHD_LIBRARIES \"\")\n",
             encoding="utf-8")
-        (uhd / "UHDConfigVersion.cmake").write_text("""set(PACKAGE_VERSION "4.8.0.0")
+        (uhd / "UHDConfigVersion.cmake").write_text("""set(PACKAGE_VERSION "4.1.0.5")
 set(PACKAGE_VERSION_COMPATIBLE TRUE)
 if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
   set(PACKAGE_VERSION_EXACT TRUE)
@@ -161,9 +162,17 @@ endif()
         ], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         flags = "\n".join(path.read_text(encoding="utf-8") for path in usrp_build.rglob("flags.make"))
-        self.assertIn("BLAH2_ENABLE_USRP=1", flags)
-        self.assertNotIn("BLAH2_ENABLE_RSPDUO=1", flags)
+        self.assertIn("BLAH2_MODULE_USRP=1", flags)
+        self.assertNotIn("BLAH2_MODULE_RSPDUO=1", flags)
         self.assertNotIn("BLAH2_KRAKEN_ONLY=1", flags)
+        # Radio SDKs are selected by their own module, never required just to
+        # launch the core processor or replay a recording from another radio.
+        main_flags = (usrp_build / "CMakeFiles/blah2.dir/flags.make").read_text()
+        self.assertNotIn("BLAH2_MODULE_USRP", main_flags)
+        main_link = (usrp_build / "CMakeFiles/blah2.dir/link.txt").read_text()
+        self.assertNotIn("libuhd", main_link)
+        self.assertNotIn("sdrplay", main_link)
+        self.assertNotIn("libhackrf", main_link)
 
     def test_each_backend_selects_only_its_dependencies_and_compile_flags(self):
         for backend, (receivers, flags) in RECEIVERS.items():
@@ -189,6 +198,7 @@ endif()
                 self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
                 calls = log.read_text(encoding="utf-8")
                 self.assertEqual("libhackrf" in calls, backend in {"hackrf", "all"})
+                self.assertEqual("libusb-1.0" in calls, backend in {"hackrf", "all"})
                 self.assertEqual("BLAH2_SDRPLAY_INCLUDE_DIR" in result.stdout,
                                  backend in {"rspduo", "all"})
 
@@ -197,6 +207,20 @@ endif()
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn("kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+
+    def test_missing_hackrf_transitive_headers_fail_before_dependency_build(self):
+        for backend in ("hackrf", "all"):
+            with self.subTest(backend=backend):
+                environment = self.build_environment(backend == "all")
+                environment["FAKE_MISSING_PKG"] = "libusb-1.0"
+                result = subprocess.run([
+                    "bash", str(BUILD_SCRIPT), "--backend", backend, "--gpu", "off",
+                    "--preflight", "--deps-dir", str(self.dependencies),
+                    "--build-dir", str(self.temp / f"missing-usb-{backend}"),
+                ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("libusb development files", result.stderr)
+                self.assertNotIn("vcpkg_cmake_prefix", result.stdout)
 
     def test_non_x86_vcpkg_configure_uses_required_system_tools(self):
         for architecture in ("aarch64", "arm64", "armv7l", "s390x", "ppc64le", "riscv64"):
@@ -296,6 +320,49 @@ endif()
         result = self.install(missing, self.temp / "unused-stage", "--no-systemd", "--preflight")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("lacks compiled_receivers", result.stderr)
+
+    def test_receiver_helper_staging_preserves_separate_root_policy(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-helper.py', artifact / 'libexec/vectorwarp-receiver-helper')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-apt.py', artifact / 'libexec/vectorwarp-receiver-apt.py')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-dnf.py', artifact / 'libexec/vectorwarp-receiver-dnf.py')
+        for name in ('vectorwarp-receiver.service.in', 'vectorwarp-receiver.socket', 'vectorwarp-receiver-policy.json.in'):
+            shutil.copy2(ROOT / 'contrib/systemd' / name, artifact / 'systemd' / name)
+        stage = self.temp / 'stage-management'
+        policy_dir = stage / 'etc/vectorwarp-management'
+        policy_dir.mkdir(parents=True)
+        policy = policy_dir / 'receivers.json'
+        sentinel = b'{"reviewed-local-policy":"preserve byte-for-byte"}\n'
+        policy.write_bytes(sentinel)
+        result = self.install(artifact, stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(policy.read_bytes(), sentinel)
+        self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
+        self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
+        service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()
+        self.assertIn('ExecStart=/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-receiver-helper serve', service)
+        self.assertNotIn('receiver-helper', (stage / 'etc/sudoers.d/vectorwarp').read_text())
+        fresh_stage = self.temp / 'stage-management-default'
+        result = self.install(artifact, fresh_stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads((fresh_stage / 'etc/vectorwarp-management/receivers.json').read_text())['actions'], [])
+
+    def test_receiver_policy_symlink_is_rejected_before_staging_any_release(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-helper.py', artifact / 'libexec/vectorwarp-receiver-helper')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-apt.py', artifact / 'libexec/vectorwarp-receiver-apt.py')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-dnf.py', artifact / 'libexec/vectorwarp-receiver-dnf.py')
+        for name in ('vectorwarp-receiver.service.in', 'vectorwarp-receiver.socket', 'vectorwarp-receiver-policy.json.in'):
+            shutil.copy2(ROOT / 'contrib/systemd' / name, artifact / 'systemd' / name)
+        stage = self.temp / 'stage-management-link'
+        (stage / 'etc').mkdir(parents=True)
+        (stage / 'etc/vectorwarp-management').symlink_to(self.temp)
+        result = self.install(artifact, stage)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must not be a symlink', result.stderr)
+        self.assertFalse((stage / 'opt/vectorwarp/current').exists())
 
 
 if __name__ == "__main__":

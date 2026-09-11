@@ -32,6 +32,9 @@ private:
   /// @brief Names of time differences.
   std::vector<std::string> name;
   blah2::AccelerationStatus acceleration;
+  blah2::AccelerationStatus clutterAcceleration;
+  bool clutterGpuExecuted = false;
+  bool clutterCpuExecuted = false;
 
 public:
   /// @brief Constructor.
@@ -50,6 +53,12 @@ public:
   /// @return JSON string.
   std::string to_json();
   void set_acceleration(const blah2::AccelerationStatus& value) { acceleration = value; }
+  void set_clutter_acceleration(const blah2::AccelerationStatus& value,
+    bool gpuExecuted, bool cpuExecuted) {
+    clutterAcceleration = value;
+    clutterGpuExecuted = gpuExecuted;
+    clutterCpuExecuted = cpuExecuted;
+  }
 
   /// @brief Append the map to a save file.
   /// @param json JSON string of map and metadata.

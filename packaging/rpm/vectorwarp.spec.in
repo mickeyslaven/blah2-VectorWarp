@@ -8,14 +8,22 @@ Packager:       Mickey Slaven <mickeyslaven@gmail.com>
 Source0:        vectorwarp-root.tar
 Requires:       systemd
 Requires:       sudo
+Requires:       python3
+%if 0%{?fedora} == 44
+Requires:       python3-libdnf5
+Requires:       python3-rpm
+%endif
 
 %global debug_package %{nil}
+# The vendor SDRplay API is installed separately under its own license. Its
+# absence must not block installation or use of the other receiver adapters.
+%global __requires_exclude ^libsdrplay_api[.]so.*$
 
 %description
 VectorWarp is a native passive-radar processor and local web interface. This
-package supports live Kraken/Heimdall input and replay recordings from all four
-supported receiver formats. It includes CPU processing and optional Vulkan
-acceleration selected at runtime.
+package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU
+processing and optional Vulkan acceleration selected at runtime. RSPduo needs
+the separately installed SDRplay API. Receiver software is checked in Settings.
 
 %prep
 
@@ -50,7 +58,7 @@ fi
 %preun
 if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service >/dev/null 2>&1 || true
+    vectorwarp-restart.service vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 
 %files
@@ -58,9 +66,14 @@ fi
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
 /usr/lib/systemd/system/vectorwarp-restart.service
+/usr/lib/systemd/system/vectorwarp-receiver.service
+/usr/lib/systemd/system/vectorwarp-receiver.socket
+/usr/lib/systemd/system/vectorwarp-api.service.wants
 /usr/lib/sysusers.d/vectorwarp.conf
 /usr/lib/tmpfiles.d/vectorwarp.conf
 %config(noreplace) /etc/sudoers.d/vectorwarp
+%dir /etc/vectorwarp-management
+%config(noreplace) /etc/vectorwarp-management/receivers.json
 %dir %attr(0770,root,root) /etc/vectorwarp
 %config(noreplace) %attr(0660,root,root) /etc/vectorwarp/config.yml
 

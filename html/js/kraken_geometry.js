@@ -18,7 +18,7 @@
     const device = config.capture?.device || {};
     const geometry = {...device.array_geometry};
     confirmations.forEach(key => { delete geometry[key]; });
-    return JSON.stringify([config.capture?.fc, config.capture?.fs, device.type,
+    return JSON.stringify([config.capture?.fc, config.capture?.fs, config.capture?.replay, device.type,
       device.channel_count, device.reference_channel, device.surveillance_channels,
       device.heimdall, config.process?.reference_synthesis, geometry]);
   }

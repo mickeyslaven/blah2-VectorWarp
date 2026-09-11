@@ -8,6 +8,10 @@ const {spawn} = require('child_process');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
 const {readConfig, writable, saveConfig} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
+const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
+const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
+const {createReceiverJournal} = require('./receiver-journal.js');
+const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
@@ -27,6 +31,24 @@ let lastFrameAt = null;
 let timestampConnections = 0;
 let upstreamCache = null;
 let processorStatus = null;
+let configWriteInProgress = false;
+// A saved file or API restart is not evidence of receiver application.
+const receiverJournal = createReceiverJournal(configFile);
+let receiverSyncState = receiverJournal.recover();
+let receiverReconciliationRequired = receiverSyncState.reconciliationRequired;
+function receiverTimeoutOption(name, maximum) {
+  if (process.env[name] === undefined) return undefined;
+  const value = Number(process.env[name]);
+  if (!Number.isInteger(value) || value < 50 || value > maximum)
+    throw new Error(`${name} must be an integer from 50 through ${maximum}.`);
+  return value;
+}
+const receiverSynchronizer = createReceiverSynchronizer({krakenOptions: {
+  statusTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_STATUS_TIMEOUT_MS', 10000),
+  readbackTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_READBACK_TIMEOUT_MS', 30000)
+}});
+const RECEIVER_SYNC_HEADER = 'X-VectorWarp-Receiver-Sync';
+const RECEIVER_SYNC_INTENT = 'synchronize-v1';
 
 function replayTruthDisabled() {
   return config.capture?.replay?.state === true ||
@@ -105,7 +127,7 @@ app.use(function(req, res, next) {
     if (origin) res.header('Vary', 'Origin');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, If-Match');
+  res.header('Access-Control-Allow-Headers', `Content-Type, If-Match, ${RECEIVER_SYNC_HEADER}`);
   res.header('Access-Control-Expose-Headers', 'ETag');
   res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   res.header('Expires', '-1');
@@ -203,6 +225,13 @@ app.get('/api/config/capabilities', (req, res) => {
       liveAvailable: !compiledLiveTypes || compiledLiveTypes.includes(item.type)})),
     compiledLiveTypes: compiledLiveTypes || getDeviceProfiles().map(item => item.type),
     fieldRules: FIELD_RULES,
+    receiverSynchronization: {
+      intentHeader: RECEIVER_SYNC_HEADER,
+      intentValue: RECEIVER_SYNC_INTENT,
+      pendingIntentValue: 'save-pending-v1',
+      applicationState: receiverSyncState.state,
+      currentReceiver: receiverAcceptanceBoundary(document.config)
+    },
     setupRequired: document.setupRequired,
     setupMessage: document.readError,
     suppliedDefaults: document.suppliedDefaults,
@@ -216,8 +245,10 @@ app.get('/api/system/status', (req, res) => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   res.json({serverId, configRevision: document.revision,
     acceleration: (() => { try { return JSON.parse(timing)?.acceleration || null; } catch (_) { return null; } })(),
+    clutterAcceleration: (() => { try { return JSON.parse(timing)?.clutterAcceleration || null; } catch (_) { return null; } })(),
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
-    restart: restartState, lastFrameAt, timestampConnections,
+    restart: restartState, receiverSynchronization: receiverSyncState,
+    lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
     radar: lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
       Math.max(10000, (config.process?.data?.cpi || 1) * 3000) ? 'receiving' : 'stale',
@@ -256,6 +287,19 @@ app.get('/api/upstream/status', async (req, res) => {
   const status = await upstreamCache.promise;
   res.status(status.available === false ? 503 : 200).json(status);
 });
+const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
+const receiverManagement = installReceiverRoutes(app, {
+  readDocument: () => readConfig(configFile),
+  port: PORT,
+  allowedOrigins: receiverOrigins,
+  helperExecutable: process.env.BLAH2_RECEIVER_HELPER,
+  extraOrigins: (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean),
+  transactionBusy: () => configWriteInProgress || ['running', 'scheduled'].includes(restartState.state),
+  processorStatus: () => processorStatusFresh(processorStatus) ? processorStatus.value : null,
+  preview: process.env.BLAH2_PREVIEW === 'true',
+  compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
+    process.env.BLAH2_RECEIVER_TYPES.split(',').map(value => value.trim()).filter(Boolean) : null
+});
 app.post('/api/config/validate', async (req, res) => {
   if (!configWriteOriginAllowed(req))
     return res.status(403).json({valid: false,
@@ -274,7 +318,14 @@ app.put('/api/config', async (req, res) => {
   if (!configFileWritable())
     return res.status(503).json({ok: false,
       errors: ['The active configuration file is read-only.']});
+  const saveLater = req.query.mode === 'pending';
+  if (req.query.mode !== undefined && !saveLater)
+    return res.status(422).json({ok: false, errors: ['Unknown configuration save mode.']});
   const wantsRestart = req.query.restart === 'true';
+  if (saveLater && (req.query.restart !== 'false' ||
+      req.get(RECEIVER_SYNC_HEADER) !== 'save-pending-v1' || !sameReceiverOrigin(req, receiverOrigins)))
+    return res.status(428).json({ok: false, code: 'PENDING_SAVE_INTENT_REQUIRED',
+      errors: ['Save for later requires its explicit same-origin intent and restart=false. No settings were saved.']});
   if (wantsRestart && !restartCommandAvailable())
     return res.status(503).json({ok: false,
       errors: ['A safe restart command is not configured on this server.']});
@@ -282,24 +333,137 @@ app.put('/api/config', async (req, res) => {
     return res.status(428).json({ok: false, errors: ['Reload settings before saving (configuration revision required).']});
   if (restartState.state === 'running' || restartState.state === 'scheduled')
     return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
+  if (configWriteInProgress || receiverManagement.busy())
+    return res.status(409).json({ok: false,
+      errors: ['Another settings transaction is in progress. Wait for its result.']});
   const allowedTypes = process.env.BLAH2_RECEIVER_TYPES?.split(',')
     .map(item => item.trim()).filter(Boolean);
   const replayRequested = req.body?.capture?.replay?.state === true;
-  if (allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type))
+  if (!saveLater && allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type))
     return res.status(422).json({ok: false, errors: [
-      'This receiver backend is unavailable for live capture in this installation. Enable replay to save this profile.'
+      'This receiver backend is unavailable for live capture in this installation. Use Save for later, or install a build containing this backend before applying it.'
     ]});
-  const validation = validateConfig(req.body, readConfig(configFile).config);
+  const currentDocument = readConfig(configFile);
+  const expectedRevision = req.get('If-Match').replace(/^"|"$/g, '');
+  if (expectedRevision !== currentDocument.revision)
+    return res.status(409).json({ok: false,
+      errors: ['The config file changed. Reload settings before saving; your edits have not been written.']});
+  const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
+  if (saveLater && receiverReconciliationRequired)
+    return res.status(409).json({ok: false, code: 'RECEIVER_RECONCILIATION_REQUIRED',
+      receiverSync: receiverSyncState.receipt,
+      errors: ['An earlier receiver command has an unresolved outcome. Reconcile it before saving for later; its receipt and saved settings were preserved.']});
+  // A previous attempt may have changed Suite without saving YAML, including
+  // before this API process started. Never use an unchanged file as readback.
+  const observeLiveReceiver = req.body?.capture?.device?.type === 'Kraken' &&
+    req.body?.capture?.replay?.state !== true && process.env.BLAH2_PREVIEW !== 'true';
+  const receiverSyncRequired = !saveLater && (observeLiveReceiver ||
+    receiverSynchronizer.requires(currentDocument.config, req.body));
+  if (receiverSyncRequired && process.env.BLAH2_PREVIEW === 'true')
+    return res.status(409).json({ok: false, code: 'RECEIVER_SYNC_DISABLED_IN_PREVIEW',
+      errors: ['UI preview cannot send settings to a receiver. Use an isolated simulated Suite V2 service for receiver tests.']});
+  if (receiverSyncRequired && req.get(RECEIVER_SYNC_HEADER) !== RECEIVER_SYNC_INTENT)
+    return res.status(428).json({ok: false, code: 'RECEIVER_SYNC_INTENT_REQUIRED',
+      errors: [`Receiver-controlled settings require the ${RECEIVER_SYNC_HEADER}: ${RECEIVER_SYNC_INTENT} intent header.`]});
+  configWriteInProgress = true;
+  let receiverSync = null;
+  const previousReceiverReceipt = receiverSyncState.receipt || null;
   try {
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.
     if (restartState.state === 'running' || restartState.state === 'scheduled')
       return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
-    const saved = saveConfig(configFile, req.body, req.get('If-Match').replace(/^"|"$/g, ''));
+    if (readConfig(configFile).revision !== currentDocument.revision)
+      return res.status(409).json({ok: false,
+        errors: ['The config file changed during validation. Reload settings; no receiver command was sent.']});
+    // Write-ahead state survives API death before a command ACK or YAML rename.
+    // A failed journal write prevents every receiver/config mutation below.
+    receiverJournal.write({state: 'in-progress', startedAt: Date.now(),
+      previousRevision: currentDocument.revision, reconciliationRequired: true,
+      receiverType: req.body.capture.device.type, saveLater,
+      receipt: receiverSyncState.receipt || null});
+    if (saveLater) {
+      // Explicit disk-only transaction. Never probe, retune, invoke the helper,
+      // restart, or clear an uncertain receiver receipt in this branch.
+      let saved;
+      try { saved = saveConfig(configFile, req.body, currentDocument.revision); }
+      catch (error) {
+        // A directory fsync can fail after atomic rename. Do not promise that
+        // the old file survived merely because persistence returned an error.
+        console.error(`Unable to save pending configuration: ${error.message}`);
+        const receipt = {schemaVersion: 1, receiverType: req.body.capture.device.type,
+          status: 'pending-save-unknown', configPersisted: null, receiverApplied: false,
+          applicationVerified: false, hardwareVerified: false, operations: []};
+        receiverSyncState = {state: 'unknown', receipt, applicationVerified: false,
+          reconciliationRequired: true};
+        receiverReconciliationRequired = true;
+        receiverJournal.write(receiverSyncState);
+        return res.status(error.status || 500).json({ok: false,
+          code: 'PENDING_SAVE_PERSISTENCE_FAILED', receiverSync: receipt,
+          errors: ['File save outcome is unknown. Reload the saved file before retrying; check configuration-directory permissions, disk space and the API log. No receiver commands or restart were requested.']});
+      }
+      const receipt = {schemaVersion: 1, receiverType: req.body.capture.device.type,
+        status: 'saved-pending', configPersisted: true, configRevision: saved.revision,
+        receiverApplied: false, applicationVerified: false, hardwareVerified: false,
+        operations: []};
+      receiverSyncState = {state: 'saved-pending', completedAt: Date.now(), receipt,
+        configRevision: saved.revision, reconciliationRequired: receiverReconciliationRequired};
+      try { receiverJournal.write(receiverSyncState); }
+      catch (error) { error.receiverSync = receipt; throw error; }
+      upstreamCache = null;
+      return res.json({ok: true, restarting: false, revision: saved.revision,
+        config: saved.config, receiverSync: receipt,
+        message: 'Settings saved for later. No receiver commands or restart were requested. Application remains pending; use Apply when the receiver is available.'});
+    }
+    receiverSyncState = {state: receiverSyncRequired ? 'synchronizing' : 'not-required',
+      startedAt: Date.now(), receipt: null};
+    receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
+      {force: observeLiveReceiver});
+    if (receiverSync.operations?.some(operation => operation.commandSent))
+      invalidateGeometry(req.body?.capture?.device?.array_geometry);
+    let saved;
+    try {
+      saved = saveConfig(configFile, req.body, currentDocument.revision);
+    } catch (error) {
+      if (receiverSyncRequired) {
+        const changedUpstream = receiverSync.operations?.length > 0;
+        const revisionConflict = error.status === 409;
+        error.receiverSync = {...receiverSync,
+          status: changedUpstream ? 'partial' : 'receiver-confirmed-config-not-saved',
+          configPersisted: false,
+          persistenceError: 'Receiver confirmation completed, but the VectorWarp config was not saved.'};
+        error.code = revisionConflict ? 'RECEIVER_SYNC_PERSISTENCE_CONFLICT' :
+          'RECEIVER_SYNC_PERSISTENCE_FAILED';
+        error.status = revisionConflict ? 409 : 500;
+        error.message = revisionConflict ?
+          `${error.message} Suite V2 may already have applied the receiver settings; reload and reconcile before retrying.` :
+          'Suite V2 confirmed the receiver settings, but VectorWarp could not save its config. The receiver may already be changed; inspect the API log, then reload and reconcile before retrying.';
+      }
+      throw error;
+    }
+    receiverSync = {...receiverSync, configPersisted: true, configRevision: saved.revision};
+    // Direct backends apply through their SDK at processor startup. A deliberate
+    // Apply can repair a disk-only failure there, but must not claim to have
+    // reconciled a previous, different upstream receiver.
+    const startupOwned = req.body.capture.device.type !== 'Kraken' || req.body.capture.replay?.state === true;
+    if (startupOwned && receiverReconciliationRequired)
+      receiverSync = {...receiverSync, priorOutcomeUnverified: true,
+        priorReceiverReceipt: previousReceiverReceipt};
+    if (receiverSyncRequired || startupOwned) receiverReconciliationRequired = false;
+    receiverSyncState = {state: receiverSync.status, completedAt: Date.now(),
+      receipt: receiverSync, configRevision: saved.revision,
+      reconciliationRequired: receiverReconciliationRequired};
+    try { receiverJournal.write(receiverSyncState); }
+    catch (error) {
+      error.receiverSync = {...receiverSync, status: 'config-saved-journal-unknown'};
+      throw error;
+    }
+    upstreamCache = null;
     res.json({ok: true, restarting: wantsRestart, revision: saved.revision, config: saved.config,
+      receiverSync,
       message: wantsRestart ? 'Configuration saved. Restart requested.' :
         'Configuration saved. Restart VectorWarp processing and its API to apply it.'});
     if (wantsRestart) {
@@ -308,8 +472,31 @@ app.put('/api/config', async (req, res) => {
     }
   } catch (error) {
     console.error(`Unable to save configuration: ${error.message}`);
+    if (error.code === 'RECEIVER_JOURNAL_PERSISTENCE_FAILED') receiverReconciliationRequired = true;
+    if (receiverSyncRequired) upstreamCache = null;
+    if (error.receiverSync) {
+      if (error.receiverSync.operations?.some(operation => operation.commandSent &&
+          operation.commandOutcome !== 'rejected') ||
+          ['RECEIVER_SYNC_PERSISTENCE_CONFLICT', 'RECEIVER_SYNC_PERSISTENCE_FAILED'].includes(error.code))
+        receiverReconciliationRequired = true;
+      error.receiverSync = {...error.receiverSync,
+        configPersisted: error.receiverSync.configPersisted === true};
+      receiverSyncState = {state: error.receiverSync.status || 'failed',
+        completedAt: Date.now(), receipt: error.receiverSync,
+        reconciliationRequired: receiverReconciliationRequired};
+    } else if (receiverSyncRequired)
+      receiverSyncState = {state: 'failed', completedAt: Date.now(),
+        receipt: null, code: error.code || 'RECEIVER_SYNC_FAILED'};
+    receiverSyncState = {...receiverSyncState,
+      reconciliationRequired: receiverReconciliationRequired};
+    try { receiverJournal.write(receiverSyncState); }
+    catch (_) { receiverReconciliationRequired = true; }
     res.status(error.status || 500).json({ok: false,
+      ...(error.code ? {code: error.code} : {}),
+      ...(error.receiverSync ? {receiverSync: error.receiverSync} : {}),
       errors: [error.status ? error.message : 'Unable to save safely. Check file ownership, directory permissions and free disk space.']});
+  } finally {
+    configWriteInProgress = false;
   }
 });
 app.get('/api/adsb2dd', (req, res) => {

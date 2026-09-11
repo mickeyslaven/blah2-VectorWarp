@@ -1,4 +1,5 @@
 #include "process/ambiguity/GpuProcess.h"
+#include <algorithm>
 #include <csignal>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -20,12 +21,48 @@ public:
     output.assign(output_, reference.front());
   }
 };
+class RawDouble final : public blah2::GpuBackend, public blah2::GpuBufferBackend,
+    public blah2::GpuClutterBufferBackend {
+  size_t output_, clutterReference_, clutterSurveillance_;
+  std::string mode_;
+public:
+  RawDouble(std::string mode, const blah2::GpuGeometry& g)
+    : output_(size_t(g.doppler) * g.delays * g.channels),
+      clutterReference_(g.clutterSamples),
+      clutterSurveillance_(size_t(g.clutterSamples) * g.channels), mode_(std::move(mode)) {}
+  blah2::GpuDevice device() const override { return {"raw-double", "Raw isolated test worker", 1}; }
+  void process(const std::vector<std::complex<float>>& reference,
+      const std::vector<std::complex<float>>&, std::vector<std::complex<float>>& output) override {
+    output.assign(output_, reference.front());
+  }
+  void processBuffers(const std::complex<float>* reference, size_t referenceCount,
+      const std::complex<float>*, size_t surveillanceCount,
+      std::complex<float>* output, size_t outputCount) override {
+    if (!reference || !referenceCount || !surveillanceCount || !output || outputCount != output_)
+      throw std::runtime_error("Invalid raw test buffers");
+    std::fill_n(output, outputCount, reference[0]);
+  }
+  bool processClutterBuffers(const std::complex<float>* reference, size_t referenceCount,
+      const std::complex<float>* surveillance, size_t surveillanceCount,
+      std::complex<float>* output, size_t outputCount) override {
+    if (!reference || referenceCount != clutterReference_ || !surveillance ||
+        surveillanceCount != clutterSurveillance_ || !output || outputCount != clutterSurveillance_)
+      throw std::runtime_error("Invalid raw clutter test buffers");
+    if (mode_ == "hang-clutter") for (;;) pause();
+    if (mode_ == "reject-clutter") return false;
+    // Clutter output is the estimate to subtract, so zero preserves the input.
+    std::fill_n(output, outputCount, std::complex<float>{});
+    return true;
+  }
+};
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "ok";
   return blah2::runGpuWorker([&](const blah2::GpuGeometry& g, const std::string&) {
     if (mode == "hang-init") for (;;) pause();
     if (mode == "crash-init") raise(SIGSEGV);
     if (mode == "error-init") throw std::runtime_error("Injected initialization failure");
-    return std::make_unique<Double>(mode, g);
+    if (mode == "raw" || mode == "hang-clutter" || mode == "reject-clutter")
+      return std::unique_ptr<blah2::GpuBackend>(std::make_unique<RawDouble>(mode, g));
+    return std::unique_ptr<blah2::GpuBackend>(std::make_unique<Double>(mode, g));
   });
 }

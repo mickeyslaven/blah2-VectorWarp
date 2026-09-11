@@ -1,5 +1,9 @@
 # Five-channel capacity and wider Doppler — 10 September 2026
 
+Historical development evidence, superseded for performance claims by the
+[fixed-range comparison](GPU_BENCHMARK_20260911.md). Do not combine its timings
+with the current campaign.
+
 The channel-worker changes measurably reduce five-channel CPU processing time.
 They do **not** establish five-channel processing at the cost of regular blah2's
 two-channel pair. VectorWarp also completes wider-Doppler configurations that

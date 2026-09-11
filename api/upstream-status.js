@@ -8,6 +8,7 @@ function compareKrakenStatus(config, live) {
     centerFrequency: config.capture.fc,
     sampleRate: config.capture.fs,
     channels: config.capture.device.channel_count,
+    ...(config.capture.device.heimdall?.gain === undefined || config.capture.device.heimdall?.gain === 'keep' ? {} : {gain: config.capture.device.heimdall.gain}),
     mode: 'coherent'
   };
   const actual = {
@@ -37,6 +38,8 @@ function compareKrakenStatus(config, live) {
     actual.sampleRate);
   mismatch('capture.device.channel_count', 'Channel count', expected.channels,
     actual.channels);
+  if (expected.gain !== undefined)
+    mismatch('capture.device.heimdall.gain', 'Suite gain', expected.gain, actual.gain);
   if (actual.mode !== expected.mode)
     issues.push({field: 'capture.device.heimdall', label: 'Operating mode',
       expected: expected.mode, actual: actual.mode || 'not reported',

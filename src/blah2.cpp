@@ -121,6 +121,12 @@ bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
 int main(int argc, char **argv)
 try
 {
+  // This read-only command checks adapter/runtime ABI without creating a
+  // receiver, opening hardware, reading a configuration or starting a service.
+  if (argc == 2 && std::string(argv[1]) == "--receiver-status") {
+    std::cout << blah2::receiver_module_status_json() << '\n';
+    return 0;
+  }
   // input handling
   signal(SIGTERM, signal_callback_handler);
   signal(SIGINT, signal_callback_handler);
@@ -331,6 +337,17 @@ try
     ambiguity.push_back(std::make_unique<Ambiguity>(delayMin, delayMax,
       dopplerMin, dopplerMax, fs, nSamples, roundHamming));
 
+  // Set up clutter before the shared accelerator so its worker can allocate a
+  // bounded batched pipeline only when filtering is enabled.
+  int32_t delayMinClutter, delayMaxClutter;
+  bool isClutter;
+  tree["process"]["clutter"]["delayMin"] >> delayMinClutter;
+  tree["process"]["clutter"]["delayMax"] >> delayMaxClutter;
+  tree["process"]["clutter"]["enable"] >> isClutter;
+  const int64_t clutterBins = int64_t(delayMaxClutter) - delayMinClutter;
+  if (isClutter && (clutterBins <= 0 || clutterBins > UINT32_MAX))
+    throw std::invalid_argument("Clutter delay range must be a non-empty half-open interval");
+
   std::string accelerationMode = "auto";
   if (tree["process"].has_child("performance") &&
       tree["process"]["performance"].has_child("acceleration"))
@@ -338,7 +355,10 @@ try
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
   blah2::Acceleration acceleration(accelerationMode,
     {ambiguity.front()->get_nfft(), ambiguity.front()->get_n_doppler_bins(),
-     ambiguity.front()->get_n_delay_bins(), uint32_t(ambiguity.size()), delayMin},
+     ambiguity.front()->get_n_delay_bins(), uint32_t(ambiguity.size()), delayMin,
+     isClutter ? nSamples : 0u,
+     isClutter ? uint32_t(clutterBins) : 0u,
+     delayMinClutter},
     ambiguity.front()->get_n_corr(), fs, ambiguity.front()->get_doppler_middle(),
     gpuDevice ? gpuDevice : "auto");
   std::vector<Ambiguity*> ambiguityPointers;
@@ -349,9 +369,6 @@ try
   }
 
   // set up process clutter
-  int32_t delayMinClutter, delayMaxClutter;
-  tree["process"]["clutter"]["delayMin"] >> delayMinClutter;
-  tree["process"]["clutter"]["delayMax"] >> delayMaxClutter;
   std::vector<std::unique_ptr<WienerHopf>> filter;
   for (std::size_t pathIndex = 0;
        pathIndex < surveillanceChannels.size(); pathIndex++)
@@ -414,8 +431,7 @@ try
     spectrumBandwidth, fc, fs);
 
   // process options
-  bool isClutter, isDetection, isTracker;
-  tree["process"]["clutter"]["enable"] >> isClutter;
+  bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
   if (!isDetection)
@@ -543,10 +559,13 @@ try
           // Filter each surveillance channel independently.
           if (isClutter)
           {
-            const bool success = process_paths(surveillanceData.size(),
-              surveillanceWorkers, [&](std::size_t pathIndex) {
-                return filter[pathIndex]->process(referenceData.get(),
-                  surveillanceData[pathIndex].get());
+            const bool success = acceleration.processClutter(*referenceData,
+              surveillancePointers, [&] {
+                return process_paths(surveillanceData.size(),
+                  surveillanceWorkers, [&](std::size_t pathIndex) {
+                    return filter[pathIndex]->process(referenceData.get(),
+                      surveillanceData[pathIndex].get());
+                  });
               });
             if (!success)
             {
@@ -640,6 +659,17 @@ try
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
           timing->set_acceleration(acceleration.status());
+          if (isClutter)
+            timing->set_clutter_acceleration(acceleration.clutterStatus(),
+              acceleration.clutterTiming().gpuExecuted,
+              acceleration.clutterTiming().cpuExecuted);
+          else {
+            blah2::AccelerationStatus disabled;
+            disabled.requested = accelerationMode;
+            disabled.state = "disabled";
+            disabled.reason = "Clutter filtering is disabled";
+            timing->set_clutter_acceleration(disabled, false, false);
+          }
           jsonTiming = timing->to_json();
           socket_timing->sendData(jsonTiming);
           timing_time.clear();

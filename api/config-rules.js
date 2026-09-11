@@ -12,6 +12,7 @@ const rules = {
   'capture.device.reference_channel': integer(0, 7),
   'capture.device.heimdall.port': integer(1, 65535),
   'capture.device.heimdall.control_port': {...integer(1, 65535), optional: true},
+  'capture.device.heimdall.gain': {type: 'gain', optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
   'capture.device.lnaState': {...integer(1, 9), choices: [1,2,3,4,5,6,7,8,9]},
@@ -65,7 +66,7 @@ for (const name of ['capture.replay.state','capture.replay.loop',
   'truth.ais.enabled','save.iq','save.map','save.detection','save.timing'])
   rules[name] = {type: 'boolean'};
 for (const name of ['capture.device.type','capture.device.heimdall.host',
-  'capture.device.address','capture.device.subdev','capture.replay.file',
+  'capture.device.address','capture.device.subdev','capture.device.serial','capture.replay.file',
   'network.ip','truth.adsb.tar1090','truth.ais.ip','save.path'])
   rules[name] = {type: 'string'};
 for (const name of ['capture.device.surveillance_channels','capture.device.serial',
@@ -75,5 +76,6 @@ for (const name of ['capture.device.surveillance_channels','capture.device.seria
   rules[name] = {type: 'array'};
 for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
 rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
+rules['capture.device.serial'] = {type: 'serial'};
 
 module.exports = rules;

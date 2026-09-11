@@ -33,16 +33,23 @@ std::string Timing::to_json()
   document.AddMember("nCpi", n, allocator);
   document.AddMember("uptime_s", uptime/1000.0, allocator);
   document.AddMember("uptime_days", uptime/1000.0/60/60/24, allocator);
-  rapidjson::Value gpu(rapidjson::kObjectType);
-  const auto addText = [&](const char* key, const std::string& value) {
-    gpu.AddMember(rapidjson::Value(key, allocator), rapidjson::Value(value.c_str(), allocator), allocator);
+  const auto backendJson = [&](const blah2::AccelerationStatus& status) {
+    rapidjson::Value gpu(rapidjson::kObjectType);
+    const auto addText = [&](const char* key, const std::string& value) {
+      gpu.AddMember(rapidjson::Value(key, allocator), rapidjson::Value(value.c_str(), allocator), allocator);
+    };
+    addText("requested", status.requested); addText("active", status.active);
+    addText("device", status.device); addText("state", status.state);
+    addText("reason", status.reason);
+    gpu.AddMember("cpuMs", status.cpuMs, allocator);
+    gpu.AddMember("gpuMs", status.gpuMs, allocator);
+    return gpu;
   };
-  addText("requested", acceleration.requested); addText("active", acceleration.active);
-  addText("device", acceleration.device); addText("state", acceleration.state);
-  addText("reason", acceleration.reason);
-  gpu.AddMember("cpuMs", acceleration.cpuMs, allocator);
-  gpu.AddMember("gpuMs", acceleration.gpuMs, allocator);
-  document.AddMember("acceleration", gpu, allocator);
+  document.AddMember("acceleration", backendJson(acceleration), allocator);
+  auto clutter = backendJson(clutterAcceleration);
+  clutter.AddMember("gpuExecuted", clutterGpuExecuted, allocator);
+  clutter.AddMember("cpuExecuted", clutterCpuExecuted, allocator);
+  document.AddMember("clutterAcceleration", clutter, allocator);
   rapidjson::Value name_value;
   for (size_t i = 0; i < time.size(); i++)
   {

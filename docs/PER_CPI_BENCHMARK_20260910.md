@@ -1,4 +1,7 @@
-# Current-source per-CPI benchmark — 2026-09-10
+# Historical per-CPI benchmark — 2026-09-10
+
+Historical evidence only; not the current performance comparison. Some profiles
+use a different excess-path window. Use the [fixed-range results](GPU_BENCHMARK_20260911.md).
 
 On the tested NVIDIA host, VectorWarp's GPU reduced the standard profile's
 instrumented pipeline from **223.91 to 163.38 ms/CPI** versus its own CPU path.

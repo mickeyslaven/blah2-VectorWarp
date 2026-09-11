@@ -69,6 +69,7 @@ jobs:
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
           npm test --prefix api
+          npm run test:receiver-management --prefix api
           npm run test:dom --prefix api
           node test/ui/deployment.test.js
       - name: Run staged native-package acceptance checks

@@ -23,7 +23,7 @@ private:
   /// @brief Maximum clutter filter delay (bins).
   int32_t delayMax;
 
-  /// @brief Number of bins (delayMax - delayMin + 1).
+  /// @brief Number of bins in the half-open range (delayMax - delayMin).
   uint32_t nBins;
 
   /// @brief Number of samples per CPI.
