@@ -147,24 +147,29 @@ def write_blah2iq(path, channels, sample_rate, frequency, frames=3, frame_sample
     struct.pack_into("<IIIIII", header, 8, 1, 64, channels, sample_rate, frequency, 1)
     struct.pack_into("<Q", header, 40, samples)
     struct.pack_into("<Q", header, 48, 1)  # completed cleanly
-    block = struct.pack("<IIQ", samples, 0, 0)
+    patterns = []
+    for channel in range(channels):
+        # Deterministic broadband samples, continuous across recording blocks.
+        state = 0x9E3779B9 ^ channel
+        pattern = bytearray()
+        for _ in range(1024):
+            state = (1664525 * state + 1013904223) & 0xffffffff
+            real = ((state >> 8) / 8388608.0) - 1.0
+            state = (1664525 * state + 1013904223) & 0xffffffff
+            imag = ((state >> 8) / 8388608.0) - 1.0
+            pattern.extend(struct.pack("<ff", real, imag))
+        patterns.append(pattern)
     with path.open("wb") as stream:
         stream.write(header)
-        stream.write(block)
-        for channel in range(channels):
-            # Repeated deterministic broadband data avoids rank-deficient
-            # constant-IQ inputs while keeping fixture creation bounded.
-            state = 0x9E3779B9 ^ channel
-            pattern = bytearray()
-            for _ in range(1024):
-                state = (1664525 * state + 1013904223) & 0xffffffff
-                real = ((state >> 8) / 8388608.0) - 1.0
-                state = (1664525 * state + 1013904223) & 0xffffffff
-                imag = ((state >> 8) / 8388608.0) - 1.0
-                pattern.extend(struct.pack("<ff", real, imag))
-            whole, tail = divmod(samples, 1024)
-            stream.write(pattern * whole)
-            stream.write(pattern[:tail * 8])
+        # A file may span many CPIs, but each BLAH2IQ block is capped at
+        # 262,144 samples/channel by RecordingReader/RecordingWriter.
+        for position in range(0, samples, 262144):
+            count = min(262144, samples - position)
+            stream.write(struct.pack("<IIQ", count, 0, position))
+            for pattern in patterns:
+                whole, tail = divmod(count, 1024)
+                stream.write(pattern * whole)
+                stream.write(pattern[:tail * 8])
 
 
 def config(receiver, channels, recording, api_port, sink_ports, loop=False, mismatch=False):
@@ -281,14 +286,15 @@ def assert_processor_outputs(sinks):
         raise AssertionError("timestamp output is not numeric")
 
 
-def run_case(binary, receiver, channels, kind="complete"):
+def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, cpi=.02, clutter=False):
     loop = kind == "loop"
     with tempfile.TemporaryDirectory(prefix="vectorwarp-replay-") as temporary:
         root = Path(temporary)
         recording = root / "input.blah2iq"
-        sample_rate = 2400000 if receiver == "Kraken" else 2000000
+        sample_rate = sample_rate or (2400000 if receiver == "Kraken" else 2000000)
         if kind != "missing":
-            write_blah2iq(recording, channels, sample_rate, 204640000)
+            write_blah2iq(recording, channels, sample_rate, 204640000,
+                          frame_samples=int(sample_rate * cpi))
         status = StatusServer()
         sinks = SinkGroup()
         process = None
@@ -297,12 +303,16 @@ def run_case(binary, receiver, channels, kind="complete"):
             sinks.start()
             payload = config(receiver, channels, recording, status.port, sinks.ports(), loop,
                              mismatch=kind == "mismatch")
+            payload["capture"]["fs"] = sample_rate
+            payload["process"]["data"]["cpi"] = cpi
+            payload["process"]["clutter"]["enable"] = clutter
             config_path = root / "config.json"
             config_path.write_text(json.dumps(payload))
             process = subprocess.Popen([str(binary), "-c", str(config_path)], cwd=root,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
-            # Leave time within the per-case 20-second allowance for SIGTERM/reap.
-            deadline = time.monotonic() + 14
+            # Large-rate software fixtures get a bounded allowance on slow CI
+            # hosts. This is a correctness test, never a real-time speed claim.
+            deadline = time.monotonic() + (60 if sample_rate == 6000000 else 14)
             if kind == "complete":
                 ok = wait_for(lambda: any(item.get("state") == "complete" for item in status.snapshot()), deadline)
                 expectation = "complete"
@@ -332,6 +342,7 @@ def run_case(binary, receiver, channels, kind="complete"):
                     raise AssertionError(f"{receiver}/{channels} never reported {required_state}")
                 assert_processor_outputs(sinks)
             return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
+                    "sample_rate": sample_rate, "cpi_seconds": cpi, "clutter": clutter,
                     "states": sorted({item.get("state") for item in states}),
                     "output_bytes": sum(sinks.bytes.values())}
         except BaseException as error:
@@ -387,6 +398,10 @@ def main():
     results.append(run_case(binary, "RspDuo", 2, "loop"))
     results.append(run_case(binary, "RspDuo", 2, "missing"))
     results.append(run_case(binary, "Kraken", 3, "mismatch"))
+    # Exercise the real processor (including clutter and map generation) with
+    # valid 6-MS/s headers and matching samples, without opening any SDR.
+    results.append(run_case(binary, "Usrp", 2, sample_rate=6000000, cpi=.2, clutter=True))
+    results.append(run_case(binary, "HackRF", 2, sample_rate=6000000, clutter=True))
     print(json.dumps({"acceptance": "offline processor replay", "cases": results,
                       "count": len(results)}, separators=(",", ":")))
 

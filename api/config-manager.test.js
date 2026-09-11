@@ -29,6 +29,19 @@ sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74
 assert.equal(validateConfig(sixChannel).valid, true);
 
 const clone = value => JSON.parse(JSON.stringify(value));
+// Sample-rate limits belong to the receiver, not to the shared DSP pipeline.
+// USRP and dual HackRF can request 6 MS/s; Kraken and coherent RSPduo cannot.
+for (const [name, accepted] of [['config-usrp.yml', true],
+  ['config-hackrf.yml', true], ['config-kraken.yml', false], ['config.yml', false]]) {
+  const value = load(name);
+  value.capture.fs = 6000000;
+  value.process.data.cpi = .2;
+  value.process.ambiguity = {delayMin: -10, delayMax: 245,
+    dopplerMin: -2400, dopplerMax: 2400};
+  const result = validateConfig(value);
+  assert.equal(result.valid, accepted, `${name} at 6 MS/s: ${result.errors.join('; ')}`);
+  if (!accepted) assert.ok(result.errors.some(error => error.includes('capture.fs')));
+}
 for (const source of ['auto', 'local:readsb', 'local:dump1090-fa',
   'local:dump1090', 'local:dump1090-mutability', '192.0.2.10:8080',
   'https://adsb.example/tar1090', '[2001:db8::1]:8080/tar1090']) {
