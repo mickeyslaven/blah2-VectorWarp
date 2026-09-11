@@ -177,6 +177,16 @@ async function rejected(promise, code, pattern) {
     assert.equal(error.receiverSync.operations[0].commandOutcome, 'unknown');
   } finally { await wrongAck.close(); }
 
+  const wrongGainAck = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false}, (_command, socket) => {
+    socket.write(`${JSON.stringify({status: 'success', gain: 9.9})}\n`);
+  });
+  try {
+    await rejected(createKrakenControlClient({statusTimeoutMs: 100, readbackTimeoutMs: 100}).synchronize(
+      config(wrongGainAck.port, {device: {heimdall: {host: '127.0.0.1', port: wrongGainAck.port + 1,
+        control_port: wrongGainAck.port, gain: 10}}})), 'KRAKEN_ACKNOWLEDGEMENT_MISMATCH', /unexpected value/);
+  } finally { await wrongGainAck.close(); }
+
   const noReadbackState = {frequency: 100000000, sampleRate: 2400000,
     channels: 5, maximum: 5, reconfiguring: false};
   const noReadback = await simulatedSuite(noReadbackState, (command, socket) => {
@@ -190,6 +200,16 @@ async function rejected(promise, code, pattern) {
     assert.equal(error.receiverSync.operations[0].acknowledged, true);
     assert.equal(error.receiverSync.operations[0].readbackMatched, false);
   } finally { await noReadback.close(); }
+
+  const gainNoReadback = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false}, (command, socket) => {
+    socket.write(`${JSON.stringify({status: 'success', gain: command.gain})}\n`);
+  });
+  try {
+    await rejected(createKrakenControlClient({statusTimeoutMs: 100, readbackTimeoutMs: 60}).synchronize(
+      config(gainNoReadback.port, {device: {heimdall: {host: '127.0.0.1', port: gainNoReadback.port + 1,
+        control_port: gainNoReadback.port, gain: 0}}})), 'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+  } finally { await gainNoReadback.close(); }
 
   const staleAcrossState = {frequency: 100000000, sampleRate: 2400000,
     channels: 5, maximum: 8, reconfiguring: false};
