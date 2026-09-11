@@ -245,6 +245,7 @@ app.get('/api/system/status', (req, res) => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   res.json({serverId, configRevision: document.revision,
     acceleration: (() => { try { return JSON.parse(timing)?.acceleration || null; } catch (_) { return null; } })(),
+    clutterAcceleration: (() => { try { return JSON.parse(timing)?.clutterAcceleration || null; } catch (_) { return null; } })(),
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: restartState, receiverSynchronization: receiverSyncState,
     lastFrameAt, timestampConnections,

@@ -194,6 +194,8 @@ async function waitForServer() {
     assert.equal(system.processorFresh, true);
     assert.deepEqual(system.processor.input, 'replay');
     assert.equal(system.processor.state, 'playing');
+    assert.equal(system.acceleration, null);
+    assert.equal(system.clutterAcceleration, null, 'No timing must not imply a selected clutter backend');
     assert.equal((await request('POST', '/api/processor/status', {
       ...replayStatus, state: 'complete', positionSamples: 24
     })).status, 204);
@@ -244,6 +246,26 @@ async function waitForServer() {
       });
       const history = (await request('GET', endpoint)).body;
       assert.equal(history.frameTimestamp ?? history.timestamp, 1000, `${stream} must update without a polling timer`);
+    }
+    const ambiguityBackend = {requested: 'auto', active: 'vulkan', state: 'ready',
+      device: 'simulated GPU', reason: '', cpuMs: 8, gpuMs: 2};
+    for (const [index, clutterBackend] of [
+      {...ambiguityBackend, cpuMs: 14, gpuMs: 4, gpuExecuted: true, cpuExecuted: false},
+      {...ambiguityBackend, active: 'cpu', state: 'fallback', reason: 'simulated clutter-only fallback',
+        gpuExecuted: false, cpuExecuted: true},
+      null
+    ].entries()) {
+      const frame = {timestamp: 1001 + index, cpi: 10, acceleration: ambiguityBackend,
+        ...(clutterBackend ? {clutterAcceleration: clutterBackend} : {})};
+      await new Promise((resolve, reject) => {
+        const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing},
+          () => socket.end(JSON.stringify(frame)));
+        socket.on('close', resolve); socket.on('error', reject);
+      });
+      const reported = (await request('GET', '/api/system/status')).body;
+      assert.deepEqual(reported.acceleration, ambiguityBackend, 'Existing ambiguity telemetry is unchanged');
+      assert.deepEqual(reported.clutterAcceleration, clutterBackend,
+        'Clutter state and execution flags propagate independently; older timing frames clear the field');
     }
     // Test-only frame marker; never touches a physical receiver.
     await new Promise((resolve, reject) => {
