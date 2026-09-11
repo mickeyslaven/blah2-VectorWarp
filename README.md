@@ -45,12 +45,13 @@ regular blah2 missed **33**. That is the difference between keeping up with this
 200 ms frame** on the Ryzen system, at 2.4 MS/s with 256 delay bins. Regular
 blah2 cannot safely process that configuration because of its buffer sizing.
 
-The table uses two repeats of sample-rate-paced replay at ±800 Hz, with four CPU
-cores on the laptop and eight on the Ryzen system. The live example averages
-27 steady frames. GPU results here accelerate the delay–Doppler stage.
+The table times signal processing during replay at the original sample rate:
+two repeats at ±800 Hz, with four CPU cores on the laptop and eight on the Ryzen
+system. The live example averages 27 steady frames. GPU results here accelerate
+the delay–Doppler stage.
 [Full settings, results, and test method →](docs/LIVE_CAPACITY_20260910.md)
 
-## Install and receiver support
+## Install on Linux
 
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
 
