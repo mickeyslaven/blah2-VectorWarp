@@ -12,7 +12,7 @@ output as an estimated signal for FP64 parent-side subtraction.
 
 The Vulkan backend owns persistent allocations. Its default `auto` policy uses
 host-visible device-local compute buffers only when every required buffer type
-is compatible, the allocations fit the per-heap quarter/512-MiB budget, and the
+is compatible, the allocations fit the per-heap quarter/2-GiB budget, and the
 device reports an integrated, largest-device-heap topology. This is a
 conservative indication of unified memory, not a vendor or device-ID list and
 not proof of performance. `BLAH2_GPU_MEMORY_PATH=staged` retains persistent
@@ -37,12 +37,15 @@ remains capped at 512 MiB.
 
 The module also accounts for each actual Vulkan allocation, including memory
 allocated inside VkFFT for tables, scratch and temporary uploads. The aggregate
-cap is the smaller of 512 MiB or a quarter of the largest device-local heap;
-each heap is independently limited to the smaller of 512 MiB or a quarter of
+cap is the smaller of 2 GiB or a quarter of the largest device-local heap;
+each heap is independently limited to the smaller of 2 GiB or a quarter of
 its size. Requests are checked before allocation, and releasing buffers returns
 their allowance. An over-budget clutter plan falls back to CPU clutter while
 preserving the already-created ambiguity backend. Diagnostic startup logs
 include peak allocated bytes and rejected requests.
+Thus a 2-GiB discrete GPU retains a 512-MiB allocation allowance, while larger
+devices can use up to 2 GiB. The separate 512-MiB process-shared frame cap and
+all dimension/overflow checks remain unchanged.
 
 Offline tests cover raw and legacy workers, the direct shared-frame producer,
 memory-type preference, unified/discrete AUTO selection, heap rejection, atom

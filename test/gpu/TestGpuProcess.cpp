@@ -126,6 +126,15 @@ int main() {
       check(!budget.reserve(0, UINT64_MAX) && !budget.reserve(99, 1) &&
         !budget.reserve(0, 0) && budget.used() == 25,
         "Invalid Vulkan allocation changed the budget");
+      check(heapBudget(2ULL << 30) == (512ULL << 20) &&
+        heapBudget(64ULL << 30) == (2ULL << 30),
+        "GPU allocation allowance did not scale with device capacity");
+      AllocationBudget large(heapBudget(64ULL << 30),
+        {{{deviceLocal, 0}}, {{64ULL << 30, true}}});
+      check(large.reserve(0, 2ULL << 30) && !large.reserve(0, 1),
+        "Large-device GPU allocation ceiling was not enforced");
+      check(autoDirect(true, 0, 1ULL << 30, properties),
+        "A capable unified-memory heap was kept at the former fixed cap");
       std::cout << "PASS memory-policy\n";
     }
     // An actual crashing/hanging worker must preserve the radar frame for CPU,

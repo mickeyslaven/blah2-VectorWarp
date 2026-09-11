@@ -14,6 +14,10 @@ constexpr uint32_t hostVisible = 0x2;
 constexpr uint32_t hostCoherent = 0x4;
 constexpr uint32_t hostCached = 0x8;
 constexpr uint32_t noType = std::numeric_limits<uint32_t>::max();
+constexpr uint64_t maximumDeviceBytes = 2ULL << 30;
+inline uint64_t heapBudget(uint64_t heapBytes) {
+  return std::min(maximumDeviceBytes, heapBytes / 4);
+}
 
 struct Type { uint32_t flags = 0, heap = 0; };
 struct Heap { uint64_t bytes = 0; bool device = false; };
@@ -35,7 +39,7 @@ public:
       return false;
     const auto heap = properties_.types[type].heap;
     if (heap >= heapUsed_.size()) return false;
-    const auto heapLimit = std::min<uint64_t>(512ULL << 20, properties_.heaps[heap].bytes / 4);
+    const auto heapLimit = heapBudget(properties_.heaps[heap].bytes);
     if (bytes > heapLimit - heapUsed_[heap]) return false;
     heapUsed_[heap] += bytes; used_ += bytes; peak_ = std::max(peak_, used_);
     return true;
@@ -73,7 +77,7 @@ inline bool autoDirect(bool integrated, uint32_t heap, uint64_t requiredBytes,
   uint64_t largest = 0;
   for (const auto& item : properties.heaps) if (item.device) largest = std::max(largest, item.bytes);
   const uint64_t size = properties.heaps[heap].bytes;
-  return size == largest && requiredBytes <= std::min<uint64_t>(512ULL << 20, size / 4);
+  return size == largest && requiredBytes <= heapBudget(size);
 }
 
 struct Range { uint64_t offset = 0, bytes = 0; bool whole = false; };

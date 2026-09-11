@@ -206,7 +206,7 @@ struct Context {
       {
         std::lock_guard<std::mutex> lock(allocationsMutex);
         deviceAllocations.try_emplace(device,
-          std::min<uint64_t>(512ULL << 20, candidate.info.memoryBytes / 4),
+          gpu_memory::heapBudget(candidate.info.memoryBytes),
           memoryProperties(candidate.physical));
       }
       startupTrace("vkCreateDevice complete");
@@ -774,7 +774,7 @@ public:
       sizeof(std::complex<float>);
     const uint64_t clutterBytes = ClutterPipeline::requiredBytes(g);
     const auto& limits = context_.candidate.properties.limits;
-    const auto budget = std::min<uint64_t>(512ULL << 20, context_.candidate.info.memoryBytes / 4);
+    const auto budget = gpu_memory::heapBudget(context_.candidate.info.memoryBytes);
     if (!g.range || !g.doppler || !g.delays || !g.channels || g.channels > 8 ||
         range * g.channels > UINT32_MAX / 2 || doppler > UINT32_MAX / 2 ||
         g.delayMin <= -int64_t(g.range) || int64_t(g.delayMin) + g.delays > g.range ||
@@ -807,7 +807,7 @@ public:
           if (buffer->heap < heapUse.size()) heapUse[buffer->heap] += buffer->allocationBytes;
         bool fits = true;
         for (size_t heap = 0; heap < heapUse.size(); ++heap)
-          if (heapUse[heap] > std::min<uint64_t>(512ULL << 20, memory.heaps[heap].bytes / 4))
+          if (heapUse[heap] > gpu_memory::heapBudget(memory.heaps[heap].bytes))
             fits = false;
         direct_ = fits && (memoryPath == "direct" || (oneHeap && gpu_memory::autoDirect(
           context_.candidate.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,

@@ -49,6 +49,13 @@ Source builds and tests use the existing `blah2-gpu-ubuntu` container limited to
 
 ## Remaining acceptance
 
+The v8 source follow-up scales the exact allocation ceiling to
+`min(2 GiB, largest device-local heap / 4)` and applies the same quarter/2-GiB
+rule to each heap. A 2-GiB GPU retains its former 512-MiB allowance. The separate
+512-MiB IPC frame ceiling remains unchanged. All three offline suites pass,
+including added small/large-device capacity and exact-ceiling tests. No FFT
+configuration, arithmetic, numerical gate or ABI changed.
+
 Confirm v7 on a physical device with actual GPU clutter and ambiguity selected,
 all per-frame maps passing `1e-4`, and allocation diagnostics within the cap.
 For a larger geometry that rejects clutter capacity, confirm GPU ambiguity
