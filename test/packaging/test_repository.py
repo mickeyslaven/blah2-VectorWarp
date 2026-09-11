@@ -27,13 +27,9 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ('Matched 200 ms processing workloads', '79.8 ms', '79.7 ms', '39.9 ms',
-                         '218.7 ms',
-                         '210.5 ms', '109.2 ms', '309.9 ms', '301.8 ms',
-                         '174.9 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
-                         'Live array proof', '95.5 ms',
+        for required in ('Matched 200 ms processing workloads', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
+                         'Earlier live array proof', '95.5 ms',
                          'Same recorded IQ at its original rate', 'Same CPU budget',
-                         '23 of 24', 'Periodic accuracy checks',
                          'clutter FFT/filtering', 'small FP64 coefficient solve',
                          'cannot safely represent the requested geometry',
                          'NVIDIA, AMD and Intel GPU checks',
@@ -44,13 +40,14 @@ class HomepageTests(unittest.TestCase):
         # The front page selects examples; the linked report must keep the
         # full comparison, including slower configurations and test boundaries.
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
-        for required in ('218.679', '109.153', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
+        plain_report = ' '.join(report.split())
+        for required in ('c821bee3f0d27cf20c8447f3d908ef722905a4de',
                          '1e-4', '30.604 km', '41 paired groups',
-                         'not an\nendurance test', 'not bit-exact output',
-                         '16/24', 'future\nwork'):
-            self.assertIn(required, report)
+                         'not an endurance test', 'not bit-exact output', 'future work'):
+            self.assertIn(required, plain_report)
         cohort = json.loads((ROOT / 'docs/benchmarks/20260911-equal-range/comparison.json').read_text())
         self.assertEqual(len(cohort['rows']), 41)
+        readme = (ROOT / 'README.md').read_text()
         for row in cohort['rows']:
             self.assertEqual(row['delay_bins'], 256)
             self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
@@ -58,6 +55,14 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(f"{row['mean_ms']:.3f}", report)
             self.assertIn(f"{row['p95_ms']:.3f}", report)
             self.assertIn(f"{row['deadline_misses']}/24", report)
+            if row['variant'] == 'vectorwarp-auto':
+                self.assertEqual(row['cpu_oracle_frames'], 0)
+            selected = ((row['host'] in ('strix', 'nvidia') and row['case'] == 'pair-200ms-800hz') or
+                        (row['host'] == 'pavilion' and row['case'] == 'pair-200ms-2400hz' and
+                         row['device'] in ('auto', '4098:27039:1')))
+            if selected:
+                self.assertIn(f"{row['mean_ms']:.1f} ms", page)
+                self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
@@ -77,7 +82,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('2–8-channel network input', readme)
         self.assertIn('one package', readme.lower())
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
-                      'clutter FFT/filtering', 'Periodic accuracy checks',
+                      'clutter FFT/filtering', 'startup',
                       'docs/GPU_BENCHMARK_20260911.md',
                       'Wider Doppler coverage'):
             self.assertIn(claim, readme)

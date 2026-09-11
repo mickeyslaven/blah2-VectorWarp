@@ -1,1 +1,19 @@
-{"schemaVersion":1,"engine":"fast","profile":"pair","supported":true,"upstreamSafe":true,"requestedCpiMs":100,"effectiveCpiMs":99.9541666667,"sampleRate":2400000,"samples":240000,"delayBins":256,"dopplerBins":161,"nCorr":1490,"rangeFft":3000,"workers":1,"fftThreads":8,"roundHamming":true,"reason":""}
+{
+  "schemaVersion": 1,
+  "engine": "fast",
+  "profile": "pair",
+  "supported": true,
+  "upstreamSafe": true,
+  "requestedCpiMs": 100,
+  "effectiveCpiMs": 99.9541666667,
+  "sampleRate": 2400000,
+  "samples": 240000,
+  "delayBins": 256,
+  "dopplerBins": 161,
+  "nCorr": 1490,
+  "rangeFft": 3000,
+  "workers": 1,
+  "fftThreads": 8,
+  "roundHamming": true,
+  "reason": ""
+}

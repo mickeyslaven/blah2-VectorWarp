@@ -34,6 +34,9 @@ contract = dict(sample_rate_hz=2400000, rf_hz=527000000, delay_min=-10,
                 excess_path_max_km=245 * 299792458 / 2400000 / 1000,
                 input_sha256=args.sha256, cpu_budget=args.cpu_budget,
                 frames_per_repeat=20, startup_frames_per_repeat=8, repeats=2,
+                periodic_cpu_oracles=False,
+                source_freeze_sha256='2239b08347ef1b2466e7f9a10a269ed397939cc3bcea2aa5acc29d68b32fc9bc',
+                fork_source_commit='8fa12290c203d85d9b48f57a5a5c0a01a66f7551',
                 paced=True, comparison='complex maps; known SNR correction is not bit-identical',
                 future_work='Exact wider-Doppler CAF; no shortened delay windows in this campaign')
 (args.output / 'contract.json').write_text(json.dumps(contract, indent=2))
@@ -108,6 +111,8 @@ for name, profile, cpi, span in cases + [('unsupported-200ms-40000hz', 'pair', .
                 record.update(json.loads(summary_path.read_text()))
                 with Path(str(prefix) + '.frames.csv').open() as frames:
                     steady = [row for row in csv.DictReader(frames) if row['phase'] == 'steady']
+                if variant == 'vectorwarp-auto' and any('cpu_oracle' in row['clutter_backend'] for row in steady):
+                    raise RuntimeError('Unexpected periodic CPU oracle in qualified steady processing')
                 record['stages'] = {key: statistics.mean(float(row[key]) for row in steady) for key in
                     ['extract_ms', 'reference_ms', 'spectrum_ms', 'clutter_ms', 'ambiguity_ms',
                      'fusion_ms', 'detection_ms', 'tracker_ms', 'json_ms']}

@@ -25,6 +25,7 @@ for host in ('strix', 'nvidia', 'pavilion'):
     contract = json.loads((folder / 'contract.json').read_text())
     assert (contract['delay_min'], contract['delay_max'], contract['delay_bins']) == (-10, 245, 256)
     assert contract['sample_rate_hz'] == 2400000 and contract['rf_hz'] == 527000000
+    assert contract['periodic_cpu_oracles'] is False
     runs = json.loads((folder / 'summary.json').read_text())
     assert len(runs) == {'strix': 34, 'nvidia': 20, 'pavilion': 28}[host], (host, len(runs))
     groups = {}
@@ -38,6 +39,8 @@ for host in ('strix', 'nvidia', 'pavilion'):
         assert len(frames) == 20
         steady = [frame for frame in frames if frame['phase'] == 'steady']
         assert len(steady) == 12
+        if run['variant'] == 'vectorwarp-auto':
+            assert all('cpu_oracle' not in frame['clutter_backend'] for frame in steady)
         timings = [float(frame['pipeline_ms']) for frame in steady]
         assert abs(statistics.mean(timings) - run['steady_dsp_mean_ms']) < 1e-6
         assert sum(value > run['requested_cpi_ms'] for value in timings) == run['steady_dsp_deadline_misses']
@@ -73,11 +76,11 @@ for host in ('strix', 'nvidia', 'pavilion'):
     receipts[host] = dict(contract=contract, measurement_runs=len(runs),
                           complete_cpis=len(runs) * 20, measured_steady_cpis=len(runs) * 12,
                           processing_acceptance='all measured runs passed',
-                          runner_exit_note='The final unsupported 40-kHz geometry probe returned expected rejection exit1; timed runs completed before that probe.')
+                          runner_exit_note='All timed runs and the campaign completed successfully; the unsupported full-range 40-kHz profile was rejected before processing.')
 (args.root / 'comparison.json').write_text(json.dumps(dict(receipts=receipts, rows=all_rows), indent=2))
 fields = [key for key in all_rows[0] if key not in ('stages', 'repeat_means_ms')]
 with (args.root / 'comparison.csv').open('w') as output:
-    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore')
+    writer = csv.DictWriter(output, fieldnames=fields, extrasaction='ignore', lineterminator='\n')
     writer.writeheader()
     writer.writerows(all_rows)
 print(json.dumps(dict(hosts=list(receipts), measurement_runs=sum(r['measurement_runs'] for r in receipts.values()),

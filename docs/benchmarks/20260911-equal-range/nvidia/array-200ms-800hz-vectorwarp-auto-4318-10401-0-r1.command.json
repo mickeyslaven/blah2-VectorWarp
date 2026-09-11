@@ -1,16 +1,16 @@
 {
   "argv": [
-    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/bin/bench-fast",
+    "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/bin/bench-fast",
     "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/recorded-20seconds.mchq",
-    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/array-200ms-800hz.profile.json",
-    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/array-200ms-800hz-vectorwarp-auto-4318-10401-0-r1",
+    "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/results/array-200ms-800hz.profile.json",
+    "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/results/array-200ms-800hz-vectorwarp-auto-4318-10401-0-r1",
     "array",
     "auto",
     "20",
     "compare",
-    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/array-200ms-800hz.maps"
+    "/var/tmp/vectorwarp-no-periodic-20260911.uFYHbZ/results/array-200ms-800hz.maps"
   ],
-  "binarySha256": "ae427499418d2827bd0560c90a228b22dd2ba41299746b7fa84098bf8f1e15d5",
+  "binarySha256": "72a14248f87321d226a0d8ff4e4b7324301d5eff6a9aa8a8c5a28e251914416e",
   "inputSha256": "1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa",
   "environment": {
     "OPENBLAS_NUM_THREADS": "1",
