@@ -653,6 +653,17 @@ try
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
           timing->set_acceleration(acceleration.status());
+          if (isClutter)
+            timing->set_clutter_acceleration(acceleration.clutterStatus(),
+              acceleration.clutterTiming().gpuExecuted,
+              acceleration.clutterTiming().cpuExecuted);
+          else {
+            blah2::AccelerationStatus disabled;
+            disabled.requested = accelerationMode;
+            disabled.state = "disabled";
+            disabled.reason = "Clutter filtering is disabled";
+            timing->set_clutter_acceleration(disabled, false, false);
+          }
           jsonTiming = timing->to_json();
           socket_timing->sendData(jsonTiming);
           timing_time.clear();

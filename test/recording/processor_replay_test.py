@@ -267,6 +267,15 @@ def assert_processor_outputs(sinks):
     timing_json = first_json(sinks.payloads["timing"], "timing")
     if not isinstance(timing_json, dict) or timing_json.get("nCpi", 0) < 1:
         raise AssertionError("timing output has no completed CPI")
+    for key in ("acceleration", "clutterAcceleration"):
+        backend = timing_json.get(key)
+        if not isinstance(backend, dict) or backend.get("active") not in ("cpu", "vulkan"):
+            raise AssertionError(f"timing output has no valid {key} backend")
+        if not all(isinstance(backend.get(field), str) for field in ("requested", "state", "reason", "device")):
+            raise AssertionError(f"timing output has incomplete {key} state")
+    if not all(isinstance(timing_json["clutterAcceleration"].get(field), bool)
+               for field in ("gpuExecuted", "cpuExecuted")):
+        raise AssertionError("timing output does not distinguish clutter GPU work from CPU validation")
     timestamp = bytes(sinks.payloads["timestamp"]).strip()
     if not timestamp or not timestamp.isdigit():
         raise AssertionError("timestamp output is not numeric")
