@@ -1,0 +1,1 @@
+{"schemaVersion":1,"engine":"upstream","profile":"array","supported":false,"upstreamSafe":true,"requestedCpiMs":200,"effectiveCpiMs":199.95625,"sampleRate":2400000,"samples":480000,"delayBins":256,"dopplerBins":321,"nCorr":1495,"rangeFft":3000,"workers":4,"fftThreads":1,"roundHamming":true,"reason":"upstream supports physical pair only"}

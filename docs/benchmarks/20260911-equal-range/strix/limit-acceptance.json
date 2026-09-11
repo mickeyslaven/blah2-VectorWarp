@@ -1,0 +1,33 @@
+{
+  "acceptance": "expected full-range rejection; no timed processing attempted",
+  "checks": [
+    {
+      "engine": "upstream",
+      "supported": false,
+      "rejection_verified": true,
+      "command": [
+        "/var/tmp/vectorwarp-strix-v8-20260911.4MbcOX/bin/bench-upstream",
+        "--inspect-geometry",
+        "/var/tmp/vectorwarp-equal-range-20260911.hrSI4f/strix/unsupported-200ms-40000hz.profile.json",
+        "pair"
+      ],
+      "binary_sha256": "c21761bf1025f69493455929a4e2d1a1555485b032411486b4755b0032240230",
+      "returncode": 1,
+      "stderr": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span"
+    },
+    {
+      "engine": "fast",
+      "supported": false,
+      "rejection_verified": true,
+      "command": [
+        "/var/tmp/vectorwarp-strix-v8-20260911.4MbcOX/bin/bench-fast",
+        "--inspect-geometry",
+        "/var/tmp/vectorwarp-equal-range-20260911.hrSI4f/strix/unsupported-200ms-40000hz.profile.json",
+        "pair"
+      ],
+      "binary_sha256": "ae427499418d2827bd0560c90a228b22dd2ba41299746b7fa84098bf8f1e15d5",
+      "returncode": 1,
+      "stderr": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span"
+    }
+  ]
+}

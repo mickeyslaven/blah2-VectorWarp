@@ -1,0 +1,17 @@
+{
+  "sample_rate_hz": 2400000,
+  "rf_hz": 527000000,
+  "delay_min": -10,
+  "delay_max": 245,
+  "delay_bins": 256,
+  "excess_path_min_km": -1.2491352416666666,
+  "excess_path_max_km": 30.603813420833333,
+  "input_sha256": "1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa",
+  "cpu_budget": 4,
+  "frames_per_repeat": 20,
+  "startup_frames_per_repeat": 8,
+  "repeats": 2,
+  "paced": true,
+  "comparison": "complex maps; known SNR correction is not bit-identical",
+  "future_work": "Exact wider-Doppler CAF; no shortened delay windows in this campaign"
+}

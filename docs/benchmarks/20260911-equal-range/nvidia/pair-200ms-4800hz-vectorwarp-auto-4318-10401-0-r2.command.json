@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/bin/bench-fast",
+    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/recorded-20seconds.mchq",
+    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/pair-200ms-4800hz.profile.json",
+    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/pair-200ms-4800hz-vectorwarp-auto-4318-10401-0-r2",
+    "pair",
+    "auto",
+    "20",
+    "compare",
+    "/var/tmp/vectorwarp-equal-range-20260911.jEeivY/results/pair-200ms-4800hz.maps"
+  ],
+  "binarySha256": "ae427499418d2827bd0560c90a228b22dd2ba41299746b7fa84098bf8f1e15d5",
+  "inputSha256": "1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa",
+  "environment": {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "BLAH2_BENCH_PACE": "1",
+    "BLAH2_GPU_MEMORY_PATH": "auto",
+    "BLAH2_GPU_DIAGNOSTICS": "1",
+    "BLAH2_GPU_DEVICE": "4318:10401:0"
+  }
+}

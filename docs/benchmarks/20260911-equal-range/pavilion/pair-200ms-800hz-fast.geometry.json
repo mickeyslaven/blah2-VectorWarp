@@ -1,0 +1,1 @@
+{"schemaVersion":1,"engine":"fast","profile":"pair","supported":true,"upstreamSafe":true,"requestedCpiMs":200,"effectiveCpiMs":199.95625,"sampleRate":2400000,"samples":480000,"delayBins":256,"dopplerBins":321,"nCorr":1495,"rangeFft":3000,"workers":1,"fftThreads":4,"roundHamming":true,"reason":""}
