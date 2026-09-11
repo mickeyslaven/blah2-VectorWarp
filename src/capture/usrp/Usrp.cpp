@@ -1,10 +1,13 @@
 #include "Usrp.h"
+#include "UsrpReadback.h"
 
 #include <string.h>
 #include <iostream>
 #include <vector>
 #include <complex>
 #include <uhd/usrp/multi_usrp.hpp>
+#include <cmath>
+#include <stdexcept>
 
 // constructor
 Usrp::Usrp(std::string _type, uint32_t _fc, uint32_t _fs, 
@@ -17,6 +20,8 @@ Usrp::Usrp(std::string _type, uint32_t _fc, uint32_t _fs,
   subdev = _subdev;
   antenna = _antenna;
   gain = _gain;
+  if (antenna.size() != 2 || gain.size() != 2)
+    throw std::invalid_argument("[USRP] Two antenna ports and two gain values are required.");
 }
 
 void Usrp::start()
@@ -35,6 +40,8 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       uhd::usrp::multi_usrp::make(address);
 
     usrp->set_rx_subdev_spec(uhd::usrp::subdev_spec_t(subdev), 0);
+    if (usrp->get_rx_num_channels() < 2)
+      throw std::runtime_error("[USRP] The selected subdevices do not provide two receive channels.");
 
     usrp->set_rx_antenna(antenna[0], 0);
     usrp->set_rx_antenna(antenna[1], 1);
@@ -50,6 +57,11 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     // set the gain
     usrp->set_rx_gain(gain[0], 0);
     usrp->set_rx_gain(gain[1], 1);
+
+    // UHD setters may coerce unsupported values. Read every configured channel
+    // back before opening its IQ stream; configured-value telemetry alone is
+    // never evidence that the receiver applied those values.
+    verify_usrp_readback(*usrp, fc, fs, gain, antenna, uhd::usrp::subdev_spec_t(subdev).to_string());
 
     // create a receive streamer
     uhd::stream_args_t streamArgs("fc32", "sc16");

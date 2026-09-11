@@ -16,6 +16,35 @@ const restartMarker = path.join(directory, 'restart-called');
 const config = yaml.load(fs.readFileSync(source, 'utf8'));
 const basePort = 20000 + (process.pid % 10000);
 const truthPort = basePort + 20;
+const suitePort = basePort + 21;
+const suiteState = {settings: {center_freq: config.capture.fc, sample_rate: config.capture.fs},
+  num_channels: config.capture.device.channel_count, max_elements: 8,
+  operating_mode: 'coherent', reconfiguring: false, recovering: false};
+// Every production live Kraken save observes Suite. Keep this generic API
+// fixture entirely on loopback; never use the default real control endpoint.
+const suiteFixture = net.createServer(socket => {
+  socket.write(`${JSON.stringify(suiteState)}\n`);
+  socket.setEncoding('utf8');
+  let buffer = '';
+  socket.on('data', chunk => {
+    buffer += chunk;
+    const lines = buffer.split('\n'); buffer = lines.pop();
+    for (const line of lines.filter(Boolean)) {
+      const command = JSON.parse(line);
+      if (command.command === 'set_frequency') {
+        suiteState.settings.center_freq = command.frequency;
+        socket.write(`${JSON.stringify({status: 'success', frequency: command.frequency})}\n`);
+      } else if (command.command === 'set_num_elements') {
+        suiteState.num_channels = command.num_elements;
+        socket.write(`${JSON.stringify({status: 'success', num_elements: command.num_elements})}\n`);
+      } else throw new Error('Unexpected simulated Suite command');
+      socket.write(`${JSON.stringify(suiteState)}\n`);
+    }
+  });
+});
+suiteFixture.listen(suitePort, '127.0.0.1');
+config.capture.device.heimdall.host = '127.0.0.1';
+config.capture.device.heimdall.control_port = suitePort;
 const truthRequests = [];
 const truthFixture = http.createServer((req, res) => {
   truthRequests.push(req.url);
@@ -53,6 +82,7 @@ function requestOnce(method, pathname, body, headers = {}) {
       path: pathname,
       method,
       headers: {
+        ...(method === 'PUT' ? {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'} : {}),
         ...(revision ? {'If-Match': `"${revision}"`} : {}),
         ...(payload ? {'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)} : {}),
@@ -308,6 +338,8 @@ async function waitForServer() {
       const switched = JSON.parse(JSON.stringify(previous));
       switched.capture.fs = profile.sampleRate;
       switched.capture.device = profile.device;
+      if (profile.type === 'Kraken') switched.capture.device.heimdall = {...profile.device.heimdall,
+        host: '127.0.0.1', control_port: suitePort};
       switched.capture.replay.state = profile.liveAvailable === false;
       if (profile.type === 'HackRF') switched.capture.device.serial = ['0001', '0002'];
       for (const key of ['performance', 'reference_synthesis']) {
@@ -355,6 +387,7 @@ async function waitForServer() {
   } finally {
     child.kill('SIGTERM');
     truthFixture.close();
+    suiteFixture.close();
     fs.rmSync(directory, {recursive: true});
   }
 })().catch(error => {

@@ -1,0 +1,22 @@
+[Unit]
+Description=VectorWarp locally authorized receiver management
+Requires=vectorwarp-receiver.socket
+After=vectorwarp-receiver.socket
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I @PREFIX@/libexec/vectorwarp-receiver-helper serve
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CPUQuota=50%
+MemoryMax=512M
+TasksMax=128

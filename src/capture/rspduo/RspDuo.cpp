@@ -13,6 +13,14 @@
 #include <unordered_map>
 #include <iostream>
 #include <mutex>
+#include <stdexcept>
+#include <cmath>
+
+static void require_api(sdrplay_api_ErrT result, const char* operation)
+{
+  if (result != sdrplay_api_Success)
+    throw std::runtime_error(std::string("[RspDuo] ") + operation + ": " + sdrplay_api_GetErrorString(result));
+}
 
 // class static constants
 const double RspDuo::MAX_FREQUENCY_NR = 2000000000;
@@ -28,7 +36,6 @@ sdrplay_api_DeviceT devs[1023];
 sdrplay_api_DeviceParamsT *deviceParams = NULL;
 sdrplay_api_ErrT err;
 sdrplay_api_CallbackFnsT cbFns;
-sdrplay_api_RxChannelParamsT *chParams;
 
 // global variables
 short *buffer_16_ar = NULL;
@@ -97,15 +104,24 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
 
 void RspDuo::start()
 {
-  open_api();
-  get_device();
-  set_device_parameters();
+  std::lock_guard<std::mutex> lock(lifecycleMutex);
   validate();
+  run_fg = true;
+  deviceRemoved = false;
+  try {
+    open_api();
+    get_device();
+    set_device_parameters();
+  } catch (...) {
+    cleanup_api();
+    throw;
+  }
 }
 
 void RspDuo::stop()
 {
   run_fg = false;
+  std::lock_guard<std::mutex> lock(lifecycleMutex);
   uninitialise_device();
 }
 
@@ -114,6 +130,8 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
   buffer1 = _buffer1;
   buffer2 = _buffer2;
 
+  std::unique_lock<std::mutex> lock(lifecycleMutex);
+  if (!run_fg) return;
   initialise_device();
 
   // set gain reduction and lna sate
@@ -123,21 +141,11 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
   deviceParams->rxChannelB->tunerParams.gain.LNAstate = lna_state_nr;
 
   // update gains after initialization
-  if ((err = sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_A, 
-                      sdrplay_api_Update_Tuner_Gr, 
-                      sdrplay_api_Update_Ext1_None)) != sdrplay_api_Success) {
-      std::cerr << "Failed to update Tuner A gain: " << sdrplay_api_GetErrorString(err) << std::endl;
-      sdrplay_api_Close();
-      exit(1);
-  }
-
-  if ((err = sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_B, 
-                    sdrplay_api_Update_Tuner_Gr, 
-                    sdrplay_api_Update_Ext1_None)) != sdrplay_api_Success) {
-      std::cerr << "Failed to update Tuner B gain: " << sdrplay_api_GetErrorString(err) << std::endl;
-      sdrplay_api_Close();
-      exit(1);
-  }
+  require_api(sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_A,
+    sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None), "Update tuner A gain");
+  require_api(sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_B,
+    sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None), "Update tuner B gain");
+  lock.unlock();
 
   // control loop
   while (run_fg)
@@ -151,6 +159,7 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
     }
     sleep(1);
   }
+  if (deviceRemoved) throw std::runtime_error("[RspDuo] Receiver disconnected. Reconnect it and check the SDRplay API service before restarting.");
 }
 
 void RspDuo::validate() {
@@ -158,40 +167,40 @@ void RspDuo::validate() {
     if (nDecimation != 1 && nDecimation != 2 && nDecimation != 4 &&
         nDecimation != 8 && nDecimation != 16 && nDecimation != 32) {
         std::cerr << "Error: Decimation must be in {1, 2, 4, 8, 16, 32}" << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] Unsupported sample rate/decimation.");
     }
 
     // validate fc
     if (fc < 1 || fc > MAX_FREQUENCY_NR) {
         std::cerr << "Error: Frequency must be between 1 and " << 
           MAX_FREQUENCY_NR << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] Frequency must be between 1 Hz and 2 GHz.");
     }
 
     // validate agc
     if (agc_bandwidth_nr != 0 && agc_bandwidth_nr != 5 && 
       agc_bandwidth_nr != 50 && agc_bandwidth_nr != 100) {
         std::cerr << "Error: AGC bandwidth must be in {0, 5, 50, 100}" << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] AGC bandwidth must be 0, 5, 50 or 100 Hz.");
     }
     if (agc_set_point_nr > 0 || agc_set_point_nr < MIN_AGC_SET_POINT_NR) {
         std::cerr << "Error: AGC set point must be between " << 
           MIN_AGC_SET_POINT_NR << " and 0" << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] AGC set point must be between -72 and 0 dBfs.");
     }
 
     // validate LNA
     if (gain_reduction_nr_a < MIN_GAIN_REDUCTION_NR || gain_reduction_nr_a > MAX_GAIN_REDUCTION_NR) {
         std::cerr << "Error: Gain reduction must be between " << MIN_GAIN_REDUCTION_NR << " and " << MAX_GAIN_REDUCTION_NR << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] Tuner A gain reduction must be between 20 and 59 dB.");
     }
     if (gain_reduction_nr_b < MIN_GAIN_REDUCTION_NR || gain_reduction_nr_b > MAX_GAIN_REDUCTION_NR) {
         std::cerr << "Error: Gain reduction must be between " << MIN_GAIN_REDUCTION_NR << " and " << MAX_GAIN_REDUCTION_NR << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] Tuner B gain reduction must be between 20 and 59 dB.");
     }
     if (lna_state_nr < 1 || lna_state_nr > MAX_LNA_STATE_NR) {
         std::cerr << "Error: LNA state must be between 1 and " << MAX_LNA_STATE_NR << std::endl;
-        exit(1);
+        throw std::invalid_argument("[RspDuo] LNA state must be between 1 and 9.");
     }
 
     // validate notch filters
@@ -216,27 +225,11 @@ void RspDuo::validate() {
 void RspDuo::open_api()
 {
   float ver = 0.0;
-  // open the sdrplay api
-  if ((err = sdrplay_api_Open()) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: API open failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    exit(1);
-  }
-  // check api versions match
-  if ((err = sdrplay_api_ApiVersion(&ver)) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: Set API version failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
-  if (ver != SDRPLAY_API_VERSION)
-  {
-    std::cerr << "Error: API versions do not match, local= " << SDRPLAY_API_VERSION << "API= " << ver << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
+  require_api(sdrplay_api_Open(), "Open API; check that the SDRplay API service is running");
+  apiOpened = true;
+  require_api(sdrplay_api_ApiVersion(&ver), "Read API version");
+  if (!std::isfinite(ver) || std::abs(ver - SDRPLAY_API_VERSION) > 0.001f)
+    throw std::runtime_error("[RspDuo] Installed SDRplay API version does not match this receiver build.");
 }
 
 void RspDuo::get_device()
@@ -245,25 +238,11 @@ void RspDuo::get_device()
   unsigned int ndev;
   unsigned int chosenIdx = 0;
 
-  // lock api while device selection is performed
-  if ((err = sdrplay_api_LockDeviceApi()) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: Lock API during device selection failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
-
-  // fetch list of available devices
-  if ((err = sdrplay_api_GetDevices(devs, &ndev, 
-    sizeof(devs) / sizeof(sdrplay_api_DeviceT))) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: sdrplay_api_GetDevices failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_UnlockDeviceApi();
-    sdrplay_api_Close();
-    exit(1);
-  }
+  require_api(sdrplay_api_LockDeviceApi(), "Lock API for device selection");
+  apiLocked = true;
+  require_api(sdrplay_api_GetDevices(devs, &ndev, sizeof(devs) / sizeof(sdrplay_api_DeviceT)), "Enumerate receivers");
+  if (ndev > sizeof(devs) / sizeof(sdrplay_api_DeviceT))
+    throw std::runtime_error("[RspDuo] API returned an invalid receiver count.");
 
   std::cerr << "[RspDuo] MaxDevs=" << sizeof(devs) / 
     sizeof(sdrplay_api_DeviceT) << " NumDevs=" << ndev << std::endl;
@@ -271,9 +250,7 @@ void RspDuo::get_device()
   if (ndev == 0)
   {
     std::cerr << "Error: No devices found" << std::endl;
-    sdrplay_api_UnlockDeviceApi();
-    sdrplay_api_Close();
-    exit(1);
+    throw std::runtime_error("[RspDuo] No receiver found. Check USB connection and permissions.");
   }
 
   // pick first RSPduo
@@ -289,9 +266,7 @@ void RspDuo::get_device()
   if (i == ndev)
   {
     std::cerr << "Error: Could not find RSPduo device to open" << std::endl;
-    sdrplay_api_UnlockDeviceApi();
-    sdrplay_api_Close();
-    exit(1);
+    throw std::runtime_error("[RspDuo] No RSPduo found among the connected SDRplay receivers.");
   }
 
   chosenDevice = &devs[chosenIdx];
@@ -304,33 +279,11 @@ void RspDuo::get_device()
   std::cerr << "[RspDuo] Tuner " << std::hex << chosenDevice->tuner << std::dec << std::endl;
   std::cerr << "[RspDuo] RspDuoMode " << std::hex << chosenDevice->rspDuoMode << std::dec << std::endl;
 
-  // select chosen device
-  if ((err = sdrplay_api_SelectDevice(chosenDevice)) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: Select device failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_UnlockDeviceApi();
-    sdrplay_api_Close();
-    exit(1);
-  }
-
-  // unlock api now that device is selected
-  if ((err = sdrplay_api_UnlockDeviceApi()) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: Unlock device API failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
-
-  // enable debug logging output
-  if ((err = sdrplay_api_DebugEnable(chosenDevice->dev, sdrplay_api_DbgLvl_Verbose)) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: Debug enable failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
+  require_api(sdrplay_api_SelectDevice(chosenDevice), "Select RSPduo in dual-tuner mode");
+  deviceSelected = true;
+  require_api(sdrplay_api_UnlockDeviceApi(), "Unlock device API");
+  apiLocked = false;
+  require_api(sdrplay_api_DebugEnable(chosenDevice->dev, sdrplay_api_DbgLvl_Verbose), "Enable API diagnostic logging");
 
   return;
 }
@@ -338,20 +291,14 @@ void RspDuo::get_device()
 void RspDuo::set_device_parameters()
 {
   // retrieve device parameters so they can be changed if wanted
-  if ((err = sdrplay_api_GetDeviceParams(chosenDevice->dev, &deviceParams)) != sdrplay_api_Success)
-  {
-    std::cout << "Error: sdrplay_api_GetDeviceParams failed " + 
-      std::string(sdrplay_api_GetErrorString(err)) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
+  require_api(sdrplay_api_GetDeviceParams(chosenDevice->dev, &deviceParams), "Read dual-tuner parameters");
 
   // check for NULL pointer before changing settings
-  if (deviceParams == NULL)
+  if (deviceParams == NULL || deviceParams->devParams == NULL ||
+      deviceParams->rxChannelA == NULL || deviceParams->rxChannelB == NULL)
   {
     std::cout << "Error: Device parameters pointer is null" << std::endl;
-    sdrplay_api_Close();
-    exit(1);
+    throw std::runtime_error("[RspDuo] API omitted device or dual-tuner parameters.");
   }
 
   // set USB mode
@@ -364,54 +311,29 @@ void RspDuo::set_device_parameters()
     deviceParams->devParams->mode = sdrplay_api_ISOCH;
   }
 
-  // configure channels - these affect both channels identically
-  chParams = deviceParams->rxChannelA;
-
-  // check for NULL pointer before changing settings
-  if (chParams == NULL)
-  {
-    std::cerr << "Error: Channel parameters pointer is null" << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
-
-  // set center frequency
-  chParams->tunerParams.rfFreq.rfHz = fc;
-
-  // set AGC
-  chParams->ctrlParams.agc.enable = sdrplay_api_AGC_DISABLE;
-  if (agc_bandwidth_nr == 5)
-  {
-    chParams->ctrlParams.agc.enable = sdrplay_api_AGC_5HZ;
-  }
-  else if (agc_bandwidth_nr == 50)
-  {
-    chParams->ctrlParams.agc.enable = sdrplay_api_AGC_50HZ;
-  }
-  else if (agc_bandwidth_nr == 100)
-  {
-    chParams->ctrlParams.agc.enable = sdrplay_api_AGC_100HZ;
-  }
-  if (chParams->ctrlParams.agc.enable != sdrplay_api_AGC_DISABLE)
-  {
-    chParams->ctrlParams.agc.setPoint_dBfs = (0 < agc_set_point_nr) ? 0 : agc_set_point_nr;
-  }
-
-  // set gain reduction and lna sate
+  // rxChannelA and rxChannelB are separate API parameter records. Set every
+  // required shared RF/AGC/IF/decimation/notch field on each, preserving their
+  // separate gains and tuner-specific defaults. These are requested values;
+  // successful Init/Update still does not prove physical RF/coherence.
   deviceParams->rxChannelA->tunerParams.gain.gRdB = gain_reduction_nr_a;
   deviceParams->rxChannelA->tunerParams.gain.LNAstate = lna_state_nr;
   deviceParams->rxChannelB->tunerParams.gain.gRdB = gain_reduction_nr_b;
   deviceParams->rxChannelB->tunerParams.gain.LNAstate = lna_state_nr;
-
-  // set decimation and IF frequency and analog bandwidth
-  chParams->ctrlParams.decimation.enable = 1;
-  chParams->ctrlParams.decimation.decimationFactor = nDecimation;
-  chParams->tunerParams.ifType = ifType;
-  chParams->tunerParams.bwType = bwType;
-
-  // configure notch filters
-  chParams->rspDuoTunerParams.rfNotchEnable = rf_notch_fg;
-  chParams->rspDuoTunerParams.rfDabNotchEnable = dab_notch_fg;
+  for (auto* channel : {deviceParams->rxChannelA, deviceParams->rxChannelB}) {
+    channel->tunerParams.rfFreq.rfHz = fc;
+    channel->ctrlParams.agc.enable = sdrplay_api_AGC_DISABLE;
+    if (agc_bandwidth_nr == 5) channel->ctrlParams.agc.enable = sdrplay_api_AGC_5HZ;
+    else if (agc_bandwidth_nr == 50) channel->ctrlParams.agc.enable = sdrplay_api_AGC_50HZ;
+    else if (agc_bandwidth_nr == 100) channel->ctrlParams.agc.enable = sdrplay_api_AGC_100HZ;
+    if (channel->ctrlParams.agc.enable != sdrplay_api_AGC_DISABLE)
+      channel->ctrlParams.agc.setPoint_dBfs = agc_set_point_nr;
+    channel->ctrlParams.decimation.enable = 1;
+    channel->ctrlParams.decimation.decimationFactor = nDecimation;
+    channel->tunerParams.ifType = ifType;
+    channel->tunerParams.bwType = bwType;
+    channel->rspDuoTunerParams.rfNotchEnable = rf_notch_fg;
+    channel->rspDuoTunerParams.rfDabNotchEnable = dab_notch_fg;
+  }
 
   // assign callback functions to be passed to sdrplay_api_Init()
   cbFns.StreamACbFn = _stream_a_callback;
@@ -583,6 +505,8 @@ void *cbContext)
 
   case sdrplay_api_DeviceRemoved:
     std::cerr << "[RspDuo] Device removed" << std::endl;
+    deviceRemoved = true;
+    run_fg = false;
     break;
 
   default:
@@ -593,24 +517,25 @@ void *cbContext)
 
 void RspDuo::initialise_device()
 {
-  if ((err = sdrplay_api_Init(chosenDevice->dev, &cbFns, NULL)) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: sdrplay_api_Init failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
+  require_api(sdrplay_api_Init(chosenDevice->dev, &cbFns, this), "Initialize dual-tuner streaming");
+  deviceInitialized = true;
 }
 
 void RspDuo::uninitialise_device()
 {
-  if ((err = sdrplay_api_Uninit(chosenDevice->dev)) != sdrplay_api_Success)
-  {
-    std::cerr << "Error: sdrplay_api_Uninit failed " << 
-      sdrplay_api_GetErrorString(err) << std::endl;
-    sdrplay_api_Close();
-    exit(1);
-  }
-  sdrplay_api_ReleaseDevice(chosenDevice);
-  sdrplay_api_Close();
+  cleanup_api();
+}
+
+void RspDuo::cleanup_api() noexcept
+{
+  auto report = [](sdrplay_api_ErrT result, const char* operation) {
+    if (result != sdrplay_api_Success)
+      std::cerr << "[RspDuo] Cleanup " << operation << ": " << sdrplay_api_GetErrorString(result) << '\n';
+  };
+  if (deviceInitialized) { report(sdrplay_api_Uninit(chosenDevice->dev), "uninitialize"); deviceInitialized = false; }
+  if (deviceSelected) { report(sdrplay_api_ReleaseDevice(chosenDevice), "release"); deviceSelected = false; }
+  if (apiLocked) { report(sdrplay_api_UnlockDeviceApi(), "unlock"); apiLocked = false; }
+  if (apiOpened) { report(sdrplay_api_Close(), "close"); apiOpened = false; }
+  chosenDevice = nullptr;
+  deviceParams = nullptr;
 }

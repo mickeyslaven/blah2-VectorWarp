@@ -31,6 +31,13 @@
 class RspDuo : public Source
 {
 private:
+  std::mutex lifecycleMutex;
+  bool apiOpened = false;
+  bool apiLocked = false;
+  bool deviceSelected = false;
+  bool deviceInitialized = false;
+  std::atomic<bool> deviceRemoved{false};
+  void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)
   int agc_bandwidth_nr;
   /// @brief AGC set point (dBfs)

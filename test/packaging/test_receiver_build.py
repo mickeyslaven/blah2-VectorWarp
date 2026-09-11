@@ -297,6 +297,49 @@ endif()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("lacks compiled_receivers", result.stderr)
 
+    def test_receiver_helper_staging_preserves_separate_root_policy(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-helper.py', artifact / 'libexec/vectorwarp-receiver-helper')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-apt.py', artifact / 'libexec/vectorwarp-receiver-apt.py')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-dnf.py', artifact / 'libexec/vectorwarp-receiver-dnf.py')
+        for name in ('vectorwarp-receiver.service.in', 'vectorwarp-receiver.socket', 'vectorwarp-receiver-policy.json.in'):
+            shutil.copy2(ROOT / 'contrib/systemd' / name, artifact / 'systemd' / name)
+        stage = self.temp / 'stage-management'
+        policy_dir = stage / 'etc/vectorwarp-management'
+        policy_dir.mkdir(parents=True)
+        policy = policy_dir / 'receivers.json'
+        sentinel = b'{"reviewed-local-policy":"preserve byte-for-byte"}\n'
+        policy.write_bytes(sentinel)
+        result = self.install(artifact, stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(policy.read_bytes(), sentinel)
+        self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
+        self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
+        service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()
+        self.assertIn('ExecStart=/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-receiver-helper serve', service)
+        self.assertNotIn('receiver-helper', (stage / 'etc/sudoers.d/vectorwarp').read_text())
+        fresh_stage = self.temp / 'stage-management-default'
+        result = self.install(artifact, fresh_stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads((fresh_stage / 'etc/vectorwarp-management/receivers.json').read_text())['actions'], [])
+
+    def test_receiver_policy_symlink_is_rejected_before_staging_any_release(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-helper.py', artifact / 'libexec/vectorwarp-receiver-helper')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-apt.py', artifact / 'libexec/vectorwarp-receiver-apt.py')
+        shutil.copy2(ROOT / 'script/vectorwarp-receiver-dnf.py', artifact / 'libexec/vectorwarp-receiver-dnf.py')
+        for name in ('vectorwarp-receiver.service.in', 'vectorwarp-receiver.socket', 'vectorwarp-receiver-policy.json.in'):
+            shutil.copy2(ROOT / 'contrib/systemd' / name, artifact / 'systemd' / name)
+        stage = self.temp / 'stage-management-link'
+        (stage / 'etc').mkdir(parents=True)
+        (stage / 'etc/vectorwarp-management').symlink_to(self.temp)
+        result = self.install(artifact, stage)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('must not be a symlink', result.stderr)
+        self.assertFalse((stage / 'opt/vectorwarp/current').exists())
+
 
 if __name__ == "__main__":
     unittest.main()

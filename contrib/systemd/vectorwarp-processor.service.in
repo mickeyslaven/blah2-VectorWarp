@@ -10,6 +10,7 @@ User=vectorwarp
 Group=vectorwarp
 SupplementaryGroups=vectorwarp-config
 WorkingDirectory=/var/lib/vectorwarp
+ExecStartPre=/usr/bin/node @PREFIX@/current/api/receiver-start-check.js @SYSCONFDIR@/config.yml
 ExecStart=@PREFIX@/current/bin/blah2 --config @SYSCONFDIR@/config.yml
 Restart=on-failure
 RestartSec=3s

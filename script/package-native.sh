@@ -177,10 +177,14 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 # Node. Binary release packages instead use the verified private runtime.
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service"
+sed -i 's|ExecStartPre=/usr/bin/node |ExecStartPre=/opt/vectorwarp/runtime/node/bin/node |' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service"
 sed -i 's|^/usr/bin/node /opt/vectorwarp/|/opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/|' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
 grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API unit to private Node'
+grep -q '^ExecStartPre=/opt/vectorwarp/runtime/node/bin/node ' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service" || die 'could not bind receiver startup check to private Node'
 grep -q '^/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart" || die 'could not bind restart helper to private Node'
 visudo -cf "$STAGE/etc/sudoers.d/vectorwarp" >/dev/null
@@ -218,9 +222,12 @@ if [[ $FORMAT == deb ]]; then
   shlibs=${shlibs_output#shlibs:Depends=}
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n VectorWarp supports live Kraken/Heimdall input and replay of recordings from\n all four receiver formats. Radar processing is never started by installation.\n' \
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n VectorWarp supports live Kraken/Heimdall input and replay of recordings from\n all four receiver formats. Radar processing is never started by installation.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
+  if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
+    printf '/etc/vectorwarp-management/receivers.json\n' >>"$CONTROL/conffiles"
+  fi
   install -m 0755 "$SOURCE_DIR/packaging/deb/postinst" "$CONTROL/postinst"
   install -m 0755 "$SOURCE_DIR/packaging/deb/prerm" "$CONTROL/prerm"
   install -m 0755 "$SOURCE_DIR/packaging/deb/postrm" "$CONTROL/postrm"

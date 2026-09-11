@@ -270,6 +270,9 @@ fi
 run mkdir -p "$ARTIFACT_TMP/libexec"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libexec/vectorwarp-restart"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 

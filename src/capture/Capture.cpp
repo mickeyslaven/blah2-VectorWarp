@@ -82,7 +82,8 @@ void Capture::process(const std::vector<IqData *>& buffers,
     while (!stopping.load()) {
       if (STOP_SIGNAL) request_stop();
       if (device && inputStopped.load() && !deviceStopped) {
-        device->stop();
+        try { device->stop(); }
+        catch (const std::exception& error) { processing_error(error.what()); }
         try { device->close_file(); }
         catch (const std::exception& error) { processing_error(error.what()); }
         deviceStopped = true;
@@ -110,7 +111,8 @@ void Capture::process(const std::vector<IqData *>& buffers,
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     if (device && !deviceStopped) {
-      device->stop();
+      try { device->stop(); }
+      catch (const std::exception& error) { processing_error(error.what()); }
       try { device->close_file(); } catch (const std::exception& error) { std::cerr << error.what() << '\n'; }
     }
   });

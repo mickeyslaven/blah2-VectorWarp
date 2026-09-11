@@ -6,7 +6,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage} =
   require('../../html/js/config_ui.js');
 
 const base = yaml.load(fs.readFileSync(
@@ -85,4 +85,7 @@ for (const [field, actual, expected, unit] of [['capture.fc', 527000000, 5280000
   const message = upstreamRestartError({available: true, issues: [{field, actual, expected, severity: 'error'}]});
   assert.ok(message.includes(unit) && message.includes('Receiver settings') && !message.includes(field));
 }
+const synchronizedMessage = receiverSaveMessage({receiverSync: {receiverType: 'Kraken', status: 'synchronized'}}, false);
+assert.match(synchronizedMessage, /acknowledged.*later status/i);
+assert.match(synchronizedMessage, /serial order.*calibration.*not independently verified/i);
 console.log('Settings device-switch, descriptions and actionable restart-mismatch tests passed.');

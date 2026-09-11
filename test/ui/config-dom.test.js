@@ -31,6 +31,7 @@ window.fetch = async (url, options = {}) => {
     }
   } else if (url.startsWith('/api/config?')) {
     assert.equal(options.headers['If-Match'], `"${revision}"`);
+    assert.equal(options.headers['X-VectorWarp-Receiver-Sync'], 'synchronize-v1');
     saved = JSON.parse(options.body);
     writes++;
     revision = `save-${writes}`;
