@@ -33,10 +33,13 @@ factorization is reused by all channels.
 
 Only the `B` live coefficients per channel cross the host boundary. The device
 zeros the `L`-sample weight arrays before copying those compact vectors into
-their prefixes. Full FP32 surveillance IQ still enters the worker/Vulkan
-staging path and a full FP32 clutter estimate returns to the parent. The parent
-subtracts that estimate from its immutable FP64 surveillance samples, avoiding
-an unnecessary deep-cancellation rounding step in the shader. Eliminating the
+their prefixes. Full FP32 surveillance IQ still enters the worker, using directly
+mapped Vulkan compute buffers on qualified integrated devices and staging elsewhere.
+A full FP32 clutter estimate returns to the parent. After the complete estimate
+and input shapes pass validation, qualified frames subtract it in the owned
+FP64 surveillance block without allocating another CPI. Startup qualification
+retains separate candidate/oracle storage. This avoids an unnecessary
+deep-cancellation rounding step in the shader. Eliminating the
 remaining input/readback process and device round trip requires a larger capture/conditioning
 ownership change and is not claimed here.
 

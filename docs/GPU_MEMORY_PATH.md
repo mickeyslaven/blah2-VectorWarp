@@ -35,6 +35,20 @@ follows the compute/transfer-to-host barrier and fence wait. Frame dimensions
 are checked in the parent, worker, and Vulkan backend, and total shared memory
 remains capped at 512 MiB.
 
+Clutter now uses the same capability-based memory policy. On a qualified
+integrated GPU, its reference, surveillance and returned estimate are directly
+mapped compute buffers; unsupported allocations retain staging. The separate
+upload/readback buffers and their full-CPI transfer commands are then unnecessary.
+The compact correlations and FP64 CPU solve still require synchronization.
+The shared process frame is not imported into Vulkan, so this is not zero-copy.
+
+The CPU producer writes each surveillance channel sequentially and initializes
+only FFT padding. Complete captured IQ blocks transfer ownership after reference
+synthesis, and accepted GPU frames retire samples in one block operation.
+Spectrum and CPU clutter processing read the existing IQ rather than copying a
+whole CPI just to inspect it. These changes retain the FIFO and raw-frame
+fallback contracts; they do not make the processing stages asynchronous.
+
 The module also accounts for each actual Vulkan allocation, including memory
 allocated inside VkFFT for tables, scratch and temporary uploads. The aggregate
 cap is the smaller of 2 GiB or a quarter of the largest device-local heap;

@@ -70,7 +70,7 @@ ctest --test-dir build/json-checks --output-on-failure
 build/json-checks/testJsonOutput --benchmark
 ```
 
-The main build can include `cmake/JsonOutputTests.cmake` under `BUILD_TESTING`.
+The main build includes `cmake/JsonOutputTests.cmake` under `BUILD_TESTING`.
 It adds `jsonOutputCompatibility`; the benchmark is opt-in and is not a timed CI
 performance gate. Numerical equality is mandatory; timing improvement on other
 CPUs, compilers or input distributions is not guaranteed by these measurements.
