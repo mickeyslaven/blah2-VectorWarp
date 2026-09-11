@@ -1,0 +1,42 @@
+{
+  "source_commit": "8ba6e1330fad9fcdbe8a5a54134a712d0959775e",
+  "upstream_commit": "c821bee3f0d27cf20c8447f3d908ef722905a4de",
+  "offworld_commit": "1d37e29c9f788bed2bc95b1b320ccf6478430111",
+  "offworld_repository": "https://github.com/offworldlabs/blah2-arm",
+  "archive_sha256": "ccbd2ec1c379310b0df1be1857570d93dd5306a6b435c63c8e785b7c8084dab6",
+  "input_sha256": "4188cd03768cf356b31e26759c1a75ec83ffc3c83ecfdc16bbb3e9bfc242d744",
+  "fs": 2400000,
+  "rf_hz": 527000000,
+  "delay_min": -10,
+  "delay_max": 245,
+  "delay_bins": 256,
+  "max_excess_path_km": 30.603813420833333,
+  "cpi_ms": 200,
+  "repeats": 2,
+  "frames_per_repeat": 20,
+  "excluded_startup_frames": 8,
+  "cpu_affinity": "0-3",
+  "cpu_quota_percent": 400,
+  "fft_threads": 4,
+  "worker_count": 1,
+  "blas_threads": 1,
+  "omp_threads": 1,
+  "scope": "Same-Pi sample-clock-paced real-IQ CPU processing; not live acquisition",
+  "tuning": "Control clutter -10..200; alternate -10..189 uses 199 taps and a 480200-point convolution FFT (2^3 * 5^2 * 7^4). Both engines receive exactly the same profile. This is a configuration tradeoff, not a new algorithm or shortened output delay range.",
+  "host": {
+    "platform": "Linux-6.19.10-300.fc44.aarch64-aarch64-with-glibc2.43",
+    "packages": [
+      "gcc-c++-16.2.1-2.fc44.aarch64",
+      "fftw-libs-double-3.3.10-17.fc44.aarch64",
+      "armadillo-12.8.1-9.fc44.aarch64",
+      "mesa-vulkan-drivers-26.0.3-4.fc44.aarch64"
+    ],
+    "upstream_head": "c821bee3f0d27cf20c8447f3d908ef722905a4de",
+    "upstream_dirty": "",
+    "fftw_neon_symbols": [
+      "00000000000c8060 T fftw_codelet_hc2cbdftv_10_neon",
+      "00000000000c8090 T fftw_codelet_hc2cbdftv_12_neon",
+      "00000000000c80c0 T fftw_codelet_hc2cbdftv_16_neon"
+    ]
+  }
+}

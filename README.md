@@ -9,7 +9,7 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 ## What you get beyond blah2
 
 - **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.
-- **Faster without a GPU, too:** less copying, repeated detector work and output conversion; CPU-only processing took 18–26% less time in the matched tests below.
+- **Faster without a GPU, too:** less copying, repeated detector work and output conversion; CPU-only processing took up to 26% less time in the matched desktop/laptop tests below.
 - **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the equal-range results below.
 - **Automatic CPU threading:** size channel workers and FFT threads to the CPU capacity available, with manual controls when you need them.
 - **Settings in your browser:** edit receiver, processing, display, recording, and ADS-B settings in organized sections.
@@ -65,6 +65,11 @@ CPU accuracy checks; the refreshed measurements above are recorded-IQ replays,
 not new live or endurance tests.
 
 ## Equal-range Doppler tests
+
+On a Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took **798.2 ms** in VectorWarp,
+versus **905.1 ms** in original blah2 and **905.9 ms** in Off World Labs' ARM
+fork. [Pi comparison and workload limits](docs/PI4_PERFORMANCE_20260911.md)
+
 
 At this same full range and **±4800 Hz**, Strix GPU processing averaged **67.0 ms
 per 200 ms CPI**, or **325.5 ms per one-second CPI**. VectorWarp CPU took 173.8 ms

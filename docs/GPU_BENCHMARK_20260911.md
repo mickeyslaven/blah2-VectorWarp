@@ -135,6 +135,10 @@ The [wider-Doppler algorithm](FUTURE_WIDE_DOPPLER.md) also remains future work.
 
 ## Earlier native live processor measurements
 
+The separate [Pi 4 CPU comparison](PI4_PERFORMANCE_20260911.md) includes
+Off World Labs' ARM fork. It retains the same excess-path range but is a
+separate recording/hardware cohort; its numbers are not pooled with this table.
+
 These historical measurements used the version with recurring CPU accuracy
 checks. They were not rerun for the startup-only or combined efficiency changes.
 Six short native runs used live Kraken input at 527 MHz and 2.4 MS/s on Strix

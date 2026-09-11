@@ -1,5 +1,8 @@
 # Raspberry Pi 4 / Fedora 44 validation — 2026-09-10
 
+For the new combined CPU build and the three-way comparison with original
+blah2 and Off World Labs' ARM fork, see [current Pi results](PI4_PERFORMANCE_20260911.md).
+
 Package and correctness evidence remains relevant. Timings below are historical,
 not part of the [current fixed-range comparison](GPU_BENCHMARK_20260911.md), and
 do not establish a Pi speedup over blah2.

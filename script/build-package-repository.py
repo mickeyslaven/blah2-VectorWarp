@@ -108,6 +108,10 @@ Doppler buffer cannot safely represent the configuration.</p>
 from 69.7 to 44.7 ms versus the preceding VectorWarp version in this campaign.
 Heavier workloads still miss some deadlines; the full report includes all
 configurations, a separate before/after comparison and remaining processing costs.</p>
+<p>On Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took 798.2 ms
+in VectorWarp, versus 905.1 ms in original blah2 and 905.9 ms in Off World Labs'
+ARM fork, with NEON FFTW enabled for all three.
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PERFORMANCE_20260911.md">Pi comparison and workload limits →</a></p>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
