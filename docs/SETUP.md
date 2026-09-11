@@ -14,15 +14,20 @@ Ubuntu/Debian:
 ```bash
 sudo apt update
 sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config \
-  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libhackrf-dev
+  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
 ```
 
 Fedora:
 
 ```bash
 sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config \
-  fftw-devel armadillo-devel uhd-devel libhackrf-devel
+  fftw-devel armadillo-devel uhd-devel boost-devel libhackrf-devel libusb1-devel
 ```
+
+Boost headers are required by UHD's public API, and HackRF's `pkg-config`
+metadata can reference libusb headers without pulling in their development
+package. Both are listed explicitly; installing only the receiver runtime or
+its nominal development package is not enough on every supported distribution.
 
 Install SDRplay API 3.15 from the vendor to supply its licensed build headers
 and library. Release builders can use the approved build-only SDK extraction

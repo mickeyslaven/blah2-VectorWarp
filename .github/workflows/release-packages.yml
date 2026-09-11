@@ -88,7 +88,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
-            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm libuhd-dev libhackrf-dev libusb-1.0-0-dev
+            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
       - name: Prepare approved SDRplay build inputs without installing vendor software
         run: |
           script/prepare-sdrplay-build-sdk.sh --output-dir build/ci-sdrplay-sdk
@@ -189,7 +189,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
-            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev libhackrf-dev libusb-1.0-0-dev
+            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
           sha_var="NODE_SHA_${NODE_ARCH^^}"
           node_sha=${!sha_var}
           archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
@@ -225,7 +225,7 @@ jobs:
               apt-get update
               apt-get install --yes --no-install-recommends \
                 build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
-                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev libhackrf-dev libusb-1.0-0-dev
+                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -257,7 +257,7 @@ jobs:
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
             bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
-                fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel libhackrf-devel libusb1-devel
+                fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel libhackrf-devel libusb1-devel
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
