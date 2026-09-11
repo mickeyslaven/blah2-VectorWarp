@@ -13,6 +13,12 @@ uses the new map writer; the actual-upstream benchmark keeps its original path.
 Its detection serialization remains unchanged, preserving that benchmark's
 existing measurement contract.
 
+The [combined real-IQ campaign](GPU_BENCHMARK_20260911.md) now measures this
+change with the CPU and memory-path improvements. On Strix at 200 ms CPI,
+±2400 Hz and the same 30.604 km maximum excess path, GPU-mode JSON time fell
+from 23.488 to 17.066 ms; complete processing fell from 69.650 to 44.669 ms.
+The total reduction includes all combined changes, not just this serializer.
+
 ## Bounded serializer measurements
 
 These are deterministic synthetic-map microbenchmarks, **not live radar or

@@ -1,0 +1,40 @@
+GPU startup 92442153 ms: vkCreateInstance begin
+GPU startup 92442165 ms: vkCreateInstance complete
+GPU startup 92442165 ms: device enumeration begin
+GPU startup 92442175 ms: device enumeration complete
+GPU startup 92442175 ms: AMD Radeon 8060S Graphics (RADV STRIX_HALO)
+GPU startup 92442175 ms: vkCreateDevice begin
+GPU startup 92442175 ms: vkCreateDevice complete
+GPU startup 92442175 ms: glslang initialization begin
+GPU startup 92442175 ms: glslang initialization complete
+GPU startup 92442175 ms: buffer allocations begin
+GPU startup 92442175 ms: direct mapped device memory selected
+GPU startup 92442175 ms: buffer allocations complete
+GPU startup 92442175 ms: VkFFT plan begin length=500 batches=1921
+GPU startup 92442237 ms: VkFFT plan complete result=0
+GPU startup 92442237 ms: VkFFT plan begin length=500 batches=1921
+GPU startup 92442260 ms: VkFFT plan complete result=0
+GPU startup 92442260 ms: VkFFT plan begin length=1921 batches=256
+GPU startup 92442388 ms: VkFFT plan complete result=0
+GPU startup 92442388 ms: multiply kernel begin
+GPU startup 92442389 ms: gather kernel begin
+GPU startup 92442390 ms: clutter pipeline begin
+GPU startup 92442390 ms: clutter direct mapped device memory selected
+GPU startup 92442391 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 92442438 ms: VkFFT plan complete result=0
+GPU startup 92442438 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 92442485 ms: VkFFT plan complete result=0
+GPU startup 92442485 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 92442532 ms: VkFFT plan complete result=0
+GPU startup 92442532 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 92442579 ms: VkFFT plan complete result=0
+GPU startup 92442579 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 92442651 ms: VkFFT plan complete result=0
+GPU startup 92442651 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 92442722 ms: VkFFT plan complete result=0
+GPU startup 92442722 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 92442793 ms: VkFFT plan complete result=0
+GPU startup 92442796 ms: clutter pipeline complete
+GPU allocation budget used=104313440 peak=104318720 limit=2147483648
+GPU startup 92442796 ms: backend ready
+Acceleration: Vulkan / AMD Radeon 8060S Graphics (RADV STRIX_HALO)

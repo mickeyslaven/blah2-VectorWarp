@@ -79,3 +79,9 @@ including when CPU ambiguity is independently selected. Physical acceptance
 must still run the same FP64 oracle on every intended Vulkan device and then use
 matched-IQ timing to qualify the complete path. No performance claim follows
 from the implementation or mock tests alone.
+
+The latest [physical results](benchmarks/20260911-efficiency/README.md) cover
+Radeon 8060S, RTX 4050 Laptop, Intel HD 630 and AMD Polaris 12. Both clutter and
+delay–Doppler ran on GPU for all 24 measured steady CPIs in every current GPU
+group. The full report separates processing time, missed deadlines and stage
+costs; the combined speedup does not mean every individual stage became faster.

@@ -1,0 +1,325 @@
+GPU startup 56740115 ms: vkCreateInstance begin
+GPU startup 56740140 ms: vkCreateInstance complete
+GPU startup 56740140 ms: device enumeration begin
+GPU startup 56742028 ms: device enumeration complete
+GPU startup 56742028 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56742028 ms: vkCreateDevice begin
+GPU startup 56742030 ms: vkCreateDevice complete
+GPU startup 56742030 ms: glslang initialization begin
+GPU startup 56742030 ms: glslang initialization complete
+GPU startup 56742030 ms: buffer allocations begin
+GPU startup 56742031 ms: direct mapped device memory selected
+GPU startup 56742031 ms: buffer allocations complete
+GPU startup 56742031 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56742137 ms: VkFFT plan complete result=0
+GPU startup 56742137 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56742155 ms: VkFFT plan complete result=0
+GPU startup 56742155 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56742165 ms: VkFFT plan complete result=0
+GPU startup 56742165 ms: multiply kernel begin
+GPU startup 56742167 ms: gather kernel begin
+GPU startup 56742169 ms: clutter pipeline begin
+GPU startup 56742169 ms: clutter direct mapped device memory selected
+GPU startup 56742169 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56742204 ms: VkFFT plan complete result=0
+GPU startup 56742204 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56742236 ms: VkFFT plan complete result=0
+GPU startup 56742236 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56742267 ms: VkFFT plan complete result=0
+GPU startup 56742267 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56742298 ms: VkFFT plan complete result=0
+GPU startup 56742298 ms: VkFFT plan begin length=270 batches=1
+GPU startup 56742328 ms: VkFFT plan complete result=0
+GPU startup 56742328 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56742356 ms: VkFFT plan complete result=0
+GPU startup 56742356 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56742385 ms: VkFFT plan complete result=0
+GPU startup 56742391 ms: clutter pipeline complete
+GPU allocation budget used=50548 peak=52668 limit=2147483648
+GPU startup 56742391 ms: backend ready
+GPU startup 56742408 ms: vkCreateInstance begin
+GPU startup 56742434 ms: vkCreateInstance complete
+GPU startup 56742434 ms: device enumeration begin
+GPU startup 56742445 ms: device enumeration complete
+GPU startup 56742445 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56742445 ms: vkCreateDevice begin
+GPU startup 56742447 ms: vkCreateDevice complete
+GPU startup 56742448 ms: glslang initialization begin
+GPU startup 56742448 ms: glslang initialization complete
+GPU startup 56742448 ms: buffer allocations begin
+GPU startup 56742448 ms: direct mapped device memory selected
+GPU startup 56742448 ms: buffer allocations complete
+GPU startup 56742448 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56742551 ms: VkFFT plan complete result=0
+GPU startup 56742551 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56742569 ms: VkFFT plan complete result=0
+GPU startup 56742569 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56742580 ms: VkFFT plan complete result=0
+GPU startup 56742580 ms: multiply kernel begin
+GPU startup 56742582 ms: gather kernel begin
+GPU startup 56742584 ms: clutter pipeline begin
+GPU startup 56742584 ms: clutter direct mapped device memory selected
+GPU startup 56742584 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56742619 ms: VkFFT plan complete result=0
+GPU startup 56742619 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56742651 ms: VkFFT plan complete result=0
+GPU startup 56742651 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56742682 ms: VkFFT plan complete result=0
+GPU startup 56742682 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56742714 ms: VkFFT plan complete result=0
+GPU startup 56742714 ms: VkFFT plan begin length=270 batches=1
+GPU startup 56742743 ms: VkFFT plan complete result=0
+GPU startup 56742743 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56742772 ms: VkFFT plan complete result=0
+GPU startup 56742773 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56742802 ms: VkFFT plan complete result=0
+GPU startup 56742808 ms: clutter pipeline complete
+GPU allocation budget used=50548 peak=52668 limit=2147483648
+GPU startup 56742808 ms: backend ready
+GPU startup 56742825 ms: vkCreateInstance begin
+GPU startup 56742850 ms: vkCreateInstance complete
+GPU startup 56742850 ms: device enumeration begin
+GPU startup 56742860 ms: device enumeration complete
+GPU startup 56742860 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56742860 ms: vkCreateDevice begin
+GPU startup 56742862 ms: vkCreateDevice complete
+GPU startup 56742862 ms: glslang initialization begin
+GPU startup 56742863 ms: glslang initialization complete
+GPU startup 56742863 ms: buffer allocations begin
+GPU startup 56742863 ms: direct mapped device memory selected
+GPU startup 56742863 ms: buffer allocations complete
+GPU startup 56742863 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56742967 ms: VkFFT plan complete result=0
+GPU startup 56742967 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56742986 ms: VkFFT plan complete result=0
+GPU startup 56742986 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56742997 ms: VkFFT plan complete result=0
+GPU startup 56742997 ms: multiply kernel begin
+GPU startup 56742999 ms: gather kernel begin
+GPU startup 56743001 ms: clutter pipeline begin
+GPU startup 56743001 ms: clutter direct mapped device memory selected
+GPU startup 56743001 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56743037 ms: VkFFT plan complete result=0
+GPU startup 56743037 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56743069 ms: VkFFT plan complete result=0
+GPU startup 56743069 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56743100 ms: VkFFT plan complete result=0
+GPU startup 56743100 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56743132 ms: VkFFT plan complete result=0
+GPU startup 56743132 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56743163 ms: VkFFT plan complete result=0
+GPU startup 56743163 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56743195 ms: VkFFT plan complete result=0
+GPU startup 56743195 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56743228 ms: VkFFT plan complete result=0
+GPU startup 56743233 ms: clutter pipeline complete
+GPU allocation budget used=46660 peak=47876 limit=2147483648
+GPU startup 56743233 ms: backend ready
+PASS clutter min=-3 max=5 samples=256 device=32902:22811:0 state=checking active=cpu reason=Checking composed GPU clutter and ambiguity output
+PASS clutter min=0 max=8 samples=256 device=32902:22811:0 state=checking active=cpu reason=Checking composed GPU clutter and ambiguity output
+GPU clutter validation worst_channel_relative_input_rms=1.40363e-07 worst_channel_relative_filtered_rms=0.00121912
+GPU startup 56743247 ms: vkCreateInstance begin
+GPU startup 56743272 ms: vkCreateInstance complete
+GPU startup 56743272 ms: device enumeration begin
+GPU startup 56743282 ms: device enumeration complete
+GPU startup 56743282 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56743282 ms: vkCreateDevice begin
+GPU startup 56743284 ms: vkCreateDevice complete
+GPU startup 56743284 ms: glslang initialization begin
+GPU startup 56743284 ms: glslang initialization complete
+GPU startup 56743284 ms: buffer allocations begin
+GPU startup 56743285 ms: direct mapped device memory selected
+GPU startup 56743285 ms: buffer allocations complete
+GPU startup 56743285 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56743388 ms: VkFFT plan complete result=0
+GPU startup 56743388 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56743406 ms: VkFFT plan complete result=0
+GPU startup 56743406 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56743416 ms: VkFFT plan complete result=0
+GPU startup 56743416 ms: multiply kernel begin
+GPU startup 56743418 ms: gather kernel begin
+GPU startup 56743420 ms: clutter pipeline begin
+GPU startup 56743420 ms: clutter direct mapped device memory selected
+GPU startup 56743420 ms: VkFFT plan begin length=250 batches=1
+GPU startup 56743463 ms: VkFFT plan complete result=0
+GPU startup 56743463 ms: VkFFT plan begin length=250 batches=3
+GPU startup 56743512 ms: VkFFT plan complete result=0
+GPU startup 56743512 ms: VkFFT plan begin length=250 batches=1
+GPU startup 56743552 ms: VkFFT plan complete result=0
+GPU startup 56743552 ms: VkFFT plan begin length=250 batches=3
+GPU startup 56743602 ms: VkFFT plan complete result=0
+GPU startup 56743602 ms: VkFFT plan begin length=250 batches=1
+GPU startup 56743641 ms: VkFFT plan complete result=0
+GPU startup 56743641 ms: VkFFT plan begin length=250 batches=3
+GPU startup 56743691 ms: VkFFT plan complete result=0
+GPU startup 56743691 ms: VkFFT plan begin length=250 batches=3
+GPU startup 56743740 ms: VkFFT plan complete result=0
+GPU startup 56743746 ms: clutter pipeline complete
+GPU allocation budget used=50724 peak=52644 limit=2147483648
+GPU startup 56743746 ms: backend ready
+GPU startup 56743760 ms: vkCreateInstance begin
+GPU startup 56743786 ms: vkCreateInstance complete
+GPU startup 56743786 ms: device enumeration begin
+GPU startup 56743796 ms: device enumeration complete
+GPU startup 56743796 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56743796 ms: vkCreateDevice begin
+GPU startup 56743798 ms: vkCreateDevice complete
+GPU startup 56743798 ms: glslang initialization begin
+GPU startup 56743798 ms: glslang initialization complete
+GPU startup 56743798 ms: buffer allocations begin
+GPU startup 56743799 ms: direct mapped device memory selected
+GPU startup 56743799 ms: buffer allocations complete
+GPU startup 56743799 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56743901 ms: VkFFT plan complete result=0
+GPU startup 56743901 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56743920 ms: VkFFT plan complete result=0
+GPU startup 56743920 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56743930 ms: VkFFT plan complete result=0
+GPU startup 56743930 ms: multiply kernel begin
+GPU startup 56743932 ms: gather kernel begin
+GPU startup 56743934 ms: clutter pipeline begin
+GPU startup 56743934 ms: clutter direct mapped device memory selected
+GPU startup 56743934 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56743969 ms: VkFFT plan complete result=0
+GPU startup 56743969 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56744001 ms: VkFFT plan complete result=0
+GPU startup 56744001 ms: VkFFT plan begin length=256 batches=1
+GPU startup 56744032 ms: VkFFT plan complete result=0
+GPU startup 56744032 ms: VkFFT plan begin length=256 batches=3
+GPU startup 56744065 ms: VkFFT plan complete result=0
+GPU startup 56744065 ms: VkFFT plan begin length=270 batches=1
+GPU startup 56744094 ms: VkFFT plan complete result=0
+GPU startup 56744094 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56744123 ms: VkFFT plan complete result=0
+GPU startup 56744123 ms: VkFFT plan begin length=270 batches=3
+GPU startup 56744152 ms: VkFFT plan complete result=0
+GPU startup 56744158 ms: clutter pipeline complete
+GPU allocation budget used=50548 peak=52668 limit=2147483648
+GPU startup 56744158 ms: backend ready
+GPU startup 56744175 ms: vkCreateInstance begin
+GPU startup 56744201 ms: vkCreateInstance complete
+GPU startup 56744201 ms: device enumeration begin
+GPU startup 56744212 ms: device enumeration complete
+GPU startup 56744212 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56744212 ms: vkCreateDevice begin
+GPU startup 56744214 ms: vkCreateDevice complete
+GPU startup 56744214 ms: glslang initialization begin
+GPU startup 56744214 ms: glslang initialization complete
+GPU startup 56744214 ms: buffer allocations begin
+GPU startup 56744215 ms: direct mapped device memory selected
+GPU startup 56744215 ms: buffer allocations complete
+GPU startup 56744215 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56744318 ms: VkFFT plan complete result=0
+GPU startup 56744318 ms: VkFFT plan begin length=8 batches=12
+GPU startup 56744336 ms: VkFFT plan complete result=0
+GPU startup 56744336 ms: VkFFT plan begin length=4 batches=6
+GPU startup 56744347 ms: VkFFT plan complete result=0
+GPU startup 56744347 ms: multiply kernel begin
+GPU startup 56744349 ms: gather kernel begin
+GPU startup 56744351 ms: clutter pipeline begin
+GPU startup 56744351 ms: clutter direct mapped device memory selected
+GPU startup 56744351 ms: VkFFT plan begin length=64 batches=1
+GPU startup 56744379 ms: VkFFT plan complete result=0
+GPU startup 56744379 ms: VkFFT plan begin length=64 batches=3
+GPU startup 56744408 ms: VkFFT plan complete result=0
+GPU startup 56744408 ms: VkFFT plan begin length=64 batches=1
+GPU startup 56744433 ms: VkFFT plan complete result=0
+GPU startup 56744433 ms: VkFFT plan begin length=64 batches=3
+GPU startup 56744462 ms: VkFFT plan complete result=0
+GPU startup 56744462 ms: VkFFT plan begin length=128 batches=1
+GPU startup 56744492 ms: VkFFT plan complete result=0
+GPU startup 56744492 ms: VkFFT plan begin length=128 batches=3
+GPU startup 56744527 ms: VkFFT plan complete result=0
+GPU startup 56744527 ms: VkFFT plan begin length=128 batches=3
+GPU startup 56744563 ms: VkFFT plan complete result=0
+GPU startup 56744568 ms: clutter pipeline complete
+GPU allocation budget used=20492 peak=21196 limit=2147483648
+GPU startup 56744568 ms: backend ready
+GPU startup 56744588 ms: vkCreateInstance begin
+GPU startup 56744613 ms: vkCreateInstance complete
+GPU startup 56744613 ms: device enumeration begin
+GPU startup 56744623 ms: device enumeration complete
+GPU startup 56744623 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56744623 ms: vkCreateDevice begin
+GPU startup 56744625 ms: vkCreateDevice complete
+GPU startup 56744625 ms: glslang initialization begin
+GPU startup 56744625 ms: glslang initialization complete
+GPU startup 56744625 ms: buffer allocations begin
+GPU startup 56744626 ms: direct mapped device memory selected
+GPU startup 56744626 ms: buffer allocations complete
+GPU startup 56744626 ms: VkFFT plan begin length=8 batches=4
+GPU startup 56744728 ms: VkFFT plan complete result=0
+GPU startup 56744728 ms: VkFFT plan begin length=8 batches=8
+GPU startup 56744747 ms: VkFFT plan complete result=0
+GPU startup 56744747 ms: VkFFT plan begin length=4 batches=4
+GPU startup 56744757 ms: VkFFT plan complete result=0
+GPU startup 56744757 ms: multiply kernel begin
+GPU startup 56744759 ms: gather kernel begin
+GPU startup 56744761 ms: clutter pipeline begin
+GPU startup 56744761 ms: clutter direct mapped device memory selected
+GPU startup 56744761 ms: VkFFT plan begin length=64 batches=1
+GPU startup 56744788 ms: VkFFT plan complete result=0
+GPU startup 56744788 ms: VkFFT plan begin length=64 batches=2
+GPU startup 56744817 ms: VkFFT plan complete result=0
+GPU startup 56744817 ms: VkFFT plan begin length=64 batches=1
+GPU startup 56744841 ms: VkFFT plan complete result=0
+GPU startup 56744841 ms: VkFFT plan begin length=64 batches=2
+GPU startup 56744869 ms: VkFFT plan complete result=0
+GPU startup 56744869 ms: VkFFT plan begin length=72 batches=1
+GPU startup 56744906 ms: VkFFT plan complete result=0
+GPU startup 56744906 ms: VkFFT plan begin length=72 batches=2
+GPU startup 56744953 ms: VkFFT plan complete result=0
+GPU startup 56744953 ms: VkFFT plan begin length=72 batches=2
+GPU startup 56744999 ms: VkFFT plan complete result=0
+GPU startup 56745004 ms: clutter pipeline complete
+GPU allocation budget used=10252 peak=10732 limit=2147483648
+GPU startup 56745004 ms: backend ready
+PASS clutter min=0 max=1 samples=256 device=32902:22811:0 state=fallback active=cpu reason=GPU clutter accuracy check failed; using CPU clutter
+PASS clutter min=3 max=4 samples=250 device=32902:22811:0 state=checking active=cpu reason=Checking composed GPU clutter and ambiguity output
+PASS clutter min=3 max=11 samples=256 device=32902:22811:0 state=checking active=cpu reason=Checking composed GPU clutter and ambiguity output
+PASS clutter min=-31 max=33 samples=64 device=32902:22811:0 state=checking active=cpu reason=Checking composed GPU clutter and ambiguity output
+Chol decomposition failed, skip clutter filter
+Chol decomposition failed, skip clutter filter
+GPU startup 56745020 ms: vkCreateInstance begin
+GPU startup 56745045 ms: vkCreateInstance complete
+GPU startup 56745045 ms: device enumeration begin
+GPU startup 56745056 ms: device enumeration complete
+GPU startup 56745056 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 56745056 ms: vkCreateDevice begin
+GPU startup 56745058 ms: vkCreateDevice complete
+GPU startup 56745058 ms: glslang initialization begin
+GPU startup 56745058 ms: glslang initialization complete
+GPU startup 56745058 ms: buffer allocations begin
+GPU startup 56745058 ms: direct mapped device memory selected
+GPU startup 56745058 ms: buffer allocations complete
+GPU startup 56745058 ms: VkFFT plan begin length=480 batches=21
+GPU startup 56745190 ms: VkFFT plan complete result=0
+GPU startup 56745190 ms: VkFFT plan begin length=480 batches=42
+GPU startup 56745238 ms: VkFFT plan complete result=0
+GPU startup 56745238 ms: VkFFT plan begin length=21 batches=52
+GPU startup 56745264 ms: VkFFT plan complete result=0
+GPU startup 56745264 ms: multiply kernel begin
+GPU startup 56745266 ms: gather kernel begin
+GPU startup 56745268 ms: clutter pipeline begin
+GPU startup 56745268 ms: clutter direct mapped device memory selected
+GPU startup 56745268 ms: VkFFT plan begin length=4800 batches=1
+GPU startup 56745394 ms: VkFFT plan complete result=0
+GPU startup 56745394 ms: VkFFT plan begin length=4800 batches=2
+GPU startup 56745513 ms: VkFFT plan complete result=0
+GPU startup 56745513 ms: VkFFT plan begin length=4800 batches=1
+GPU startup 56745634 ms: VkFFT plan complete result=0
+GPU startup 56745634 ms: VkFFT plan begin length=4800 batches=2
+GPU startup 56745755 ms: VkFFT plan complete result=0
+GPU startup 56745755 ms: VkFFT plan begin length=4860 batches=1
+GPU startup 56745903 ms: VkFFT plan complete result=0
+GPU startup 56745903 ms: VkFFT plan begin length=4860 batches=2
+GPU startup 56746050 ms: VkFFT plan complete result=0
+GPU startup 56746050 ms: VkFFT plan begin length=4860 batches=2
+GPU startup 56746197 ms: VkFFT plan complete result=0
+GPU startup 56746202 ms: clutter pipeline complete
+GPU allocation budget used=989720 peak=1028560 limit=2147483648
+GPU startup 56746202 ms: backend ready
+PASS clutter-rank-deficient device=32902:22811:0
+Acceleration: Vulkan / Intel(R) HD Graphics 630 (KBL GT2)
+GPU composed validation relative_rms=5.70994e-05 relative_peak=0.000168631
+PASS clutter-composed device=32902:22811:0 clutter_active=cpu clutter_reason=Composed GPU clutter/ambiguity accuracy check failed; using CPU clutter

@@ -68,6 +68,12 @@ still requires numerical qualification against the FP64 CPU implementation and
 matched-IQ timing of both `auto/direct` and `staged`; this document makes no
 zero-copy or speedup claim.
 
+The [combined efficiency campaign](benchmarks/20260911-efficiency/README.md)
+passed numerical preflights in `auto` and `staged` on Radeon 8060S, RTX 4050
+Laptop, Intel HD 630 and AMD Polaris 12. Its timing results use `auto` and combine
+the memory changes with CPU and JSON improvements; they do not isolate the
+benefit of direct mapping or establish forced-direct speed on discrete GPUs.
+
 Primary synchronization and memory references:
 
 - <https://registry.khronos.org/vulkan/specs/latest/man/html/VkMemoryPropertyFlagBits.html>
