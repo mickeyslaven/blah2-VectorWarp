@@ -58,12 +58,12 @@ Keep the UI on a trusted LAN/VPN: it has no login.
 
 ## Limits
 
-- Published packages will support live Kraken/Heimdall input and replay. Kraken
+- Each package includes Kraken, USRP, dual-HackRF and RSPduo adapters. Kraken
   Suite and its USB drivers remain external: VectorWarp can enroll, reuse and
   start an already-installed allowlisted local service, or use a remote endpoint.
-- RSPduo remains a local vendor-licensed installation. USRP and dual-HackRF
-  need a compiled backend; their missing dependencies have qualified add-only
-  Ubuntu/Fedora plans only after local enrollment and one-use approval. This is
-  not a universal automatic driver installation.
+- UHD and libhackrf are installed as native package dependencies. RSPduo still
+  needs the vendor's locally installed SDRplay API. Settings checks whether it
+  is running; starting a local service requires enrollment and one-use local
+  approval. That is not an unconditional one-click driver installer.
 - Replay does not open radio hardware. macOS and Windows are browser clients,
   not processor hosts.

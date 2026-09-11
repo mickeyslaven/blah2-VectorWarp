@@ -60,9 +60,9 @@ For every release:
 1. Keep the comparison baseline pinned; record a separate upstream merge if it changes.
 2. Review the actual diff and update this table plus the focused fix list.
 3. Separate implemented code, automated tests, physical-hardware tests and planned work.
-4. Describe package receiver support separately from source-build support: a
-   Kraken-live package can replay other receiver recordings without containing
-   their live hardware SDKs.
+4. Keep package adapters separate from external receiver software: all four
+   adapters ship together, while SDRplay's licensed API and Kraken Suite remain
+   separate installations. A loadable adapter is not proof of RF reception.
 5. Use verified workflow artifacts and installation checks before changing package
    distribution from “unpublished” to “available.”
 6. Preserve user-facing compatibility keys and 30hours attribution. Do not rewrite
