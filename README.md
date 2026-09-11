@@ -50,6 +50,11 @@ The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its sm
 FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
 settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
+**Live proof:** on five-channel Kraken input at 527 MHz and 2.4 MS/s, a native
+±40 kHz, 200 ms GPU run averaged **143.9 ms** (p95 273.0 ms; 2/32 misses), with
+both clutter and delay–Doppler GPU stages active. This is a live capacity result,
+not a matched upstream speed comparison.
+
 ## Wide Doppler for higher-frequency experiments
 
 | Recorded-IQ capacity workload | GPU mean | CPI | Range window |

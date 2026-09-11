@@ -115,6 +115,33 @@ experiments with higher-frequency illuminators, including satellite-TV and LEO
 downlinks. It is only a processing result. For broader passive-radar context,
 see the [Fraunhofer publication](https://publica.fraunhofer.de/entities/publication/9f079ad1-1f9e-4f87-a228-eeb7a5e67332).
 
+## Native live processor
+
+Seven short native runs used live five-channel Kraken input at 527 MHz and
+2.4 MS/s on Strix (eight physical CPUs, 800% CPU budget). Each run has 40
+frames with eight startup frames excluded. These runs include actual receiver
+ingress and the native processor timer; they are not matched RF comparisons
+between modes, so the paired-replay tables remain the upstream speed evidence.
+
+| Live workload | Mode | Mean ms | p95 ms | Max ms | Misses |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Pair, ±2400 Hz, 200 ms CPI | CPU | 148.562 | 155.363 | 158.890 | 0/32 |
+| Pair, ±2400 Hz, 200 ms CPI | GPU | **78.873** | 116.978 | 168.670 | 0/32 |
+| Five-channel array, ±800 Hz, 200 ms CPI | CPU | 177.468 | 183.653 | 191.390 | 0/32 |
+| Five-channel array, ±800 Hz, 200 ms CPI | GPU | **95.540** | 152.172 | 229.740 | 2/32 |
+| Pair, ±4000 Hz, 200 ms CPI | GPU | **113.536** | 161.797 | 226.080 | 2/32 |
+| Pair, ±40 kHz, 200 ms CPI | GPU | **143.872** | 272.957 | 458.600 | 2/32 |
+| Pair, ±4000 Hz, 1 s CPI, full 256 delay bins | GPU | **564.663** | 789.005 | 1092.320 | 2/32 |
+
+Every GPU run recorded 30 GPU-backed clutter frames and two CPU oracle frames;
+the forced GPU delay–Doppler stage was also active. The processor caught up from
+startup backlog, so observed arrival intervals can briefly be shorter than the
+requested CPI. The receiver does not expose a sample/drop counter, therefore
+these timings do not prove loss-free acquisition. Campaign peak temperatures
+were 77.125°C CPU and 72.875°C GPU. The restoration receipt confirms that the
+production configuration and CPU limits were unchanged and the receiver was
+stopped afterward.
+
 ## What was compared
 
 - **Baseline:** unmodified `30hours/blah2` commit

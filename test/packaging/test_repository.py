@@ -31,6 +31,7 @@ class HomepageTests(unittest.TestCase):
                          '240.1 ms',
                          '239.5 ms', '127.8 ms', '308.1 ms', '303.2 ms',
                          '174.6 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
+                         'Live five-channel proof', '143.9 ms', '2/32 misses',
                          'Same recorded IQ at its original rate', 'Same CPU budget',
                          '23 of 24', 'Periodic accuracy checks',
                          'clutter FFT/filtering', 'small FP64 coefficient solve',
