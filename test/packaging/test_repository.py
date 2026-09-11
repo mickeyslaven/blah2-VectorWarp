@@ -59,14 +59,20 @@ class HomepageTests(unittest.TestCase):
         # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('first signed APT/DNF release is being prepared', readme)
-        self.assertIn('times signal processing during replay at the original sample rate', readme)
-        self.assertIn('same CPU allocation', readme)
+        self.assertIn('replaying the same recorded signal at its original rate', readme)
+        self.assertIn('same CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
         self.assertIn('source builds with the receiver', readme)
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
-                      '**239 ms**', '**162 ms**', '**32%**', '**19%**',
-                      'Regular blah2 cannot safely process that configuration because of its buffer sizing.'):
+                      'clutter FFT/filtering', 'Periodic accuracy checks',
+                      'docs/GPU_BENCHMARK_20260911.md',
+                      'upstream processor cannot safely represent'):
             self.assertIn(claim, readme)
+        # Numeric findings belong to the linked report rather than an old
+        # README headline; editorial changes must not resurrect obsolete runs.
+        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
+        self.assertIn('c821bee3f0d27cf20c8447f3d908ef722905a4de', report)
+        self.assertIn('1e-4', report)
         self.assertTrue((ROOT / 'html/favicon/vectorwarp-vw.svg').is_file())
         for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
             document = ROOT / name
