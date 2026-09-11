@@ -1,0 +1,9 @@
+case,variant,repeats,steady_frames,mean_ms,p95_ms,deadline_misses,gpu_frames_per_run,cpu_frames_per_run,clutter_ms,ambiguity_ms,detection_ms,peak_rss_kib,map_rms_max,map_peak_max
+pair-standard,regular-blah2,2,24,84.948,87.656,0,0,20,24.629,36.647,6.483,200976,0,0
+pair-standard,vectorwarp-cpu,2,24,78.041,81.215,0,0,20,21.362,33.672,5.129,185112,0,0
+pair-standard,vectorwarp-auto,2,24,41.666,65.050,0,11,9,11.855,9.423,5.123,215584,0.000005750,0.000030928
+pair-wide,regular-blah2,2,24,138.792,145.715,0,0,20,22.076,63.558,18.861,204188,0,0
+pair-wide,vectorwarp-cpu,2,24,132.946,137.053,0,0,20,21.625,59.942,15.544,188576,0,0
+pair-wide,vectorwarp-auto,2,24,74.856,104.709,0,11,9,11.227,15.211,15.173,219240,0.000004505,0.000030864
+array-standard,vectorwarp-cpu,2,24,175.815,181.704,0,0,20,87.543,43.668,5.113,625660,0,0
+array-standard,vectorwarp-auto,2,24,100.995,153.755,2,11,9,28.375,30.599,5.095,739152,0.000008327,0.000025895

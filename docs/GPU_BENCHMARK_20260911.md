@@ -60,6 +60,24 @@ as unavailable, rather than accepting a false zero; once the device was active,
 every recorded guard observation was fresh. This is bounded campaign evidence,
 not an endurance or thermal-margin claim.
 
+## Strix: matched replay with more CPU capacity
+
+Strix used eight physical CPUs (0–7), an 800% CPU budget and 12 GiB memory.
+These results are useful capacity evidence for that host; they are not a
+cross-host ranking of GPUs or CPUs.
+
+| 200 ms CPI workload | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU | GPU deadline misses |
+| --- | ---: | ---: | ---: | ---: |
+| Pair, ±800 Hz | 84.948 | 78.041 | **41.666** | 0/24 |
+| Pair, ±2400 Hz | 138.792 | 132.946 | **74.856** | 0/24 |
+| Five-channel array, ±800 Hz | No equivalent upstream mode | 175.815 | **100.995** | 2/24 |
+
+Pair runs used one worker/eight FFT threads; the array used four workers/two
+FFT threads. The same input, source baseline and 12-frame steady-window method
+apply. GPU maps passed the same 1e-4 relative RMS/peak acceptance tolerance;
+they are not bit-exact outputs and this timing campaign does not claim identical
+detection SNR.
+
 ## What was compared
 
 - **Baseline:** unmodified `30hours/blah2` commit

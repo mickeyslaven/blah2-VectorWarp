@@ -41,10 +41,10 @@ renderers such as lavapipe are not treated as GPUs.
 
 On the tested RTX 4050 Laptop, the GPU reduced a matched 200 ms, ±800 Hz
 recorded-IQ replay from 240.118 ms/CPI in regular blah2 to 127.770 ms/CPI in
-VectorWarp: 46.8% less processing time. This is a measured delay–Doppler
-benefit, not a claim that the whole radar pipeline is on the GPU or that every
-profile meets a 200 ms deadline. The [GPU benchmark report](GPU_BENCHMARK_20260911.md)
-has the full comparison, accuracy checks, deadline counts and method.
+VectorWarp: 46.8% less processing time. It accelerates clutter FFT/filtering
+and delay–Doppler work; the small FP64 coefficient solve and other pipeline
+stages remain CPU work. The [GPU benchmark report](GPU_BENCHMARK_20260911.md)
+has the comparison, accuracy checks, deadline counts and method.
 
 ## Drivers and older hardware
 
