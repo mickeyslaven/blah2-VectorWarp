@@ -44,11 +44,20 @@ class HomepageTests(unittest.TestCase):
         # The front page selects examples; the linked report must keep the
         # full comparison, including slower configurations and test boundaries.
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
-        for required in ('240.118', '127.770', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
-                         '1e-4', '30.604 km', 'Equal-range wide-Doppler rerun',
-                         'not a live radar or\nendurance test',
-                         'not bit-exact outputs'):
+        for required in ('218.679', '109.153', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
+                         '1e-4', '30.604 km', '41 paired groups',
+                         'not an\nendurance test', 'not bit-exact output',
+                         '16/24', 'future\nwork'):
             self.assertIn(required, report)
+        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-equal-range/comparison.json').read_text())
+        self.assertEqual(len(cohort['rows']), 41)
+        for row in cohort['rows']:
+            self.assertEqual(row['delay_bins'], 256)
+            self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
+            self.assertEqual(row['frames'], 24)
+            self.assertIn(f"{row['mean_ms']:.3f}", report)
+            self.assertIn(f"{row['p95_ms']:.3f}", report)
+            self.assertIn(f"{row['deadline_misses']}/24", report)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
@@ -64,7 +73,7 @@ class HomepageTests(unittest.TestCase):
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('first signed APT/DNF release is being prepared', readme)
         self.assertIn('replaying the same recorded signal at its original rate', readme)
-        self.assertIn('same CPU budget', readme)
+        self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
         self.assertIn('one package', readme.lower())
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',

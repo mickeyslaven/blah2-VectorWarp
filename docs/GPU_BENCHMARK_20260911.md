@@ -2,14 +2,14 @@
 
 ## Result
 
-This is the current, like-for-like replay comparison. Every row uses the same
-four seconds of recorded IQ (SHA-256
+This is the current, like-for-like replay comparison. Each matched pair uses
+the same samples from one 20.002-second recording (SHA-256
 `1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa`), at
 527 MHz and 2.4 MS/s, with delays −10…245 (256 bins, maximum excess path
 30.604 km) and clutter −10…200. GPU acceleration substantially reduces the
-tested ambiguity-processing time; CPU-only differences are usually small.
+tested pipeline processing time; CPU-only differences are usually small.
 
-The direct comparison below is against unmodified
+The direct comparison below uses the original DSP from
 [`30hours/blah2` `c821bee3`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de).
 All figures are ms/CPI (lower is better). P95 is pooled across the 24 steady
 CPIs for that row; misses are steady CPI deadlines.
@@ -95,6 +95,9 @@ paced from the recording sample clock, not live RF or browser timing. The 82
 timed runs (41 paired groups, 1,640 complete CPIs) passed processing acceptance;
 all GPU complex maps were within `1e-4` of the CPU reference. That validates
 the tested maps, not bit-exact output or identical detection SNR.
+Each repeat consumes two seconds for a 100 ms CPI, four seconds for a 200 ms
+CPI, or twenty seconds for a one-second CPI. These short runs are not an
+endurance test.
 
 The campaign used the v8 source freeze
 `8ceb110d4b71854a653789696b17fd7a57a318ab58f6c27212f9899422b666c3`.
@@ -106,6 +109,8 @@ remain CPU work.
 The complete 41-group summaries and provenance are retained in
 [`docs/benchmarks/20260911-equal-range/comparison.csv`](benchmarks/20260911-equal-range/comparison.csv)
 and [`comparison.json`](benchmarks/20260911-equal-range/comparison.json).
+[Exact settings, hardware, CPU limits and reproduction](benchmarks/20260911-equal-range/README.md)
+accompany every per-frame receipt.
 Earlier mixed-window results remain available as
 [archival evidence](benchmarks/20260911/); they are not used in any current
 comparison table. Exact wider-Doppler CAF at the full delay range is future
