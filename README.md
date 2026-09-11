@@ -54,16 +54,15 @@ The first signed APT/DNF release is being prepared. Start with the
 
 ## OS support
 
-Package targets cover **x86-64 (amd64 / x86_64)** and
-**ARM64 (arm64 / aarch64)**:
+Package targets use the native architecture names shown below:
 
-| System | Package target |
-| --- | --- |
-| Ubuntu | 22.04, 24.04, 26.04 — DEB |
-| Debian | 13 (Trixie) — DEB |
-| Fedora | 44 — RPM |
-| DragonOS | Matching Ubuntu-base DEB |
-| Raspberry Pi OS | 64-bit Trixie — Debian 13 ARM64 DEB |
+| Operating system | Versions | Architectures | Package |
+| --- | --- | --- | --- |
+| Ubuntu | 22.04, 24.04, 26.04 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | DEB for the matching Ubuntu version |
+| Debian | 13 (Trixie) | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Debian 13 DEB |
+| Fedora | 44 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Fedora 44 RPM |
+| DragonOS | Ubuntu 22.04, 24.04, or 26.04 base | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Matching Ubuntu DEB selected from OS metadata |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 (arm64 / aarch64) | Debian 13 ARM64 DEB |
 
 [Platform and installation notes](docs/INSTALL.md)
 

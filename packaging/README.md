@@ -1,10 +1,11 @@
 # Native release packaging
 
 Packages are **not published**. This directory describes the release build for
-Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 and ARM64.
-Ubuntu/Debian produce DEBs; Fedora produces RPMs. DragonOS selects a matching
-Ubuntu repository only when its OS metadata matches, and Raspberry Pi OS Trixie
-selects Debian 13 ARM64. Neither is a separate image or hardware validation.
+Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)
+and ARM64 (arm64 / aarch64). Ubuntu/Debian produce DEBs; Fedora produces RPMs.
+DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
+and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
+or hardware validation.
 
 Published packages are Kraken-only: they support live Kraken/Heimdall input and
 all replay formats. They do not install Kraken USB drivers or Heimdall. Live

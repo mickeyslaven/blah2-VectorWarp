@@ -4,9 +4,9 @@ Signed packages are planned but **not published**. When the first release is
 announced, use this guide; until then use the [source build](SETUP.md).
 
 Planned packages support Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on
-x86-64 and ARM64. DragonOS may use the matching Ubuntu package when its OS
-metadata matches; it is not a separately validated DragonOS image. See
-[DragonOS notes](DRAGONOS.md).
+x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). DragonOS may use the
+matching Ubuntu package when its OS metadata matches; it is not a separately
+validated DragonOS image. See [DragonOS notes](DRAGONOS.md).
 
 ## Raspberry Pi
 
