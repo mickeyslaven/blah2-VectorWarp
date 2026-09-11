@@ -38,8 +38,24 @@ and adsb2dd PRs to the actual implementation and regression coverage.
 
 ## Performance wording
 
-Use the [recorded-IQ report](RECORDED_IQ_BENCHMARK.md), including its frozen source
-hashes. In that campaign, the RTX 4050 Laptop's matching two-channel AUTO median
+Use the [current per-CPI report](PER_CPI_BENCHMARK_20260910.md) for the latest
+matched measurements. At 200 ms CPI / ±800 Hz on the RTX 4050 Laptop, the median
+of three warm-run means was 228.11 ms upstream CPU, 223.91 ms VectorWarp CPU,
+164.72 ms AUTO and 163.38 ms explicit GPU. GPU used 28.4% less processing time
+than upstream under the same four-core/four-FFT-thread controls. Explicit GPU
+missed 0/51 warm deadlines; upstream missed 50/51. Wider and shorter-CPI tests
+still missed deadlines. Corrected edge detections, SNR and track association
+mean upstream outputs are not universally identical; VectorWarp CPU/GPU saved
+outputs agreed. No CPU-only or Pi speedup claim is established.
+
+A separate actual-processor timing check at the standard setting measured
+239.46 ms CPU versus 180.31 ms GPU, with 17/17 versus 1/17 warm deadline misses.
+That is VectorWarp sample-rate-paced replay, not an upstream full-application
+comparison or live RF verification. Do not substitute offline DSP times for
+the processor timing stream or promise sustained acquisition from a short run.
+
+The earlier [recorded-IQ report](RECORDED_IQ_BENCHMARK.md) retains its frozen source
+hashes. In that earlier campaign, the RTX 4050 Laptop's matching two-channel AUTO median
 was 1.305× upstream CPU throughput. Its five-channel GPU profile was slower than
 fork CPU. Strix and HP results are partial thermal-stop observations, not full
 replicated matrices. Those measurements predate later math/recording/selection

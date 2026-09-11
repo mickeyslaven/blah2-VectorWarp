@@ -39,9 +39,11 @@ pull-request branches are not rewritten by this integration.
 - Automatic GPU selection checks sustained frame costs, including input retirement,
   and returns to CPU when the GPU no longer beats the qualification baseline.
 
-Focused C++ and Node tests cover these changes. The recorded-IQ performance
-campaign used frozen earlier source, so its numbers do **not** benchmark these
-later repairs. See [the benchmark report](RECORDED_IQ_BENCHMARK.md).
+Focused C++ and Node tests cover these changes. The
+[current per-CPI campaign](PER_CPI_BENCHMARK_20260910.md) measures the processing
+path containing these repairs and classifies the observed upstream differences.
+It does not isolate a speed improvement from each correctness patch. The
+[earlier benchmark](RECORDED_IQ_BENCHMARK.md) remains frozen historical evidence.
 
 ADS-B remains a display/evaluation overlay, never a detection or tracking input.
 These repairs do not establish bearing reliability or prove tracker accuracy on

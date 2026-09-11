@@ -23,6 +23,24 @@ repository = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(repository)
 
 
+class HomepageTests(unittest.TestCase):
+    def test_timing_claims_keep_their_scope(self):
+        page = repository.repository_homepage()
+        for required in ("200 ms CPI, ±800 Hz", "228", "163", "50/51", "0/51",
+                         "Three-repeat instrumented DSP", "same laptop",
+                         "not live RF", "17/17 versus 1/17", "missed deadlines",
+                         "PER_CPI_BENCHMARK_20260910.md"):
+            self.assertIn(required, page)
+
+    def test_page_has_accessible_layout_and_current_repository(self):
+        page = repository.repository_homepage()
+        for required in ('lang="en"', 'name="viewport"', '<caption>',
+                         'scope="col"', 'scope="row"', 'overflow-x:auto',
+                         'tabindex="0"', 'blah2-VectorWarp#install-on-linux',
+                         'https://github.com/30hours/blah2'):
+            self.assertIn(required, page)
+
+
 class ManifestTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="vectorwarp-manifest-test-")

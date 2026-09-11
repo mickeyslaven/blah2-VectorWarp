@@ -18,6 +18,34 @@ the host, configuration and workload.
   or a remote tar1090 endpoint. ADS-B never informs
   detection or tracking.
 
+## Processing performance
+
+On an RTX 4050 Laptop, VectorWarp GPU used **28% less processing time per CPI**
+than upstream blah2 in the matched 200 ms / ±800 Hz test: **163 vs 228 ms/CPI**.
+At that setting the GPU finished all 51 measured warm frames within the 200 ms
+budget; upstream exceeded it in 50. Lower milliseconds means more processing
+headroom—not a guarantee for every radio, computer or configuration.
+
+| CPI / Doppler span | Upstream CPU | VectorWarp CPU | VectorWarp GPU |
+| --- | ---: | ---: | ---: |
+| 200 ms / ±800 Hz | 228 ms/CPI | 224 ms/CPI | 163 ms/CPI |
+| 200 ms / ±1200 Hz | 247 ms/CPI | 244 ms/CPI | 186 ms/CPI |
+| 50 ms / ±1600 Hz | 79 ms/CPI | 86 ms/CPI | 59 ms/CPI |
+
+These are three-repeat instrumented DSP measurements on the **same laptop**,
+using identical real recorded IQ, settings, one reference/surveillance pair,
+four CPU cores and four FFT threads. The ±1200 Hz GPU test still missed 3/51
+deadlines; the 50 ms test did not keep up. CPU-only and Pi tests do not establish
+a reliable speedup. Upstream output differences from documented detection and
+tracking fixes are disclosed in the [full results](docs/PER_CPI_BENCHMARK_20260910.md).
+
+Separately, the **actual VectorWarp processor's CPI timing stream** measured
+239 ms on CPU versus 180 ms on GPU in sample-rate-paced replay of the same
+200 ms / ±800 Hz setup. GPU missed 1/17 warm deadlines, CPU 17/17. This includes
+the application's processing/output path, but **is not a live-radio test** or
+an upstream full-application comparison. See the report for startup costs,
+deadline counts, provenance and limitations.
+
 ### Verification
 
 Automated coverage includes 2–8-channel parsing/unit/replay cases, API/browser
@@ -146,11 +174,12 @@ selectable in this fork.
 - [DragonOS package-selection notes](docs/DRAGONOS.md)
 - [Advanced source build and receiver setup](docs/SETUP.md)
 - [GPU acceleration](docs/GPU_ACCELERATION.md)
-- [Recorded-IQ benchmark](docs/RECORDED_IQ_BENCHMARK.md)
+- [Current per-CPI timings and processing limits](docs/PER_CPI_BENCHMARK_20260910.md)
+- [Earlier recorded-IQ benchmark](docs/RECORDED_IQ_BENCHMARK.md)
 - [Upstream comparison, math audit and validation evidence](docs/UPSTREAM_COMPARISON.md)
 - [Maintainer release guide](docs/MAINTAINER_RELEASE.md)
 
-The recorded-IQ benchmark is frozen evidence from before later detector/math
+The earlier recorded-IQ benchmark is frozen evidence from before later detector/math
 fixes; it is useful baseline data, not a claim that those later fixes were
 measured by that run.
 

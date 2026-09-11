@@ -1,0 +1,1898 @@
+{
+  "schema": 1,
+  "timing": "native processor cpi field in sample-rate-paced replay; not live RF",
+  "runs": [
+    {
+      "evidence": "sample-rate-paced full-processor replay; not live RF acquisition",
+      "sourceSha": "e17a017e7f536e02ba560b64320848ddefd21252",
+      "packageSha256": "91b03395bcb37897fdd224db1cca5fcb38947e519fbd77aaa147d9ded8c58715",
+      "binarySha256": "10cc2ce0dee34803b2a658caed9476d20b7088728d58fbeec61862f05f6bda40",
+      "binary": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native/bin/blah2",
+      "input": {
+        "format": "MCHQ-Heimdall-v2",
+        "synthetic": false,
+        "sha256": "89bfe1c338995167946b7c367b80480143b60a515d9eabde39380bcc48e03a5d",
+        "sampleRate": 2400000,
+        "channels": 5,
+        "frequency": 527000000,
+        "trailingSamples": 1024,
+        "frames": 20,
+        "cpiMs": 200.0,
+        "recordingDurationMs": 4000.0
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -800,
+        "doppler_max": 800,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "name": "standard-200"
+      },
+      "nativeConfig": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ]
+          },
+          "replay": {
+            "state": true,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native-20cpi.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "cpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -800,
+            "dopplerMax": 800
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 38783,
+            "map": 46507,
+            "detection": 46093,
+            "track": 33775,
+            "timestamp": 34065,
+            "timing": 41791,
+            "iqdata": 39301
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4"
+        }
+      },
+      "nativeFixedSettings": {
+        "roundHamming": true,
+        "spectrumBandwidthHz": 2000
+      },
+      "controls": {
+        "surveillanceWorkers": 1,
+        "fftThreads": 4,
+        "acceleration": "cpu",
+        "gpuDevicePin": "4318:10401:0"
+      },
+      "timing": {
+        "frames": 20,
+        "coldMs": 316.31,
+        "warmMeanMs": 239.5863157894737,
+        "warmP95Ms": 269.023,
+        "warmP99Ms": 301.8766,
+        "warmMaxMs": 310.09,
+        "warmDeadlineMisses": 19,
+        "steadyStartFrame": 3,
+        "steadyFrames": 17,
+        "steadyMeanMs": 239.45705882352942,
+        "steadyP95Ms": 273.58599999999996,
+        "steadyP99Ms": 302.7892,
+        "steadyMaxMs": 310.09,
+        "steadyDeadlineMisses": 17
+      },
+      "stageTiming": {
+        "ambiguity_processing": {
+          "warmMeanMs": 92.58157894736843,
+          "warmP95Ms": 129.99300000000002,
+          "warmMaxMs": 150.36
+        },
+        "clutter_filter": {
+          "warmMeanMs": 79.14526315789473,
+          "warmP95Ms": 95.243,
+          "warmMaxMs": 96.26
+        },
+        "cpi": {
+          "warmMeanMs": 239.5863157894737,
+          "warmP95Ms": 269.023,
+          "warmMaxMs": 310.09
+        },
+        "detector": {
+          "warmMeanMs": 13.666315789473686,
+          "warmP95Ms": 15.278000000000002,
+          "warmMaxMs": 16.61
+        },
+        "extract_buffer": {
+          "warmMeanMs": 16.912105263157894,
+          "warmP95Ms": 21.677,
+          "warmMaxMs": 22.28
+        },
+        "output_radar_data": {
+          "warmMeanMs": 22.906315789473684,
+          "warmP95Ms": 24.383000000000003,
+          "warmMaxMs": 25.58
+        },
+        "reference_synthesis": {
+          "warmMeanMs": 0.0,
+          "warmP95Ms": 0.0,
+          "warmMaxMs": 0.0
+        },
+        "spectrum": {
+          "warmMeanMs": 14.084736842105263,
+          "warmP95Ms": 20.128000000000004,
+          "warmMaxMs": 21.46
+        },
+        "tracker": {
+          "warmMeanMs": 0.2573684210526316,
+          "warmP95Ms": 0.5160000000000001,
+          "warmMaxMs": 0.57
+        }
+      },
+      "pacing": {
+        "launchToCompleteMs": 7686.264460906386,
+        "launchToFirstTimingMs": 2645.824735984206,
+        "statusSamples": 9,
+        "maxRelativeLagMs": 549.3339103362463,
+        "finalRelativeLagMs": 549.3339103362463,
+        "frameTimestampIntervalMeanMs": 244.73684210526315,
+        "frameTimestampIntervalP95Ms": 310.7,
+        "timingArrivalIntervalMeanMs": 239.67348347344486,
+        "timingArrivalIntervalP95Ms": 269.1251384094358,
+        "finalFrameScheduleDriftMs": 850.0,
+        "maxFrameScheduleDriftMs": 850.0,
+        "statusCadenceNote": "coarse ~500 ms processor status cadence"
+      },
+      "captureStatus": {
+        "input": "replay",
+        "receiver": "Kraken",
+        "state": "complete",
+        "error": "",
+        "file": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native-20cpi.mchq",
+        "sampleRate": 2400000,
+        "frequency": 527000000,
+        "positionSamples": 9601024,
+        "totalSamples": 9601024,
+        "loops": 0,
+        "trailingSamples": 1024,
+        "recording": false,
+        "recordingFile": "",
+        "recordingError": "",
+        "recordedSamples": 0,
+        "recordingRequestId": 0
+      },
+      "nativeTiming": [
+        {
+          "timestamp": 1789084462193,
+          "nCpi": 1,
+          "uptime_s": 0.2,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 64.3,
+          "reference_synthesis": 0.0,
+          "spectrum": 21.64,
+          "clutter_filter": 83.93,
+          "ambiguity_processing": 111.22,
+          "detector": 13.09,
+          "tracker": 0.03,
+          "output_radar_data": 22.08,
+          "cpi": 316.31
+        },
+        {
+          "timestamp": 1789084462510,
+          "nCpi": 2,
+          "uptime_s": 0.51,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.24,
+          "reference_synthesis": 0.0,
+          "spectrum": 16.92,
+          "clutter_filter": 69.4,
+          "ambiguity_processing": 103.73,
+          "detector": 13.15,
+          "tracker": 0.05,
+          "output_radar_data": 22.56,
+          "cpi": 242.07
+        },
+        {
+          "timestamp": 1789084462752,
+          "nCpi": 3,
+          "uptime_s": 0.76,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.18,
+          "reference_synthesis": 0.0,
+          "spectrum": 15.61,
+          "clutter_filter": 75.05,
+          "ambiguity_processing": 96.89,
+          "detector": 13.22,
+          "tracker": 0.06,
+          "output_radar_data": 22.26,
+          "cpi": 239.3
+        },
+        {
+          "timestamp": 1789084462991,
+          "nCpi": 4,
+          "uptime_s": 1.0,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.19,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.36,
+          "clutter_filter": 70.84,
+          "ambiguity_processing": 127.73,
+          "detector": 13.58,
+          "tracker": 0.07,
+          "output_radar_data": 22.67,
+          "cpi": 261.48
+        },
+        {
+          "timestamp": 1789084463253,
+          "nCpi": 5,
+          "uptime_s": 1.26,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.73,
+          "reference_synthesis": 0.0,
+          "spectrum": 11.32,
+          "clutter_filter": 96.26,
+          "ambiguity_processing": 150.36,
+          "detector": 13.09,
+          "tracker": 0.08,
+          "output_radar_data": 22.22,
+          "cpi": 310.09
+        },
+        {
+          "timestamp": 1789084463563,
+          "nCpi": 6,
+          "uptime_s": 1.57,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.03,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.91,
+          "clutter_filter": 70.31,
+          "ambiguity_processing": 78.48,
+          "detector": 13.29,
+          "tracker": 0.1,
+          "output_radar_data": 25.58,
+          "cpi": 214.73
+        },
+        {
+          "timestamp": 1789084463778,
+          "nCpi": 7,
+          "uptime_s": 1.78,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.82,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.49,
+          "clutter_filter": 70.86,
+          "ambiguity_processing": 79.18,
+          "detector": 13.16,
+          "tracker": 0.12,
+          "output_radar_data": 23.43,
+          "cpi": 213.09
+        },
+        {
+          "timestamp": 1789084463991,
+          "nCpi": 8,
+          "uptime_s": 2.0,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 17.21,
+          "reference_synthesis": 0.0,
+          "spectrum": 14.78,
+          "clutter_filter": 82.75,
+          "ambiguity_processing": 87.95,
+          "detector": 13.21,
+          "tracker": 0.14,
+          "output_radar_data": 22.3,
+          "cpi": 238.37
+        },
+        {
+          "timestamp": 1789084464229,
+          "nCpi": 9,
+          "uptime_s": 2.23,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.87,
+          "reference_synthesis": 0.0,
+          "spectrum": 12.26,
+          "clutter_filter": 79.87,
+          "ambiguity_processing": 90.29,
+          "detector": 13.51,
+          "tracker": 0.17,
+          "output_radar_data": 22.15,
+          "cpi": 234.16
+        },
+        {
+          "timestamp": 1789084464464,
+          "nCpi": 10,
+          "uptime_s": 2.47,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.01,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.43,
+          "clutter_filter": 84.86,
+          "ambiguity_processing": 76.97,
+          "detector": 13.24,
+          "tracker": 0.22,
+          "output_radar_data": 22.35,
+          "cpi": 224.11
+        },
+        {
+          "timestamp": 1789084464688,
+          "nCpi": 11,
+          "uptime_s": 2.69,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.88,
+          "reference_synthesis": 0.0,
+          "spectrum": 21.46,
+          "clutter_filter": 73.84,
+          "ambiguity_processing": 74.26,
+          "detector": 13.08,
+          "tracker": 0.21,
+          "output_radar_data": 22.25,
+          "cpi": 221.01
+        },
+        {
+          "timestamp": 1789084464909,
+          "nCpi": 12,
+          "uptime_s": 2.91,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.03,
+          "reference_synthesis": 0.0,
+          "spectrum": 17.03,
+          "clutter_filter": 70.37,
+          "ambiguity_processing": 84.13,
+          "detector": 16.61,
+          "tracker": 0.28,
+          "output_radar_data": 24.0,
+          "cpi": 228.49
+        },
+        {
+          "timestamp": 1789084465137,
+          "nCpi": 13,
+          "uptime_s": 3.14,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 17.05,
+          "reference_synthesis": 0.0,
+          "spectrum": 12.67,
+          "clutter_filter": 80.29,
+          "ambiguity_processing": 94.45,
+          "detector": 15.03,
+          "tracker": 0.37,
+          "output_radar_data": 24.05,
+          "cpi": 243.93
+        },
+        {
+          "timestamp": 1789084465381,
+          "nCpi": 14,
+          "uptime_s": 3.39,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 22.28,
+          "reference_synthesis": 0.0,
+          "spectrum": 11.9,
+          "clutter_filter": 94.97,
+          "ambiguity_processing": 75.26,
+          "detector": 13.43,
+          "tracker": 0.32,
+          "output_radar_data": 22.73,
+          "cpi": 240.93
+        },
+        {
+          "timestamp": 1789084465622,
+          "nCpi": 15,
+          "uptime_s": 3.63,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 21.61,
+          "reference_synthesis": 0.0,
+          "spectrum": 19.48,
+          "clutter_filter": 73.3,
+          "ambiguity_processing": 76.17,
+          "detector": 13.41,
+          "tracker": 0.34,
+          "output_radar_data": 22.31,
+          "cpi": 226.66
+        },
+        {
+          "timestamp": 1789084465849,
+          "nCpi": 16,
+          "uptime_s": 3.85,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.86,
+          "reference_synthesis": 0.0,
+          "spectrum": 15.43,
+          "clutter_filter": 80.52,
+          "ambiguity_processing": 114.68,
+          "detector": 15.13,
+          "tracker": 0.38,
+          "output_radar_data": 22.42,
+          "cpi": 264.46
+        },
+        {
+          "timestamp": 1789084466114,
+          "nCpi": 17,
+          "uptime_s": 4.12,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 16.28,
+          "reference_synthesis": 0.0,
+          "spectrum": 17.61,
+          "clutter_filter": 95.13,
+          "ambiguity_processing": 85.18,
+          "detector": 13.79,
+          "tracker": 0.44,
+          "output_radar_data": 24.25,
+          "cpi": 252.71
+        },
+        {
+          "timestamp": 1789084466366,
+          "nCpi": 18,
+          "uptime_s": 4.37,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 18.12,
+          "reference_synthesis": 0.0,
+          "spectrum": 19.98,
+          "clutter_filter": 84.2,
+          "ambiguity_processing": 91.61,
+          "detector": 13.46,
+          "tracker": 0.46,
+          "output_radar_data": 22.95,
+          "cpi": 250.82
+        },
+        {
+          "timestamp": 1789084466617,
+          "nCpi": 19,
+          "uptime_s": 4.62,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.95,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.67,
+          "clutter_filter": 81.39,
+          "ambiguity_processing": 82.94,
+          "detector": 13.11,
+          "tracker": 0.51,
+          "output_radar_data": 22.33,
+          "cpi": 225.92
+        },
+        {
+          "timestamp": 1789084466843,
+          "nCpi": 20,
+          "uptime_s": 4.85,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "cpu",
+            "active": "cpu",
+            "device": "",
+            "state": "selected",
+            "reason": "",
+            "cpuMs": 0.0,
+            "gpuMs": 0.0
+          },
+          "extract_buffer": 15.99,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.3,
+          "clutter_filter": 69.55,
+          "ambiguity_processing": 88.79,
+          "detector": 13.16,
+          "tracker": 0.57,
+          "output_radar_data": 22.41,
+          "cpi": 219.81
+        }
+      ],
+      "accelerationStatus": [
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        },
+        {
+          "requested": "cpu",
+          "active": "cpu",
+          "device": "",
+          "state": "selected",
+          "reason": "",
+          "cpuMs": 0.0,
+          "gpuMs": 0.0
+        }
+      ],
+      "reportedPostFrameBackendCounts": {
+        "cpu": 20,
+        "vulkan": 0
+      },
+      "acceptedFrameBackend": [
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu",
+        "cpu"
+      ],
+      "acceptedBackendCounts": {
+        "cpu": 20,
+        "vulkan": 0
+      },
+      "backendCaveat": "native timing acceleration is post-frame policy status: the third qualification frame can report Vulkan although CPU owns it, and AUTO can switch after an accepted frame. acceptedFrameBackend is therefore exact only for forced CPU/GPU; AUTO is null",
+      "processorReturnCode": 0,
+      "processorOutputTail": "Surveillance paths=1 workers=1 fft_threads=4 available_cpus=4\nOpening recording\nCPI time (ms): 316.317\nCPI time (ms): 242.076\nCPI time (ms): 239.307\nCPI time (ms): 261.482\nCPI time (ms): 310.098\nCPI time (ms): 214.736\nCPI time (ms): 213.09\nCPI time (ms): 238.371\nCPI time (ms): 234.163\nCPI time (ms): 224.118\nCPI time (ms): 221.015\nCPI time (ms): 228.49\nCPI time (ms): 243.932\nCPI time (ms): 240.933\nCPI time (ms): 226.664\nCPI time (ms): 264.466\nCPI time (ms): 252.718\nCPI time (ms): 250.821\nCPI time (ms): 225.929\nCPI time (ms): 219.811\n"
+    },
+    {
+      "evidence": "sample-rate-paced full-processor replay; not live RF acquisition",
+      "sourceSha": "e17a017e7f536e02ba560b64320848ddefd21252",
+      "packageSha256": "91b03395bcb37897fdd224db1cca5fcb38947e519fbd77aaa147d9ded8c58715",
+      "binarySha256": "10cc2ce0dee34803b2a658caed9476d20b7088728d58fbeec61862f05f6bda40",
+      "binary": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native/bin/blah2",
+      "input": {
+        "format": "MCHQ-Heimdall-v2",
+        "synthetic": false,
+        "sha256": "89bfe1c338995167946b7c367b80480143b60a515d9eabde39380bcc48e03a5d",
+        "sampleRate": 2400000,
+        "channels": 5,
+        "frequency": 527000000,
+        "trailingSamples": 1024,
+        "frames": 20,
+        "cpiMs": 200.0,
+        "recordingDurationMs": 4000.0
+      },
+      "profile": {
+        "sample_rate": 2400000,
+        "frequency": 527000000,
+        "channels": 5,
+        "reference_channel": 0,
+        "surveillance_channel": 1,
+        "cpi": 0.2,
+        "delay_min": -10,
+        "delay_max": 245,
+        "doppler_min": -800,
+        "doppler_max": 800,
+        "clutter_min": -10,
+        "clutter_max": 200,
+        "pfa": 0.0001,
+        "guard_cells": 2,
+        "training_cells": 6,
+        "min_delay": 1,
+        "min_doppler": 5,
+        "centroid_cells": 6,
+        "tracker_m": 12,
+        "tracker_n": 25,
+        "tracker_delete": 40,
+        "tracker_max_acceleration": 0,
+        "reference_analysis_samples": 32768,
+        "reference_analysis_interval": 50,
+        "reference_power_iterations": 12,
+        "reference_covariance_smoothing": 0.8,
+        "reference_diagonal_loading": 0.001,
+        "benchmark_workers": 1,
+        "benchmark_fft_threads": 4,
+        "round_hamming": true,
+        "name": "standard-200"
+      },
+      "nativeConfig": {
+        "capture": {
+          "fs": 2400000,
+          "fc": 527000000,
+          "device": {
+            "type": "Kraken",
+            "channel_count": 5,
+            "reference_channel": 0,
+            "surveillance_channels": [
+              1
+            ]
+          },
+          "replay": {
+            "state": true,
+            "loop": false,
+            "file": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native-20cpi.mchq",
+            "format": "mchq"
+          }
+        },
+        "process": {
+          "performance": {
+            "surveillance_workers": 1,
+            "fft_threads": 4,
+            "acceleration": "gpu"
+          },
+          "data": {
+            "cpi": 0.2,
+            "buffer": 2.0,
+            "overlap": 0
+          },
+          "ambiguity": {
+            "delayMin": -10,
+            "delayMax": 245,
+            "dopplerMin": -800,
+            "dopplerMax": 800
+          },
+          "clutter": {
+            "enable": true,
+            "delayMin": -10,
+            "delayMax": 200
+          },
+          "reference_synthesis": {
+            "mode": "dedicated",
+            "channels": [
+              0
+            ],
+            "analysis_samples": 32768,
+            "analysis_interval": 50,
+            "power_iterations": 12,
+            "covariance_smoothing": 0.8,
+            "diagonal_loading": 0.001
+          },
+          "detection": {
+            "enable": true,
+            "pfa": 0.0001,
+            "nGuard": 2,
+            "nTrain": 6,
+            "minDelay": 1,
+            "minDoppler": 5,
+            "nCentroid": 6
+          },
+          "tracker": {
+            "enable": true,
+            "initiate": {
+              "M": 12,
+              "N": 25,
+              "maxAcc": 0
+            },
+            "delete": 40,
+            "smooth": "none"
+          }
+        },
+        "network": {
+          "ip": "127.0.0.1",
+          "ports": {
+            "api": 44047,
+            "map": 46639,
+            "detection": 38791,
+            "track": 40833,
+            "timestamp": 33107,
+            "timing": 39611,
+            "iqdata": 35587
+          }
+        },
+        "save": {
+          "iq": false,
+          "map": false,
+          "detection": false,
+          "timing": false,
+          "path": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4"
+        }
+      },
+      "nativeFixedSettings": {
+        "roundHamming": true,
+        "spectrumBandwidthHz": 2000
+      },
+      "controls": {
+        "surveillanceWorkers": 1,
+        "fftThreads": 4,
+        "acceleration": "gpu",
+        "gpuDevicePin": "4318:10401:0"
+      },
+      "timing": {
+        "frames": 20,
+        "coldMs": 367.65,
+        "warmMeanMs": 188.20000000000002,
+        "warmP95Ms": 249.91300000000004,
+        "warmP99Ms": 259.5106,
+        "warmMaxMs": 261.91,
+        "warmDeadlineMisses": 3,
+        "steadyStartFrame": 3,
+        "steadyFrames": 17,
+        "steadyMeanMs": 180.31235294117647,
+        "steadyP95Ms": 197.206,
+        "steadyP99Ms": 209.22519999999997,
+        "steadyMaxMs": 212.23,
+        "steadyDeadlineMisses": 1
+      },
+      "stageTiming": {
+        "ambiguity_processing": {
+          "warmMeanMs": 36.09368421052631,
+          "warmP95Ms": 111.84800000000001,
+          "warmMaxMs": 115.97
+        },
+        "clutter_filter": {
+          "warmMeanMs": 86.19315789473684,
+          "warmP95Ms": 106.84200000000001,
+          "warmMaxMs": 112.8
+        },
+        "cpi": {
+          "warmMeanMs": 188.20000000000002,
+          "warmP95Ms": 249.91300000000004,
+          "warmMaxMs": 261.91
+        },
+        "detector": {
+          "warmMeanMs": 14.646315789473682,
+          "warmP95Ms": 18.195000000000007,
+          "warmMaxMs": 22.02
+        },
+        "extract_buffer": {
+          "warmMeanMs": 17.400526315789474,
+          "warmP95Ms": 21.649,
+          "warmMaxMs": 22.63
+        },
+        "output_radar_data": {
+          "warmMeanMs": 22.79263157894737,
+          "warmP95Ms": 24.158,
+          "warmMaxMs": 25.85
+        },
+        "reference_synthesis": {
+          "warmMeanMs": 0.0,
+          "warmP95Ms": 0.0,
+          "warmMaxMs": 0.0
+        },
+        "spectrum": {
+          "warmMeanMs": 10.78,
+          "warmP95Ms": 15.193000000000008,
+          "warmMaxMs": 21.25
+        },
+        "tracker": {
+          "warmMeanMs": 0.2657894736842105,
+          "warmP95Ms": 0.583,
+          "warmMaxMs": 0.61
+        }
+      },
+      "pacing": {
+        "launchToCompleteMs": 7355.919448076747,
+        "launchToFirstTimingMs": 3351.592340040952,
+        "statusSamples": 7,
+        "maxRelativeLagMs": 7.324102301908053,
+        "finalRelativeLagMs": 1.0712576090421422,
+        "frameTimestampIntervalMeanMs": 200.05263157894737,
+        "frameTimestampIntervalP95Ms": 272.60000000000014,
+        "timingArrivalIntervalMeanMs": 190.8677390004557,
+        "timingArrivalIntervalP95Ms": 249.97072455007586,
+        "finalFrameScheduleDriftMs": 1.0,
+        "maxFrameScheduleDriftMs": 278.0,
+        "statusCadenceNote": "coarse ~500 ms processor status cadence"
+      },
+      "captureStatus": {
+        "input": "replay",
+        "receiver": "Kraken",
+        "state": "complete",
+        "error": "",
+        "file": "/var/tmp/vectorwarp-capacity-20260910.VGPFa4/native-20cpi.mchq",
+        "sampleRate": 2400000,
+        "frequency": 527000000,
+        "positionSamples": 9601024,
+        "totalSamples": 9601024,
+        "loops": 0,
+        "trailingSamples": 1024,
+        "recording": false,
+        "recordingFile": "",
+        "recordingError": "",
+        "recordedSamples": 0,
+        "recordingRequestId": 0
+      },
+      "nativeTiming": [
+        {
+          "timestamp": 1789084471721,
+          "nCpi": 1,
+          "uptime_s": 0.2,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "cpu",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "checking",
+            "reason": "Checking GPU accuracy and speed",
+            "cpuMs": 120.35,
+            "gpuMs": 30.3
+          },
+          "extract_buffer": 60.54,
+          "reference_synthesis": 0.0,
+          "spectrum": 22.9,
+          "clutter_filter": 92.21,
+          "ambiguity_processing": 156.16,
+          "detector": 13.56,
+          "tracker": 0.02,
+          "output_radar_data": 22.22,
+          "cpi": 367.65
+        },
+        {
+          "timestamp": 1789084472089,
+          "nCpi": 2,
+          "uptime_s": 0.57,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "cpu",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "checking",
+            "reason": "Checking GPU accuracy and speed",
+            "cpuMs": 120.35,
+            "gpuMs": 30.3
+          },
+          "extract_buffer": 16.86,
+          "reference_synthesis": 0.0,
+          "spectrum": 21.25,
+          "clutter_filter": 77.05,
+          "ambiguity_processing": 111.39,
+          "detector": 13.07,
+          "tracker": 0.05,
+          "output_radar_data": 22.22,
+          "cpi": 261.91
+        },
+        {
+          "timestamp": 1789084472351,
+          "nCpi": 3,
+          "uptime_s": 0.83,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.1,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.34,
+          "clutter_filter": 71.42,
+          "ambiguity_processing": 115.97,
+          "detector": 13.26,
+          "tracker": 0.05,
+          "output_radar_data": 22.4,
+          "cpi": 248.58
+        },
+        {
+          "timestamp": 1789084472599,
+          "nCpi": 4,
+          "uptime_s": 1.08,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.32,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.03,
+          "clutter_filter": 75.39,
+          "ambiguity_processing": 28.02,
+          "detector": 14.25,
+          "tracker": 0.07,
+          "output_radar_data": 25.85,
+          "cpi": 169.96
+        },
+        {
+          "timestamp": 1789084472769,
+          "nCpi": 5,
+          "uptime_s": 1.25,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.62,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.35,
+          "clutter_filter": 85.2,
+          "ambiguity_processing": 22.08,
+          "detector": 13.06,
+          "tracker": 0.08,
+          "output_radar_data": 22.49,
+          "cpi": 168.92
+        },
+        {
+          "timestamp": 1789084472938,
+          "nCpi": 6,
+          "uptime_s": 1.42,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.05,
+          "reference_synthesis": 0.0,
+          "spectrum": 8.83,
+          "clutter_filter": 65.62,
+          "ambiguity_processing": 23.05,
+          "detector": 17.77,
+          "tracker": 0.11,
+          "output_radar_data": 22.48,
+          "cpi": 153.95
+        },
+        {
+          "timestamp": 1789084473092,
+          "nCpi": 7,
+          "uptime_s": 1.57,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 15.95,
+          "reference_synthesis": 0.0,
+          "spectrum": 8.98,
+          "clutter_filter": 72.36,
+          "ambiguity_processing": 22.89,
+          "detector": 15.22,
+          "tracker": 0.12,
+          "output_radar_data": 22.69,
+          "cpi": 158.24
+        },
+        {
+          "timestamp": 1789084473251,
+          "nCpi": 8,
+          "uptime_s": 1.73,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.75,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.22,
+          "clutter_filter": 93.25,
+          "ambiguity_processing": 22.72,
+          "detector": 13.31,
+          "tracker": 0.14,
+          "output_radar_data": 22.26,
+          "cpi": 177.68
+        },
+        {
+          "timestamp": 1789084473429,
+          "nCpi": 9,
+          "uptime_s": 1.91,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.8,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.35,
+          "clutter_filter": 106.18,
+          "ambiguity_processing": 23.32,
+          "detector": 13.69,
+          "tracker": 0.18,
+          "output_radar_data": 22.37,
+          "cpi": 192.92
+        },
+        {
+          "timestamp": 1789084473622,
+          "nCpi": 10,
+          "uptime_s": 2.1,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 17.4,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.31,
+          "clutter_filter": 82.32,
+          "ambiguity_processing": 22.28,
+          "detector": 17.55,
+          "tracker": 0.27,
+          "output_radar_data": 23.97,
+          "cpi": 174.12
+        },
+        {
+          "timestamp": 1789084473796,
+          "nCpi": 11,
+          "uptime_s": 2.27,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 21.51,
+          "reference_synthesis": 0.0,
+          "spectrum": 11.15,
+          "clutter_filter": 78.94,
+          "ambiguity_processing": 23.44,
+          "detector": 13.38,
+          "tracker": 0.2,
+          "output_radar_data": 22.13,
+          "cpi": 170.78
+        },
+        {
+          "timestamp": 1789084473967,
+          "nCpi": 12,
+          "uptime_s": 2.44,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.06,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.24,
+          "clutter_filter": 80.53,
+          "ambiguity_processing": 21.93,
+          "detector": 17.08,
+          "tracker": 0.29,
+          "output_radar_data": 23.58,
+          "cpi": 168.72
+        },
+        {
+          "timestamp": 1789084474135,
+          "nCpi": 13,
+          "uptime_s": 2.61,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 21.54,
+          "reference_synthesis": 0.0,
+          "spectrum": 14.52,
+          "clutter_filter": 112.8,
+          "ambiguity_processing": 27.34,
+          "detector": 13.31,
+          "tracker": 0.3,
+          "output_radar_data": 22.38,
+          "cpi": 212.23
+        },
+        {
+          "timestamp": 1789084474348,
+          "nCpi": 14,
+          "uptime_s": 2.83,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.37,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.83,
+          "clutter_filter": 91.04,
+          "ambiguity_processing": 27.34,
+          "detector": 13.7,
+          "tracker": 0.33,
+          "output_radar_data": 22.27,
+          "cpi": 180.91
+        },
+        {
+          "timestamp": 1789084474529,
+          "nCpi": 15,
+          "uptime_s": 3.01,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.29,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.72,
+          "clutter_filter": 91.53,
+          "ambiguity_processing": 28.99,
+          "detector": 13.24,
+          "tracker": 0.37,
+          "output_radar_data": 22.4,
+          "cpi": 183.56
+        },
+        {
+          "timestamp": 1789084474722,
+          "nCpi": 16,
+          "uptime_s": 3.2,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 22.63,
+          "reference_synthesis": 0.0,
+          "spectrum": 11.89,
+          "clutter_filter": 93.7,
+          "ambiguity_processing": 27.04,
+          "detector": 13.7,
+          "tracker": 0.36,
+          "output_radar_data": 22.38,
+          "cpi": 191.72
+        },
+        {
+          "timestamp": 1789084474923,
+          "nCpi": 17,
+          "uptime_s": 3.4,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.42,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.86,
+          "clutter_filter": 99.91,
+          "ambiguity_processing": 27.42,
+          "detector": 13.24,
+          "tracker": 0.4,
+          "output_radar_data": 22.31,
+          "cpi": 189.59
+        },
+        {
+          "timestamp": 1789084475121,
+          "nCpi": 18,
+          "uptime_s": 3.6,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.48,
+          "reference_synthesis": 0.0,
+          "spectrum": 9.4,
+          "clutter_filter": 80.92,
+          "ambiguity_processing": 38.48,
+          "detector": 22.02,
+          "tracker": 0.61,
+          "output_radar_data": 23.73,
+          "cpi": 191.67
+        },
+        {
+          "timestamp": 1789084475321,
+          "nCpi": 19,
+          "uptime_s": 3.8,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 18.13,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.24,
+          "clutter_filter": 87.01,
+          "ambiguity_processing": 35.38,
+          "detector": 13.1,
+          "tracker": 0.58,
+          "output_radar_data": 22.42,
+          "cpi": 186.89
+        },
+        {
+          "timestamp": 1789084475522,
+          "nCpi": 20,
+          "uptime_s": 4.0,
+          "uptime_days": 0.0,
+          "acceleration": {
+            "requested": "gpu",
+            "active": "vulkan",
+            "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+            "state": "ready",
+            "reason": "",
+            "cpuMs": 92.81,
+            "gpuMs": 17.71
+          },
+          "extract_buffer": 16.33,
+          "reference_synthesis": 0.0,
+          "spectrum": 10.31,
+          "clutter_filter": 92.5,
+          "ambiguity_processing": 36.7,
+          "detector": 14.33,
+          "tracker": 0.54,
+          "output_radar_data": 22.73,
+          "cpi": 193.45
+        }
+      ],
+      "accelerationStatus": [
+        {
+          "requested": "gpu",
+          "active": "cpu",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "checking",
+          "reason": "Checking GPU accuracy and speed",
+          "cpuMs": 120.35,
+          "gpuMs": 30.3
+        },
+        {
+          "requested": "gpu",
+          "active": "cpu",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "checking",
+          "reason": "Checking GPU accuracy and speed",
+          "cpuMs": 120.35,
+          "gpuMs": 30.3
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        },
+        {
+          "requested": "gpu",
+          "active": "vulkan",
+          "device": "NVIDIA GeForce RTX 4050 Laptop GPU",
+          "state": "ready",
+          "reason": "",
+          "cpuMs": 92.81,
+          "gpuMs": 17.71
+        }
+      ],
+      "reportedPostFrameBackendCounts": {
+        "cpu": 2,
+        "vulkan": 18
+      },
+      "acceptedFrameBackend": [
+        "cpu",
+        "cpu",
+        "cpu",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan",
+        "vulkan"
+      ],
+      "acceptedBackendCounts": {
+        "cpu": 3,
+        "vulkan": 17
+      },
+      "backendCaveat": "native timing acceleration is post-frame policy status: the third qualification frame can report Vulkan although CPU owns it, and AUTO can switch after an accepted frame. acceptedFrameBackend is therefore exact only for forced CPU/GPU; AUTO is null",
+      "processorReturnCode": 0,
+      "processorOutputTail": "Surveillance paths=1 workers=1 fft_threads=4 available_cpus=4\nOpening recording\nCPI time (ms): 367.653\nCPI time (ms): 261.919\nAcceleration: Vulkan / NVIDIA GeForce RTX 4050 Laptop GPU\nCPI time (ms): 248.58\nCPI time (ms): 169.969\nCPI time (ms): 168.92\nCPI time (ms): 153.95\nCPI time (ms): 158.245\nCPI time (ms): 177.688\nCPI time (ms): 192.922\nCPI time (ms): 174.121\nCPI time (ms): 170.787\nCPI time (ms): 168.725\nCPI time (ms): 212.233\nCPI time (ms): 180.917\nCPI time (ms): 183.569\nCPI time (ms): 191.723\nCPI time (ms): 189.59\nCPI time (ms): 191.678\nCPI time (ms): 186.894\nCPI time (ms): 193.456\n"
+    }
+  ]
+}

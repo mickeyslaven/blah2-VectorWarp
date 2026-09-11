@@ -35,6 +35,48 @@ RELEASE_TARGETS = {
 }
 
 
+def repository_homepage():
+    """Historical measured results, not a promise about every release/host."""
+    return '''<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VectorWarp — native radar processing</title>
+<style>
+body{font:18px/1.6 system-ui,sans-serif;max-width:52rem;margin:3rem auto;padding:0 1.2rem;color:#252525}
+h1{line-height:1.15}a{color:#9c3900}table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{padding:.65rem;text-align:left;border-bottom:1px solid #ddd}
+caption{text-align:left;font-weight:600;margin-bottom:.5rem}.table-scroll{overflow-x:auto}
+.brand{display:inline-block;background:#ed7b24;color:#171717;padding:.2em .35em;border-radius:.2em}
+</style></head><body>
+<h1><span class="brand">VW</span> VectorWarp</h1>
+<p>Native Linux passive radar with browser setup, recording, replay and optional GPU acceleration.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Installation guide</a>
+ · <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Source and receiver support</a></p>
+<h2>Measured processing headroom</h2>
+<p>In the September 10, 2026 matched test, VectorWarp GPU used 28% less processing
+time per CPI than upstream blah2 on an RTX 4050 Laptop.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Per-CPI benchmark results">
+<table><caption>200 ms CPI, ±800 Hz Doppler — lower is better</caption>
+<thead><tr><th scope="col">Processing path</th><th scope="col">ms/CPI</th><th scope="col">Warm frames over 200 ms</th></tr></thead>
+<tbody><tr><th scope="row">Upstream CPU</th><td>228</td><td>50/51</td></tr>
+<tr><th scope="row">VectorWarp CPU</th><td>224</td><td>44/51</td></tr>
+<tr><th scope="row">VectorWarp GPU</th><td>163</td><td>0/51</td></tr></tbody></table></div>
+<p>Three-repeat instrumented DSP test: identical recorded IQ, settings and
+four-core CPU budget on the same laptop. Wider-Doppler and 50 ms CPI tests
+still missed deadlines. Detection/tracking corrections produce documented
+differences from upstream; CPU-only and Pi tests do not establish a reliable speedup.</p>
+<p>A separate actual VectorWarp processor timing check measured 239 ms/CPI on
+CPU versus 180 ms/CPI on GPU, with 17/17 versus 1/17 warm deadline misses.
+That check used sample-rate-paced replay, not live RF or the upstream full application.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PER_CPI_BENCHMARK_20260910.md">Full results, timing definitions, data and limitations</a></p>
+<h2>Signed Linux packages</h2>
+<p>This repository supplies APT/DNF updates. Read the installation guide to
+choose the package for your operating system and architecture.</p>
+<footer><p>Based on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>.</p></footer>
+</body></html>
+'''
+
+
 def run(command, **kwargs):
     result = subprocess.run(command, capture_output=True, timeout=180,
                             check=False, **kwargs)
@@ -297,9 +339,7 @@ def build(args):
                 raise ValueError("Installer template has no signing-fingerprint placeholder")
             (site / "install.sh").write_text(template.replace("@SIGNING_FINGERPRINT@", fingerprint))
         (site / ".nojekyll").touch()
-        (site / "index.html").write_text('<!doctype html><title>VectorWarp packages</title><h1>VectorWarp packages</h1>'
-            '<p>Signed native Linux packages. See the <a href="https://github.com/mickeyslaven/blah2-VectorWarp">'
-            'installation guide</a> before installing.</p>\n')
+        (site / "index.html").write_text(repository_homepage())
         if sum(file.stat().st_size for file in site.rglob("*") if file.is_file()) > MAX_BYTES:
             raise ValueError("Signed repository exceeds the 900-MiB Pages budget")
         site.rename(output)
