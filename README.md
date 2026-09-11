@@ -35,6 +35,7 @@ mode checks accuracy before retaining GPU work.
 
 | Same recorded IQ, same CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
 | --- | ---: | ---: | ---: |
+| Strix, 200 ms CPI, ±800 Hz | 84.9 ms | 78.0 ms | **41.7 ms** |
 | RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 240.1 ms | 239.5 ms | **127.8 ms** |
 | Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 308.1 ms | 303.2 ms | **174.6 ms** |
 
@@ -45,31 +46,23 @@ intervals while VectorWarp GPU missed 2. Periodic accuracy checks can still
 overrun an interval; [full timing distributions and method](docs/GPU_BENCHMARK_20260911.md)
 are available before sizing a live system.
 
-VectorWarp also completed configurations that the upstream processor cannot
-safely represent: a ±4000 Hz pair took 319.268 ms/CPI on the GPU, while upstream
-was excluded because its Doppler scratch allocation is too small. A five-channel
-array took 302.140 ms/CPI on the GPU. Those workloads are VectorWarp-only, so
-they are capacity results rather than speedups over blah2.
-
 The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its small
 FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
 settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
 ## Wide Doppler for higher-frequency experiments
 
-VectorWarp processed a recorded 527 MHz signal across **±40 kHz** at 100, 200
-and 500 ms CPIs in **87, 171 and 419 ms** on the GPU; a ±20 kHz, one-second CPI
-took **769 ms**. This is demonstrated processing capacity, not a claim that
-every frame meets its deadline: each GPU result had two periodic CPU accuracy
-checks outside its budget.
+| Recorded-IQ capacity workload | GPU mean | CPI | Range window |
+| --- | ---: | ---: | --- |
+| ±40 kHz Doppler | 87 ms | 100 ms | 2.623 km excess path |
+| ±40 kHz Doppler | 171 ms | 200 ms | 2.623 km excess path |
+| ±40 kHz Doppler | 419 ms | 500 ms | 2.623 km excess path |
+| ±20 kHz Doppler | 769 ms | 1 s | 6.620 km excess path |
 
 Higher RF carrier frequencies create larger Doppler shifts for the same motion,
-so this headroom can support experiments with higher-frequency illuminators such
-as satellite-TV or LEO downlinks. It does not add an RF frontend or establish
-support for Starlink, Ku-band IQ, moving-illuminator compensation, link budget,
-or aircraft detection. Doppler span is not receiver bandwidth or carrier
-frequency. The tradeoff is range coverage: ±40 kHz used 32 delay bins (up to
-2.623 km excess path), while ±20 kHz used 64 (up to 6.620 km).
+so this opens processing experiments with higher-frequency illuminators such as
+satellite-TV or LEO downlinks. Doppler span is not receiver bandwidth or carrier
+frequency. Periodic accuracy checks can still overrun an interval.
 
 [Wide-Doppler capacity, tails, and experimental context →](docs/GPU_BENCHMARK_20260911.md#wide-doppler-capacity)
 

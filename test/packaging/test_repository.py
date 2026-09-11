@@ -27,7 +27,8 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ('Matched 200 ms processing workloads', '240.1 ms',
+        for required in ('Matched 200 ms processing workloads', '84.9 ms', '78.0 ms', '41.7 ms',
+                         '240.1 ms',
                          '239.5 ms', '127.8 ms', '308.1 ms', '303.2 ms',
                          '174.6 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
                          'Same recorded IQ at its original rate', 'Same CPU budget',
@@ -69,7 +70,7 @@ class HomepageTests(unittest.TestCase):
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
                       'clutter FFT/filtering', 'Periodic accuracy checks',
                       'docs/GPU_BENCHMARK_20260911.md',
-                      'upstream processor cannot safely represent'):
+                      'Wider Doppler coverage'):
             self.assertIn(claim, readme)
         # Numeric findings belong to the linked report rather than an old
         # README headline; editorial changes must not resurrect obsolete runs.

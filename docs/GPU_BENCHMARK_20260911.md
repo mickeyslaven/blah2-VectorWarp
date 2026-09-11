@@ -105,8 +105,9 @@ for all one-second stress profiles, so no upstream timing is invented here.
 The wide spans deliberately trade range gates for processing size. ±40 kHz uses
 32 delay bins from −10 to 21, up to **2.623 km** excess path. ±20 kHz uses 64
 bins from −10 to 53, up to **6.620 km**. The 1 s ±2400 Hz full-coverage pair
-retains 256 bins (up to **30.604 km** excess path) and measured 551.091 ms GPU
-versus 1005.935 ms VectorWarp CPU; its GPU p95 was 776.886 ms with 2/24 misses.
+retains 256 bins (up to **30.604 km** excess path) and measured 369.693 ms GPU
+versus 694.274 ms VectorWarp CPU; its GPU p95 was 530.474 ms with 0/24 misses.
+The 551.091/1005.935 ms figures belong to the separate ±4000 Hz row.
 
 Higher carrier frequencies cause proportionally larger Doppler shifts for the
 same relative motion. That makes the demonstrated headroom relevant to future
