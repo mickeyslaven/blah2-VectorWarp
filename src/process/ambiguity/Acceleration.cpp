@@ -151,9 +151,9 @@ bool Acceleration::processClutter(const IqData& reference,
     const bool qualifying = clutterChecks_ < ClutterQualificationFrames;
     const bool combinedQualifying = !qualifying &&
       combinedChecks_ < CombinedQualificationFrames;
-    const bool periodicOracle = !qualifying && !combinedQualifying &&
-      clutterAcceptedFrames_ && clutterAcceptedFrames_ % 16 == 0;
-    if (qualifying || combinedQualifying || periodicOracle) {
+    // Full CPU comparisons are startup qualification for this instance's
+    // device and geometry, never recurring work on accepted steady frames.
+    if (qualifying || combinedQualifying) {
       const double cpuStart = now_ms();
       const bool success = runCpu();
       const double cpuMs = now_ms() - cpuStart;
@@ -195,11 +195,9 @@ bool Acceleration::processClutter(const IqData& reference,
           << '\n';
         return true;
       }
-      if (qualifying || combinedQualifying) {
-        clutterCpuTimes_.push_back(cpuMs); clutterGpuTimes_.push_back(gpuMs);
-        clutterStatus_.cpuMs = median(clutterCpuTimes_);
-        clutterStatus_.gpuMs = median(clutterGpuTimes_);
-      }
+      clutterCpuTimes_.push_back(cpuMs); clutterGpuTimes_.push_back(gpuMs);
+      clutterStatus_.cpuMs = median(clutterCpuTimes_);
+      clutterStatus_.gpuMs = median(clutterGpuTimes_);
       if (qualifying && ++clutterChecks_ == ClutterQualificationFrames) {
         if (clutterStatus_.requested == "auto" &&
             clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
@@ -219,17 +217,15 @@ bool Acceleration::processClutter(const IqData& reference,
         for (size_t channel = 0; channel < surveillance.size(); ++channel)
           surveillance[channel]->replace(std::move(candidate[channel]));
         combinedPending_ = true;
-        combinedPeriodic_ = periodicOracle;
       }
       return true;
     }
     for (size_t channel = 0; channel < surveillance.size(); ++channel)
       surveillance[channel]->replace(std::move(candidate[channel]));
-    ++clutterAcceptedFrames_;
     clutterStatus_.gpuMs = gpuMs;
     return true;
   } catch (const std::exception& error) {
-    // A qualifying/periodic CPU oracle may have already mutated part of the
+    // A startup CPU oracle may have already mutated part of the
     // frame before throwing. It is not safe to run that callback a second time.
     if (clutterTiming_.cpuExecuted) throw;
     fallback(error.what());
@@ -254,8 +250,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
     for (size_t channel = 0; channel < surveillance.size(); ++channel)
       surveillance[channel]->replace(std::move(cpuClutter_[channel]));
     cpuClutter_.clear();
-    const bool periodic = combinedPeriodic_;
-    combinedPending_ = false; combinedPeriodic_ = false;
+    combinedPending_ = false;
     cpuRun();
     bool invalid = false;
     double worstRms = 0, worstPeak = 0;
@@ -288,8 +283,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
         << " relative_peak=" << worstPeak << '\n';
       return;
     }
-    ++clutterAcceptedFrames_;
-    if (!periodic && ++combinedChecks_ == CombinedQualificationFrames) {
+    if (++combinedChecks_ == CombinedQualificationFrames) {
       if (clutterStatus_.requested == "auto" &&
           clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
         clutterDisabled_ = true;
@@ -376,8 +370,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       for (size_t channel = 0; channel < surveillance.size(); ++channel)
         surveillance[channel]->replace(std::move(cpuClutter_[channel]));
       cpuClutter_.clear();
-      const bool periodic = combinedPeriodic_;
-      combinedPending_ = false; combinedPeriodic_ = false;
+      combinedPending_ = false;
       cpuStarted = true;
       cpuRun();
       bool invalid = false;
@@ -412,8 +405,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
           << " relative_peak=" << worstPeak << '\n';
         return;
       }
-      ++clutterAcceptedFrames_;
-      if (!periodic && ++combinedChecks_ == CombinedQualificationFrames) {
+      if (++combinedChecks_ == CombinedQualificationFrames) {
         if (clutterStatus_.requested == "auto" &&
             clutterStatus_.gpuMs >= clutterStatus_.cpuMs * .95) {
           clutterDisabled_ = true;
@@ -488,7 +480,7 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       for (size_t channel = 0; channel < surveillance.size() &&
           channel < cpuClutter_.size(); ++channel)
         surveillance[channel]->replace(std::move(cpuClutter_[channel]));
-      cpuClutter_.clear(); combinedPending_ = false; combinedPeriodic_ = false;
+      cpuClutter_.clear(); combinedPending_ = false;
     }
     if (cpuStarted || inputRetired) throw; // Never rerun an already-consumed frame.
     // GPU never consumes input: this exact frame can safely be rerun on CPU.

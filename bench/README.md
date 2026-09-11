@@ -37,7 +37,10 @@ every map bin outside the timed processing section. Save both summaries and
 per-frame CSV/JSON output. Setup, input decoding, validation and wall time are
 reported separately. The fixed, sample-derived tracking clock ensures replay
 speed cannot change tracker timing. GPU qualification uses CPU outputs for the
-first three frames. GPU timing includes worker transfers and map conversion.
+first three delay–Doppler frames plus five composed-stage frames when GPU
+clutter is enabled. Qualification is startup-only; accepted steady GPU frames
+do not run recurring CPU accuracy oracles. The benchmark's independent CPU
+comparisons remain enabled. GPU timing includes worker transfers and map conversion.
 
 `record_iq.py` captures finite Suite V2 MCHQ input without changing tuning. It
 retains the calibrated unsigned 8-bit I/Q wire stream, validates packet state and

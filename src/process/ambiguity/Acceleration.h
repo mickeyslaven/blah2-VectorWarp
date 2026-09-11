@@ -48,11 +48,9 @@ private:
   std::vector<std::complex<float>> reference_, surveillance_, output_;
   unsigned clutterChecks_ = 0;
   unsigned combinedChecks_ = 0;
-  uint64_t clutterAcceptedFrames_ = 0;
   bool clutterDisabled_ = false;
   bool ambiguityDisabled_ = false;
   bool combinedPending_ = false;
-  bool combinedPeriodic_ = false;
   std::vector<std::deque<std::complex<double>>> cpuClutter_;
   std::vector<double> clutterCpuTimes_, clutterGpuTimes_;
   ClutterTiming clutterTiming_;

@@ -67,8 +67,9 @@ speed, transfer costs and larger-map API/UI costs remain unmeasured.
    near-zero maps. A bounded toy audit matched the exact polyphase identity at
    normalized peak error 2.26e-15; halo-only error was 0.806 on that same case.
 4. Compare full-size CPU FFTW and GPU results under the existing 1e-4 complex-map
-   gates; qualify each vendor, fallbacks and periodic CPU oracles. Legacy block
-   maps are compatibility evidence, not an exact-CAF truth oracle.
+   gates; qualify each vendor, startup checks and runtime fallbacks. Keep an
+   independent CPU oracle in acceptance tests, not recurring production work.
+   Legacy block maps are compatibility evidence, not an exact-CAF truth oracle.
 5. Benchmark only after correctness, at the same standard excess-path range and
    stated CPI. Keep actual GPU selection, throughput, memory, dropped deadlines
    and thermal limits separate. No speedup or hardware capacity is promised.

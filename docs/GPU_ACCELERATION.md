@@ -35,8 +35,15 @@ The file setting is `process.performance.acceleration`: `auto`, `cpu` or `gpu`.
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.
 
+Startup qualification is per processor instance, selected device and geometry:
 GPU results must agree with the CPU's complex-valued map before detection sees
-them. The input remains available for same-frame CPU recovery. Software Vulkan
+them. After qualification, accepted GPU frames do not repeat CPU clutter or
+complex-map accuracy computations. Every-frame finite-output, numerical-solve,
+worker-error and timeout protections remain, as does AUTO's sustained GPU timing
+comparison against the CPU cost measured at startup. This does not continuously
+revalidate accuracy against changing signal conditions; independent benchmark
+comparisons remain separate. The input remains available for same-frame CPU
+recovery. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
 
 ## Measured performance

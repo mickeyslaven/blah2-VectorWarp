@@ -46,26 +46,33 @@ filtered sample on every channel with the existing FP64 CPU filter at the same
 exercise the composed GPU-clutter to GPU-ambiguity path and compare its complete
 complex maps against CPU-clutter plus CPU-ambiguity results. This is essential:
 qualifying each stage only on CPU-owned intermediate data does not qualify their
-composition. A periodic composed oracle repeats every 16 accepted frames so a
-later signal or conditioning change cannot silently retain an unsuitable FP32
-path. The comparison includes residual-relative and peak limits so
-strong-direct-signal cancellation cannot hide weak-channel error. Non-finite
-output, inaccurate output, rank deficiency, ill-conditioning, or an unstable
-solve keeps the CPU-owned frame and disables only GPU clutter. A worker,
-protocol, or device fault disables both GPU stages; a separate ambiguity
-accuracy or speed decision does not discard healthy GPU clutter.
+composition. These eight startup frames qualify this instance's device and
+geometry; accepted steady-state frames do not repeat CPU clutter or composed-map
+oracles. The startup comparison includes residual-relative and peak limits so
+strong-direct-signal cancellation cannot hide weak-channel error. Startup
+accuracy rejection disables only GPU clutter and keeps the CPU-owned frame.
+Rank deficiency, ill-conditioning and an unstable solve are still guarded on
+every frame and select CPU clutter when GPU precision is unsuitable. Non-finite
+output or a worker, protocol, or device fault disables both GPU stages; a
+separate ambiguity accuracy or speed decision does not discard healthy GPU clutter.
 
 The benchmark exports parent preparation, worker dispatch, and output
 acceptance/conversion separately. `dispatch` includes shared-memory transfer,
 both Vulkan submissions, and the FP64 CPU solve inside the worker; it is not a
 kernel-only time. It also records whether GPU clutter and the CPU oracle ran,
 plus the selected clutter backend/state, so mixed GPU-clutter/CPU-ambiguity
-operation remains visible.
+operation remains visible. The small FP64 solve remains normal GPU-clutter-path
+CPU work, not an accuracy oracle. AUTO's sustained GPU cost selection also
+remains; it compares GPU timing against the startup CPU measurement without
+recomputing CPU maps. Changing signal conditions are not continuously checked
+against a full CPU reference after startup.
 
 Offline acceptance covers signed negative/zero/positive lags, `B = 1`, `B = N`,
 multi-channel shared-reference equivalence, strong cancellation, changed input
 after qualification, rank deficiency, invalid output/shape, explicit numerical
-rejection, worker fault recovery, and atomic CPU fallback. Physical acceptance
+rejection, worker fault recovery, and atomic CPU fallback. Long steady-state
+fixtures verify that neither GPU stage repeats a CPU oracle after qualification,
+including when CPU ambiguity is independently selected. Physical acceptance
 must still run the same FP64 oracle on every intended Vulkan device and then use
 matched-IQ timing to qualify the complete path. No performance claim follows
 from the implementation or mock tests alone.
