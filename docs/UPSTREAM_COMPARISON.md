@@ -41,19 +41,24 @@ and adsb2dd PRs to the actual implementation and regression coverage.
 Direct upstream claims come only from the matched recorded-IQ replays in the
 [2026-09-11 GPU benchmark report](GPU_BENCHMARK_20260911.md): same recording,
 same host and CPU budget, pinned `30hours/blah2` baseline. Examples include the
-RTX 4050 standard profile (225.574 ms/CPI upstream, 220.020 VectorWarp CPU,
-112.968 GPU) and the Pavilion AMD wide profile (310.520, 303.218 and 157.501
+RTX 4050 standard profile (230.457 ms/CPI upstream, 180.855 VectorWarp CPU,
+63.638 GPU) and the Pavilion AMD wide profile (306.828, 229.883 and 88.079
 ms/CPI respectively). Every current comparison uses 527 MHz, 2.4 MS/s,
 delays -10 through 245 (256 bins; 30.604 km maximum excess path).
 The GPU runs clutter FFT/filtering and ambiguity/
 delay–Doppler work; the small FP64 coefficient solve remains CPU work.
+At 200 ms CPI and ±2400 Hz, CPU-only processing uses 25.1–25.9% less time than
+upstream, and GPU mode uses 63.8–71.3% less, on these hosts. These are efficiency
+gains, not evidence of better detection accuracy. Separate same-campaign
+before/after rows compare the combined optimization with VectorWarp `2a9bfdf`.
 
 Native live results and wide-Doppler stress demonstrate VectorWarp processing
 capacity, but are not upstream ratios because the RF/input conditions differ or
 the upstream geometry is unsupported. Use the benchmark report for matched
 comparisons, deadline distributions and exclusions. The refreshed replay
-campaign uses startup-only CPU accuracy qualification; the listed native live
-runs are earlier evidence from the version with recurring checks, not new live
+campaign includes all combined efficiency changes and uses startup-only CPU
+accuracy qualification; the listed native live runs are earlier evidence from
+the version with recurring checks, not new live
 measurements of this change. Independent benchmark CPU comparisons remain
 enabled, while production does not continuously revalidate later IQ against a
 full CPU reference. Do not claim universal GPU

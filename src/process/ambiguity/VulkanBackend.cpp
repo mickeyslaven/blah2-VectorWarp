@@ -525,6 +525,8 @@ class ClutterPipeline {
   std::unique_ptr<Plan> filterReferencePlan_, weightPlan_, filteredPlan_;
   std::unique_ptr<Kernel> products_, multiply_, normalize_;
   VkCommandBuffer prepare_ = VK_NULL_HANDLE, finish_ = VK_NULL_HANDLE;
+  bool direct_ = false;
+  std::vector<std::complex<double>> first_, lower_, solved_, temporary_;
 
   void submit(VkCommandBuffer command, const char* phase) {
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -533,12 +535,12 @@ class ClutterPipeline {
     check(vkWaitForFences(context_.device, 1, &context_.fence, VK_TRUE, UINT64_MAX), phase);
     check(vkResetFences(context_.device, 1, &context_.fence), "clutter fence reset");
   }
-  std::vector<std::complex<double>> solveWeights() {
+  void solveWeights() {
     using Double = std::complex<double>;
     const auto* values = static_cast<const std::complex<float>*>(correlations_->mapped);
-    std::vector<Double> first(bins_);
+    auto& first = first_;
     for (uint32_t i = 0; i < bins_; ++i) first[i] = std::conj(Double(values[i])) / double(samples_);
-    std::vector<Double> lower(size_t(bins_) * bins_);
+    auto& lower = lower_;
     double smallestPivot = std::numeric_limits<double>::infinity(), largestPivot = 0;
     for (uint32_t row = 0; row < bins_; ++row)
       for (uint32_t column = 0; column <= row; ++column) {
@@ -560,7 +562,8 @@ class ClutterPipeline {
       }
     if (smallestPivot < largestPivot * 1e-4)
       throw ClutterRejected("GPU clutter correlation is ill-conditioned; using CPU clutter");
-    std::vector<Double> result(size_t(channels_) * bins_), temporary(bins_);
+    auto& result = solved_;
+    auto& temporary = temporary_;
     for (uint32_t channel = 0; channel < channels_; ++channel) {
       const auto* rhs = values + bins_ + size_t(channel) * bins_;
       for (uint32_t row = 0; row < bins_; ++row) {
@@ -588,7 +591,6 @@ class ClutterPipeline {
       if (residual > std::max(rhsPower * 1e-10, 1e-20))
         throw ClutterRejected("GPU clutter solve residual is unstable; using CPU clutter");
     }
-    return result;
   }
 public:
   static bool twiddleLut() {
@@ -621,7 +623,8 @@ public:
     if (twiddleLut()) elements += 4*n + 3*l;
     return elements * sizeof(std::complex<float>);
   }
-  ClutterPipeline(Context& context, const GpuGeometry& g)
+  ClutterPipeline(Context& context, const GpuGeometry& g,
+      bool allowDirect, bool forceDirect)
     : context_(context), samples_(g.clutterSamples), bins_(g.clutterBins),
       channels_(g.channels), length_(filterLength(g)) {
     const uint64_t n = samples_, nc = uint64_t(samples_) * channels_;
@@ -635,21 +638,48 @@ public:
     constexpr auto device = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     constexpr auto host = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
     constexpr auto coherent = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    reference_ = std::make_unique<Buffer>(context, n*8, device);
-    surveillance_ = std::make_unique<Buffer>(context, nc*8, device);
-    estimate_ = std::make_unique<Buffer>(context, nc*8, device);
+    if (allowDirect) {
+      try {
+        const auto preferred = coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        reference_ = std::make_unique<Buffer>(context, n*8, device | host, preferred);
+        surveillance_ = std::make_unique<Buffer>(context, nc*8, device | host, preferred);
+        estimate_ = std::make_unique<Buffer>(context, nc*8, device | host, preferred);
+        const auto memory = memoryProperties(context.candidate.physical);
+        const bool oneHeap = reference_->heap == surveillance_->heap &&
+          reference_->heap == estimate_->heap;
+        const uint64_t bytes = reference_->allocationBytes +
+          surveillance_->allocationBytes + estimate_->allocationBytes;
+        // Every allocation is also charged to the existing aggregate/per-heap
+        // budget. AUTO requires the same unified-memory topology as ambiguity.
+        direct_ = forceDirect || (oneHeap && gpu_memory::autoDirect(
+          context.candidate.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
+          reference_->heap, bytes, memory));
+      } catch (const std::exception&) { direct_ = false; }
+      if (!direct_) { reference_.reset(); surveillance_.reset(); estimate_.reset(); }
+    }
+    if (!direct_) {
+      reference_ = std::make_unique<Buffer>(context, n*8, device);
+      surveillance_ = std::make_unique<Buffer>(context, nc*8, device);
+      estimate_ = std::make_unique<Buffer>(context, nc*8, device);
+      input_ = std::make_unique<Buffer>(context, (n+nc)*8, host, coherent);
+      output_ = std::make_unique<Buffer>(context, nc*8, host,
+        coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    }
+    startupTrace(direct_ ? "clutter direct mapped device memory selected" :
+      "clutter persistent staging selected");
     autocorrelation_ = std::make_unique<Buffer>(context, n*8, device);
     crosscorrelation_ = std::make_unique<Buffer>(context, nc*8, device);
     filterReference_ = std::make_unique<Buffer>(context, l*8, device);
     weights_ = std::make_unique<Buffer>(context, lc*8, device);
     filtered_ = std::make_unique<Buffer>(context, lc*8, device);
-    input_ = std::make_unique<Buffer>(context, (n+nc)*8, host, coherent);
     correlations_ = std::make_unique<Buffer>(context, bins_*(1+channels_)*8, host,
       coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     weightUpload_ = std::make_unique<Buffer>(context, uint64_t(bins_)*channels_*8,
       host, coherent);
-    output_ = std::make_unique<Buffer>(context, nc*8, host,
-      coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    first_.resize(bins_);
+    lower_.resize(size_t(bins_) * bins_);
+    solved_.resize(size_t(channels_) * bins_);
+    temporary_.resize(bins_);
     const bool lut = twiddleLut();
     referencePlan_ = std::make_unique<Plan>(context, *reference_, samples_, 1, lut);
     surveillancePlan_ = std::make_unique<Plan>(context, *surveillance_, samples_, channels_, lut);
@@ -673,16 +703,22 @@ public:
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     check(vkBeginCommandBuffer(prepare_, &begin), "clutter prepare recording");
     VkMemoryBarrier hostWrite{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-    hostWrite.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT; hostWrite.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    vkCmdPipelineBarrier(prepare_, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    hostWrite.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    hostWrite.dstAccessMask = direct_ ?
+      VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(prepare_, VK_PIPELINE_STAGE_HOST_BIT,
+      direct_ ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT,
       0, 1, &hostWrite, 0, nullptr, 0, nullptr);
-    VkBufferCopy ref{0,0,n*8}, surv{n*8,0,nc*8};
-    vkCmdCopyBuffer(prepare_, input_->handle, reference_->handle, 1, &ref);
-    vkCmdCopyBuffer(prepare_, input_->handle, surveillance_->handle, 1, &surv);
+    if (!direct_) {
+      VkBufferCopy ref{0,0,n*8}, surv{n*8,0,nc*8};
+      vkCmdCopyBuffer(prepare_, input_->handle, reference_->handle, 1, &ref);
+      vkCmdCopyBuffer(prepare_, input_->handle, surveillance_->handle, 1, &surv);
+    }
     vkCmdFillBuffer(prepare_, filterReference_->handle, 0, l*8, 0);
     barrier(prepare_); // Order the zero fill before overwriting its live prefix.
     VkBufferCopy filterRef{0,0,n*8};
-    vkCmdCopyBuffer(prepare_, input_->handle, filterReference_->handle, 1, &filterRef);
+    vkCmdCopyBuffer(prepare_, direct_ ? reference_->handle : input_->handle,
+      filterReference_->handle, 1, &filterRef);
     barrier(prepare_);
     referencePlan_->append(prepare_, -1); surveillancePlan_->append(prepare_, -1);
     filterReferencePlan_->append(prepare_, -1); barrier(prepare_);
@@ -701,6 +737,7 @@ public:
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
     check(vkEndCommandBuffer(prepare_), "clutter prepare recording");
     check(vkBeginCommandBuffer(finish_, &begin), "clutter finish recording");
+    hostWrite.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(finish_, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
       0, 1, &hostWrite, 0, nullptr, 0, nullptr);
     vkCmdFillBuffer(finish_, weights_->handle, 0, lc*8, 0);
@@ -715,9 +752,14 @@ public:
     multiply_->append(finish_, {uint32_t(lc), length_, channels_, 0, 0}); barrier(finish_);
     filteredPlan_->append(finish_, 1); barrier(finish_);
     normalize_->append(finish_, {uint32_t(nc), samples_, length_, 0, 0}); barrier(finish_);
-    VkBufferCopy outputCopy{0,0,nc*8};
-    vkCmdCopyBuffer(finish_, estimate_->handle, output_->handle, 1, &outputCopy);
-    vkCmdPipelineBarrier(finish_, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+    if (!direct_) {
+      VkBufferCopy outputCopy{0,0,nc*8};
+      vkCmdCopyBuffer(finish_, estimate_->handle, output_->handle, 1, &outputCopy);
+    }
+    hostRead.srcAccessMask = direct_ ? VK_ACCESS_MEMORY_WRITE_BIT : VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(finish_,
+      direct_ ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_HOST_BIT,
       0, 1, &hostRead, 0, nullptr, 0, nullptr);
     check(vkEndCommandBuffer(finish_), "clutter finish recording");
   }
@@ -727,15 +769,22 @@ public:
     if (!reference || !surveillance || !output || referenceCount != samples_ ||
         surveillanceCount != uint64_t(samples_)*channels_ || outputCount != surveillanceCount)
       throw std::invalid_argument("GPU clutter buffer dimensions changed");
-    std::memcpy(input_->mapped, reference, referenceCount*8);
-    std::memcpy(static_cast<char*>(input_->mapped)+referenceCount*8,
-      surveillance, surveillanceCount*8);
-    input_->flush(0, input_->bytes);
+    if (direct_) {
+      std::memcpy(reference_->mapped, reference, referenceCount*8);
+      std::memcpy(surveillance_->mapped, surveillance, surveillanceCount*8);
+      reference_->flush(0, reference_->bytes);
+      surveillance_->flush(0, surveillance_->bytes);
+    } else {
+      std::memcpy(input_->mapped, reference, referenceCount*8);
+      std::memcpy(static_cast<char*>(input_->mapped)+referenceCount*8,
+        surveillance, surveillanceCount*8);
+      input_->flush(0, input_->bytes);
+    }
     submit(prepare_, "clutter correlations");
     correlations_->invalidate(0, correlations_->bytes);
-    std::vector<std::complex<double>> solved;
-    try { solved = solveWeights(); }
+    try { solveWeights(); }
     catch (const ClutterRejected&) { return false; }
+    const auto& solved = solved_;
     if (!std::all_of(solved.begin(), solved.end(), [](auto value) {
           return std::isfinite(value.real()) && std::isfinite(value.imag());
         })) return false;
@@ -745,8 +794,9 @@ public:
         upload[uint64_t(channel)*bins_+bin] = solved[uint64_t(channel)*bins_+bin];
     weightUpload_->flush(0, weightUpload_->bytes);
     submit(finish_, "clutter filtering");
-    output_->invalidate(0, output_->bytes);
-    std::memcpy(output, output_->mapped, outputCount*8);
+    Buffer& result = direct_ ? *estimate_ : *output_;
+    result.invalidate(0, result.bytes);
+    std::memcpy(output, result.mapped, outputCount*8);
     return true;
   }
 };
@@ -886,7 +936,8 @@ public:
     if (g.clutterSamples && clutterBytes <= budget - ambiguityBytes) {
       startupTrace("clutter pipeline begin");
       try {
-        clutter_ = std::make_unique<ClutterPipeline>(context_, g);
+        clutter_ = std::make_unique<ClutterPipeline>(context_, g,
+          direct_, memoryPath == "direct");
         startupTrace("clutter pipeline complete");
       } catch (const std::exception& error) {
         startupTrace(error.what());

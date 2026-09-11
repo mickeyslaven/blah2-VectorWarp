@@ -325,12 +325,28 @@ int main(int argc, char** argv) try {
     const auto begin=Clock::now(); auto mark=begin;
     std::vector<double> times;
     auto tick=[&] { const auto now=Clock::now(); times.push_back(ms(mark, now)); mark=now; };
+#ifdef BLAH2_BENCH_FAST
+    // Keep decoded IQ immutable for the independent oracle. Model the native
+    // consumer's block ownership, including synthesis's final read before the
+    // same surveillance blocks pass to conditioning without another copy.
+    if (array) for (unsigned i=0; i<channels; ++i)
+      capture[i]->replace(std::deque<Complex>(decoded[i]));
+    else {
+      reference->replace(std::deque<Complex>(decoded[referenceChannel]));
+      surveillance[0]->replace(std::deque<Complex>(decoded[surveillanceChannel]));
+    }
+#else
     if (array) for (unsigned i=0; i<channels; ++i) fill(*capture[i], decoded[i]);
     else fill(*reference, decoded[referenceChannel]);
     for (unsigned i=0; i<pathCount; ++i) fill(*surveillance[i], decoded[array ? i : surveillanceChannel]);
+#endif
     tick();
 #ifdef BLAH2_BENCH_FAST
-    if (array) reference=synthesizer.process(capPointers);
+    if (array) {
+      reference=synthesizer.process(capPointers);
+      for (unsigned i=0; i<pathCount; ++i)
+        surveillance[i]->replace(capture[i]->drain_front(samples));
+    }
 #endif
     tick(); spectrum.process(reference.get()); tick();
     bool clutterGpuExecuted=false, clutterCpuExecuted=true;
@@ -379,7 +395,7 @@ int main(int argc, char** argv) try {
     active=cpuExecuted ? "cpu" : "vulkan"; state=acceleration.status().state;
     if (mode == "gpu" && frame >= SteadyStartFrame && active != "vulkan")
       throw std::runtime_error("FORCED_GPU_FALLBACK: explicit GPU case did not execute on Vulkan");
-    for (unsigned i=0; i<pathCount; ++i) { maps[i]=ambiguity[i]->result(); maps[i]->set_metrics(); }
+    for (unsigned i=0; i<pathCount; ++i) maps[i]=ambiguity[i]->result();
     tick();
     auto fused=fusion.process(maps); map=fused.get();
     map->set_metrics(); tick();
@@ -393,7 +409,11 @@ int main(int argc, char** argv) try {
     const uint64_t timestamp=1700000000000ULL+std::llround(frame*cpi*1000);
     auto tracks=tracker.process(detections.get(), timestamp); tick();
     auto iqJson=reference->to_json(timestamp);
+#ifdef BLAH2_BENCH_FAST
+    auto mapJson=map->to_json_km(timestamp, fs);
+#else
     auto mapJson=map->delay_bin_to_km(map->to_json(timestamp), fs);
+#endif
     auto detectionJson=detections->to_json(timestamp); auto trackJson=tracks->to_json(timestamp);
     jsonBytes+=iqJson.size()+mapJson.size()+detectionJson.size()+trackJson.size(); tick();
     const double pipeline=ms(begin, mark), readMs=ms(beforeRead, begin);

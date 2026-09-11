@@ -165,6 +165,17 @@ add_executable(testAccelerationFallback
 target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
 add_test(NAME testAccelerationFallback COMMAND testAccelerationFallback)
 
+add_executable(testCfarEfficiency
+  test/unit/process/detection/TestCfarEfficiency.cpp
+  src/process/detection/CfarDetector1D.cpp src/data/Detection.cpp src/data/Map.cpp)
+target_link_libraries(testCfarEfficiency PRIVATE blah2RapidJson)
+add_test(NAME cfarExactOutput COMMAND testCfarEfficiency)
+add_executable(testIqDataFifo
+  test/unit/data/TestIqDataFifo.cpp src/data/IqData.cpp)
+target_link_libraries(testIqDataFifo PRIVATE blah2RapidJson Threads::Threads)
+add_test(NAME iqDataFifo COMMAND testIqDataFifo)
+include(cmake/JsonOutputTests.cmake)
+
 # unit tests
 include(cmake/GpuProcessTests.cmake)
 add_executable(testProcessingThreads

@@ -78,6 +78,14 @@ public:
   /// @brief Remove and return a block from the front of the queue.
   std::deque<std::complex<double>> drain_front(uint32_t count);
 
+  /// @brief Discard a processed block without returning or copying samples.
+  /// @warning Caller must prevent concurrent mutation.
+  void discard_front(uint32_t count);
+
+  /// @brief Subtract a validated FP32 clutter estimate in FP64 and keep its CPI.
+  /// @warning Caller owns this block and has validated the complete estimate.
+  void subtract_clutter(const std::complex<float>* estimate, uint32_t count);
+
   /// @brief Replace all samples with an existing block.
   void replace(std::deque<std::complex<double>>&& samples);
 

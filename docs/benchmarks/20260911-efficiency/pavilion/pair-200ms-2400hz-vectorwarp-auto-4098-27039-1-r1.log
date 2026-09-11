@@ -1,0 +1,40 @@
+GPU startup 56854020 ms: vkCreateInstance begin
+GPU startup 56854044 ms: vkCreateInstance complete
+GPU startup 56854044 ms: device enumeration begin
+GPU startup 56854054 ms: device enumeration complete
+GPU startup 56854054 ms: AMD Radeon 500 Series (RADV POLARIS12)
+GPU startup 56854054 ms: vkCreateDevice begin
+GPU startup 56854055 ms: vkCreateDevice complete
+GPU startup 56854055 ms: glslang initialization begin
+GPU startup 56854055 ms: glslang initialization complete
+GPU startup 56854055 ms: buffer allocations begin
+GPU startup 56854056 ms: persistent staging selected
+GPU startup 56854056 ms: buffer allocations complete
+GPU startup 56854056 ms: VkFFT plan begin length=1000 batches=961
+GPU startup 56854185 ms: VkFFT plan complete result=0
+GPU startup 56854185 ms: VkFFT plan begin length=1000 batches=961
+GPU startup 56854236 ms: VkFFT plan complete result=0
+GPU startup 56854236 ms: VkFFT plan begin length=961 batches=256
+GPU startup 56854340 ms: VkFFT plan complete result=0
+GPU startup 56854340 ms: multiply kernel begin
+GPU startup 56854342 ms: gather kernel begin
+GPU startup 56854345 ms: clutter pipeline begin
+GPU startup 56854345 ms: clutter persistent staging selected
+GPU startup 56854345 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 56854449 ms: VkFFT plan complete result=0
+GPU startup 56854449 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 56854563 ms: VkFFT plan complete result=0
+GPU startup 56854563 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 56854663 ms: VkFFT plan complete result=0
+GPU startup 56854663 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 56854763 ms: VkFFT plan complete result=0
+GPU startup 56854763 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 56854923 ms: VkFFT plan complete result=0
+GPU startup 56854923 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 56855085 ms: VkFFT plan complete result=0
+GPU startup 56855085 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 56855243 ms: VkFFT plan complete result=0
+GPU startup 56855251 ms: clutter pipeline complete
+GPU allocation budget used=131209840 peak=131215120 limit=469762048
+GPU startup 56855251 ms: backend ready
+Acceleration: Vulkan / AMD Radeon 500 Series (RADV POLARIS12)

@@ -513,11 +513,7 @@ try
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
           if (!arrayReference)
-            referenceData->replace(captureData[referenceChannel]->get_data());
-          for (std::size_t pathIndex = 0;
-               pathIndex < surveillanceChannels.size(); pathIndex++)
-            surveillanceData[pathIndex]->replace(
-              captureData[surveillanceChannels[pathIndex]]->get_data());
+            referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time, "extract_buffer");
 
           std::vector<IqData *> surveillancePointers;
@@ -549,6 +545,12 @@ try
               reportedReferenceUpdate = metrics.updates;
             }
           }
+          // Synthesis is the last reader of the captured channels. Transfer
+          // complete sample blocks to conditioning instead of copying a CPI.
+          for (std::size_t pathIndex = 0;
+               pathIndex < surveillanceChannels.size(); pathIndex++)
+            surveillanceData[pathIndex]->replace(
+              captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time,
             "reference_synthesis");
           
@@ -590,8 +592,9 @@ try
             }); });
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
-            channelMaps[channel]->set_metrics();
           }
+          // Only the fused map is detected/published. Fusion consumes complex
+          // samples, so per-channel display metrics would be unused log passes.
           map = mapFusion.process(channelMaps);
           map->set_metrics();
           timing_helper(timing_name, timing_time, time, "ambiguity_processing");
@@ -619,8 +622,7 @@ try
           socket_iqdata->sendData(jsonIqData);
 
           // output map data
-          mapJson = map->to_json(time[0]/1000);
-          mapJson = map->delay_bin_to_km(mapJson, fs);
+          mapJson = map->to_json_km(time[0]/1000, fs);
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
@@ -630,8 +632,7 @@ try
           // output detection data
           if (isDetection)
           {
-            detectionJson = detection->to_json(time[0]/1000);
-            detectionJson = detection->delay_bin_to_km(detectionJson, fs);
+            detectionJson = detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
           }
           if (saveDetection)

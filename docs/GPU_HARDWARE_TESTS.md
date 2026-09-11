@@ -3,6 +3,9 @@
 This is the initial delay–Doppler verification. For the later combined GPU clutter
 and delay–Doppler build, see [final device confirmations](benchmarks/20260911/v8-all-device-confirmation.md)
 and the [matched replay and live benchmark report](GPU_BENCHMARK_20260911.md).
+The subsequent [combined efficiency campaign](benchmarks/20260911-efficiency/README.md)
+retested all four GPUs after the CPU, memory and JSON changes. Its 110 runs
+passed; all current GPU groups used both accelerated stages on 24/24 steady CPIs.
 
 Offline processing tests compare every complex delay–Doppler bin with independent
 CPU processing. No test data is sent to the radar UI, and no live receiver settings

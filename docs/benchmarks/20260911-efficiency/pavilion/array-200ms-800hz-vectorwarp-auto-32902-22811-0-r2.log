@@ -1,0 +1,40 @@
+GPU startup 57017060 ms: vkCreateInstance begin
+GPU startup 57017084 ms: vkCreateInstance complete
+GPU startup 57017084 ms: device enumeration begin
+GPU startup 57017094 ms: device enumeration complete
+GPU startup 57017094 ms: Intel(R) HD Graphics 630 (KBL GT2)
+GPU startup 57017094 ms: vkCreateDevice begin
+GPU startup 57017096 ms: vkCreateDevice complete
+GPU startup 57017096 ms: glslang initialization begin
+GPU startup 57017096 ms: glslang initialization complete
+GPU startup 57017096 ms: buffer allocations begin
+GPU startup 57017097 ms: direct mapped device memory selected
+GPU startup 57017097 ms: buffer allocations complete
+GPU startup 57017097 ms: VkFFT plan begin length=3000 batches=321
+GPU startup 57017303 ms: VkFFT plan complete result=0
+GPU startup 57017303 ms: VkFFT plan begin length=3000 batches=1605
+GPU startup 57017413 ms: VkFFT plan complete result=0
+GPU startup 57017413 ms: VkFFT plan begin length=321 batches=1280
+GPU startup 57017581 ms: VkFFT plan complete result=0
+GPU startup 57017581 ms: multiply kernel begin
+GPU startup 57017583 ms: gather kernel begin
+GPU startup 57017585 ms: clutter pipeline begin
+GPU startup 57017585 ms: clutter direct mapped device memory selected
+GPU startup 57017585 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 57017833 ms: VkFFT plan complete result=0
+GPU startup 57017833 ms: VkFFT plan begin length=480000 batches=5
+GPU startup 57018051 ms: VkFFT plan complete result=0
+GPU startup 57018051 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 57018271 ms: VkFFT plan complete result=0
+GPU startup 57018271 ms: VkFFT plan begin length=480000 batches=5
+GPU startup 57018487 ms: VkFFT plan complete result=0
+GPU startup 57018487 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 57018751 ms: VkFFT plan complete result=0
+GPU startup 57018751 ms: VkFFT plan begin length=486000 batches=5
+GPU startup 57019010 ms: VkFFT plan complete result=0
+GPU startup 57019010 ms: VkFFT plan begin length=486000 batches=5
+GPU startup 57019274 ms: VkFFT plan complete result=0
+GPU startup 57019279 ms: clutter pipeline complete
+GPU allocation budget used=273595864 peak=273595864 limit=2147483648
+GPU startup 57019279 ms: backend ready
+Acceleration: Vulkan / Intel(R) HD Graphics 630 (KBL GT2)

@@ -33,10 +33,13 @@ factorization is reused by all channels.
 
 Only the `B` live coefficients per channel cross the host boundary. The device
 zeros the `L`-sample weight arrays before copying those compact vectors into
-their prefixes. Full FP32 surveillance IQ still enters the worker/Vulkan
-staging path and a full FP32 clutter estimate returns to the parent. The parent
-subtracts that estimate from its immutable FP64 surveillance samples, avoiding
-an unnecessary deep-cancellation rounding step in the shader. Eliminating the
+their prefixes. Full FP32 surveillance IQ still enters the worker, using directly
+mapped Vulkan compute buffers on qualified integrated devices and staging elsewhere.
+A full FP32 clutter estimate returns to the parent. After the complete estimate
+and input shapes pass validation, qualified frames subtract it in the owned
+FP64 surveillance block without allocating another CPI. Startup qualification
+retains separate candidate/oracle storage. This avoids an unnecessary
+deep-cancellation rounding step in the shader. Eliminating the
 remaining input/readback process and device round trip requires a larger capture/conditioning
 ownership change and is not claimed here.
 
@@ -76,3 +79,9 @@ including when CPU ambiguity is independently selected. Physical acceptance
 must still run the same FP64 oracle on every intended Vulkan device and then use
 matched-IQ timing to qualify the complete path. No performance claim follows
 from the implementation or mock tests alone.
+
+The latest [physical results](benchmarks/20260911-efficiency/README.md) cover
+Radeon 8060S, RTX 4050 Laptop, Intel HD 630 and AMD Polaris 12. Both clutter and
+delay–Doppler ran on GPU for all 24 measured steady CPIs in every current GPU
+group. The full report separates processing time, missed deadlines and stage
+costs; the combined speedup does not mean every individual stage became faster.

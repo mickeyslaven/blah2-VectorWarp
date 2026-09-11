@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(blah2JsonChecks LANGUAGES CXX)
+include(CTest)
+get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+include(${PROJECT_ROOT}/cmake/JsonOutputTests.cmake)

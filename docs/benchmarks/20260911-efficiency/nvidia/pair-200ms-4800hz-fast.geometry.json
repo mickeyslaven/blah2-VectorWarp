@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "engine": "fast",
+  "profile": "pair",
+  "supported": true,
+  "upstreamSafe": false,
+  "requestedCpiMs": 200,
+  "effectiveCpiMs": 199.30375,
+  "sampleRate": 2400000,
+  "samples": 480000,
+  "delayBins": 256,
+  "dopplerBins": 1921,
+  "nCorr": 249,
+  "rangeFft": 500,
+  "workers": 1,
+  "fftThreads": 4,
+  "roundHamming": true,
+  "reason": ""
+}

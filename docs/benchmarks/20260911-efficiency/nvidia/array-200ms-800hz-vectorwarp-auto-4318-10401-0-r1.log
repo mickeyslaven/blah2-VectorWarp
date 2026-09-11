@@ -1,0 +1,40 @@
+GPU startup 1069203813 ms: vkCreateInstance begin
+GPU startup 1069203949 ms: vkCreateInstance complete
+GPU startup 1069203949 ms: device enumeration begin
+GPU startup 1069203953 ms: device enumeration complete
+GPU startup 1069203953 ms: NVIDIA GeForce RTX 4050 Laptop GPU
+GPU startup 1069203953 ms: vkCreateDevice begin
+GPU startup 1069204057 ms: vkCreateDevice complete
+GPU startup 1069204057 ms: glslang initialization begin
+GPU startup 1069204057 ms: glslang initialization complete
+GPU startup 1069204057 ms: buffer allocations begin
+GPU startup 1069204078 ms: persistent staging selected
+GPU startup 1069204078 ms: buffer allocations complete
+GPU startup 1069204078 ms: VkFFT plan begin length=3000 batches=321
+GPU startup 1069204224 ms: VkFFT plan complete result=0
+GPU startup 1069204224 ms: VkFFT plan begin length=3000 batches=1605
+GPU startup 1069204281 ms: VkFFT plan complete result=0
+GPU startup 1069204282 ms: VkFFT plan begin length=321 batches=1280
+GPU startup 1069204457 ms: VkFFT plan complete result=0
+GPU startup 1069204457 ms: multiply kernel begin
+GPU startup 1069204459 ms: gather kernel begin
+GPU startup 1069204461 ms: clutter pipeline begin
+GPU startup 1069204475 ms: clutter persistent staging selected
+GPU startup 1069204478 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 1069204584 ms: VkFFT plan complete result=0
+GPU startup 1069204584 ms: VkFFT plan begin length=480000 batches=5
+GPU startup 1069204691 ms: VkFFT plan complete result=0
+GPU startup 1069204691 ms: VkFFT plan begin length=480000 batches=1
+GPU startup 1069204798 ms: VkFFT plan complete result=0
+GPU startup 1069204798 ms: VkFFT plan begin length=480000 batches=5
+GPU startup 1069204910 ms: VkFFT plan complete result=0
+GPU startup 1069204910 ms: VkFFT plan begin length=486000 batches=1
+GPU startup 1069205091 ms: VkFFT plan complete result=0
+GPU startup 1069205091 ms: VkFFT plan begin length=486000 batches=5
+GPU startup 1069205259 ms: VkFFT plan complete result=0
+GPU startup 1069205259 ms: VkFFT plan begin length=486000 batches=5
+GPU startup 1069205426 ms: VkFFT plan complete result=0
+GPU startup 1069205432 ms: clutter pipeline complete
+GPU allocation budget used=365295088 peak=365295088 limit=1609826304
+GPU startup 1069205432 ms: backend ready
+Acceleration: Vulkan / NVIDIA GeForce RTX 4050 Laptop GPU

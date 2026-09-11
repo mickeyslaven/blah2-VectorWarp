@@ -1,0 +1,66 @@
+[
+  {
+    "case": "pair-200ms-4800hz",
+    "engine": "upstream",
+    "geometry": {
+      "schemaVersion": 1,
+      "engine": "upstream",
+      "profile": "pair",
+      "supported": false,
+      "upstreamSafe": false,
+      "requestedCpiMs": 200,
+      "effectiveCpiMs": 199.30375,
+      "sampleRate": 2400000,
+      "samples": 480000,
+      "delayBins": 256,
+      "dopplerBins": 1921,
+      "nCorr": 249,
+      "rangeFft": 500,
+      "workers": 1,
+      "fftThreads": 4,
+      "roundHamming": true,
+      "reason": "upstream Doppler scratch is smaller than requested Doppler bins"
+    }
+  },
+  {
+    "case": "array-200ms-800hz",
+    "engine": "upstream",
+    "geometry": {
+      "schemaVersion": 1,
+      "engine": "upstream",
+      "profile": "array",
+      "supported": false,
+      "upstreamSafe": true,
+      "requestedCpiMs": 200,
+      "effectiveCpiMs": 199.95625,
+      "sampleRate": 2400000,
+      "samples": 480000,
+      "delayBins": 256,
+      "dopplerBins": 321,
+      "nCorr": 1495,
+      "rangeFft": 3000,
+      "workers": 4,
+      "fftThreads": 1,
+      "roundHamming": true,
+      "reason": "upstream supports physical pair only"
+    }
+  },
+  {
+    "case": "unsupported-200ms-40000hz",
+    "engine": "upstream",
+    "geometry": {
+      "supported": false,
+      "rejection": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span",
+      "returncode": 1
+    }
+  },
+  {
+    "case": "unsupported-200ms-40000hz",
+    "engine": "fast",
+    "geometry": {
+      "supported": false,
+      "rejection": "BENCHMARK FAILED: Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span",
+      "returncode": 1
+    }
+  }
+]

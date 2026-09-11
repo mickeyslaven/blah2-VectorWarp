@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "/var/tmp/vectorwarp-efficiency-20260911.Cbm8Ep/before/bin/bench-fast",
+    "/var/tmp/vectorwarp-strix-combined-20260911.W5x5o9/recorded-20seconds.mchq",
+    "/var/tmp/vectorwarp-efficiency-20260911.Cbm8Ep/strix/pair-200ms-2400hz.profile.json",
+    "/var/tmp/vectorwarp-efficiency-20260911.Cbm8Ep/strix/pair-200ms-2400hz-vectorwarp-before-auto-4098-5510-0-r1",
+    "pair",
+    "auto",
+    "20",
+    "compare",
+    "/var/tmp/vectorwarp-efficiency-20260911.Cbm8Ep/strix/pair-200ms-2400hz.maps"
+  ],
+  "binarySha256": "72a14248f87321d226a0d8ff4e4b7324301d5eff6a9aa8a8c5a28e251914416e",
+  "inputSha256": "1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa",
+  "environment": {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "BLAH2_BENCH_PACE": "1",
+    "BLAH2_GPU_MEMORY_PATH": "auto",
+    "BLAH2_GPU_DIAGNOSTICS": "1",
+    "BLAH2_GPU_DEVICE": "4098:5510:0"
+  }
+}

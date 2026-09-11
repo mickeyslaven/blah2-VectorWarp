@@ -42,27 +42,71 @@ class HomepageTests(unittest.TestCase):
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
         plain_report = ' '.join(report.split())
         for required in ('c821bee3f0d27cf20c8447f3d908ef722905a4de',
-                         '1e-4', '30.604 km', '41 paired groups',
+                         '1e-4', '30.604 km', '41 paired groups', '14 prior-version groups',
+                         '110 timed runs', '2,200 complete CPIs',
                          'not an endurance test', 'not bit-exact output', 'future work'):
             self.assertIn(required, plain_report)
-        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-equal-range/comparison.json').read_text())
-        self.assertEqual(len(cohort['rows']), 41)
+        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-efficiency/comparison.json').read_text())
+        self.assertEqual(len(cohort['rows']), 55)
+        current = [row for row in cohort['rows'] if not row['variant'].startswith('vectorwarp-before-')]
+        prior = [row for row in cohort['rows'] if row['variant'].startswith('vectorwarp-before-')]
+        self.assertEqual(len(current), 41)
+        self.assertEqual(len(prior), 14)
+        self.assertEqual(sum(item['measurement_runs'] for item in cohort['receipts'].values()), 110)
+        self.assertEqual(sum(item['complete_cpis'] for item in cohort['receipts'].values()), 2200)
+        self.assertIn('ccbd2ec1c379310b0df1be1857570d93dd5306a6b435c63c8e785b7c8084dab6', report)
+        self.assertIn('8ba6e1330fad9fcdbe8a5a54134a712d0959775e', report)
         readme = (ROOT / 'README.md').read_text()
         for row in cohort['rows']:
             self.assertEqual(row['delay_bins'], 256)
             self.assertAlmostEqual(row['max_excess_path_km'], 30.603813420833334)
             self.assertEqual(row['frames'], 24)
-            self.assertIn(f"{row['mean_ms']:.3f}", report)
-            self.assertIn(f"{row['p95_ms']:.3f}", report)
-            self.assertIn(f"{row['deadline_misses']}/24", report)
+            self.assertIn(f"{row['mean_ms']:.3f} / {row['p95_ms']:.3f} / {row['deadline_misses']}/24", report)
             if row['variant'] == 'vectorwarp-auto':
                 self.assertEqual(row['cpu_oracle_frames'], 0)
+                self.assertEqual(row['gpu_dd_frames'], 24)
+                self.assertEqual(row['gpu_clutter_frames'], 24)
+            if row in prior:
+                corresponding = next(item for item in current if
+                    (item['host'], item['case'], item['device'], item['variant']) ==
+                    (row['host'], row['case'], row['device'], row['variant'].replace('-before', '')))
+                reduction = 100 * (1 - corresponding['mean_ms'] / row['mean_ms'])
+                self.assertIn(f'{reduction:.1f}%', report)
+                continue
             selected = ((row['host'] in ('strix', 'nvidia') and row['case'] == 'pair-200ms-800hz') or
                         (row['host'] == 'pavilion' and row['case'] == 'pair-200ms-2400hz' and
                          row['device'] in ('auto', '4098:27039:1')))
             if selected:
                 self.assertIn(f"{row['mean_ms']:.1f} ms", page)
                 self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
+        for variant in ('vectorwarp-cpu', 'vectorwarp-auto'):
+            reductions = []
+            for row in current:
+                if row['variant'] != variant or row['case'] != 'pair-200ms-2400hz':
+                    continue
+                upstream = next(item for item in current if item['host'] == row['host'] and
+                                item['case'] == row['case'] and item['variant'] == 'regular-blah2')
+                reductions.append(100 * (1 - row['mean_ms'] / upstream['mean_ms']))
+            self.assertIn(f'{min(reductions):.1f}–{max(reductions):.1f}%', report)
+
+    def test_current_sink_profile_and_historical_boundaries(self):
+        report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
+        cohort = json.loads((ROOT / 'docs/benchmarks/20260911-efficiency/comparison.json').read_text())
+        profiles = {row['variant']: row for row in cohort['rows']
+                    if row['host'] == 'strix' and row['case'] == 'pair-200ms-2400hz'}
+        for key in ('json_ms', 'clutter_ms', 'ambiguity_ms', 'fusion_ms',
+                    'spectrum_ms', 'extract_ms', 'detection_ms', 'tracker_ms'):
+            prior = profiles['vectorwarp-before-auto']['stages'][key]
+            current = profiles['vectorwarp-auto']['stages'][key]
+            self.assertIn(f'{prior:.3f} ms | {current:.3f} ms', report)
+        for scope in ('not evidence of improved detection', 'not a guarantee',
+                      'not isolate each change', 'not a kernel-only or zero-copy claim',
+                      'Earlier native live processor measurements',
+                      'not rerun for the startup-only or combined efficiency changes',
+                      'benchmarks/20260911-equal-range/README.md',
+                      'benchmarks/20260911-efficiency/comparison.json'):
+            self.assertIn(scope, ' '.join(report.split()))
+        self.assertIn('2a9bfdf', report)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()

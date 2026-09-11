@@ -59,7 +59,7 @@ bool WienerHopf::process(IqData *x, IqData *y)
 {
   uint32_t i, j;
   const auto& xData = x->view_data();
-  const auto yData = y->get_data();
+  const auto& yData = y->view_data();
 
   // change deque to std::complex
   for (i = 0; i < nSamples; i++)

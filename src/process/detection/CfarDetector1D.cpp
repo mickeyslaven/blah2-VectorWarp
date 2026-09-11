@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <stdexcept>
+#include <algorithm>
 
 // constructor
 CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int8_t _minDelay, double _minDoppler)
@@ -29,8 +30,25 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
   int32_t nDelayBins = x->get_nCols();
   int32_t nDopplerBins = x->get_nRows();
 
-  std::vector<std::complex<double>> mapRow;
-  std::vector<double> mapRowSquare, mapRowSnr;
+  std::vector<double> mapRowSquare(nDelayBins);
+  struct Window {
+    int leftBegin, leftEnd, rightBegin, rightEnd, count;
+    double alpha;
+  };
+  // The training geometry and false-alarm factor depend on delay, not Doppler.
+  // Preserve the original left-then-right summation order: rolling/prefix sums
+  // can round differently at the detection threshold.
+  std::vector<Window> windows;
+  windows.reserve(nDelayBins);
+  for (int j = 0; j < nDelayBins; ++j) {
+    const int leftBegin = std::max(0, j - nGuard - nTrain);
+    const int leftEnd = std::max(0, j - nGuard);
+    const int rightBegin = std::min(nDelayBins, j + nGuard + 1);
+    const int rightEnd = std::min(nDelayBins, j + nGuard + nTrain + 1);
+    const int count = leftEnd - leftBegin + rightEnd - rightBegin;
+    windows.push_back({leftBegin, leftEnd, rightBegin, rightEnd, count,
+      count ? count * (pow(pfa, -1.0 / count) - 1) : 0});
+  }
 
   // store detections temporarily
   std::vector<double> delay;
@@ -45,11 +63,10 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
     {
       continue;
     } 
-    mapRow = x->get_row(i);
+    const auto& mapRow = x->data[i];
     for (int j = 0; j < nDelayBins; j++)
     {
-      mapRowSquare.push_back((double) std::abs(mapRow[j]*mapRow[j]));
-      mapRowSnr.push_back((double)10 * std::log10(std::abs(mapRow[j])) - x->noisePower);
+      mapRowSquare[j] = (double) std::abs(mapRow[j]*mapRow[j]);
     }
     for (int j = 0; j < nDelayBins; j++)
     {
@@ -58,46 +75,26 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
       {
         continue;
       } 
-      // get train cell indices
-      std::vector<int> iTrain;
-      for (int k = j-nGuard-nTrain; k < j-nGuard; k++)
-      {
-        if (k >= 0 && k < nDelayBins)
-        {
-          iTrain.push_back(k);
-        }
-      }
-      for (int k = j+nGuard+1; k < j+nGuard+nTrain+1; k++)
-      {
-        if (k >= 0 && k < nDelayBins)
-        {
-          iTrain.push_back(k);
-        }
-      }
-
       // compute threshold
-      int nCells = iTrain.size();
+      const auto& window = windows[j];
+      int nCells = window.count;
       if (nCells == 0) continue;
-      double alpha = nCells * (pow(pfa, -1.0 / nCells) - 1);
       double trainNoise = 0.0;
-      for (int k = 0; k < nCells; k++)
-      {
-        trainNoise += mapRowSquare[iTrain[k]];
-      }
+      for (int k = window.leftBegin; k < window.leftEnd; ++k)
+        trainNoise += mapRowSquare[k];
+      for (int k = window.rightBegin; k < window.rightEnd; ++k)
+        trainNoise += mapRowSquare[k];
       trainNoise /= nCells;
-      double threshold = alpha * trainNoise;
+      double threshold = window.alpha * trainNoise;
 
       // detection if over threshold
       if (mapRowSquare[j] > threshold)
       {
         delay.push_back(j + x->delay[0]);
         doppler.push_back(x->doppler[i]);
-        snr.push_back(mapRowSnr[j]);
+        snr.push_back((double)10 * std::log10(std::abs(mapRow[j])) - x->noisePower);
       }
-      iTrain.clear();
     }
-    mapRowSquare.clear();
-    mapRowSnr.clear();
   }
 
   // create detection

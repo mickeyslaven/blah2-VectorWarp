@@ -48,7 +48,7 @@ void SpectrumAnalyser::process(IqData *x)
 {  
   // load data and FFT
   uint32_t i;
-  std::deque<std::complex<double>> data = x->get_data();
+  const auto& data = x->view_data();
   if (data.size() < nfft)
     throw std::invalid_argument("Not enough samples for the reference spectrum");
   for (i = 0; i < nfft; i++)
@@ -57,23 +57,18 @@ void SpectrumAnalyser::process(IqData *x)
   }
   fftw_execute(fftX);
 
-  // fftshift
-  std::vector<std::complex<double>> fftshift;
-  for (i = 0; i < nfft; i++)
-  {
-    fftshift.push_back(dataX[(i + (nfft + 1) / 2) % nfft]);
-  }
-  
-  // decimate
+  // Select the shifted bins directly; no full-size shifted copy is needed.
   std::vector<std::complex<double>> spectrum;
+  spectrum.reserve(nSpectrum);
   for (i = 0; i < nfft; i+=decimation)
   {
-    spectrum.push_back(fftshift[i] / static_cast<double>(nfft));
+    spectrum.push_back(dataX[(i + (nfft + 1) / 2) % nfft] / static_cast<double>(nfft));
   }
   x->update_spectrum(spectrum);
 
   // update frequency
   std::vector<double> frequency;
+  frequency.reserve(nSpectrum);
   for (i = 0; i < nfft; i += decimation)
   {
     const double basebandBin = static_cast<double>(i) - nfft / 2;

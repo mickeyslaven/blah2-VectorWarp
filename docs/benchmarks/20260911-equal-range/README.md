@@ -1,6 +1,7 @@
 # Fixed-range processing comparison
 
-These are the current matched performance results, rerun after removing recurring
+Historical results, superseded by the [combined efficiency campaign](../20260911-efficiency/README.md).
+These measurements were rerun after removing recurring
 CPU accuracy checks from qualified GPU processing. Every timed profile uses
 **527 MHz, 2.4 MS/s, delays -10 through 245 (256 bins), and a maximum excess
 path of 30.603813 km**. Excess path is the extra transmitter-to-target-to-receiver
