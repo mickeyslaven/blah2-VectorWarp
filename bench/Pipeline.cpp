@@ -395,7 +395,7 @@ int main(int argc, char** argv) try {
     active=cpuExecuted ? "cpu" : "vulkan"; state=acceleration.status().state;
     if (mode == "gpu" && frame >= SteadyStartFrame && active != "vulkan")
       throw std::runtime_error("FORCED_GPU_FALLBACK: explicit GPU case did not execute on Vulkan");
-    for (unsigned i=0; i<pathCount; ++i) { maps[i]=ambiguity[i]->result(); maps[i]->set_metrics(); }
+    for (unsigned i=0; i<pathCount; ++i) maps[i]=ambiguity[i]->result();
     tick();
     auto fused=fusion.process(maps); map=fused.get();
     map->set_metrics(); tick();

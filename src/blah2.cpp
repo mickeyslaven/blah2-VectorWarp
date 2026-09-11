@@ -592,8 +592,9 @@ try
             }); });
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
-            channelMaps[channel]->set_metrics();
           }
+          // Only the fused map is detected/published. Fusion consumes complex
+          // samples, so per-channel display metrics would be unused log passes.
           map = mapFusion.process(channelMaps);
           map->set_metrics();
           timing_helper(timing_name, timing_time, time, "ambiguity_processing");
