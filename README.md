@@ -46,6 +46,37 @@ the application's processing/output path, but **is not a live-radio test** or
 an upstream full-application comparison. See the report for startup costs,
 deadline counts, provenance and limitations.
 
+### Five-channel CPU scaling and wider Doppler
+
+Channel workers **do** help the full five-channel array. At 200 ms CPI / ±800 Hz,
+moving from one to four workers with one FFT thread each reduced processing
+from **1075 to 568 ms/CPI: 47% less time**, within the same four-core budget.
+That is a gain over VectorWarp's sequential five-channel path, not over blah2.
+
+Giving both programs six physical performance cores produced:
+
+| Workload | Processing time |
+| --- | ---: |
+| Regular blah2, two-channel pair, CPU | 210 ms/CPI |
+| VectorWarp, five-channel array, CPU | 376 ms/CPI |
+| VectorWarp, five-channel array, GPU | 414 ms/CPI |
+
+These are three-repeat medians on the same laptop. Five channels did **not**
+match the two-channel time, and neither five-channel mode kept up with 200 ms.
+GPU is not faster for every workload; AUTO can fall back to CPU.
+Separately, the actual processor's four-core paced-replay check measured
+**539 ms CPU / 592 ms GPU** for all five channels, missing every warm 200 ms
+deadline. These are not live-RF measurements.
+
+VectorWarp also completed **±2500 and ±4000 Hz** at 2.4 MS/s, 200 ms CPI and
+256 delay bins, configurations where regular blah2's Doppler buffer is too
+small. At ±4000 Hz, instrumented CPU/GPU timing was **477/332 ms/CPI**; the
+actual processor's paced-replay timing was **501/369 ms/CPI**. This is broader
+configuration support, **not real-time wide-Doppler performance** on this host.
+An extreme ±6000-Hz case exposed invalid delay mapping and is excluded from
+usable-coverage claims; its settings-validation gap remains to be fixed.
+See [all capacity, worker, native-timing and boundary results](docs/ARRAY_CAPACITY_20260910.md).
+
 ### Verification
 
 Automated coverage includes 2–8-channel parsing/unit/replay cases, API/browser
@@ -175,6 +206,7 @@ selectable in this fork.
 - [Advanced source build and receiver setup](docs/SETUP.md)
 - [GPU acceleration](docs/GPU_ACCELERATION.md)
 - [Current per-CPI timings and processing limits](docs/PER_CPI_BENCHMARK_20260910.md)
+- [Five-channel CPU scaling and wider-Doppler limits](docs/ARRAY_CAPACITY_20260910.md)
 - [Earlier recorded-IQ benchmark](docs/RECORDED_IQ_BENCHMARK.md)
 - [Upstream comparison, math audit and validation evidence](docs/UPSTREAM_COMPARISON.md)
 - [Maintainer release guide](docs/MAINTAINER_RELEASE.md)

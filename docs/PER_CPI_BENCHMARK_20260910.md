@@ -6,6 +6,12 @@ That is the supported GPU execution-path comparison. CPU-only changes were near
 parity or slower, and the reduced-load Pi profiles did **not** meet real-time
 budgets. These are recorded-IQ measurements, not live RF acceptance.
 
+The subsequent [five-channel and wider-Doppler follow-up](ARRAY_CAPACITY_20260910.md)
+measures channel-worker scaling separately, tests beyond the upstream buffer
+limit and records additional actual-processor CPI timings and an excluded
+extreme-delay configuration. Keep its different CPU budgets and workloads
+separate from the pair results below.
+
 ## Scope and reproducibility
 
 Results come from `nvidia-confirm`, `nvidia-pilot` and `pi-pilot` under the

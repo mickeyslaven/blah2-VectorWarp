@@ -69,6 +69,15 @@ differences from upstream; CPU-only and Pi tests do not establish a reliable spe
 CPU versus 180 ms/CPI on GPU, with 17/17 versus 1/17 warm deadline misses.
 That check used sample-rate-paced replay, not live RF or the upstream full application.</p>
 <p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PER_CPI_BENCHMARK_20260910.md">Full results, timing definitions, data and limitations</a></p>
+<h2>More channels and wider Doppler</h2>
+<p>Four channel workers reduced five-channel CPU time from 1075 to 568 ms/CPI
+under the same four-core budget. With six performance cores available to both
+programs, five-channel VectorWarp CPU took 376 ms versus 210 ms for regular
+blah2's two-channel pair. Five-channel processing has not matched pair timing.</p>
+<p>VectorWarp completed ±2500/±4000 Hz configurations that exceed upstream's
+Doppler buffer size. These wide profiles did not meet their 200 ms deadlines;
+an extreme ±6000 Hz full-delay profile is excluded due to a delay-mapping issue.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/ARRAY_CAPACITY_20260910.md">Channel scaling, actual processor timings and wider-Doppler limits</a></p>
 <h2>Signed Linux packages</h2>
 <p>This repository supplies APT/DNF updates. Read the installation guide to
 choose the package for your operating system and architecture.</p>

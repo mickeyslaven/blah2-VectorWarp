@@ -29,7 +29,9 @@ class HomepageTests(unittest.TestCase):
         for required in ("200 ms CPI, ±800 Hz", "228", "163", "50/51", "0/51",
                          "Three-repeat instrumented DSP", "same laptop",
                          "not live RF", "17/17 versus 1/17", "missed deadlines",
-                         "PER_CPI_BENCHMARK_20260910.md"):
+                         "PER_CPI_BENCHMARK_20260910.md", "1075 to 568",
+                         "376 ms versus 210 ms", "has not matched pair timing",
+                         "ARRAY_CAPACITY_20260910.md", "excluded due to a delay-mapping issue"):
             self.assertIn(required, page)
 
     def test_page_has_accessible_layout_and_current_repository(self):

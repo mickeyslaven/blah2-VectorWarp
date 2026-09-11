@@ -38,6 +38,19 @@ and adsb2dd PRs to the actual implementation and regression coverage.
 
 ## Performance wording
 
+The [capacity follow-up](ARRAY_CAPACITY_20260910.md) isolates channel-worker
+scaling: one-to-four workers at one FFT thread each reduced five-channel time
+1074.93→568.03 ms under the same four-core budget. With six physical P-cores
+available to both programs, upstream's pair took 210.32 ms and VectorWarp's full
+five-channel CPU array 376.32 ms (GPU 414.22 ms). Five-channel/two-channel parity
+has **not** been demonstrated. These are different channel workloads.
+
+At 200 ms CPI, 2.4 MS/s and delay −10…245, VectorWarp also completed ±2500/±4000 Hz
+profiles that exceed upstream's incorrectly sized Doppler buffer. Native
+±4000-Hz timing was 501.06 ms CPU/368.58 ms GPU; neither met 200 ms. Support is not
+real-time speed. The ±6000-Hz full-delay stress case exposed lag relabeling and
+is excluded; its remaining validation gap is documented rather than promoted.
+
 Use the [current per-CPI report](PER_CPI_BENCHMARK_20260910.md) for the latest
 matched measurements. At 200 ms CPI / ±800 Hz on the RTX 4050 Laptop, the median
 of three warm-run means was 228.11 ms upstream CPU, 223.91 ms VectorWarp CPU,
