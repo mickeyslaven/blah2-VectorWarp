@@ -36,67 +36,80 @@ RELEASE_TARGETS = {
 
 
 def repository_homepage():
-    """Historical measured results, not a promise about every release/host."""
+    """Selected measured capabilities; full evidence stays in the linked report."""
     return '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VectorWarp — native radar processing</title>
+<meta name="description" content="VectorWarp: more channels, wider Doppler and GPU-accelerated passive radar with browser controls.">
+<title>VectorWarp — more channels, wider Doppler, faster radar</title>
 <style>
-body{font:18px/1.6 system-ui,sans-serif;max-width:52rem;margin:3rem auto;padding:0 1.2rem;color:#252525}
-h1{line-height:1.15}a{color:#9c3900}table{border-collapse:collapse;width:100%;font-size:.95rem}
-th,td{padding:.65rem;text-align:left;border-bottom:1px solid #ddd}
-caption{text-align:left;font-weight:600;margin-bottom:.5rem}.table-scroll{overflow-x:auto}
-.brand{display:inline-block;background:#ed7b24;color:#171717;padding:.2em .35em;border-radius:.2em}
+*{box-sizing:border-box}body{margin:0;background:#faf8f5;color:#24221f;font:17px/1.6 system-ui,sans-serif}
+main,header,footer{max-width:68rem;margin:auto;padding:1.4rem}
+header{display:flex;align-items:center;gap:.8rem;font-weight:750}
+.brand{display:inline-flex;align-items:center;justify-content:center;width:2.8rem;height:2.8rem;background:#ed7b24;color:#171717;border-radius:.35rem}
+h1{font-size:clamp(2.2rem,6vw,4rem);line-height:1.08;letter-spacing:-.045em;max-width:17ch;margin:.5rem 0 1.3rem}
+h2{font-size:1.5rem;line-height:1.3;margin:0 0 1rem}p{max-width:65ch}
+a{color:#923700;text-underline-offset:.2em}a:focus-visible,.table-scroll:focus-visible{outline:3px solid #bf5007;outline-offset:4px}
+.hero{padding:1rem 0 2.5rem}.actions{display:flex;gap:.8rem;flex-wrap:wrap;align-items:center}
+.button{display:inline-block;padding:.65rem 1.1rem;border-radius:.4rem;background:#ed7b24;color:#171717;font-weight:700;text-decoration:none}
+section{margin:0 0 2.5rem}.panel{background:#fff;border:1px solid #e6e0d7;border-radius:.75rem;padding:1.5rem}
+.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:38rem;font-size:.95rem}
+caption{text-align:left;font-weight:600;margin-bottom:.5rem}th,td{padding:.85rem;text-align:left;border-bottom:1px solid #e6e0d7;vertical-align:top}
+th:first-child{padding-left:0}td:last-child{font-weight:700;color:#873200}
+.scope{font-size:.85rem;color:#59544b}.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}
+.features h3{font-size:1rem;margin:0}.features p{margin:.3rem 0 0}footer{font-size:.85rem;color:#59544b}
+@media(max-width:40rem){main,header,footer{padding:1rem}.panel{padding:1rem}}
 </style></head><body>
-<h1><span class="brand">VW</span> VectorWarp</h1>
-<p>Native Linux passive radar with browser setup, recording, replay and optional GPU acceleration.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Installation guide</a>
- · <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Source and receiver support</a></p>
-<h2>Live radar that keeps pace</h2>
-<p>On a Ryzen AI Max+ 395 / Radeon 8060S with eight physical cores available,
-live five-channel Kraken processing averaged 147.5 ms per 200 ms CPI on CPU.
-A live reference/surveillance pair at ±4000 Hz averaged 138.7 ms on GPU,
-meeting all 27 measured 200 ms processing deadlines. That configuration exceeds
-regular blah2's safe Doppler buffer size.</p>
-<p>Five configurations, CPU and GPU, 300 live CPIs total. These are short runs,
-not an endurance or loss-free acquisition guarantee. Parallel CPU was faster
-for the five-channel workloads; the 400 ms / ±1600 Hz five-channel GPU case
-missed all 27 measured deadlines.</p>
-<p>A separate identical-IQ, sample-clock-paced RTX 4050 comparison averaged
-239 ms/CPI upstream versus 162 ms on VectorWarp GPU at 200 ms / ±800 Hz:
-about 32% less processing time, with 33/34 versus 0/34 warm deadline misses.
-The heavier 250 ms / ±2000 Hz profile did not keep pace in any mode.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Live and paced results, per-CPI evidence and limitations</a></p>
-<h2>Earlier matched processing measurements</h2>
-<p>In the September 10, 2026 matched test, VectorWarp GPU used 28% less processing
-time per CPI than upstream blah2 on an RTX 4050 Laptop.</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Per-CPI benchmark results">
-<table><caption>200 ms CPI, ±800 Hz Doppler — lower is better</caption>
-<thead><tr><th scope="col">Processing path</th><th scope="col">ms/CPI</th><th scope="col">Warm frames over 200 ms</th></tr></thead>
-<tbody><tr><th scope="row">Upstream CPU</th><td>228</td><td>50/51</td></tr>
-<tr><th scope="row">VectorWarp CPU</th><td>224</td><td>44/51</td></tr>
-<tr><th scope="row">VectorWarp GPU</th><td>163</td><td>0/51</td></tr></tbody></table></div>
-<p>Three-repeat instrumented DSP test: identical recorded IQ, settings and
-four-core CPU budget on the same laptop. Wider-Doppler and 50 ms CPI tests
-still missed deadlines. Detection/tracking corrections produce documented
-differences from upstream; CPU-only and Pi tests do not establish a reliable speedup.</p>
-<p>A separate actual VectorWarp processor timing check measured 239 ms/CPI on
-CPU versus 180 ms/CPI on GPU, with 17/17 versus 1/17 warm deadline misses.
-That check used sample-rate-paced replay, not live RF or the upstream full application.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PER_CPI_BENCHMARK_20260910.md">Full results, timing definitions, data and limitations</a></p>
-<h2>More channels and wider Doppler</h2>
-<p>Four channel workers reduced five-channel CPU time from 1075 to 568 ms/CPI
-under the same four-core budget. With six performance cores available to both
-programs, five-channel VectorWarp CPU took 376 ms versus 210 ms for regular
-blah2's two-channel pair. Five-channel processing has not matched pair timing.</p>
-<p>On that laptop, VectorWarp completed ±2500/±4000 Hz configurations that exceed upstream's
-Doppler buffer size. Those wide profiles did not meet their 200 ms deadlines;
-an extreme ±6000 Hz full-delay profile is excluded due to a delay-mapping issue.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/ARRAY_CAPACITY_20260910.md">Channel scaling, actual processor timings and wider-Doppler limits</a></p>
-<h2>Signed Linux packages</h2>
-<p>This repository supplies APT/DNF updates. Read the installation guide to
-choose the package for your operating system and architecture.</p>
-<footer><p>Based on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>.</p></footer>
+<header><span class="brand" aria-hidden="true">VW</span> VectorWarp</header>
+<main>
+<section class="hero">
+<h1>More channels. Wider Doppler. Faster radar.</h1>
+<p>Native Linux passive radar with multicore processing, optional GPU acceleration,
+and browser controls for live displays, settings, recording and replay.</p>
+<div class="actions"><a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Get started</a>
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp">Explore the project</a></div>
+</section>
+<section class="panel" aria-labelledby="results">
+<h2 id="results">Faster than regular blah2</h2>
+<p>Same recorded signal. Same settings. Same CPU allocation on each machine.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Regular blah2 and VectorWarp processing comparison">
+<table><caption>200 ms processing deadline, ±800 Hz Doppler</caption>
+<thead><tr><th scope="col">Hardware</th><th scope="col">Regular blah2</th><th scope="col">VectorWarp</th></tr></thead>
+<tbody>
+<tr><th scope="row">RTX 4050 Laptop</th><td>238.8 ms on CPU</td><td>162.3 ms on GPU — 32% less processing time</td></tr>
+<tr><th scope="row">Ryzen AI Max+ 395 / Radeon 8060S</th><td>76.1 ms on CPU</td><td>62.0 ms on GPU — 19% less processing time</td></tr>
+</tbody></table></div>
+<p>On the RTX 4050, VectorWarp GPU met all <strong>34 steady-frame deadlines</strong>;
+regular blah2 missed 33.</p>
+<p class="scope">Measured DSP means: same IQ and settings, two repeats of
+sample-clock-paced DSP replay; four CPU cores on the laptop, eight CPU cores on the Ryzen system.</p>
+<h2>More radar per frame</h2>
+<p><strong>Five-channel live radar at 147.5 ms on CPU.</strong> Synthesized reference
+and five surveillance maps within a 200 ms frame, beyond regular blah2's two-channel path.</p>
+<p><strong>Live ±4000 Hz at 138.7 ms on GPU.</strong> Within a 200 ms frame, at
+2.4 MS/s with 256 delay bins. <strong>Regular blah2 cannot safely process this configuration.</strong></p>
+<p class="scope">Live examples: Ryzen AI Max+ 395 / Radeon 8060S, eight CPU cores,
+2.4 MS/s; means over 27 steady frames. The five-channel example uses CPU at ±800 Hz.</p>
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Full configurations, results and methodology →</a>
+</section>
+<section aria-labelledby="features">
+<h2 id="features">Everything in one interface</h2>
+<div class="features">
+<div><h3>Live radar and maps</h3><p>Delay–Doppler, delay ellipses, spectrum and fullscreen displays.</p></div>
+<div><h3>Browser settings</h3><p>Clear controls, validation and Save &amp; Restart.</p></div>
+<div><h3>Built-in ADS-B</h3><p>Use a local decoder or a remote tar1090 feed.</p></div>
+<div><h3>Record and replay</h3><p>Capture IQ and return to the same recording for another look.</p></div>
+</div>
+</section>
+<section class="panel" aria-labelledby="install">
+<h2 id="install">Native Linux. Normal package updates.</h2>
+<p>Signed APT and DNF packages for Ubuntu, Debian and Fedora, with matching
+packages for DragonOS and 64-bit Raspberry Pi OS. Kraken live input is included;
+RSPduo, USRP and dual HackRF are available through source builds with their SDKs.</p>
+<a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">Installation guide</a>
+</section>
+</main>
+<footer>Built on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>. MIT licensed.</footer>
 </body></html>
 '''
 

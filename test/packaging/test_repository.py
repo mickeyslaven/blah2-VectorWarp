@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,17 +27,24 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ("200 ms CPI, ±800 Hz", "228", "163", "50/51", "0/51",
-                         "Three-repeat instrumented DSP", "same laptop",
-                         "not live RF", "17/17 versus 1/17", "missed deadlines",
-                         "PER_CPI_BENCHMARK_20260910.md", "1075 to 568",
-                         "376 ms versus 210 ms", "has not matched pair timing",
-                         "ARRAY_CAPACITY_20260910.md", "excluded due to a delay-mapping issue"):
+        for required in ('200 ms processing deadline', '147.5 ms on CPU',
+                         '138.7 ms on GPU', '238.8 ms on CPU', '162.3 ms on GPU',
+                         '32% less processing time', '76.1 ms on CPU', '62.0 ms on GPU',
+                         '19% less processing time', '256 delay bins', '±800 Hz',
+                         'Regular blah2 cannot safely process this configuration',
+                         'Ryzen AI Max+ 395', 'eight CPU cores', '2.4 MS/s',
+                         '27 steady frames', 'RTX 4050 Laptop', 'four CPU cores',
+                         'same IQ and settings', 'two repeats',
+                         'sample-clock-paced DSP replay', 'LIVE_CAPACITY_20260910.md'):
             self.assertIn(required, page)
-        for required in ('147.5 ms', '138.7 ms', '300 live CPIs', 'not an endurance',
-                         '33/34 versus 0/34', 'LIVE_CAPACITY_20260910.md',
-                         'did not keep pace in any mode'):
-            self.assertIn(required, page)
+
+        # The front page selects examples; the linked report must keep the
+        # full comparison, including slower configurations and test boundaries.
+        report = (ROOT / 'docs/LIVE_CAPACITY_20260910.md').read_text()
+        for required in ('427.68', '27/27', 'not endurance tests',
+                         'No live\nupstream executable was run',
+                         'full output equivalence is\nnot claimed'):
+            self.assertIn(required, report)
 
     def test_page_has_accessible_layout_and_current_repository(self):
         page = repository.repository_homepage()
@@ -45,6 +53,32 @@ class HomepageTests(unittest.TestCase):
                          'tabindex="0"', 'blah2-VectorWarp#install-on-linux',
                          'https://github.com/30hours/blah2'):
             self.assertIn(required, page)
+
+    def test_quickstart_links_and_release_status(self):
+        readme = (ROOT / 'README.md').read_text()
+        self.assertIn('first signed APT/DNF release is being prepared', readme)
+        self.assertIn('sample-clock-paced DSP replay', readme)
+        self.assertIn('2–8-channel network input', readme)
+        self.assertIn('source builds with the receiver', readme)
+        for claim in ('Faster than regular blah2', 'Regular blah2 CPU', 'VectorWarp GPU',
+                      '**239 ms**', '**162 ms**', '**32%**', '**19%**',
+                      'Regular blah2 cannot safely process this configuration'):
+            self.assertIn(claim, readme)
+        self.assertTrue((ROOT / 'html/favicon/vectorwarp-vw.svg').is_file())
+        for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
+            document = ROOT / name
+            for target in re.findall(r'\]\(([^)]+)\)', document.read_text()):
+                if '://' in target or target.startswith('mailto:'):
+                    continue
+                relative, _, anchor = target.partition('#')
+                destination = document.parent / relative if relative else document
+                with self.subTest(document=name, target=target):
+                    self.assertTrue(destination.is_file(), f'missing link: {target}')
+                    if anchor:
+                        headings = re.findall(r'^#+\s+(.+)$', destination.read_text(), re.MULTILINE)
+                        anchors = {re.sub(r'[^\w\- ]', '', heading.lower()).replace(' ', '-')
+                                   for heading in headings}
+                        self.assertIn(anchor, anchors)
 
 
 class ManifestTests(unittest.TestCase):

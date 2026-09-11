@@ -7,6 +7,8 @@ const path = require('path');
 const {spawn} = require('child_process');
 const {once} = require('events');
 const http = require('http');
+const net = require('net');
+const {randomInt} = require('crypto');
 const {JSDOM} = require('jsdom');
 const {getDeviceProfiles, writeConfigAtomically} = require('../../api/config-manager');
 const {setupDefaults, readConfig} = require('../../api/config-store');
@@ -17,39 +19,76 @@ const filename = path.join(directory, 'config.yml');
 const config = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
 config.truth.adsb.enabled = false;
 config.network.ip = '127.0.0.1';
-const port = 40000 + process.pid % 10000;
-Object.keys(config.network.ports).forEach((key, index) => { config.network.ports[key] = port + index; });
 config.capture.device.reference_channel = 2;
 config.capture.device.surveillance_channels = [0, 1, 3, 4];
 config.process.reference_synthesis.mode = 'dedicated';
 config.process.reference_synthesis.channels = [2];
-writeConfigAtomically(filename, config);
-const child = spawn(process.execPath, [path.join(root, 'api/server.js'), filename], {
-  env: {...process.env, BLAH2_PREVIEW: 'true', BLAH2_RECEIVER_TYPES: 'Kraken', BLAH2_CONFIG_RESTART_COMMAND: ''},
-  stdio: ['ignore', 'ignore', 'pipe']
-});
-let stderr = ''; child.stderr.on('data', value => { stderr += value; });
-const base = `http://127.0.0.1:${port}`;
+async function reservePorts(count) {
+  const listeners = [];
+  const first = 20000 + randomInt(10000); // Below Linux's usual ephemeral range.
+  const release = () => Promise.all(listeners.map(listener => new Promise((resolve, reject) =>
+    listener.close(error => error ? reject(error) : resolve()))));
+  try {
+    for (let offset = 0; offset < 10000 && listeners.length < count; offset++) {
+      const port = 20000 + (first - 20000 + offset) % 10000;
+      const listener = net.createServer();
+      const reserved = await new Promise(resolve => {
+        listener.once('error', () => resolve(false));
+        listener.listen(port, '127.0.0.1', () => resolve(true));
+      });
+      if (reserved) listeners.push(listener);
+    }
+    if (listeners.length !== count) throw new Error('Could not reserve distinct disposable test ports');
+    return {ports: listeners.map(listener => listener.address().port), release};
+  } catch (error) {
+    await release();
+    throw error;
+  }
+}
+
+let child;
+let stderr = '';
+let childFailure = '';
+let port;
+let base;
 let dom;
 const request = (url, options = {}) => new Promise((resolve, reject) => {
   const req = http.request(`${base}${url}`, {method: options.method || 'GET',
-    headers: options.headers}, response => {
+    headers: options.headers, timeout: options.timeout || 500}, response => {
     let body = '';
     response.setEncoding('utf8'); response.on('data', value => { body += value; });
     response.on('end', () => resolve({ok: response.statusCode >= 200 && response.statusCode < 300,
       status: response.statusCode, headers: {get: name => response.headers[name.toLowerCase()] || null},
       json: async () => JSON.parse(body)}));
   });
+  req.on('timeout', () => req.destroy(new Error('Disposable API request timed out')));
   req.on('error', reject); if (options.body) req.write(options.body); req.end();
 });
 (async () => {
+  let reservation;
   try {
+    const portNames = Object.keys(config.network.ports);
+    reservation = await reservePorts(portNames.length);
+    portNames.forEach((key, index) => { config.network.ports[key] = reservation.ports[index]; });
+    port = config.network.ports.api;
+    base = `http://127.0.0.1:${port}`;
+    writeConfigAtomically(filename, config);
+    await reservation.release();
+    reservation = null;
+    child = spawn(process.execPath, [path.join(root, 'api/server.js'), filename], {
+      env: {...process.env, BLAH2_PREVIEW: 'true', BLAH2_RECEIVER_TYPES: 'Kraken', BLAH2_CONFIG_RESTART_COMMAND: ''},
+      stdio: ['ignore', 'ignore', 'pipe']
+    });
+    child.stderr.on('data', value => { stderr = `${stderr}${value}`.slice(-4096); });
+    child.once('error', error => { childFailure = `spawn error: ${error.message}`; });
+    child.once('exit', (code, signal) => { childFailure = `exit ${code}${signal ? ` (${signal})` : ''}`; });
     let ready = false;
-    for (let attempt = 0; attempt < 80; attempt++) {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && !childFailure) {
       try { if ((await request('/api/config')).ok) { ready = true; break; } } catch (_) { /* Isolated startup. */ }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    assert.ok(ready, stderr || 'Disposable API did not start');
+    assert.ok(ready, stderr || `Disposable API did not start (${childFailure || 'startup timed out'})`);
     dom = new JSDOM('<div id="configuration"></div>', {url: `${base}/display/configuration/`, runScripts: 'outside-only', pretendToBeVisual: true});
     const window = dom.window;
     window.liveApiUrl = value => value; window.rememberApiPort = () => {};
@@ -248,7 +287,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     console.log('Kraken Receiver editor + real disposable API + YAML save/reload + status isolation passed.');
   } finally {
     if (dom) dom.window.close();
-    if (child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
+    if (reservation) await reservation.release();
+    if (child?.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
     fs.rmSync(directory, {recursive: true, force: true});
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
