@@ -39,6 +39,12 @@ async function expectReject(promise, pattern) {
         Usrp: {state: 'installed', version: '4.8'},
         HackRF: {state: 'installed'}
       }),
+      nativeReceiverStatus: async () => ({
+        Kraken: {builtIn: true, compiled: true, moduleLoadable: true, error: ''},
+        RspDuo: {builtIn: false, compiled: true, moduleLoadable: false, error: 'SDRplay runtime is unavailable.'},
+        Usrp: {builtIn: false, compiled: true, moduleLoadable: true, error: ''},
+        HackRF: {builtIn: false, compiled: true, moduleLoadable: true, error: ''}
+      }),
       configuredUpstreamStatus: async endpoint => {
         calls.push(['upstream', endpoint]);
         return {available: true, matched: true,
@@ -67,6 +73,9 @@ async function expectReject(promise, pattern) {
   assert.deepEqual(byType.Kraken.detection.evidence,
     ['configured-upstream-telemetry']);
   assert.equal(byType.RspDuo.capabilities.detected, true);
+  assert.equal(byType.RspDuo.capabilities.liveCompiled, true);
+  assert.equal(byType.RspDuo.capabilities.runtimeLoadable, false);
+  assert.equal(byType.RspDuo.capabilities.possible, false);
   assert.equal(byType.RspDuo.capabilities.possible, false,
     'A known missing runtime is a blocker even when hardware is present');
   assert.equal(byType.Usrp.capabilities.detected, true);
@@ -106,6 +115,24 @@ async function expectReject(promise, pattern) {
     'blocked');
   assert.equal(rspPlan.actions.find(item => item.id === 'upstream-service').target,
     'sdrplay-api');
+
+  const runtimeMissing = createReceiverManager({probes: {
+    usbInventory: async () => [], dependencyInventory: async () => ({RspDuo: {state: 'missing'}}),
+    nativeReceiverStatus: async () => ({
+      Kraken: {builtIn: true, compiled: true, moduleLoadable: true, error: ''},
+      RspDuo: {builtIn: false, compiled: true, moduleLoadable: false, error: 'Install SDRplay API.'},
+      Usrp: {builtIn: false, compiled: false, moduleLoadable: false, error: 'Not built.'},
+      HackRF: {builtIn: false, compiled: false, moduleLoadable: false, error: 'Not built.'}
+    })
+  }});
+  const runtimeMissingDiscovery = await runtimeMissing.discover({config: {capture: {device: {type: 'RspDuo'}}},
+    compiledLiveTypes: []});
+  const runtimeMissingRsp = runtimeMissingDiscovery.receivers.find(item => item.type === 'RspDuo');
+  assert.equal(runtimeMissingRsp.capabilities.liveCompiled, true,
+    'A compiled adapter remains selectable when its runtime dependency is absent');
+  assert.equal(runtimeMissingRsp.capabilities.runtimeLoadable, false);
+  assert.equal(runtimeMissing.plan({receiverType: 'RspDuo'}, runtimeMissingDiscovery).actions
+    .find(item => item.id === 'backend').execution, 'runtime-unavailable');
 
   let remoteServiceCalled = false;
   const remoteManager = createReceiverManager({timeoutMs: 100, probes: {

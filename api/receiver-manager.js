@@ -29,7 +29,7 @@ const DEFINITIONS = Object.freeze({
   }),
   Usrp: Object.freeze({
     label: 'Ettus USRP / UHD',
-    dependency: 'uhd-4.8',
+    dependency: 'uhd-4.1',
     sourceSupported: true,
     direct: true,
     service: null
@@ -262,6 +262,14 @@ function configuredUsbMatches(type, config, matches) {
       return {matches: exact.length === 1 ? exact : [], identityMatched: exact.length === 1};
     }
   }
+  if (type === 'RspDuo') {
+    const serial = typeof config.capture?.device?.serial === 'string' ? config.capture.device.serial : null;
+    if (serial) {
+      const exact = matches.filter(item => item.serial === serial);
+      return {matches: exact.length === 1 ? exact : [], identityMatched: exact.length === 1};
+    }
+    return {matches: matches.length === 1 ? matches : [], identityMatched: matches.length === 1 ? null : false};
+  }
   return {matches, identityMatched: null};
 }
 
@@ -328,6 +336,24 @@ function normalizeService(value) {
   return value.state;
 }
 
+function normalizeNativeReceiverStatus(value) {
+  if (!plainObject(value)) throw new Error('Native receiver status must be an object.');
+  const result = {};
+  for (const type of RECEIVER_TYPES) {
+    const item = value[type];
+    if (!plainObject(item)) throw new Error(`Native receiver status for ${type} is invalid.`);
+    exactKeys(item, ['builtIn', 'compiled', 'moduleLoadable', 'error'], `nativeStatus.${type}`);
+    if (typeof item.builtIn !== 'boolean' || typeof item.compiled !== 'boolean' ||
+        typeof item.moduleLoadable !== 'boolean' || typeof item.error !== 'string' ||
+        item.error.length > 240 || /[\u0000-\u001f\u007f]/.test(item.error) ||
+        (!item.compiled && item.moduleLoadable))
+      throw new Error(`Native receiver status for ${type} is invalid.`);
+    result[type] = {builtIn: item.builtIn, compiled: item.compiled,
+      moduleLoadable: item.moduleLoadable, error: item.error};
+  }
+  return result;
+}
+
 function getSettingsMapping(type) {
   if (!RECEIVER_TYPES.includes(type)) throw inputError('receiver type is not supported.');
   return SETTINGS_SYNC[type].map(item => ({...item}));
@@ -366,8 +392,13 @@ function planReceiverSetup(request, discovery) {
       'unsupported', 'This installed VectorWarp binary does not contain the selected live backend.');
     errors.push(errorRecord('BACKEND_NOT_COMPILED', request.receiverType,
       'Install a reviewed build containing this receiver backend.'));
+  } else if (receiver.capabilities.runtimeLoadable === false) {
+    add('backend', 'provide-live-backend', request.receiverType, 'blocked',
+      'runtime-unavailable', 'The selected adapter is compiled, but its runtime module or SDK is unavailable.');
+    errors.push(errorRecord('RUNTIME_MODULE_UNAVAILABLE', request.receiverType,
+      receiver.capabilities.runtimeError || 'The selected adapter could not load its runtime module.'));
   } else add('backend', 'provide-live-backend', request.receiverType,
-    'not-required', 'none', 'The selected live backend is compiled in.');
+    'not-required', 'none', 'The selected live backend is compiled and its runtime module is loadable.');
 
   if (receiver.dependencies.state === 'installed')
     add('dependency', 'install-dependency', DEFINITIONS[request.receiverType].dependency,
@@ -442,7 +473,7 @@ function planReceiverSetup(request, discovery) {
 function createReceiverManager(options = {}) {
   exactKeys(options, ['probes', 'timeoutMs', 'now'], 'options');
   const probes = options.probes === undefined ? {} : options.probes;
-  exactKeys(probes, ['usbInventory', 'dependencyInventory',
+  exactKeys(probes, ['usbInventory', 'dependencyInventory', 'nativeReceiverStatus',
     'configuredUpstreamStatus', 'serviceStatus'], 'options.probes');
   const timeoutMs = normalizeTimeout(options.timeoutMs);
   const now = options.now === undefined ? Date.now : options.now;
@@ -467,6 +498,17 @@ function createReceiverManager(options = {}) {
     catch (error) {
       errors.push(errorRecord('INVALID_PROBE_RESULT', 'dependency-inventory', error.message));
       dependencies = normalizeDependencies({});
+    }
+    let nativeStatus = null;
+    if (typeof probes.nativeReceiverStatus === 'function') {
+      const rawNativeStatus = await runProbe('native-receiver-status', probes.nativeReceiverStatus,
+        {}, timeoutMs, errors, null);
+      if (rawNativeStatus !== null) {
+        try { nativeStatus = normalizeNativeReceiverStatus(rawNativeStatus); }
+        catch (error) {
+          errors.push(errorRecord('INVALID_PROBE_RESULT', 'native-receiver-status', error.message));
+        }
+      }
     }
 
     let upstream = {availability: 'unknown', capabilities: []};
@@ -527,8 +569,12 @@ function createReceiverManager(options = {}) {
           {state: 'unknown', installed: [], missing: [],
             unknown: [DEFINITIONS.Kraken.dependency]};
       }
-      const liveCompiled = request.compiledLiveTypes.has(type);
-      const possible = liveCompiled && dependency.state !== 'missing';
+      const native = nativeStatus?.[type] || null;
+      // A status result has precedence. The older environment manifest remains
+      // a conservative fallback while upgrading installations.
+      const liveCompiled = native ? native.compiled : request.compiledLiveTypes.has(type);
+      const runtimeLoadable = native ? native.moduleLoadable : null;
+      const possible = liveCompiled && runtimeLoadable !== false && dependency.state !== 'missing';
       const serviceId = DEFINITIONS[type].service;
       const service = serviceId ? {
         id: serviceId, required: true, state: locality === 'local' ?
@@ -539,6 +585,8 @@ function createReceiverManager(options = {}) {
       return {
         type, label: DEFINITIONS[type].label, locality,
         capabilities: {detected, possible, configured, liveCompiled,
+          runtimeLoadable, runtimeError: native?.error || null,
+          ...(native ? {builtIn: native.builtIn} : {}),
           sourceSupported: DEFINITIONS[type].sourceSupported},
         detection: {configuredIdentityMatched: identityMatched,
           modelDetected: type === 'Kraken' ? detected : modelMatches.length > 0,

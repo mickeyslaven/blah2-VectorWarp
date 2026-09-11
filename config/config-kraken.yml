@@ -10,6 +10,9 @@ capture:
       host: "127.0.0.1"
       port: 8091
       control_port: 8092
+      # Preserve the Suite's existing gain unless an operator explicitly selects
+      # automatic (-1) or a manual 0–50 dB Suite gain in Settings.
+      gain: "keep"
     # Must match the number of channels streamed by the Suite.
     channel_count: 5
     reference_channel: 0

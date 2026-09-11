@@ -7,6 +7,9 @@ const {setupDefaults} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 const dom = new JSDOM('<div id="configuration"></div>', {url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'});
 const window = dom.window, saved = setupDefaults(), requests = [];
+saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0,
+  surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
+saved.capture.fs = 2400000;
 let revision = 'a'.repeat(64), discoveryCount = 0, mode = 'ok';
 window.liveApiUrl = value => value;
 window.rememberApiPort = () => {};
@@ -23,9 +26,15 @@ window.fetch = async (url, options = {}) => {
     discoveryCount++;
     body = {configRevision: revision, buildCapabilitiesKnown: true, managementAvailable: true,
       receivers: ['Kraken', 'RspDuo', 'Usrp', 'HackRF'].map(type => ({type, label: type,
-        capabilities: {liveCompiled: ['Kraken', 'HackRF'].includes(type)}, detection: {state: 'unknown'},
+        capabilities: {liveCompiled: ['Kraken', 'HackRF'].includes(type),
+          runtimeLoadable: type === 'RspDuo' ? false : true}, detection: {state: 'unknown'},
         dependencies: {state: 'unknown'}, managedService: {required: false},
-        upstream: {availability: type === 'Kraken' ? 'available' : 'not-applicable'}})),
+        upstream: {availability: type === 'Kraken' ? 'available' : 'not-applicable'},
+        settings: type === 'Kraken' ? [
+          {configField: 'capture.fc', direction: 'browser-to-upstream-after-ack-and-readback'},
+          {configField: 'capture.fs', direction: 'upstream-authoritative-mismatch-block'},
+          {configField: 'capture.device.reference_channel', direction: 'config-only'}] :
+          [{configField: 'capture.fc', direction: 'direct-tuning'}]})),
       management: {actions: [{id: 'reviewed-hackrf', receiverType: 'HackRF', kind: 'install-packages', available: true}]}, errors: []};
   } else if (url === '/api/receivers/plan') body = {nonce: 'b'.repeat(64), configRevision: revision,
     status: 'awaiting-local-authorization', lifetimeSeconds: 300, review: '<img src=x onerror=alert(1)>',
@@ -44,12 +53,26 @@ async function click(label) { const button = findButton(label); assert.ok(button
 (async () => {
   try {
     await window.renderConfiguration();
+    const suiteGain = window.document.querySelector('[data-path="capture.device.heimdall.gain"]');
+    assert.ok(suiteGain, 'Older saved Kraken files still show the non-retuning gain control');
+    const gainControls = suiteGain.querySelectorAll('select,input');
+    assert.equal(gainControls[0].value, 'keep');
+    assert.equal(gainControls[1].hidden, true);
     assert.equal(discoveryCount, 0, 'Host checks only run on an explicit check');
     await click('Check receiver software');
     const text = window.document.querySelector('#receiver-setup').textContent;
     for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF']) assert.ok(text.includes(type));
     assert.ok(text.includes('license accepted locally'));
     assert.ok(text.includes('will be reused'));
+    assert.ok(text.includes('runtime unavailable'));
+    for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF'])
+      await click(`Show setting application matrix: ${type}`);
+    const matrix = window.document.querySelector('#receiver-setup').textContent;
+    assert.match(matrix, /Suite V2 control; require its acknowledgement/);
+    assert.match(matrix, /not sent to Suite V2/);
+    assert.match(matrix, /SDRplay API v3 at processor startup/);
+    assert.match(matrix, /UHD startup parameter after Save & Restart/);
+    assert.match(matrix, /selected HackRF pair at processor startup/);
     await click('Review missing dependency install');
     assert.ok(window.document.querySelector('#receiver-setup pre').textContent.startsWith('sudo '));
     assert.match(window.document.querySelector('#receiver-setup').textContent, /hackrf.*1\.2\.3.*Fedora/s,

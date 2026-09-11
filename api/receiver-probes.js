@@ -12,7 +12,8 @@ const SERVICE_UNITS = Object.freeze({
 });
 const COMMANDS = Object.freeze({
   libraries: ['/usr/sbin/ldconfig', '/sbin/ldconfig'],
-  service: ['/usr/bin/systemctl', '/bin/systemctl']
+  service: ['/usr/bin/systemctl', '/bin/systemctl'],
+  receiverStatus: [process.env.BLAH2_RECEIVER_STATUS_EXECUTABLE || '/opt/vectorwarp/bin/blah2']
 });
 
 async function smallFile(file, limit = 1024) {
@@ -61,7 +62,7 @@ function dependenciesFromCache(cache) {
   const sdrplay = /^\s*libsdrplay_api\.so\.(3\.15(?:\.\d+)?)\s/m.exec(cache);
   if (sdrplay) result.RspDuo = {state: 'installed', version: sdrplay[1]};
   const uhd = [...cache.matchAll(/^\s*libuhd\.so\.(\d+)\.(\d+)([.\d]*)\s/gm)]
-    .find(match => Number(match[1]) > 4 || (Number(match[1]) === 4 && Number(match[2]) >= 8));
+    .find(match => Number(match[1]) > 4 || (Number(match[1]) === 4 && Number(match[2]) >= 1));
   if (uhd) result.Usrp = {state: 'installed', version: `${uhd[1]}.${uhd[2]}${uhd[3]}`};
   // An absent cache entry is not proof of absence: SDKs can use private RPATHs.
   return result;
@@ -77,6 +78,36 @@ function serviceFromProperties(properties) {
   return {state: 'unknown'};
 }
 
+function receiverStatusFromJson(text) {
+  if (typeof text !== 'string' || Buffer.byteLength(text) > 262144)
+    throw new Error('Invalid receiver capability report.');
+  let report;
+  try { report = JSON.parse(text); }
+  catch (_) { throw new Error('Invalid receiver capability report.'); }
+  if (!report || typeof report !== 'object' || Array.isArray(report) ||
+      Object.keys(report).some(key => !['schema', 'hardwareProbed', 'receivers'].includes(key)) || report.schema !== 1 ||
+      !Array.isArray(report.receivers) || report.receivers.length !== 4 ||
+      report.hardwareProbed !== false)
+    throw new Error('Invalid receiver capability report.');
+  const allowed = new Set(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
+  const receivers = {};
+  for (const item of report.receivers) {
+    if (!item || typeof item !== 'object' || Array.isArray(item) ||
+        Object.keys(item).some(key => !['receiver', 'builtIn', 'compiled', 'moduleLoadable', 'error'].includes(key)) ||
+        !allowed.has(item.receiver) || receivers[item.receiver] ||
+        typeof item.builtIn !== 'boolean' || typeof item.compiled !== 'boolean' ||
+        typeof item.moduleLoadable !== 'boolean' || typeof item.error !== 'string' ||
+        item.error.length > 240 || /[\u0000-\u001f\u007f]/.test(item.error) ||
+        (!item.compiled && item.moduleLoadable))
+      throw new Error('Invalid receiver capability report.');
+    receivers[item.receiver] = {builtIn: item.builtIn, compiled: item.compiled,
+      moduleLoadable: item.moduleLoadable, error: item.error};
+  }
+  if (Object.keys(receivers).length !== allowed.size)
+    throw new Error('Invalid receiver capability report.');
+  return receivers;
+}
+
 function createReceiverProbes(config, options = {}) {
   const snapshot = JSON.parse(JSON.stringify(config));
   // Options are dependency injection for tests, never request parameters.
@@ -84,6 +115,8 @@ function createReceiverProbes(config, options = {}) {
   const list = options.readdir || (directory => fs.readdir(directory));
   const run = options.run || runCommand;
   const upstream = options.upstream || getUpstreamStatus;
+  const receiverStatus = options.receiverStatus || (async context =>
+    receiverStatusFromJson(await command('receiverStatus', ['--receiver-status'], context)));
   const exists = options.exists || (async file => {
     try { await fs.access(file, require('fs').constants.X_OK); return true; }
     catch (_) { return false; }
@@ -119,6 +152,9 @@ function createReceiverProbes(config, options = {}) {
     async dependencyInventory(_request, context) {
       return dependenciesFromCache(await command('libraries', ['-p'], context));
     },
+    async nativeReceiverStatus(_request, context) {
+      return receiverStatus(context);
+    },
     async serviceStatus({serviceId}, context) {
       const units = SERVICE_UNITS[serviceId];
       if (!units) throw new Error('Unknown receiver service.');
@@ -142,4 +178,5 @@ function createReceiverProbes(config, options = {}) {
   };
 }
 
-module.exports = {createReceiverProbes, dependenciesFromCache, serviceFromProperties};
+module.exports = {createReceiverProbes, dependenciesFromCache, serviceFromProperties,
+  receiverStatusFromJson};

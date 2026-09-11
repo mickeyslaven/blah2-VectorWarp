@@ -20,7 +20,7 @@ const DEVICE_PROFILES = [
     sampleRate: 2400000,
     device: {
       type: 'Kraken',
-      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092},
+      heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092, gain: 'keep'},
       channel_count: 5,
       reference_channel: 0,
       surveillance_channels: [0, 1, 2, 3, 4]
@@ -46,6 +46,7 @@ const DEVICE_PROFILES = [
     sampleRate: 2000000,
     device: {
       type: 'RspDuo', agcSetPoint: -20, bandwidthNumber: 5,
+      serial: '',
       gainReduction: [50, 45], lnaState: 1,
       dabNotch: false, rfNotch: false
     }
@@ -159,7 +160,12 @@ function validateConfig(config, baseline = null) {
     if (key === 'truth.adsb.adsb2dd') return;
     const rule = FIELD_RULES[key];
     const previous = keys.reduce((item, name) => item?.[name], baseline);
-    if (rule && (rule.type === 'array' ? !Array.isArray(value) : typeof value !== rule.type))
+    if (rule && rule.type === 'serial' && !(typeof value === 'string' || Array.isArray(value)))
+      errors.push(`${key} must be a string or array`);
+    else if (rule && rule.type === 'gain' && !(value === 'keep' || value === -1 ||
+        (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 && Math.round(value * 10) === value * 10)))
+      errors.push(`${key} must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps`);
+    else if (rule && (rule.type === 'array' ? !Array.isArray(value) : !['gain', 'serial'].includes(rule.type) && typeof value !== rule.type))
       errors.push(`${key} must be ${rule.type}`);
     if (isObject(value)) {
       if (key && !rule && !Object.keys(FIELD_RULES).some(field => field.startsWith(`${key}.`)) &&
@@ -278,6 +284,9 @@ function validateConfig(config, baseline = null) {
       if (heimdall.control_port === heimdall.port)
         errors.push('capture.device.heimdall.control_port must differ from the IQ data port');
     }
+    if (heimdall.gain !== undefined && !(heimdall.gain === 'keep' || heimdall.gain === -1 ||
+        (typeof heimdall.gain === 'number' && Number.isFinite(heimdall.gain) && heimdall.gain >= 0 && heimdall.gain <= 50 && Math.round(heimdall.gain * 10) === heimdall.gain * 10)))
+      errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
     if (typeof heimdall.host === 'string' &&
         !net.isIP(heimdall.host) && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(heimdall.host))
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');
@@ -328,6 +337,8 @@ function validateConfig(config, baseline = null) {
       device.amp_enable.forEach((value, index) =>
         boolean(value, `capture.device.amp_enable[${index}]`));
   } else if (device.type === 'RspDuo') {
+    if (device.serial !== undefined && (typeof device.serial !== 'string' || device.serial.length > 160 || /[\u0000-\u001f\u007f]/.test(device.serial)))
+      errors.push('capture.device.serial must be an optional RSPduo serial string');
     number(capture.fc, 'capture.fc', {integer: true, min: 1,
       max: 2000000000});
     oneOf(capture.fs, 'capture.fs',

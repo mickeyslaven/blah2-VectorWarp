@@ -26,7 +26,7 @@ function config(port, overrides = {}) {
 
 function status(state) {
   return {settings: {center_freq: state.frequency, sample_rate: state.sampleRate,
-    gain: 20}, num_channels: state.channels, max_elements: state.maximum,
+    gain: state.gain ?? 20}, num_channels: state.channels, max_elements: state.maximum,
   reconfiguring: state.reconfiguring, recovering: state.recovering || false,
   operating_mode: state.mode || 'coherent', cooldown_active: false};
 }
@@ -115,6 +115,10 @@ async function rejected(promise, code, pattern) {
         live.reconfiguring = false;
         socket.write(`${JSON.stringify(status(live))}\n`);
       }, 10);
+    } else if (command.command === 'set_gain') {
+      socket.write(`${JSON.stringify({status: 'success', gain: command.gain})}\n`);
+      live.gain = command.gain;
+      socket.write(`${JSON.stringify(status(live))}\n`);
     }
   });
   try {
@@ -131,6 +135,10 @@ async function rejected(promise, code, pattern) {
       item.acknowledged, item.readbackMatched]), [
       ['set_num_elements', true, true], ['set_frequency', true, true]
     ]);
+    const gainConfig = config(suite.port, {device: {heimdall: {host: '127.0.0.1',
+      port: suite.port + 1, control_port: suite.port, gain: 12.5}}});
+    const gainResult = await createKrakenControlClient().synchronize(gainConfig);
+    assert.ok(gainResult.operations.some(item => item.operation === 'set_gain' && item.readbackMatched));
     assert.equal(result.after.centerFrequency, 204640000);
     assert.equal(result.after.channelCount, 3);
     assert.equal(result.channelIdentity.hardwareSerialsVerified, false);

@@ -48,11 +48,15 @@ function endpointFrom(config) {
 function requestedSettings(config) {
   if (config?.capture?.device?.type !== 'Kraken')
     throw receiverError('INVALID_RECEIVER_SYNC', 'Kraken synchronization requires a Kraken profile.', 422);
+  const gain = config.capture.device.heimdall?.gain;
+  if (gain !== undefined && gain !== 'keep' && gain !== -1 && !(typeof gain === 'number' && Number.isFinite(gain) && gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10))
+    throw receiverError('INVALID_RECEIVER_SYNC', 'Kraken gain is invalid.', 422);
   return {
     frequency: positiveInteger(config.capture.fc, 'capture.fc'),
     sampleRate: positiveInteger(config.capture.fs, 'capture.fs'),
     channelCount: positiveInteger(config.capture.device.channel_count,
-      'capture.device.channel_count')
+      'capture.device.channel_count'),
+    ...(gain === undefined || gain === 'keep' ? {} : {gain})
   };
 }
 
@@ -63,7 +67,8 @@ function krakenControlValues(config) {
   catch (_) { endpoint = {host: null, controlPort: null}; }
   return {endpoint, iqPort: config.capture.device.heimdall?.port,
     frequency: config.capture.fc, sampleRate: config.capture.fs,
-    channelCount: config.capture.device.channel_count};
+    channelCount: config.capture.device.channel_count,
+    gain: config.capture.device.heimdall?.gain === 'keep' ? undefined : config.capture.device.heimdall?.gain};
 }
 
 function requiresReceiverSynchronization(previous, candidate) {
@@ -83,7 +88,8 @@ function normalizeStatus(frame) {
   const sampleRate = frame.settings.sample_rate;
   const channelCount = frame.num_channels;
   const maximumChannels = frame.max_elements;
-  if (!Number.isFinite(centerFrequency) || !Number.isFinite(sampleRate) ||
+  const gain = frame.settings.gain;
+  if (!Number.isFinite(centerFrequency) || !Number.isFinite(sampleRate) || !Number.isFinite(gain) ||
       !Number.isInteger(channelCount) || !Number.isInteger(maximumChannels) ||
       channelCount < 1 || maximumChannels < channelCount || maximumChannels > 64 ||
       typeof frame.reconfiguring !== 'boolean' ||
@@ -91,7 +97,7 @@ function normalizeStatus(frame) {
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
       'Suite V2 status is missing required tuning, channel, mode, or reconfiguration fields.', 502);
   return {
-    centerFrequency, sampleRate, channelCount, maximumChannels,
+    centerFrequency, sampleRate, channelCount, maximumChannels, gain,
     operatingMode: frame.operating_mode,
     reconfiguring: frame.reconfiguring,
     recovering: frame.recovering === true,
@@ -145,6 +151,11 @@ function operationList(status, wanted) {
     command: {command: 'set_frequency', frequency: wanted.frequency},
     acknowledgementField: 'frequency',
     matches: observed => observed.centerFrequency === wanted.frequency
+  });
+  if (wanted.gain !== undefined && status.gain !== wanted.gain) operations.push({
+    id: 'set_gain', field: 'capture.device.heimdall.gain', value: wanted.gain,
+    command: {command: 'set_gain', gain: wanted.gain}, acknowledgementField: 'gain',
+    matches: observed => observed.gain === wanted.gain
   });
   return operations;
 }
@@ -231,7 +242,7 @@ function createKrakenControlClient(options = {}) {
       };
       const finish = () => {
         if (settled) return;
-        if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount))
+        if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
           return fail(receiverError('KRAKEN_STATUS_DRIFT',
             'Suite V2 no longer reports the complete requested settings; the config was not saved.', 409));
         settled = true;
@@ -258,10 +269,10 @@ function createKrakenControlClient(options = {}) {
         currentAcknowledged = false;
         next();
       };
-      const matchesTuple = (observed, frequency, count) => observed &&
+      const matchesTuple = (observed, frequency, count, gain) => observed &&
         observed.operatingMode === 'coherent' && observed.sampleRate === wanted.sampleRate &&
         observed.centerFrequency === frequency && observed.channelCount === count &&
-        observed.reconfiguring === false;
+        (gain === undefined || observed.gain === gain) && observed.reconfiguring === false;
       const handleStatus = frame => {
         const observed = normalizeStatus(frame);
         statusSequence += 1;
@@ -283,7 +294,8 @@ function createKrakenControlClient(options = {}) {
         const frequency = current?.id === 'set_num_elements' ?
           initialStatus.centerFrequency : wanted.frequency;
         if (current && currentAcknowledged && statusSequence > acknowledgedAfterStatus &&
-            current.matches(observed) && matchesTuple(observed, frequency, wanted.channelCount))
+            current.matches(observed) && matchesTuple(observed, frequency, wanted.channelCount,
+              current.id === 'set_gain' ? wanted.gain : undefined))
           acceptReadback();
       };
       const handleResponse = frame => {

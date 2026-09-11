@@ -1,7 +1,8 @@
 'use strict';
 
 const assert = require('assert/strict');
-const {createReceiverProbes, dependenciesFromCache, serviceFromProperties} = require('./receiver-probes');
+const {createReceiverProbes, dependenciesFromCache, serviceFromProperties,
+  receiverStatusFromJson} = require('./receiver-probes');
 
 async function main() {
   const libraries = dependenciesFromCache([
@@ -19,6 +20,14 @@ async function main() {
   assert.deepEqual(serviceFromProperties('LoadState=loaded\nActiveState=active\n'), {state: 'running'});
   assert.deepEqual(serviceFromProperties('LoadState=loaded\nActiveState=failed\n'), {state: 'stopped'});
   assert.deepEqual(serviceFromProperties('LoadState=not-found\nActiveState=inactive\n'), {state: 'unknown'});
+  const status = receiverStatusFromJson(JSON.stringify({schema: 1, hardwareProbed: false,
+    receivers: ['Kraken', 'RspDuo', 'Usrp', 'HackRF'].map((receiver, index) => ({receiver,
+      builtIn: receiver === 'Kraken', compiled: true, moduleLoadable: index !== 1,
+      error: index === 1 ? 'Runtime dependency unavailable.' : ''}))}));
+  assert.equal(status.Kraken.builtIn, true);
+  assert.equal(status.RspDuo.moduleLoadable, false);
+  assert.throws(() => receiverStatusFromJson(JSON.stringify({schema: 1, hardwareProbed: true,
+    receivers: []})), /capability/);
 
   const touched = [];
   const config = {capture: {device: {type: 'Kraken', heimdall: {host: '127.0.0.1', port: 8091}}}};
@@ -36,13 +45,15 @@ async function main() {
       assert.ok(args.slice(5).every(unit => unit.endsWith('.service')));
       return 'LoadState=loaded\nActiveState=inactive\n';
     },
-    upstream: async () => { upstreamCalls++; return {available: true, matched: true}; }
+    upstream: async () => { upstreamCalls++; return {available: true, matched: true}; },
+    receiverStatus: async () => status
   });
   assert.equal((await probes.usbInventory({})).length, 1);
   assert.equal(touched.length, 3);
   assert.ok(touched.every(file => file.startsWith('/sys/bus/usb/devices/1-1/')));
   assert.deepEqual(await probes.serviceStatus({serviceId: 'kraken-suite-v2'}), {state: 'stopped'});
   assert.deepEqual(await probes.serviceStatus({serviceId: 'sdrplay-api'}), {state: 'stopped'});
+  assert.deepEqual(await probes.nativeReceiverStatus({}), status);
   await assert.rejects(probes.serviceStatus({serviceId: 'arbitrary.service'}), /Unknown/);
   assert.equal((await probes.configuredUpstreamStatus({host: '127.0.0.1', dataPort: 8091, controlPort: 8092})).available, true);
   await assert.rejects(probes.configuredUpstreamStatus({host: 'other-host', dataPort: 8091, controlPort: 8092}), /endpoint changed/);

@@ -19,6 +19,7 @@ const CONFIG_META = {
   'capture.device.heimdall.host': ['HeIMDALL host', 'Computer running HeIMDALL.'],
   'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
   'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
+  'capture.device.heimdall.gain': ['Suite gain', 'Keep the receiver setting, request automatic gain, or send a manual Suite gain in dB. Manual gain requires Suite acknowledgement and fresh status readback.'],
   'capture.device.address': ['USRP address', 'UHD device address or hostname'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
@@ -28,6 +29,7 @@ const CONFIG_META = {
   'capture.device.gain_vga': ['HackRF VGA gains', 'Two gains in dB: 0–62, in steps of 2.'],
   'capture.device.amp_enable': ['HackRF RF amplifiers', 'Enable the RF amplifier for each receiver'],
   'capture.device.agcSetPoint': ['AGC target', 'RSPduo automatic-gain target, from -72 to 0 dBFS.'],
+  'capture.device.serial': ['RSPduo serial', 'Optional exact RSPduo selection. Leave blank only when exactly one matching receiver is connected.'],
   'capture.device.bandwidthNumber': ['AGC speed', 'RSPduo automatic-gain response: off, 5, 50 or 100 Hz.'],
   'capture.device.gainReduction': ['Gain reduction', 'Two RSPduo gain reductions in dB. Each must be 20–59.'],
   'capture.device.lnaState': ['LNA state', 'RSPduo low-noise amplifier state, from 1 to 9.'],
@@ -630,6 +632,33 @@ function typedInput(value, path) {
     wrapper.append(mode, endpoint);
     return wrapper;
   }
+  if (key === 'capture.device.heimdall.gain') {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'config-suite-gain';
+    const isManual = typeof value === 'number';
+    const known = value === 'keep' || value === -1 || isManual;
+    const manual = document.createElement('input');
+    manual.type = 'number'; manual.min = '0'; manual.max = '50'; manual.step = '0.1';
+    manual.value = isManual ? String(value) : '';
+    manual.hidden = !isManual;
+    manual.setAttribute('aria-label', 'Manual Suite gain in dB');
+    const mode = selectInput([
+      {value: 'keep', label: 'Keep current receiver gain'},
+      {value: '-1', label: 'Automatic'},
+      {value: 'manual', label: 'Manual gain'}
+    ], known ? (isManual ? 'manual' : String(value)) : String(value), selected => {
+      manual.hidden = selected !== 'manual';
+      if (selected === 'keep') setValue(path, 'keep');
+      else if (selected === '-1') setValue(path, -1);
+      else setValue(path, manual.value === '' ? null : Number(manual.value));
+    });
+    mode.setAttribute('aria-label', 'Suite gain mode');
+    manual.addEventListener('input', () => {
+      if (mode.value === 'manual') setValue(path, manual.value === '' ? null : Number(manual.value));
+    });
+    wrapper.append(mode, manual);
+    return wrapper;
+  }
   if (typeof value === 'boolean' || rule.type === 'boolean') {
     const label = document.createElement('label');
     label.className = 'switch';
@@ -865,6 +894,10 @@ function group(key, value, path, topLevel = false) {
       content.appendChild(field(activeConfig.capture.device.reference_channel,
         ['capture', 'device', 'reference_channel']));
   });
+  // Older saved Kraken configurations omit this optional control. Showing its
+  // default does not write or retune anything until the operator changes it.
+  if (dotted === 'capture.device.heimdall' && value.gain === undefined)
+    content.appendChild(field('keep', [...currentPath, 'gain']));
   if (advancedFields.children.length) content.appendChild(advancedReference);
   if (dotted === 'process.performance' && activeConfig.process?.data?.buffer !== undefined)
     content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
@@ -1312,7 +1345,7 @@ function renderReceiverSetup() {
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
   const description = document.createElement('p');
-  description.textContent = 'Check the installed live backends, connected receiver identities and saved upstream endpoint. Review any available software or service action before running it.';
+  description.textContent = 'Check compiled receiver adapters, runtime software, connected identities and the saved endpoint. This never changes the selected receiver or radio settings; choose a receiver above when more than one is available.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
   check.textContent = 'Check receiver software';
@@ -1337,6 +1370,21 @@ function renderReceiverSetup() {
     });
     output.appendChild(element);
     return element;
+  };
+  const settingApplication = (receiver, item) => {
+    if (item.direction === 'browser-to-upstream-after-ack-and-readback')
+      return `${item.configField}: sent to Suite V2 control; require its acknowledgement and a fresh status readback.`;
+    if (item.direction === 'upstream-authoritative-mismatch-block')
+      return `${item.configField}: not sent to Suite V2; its reported startup/sample rate is authoritative and a mismatch blocks Apply.`;
+    if (item.direction === 'config-only')
+      return `${item.configField}: saved by VectorWarp only; it is not sent to Suite V2.`;
+    if (receiver.type === 'Usrp')
+      return `${item.configField}: saved, then passed as a UHD startup parameter after Save & Restart; per-channel UHD getters gate startup before IQ streaming, not an instant browser setter.`;
+    if (receiver.type === 'RspDuo')
+      return `${item.configField}: saved, then applied through SDRplay API v3 at processor startup; SDK failures reach processor status, with no independent post-init readback.`;
+    if (receiver.type === 'HackRF')
+      return `${item.configField}: saved, then applied to the selected HackRF pair at processor startup; return codes are checked, with no post-set readback.`;
+    return `${item.configField}: saved for the configured receiver.`;
   };
   async function reviewAction(receiverType, actionId) {
     if (serializeConfig(activeConfig) !== originalConfig)
@@ -1374,13 +1422,19 @@ function renderReceiverSetup() {
       if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before planning an action.');
       if (!result.buildCapabilitiesKnown) paragraph('This installation has no verified live-backend manifest. Detection cannot establish live capture support.');
       for (const receiver of result.receivers || []) {
-        const compiled = receiver.capabilities.liveCompiled ? 'live backend installed' : 'live backend missing';
+        const compiled = receiver.capabilities.liveCompiled ? 'adapter compiled' : 'adapter not compiled';
+        const runtime = receiver.capabilities.runtimeLoadable === true ? 'runtime loadable' :
+          receiver.capabilities.runtimeLoadable === false ? 'runtime unavailable' : 'runtime not checked';
         const detection = receiver.detection.configuredIdentityMatched === false ? 'configured identity not found' : receiver.detection.state;
         const service = receiver.managedService.required ? `; upstream service ${receiver.managedService.state}` : '';
-        paragraph(`${receiver.label}: ${compiled}; receiver ${detection}; dependency ${receiver.dependencies.state}${service}.`);
+        paragraph(`${receiver.label}: ${compiled}; ${runtime}; receiver ${detection}; dependency ${receiver.dependencies.state}${service}.`);
         if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: the saved upstream endpoint is available and will be reused. Its reported settings still require a fresh check when saving.`);
+        if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
+          paragraph('SDRplay API is already running and will be reused without restart.');
         if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed')
           paragraph('SDRplay API must be obtained from the vendor with its license accepted locally. Automatic redistribution is unavailable.');
+        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
+          paragraph('SDRplay API is installed but stopped. A reviewed Start SDRplay action appears only when this local service is already enrolled.');
         if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
           for (const step of receiver.setupGuide) {
             paragraph(step.text);
@@ -1397,9 +1451,14 @@ function renderReceiverSetup() {
             }
           }
         });
+        if (receiver.settings?.length) button(`Show setting application matrix: ${receiver.label}`, () => {
+          paragraph(`${receiver.label}: software application and verification boundary; this is not physical receiver proof.`);
+          for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
+        });
         for (const action of result.management?.actions?.filter(item =>
           receiver.capabilities.liveCompiled && item.receiverType === receiver.type) || []) {
-          if (action.available && !action.ready) button(action.kind === 'start-service' ? 'Review receiver service start' : 'Review missing dependency install',
+          if (action.available && !action.ready) button(action.kind === 'start-service' ?
+            (receiver.type === 'RspDuo' ? 'Review Start SDRplay' : 'Review receiver service start') : 'Review missing dependency install',
             () => reviewAction(receiver.type, action.id));
           else if (!action.available) paragraph(action.message || 'The installed action needs local review.');
         }
