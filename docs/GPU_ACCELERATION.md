@@ -18,7 +18,9 @@ and [startup diagnostics](GPU_DIAGNOSTICS.md).
 
 Settings → Processing → Acceleration provides:
 
-- **Automatic** (default): check the GPU against the CPU for three frames, then
+- **Automatic** (default): check GPU accuracy before selecting it. Delay–Doppler
+  qualification takes three frames; GPU clutter adds five combined-stage checks.
+  Then
   use it only if the measured delay–Doppler stage is at least 5% faster, including
   worker transfers and map conversion. Those first frames use
   CPU results.

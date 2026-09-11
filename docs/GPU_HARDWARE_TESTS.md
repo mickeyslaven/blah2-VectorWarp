@@ -1,5 +1,9 @@
 # GPU verification — 10 September 2026
 
+This is the initial delay–Doppler verification. For the later combined GPU clutter
+and delay–Doppler build, see [final device confirmations](benchmarks/20260911/v8-all-device-confirmation.md)
+and the [matched replay and live benchmark report](GPU_BENCHMARK_20260911.md).
+
 Offline processing tests compare every complex delay–Doppler bin with independent
 CPU processing. No test data is sent to the radar UI, and no live receiver settings
 are changed.

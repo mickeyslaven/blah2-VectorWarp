@@ -196,7 +196,7 @@ the clutter FP64 solve remains on the CPU; extraction, reference work,
 detection, tracking and output handling also remain CPU work. The implementation
 uses shared-host/staging transfers, not an all-GPU or zero-copy pipeline.
 
-Each forced-GPU repeat produced 11 GPU-backed steady frames and one periodic
+Each GPU-selected replay repeat produced 11 GPU-backed steady frames and one periodic
 CPU oracle frame. The campaign's full 28-row Pavilion cohort passed its output checks;
 the recorded GPU maps were compared against the CPU reference before they were
 used. This validates the tested data and tolerances, not every GPU, driver,

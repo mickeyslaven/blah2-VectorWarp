@@ -8,7 +8,7 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-a
 
 ## What you get beyond blah2
 
-- **GPU acceleration:** use a compatible GPU for delay–Doppler processing, with automatic selection and CPU fallback.
+- **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.
 - **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the live example below.
 - **Automatic CPU threading:** size channel workers and FFT threads to the CPU capacity available, with manual controls when you need them.
 - **Settings in your browser:** edit receiver, processing, display, recording, and ADS-B settings in organized sections.
@@ -57,6 +57,9 @@ five-channel array result is 95.5 ms at ±800 Hz and 200 ms CPI. These are live
 capacity results, not matched upstream speed comparisons.
 
 ## Wide Doppler for higher-frequency experiments
+
+These two-channel Strix tests used the same recorded input and included periodic
+CPU accuracy checks in the processing times.
 
 | Recorded-IQ capacity workload | GPU mean | CPI | Range window |
 | --- | ---: | ---: | --- |
