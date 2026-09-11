@@ -2,100 +2,75 @@
 
 ## Result
 
-On an i7-12650H laptop with a 6 GiB RTX 4050 Laptop GPU, VectorWarp's Vulkan
-path reduced the standard matched workload from **240.118 ms/CPI** in regular
-`30hours/blah2` to **127.770 ms/CPI**: **46.8% less processing time**. The
-VectorWarp CPU result was 239.479 ms/CPI, essentially the same as upstream in
-this workload.
+This is the current, like-for-like replay comparison. Every row uses the same
+four seconds of recorded IQ (SHA-256
+`1e8d50a5fe62410ead9094d95a57af1d03414e87ac00b8861b75444c7aab12aa`), at
+527 MHz and 2.4 MS/s, with delays −10…245 (256 bins, maximum excess path
+30.604 km) and clutter −10…200. GPU acceleration substantially reduces the
+tested ambiguity-processing time; CPU-only differences are usually small.
 
-| 200 ms CPI workload | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU | Steady deadline misses, upstream / CPU / GPU |
-| --- | ---: | ---: | ---: | ---: |
-| Pair, ±800 Hz | 240.118 | 239.479 | **127.770** | 23/24 / 23/24 / 2/24 |
-| Pair, ±2400 Hz | 341.780 | 347.133 | **234.069** | 24/24 / 24/24 / 20/24 |
-| Pair, ±4000 Hz | Not safely supported | 487.264 | **319.268** | n/a / 24/24 / 24/24 |
-| Five-channel array, ±800 Hz | No equivalent upstream mode | 549.386 | **302.140** | n/a / 24/24 / 20/24 |
+The direct comparison below is against unmodified
+[`30hours/blah2` `c821bee3`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de).
+All figures are ms/CPI (lower is better). P95 is pooled across the 24 steady
+CPIs for that row; misses are steady CPI deadlines.
 
-All figures are milliseconds per complete CPI; lower is better. The standard
-row is the direct upstream comparison. The ±4000 Hz and five-channel rows show
-useful VectorWarp capacity, but are not speedups over blah2: upstream was not
-run where its geometry was unsafe or where it has no equivalent array mode.
+| Host and two-channel workload | CPI | Regular blah2 mean / p95 / misses | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses |
+| --- | ---: | --- | --- | --- |
+| Strix, ±800 Hz | 200 ms | 79.775 / 83.396 / 0/24 | 79.669 / 82.014 / 0/24 | **39.915 / 82.630 / 0/24** |
+| Strix, ±2400 Hz | 200 ms | 137.802 / 140.530 / 0/24 | 135.374 / 142.546 / 0/24 | **77.268 / 137.339 / 0/24** |
+| Strix, ±800 Hz | 100 ms | 43.126 / 45.590 / 0/24 | 41.538 / 43.610 / 0/24 | **22.439 / 42.416 / 0/24** |
+| RTX 4050 Laptop, ±800 Hz | 200 ms | 218.679 / 234.160 / 23/24 | 210.487 / 223.833 / 23/24 | **109.153 / 232.294 / 2/24** |
+| RTX 4050 Laptop, ±2400 Hz | 200 ms | 345.106 / 377.519 / 24/24 | 337.309 / 371.747 / 24/24 | **236.549 / 454.478 / 23/24** |
+| Pavilion Intel HD 630, ±800 Hz | 200 ms | 204.727 / 208.260 / 24/24 | 204.131 / 206.111 / 24/24 | **115.533 / 236.249 / 2/24** |
+| Pavilion AMD Polaris 12, ±800 Hz | 200 ms | 204.727 / 208.260 / 24/24 | 204.131 / 206.111 / 24/24 | **106.998 / 228.246 / 2/24** |
+| Pavilion Intel HD 630, ±2400 Hz | 200 ms | 309.947 / 329.557 / 24/24 | 301.840 / 308.012 / 24/24 | **179.449 / 324.859 / 2/24** |
+| Pavilion AMD Polaris 12, ±2400 Hz | 200 ms | 309.947 / 329.557 / 24/24 | 301.840 / 308.012 / 24/24 | **174.882 / 320.329 / 2/24** |
 
-The standard GPU result is encouraging, but it is not a 100 ms real-time claim:
-its mean is about 128 ms and it still missed two of 24 measured 200 ms deadlines.
-The wide and array workloads also missed deadlines at this CPU allocation.
+## Strix capacity at the same full delay range
 
-## Pavilion: two older GPUs, same upstream baseline
+These are VectorWarp-only workloads: upstream was not timed where its geometry
+is unsafe or it has no equivalent five-channel array mode. They remain the same
+527 MHz / 2.4 MS/s / −10…245 / 256-bin / 30.604 km cohort.
 
-The completed Pavilion campaign repeated the paired replay on both available
-Vulkan devices: Intel HD Graphics 630 (KBL GT2) and AMD Radeon 500 Series
-(RADV POLARIS12). The direct comparison remains regular upstream blah2, not a
-VectorWarp CPU-only build.
+| Workload | CPI | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses |
+| --- | ---: | --- | --- |
+| Two-channel pair, ±4800 Hz | 200 ms | 231.237 / 234.783 / 24/24 | **127.858 / 227.881 / 2/24** |
+| Five-channel array, ±800 Hz | 200 ms | 175.428 / 179.069 / 0/24 | **98.963 / 200.895 / 2/24** |
+| Two-channel pair, ±4800 Hz | 1 s | 1192.768 / 1212.540 / 24/24 | **650.484 / 1185.861 / 2/24** |
+| Five-channel array, ±2400 Hz | 1 s | 1418.515 / 1442.808 / 24/24 | **807.401 / 1580.066 / 2/24** |
 
-| 200 ms CPI workload | Regular blah2 CPU | VectorWarp CPU | Intel GPU | AMD GPU |
-| --- | ---: | ---: | ---: | ---: |
-| Pair, ±800 Hz mean | 204.887 | 204.343 | **114.540** | **108.215** |
-| Pair, ±800 Hz p95 | 208.465 | 207.135 | 175.390 | 168.061 |
-| Pair, ±800 Hz misses | 24/24 | 24/24 | 2/24 | 2/24 |
-| Pair, ±2400 Hz mean | 308.096 | 303.164 | **183.244** | **174.629** |
-| Pair, ±2400 Hz p95 | 312.916 | 309.900 | 256.497 | 246.385 |
-| Pair, ±2400 Hz misses | 24/24 | 24/24 | 2/24 | 2/24 |
+## Older GPUs: same-range capacity
 
-These are the means of two alternating 12-frame steady windows, in ms/CPI;
-each p95 is the mean of the two per-run p95 values rather than a pooled-frame
-percentile.
-The GPUs saved about 41–47% on the standard pair and 41–43% on the wider pair
-relative to actual upstream blah2. A periodic CPU oracle occupied one of each
-12-frame GPU steady window; it explains the two deadline misses and should not
-be described as a continuous GPU-only real-time result.
+The RTX 4050 Laptop campaign used four physical CPU cores; the Pavilion used
+its available Intel HD 630 and AMD Polaris 12 Vulkan devices. These rows are
+VectorWarp-only capacity measurements, so they are not presented as upstream
+speedups.
 
-The campaign also measured VectorWarp-only capacity. At ±4000 Hz, Intel/AMD GPU
-means were 253.263/247.161 ms/CPI (all 24 deadlines missed); the CPU mean was
-442.701 ms/CPI. For the five-channel ±800 Hz array, Intel/AMD GPU means were
-321.475/285.746 ms/CPI, compared with 563.478 ms/CPI CPU; all were over the
-200 ms deadline. Upstream has no equivalent array mode and was excluded from
-±4000 Hz because its Doppler scratch geometry is unsafe.
+| Host and workload | CPI | VectorWarp CPU mean / p95 / misses | VectorWarp GPU mean / p95 / misses | GPU delay–Doppler / clutter frames |
+| --- | ---: | --- | --- | --- |
+| RTX 4050 Laptop pair, ±4800 Hz | 200 ms | 533.311 / 598.044 / 24/24 | **361.641 / 604.565 / 24/24** | 22/24 / 24/24 |
+| RTX 4050 Laptop five-channel array, ±800 Hz | 200 ms | 550.953 / 577.119 / 24/24 | **326.723 / 607.102 / 24/24** | **16/24** / 24/24 |
+| Pavilion Intel HD 630 pair, ±4800 Hz | 200 ms | 482.085 / 486.700 / 24/24 | **284.123 / 496.815 / 24/24** | 22/24 / 24/24 |
+| Pavilion AMD Polaris 12 pair, ±4800 Hz | 200 ms | 482.085 / 486.700 / 24/24 | **279.698 / 494.282 / 24/24** | 22/24 / 24/24 |
+| Pavilion Intel HD 630 five-channel array, ±800 Hz | 200 ms | 568.039 / 582.264 / 24/24 | **322.726 / 686.567 / 24/24** | 22/24 / 24/24 |
+| Pavilion AMD Polaris 12 five-channel array, ±800 Hz | 200 ms | 568.039 / 582.264 / 24/24 | **285.875 / 642.224 / 24/24** | 22/24 / 24/24 |
 
-For the Pavilion's active sensor readings, the peak CPU package temperature was
-83°C against a 100°C critical limit and the active AMD edge sensor peaked at
-54°C against 94°C. The guard treats an initially runtime-suspended AMD sensor
-as unavailable, rather than accepting a false zero; once the device was active,
-every recorded guard observation was fresh. This is bounded campaign evidence,
-not an endurance or thermal-margin claim.
-
-## Strix: matched replay with more CPU capacity
-
-Strix used eight physical CPUs (0–7), an 800% CPU budget and 12 GiB memory.
-These results are useful capacity evidence for that host; they are not a
-cross-host ranking of GPUs or CPUs.
-
-| 200 ms CPI workload | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU | GPU deadline misses |
-| --- | ---: | ---: | ---: | ---: |
-| Pair, ±800 Hz | 84.948 | 78.041 | **41.666** | 0/24 |
-| Pair, ±2400 Hz | 138.792 | 132.946 | **74.856** | 0/24 |
-| Five-channel array, ±800 Hz | No equivalent upstream mode | 175.815 | **100.995** | 2/24 |
-
-Pair runs used one worker/eight FFT threads; the array used four workers/two
-FFT threads. The same input, source baseline and 12-frame steady-window method
-apply. GPU maps passed the same 1e-4 relative RMS/peak acceptance tolerance;
-they are not bit-exact outputs and this timing campaign does not claim identical
-detection SNR.
-
-## Equal-range wide-Doppler rerun
-
-Current public comparisons use the standard 527 MHz, 2.4 MS/s input and delays
-−10…245 (256 bins; **30.604 km** maximum excess path). Equal-range wide-Doppler
-reruns are in progress. The earlier shorter-window stress rows remain archived
-in `docs/benchmarks/20260911`, but are ineligible for current comparisons.
+The NVIDIA array's Automatic mode used GPU clutter on all 24 steady CPIs but
+GPU delay–Doppler on 16/24; it is reported as measured, not as a fully GPU
+delay–Doppler result. The other Automatic GPU rows used 22 GPU delay–Doppler
+CPIs and two periodic CPU-oracle CPIs. Those oracle checks mean a low average
+does not guarantee that every interval completes on time.
 
 ## Native live processor
 
-Seven short native runs used live Kraken input at 527 MHz and 2.4 MS/s on Strix
-(eight physical CPUs, 800% CPU budget). Pair rows process two channels selected
-from the five-channel receiver; only the array row processes all five channels.
-Each run has 40 frames with eight startup frames excluded. These runs include
-actual receiver ingress and the native processor timer; their p95 is the usual
-32-frame percentile. They are not matched RF comparisons between modes, so the
-paired-replay tables remain the upstream speed evidence.
+Six short native runs used live Kraken input at 527 MHz and 2.4 MS/s on Strix
+(eight physical CPUs, 800% CPU budget), with the same full 256-bin delay range.
+Pair rows process two channels selected from the five-channel receiver; only
+the array row processes all five channels. Each run has 40 frames with eight
+startup frames excluded. Their p95 is the ordinary 32-frame percentile.
+
+These are live ingress and processor-timer evidence, not matched RF comparisons
+between modes; the replay tables above remain the direct upstream evidence.
 
 | Live workload | Mode | Mean ms | p95 ms | Max ms | Misses |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -104,99 +79,34 @@ paired-replay tables remain the upstream speed evidence.
 | Five-channel array, ±800 Hz, 200 ms CPI | CPU | 177.468 | 183.653 | 191.390 | 0/32 |
 | Five-channel array, ±800 Hz, 200 ms CPI | GPU | **95.540** | 152.172 | 229.740 | 2/32 |
 | Pair, ±4000 Hz, 200 ms CPI | GPU | **113.536** | 161.797 | 226.080 | 2/32 |
-| Pair, ±4000 Hz, 1 s CPI, full 256 delay bins | GPU | **564.663** | 789.005 | 1092.320 | 2/32 |
+| Pair, ±4000 Hz, 1 s CPI | GPU | **564.663** | 789.005 | 1092.320 | 2/32 |
 
-Every GPU run recorded 30 GPU-backed clutter frames and two CPU oracle frames;
-the forced GPU delay–Doppler stage was also active. The processor caught up from
-startup backlog, so observed arrival intervals can briefly be shorter than the
-requested CPI. The receiver does not expose a sample/drop counter, therefore
-these timings do not prove loss-free acquisition. Campaign peak temperatures
-were 77.125°C CPU and 72.875°C GPU. The restoration receipt confirms that the
-production configuration and CPU limits were unchanged and the receiver was
-stopped afterward.
+Every live GPU run recorded 30 GPU-backed clutter frames and two CPU-oracle
+frames; the forced GPU delay–Doppler stage was active. The processor caught up
+from startup backlog, so observed arrival intervals can briefly be shorter than
+the requested CPI. No sample/drop counter was available, so these runs do not
+prove loss-free acquisition.
 
-## What was compared
+## Method, accuracy, and evidence
 
-### Why some upstream settings are excluded
+Each replay result is two alternating 20-frame repeats. The first eight startup
+frames of each repeat are excluded, leaving 24 steady CPIs per row. The DSP is
+paced from the recording sample clock, not live RF or browser timing. The 82
+timed runs (41 paired groups, 1,640 complete CPIs) passed processing acceptance;
+all GPU complex maps were within `1e-4` of the CPU reference. That validates
+the tested maps, not bit-exact output or identical detection SNR.
 
-Original blah2 allocates its Doppler scratch buffer using the range FFT length,
-but its Doppler FFT reads and writes the number of Doppler bins. At 2.4 MS/s and
-a 200 ms CPI, a ±2400 Hz search needs 961 values and gets 1000; ±2500 Hz needs
-1001 but gets only 960. The latter can access memory outside the buffer.
-This is a sizing bug, not a fixed hertz limit or simply slow processing.
-VectorWarp sizes that buffer for the Doppler FFT and checks the remaining
-geometry before acquisition. GPU acceleration is the separate improvement that
-makes larger valid searches practical. See the
-[original allocation and FFT plan](https://github.com/30hours/blah2/blob/c821bee3f0d27cf20c8447f3d908ef722905a4de/src/process/ambiguity/Ambiguity.cpp#L72-L80).
+The campaign used the v8 source freeze
+`8ceb110d4b71854a653789696b17fd7a57a318ab58f6c27212f9899422b666c3`.
+Its expanded allocation cap did not change DSP math from v6. GPU work covers
+clutter FFT/filtering and delay–Doppler; the small FP64 clutter coefficient
+solve, capture, reference synthesis, detection, tracking and output handling
+remain CPU work.
 
-### Matched replay controls
-
-- **Baseline:** unmodified `30hours/blah2` commit
-  [`c821bee3f0d27cf20c8447f3d908ef722905a4de`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de), not a Kraken pull request.
-- **VectorWarp sources:** experimental v6 source freeze SHA-256
-  `4de77e6f9b7ec8afa490e30c287f356fbe6f669d5b770f7d85c3071c37abcd08`.
-  The v7 allocation-guard-only follow-up freeze has SHA-256
-  `1dd92939ab7d735074f27a1c31a93780f776e419106adca3b43380125b32c488`;
-  its math is unchanged.
-  The corrected GPU source commit was
-  `407b9737c744f2ef754139767adad238d25d52f0`; the v7 kernel math is unchanged.
-- **Host and limits:** i7-12650H, RTX 4050 Laptop GPU (6 GiB), four physical
-  P-cores (0, 2, 4 and 6), 400% CPU allowance, 3 GiB memory limit and no swap.
-  The guarded run used a 78°C stop threshold.
-- **Input:** the same four seconds of real five-channel recorded IQ for every
-  compared run, SHA-256
-  `89bfe1c338995167946b7c367b80480143b60a515d9eabde39380bcc48e03a5d`.
-  The processor selected physical pair 0/1; the array case used all five
-  channels with a synthesized reference.
-- **Geometry:** 527 MHz, 2.4 MS/s, 200 ms CPI, delays −10…245 (256 bins), and
-  clutter −10…200. The standard, wide and extra-wide profiles use ±800, ±2400
-  and ±4000 Hz Doppler respectively. Pair runs use one worker/four FFT threads;
-  the array uses four workers/one FFT thread.
-- **Method:** two alternating repeats per mode, 20 frames each. The first eight
-  startup frames were excluded for every engine, leaving 12 steady frames per
-  repeat and 24 per result. DSP was paced from the recording's sample clock;
-  it is not live RF acquisition or browser timing.
-
-## GPU scope and accuracy
-
-The GPU accelerates delay–Doppler processing. Clutter FFTs run on the GPU, but
-the clutter FP64 solve remains on the CPU; extraction, reference work,
-detection, tracking and output handling also remain CPU work. The implementation
-uses shared-host/staging transfers, not an all-GPU or zero-copy pipeline.
-
-Each GPU-selected replay repeat produced 11 GPU-backed steady frames and one periodic
-CPU oracle frame. The campaign's full 28-row Pavilion cohort passed its output checks;
-the recorded GPU maps were compared against the CPU reference before they were
-used. This validates the tested data and tolerances, not every GPU, driver,
-signal or operating condition.
-
-The array GPU runs varied substantially between repeats (334 ms and 270 ms
-steady means). The table reports their mean rather than the faster repeat.
-
-## Interpretation
-
-This is a matched, resource-limited processing comparison, not a live radar or
-endurance test. Both engines replayed the same captured samples at their
-original rate. When a run exceeded its CPI budget, work accumulated as lag
-rather than silently dropping input. The report therefore supports the stated
-per-CPI and deadline results, not a claim about loss-free reception, aircraft
-detection quality, browser performance, or universal GPU speedups.
-
-Automatic mode measures the complete GPU ambiguity path and can retain CPU
-processing when GPU work does not sustain its margin. Forced GPU mode is useful
-for verification; it is not a recommendation to override Automatic mode on an
-unmeasured host. See [GPU acceleration](GPU_ACCELERATION.md) for configuration
-and fallback behavior.
-
-## Evidence retained with the campaign
-
-The source evidence is the 20-row NVIDIA v6 result cohort at
-`/var/tmp/vectorwarp-combined-results-20260911.wH4BQf/nvidia-v6/results/summary.json`,
-with per-frame CSV files, commands, geometries and exclusions beside it.
-Precision, thermal and preflight receipts remain in the parent directory. This
-repository records the human-readable result; the machine-local evidence retains
-the raw timing and command receipts.
-
-The publishable NVIDIA v6 per-run summary, Pavilion/Strix aggregates, profiles
-and v8 confirmation provenance are checked in at
-[`docs/benchmarks/20260911`](benchmarks/20260911/).
+The complete 41-group summaries and provenance are retained in
+[`docs/benchmarks/20260911-equal-range/comparison.csv`](benchmarks/20260911-equal-range/comparison.csv)
+and [`comparison.json`](benchmarks/20260911-equal-range/comparison.json).
+Earlier mixed-window results remain available as
+[archival evidence](benchmarks/20260911/); they are not used in any current
+comparison table. Exact wider-Doppler CAF at the full delay range is future
+work, not a benchmark result.
