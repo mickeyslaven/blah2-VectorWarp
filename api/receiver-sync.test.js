@@ -26,7 +26,7 @@ function config(port, overrides = {}) {
 
 function status(state) {
   return {settings: {center_freq: state.frequency, sample_rate: state.sampleRate,
-    gain: state.gain ?? 20}, num_channels: state.channels, max_elements: state.maximum,
+    ...(state.noGain ? {} : {gain: state.gain ?? 20})}, num_channels: state.channels, max_elements: state.maximum,
   reconfiguring: state.reconfiguring, recovering: state.recovering || false,
   operating_mode: state.mode || 'coherent', cooldown_active: false};
 }
@@ -139,6 +139,11 @@ async function rejected(promise, code, pattern) {
       port: suite.port + 1, control_port: suite.port, gain: 12.5}}});
     const gainResult = await createKrakenControlClient().synchronize(gainConfig);
     assert.ok(gainResult.operations.some(item => item.operation === 'set_gain' && item.readbackMatched));
+    state.noGain = true;
+    const keepResult = await createKrakenControlClient().synchronize(config(suite.port));
+    assert.equal(keepResult.status, 'already-matched', 'keep/absence does not require a gain status field');
+    await rejected(createKrakenControlClient().synchronize(gainConfig), 'KRAKEN_GAIN_NOT_REPORTED', /did not report gain/);
+    state.noGain = false;
     assert.equal(result.after.centerFrequency, 204640000);
     assert.equal(result.after.channelCount, 3);
     assert.equal(result.channelIdentity.hardwareSerialsVerified, false);

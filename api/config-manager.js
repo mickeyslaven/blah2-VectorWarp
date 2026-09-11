@@ -215,7 +215,8 @@ function validateConfig(config, baseline = null) {
         errors.push(`capture.device.${key} is not valid for ${device.type}`);
     });
     allowed.forEach(key => {
-      if (!Object.prototype.hasOwnProperty.call(device, key))
+      if (!Object.prototype.hasOwnProperty.call(device, key) &&
+          !(device.type === 'RspDuo' && key === 'serial'))
         errors.push(`capture.device.${key} is required for ${device.type}`);
     });
   }

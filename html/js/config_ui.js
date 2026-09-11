@@ -1455,6 +1455,10 @@ function renderReceiverSetup() {
           paragraph(`${receiver.label}: software application and verification boundary; this is not physical receiver proof.`);
           for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
         });
+        if (receiver.capabilities.liveCompiled) button(`Choose ${receiver.label} for settings`, () => {
+          switchDevice(receiver.type);
+          paragraph(`${receiver.label} is now the unsaved selection. Discovery did not change it automatically.`);
+        });
         for (const action of result.management?.actions?.filter(item =>
           receiver.capabilities.liveCompiled && item.receiverType === receiver.type) || []) {
           if (action.available && !action.ready) button(action.kind === 'start-service' ?

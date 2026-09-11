@@ -14,7 +14,8 @@ async function main() {
   assert.equal(libraries.RspDuo.version, '3.15');
   assert.equal(libraries.Usrp.version, '4.8.0');
   assert.equal(libraries.Kraken.state, 'unknown');
-  assert.equal(dependenciesFromCache(' libuhd.so.4.6.0 => /lib/libuhd.so.4.6.0').Usrp.state, 'unknown');
+  assert.equal(dependenciesFromCache(' libuhd.so.4.0.0 => /lib/libuhd.so.4.0.0').Usrp.state, 'unknown');
+  assert.equal(dependenciesFromCache(' libuhd.so.4.1.0 => /lib/libuhd.so.4.1.0').Usrp.state, 'installed');
   assert.equal(dependenciesFromCache('').HackRF.state, 'unknown');
   assert.throws(() => dependenciesFromCache('x'.repeat(262145)), /inventory/);
   assert.deepEqual(serviceFromProperties('LoadState=loaded\nActiveState=active\n'), {state: 'running'});

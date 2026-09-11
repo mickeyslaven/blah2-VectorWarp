@@ -13,7 +13,7 @@ const SERVICE_UNITS = Object.freeze({
 const COMMANDS = Object.freeze({
   libraries: ['/usr/sbin/ldconfig', '/sbin/ldconfig'],
   service: ['/usr/bin/systemctl', '/bin/systemctl'],
-  receiverStatus: [process.env.BLAH2_RECEIVER_STATUS_EXECUTABLE || '/opt/vectorwarp/bin/blah2']
+  receiverStatus: [process.env.BLAH2_RECEIVER_STATUS_EXECUTABLE || path.resolve(__dirname, '../bin/blah2')]
 });
 
 async function smallFile(file, limit = 1024) {

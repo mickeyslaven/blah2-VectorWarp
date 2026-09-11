@@ -89,7 +89,7 @@ function normalizeStatus(frame) {
   const channelCount = frame.num_channels;
   const maximumChannels = frame.max_elements;
   const gain = frame.settings.gain;
-  if (!Number.isFinite(centerFrequency) || !Number.isFinite(sampleRate) || !Number.isFinite(gain) ||
+  if (!Number.isFinite(centerFrequency) || !Number.isFinite(sampleRate) ||
       !Number.isInteger(channelCount) || !Number.isInteger(maximumChannels) ||
       channelCount < 1 || maximumChannels < channelCount || maximumChannels > 64 ||
       typeof frame.reconfiguring !== 'boolean' ||
@@ -97,7 +97,8 @@ function normalizeStatus(frame) {
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
       'Suite V2 status is missing required tuning, channel, mode, or reconfiguration fields.', 502);
   return {
-    centerFrequency, sampleRate, channelCount, maximumChannels, gain,
+    centerFrequency, sampleRate, channelCount, maximumChannels,
+    gain: Number.isFinite(gain) ? gain : null,
     operatingMode: frame.operating_mode,
     reconfiguring: frame.reconfiguring,
     recovering: frame.recovering === true,
@@ -120,6 +121,9 @@ function validateInitialStatus(status, wanted) {
     throw receiverError('KRAKEN_SAMPLE_RATE_MISMATCH',
       `Suite V2 reports ${status.sampleRate} samples/s, but VectorWarp requests ${wanted.sampleRate}. ` +
       'Sample rate is a Suite startup/build setting and cannot be changed by VectorWarp.', 409);
+  if (wanted.gain !== undefined && status.gain === null)
+    throw receiverError('KRAKEN_GAIN_NOT_REPORTED',
+      'Suite V2 did not report gain, so an explicit gain cannot be acknowledged and read back.', 409);
   // The inspected control contract guarantees this standard tuner range. A
   // wideband/downconverter build can expose more RF, but does not advertise a
   // machine-readable range; do not infer one from an optional status object.
