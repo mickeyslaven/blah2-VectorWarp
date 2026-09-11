@@ -12,13 +12,31 @@ const {readConfig, saveConfig, writable} = require('./config-store');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
 
-function request(port, url) {
+function request(port, url, timeout = 500) {
   return new Promise((resolve, reject) => {
-    http.get(`http://127.0.0.1:${port}${url}`, response => {
+    const request = http.get(`http://127.0.0.1:${port}${url}`, {timeout}, response => {
       let data = '';
       response.on('data', chunk => { data += chunk; });
       response.on('end', () => resolve({status: response.statusCode, body: JSON.parse(data)}));
-    }).on('error', reject);
+    });
+    request.on('timeout', () => request.destroy(new Error(`request timed out after ${timeout}ms`)));
+    request.on('error', reject);
+  });
+}
+
+function availablePort(usedPorts) {
+  const probe = net.createServer();
+  return new Promise((resolve, reject) => {
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const {port} = probe.address();
+      probe.close(error => {
+        if (error) return reject(error);
+        if (usedPorts.has(port)) return resolve(availablePort(usedPorts));
+        usedPorts.add(port);
+        resolve(port);
+      });
+    });
   });
 }
 
@@ -78,20 +96,32 @@ function request(port, url) {
     assert.equal(legacyDocument.setupRequired, false, 'Valid old configs must not require setup just for optional defaults');
 
     await new Promise(resolve => conflict.listen(0, '0.0.0.0', resolve));
+    const usedPorts = new Set([conflict.address().port]);
     const config = repaired.config;
-    const apiPort = 35000 + process.pid % 5000;
+    const apiPort = await availablePort(usedPorts);
     config.network.ports.api = apiPort;
     config.network.ports.map = conflict.address().port;
-    for (const [index, key] of ['detection','track','timestamp','timing','iqdata','config'].entries())
-      config.network.ports[key] = apiPort + index + 1;
+    for (const key of ['detection','track','timestamp','timing','iqdata','config'])
+      config.network.ports[key] = await availablePort(usedPorts);
     fs.writeFileSync(file, yaml.dump(config));
-    child = spawn(process.execPath, [path.join(__dirname, 'server.js'), file], {stdio: 'ignore'});
+    let childExit = null;
+    let childOutput = '';
+    const appendChildOutput = (label, chunk) => {
+      childOutput = `${childOutput}${label}${chunk}`.slice(-4096);
+    };
+    child = spawn(process.execPath, [path.join(__dirname, 'server.js'), file],
+      {stdio: ['ignore', 'pipe', 'pipe']});
+    child.stdout.on('data', chunk => appendChildOutput('stdout: ', chunk));
+    child.stderr.on('data', chunk => appendChildOutput('stderr: ', chunk));
+    child.once('error', error => { childExit = `spawn error: ${error.message}`; });
+    child.once('exit', (code, signal) => { childExit = `exit ${code}${signal ? ` (${signal})` : ''}`; });
     let response;
-    for (let i = 0; i < 100; i++) {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && childExit === null) {
       try { response = await request(apiPort, '/api/system/status'); break; }
       catch (_) { await new Promise(resolve => setTimeout(resolve, 30)); }
     }
-    assert.equal(response?.status, 200, 'API stays available when a radar data port cannot bind');
+    assert.equal(response?.status, 200, `API stays available when a radar data port cannot bind (${childExit || 'startup timed out'}; ${childOutput || 'no child output'})`);
     assert.ok(response.body.errors.some(error => error.includes('map data port')));
     assert.equal((await request(apiPort, '/api/config/capabilities')).body.editable, true);
     fs.writeFileSync(file, 'not: [valid yaml');
