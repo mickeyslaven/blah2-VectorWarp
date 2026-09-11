@@ -40,7 +40,7 @@ pull-request branches are not rewritten by this integration.
   and returns to CPU when the GPU no longer beats the qualification baseline.
 
 Focused C++ and Node tests cover these changes. The
-[current per-CPI campaign](PER_CPI_BENCHMARK_20260910.md) measures the processing
+[current fixed-range campaign](GPU_BENCHMARK_20260911.md) measures the processing
 path containing these repairs and classifies the observed upstream differences.
 It does not isolate a speed improvement from each correctness patch. The
 [earlier benchmark](RECORDED_IQ_BENCHMARK.md) remains frozen historical evidence.

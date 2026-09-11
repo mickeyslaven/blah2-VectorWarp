@@ -135,5 +135,5 @@ data only; it is never a detection or tracking input.
 ## Evidence and limits
 
 See [upstream comparison](UPSTREAM_COMPARISON.md) for implemented, tested,
-planned, and unpublished work. The [recorded-IQ benchmark](RECORDED_IQ_BENCHMARK.md)
-is historical evidence, not a measurement of later detector/math changes.
+planned, and unpublished work, and the [fixed-range benchmark](GPU_BENCHMARK_20260911.md)
+for current processing times and test limits.
