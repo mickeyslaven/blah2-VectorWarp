@@ -41,8 +41,53 @@ format: TCP order alone cannot prove no samples were lost before transmission.
 
 Copy `profile-example.json` and set its sample rate, frequency, channel count and
 processing geometry to match your recording. It is an example, not a receiver
-configuration. The current benchmark adapter reads MCHQ recordings; application
+configuration. New campaign profiles must also set `benchmark_workers`,
+`benchmark_fft_threads` and `round_hamming`. The same profile bytes must be used
+for the upstream and VectorWarp physical-pair cases; pair profiles require one
+worker, while the FFT thread count remains an explicit matched control. Inspect
+every generated case before opening IQ data:
+
+```sh
+bin/bench-upstream --inspect-geometry profile.json pair
+bin/bench-fast --inspect-geometry profile.json pair
+```
+
+The bounded JSON reports requested/effective CPI, samples, delay/Doppler bins,
+correlation/range FFT sizes and thread controls. It also reports whether the
+unchanged upstream Doppler scratch layout can safely represent the geometry.
+An unsafe upstream case is reported as unsupported and a normal upstream run
+rejects it before constructing the DSP; the harness never narrows or otherwise
+silently repairs the requested geometry. VectorWarp may still run that exact
+case because its wider Doppler scratch regression is fixed. Upstream remains a
+physical reference/surveillance pair CPU comparison only; array scaling is
+VectorWarp-only.
+
+The current benchmark adapter reads MCHQ recordings; application
 replay also supports the other formats documented in the setup guide.
+
+`pipeline_ms` and its identical `dsp_ms` alias measure extract through JSON
+serialization. IQ reading, construction/initialization and complex-map
+validation are separate `read_ms`, `startup_ms`/`initialization_ms`, and
+`validation_ms` values. Per-frame rows label cold/warmup, GPU qualification and
+steady phases. Summary JSON records first-frame time, whole-run and steady
+mean/p95/p99/max, deadline misses, requested/effective CPI, FFT geometry and
+CPU/GPU frame counts. A forced `gpu` run fails unless it completes at least one
+post-qualification frame on Vulkan and every such frame stays on Vulkan. AUTO
+fallback remains valid evidence but cannot be presented as GPU performance.
+
+VectorWarp's current processing path applies noncoherent magnitude fusion even
+to one surveillance map; the fork pair harness does the same and times map
+metrics/fusion separately. Correctness still compares each pre-fusion complex
+channel map against the upstream CPU golden map. A separate validation checks
+the post-fusion magnitude map. Detection delay, Doppler and SNR fields and track
+outputs remain in JSON for separate comparison; a known SNR-field difference
+must not be mislabeled as a complex-map mismatch or sensitivity gain.
+
+Reduced-load Pi profiles must retain the recording's real 2.4-MS/s sample rate
+unless both binaries receive genuinely filtered/decimated samples. Reduce the
+matched delay/clutter/Doppler work instead; changing only a profile header is not
+valid decimation. Pi results compare upstream and VectorWarp on that same Pi,
+never against another host.
 
 `run_matrix.py` takes an explicit recording, profile and verified checksum. It
 runs three repeats in alternating mode order, verifies identical sample counts,

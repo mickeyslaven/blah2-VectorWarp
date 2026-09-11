@@ -37,6 +37,13 @@ def snapshot():
             value = read(card / "device" / field)
             if value is not None:
                 gpu[f"{card.name}:{field}"] = value
+    # Raspberry Pi exposes CPU temperature as a thermal zone, not coretemp.
+    for zone in Path("/sys/class/thermal").glob("thermal_zone*"):
+        if read(zone / "type") in ("cpu-thermal", "cpu_thermal", "soc_thermal"):
+            value = read(zone / "temp")
+            if value is not None:
+                sensors[f"{zone.name}:cpu"] = dict(celsius=int(value) / 1000,
+                    critical_alarm=None)
     if shutil.which("nvidia-smi"):
         try:
             result = subprocess.run(["nvidia-smi", "--query-gpu=temperature.gpu,utilization.gpu,memory.used,power.draw,clocks.sm",
@@ -61,6 +68,8 @@ def main():
     parser.add_argument("--min-disk-gib", type=float, default=8)
     parser.add_argument("--disk", type=Path, default=Path("/"))
     parser.add_argument("--deadline", type=float, default=3600)
+    parser.add_argument("--require-cpu", action="store_true")
+    parser.add_argument("--require-nvidia", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -71,9 +80,21 @@ def main():
         parser.error("Temperature, memory, disk and deadline limits must be finite and positive")
     process = None
     start = time.monotonic()
+    expected_sensors = None
     def check(state):
+        nonlocal expected_sensors
         if not state["sensors"]:
             raise RuntimeError("No usable CPU/GPU temperature telemetry")
+        keys = set(state["sensors"])
+        if args.require_cpu and not any(":coretemp:" in key or ":k10temp:" in key or
+                                       key.endswith(":cpu") for key in keys):
+            raise RuntimeError("Required CPU temperature telemetry unavailable")
+        if args.require_nvidia and not any(key.startswith("nvidia:") for key in keys):
+            raise RuntimeError("Required NVIDIA temperature telemetry unavailable")
+        if expected_sensors is None:
+            expected_sensors = keys
+        elif not expected_sensors.issubset(keys):
+            raise RuntimeError("Temperature telemetry disappeared; benchmark stopped")
         if any(v["celsius"] >= args.max_celsius or v.get("critical_alarm") == "1"
                for v in state["sensors"].values()):
             raise RuntimeError("Thermal cutoff or critical alarm; benchmark stopped")

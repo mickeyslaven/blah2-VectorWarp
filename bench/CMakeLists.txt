@@ -3,6 +3,7 @@ project(blah2RecordedBenchmark LANGUAGES CXX)
 find_package(Threads REQUIRED)
 find_package(Armadillo REQUIRED)
 include(CTest)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 get_filename_component(PROJECT_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 set(UPSTREAM_ROOT "" CACHE PATH "Unmodified pinned upstream source")
 if(NOT EXISTS "${UPSTREAM_ROOT}/src/process/ambiguity/Ambiguity.cpp")
@@ -48,3 +49,7 @@ add_executable(testMchqReader TestReader.cpp ${PROJECT_ROOT}/src/capture/kraken/
 target_include_directories(testMchqReader PRIVATE ${PROJECT_ROOT}/src)
 target_compile_features(testMchqReader PRIVATE cxx_std_17)
 add_test(NAME recordedIqReader COMMAND testMchqReader)
+add_test(NAME recordedBenchmarkContract COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_contract.py
+  $<TARGET_FILE:bench-upstream> $<TARGET_FILE:bench-fast>
+  ${CMAKE_CURRENT_SOURCE_DIR}/profile-example.json)
