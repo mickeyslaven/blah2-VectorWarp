@@ -29,7 +29,6 @@ const CONFIG_META = {
   'capture.device.gain_vga': ['HackRF VGA gains', 'Two gains in dB: 0–62, in steps of 2.'],
   'capture.device.amp_enable': ['HackRF RF amplifiers', 'Enable the RF amplifier for each receiver'],
   'capture.device.agcSetPoint': ['AGC target', 'RSPduo automatic-gain target, from -72 to 0 dBFS.'],
-  'capture.device.serial': ['RSPduo serial', 'Optional exact selection; blank only with one matching receiver.'],
   'capture.device.bandwidthNumber': ['AGC speed', 'RSPduo automatic-gain response: off, 5, 50 or 100 Hz.'],
   'capture.device.gainReduction': ['Gain reduction', 'Two RSPduo gain reductions in dB. Each must be 20–59.'],
   'capture.device.lnaState': ['LNA state', 'RSPduo low-noise amplifier state, from 1 to 9.'],
@@ -375,6 +374,8 @@ function words(value) {
 
 function metadata(path) {
   const key = path.join('.');
+  if (key === 'capture.device.serial' && activeConfig?.capture?.device?.type === 'RspDuo')
+    return ['RSPduo serial', 'Optional exact selection; blank only with one matching receiver.'];
   if (CONFIG_META[key]) return CONFIG_META[key];
   const raw = path[path.length - 1];
   const label = words(raw);
@@ -635,12 +636,13 @@ function typedInput(value, path) {
   if (key === 'capture.device.heimdall.gain') {
     const wrapper = document.createElement('div');
     wrapper.className = 'config-suite-gain';
-    const isManual = typeof value === 'number';
+    const isManual = typeof value === 'number' && value !== -1;
     const known = value === 'keep' || value === -1 || isManual;
     const manual = document.createElement('input');
     manual.type = 'number'; manual.min = '0'; manual.max = '50'; manual.step = '0.1';
     manual.value = isManual ? String(value) : '';
     manual.hidden = !isManual;
+    manual.disabled = !isManual;
     manual.setAttribute('aria-label', 'Manual Suite gain in dB');
     const mode = selectInput([
       {value: 'keep', label: 'Keep current receiver gain'},
@@ -648,6 +650,8 @@ function typedInput(value, path) {
       {value: 'manual', label: 'Manual gain'}
     ], known ? (isManual ? 'manual' : String(value)) : String(value), selected => {
       manual.hidden = selected !== 'manual';
+      manual.disabled = selected !== 'manual';
+      manual.dataset.originalDisabled = String(manual.disabled);
       if (selected === 'keep') setValue(path, 'keep');
       else if (selected === '-1') setValue(path, -1);
       else setValue(path, manual.value === '' ? null : Number(manual.value));
@@ -783,7 +787,10 @@ function typedInput(value, path) {
     }
   } else {
     input.type = 'text';
-    input.required = true;
+    const optionalRspSerial = key === 'capture.device.serial' &&
+      activeConfig.capture?.device?.type === 'RspDuo';
+    input.required = !optionalRspSerial;
+    if (optionalRspSerial) input.maxLength = 160;
     input.value = value ?? '';
     input.addEventListener('input', () => setValue(path, input.value));
   }

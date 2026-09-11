@@ -11,6 +11,8 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const capture = read('src/capture/Capture.cpp');
 const rsp = read('src/capture/rspduo/RspDuo.cpp');
 const usrp = read('src/capture/usrp/Usrp.cpp');
+const usrpSettings = read('src/capture/usrp/UsrpSettings.h');
+const receiverFactory = read('src/capture/ReceiverFactory.cpp');
 const usrpReadback = read('src/capture/usrp/UsrpReadback.h');
 const hackrf = read('src/capture/hackrf/HackRf.cpp');
 
@@ -18,12 +20,18 @@ for (const key of ['agcSetPoint', 'bandwidthNumber', 'gainReduction',
   'lnaState', 'dabNotch', 'rfNotch', 'address', 'subdev', 'antenna',
   'gain', 'serial', 'gain_lna', 'gain_vga', 'amp_enable'])
   assert.ok(capture.includes(`config["${key}"]`), `Capture factory omits ${key}`);
-for (const call of ['multi_usrp::make(address)', 'set_rx_subdev_spec',
-  'set_rx_antenna(antenna[0], 0)', 'set_rx_antenna(antenna[1], 1)',
-  'set_rx_rate', 'set_rx_freq(centerFrequency, 0)',
-  'set_rx_freq(centerFrequency, 1)', 'set_rx_gain(gain[0], 0)',
-  'set_rx_gain(gain[1], 1)'])
+for (const call of ['multi_usrp::make(address)',
+  'apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna)'])
   assert.ok(usrp.includes(call), `USRP startup omits ${call}`);
+assert.ok(capture.includes('blah2::load_receiver(type, settings)'));
+for (const value of ['c.address, c.subdev', '{c.antenna[0], c.antenna[1]}', '{c.gain[0], c.gain[1]}'])
+  assert.ok(receiverFactory.includes(value), `Receiver module omits ${value}`);
+assert.match(usrpSettings, /for \(unsigned channel = 0; channel < 2; \+\+channel\)/);
+for (const call of ['device.set_rx_subdev_spec(subdevices, 0)',
+  'device.set_rx_antenna(antenna[channel], channel)', 'device.set_rx_rate(sampleRate, channel)',
+  'device.set_rx_freq(frequency, channel)', 'device.set_rx_gain(gain[channel], channel)',
+  'verify_usrp_readback(device, frequency, sampleRate, gain, antenna, subdevices.to_string())'])
+  assert.ok(usrpSettings.includes(call), `USRP settings helper omits ${call}`);
 for (const call of ['hackrf_open_by_serial', 'hackrf_set_freq',
   'hackrf_set_sample_rate', 'hackrf_set_amp_enable', 'hackrf_set_lna_gain',
   'hackrf_set_vga_gain', 'hackrf_set_hw_sync_mode',
@@ -46,7 +54,14 @@ assert.match(capture, /AddMember\("sampleRate",fs,a\)[\s\S]*AddMember\("frequenc
 for (const getter of ['get_rx_rate(', 'get_rx_freq(', 'get_rx_gain(',
   'get_rx_antenna(', 'get_rx_subdev_spec('])
   assert.equal(usrpReadback.includes(getter), true, `USRP is missing ${getter}`);
-assert.ok(usrp.indexOf('verify_usrp_readback(*usrp') < usrp.indexOf('get_rx_stream(streamArgs)'));
+const applyIndex = usrp.indexOf('apply_usrp_settings(*usrp');
+const streamIndex = usrp.indexOf('get_rx_stream(streamArgs)');
+const readbackIndex = usrpSettings.indexOf('verify_usrp_readback(device,');
+const gainIndex = usrpSettings.indexOf('device.set_rx_gain(');
+assert.ok(applyIndex >= 0 && streamIndex >= 0 && applyIndex < streamIndex,
+  'USRP setting/readback helper must execute before stream creation');
+assert.ok(gainIndex >= 0 && readbackIndex >= 0 && gainIndex < readbackIndex,
+  'USRP setters must precede the independent getter gate');
 
 // libhackrf reports success/failure for the current open/set/start calls. The
 // path checks those codes, but does not independently query the applied RF

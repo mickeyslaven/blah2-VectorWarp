@@ -36,6 +36,7 @@ async function simulatedSuite(initial, onCommand) {
   const sockets = new Set();
   const server = net.createServer(socket => {
     sockets.add(socket);
+    socket.setNoDelay(true);
     socket.setEncoding('utf8');
     socket.write(`${JSON.stringify(status(initial))}\n`);
     let buffer = '';
@@ -94,6 +95,45 @@ async function rejected(promise, code, pattern) {
 }
 
 (async () => {
+  // Mirror the real C++ Suite's std::stof -> std::to_string(float) ACK, not
+  // an idealized JavaScript echo. Every supported tenth-dB value is exercised.
+  let roundedAcks = 0;
+  const gainMatrix = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false, gain: -1}, (command, socket, live) => {
+    assert.equal(command.command, 'set_gain');
+    const encoded = Number(Math.fround(command.gain).toFixed(6));
+    if (encoded !== command.gain) roundedAcks++;
+    socket.write(`${JSON.stringify({status: 'success', gain: encoded})}\n`);
+    live.gain = command.gain;
+    socket.write(`${JSON.stringify(status(live))}\n`);
+  });
+  try {
+    for (let tenth = 0; tenth <= 500; tenth++) {
+      const gain = tenth / 10;
+      const candidate = config(gainMatrix.port);
+      candidate.capture.device.heimdall.gain = gain;
+      const accepted = await createKrakenControlClient({statusTimeoutMs: 1000,
+        readbackTimeoutMs: 1000}).synchronize(candidate);
+      assert.equal(accepted.after.gain, gain);
+      assert.deepEqual(accepted.operations.map(item => [item.operation, item.acknowledged, item.readbackMatched]),
+        [['set_gain', true, true]], `Gain ${gain} requires its ACK and exact subsequent status`);
+    }
+    assert.equal(gainMatrix.commands.length, 501);
+    assert.equal(roundedAcks, 208);
+  } finally { await gainMatrix.close(); }
+  const impreciseStatus = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false, gain: 20}, (command, socket, live) => {
+    const encoded = Number(Math.fround(command.gain).toFixed(6));
+    socket.write(`${JSON.stringify({status: 'success', gain: encoded})}\n`);
+    live.gain = encoded; // ACK encoding is not an exact applied-value receipt.
+    socket.write(`${JSON.stringify(status(live))}\n`);
+  });
+  try {
+    const candidate = config(impreciseStatus.port);
+    candidate.capture.device.heimdall.gain = 49.6;
+    await rejected(createKrakenControlClient({statusTimeoutMs: 200, readbackTimeoutMs: 60})
+      .synchronize(candidate), 'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+  } finally { await impreciseStatus.close(); }
   const state = {frequency: 100000000, sampleRate: 2400000,
     channels: 5, maximum: 8, reconfiguring: false};
   const suite = await simulatedSuite(state, (command, socket, live) => {

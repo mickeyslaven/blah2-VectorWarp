@@ -311,7 +311,14 @@ function createKrakenControlClient(options = {}) {
             `Suite V2 rejected ${current.field}: ${cleanMessage(frame.message, 'unknown error')}`,
             409, failureReceipt()));
         }
-        if (frame[current.acknowledgementField] !== current.value)
+        const acknowledgedValue = frame[current.acknowledgementField];
+        // The inspected Suite parses gain as float32 and serializes its ACK
+        // with std::to_string (six decimal places): 49.6 becomes 49.599998.
+        // Accept only that exact wire encoding or an exact-value implementation;
+        // do not loosen subsequent full-tuple/tenth-dB status readback.
+        const wireValue = current.id === 'set_gain' ?
+          Number(Math.fround(current.value).toFixed(6)) : current.value;
+        if (acknowledgedValue !== current.value && acknowledgedValue !== wireValue)
           return fail(receiverError('KRAKEN_ACKNOWLEDGEMENT_MISMATCH',
             `Suite V2 acknowledged ${current.field} with an unexpected value.`, 502,
             failureReceipt()));
