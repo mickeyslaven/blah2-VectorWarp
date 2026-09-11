@@ -149,6 +149,20 @@ stopped afterward.
 
 ## What was compared
 
+### Why some upstream settings are excluded
+
+Original blah2 allocates its Doppler scratch buffer using the range FFT length,
+but its Doppler FFT reads and writes the number of Doppler bins. At 2.4 MS/s and
+a 200 ms CPI, a ±2400 Hz search needs 961 values and gets 1000; ±2500 Hz needs
+1001 but gets only 960. The latter can access memory outside the buffer.
+This is a sizing bug, not a fixed hertz limit or simply slow processing.
+VectorWarp sizes that buffer for the Doppler FFT and checks the remaining
+geometry before acquisition. GPU acceleration is the separate improvement that
+makes larger valid searches practical. See the
+[original allocation and FFT plan](https://github.com/30hours/blah2/blob/c821bee3f0d27cf20c8447f3d908ef722905a4de/src/process/ambiguity/Ambiguity.cpp#L72-L80).
+
+### Matched replay controls
+
 - **Baseline:** unmodified `30hours/blah2` commit
   [`c821bee3f0d27cf20c8447f3d908ef722905a4de`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de), not a Kraken pull request.
 - **VectorWarp sources:** experimental v6 source freeze SHA-256
