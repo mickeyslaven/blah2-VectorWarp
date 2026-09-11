@@ -174,6 +174,7 @@ add_executable(testIqDataFifo
   test/unit/data/TestIqDataFifo.cpp src/data/IqData.cpp)
 target_link_libraries(testIqDataFifo PRIVATE blah2RapidJson Threads::Threads)
 add_test(NAME iqDataFifo COMMAND testIqDataFifo)
+include(cmake/JsonOutputTests.cmake)
 
 # unit tests
 include(cmake/GpuProcessTests.cmake)
