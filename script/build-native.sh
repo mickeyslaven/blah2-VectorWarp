@@ -4,7 +4,7 @@ set -euo pipefail
 SOURCE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 BUILD_DIR="$SOURCE_DIR/build/native"
 DEPS_DIR="$SOURCE_DIR/build/native-deps"
-BACKEND=kraken
+BACKEND=all
 GPU=AUTO
 JOBS=4
 OFFLINE=false
@@ -22,7 +22,7 @@ Usage: script/build-native.sh [options]
 
 Build a relocatable VectorWarp artifact without installing it.
 
-  --backend NAME          kraken (default), rspduo, usrp, hackrf or all
+  --backend NAME          all (default); kraken, rspduo, usrp or hackrf for development
   --gpu auto|on|off       Optional Vulkan worker selection (default: auto)
   --build-dir PATH        Build/output directory (default: build/native)
   --deps-dir PATH         Pinned source dependency cache
@@ -106,7 +106,7 @@ if [[ $ENABLE_HACKRF == ON ]]; then
 fi
 if [[ $ENABLE_USRP == ON ]]; then
   command -v uhd_config_info >/dev/null 2>&1 ||
-    die 'usrp backend needs UHD 4.8 development files and uhd_config_info'
+    die 'usrp backend needs UHD development files and uhd_config_info'
 fi
 
 if [[ $GPU == ON ]]; then
@@ -278,6 +278,17 @@ run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
 if ! $DRY_RUN; then
   [[ -x $ARTIFACT_TMP/bin/blah2 ]] || die 'processor binary was not produced'
+  [[ -f $ARTIFACT_TMP/bin/libblah2-capture-core.so.1 ]] || die 'capture core library was not produced'
+  for adapter in rspduo usrp hackrf; do
+    case $adapter in
+      rspduo) enabled=$ENABLE_RSPDUO ;;
+      usrp) enabled=$ENABLE_USRP ;;
+      hackrf) enabled=$ENABLE_HACKRF ;;
+    esac
+    if [[ $enabled == ON ]]; then
+      [[ -f $ARTIFACT_TMP/bin/blah2-receiver-$adapter.so ]] || die "receiver adapter was not produced: $adapter"
+    fi
+  done
   [[ -f $ARTIFACT_TMP/api/server.js && -f $ARTIFACT_TMP/html/index.html ]] ||
     die 'API/UI artifact is incomplete'
   revision=$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)

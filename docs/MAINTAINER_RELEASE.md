@@ -54,11 +54,18 @@ selection through `/etc/os-release`; it is not an independently built or
 boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
 ARM64 (arm64 / aarch64) package; its installation and Pi hardware performance need separate
 validation. No 32-bit or custom SD-card image is produced.
-The default package supports the Kraken/Heimdall
-network receiver and CPU processing with Vulkan auto-detection where available.
+Each package includes all four receiver adapters and CPU processing with
+Vulkan auto-detection. UHD and libhackrf use native distro dependencies;
+SDRplay's API remains a separately licensed local installation.
+
+Before running release builds, accept SDRplay's SDK license for build use and
+set repository variable `VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED` to `true`.
+The build extracts the pinned SDK's headers/link library without executing its
+installer. The package contains only our adapter, never the vendor SDK/runtime.
 
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
-   `Build release packages` also performs unsigned `0.0.0` packaging smoke
+   `Build release packages` additionally tests all receiver modules and vendor
+   mocks, then performs unsigned `0.0.0` packaging smoke
    builds on pull requests targeting `main`; that path has no signing job and
    does not consume an environment-scoped signing secret. Configure and protect
    `release-signing` before any release tag. Use the immutable

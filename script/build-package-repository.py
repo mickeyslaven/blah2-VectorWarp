@@ -114,8 +114,9 @@ Doppler span is not RF bandwidth or carrier frequency. Periodic CPU accuracy che
 <section class="panel" aria-labelledby="install">
 <h2 id="install">Native Linux. Normal package updates.</h2>
 <p>Signed APT and DNF packages for Ubuntu, Debian and Fedora, with matching
-packages for DragonOS and 64-bit Raspberry Pi OS. Kraken live input is included;
-RSPduo, USRP and dual HackRF are available through source builds with their SDKs.</p>
+packages for DragonOS and 64-bit Raspberry Pi OS. Each package includes Kraken,
+USRP, dual HackRF and RSPduo adapters. Choose your receiver in Settings;
+RSPduo needs the separately installed SDRplay API.</p>
 <a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">Installation guide</a>
 </section>
 </main>
@@ -190,8 +191,10 @@ def load_manifest(file, packages):
         if filename != expected_filename:
             raise ValueError(f"Package filename disagrees with its immutable identity: {filename}")
         if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
-                "kraken", "auto", "24.21.0"):
+                "all", "auto", "24.21.0"):
             raise ValueError(f"Unexpected package build profile: {filename}")
+        if entry.get("compiled_receivers") != ["Kraken", "RspDuo", "Usrp", "HackRF"]:
+            raise ValueError(f"Package must contain every receiver adapter: {filename}")
         identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
         if identity in identities:
             raise ValueError("Duplicate package target/version")

@@ -36,6 +36,13 @@ const receiverBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});
 assert.equal(receiverBuildCheck.status, 0,
   `receiver build/install contract: ${receiverBuildCheck.stdout}${receiverBuildCheck.stderr}`);
+const sdkBuildCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_sdrplay_build_sdk.py')], {encoding: 'utf8'});
+assert.equal(sdkBuildCheck.status, 0,
+  `build-only SDK consent/extraction: ${sdkBuildCheck.stdout}${sdkBuildCheck.stderr}`);
+assert.match(packageScript, /all receiver adapters in one build/);
+assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
+assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
 
 // Matrix jobs must not upload immutable artifacts under the same name.
 assert.ok(read('.github/workflows/ci.yml').includes(

@@ -67,7 +67,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('same CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
-        self.assertIn('source builds with the receiver', readme)
+        self.assertIn('one package', readme.lower())
         for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
                       'clutter FFT/filtering', 'Periodic accuracy checks',
                       'docs/GPU_BENCHMARK_20260911.md',
@@ -105,7 +105,8 @@ class ManifestTests(unittest.TestCase):
         self.entry = dict(name="vectorwarp", version="1.2.3", release="1", format="deb",
                           distro="ubuntu", distro_version="24.04", codename="noble", arch="amd64",
                           filename=self.package.name, size=self.package.stat().st_size,
-                          sha256=repository.sha256(self.package), backend="kraken", gpu="auto",
+                          sha256=repository.sha256(self.package), backend="all", gpu="auto",
+                          compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"],
                           node_version="24.21.0")
         self.manifest = self.root / "manifest.json"
 
@@ -118,6 +119,13 @@ class ManifestTests(unittest.TestCase):
 
     def test_valid_entry(self):
         self.assertEqual(self.load(), [self.entry])
+
+    def test_receiver_specific_or_incomplete_packages_are_rejected(self):
+        for changes in ({"backend": "kraken"},
+                        {"compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
+                        {"compiled_receivers": ["Kraken", "RspDuo", "Usrp", "Usrp"]}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.load([{**self.entry, **changes}])
 
     def test_resolute_target_is_valid(self):
         package = self.root / "vectorwarp_1.2.3-1_ubuntu26.04_amd64.deb"
@@ -182,7 +190,7 @@ class ManifestTests(unittest.TestCase):
                 self.load([{**self.entry, **update}])
 
     def test_filename_and_build_profile_are_immutable(self):
-        for update in ({"filename": "renamed.deb"}, {"backend": "all"}, {"gpu": "off"},
+        for update in ({"filename": "renamed.deb"}, {"backend": "kraken"}, {"gpu": "off"},
                        {"node_version": "25.0.0"}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 self.load([{**self.entry, **update}])
@@ -307,7 +315,8 @@ class SignedRepositoryTests(unittest.TestCase):
         result = dict(name="vectorwarp", version="1.2.3", release="1.fc44" if format == "rpm" else "1",
                       format=format, distro=distro, distro_version=version, arch=arch,
                       filename=file.name, sha256=repository.sha256(file), size=file.stat().st_size,
-                      backend="kraken", gpu="auto", node_version="24.21.0")
+                      backend="all", gpu="auto", node_version="24.21.0",
+                      compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"])
         if codename:
             result["codename"] = codename
         return result

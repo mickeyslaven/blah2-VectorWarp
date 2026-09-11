@@ -15,12 +15,15 @@ Requires:       python3-rpm
 %endif
 
 %global debug_package %{nil}
+# The vendor SDRplay API is installed separately under its own license. Its
+# absence must not block installation or use of the other receiver adapters.
+%global __requires_exclude ^libsdrplay_api\\.so.*$
 
 %description
 VectorWarp is a native passive-radar processor and local web interface. This
-package supports live Kraken/Heimdall input and replay recordings from all four
-supported receiver formats. It includes CPU processing and optional Vulkan
-acceleration selected at runtime.
+package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU
+processing and optional Vulkan acceleration selected at runtime. RSPduo needs
+the separately installed SDRplay API. Receiver software is checked in Settings.
 
 %prep
 
