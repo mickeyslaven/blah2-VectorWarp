@@ -87,6 +87,27 @@ from startup backlog, so observed arrival intervals can briefly be shorter than
 the requested CPI. No sample/drop counter was available, so these runs do not
 prove loss-free acquisition.
 
+## What made it faster
+
+The main gain in these tests comes from the combined GPU path, not CPU-only
+changes. For the Strix two-channel, 200 ms, ±2400 Hz workload:
+
+| Processing stage | VectorWarp CPU | VectorWarp GPU mode |
+| --- | ---: | ---: |
+| Clutter filtering | 21.914 ms | 12.555 ms |
+| Delay–Doppler | 62.341 ms | 15.887 ms |
+| Complete pipeline | 135.374 ms | 77.268 ms |
+
+These averages include the periodic CPU accuracy checks. Shared inputs, batched
+GPU work and lower-copy transfers are implemented, but this campaign does not
+separately measure the contribution of each optimization.
+
+The remaining CPU work is worth investigating next: map JSON output averaged
+24.344 ms and detection 15.366 ms in that GPU profile. Reducing output conversion
+cost and checking whether accuracy verification can run without blocking the
+next frame are future optimization candidates, not demonstrated improvements.
+The [wider-Doppler algorithm](FUTURE_WIDE_DOPPLER.md) is also deferred.
+
 ## Method, accuracy, and evidence
 
 Each replay result is two alternating 20-frame repeats. The first eight startup
