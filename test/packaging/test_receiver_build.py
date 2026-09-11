@@ -115,7 +115,7 @@ exit 0
         (uhd / "UHDConfig.cmake").write_text(
             "set(UHD_FOUND TRUE)\nset(UHD_INCLUDE_DIRS \"\")\nset(UHD_LIBRARIES \"\")\n",
             encoding="utf-8")
-        (uhd / "UHDConfigVersion.cmake").write_text("""set(PACKAGE_VERSION "4.8.0.0")
+        (uhd / "UHDConfigVersion.cmake").write_text("""set(PACKAGE_VERSION "4.1.0.5")
 set(PACKAGE_VERSION_COMPATIBLE TRUE)
 if(PACKAGE_FIND_VERSION VERSION_EQUAL PACKAGE_VERSION)
   set(PACKAGE_VERSION_EXACT TRUE)
@@ -161,9 +161,17 @@ endif()
         ], text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         flags = "\n".join(path.read_text(encoding="utf-8") for path in usrp_build.rglob("flags.make"))
-        self.assertIn("BLAH2_ENABLE_USRP=1", flags)
-        self.assertNotIn("BLAH2_ENABLE_RSPDUO=1", flags)
+        self.assertIn("BLAH2_MODULE_USRP=1", flags)
+        self.assertNotIn("BLAH2_MODULE_RSPDUO=1", flags)
         self.assertNotIn("BLAH2_KRAKEN_ONLY=1", flags)
+        # Radio SDKs are selected by their own module, never required just to
+        # launch the core processor or replay a recording from another radio.
+        main_flags = (usrp_build / "CMakeFiles/blah2.dir/flags.make").read_text()
+        self.assertNotIn("BLAH2_MODULE_USRP", main_flags)
+        main_link = (usrp_build / "CMakeFiles/blah2.dir/link.txt").read_text()
+        self.assertNotIn("libuhd", main_link)
+        self.assertNotIn("sdrplay", main_link)
+        self.assertNotIn("libhackrf", main_link)
 
     def test_each_backend_selects_only_its_dependencies_and_compile_flags(self):
         for backend, (receivers, flags) in RECEIVERS.items():

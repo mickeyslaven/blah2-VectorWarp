@@ -17,7 +17,7 @@ Requires:       python3-rpm
 %global debug_package %{nil}
 # The vendor SDRplay API is installed separately under its own license. Its
 # absence must not block installation or use of the other receiver adapters.
-%global __requires_exclude ^libsdrplay_api\\.so.*$
+%global __requires_exclude ^libsdrplay_api[.]so.*$
 
 %description
 VectorWarp is a native passive-radar processor and local web interface. This
