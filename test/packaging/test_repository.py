@@ -55,14 +55,17 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(required, page)
 
     def test_quickstart_links_and_release_status(self):
-        readme = (ROOT / 'README.md').read_text()
+        # Wrapping and headings are editorial choices. Keep the measured scope,
+        # actual upstream comparison, and release boundaries under test.
+        readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('first signed APT/DNF release is being prepared', readme)
-        self.assertIn('sample-clock-paced DSP replay', readme)
+        self.assertIn('times signal processing during replay at the original sample rate', readme)
+        self.assertIn('same CPU allocation', readme)
         self.assertIn('2–8-channel network input', readme)
         self.assertIn('source builds with the receiver', readme)
-        for claim in ('Faster than regular blah2', 'Regular blah2 CPU', 'VectorWarp GPU',
+        for claim in ('Regular blah2 CPU', 'VectorWarp CPU', 'VectorWarp GPU',
                       '**239 ms**', '**162 ms**', '**32%**', '**19%**',
-                      'Regular blah2 cannot safely process this configuration'):
+                      'Regular blah2 cannot safely process that configuration because of its buffer sizing.'):
             self.assertIn(claim, readme)
         self.assertTrue((ROOT / 'html/favicon/vectorwarp-vw.svg').is_file())
         for name in ('README.md', 'docs/INSTALL.md', 'docs/SETUP.md', 'packaging/README.md'):
