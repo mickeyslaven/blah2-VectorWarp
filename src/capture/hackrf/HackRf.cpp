@@ -54,6 +54,7 @@ void HackRf::start()
   int status;
   status = hackrf_init();
   check_status(status, "Failed to initialise HackRF");
+  apiStarted = true;
   hackrf_device_list_t *list;
   list = hackrf_device_list();
   if (!list || list->devicecount < 2)
@@ -97,30 +98,42 @@ void HackRf::start()
 
 void HackRf::stop()
 {
-  hackrf_stop_rx(dev[0]);
-  hackrf_stop_rx(dev[1]);
-  hackrf_close(dev[0]);
-  hackrf_close(dev[1]);
-  hackrf_exit();
+  for (auto& device : dev) if (device) {
+    hackrf_stop_rx(device); hackrf_close(device); device = nullptr;
+  }
+  if (apiStarted) { hackrf_exit(); apiStarted = false; }
 }
 
 void HackRf::process(IqData *buffer1, IqData *buffer2)
 {
+  try {
     int status;
-    status = hackrf_start_rx(dev[1], rx_callback, buffer2);
+    channels[0] = {this, buffer1, 0, 0};
+    channels[1] = {this, buffer2, 1, 0};
+    status = hackrf_start_rx(dev[1], rx_callback, &channels[1]);
     check_status(status, "Failed to start RX streaming.");
-    status = hackrf_start_rx(dev[0], rx_callback, buffer1);
+    status = hackrf_start_rx(dev[0], rx_callback, &channels[0]);
     check_status(status, "Failed to start RX streaming.");
+  } catch (...) {
+    stop();
+    throw;
+  }
 }
 
 int HackRf::rx_callback(hackrf_transfer* transfer)
 {
-  IqData* buffer_blah2 = (IqData*)transfer->rx_ctx;
+  if (!transfer || !transfer->rx_ctx || !transfer->buffer) return -1;
+  auto& channel = *static_cast<ChannelContext*>(transfer->rx_ctx);
+  IqData* buffer_blah2 = channel.buffer;
   int8_t* buffer_hackrf = (int8_t*) transfer->buffer;
+  if (transfer->valid_length < 0 || transfer->valid_length > transfer->buffer_length || transfer->valid_length % 2) {
+    channel.source->recording_discontinuity("HackRF callback has an invalid sample length");
+    return -1;
+  }
 
   buffer_blah2->lock();
 
-  for (int i = 0; i < transfer->buffer_length; i=i+2) 
+  for (int i = 0; i < transfer->valid_length; i=i+2)
   {
     double iqi = static_cast<double>(buffer_hackrf[i]);
     double iqq = static_cast<double>(buffer_hackrf[i+1]);
@@ -129,11 +142,14 @@ int HackRf::rx_callback(hackrf_transfer* transfer)
 
   buffer_blah2->unlock();
 
+  const auto count = static_cast<unsigned>(transfer->valid_length / 2);
+  if (channel.source->is_recording() && count) {
+    std::vector<std::complex<float>> samples(count);
+    for (unsigned i=0; i<count; ++i)
+      samples[i] = {float(buffer_hackrf[i*2]), float(buffer_hackrf[i*2+1])};
+    channel.source->record_channel(channel.channel, channel.received, samples);
+  }
+  channel.received += count;
+
   return 0;
 }
-
-void HackRf::replay(IqData *buffer1, IqData *buffer2, std::string _file, bool _loop)
-{
-  return;
-}
-

@@ -9,6 +9,7 @@ This requires 2 HackRF units with a shared clock signal and a shared hardware tr
 - Install the HackRF package on the host using `sudo apt install hackrf` to access HackRF tools.
 - Run `hackrf_info` to get HackRF serial numbers.
 - Edit the `config/config-hackrf.yml` file to add serial numbers and parameters.
-- Update the `docker-compose.yml` file to use the above config file in both locations.
+- Build with `script/build-native.sh --backend all`, then select the HackRF
+  configuration in `/etc/vectorwarp/config.yml` before starting the native units.
 
 ![HackRF blah2 wiring diagram](./hackrf-blah2.png "HackRF")

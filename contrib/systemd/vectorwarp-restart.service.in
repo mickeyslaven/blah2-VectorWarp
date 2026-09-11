@@ -1,0 +1,13 @@
+[Unit]
+Description=Safely restart VectorWarp API and radar processing
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+
+[Service]
+Type=oneshot
+ExecStart=@PREFIX@/libexec/vectorwarp-restart
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes

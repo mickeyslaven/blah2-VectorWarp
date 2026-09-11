@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "upstream_repository": "30hours/blah2",
+  "upstream_commit": "c821bee3f0d27cf20c8447f3d908ef722905a4de",
+  "integration_base_commit": "05df12bd54fda0b34c545d6f28494073274b3942",
+  "integration_base_pull_request": "https://github.com/30hours/blah2/pull/45",
+  "adsb2dd_repository": "30hours/adsb2dd",
+  "adsb2dd_commit": "1d004a0f0b741214422d55763aa672b0bbb6ae79",
+  "audit_date": "2026-09-10"
+}

@@ -63,13 +63,6 @@ public:
   /// @return Void.
   void stop();
 
-  /// @brief Implement replay function on RSPduo.
-  /// @param buffer1 Pointer to reference buffer.
-  /// @param buffer2 Pointer to surveillance buffer.
-  /// @param file Path to file to replay data from.
-  /// @param loop True if samples should loop at EOF.
-  /// @return Void.
-  void replay(IqData *buffer1, IqData *buffer2, std::string file, bool loop);
 
 };
 

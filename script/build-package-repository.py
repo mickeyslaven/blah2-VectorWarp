@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Build a signed, distro-specific APT/RPM site from verified release packages.
+
+Never downloads, installs packages, imports private keys, or deploys a site.
+The release job supplies an isolated GNUPGHOME containing its signing key.
+"""
+import argparse
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+
+MAX_BYTES = 900 * 1024 * 1024
+FINGERPRINT = re.compile(r"(?:[0-9A-F]{40}|[0-9A-F]{64})\Z")
+FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+~-]*\Z")
+TARGETS = {
+    ("deb", "ubuntu", "22.04"): ("jammy", {"amd64", "arm64"}),
+    ("deb", "ubuntu", "24.04"): ("noble", {"amd64", "arm64"}),
+    ("deb", "ubuntu", "26.04"): ("resolute", {"amd64", "arm64"}),
+    ("deb", "debian", "13"): ("trixie", {"amd64", "arm64"}),
+    ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
+}
+RELEASE_TARGETS = {
+    (format, distro, version, arch)
+    for (format, distro, version), (_, architectures) in TARGETS.items()
+    for arch in architectures
+}
+
+
+def repository_homepage():
+    """Historical measured results, not a promise about every release/host."""
+    return '''<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VectorWarp — native radar processing</title>
+<style>
+body{font:18px/1.6 system-ui,sans-serif;max-width:52rem;margin:3rem auto;padding:0 1.2rem;color:#252525}
+h1{line-height:1.15}a{color:#9c3900}table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{padding:.65rem;text-align:left;border-bottom:1px solid #ddd}
+caption{text-align:left;font-weight:600;margin-bottom:.5rem}.table-scroll{overflow-x:auto}
+.brand{display:inline-block;background:#ed7b24;color:#171717;padding:.2em .35em;border-radius:.2em}
+</style></head><body>
+<h1><span class="brand">VW</span> VectorWarp</h1>
+<p>Native Linux passive radar with browser setup, recording, replay and optional GPU acceleration.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Installation guide</a>
+ · <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Source and receiver support</a></p>
+<h2>Live radar that keeps pace</h2>
+<p>On a Ryzen AI Max+ 395 / Radeon 8060S with eight physical cores available,
+live five-channel Kraken processing averaged 147.5 ms per 200 ms CPI on CPU.
+A live reference/surveillance pair at ±4000 Hz averaged 138.7 ms on GPU,
+meeting all 27 measured 200 ms processing deadlines. That configuration exceeds
+regular blah2's safe Doppler buffer size.</p>
+<p>Five configurations, CPU and GPU, 300 live CPIs total. These are short runs,
+not an endurance or loss-free acquisition guarantee. Parallel CPU was faster
+for the five-channel workloads; the 400 ms / ±1600 Hz five-channel GPU case
+missed all 27 measured deadlines.</p>
+<p>A separate identical-IQ, sample-clock-paced RTX 4050 comparison averaged
+239 ms/CPI upstream versus 162 ms on VectorWarp GPU at 200 ms / ±800 Hz:
+about 32% less processing time, with 33/34 versus 0/34 warm deadline misses.
+The heavier 250 ms / ±2000 Hz profile did not keep pace in any mode.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/LIVE_CAPACITY_20260910.md">Live and paced results, per-CPI evidence and limitations</a></p>
+<h2>Earlier matched processing measurements</h2>
+<p>In the September 10, 2026 matched test, VectorWarp GPU used 28% less processing
+time per CPI than upstream blah2 on an RTX 4050 Laptop.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Per-CPI benchmark results">
+<table><caption>200 ms CPI, ±800 Hz Doppler — lower is better</caption>
+<thead><tr><th scope="col">Processing path</th><th scope="col">ms/CPI</th><th scope="col">Warm frames over 200 ms</th></tr></thead>
+<tbody><tr><th scope="row">Upstream CPU</th><td>228</td><td>50/51</td></tr>
+<tr><th scope="row">VectorWarp CPU</th><td>224</td><td>44/51</td></tr>
+<tr><th scope="row">VectorWarp GPU</th><td>163</td><td>0/51</td></tr></tbody></table></div>
+<p>Three-repeat instrumented DSP test: identical recorded IQ, settings and
+four-core CPU budget on the same laptop. Wider-Doppler and 50 ms CPI tests
+still missed deadlines. Detection/tracking corrections produce documented
+differences from upstream; CPU-only and Pi tests do not establish a reliable speedup.</p>
+<p>A separate actual VectorWarp processor timing check measured 239 ms/CPI on
+CPU versus 180 ms/CPI on GPU, with 17/17 versus 1/17 warm deadline misses.
+That check used sample-rate-paced replay, not live RF or the upstream full application.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PER_CPI_BENCHMARK_20260910.md">Full results, timing definitions, data and limitations</a></p>
+<h2>More channels and wider Doppler</h2>
+<p>Four channel workers reduced five-channel CPU time from 1075 to 568 ms/CPI
+under the same four-core budget. With six performance cores available to both
+programs, five-channel VectorWarp CPU took 376 ms versus 210 ms for regular
+blah2's two-channel pair. Five-channel processing has not matched pair timing.</p>
+<p>On that laptop, VectorWarp completed ±2500/±4000 Hz configurations that exceed upstream's
+Doppler buffer size. Those wide profiles did not meet their 200 ms deadlines;
+an extreme ±6000 Hz full-delay profile is excluded due to a delay-mapping issue.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/ARRAY_CAPACITY_20260910.md">Channel scaling, actual processor timings and wider-Doppler limits</a></p>
+<h2>Signed Linux packages</h2>
+<p>This repository supplies APT/DNF updates. Read the installation guide to
+choose the package for your operating system and architecture.</p>
+<footer><p>Based on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>.</p></footer>
+</body></html>
+'''
+
+
+def run(command, **kwargs):
+    result = subprocess.run(command, capture_output=True, timeout=180,
+                            check=False, **kwargs)
+    if result.returncode:
+        error = result.stderr.decode(errors="replace")[-2000:]
+        raise ValueError(f"{command[0]} failed: {error.strip()}")
+    return result.stdout
+
+
+def sha256(file):
+    digest = hashlib.sha256()
+    with file.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_manifest(file, packages):
+    if file.stat().st_size > 1024 * 1024:
+        raise ValueError("Package manifest is too large")
+    manifest = json.loads(file.read_text())
+    if not isinstance(manifest, dict):
+        raise ValueError("Package manifest must be an object")
+    entries = manifest.get("packages")
+    if manifest.get("schema") != 1 or not isinstance(entries, list) or not 1 <= len(entries) <= 64:
+        raise ValueError("Expected schema 1 with 1–64 packages")
+    version = manifest.get("version")
+    source_commit = manifest.get("source_commit")
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Package manifest must bind one stable numeric version")
+    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9A-Fa-f]{40}", source_commit):
+        raise ValueError("Package manifest must bind one full source commit")
+    names = set()
+    identities = set()
+    total = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Every package must be a metadata object")
+        for field in ("format", "distro", "distro_version", "arch", "name", "version", "release"):
+            if not isinstance(entry.get(field), str):
+                raise ValueError(f"Package {field} must be a string")
+        filename = entry.get("filename", "")
+        if not isinstance(filename, str) or not FILENAME.fullmatch(filename) or filename in names:
+            raise ValueError("Package filenames must be unique plain basenames")
+        names.add(filename)
+        target = TARGETS.get((entry.get("format"), entry.get("distro"), entry.get("distro_version")))
+        if not target or entry.get("arch") not in target[1] or entry.get("codename") != target[0]:
+            raise ValueError(f"Unsupported or inconsistent package target: {filename}")
+        version = entry.get("version", "")
+        release = entry.get("release", "")
+        if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+            raise ValueError("Repository publication requires a stable numeric version")
+        if version != manifest["version"]:
+            raise ValueError("Package version disagrees with aggregate manifest")
+        if release != ("1.fc44" if entry["format"] == "rpm" else "1"):
+            raise ValueError(f"Unexpected package release: {filename}")
+        if entry.get("name") != "vectorwarp" or not filename.endswith("." + entry["format"]):
+            raise ValueError(f"Wrong package name or extension: {filename}")
+        if entry["format"] == "deb":
+            distro_label = "debian13" if entry["distro"] == "debian" else "ubuntu" + entry["distro_version"]
+            expected_filename = (f"vectorwarp_{version}-{release}_{distro_label}_{entry['arch']}.deb")
+        else:
+            expected_filename = f"vectorwarp-{version}-{release}.{entry['arch']}.rpm"
+        if filename != expected_filename:
+            raise ValueError(f"Package filename disagrees with its immutable identity: {filename}")
+        if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
+                "kraken", "auto", "24.21.0"):
+            raise ValueError(f"Unexpected package build profile: {filename}")
+        identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
+        if identity in identities:
+            raise ValueError("Duplicate package target/version")
+        identities.add(identity)
+        source = packages / filename
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"Missing regular package file: {filename}")
+        size = source.stat().st_size
+        if type(entry.get("size")) is not int or entry["size"] != size or size <= 0:
+            raise ValueError(f"Package size mismatch: {filename}")
+        if entry.get("sha256") != sha256(source):
+            raise ValueError(f"Package checksum mismatch: {filename}")
+        total += size
+    if total > MAX_BYTES:
+        raise ValueError("Packages exceed the 900-MiB repository budget; reduce retained versions")
+    return manifest, entries
+
+
+def verify_release_matrix(entries):
+    actual = {(entry["format"], entry["distro"], entry["distro_version"], entry["arch"])
+              for entry in entries}
+    if actual != RELEASE_TARGETS or len(entries) != len(RELEASE_TARGETS):
+        missing = sorted(RELEASE_TARGETS - actual)
+        extra = sorted(actual - RELEASE_TARGETS)
+        raise ValueError(f"Release matrix is incomplete or inconsistent (missing={missing}, extra={extra})")
+
+
+def verify_metadata(entry, file):
+    if entry["format"] == "deb":
+        actual = run(["dpkg-deb", "--field", str(file), "Package", "Version", "Architecture"]).decode()
+        fields = dict(line.split(": ", 1) for line in actual.splitlines() if ": " in line)
+        expected = {"Package": entry["name"], "Version": entry["version"] + "-" + entry["release"],
+                    "Architecture": entry["arch"]}
+        if fields != expected:
+            raise ValueError(f"DEB metadata disagrees with manifest: {file.name}")
+    else:
+        actual = run(["rpm", "-qp", "--queryformat", "%{NAME}\n%{VERSION}\n%{RELEASE}\n%{ARCH}\n", str(file)]).decode().splitlines()
+        if actual != [entry[key] for key in ("name", "version", "release", "arch")]:
+            raise ValueError(f"RPM metadata disagrees with manifest: {file.name}")
+
+
+def public_fingerprint(public_key):
+    records = run(["gpg", "--batch", "--with-colons", "--show-keys", str(public_key)]).decode().splitlines()
+    keys = [line for line in records if line.startswith("pub:")]
+    fingerprints = [line.split(":")[9] for line in records if line.startswith("fpr:")]
+    if any(line.startswith(("sec:", "ssb:")) for line in records):
+        raise ValueError("The public-key file must not contain secret keys")
+    if len(keys) != 1 or not fingerprints:
+        raise ValueError("Exactly one public signing key is required")
+    return fingerprints[0]
+
+
+def verified_rpm(file, database):
+    # Only a signature verifiable by the isolated, pinned-key database counts.
+    # An unsigned RPM can pass checksig on its digests alone.
+    result = subprocess.run(["rpm", "--dbpath", str(database), "--checksig", "--verbose", str(file)],
+                            capture_output=True, timeout=180, check=False)
+    report = result.stdout.decode(errors="replace")
+    signatures = [line.strip() for line in report.splitlines() if "Signature" in line]
+    return (result.returncode == 0 and bool(signatures) and
+            all(line.endswith(": OK") for line in signatures) and
+            not any(marker in report for marker in ("NOKEY", "NOT OK", "BAD")))
+
+
+def sign(file, signer, clear=False):
+    output = file.with_name("InRelease") if clear else Path(str(file) + (".gpg" if file.name == "Release" else ".asc"))
+    command = ["gpg", "--batch", "--yes", "--pinentry-mode", "error", "--local-user", signer,
+               "--digest-algo", "SHA256", "--output", str(output)]
+    command += ["--clearsign"] if clear else ["--armor", "--detach-sign"]
+    run(command + [str(file)])
+    return output
+
+
+def build(args):
+    fingerprint = args.fingerprint.upper()
+    signer = args.signing_key.upper()
+    if not FINGERPRINT.fullmatch(fingerprint) or signer != fingerprint:
+        raise ValueError("Use the same full primary fingerprint for expected and signing keys")
+    key_home = os.environ.get("GNUPGHOME", "")
+    if not re.fullmatch(r"/[A-Za-z0-9_./-]+", key_home) or not Path(key_home).is_dir():
+        raise ValueError("Set GNUPGHOME to an isolated absolute signing-key directory")
+    if Path(key_home).stat().st_mode & 0o077:
+        raise ValueError("Signing-key directory permissions must be private (0700)")
+    packages = Path(args.packages).resolve(strict=True)
+    if not packages.is_dir():
+        raise ValueError("Packages must be a directory")
+    manifest, entries = load_manifest(Path(args.manifest), packages)
+    expected_version = getattr(args, "expected_version", None)
+    expected_source_commit = getattr(args, "expected_source_commit", None)
+    if expected_version is not None and manifest["version"] != expected_version:
+        raise ValueError("Package manifest version does not match the selected release")
+    if (expected_source_commit is not None and
+            manifest["source_commit"].lower() != expected_source_commit.lower()):
+        raise ValueError("Package manifest source commit does not match the selected release tag")
+    if getattr(args, "require_release_matrix", False):
+        verify_release_matrix(entries)
+    public_key = Path(args.public_key).resolve(strict=True)
+    if public_fingerprint(public_key) != fingerprint:
+        raise ValueError("Public key fingerprint does not match the pinned release key")
+    requested_output = Path(args.output).absolute()
+    if requested_output.exists() or requested_output.is_symlink():
+        raise ValueError("Output must not exist; existing repositories are never overwritten in place")
+    output = requested_output.resolve()
+    if not output.parent.is_dir() or output == packages or packages in output.parents:
+        raise ValueError("Output must be outside the package input directory")
+    for entry in entries:
+        verify_metadata(entry, packages / entry["filename"])
+    with tempfile.TemporaryDirectory(prefix=".vectorwarp-repository-", dir=output.parent) as temporary:
+        scratch = Path(temporary)
+        site = scratch / "site"
+        keys = site / "keys"
+        keys.mkdir(parents=True)
+        # Export public packets from the keyring for BOTH encodings. Never
+        # dearmor an input file directly into a publicly served keyring.
+        (keys / "vectorwarp.gpg").write_bytes(run(["gpg", "--batch", "--export", fingerprint]))
+        (keys / "vectorwarp.asc").write_bytes(run(["gpg", "--batch", "--armor", "--export", fingerprint]))
+        if not (keys / "vectorwarp.asc").stat().st_size:
+            raise ValueError("Pinned key is not imported in the signing keyring")
+        if public_fingerprint(keys / "vectorwarp.gpg") != fingerprint:
+            raise ValueError("Exported key does not match the pinned release key")
+        (keys / "fingerprint.txt").write_text(fingerprint + "\n")
+        apt_groups = set()
+        rpm_groups = set()
+        rpm_db = scratch / "rpmdb"
+        if any(entry["format"] == "rpm" for entry in entries):
+            rpm_db.mkdir()
+            run(["rpm", "--dbpath", str(rpm_db), "--import", str(keys / "vectorwarp.asc")])
+        published = []
+        for entry in entries:
+            if entry["format"] == "deb":
+                relative = Path("apt/pool") / entry["codename"] / entry["arch"] / entry["filename"]
+                apt_groups.add((entry["codename"], entry["arch"]))
+            else:
+                relative = Path("rpm/fedora") / entry["distro_version"] / entry["arch"] / "Packages" / entry["filename"]
+                rpm_groups.add((entry["distro_version"], entry["arch"]))
+            destination = site / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(packages / entry["filename"], destination)
+            if entry["format"] == "rpm":
+                # Weekly index refresh must preserve already signed package
+                # bytes so a published immutable package never changes hash.
+                if not verified_rpm(destination, rpm_db):
+                    run(["rpmsign", "--addsign", "--define", f"_gpg_name {signer}",
+                         "--define", f"_gpg_path {key_home}", "--define", "__gpg /usr/bin/gpg",
+                         "--define", "_gpg_sign_cmd_extra_args --batch --pinentry-mode error", str(destination)])
+                if not verified_rpm(destination, rpm_db):
+                    raise ValueError(f"RPM signature could not be verified: {entry['filename']}")
+            published.append({**entry, "sha256": sha256(destination), "size": destination.stat().st_size,
+                              "repository_path": relative.as_posix()})
+        apt = site / "apt"
+        for codename, arch in sorted(apt_groups):
+            folder = apt / "dists" / codename / "main" / f"binary-{arch}"
+            folder.mkdir(parents=True)
+            data = run(["apt-ftparchive", "packages", f"pool/{codename}/{arch}"], cwd=apt)
+            (folder / "Packages").write_bytes(data)
+            (folder / "Packages.gz").write_bytes(gzip.compress(data, mtime=0))
+            by_hash = folder / "by-hash/SHA256"
+            by_hash.mkdir(parents=True)
+            for name in ("Packages", "Packages.gz"):
+                shutil.copyfile(folder / name, by_hash / sha256(folder / name))
+        valid_until = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
+        for codename in sorted({group[0] for group in apt_groups}):
+            distro = apt / "dists" / codename
+            architectures = " ".join(sorted(arch for suite, arch in apt_groups if suite == codename))
+            settings = {"Origin": "VectorWarp", "Label": "VectorWarp", "Suite": codename,
+                        "Codename": codename, "Architectures": architectures, "Components": "main",
+                        "Acquire-By-Hash": "yes"}
+            command = ["apt-ftparchive"]
+            for key, value in settings.items():
+                command += ["-o", f"APT::FTPArchive::Release::{key}={value}"]
+            release = distro / "Release"
+            # Older apt-ftparchive silently ignores the Valid-Until setting.
+            # Add the field explicitly BEFORE signing on every supported host.
+            release_data = run(command + ["release", "."], cwd=distro)
+            release.write_bytes(f"Valid-Until: {valid_until}\n".encode() + release_data)
+            for signature in (sign(release, signer), sign(release, signer, clear=True)):
+                run(["gpgv", "--keyring", str(keys / "vectorwarp.gpg"), str(signature)] +
+                    ([] if signature.name == "InRelease" else [str(release)]))
+        for version, arch in sorted(rpm_groups):
+            folder = site / "rpm/fedora" / version / arch
+            run(["createrepo_c", "--checksum", "sha256", str(folder)])
+            metadata = folder / "repodata/repomd.xml"
+            signature = sign(metadata, signer)
+            run(["gpgv", "--keyring", str(keys / "vectorwarp.gpg"), str(signature), str(metadata)])
+        document = {"schema": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "version": manifest["version"], "source_commit": manifest["source_commit"].lower(),
+                    "signing_fingerprint": fingerprint, "packages": published}
+        (site / "repository-manifest.json").write_text(json.dumps(document, indent=2) + "\n")
+        if args.installer_template:
+            template = Path(args.installer_template).read_text()
+            if "@SIGNING_FINGERPRINT@" not in template:
+                raise ValueError("Installer template has no signing-fingerprint placeholder")
+            (site / "install.sh").write_text(template.replace("@SIGNING_FINGERPRINT@", fingerprint))
+        (site / ".nojekyll").touch()
+        (site / "index.html").write_text(repository_homepage())
+        if sum(file.stat().st_size for file in site.rglob("*") if file.is_file()) > MAX_BYTES:
+            raise ValueError("Signed repository exceeds the 900-MiB Pages budget")
+        site.rename(output)
+    return document
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("packages", "manifest", "output", "public-key", "fingerprint", "signing-key"):
+        parser.add_argument("--" + name, required=True)
+    parser.add_argument("--expected-version")
+    parser.add_argument("--expected-source-commit")
+    parser.add_argument("--require-release-matrix", action="store_true")
+    parser.add_argument("--installer-template")
+    args = parser.parse_args()
+    try:
+        document = build(args)
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        parser.exit(1, f"Repository not published: {error}\n")
+    print(f"Verified signed repository: {len(document['packages'])} packages at {args.output}")
+
+
+if __name__ == "__main__":
+    main()

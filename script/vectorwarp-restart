@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  echo 'vectorwarp-restart accepts no arguments' >&2
+  exit 64
+fi
+
+# This script runs as the root-owned vectorwarp-restart.service, outside the API
+# cgroup. Keep processing stopped unless the replacement API is actually ready.
+/usr/bin/systemctl stop vectorwarp-processor.service
+/usr/bin/systemctl restart vectorwarp-api.service
+/usr/bin/node @PREFIX@/libexec/vectorwarp-wait-api.js \
+  @SYSCONFDIR@/config.yml @PREFIX@/current/api/node_modules
+/usr/bin/systemctl start vectorwarp-processor.service

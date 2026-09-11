@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# Stop only on removal/purge. During an upgrade, leave the administrator's
+# current service state unchanged and never cause the radar to start.
+if [ "${1:-}" = remove ] && [ -d /run/systemd/system ]; then
+  systemctl stop vectorwarp-processor.service vectorwarp-api.service \
+    vectorwarp-restart.service >/dev/null 2>&1 || true
+fi
+exit 0

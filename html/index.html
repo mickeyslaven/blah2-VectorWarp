@@ -1,51 +1,19 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta charset="UTF-8">
-  <title>blah2</title>
-  <link rel="icon" type="image/x-icon" href="/favicon/favicon-16x16.png" sizes="16x16">
-  <link rel="icon" type="image/x-icon" href="/favicon/favicon-32x32.png" sizes="32x32">
-  <link rel="icon" type="image/x-icon" href="/favicon/favicon-128x128.png" sizes="128x128">
-  <link rel="icon" type="image/x-icon" href="/favicon/favicon-196x196.png" sizes="196x196">
-  <!-- load lib js -->
-  <script src="./lib/bootstrap-5.2.3.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VectorWarp · Live radar</title>
+  <link rel="icon" href="/favicon/vectorwarp-vw.svg" type="image/svg+xml">
   <script src="./lib/plotly-2.20.0.min.js"></script>
-  <script src="./lib/jquery-3.6.4.min.js"></script>
-  <!-- load lib css -->
-  <link rel="stylesheet" href="./lib/bootstrap-5.2.3.min.css">
-  <link rel="stylesheet" href="./lib/blah2.css">
-  <style>
-  </style>
+  <link rel="stylesheet" href="./lib/blah2.css?v=config-audit-10">
 </head>
 <body>
-  <div style="width: 95vw" class="container-fluid">
-    <div class="row align-items-center d-flex">
-    <nav class="navbar navbar-light navbar-expand text-center pb-3">
-      <ul class="navbar-nav mx-auto justify-content-center">
-        <li class="nav-item px-3 px-md-4">
-          <a class="navbar-brand mx-0 menu text-decoration-underline" href="#">RADAR</a>
-        </li>
-        <li class="nav-item px-3 px-md-4">
-          <a class="navbar-brand mx-0 menu" href="/controller">CONTROLLER</a>
-        </li>
-      </ul>
-    </nav>
-    <!-- notifications if radar RF is down -->
-    <div class="center">
-    <p>
-      <center>
-      <center>
-    </div>
-    <div style="height: 90vh; width: 95vw" class="row d-flex">
-      <div class="justify-content-center" id="data"></div>
-    </div>
-    </div>
+  <main class="app-shell"><header class="app-header"></header>
+    <section class="panel radar-panel" aria-label="Live radar visualization"><div class="visualization" id="data"></div></section>
+  </main>
+  <script>var urlMap = '/api/map';</script>
+  <script src="./js/common.js?v=vw-logo-1"></script><script>renderAppHeader('radar');</script>
+  <script src="./js/plot_map.js?v=config-audit-10"></script>
 </body>
-<script>
-  var urlMap = '/api/map';
-</script>
-<script src="js/common.js"></script>
-<script src="js/plot_map.js"></script>
-<script src="control.js"></script>
 </html>

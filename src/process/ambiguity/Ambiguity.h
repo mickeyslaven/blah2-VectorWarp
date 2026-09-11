@@ -6,13 +6,14 @@
 /// @author 30hours
 /// @todo Ambiguity maps are still offset by 1 bin.
 /// @todo Write a performance test for hamming assisted ambiguity processing.
-/// @todo If delayMin > delayMax = trouble, what's the exception policy?
 
+#pragma once
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "process/meta/HammingNumber.h"
 #include <stdint.h>
 #include <fftw3.h>
+#include <deque>
 #include <memory>
 
 class Ambiguity
@@ -43,6 +44,9 @@ public:
   /// @return Ambiguity map data of IQ samples.
   Map<Complex> *process(IqData *x, IqData *y);
 
+  /// @brief Process against a shared, immutable reference CPI.
+  Map<Complex> *process(const std::deque<Complex>& x, IqData *y);
+
   double get_doppler_middle() const;
 
   uint16_t get_n_delay_bins() const;
@@ -56,6 +60,10 @@ public:
   uint32_t get_nfft() const;
 
   uint32_t get_n_samples() const;
+
+  // GPU output is delay-major, unshifted Doppler, matching the CPU FFT layout.
+  Map<Complex>* import_gpu(const std::complex<float>* output);
+  Map<Complex>* result() const { return map.get(); }
 
 private:
   /// @brief Minimum delay (bins).
@@ -102,7 +110,6 @@ private:
   std::vector<Complex> dataXi;
   std::vector<Complex> dataYi;
   std::vector<Complex> dataZi;
-  std::vector<Complex> dataCorr;
   std::vector<Complex> dataDoppler;
   /// @}
 

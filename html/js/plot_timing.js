@@ -1,27 +1,14 @@
-var timestamp = -1;
-var nRows = 3;
-var host = window.location.hostname;
-var isLocalHost = is_localhost(host);
+var plottedKeys = '';
 
 // setup API
-var urlTimestamp;
-var urlTiming;
-if (isLocalHost) {
-  urlTimestamp = '//' + host + ':3000/api/timestamp';
-} else {
-  urlTimestamp = '//' + host + '/api/timestamp';
-}
-if (isLocalHost) {
-  urlTiming = '//' + host + ':3000/stash/timing';
-} else {
-  urlTiming = '//' + host + '/stash/timing';
-}
+var urlTiming = liveApiUrl('/stash/timing');
 
 // setup plotly
 var layout = {
-  autosize: false,
+  font: {color: '#f3eee9'},
+  autosize: true,
   margin: {
-    l: 50,
+    l: 92,
     r: 50,
     b: 50,
     t: 10,
@@ -30,17 +17,16 @@ var layout = {
   hoverlabel: {
     namelength: 0
   },
-  width: document.getElementById('data').offsetWidth,
-  height: document.getElementById('data').offsetHeight,
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
   displayModeBar: false,
   xaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: xTitle,
       font: {
-        size: 24
+        size: 18
       }
     },
     showgrid: false,
@@ -48,26 +34,27 @@ var layout = {
     side: 'bottom'
   },
   yaxis: {
+    gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
       text: yTitle,
       font: {
-        size: 24
+        size: 18
       }
     },
     showgrid: false,
     ticks: '',
     ticksuffix: ' ',
-    autosize: false,
     categoryorder: "total descending"
   },
   legend: {
     orientation: "h",
-    bgcolor: "#f78c58",
-    bordercolor: "#000000",
-    borderwidth: 2
+    bgcolor: "#29201c",
+    bordercolor: "#47362e",
+    borderwidth: 1
   }
 };
 var config = {
+  responsive: true,
   displayModeBar: false,
   scrollZoom: true
 }
@@ -84,80 +71,58 @@ var data = [
 Plotly.newPlot('data', data, layout, config);
 
 // callback function
-var intervalId = window.setInterval(function () {
+var radarUpdates = startRadarPlot(urlTiming, async function (data) {
+  const keys = Object.keys(data).filter(key =>
+    Array.isArray(data[key]) && !['timestamp', 'uptime_s', 'uptime_days'].includes(key));
+  const signature = JSON.stringify(keys);
 
-  // check if timestamp is updated
-  $.get(urlTimestamp, function () { })
+  // case draw new plot
+  if (signature !== plottedKeys) {
 
-    .done(function (data) {
-      if (timestamp != data) {
-        timestamp = data;
+    // timestamp posix to js
+    for (let i = 0; i < data["timestamp"].length; i++)
+    {
+      data["timestamp"][i] = new Date(data["timestamp"][i]);
+    }
 
-        // get new data
-        $.getJSON(urlTiming, function () { })
-          .done(function (data) {
+    var data_trace = [];
+    for (let i = 0; i < keys.length; i++) {
+      var trace = {
+        x: data["timestamp"],
+        y: data[keys[i]],
+        mode: 'lines+markers',
+        type: 'scatter',
+        name: keys[i],
+        line: {
+          width: 5
+        },
+        marker: {
+          size: 12
+        },
+      };
+      data_trace.push(trace);
+    }
 
-            // case draw new plot
-            if (data.nRows != nRows) {
-              nRows = data.nRows;
-
-              // timestamp posix to js
-              for (i = 0; i < data["timestamp"].length; i++)
-              {
-                data["timestamp"][i] = new Date(data["timestamp"][i]);
-              }
-
-              data_trace = [];
-              keys = Object.keys(data);
-              keys = keys.filter(item => item !== "timestamp" && item !== "uptime_s" && item !== "uptime_days");
-              for (i = 0; i < keys.length; i++) {
-                var trace = {
-                  x: data["timestamp"],
-                  y: data[keys[i]],
-                  mode: 'lines+markers',
-                  type: 'scatter',
-                  name: keys[i],
-                  line: {
-                    width: 5
-                  },
-                  marker: {
-                    size: 12
-                  },
-                };
-                data_trace.push(trace);
-              }
-
-              Plotly.newPlot('data', data_trace, layout, config);
-            }
-            // case update plot
-            else {
-              // timestamp posix to js
-              for (i = 0; i < data["timestamp"].length; i++)
-              {
-                data["timestamp"][i] = new Date(data["timestamp"][i]);
-              }
-              var xVec = [];
-              var yVec = [];
-              for (i = 0; i < keys.length; i++) {
-                xVec.push(data["timestamp"]);
-                yVec.push(data[keys[i]]);
-              }
-              var trace_update = {
-                x: xVec,
-                y: yVec
-              };
-              Plotly.update('data', trace_update);
-            }
-
-          })
-          .fail(function () {
-          })
-          .always(function () {
-          });
-      }
-    })
-    .fail(function () {
-    })
-    .always(function () {
-    });
-}, 100);
+    await Plotly.newPlot('data', data_trace, layout, config);
+    plottedKeys = signature;
+  }
+  // case update plot
+  else {
+    // timestamp posix to js
+    for (let i = 0; i < data["timestamp"].length; i++)
+    {
+      data["timestamp"][i] = new Date(data["timestamp"][i]);
+    }
+    var xVec = [];
+    var yVec = [];
+    for (let i = 0; i < keys.length; i++) {
+      xVec.push(data["timestamp"]);
+      yVec.push(data[keys[i]]);
+    }
+    var trace_update = {
+      x: xVec,
+      y: yVec
+    };
+    await Plotly.update('data', trace_update);
+  }
+});

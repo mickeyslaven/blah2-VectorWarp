@@ -1,46 +1,80 @@
-# blah2 Test
+# VectorWarp tests
 
-A set of tests are provided for development/debugging.
+VectorWarp retains the `blah2` binary and some target names for compatibility.
+Tests are split by the component they exercise; they do not imply physical radio
+or browser coverage beyond the stated fixtures.
 
-## Framework
+## C++ and replay
 
-The test framework is [catch2](https://github.com/catchorg/Catch2).
+From a configured build with testing enabled:
 
-## Types
-
-The test files are split across directories defined by the type of test.
-
-- **Unit tests** will test the class in isolation. The directory structure mirrors *src*.
-- **Functional tests** will test that expected outputs are achieved from defined inputs. An example would be checking the program turns a specific IQ data set to a specific delay-Doppler map. This test category will rely on golden data.
-- **Comparison tests** will compare different methods of performing the same task. An example would be comparing 2 methods of clutter filtering. Metrics to be compared may include time and performance. Note there is no specific pass/fail criteria for comparison tests - this is purely for information. A comparison test will pass if executed successfully. Any comparison testing on input parameters for a single class will be handled in the unit test.
-
-## Usage
-
-All tests are compiled when building, however tests be run manually.
-
-- Run a single unit test for "TestClass".
-
-```
-sudo docker exec -it blah2 /blah2/bin/test/unit/testClass
+```bash
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-- Run a single functional test for "TestFunctional".
+CTest includes unit coverage for processing, spectrum, tracking, detection math,
+Kraken frame handling, recording formats and CPU/GPU fallback behavior when that
+target is configured. Select one test with:
 
-```
-sudo docker exec -it blah2 /blah2/bin/test/functional/testFunctional
-```
-
-- Run a single comparison test for "TestComparison".
-
-```
-sudo docker exec -it blah2 /blah2/bin/test/comparison/testComparison
+```bash
+ctest --test-dir build -R testDetectionMath --output-on-failure
 ```
 
-- *TODO:* Run all test cases.
+The offline full-processor replay harness exercises portable recordings for all
+four receiver profiles through the built binary without receiver hardware.
+Legacy-format readers have separate recording unit coverage.
 
+```bash
+python3 test/recording/processor_replay_test.py --binary bin/blah2
 ```
-sudo docker exec -it blah2 /blah2/bin/test/runall.sh
-sudo docker exec -it blah2 /blah2/bin/test/unit/runall.sh
-sudo docker exec -it blah2 /blah2/bin/test/functional/runall.sh
-sudo docker exec -it blah2 /blah2/bin/test/comparison/runall.sh
+
+Use the actual configured output path if it differs from `bin/blah2`.
+
+## API and browser fixtures
+
+Node.js 22 or newer is required. Install the locked development dependencies;
+the DOM test uses the pinned jsdom dependency.
+
+```bash
+cd api
+npm ci --ignore-scripts --no-audit --no-fund
+export NODE_PATH="$PWD/node_modules${NODE_PATH:+:$NODE_PATH}"
+npm test
+npm run test:dom
+cd ..
+node test/ui/deployment.test.js
+node test/ui/packaging.test.js
 ```
+
+These checks cover configuration validation/recovery, processor status,
+recording/replay controls, replay-only profiles, ADS-B projection, API/browser
+behavior, native unit templates and package safety. They use temporary files,
+loopback listeners and fixtures; they must not connect to a receiver or alter a
+production service.
+
+## Signed repository
+
+Manifest validation needs only Python 3:
+
+```bash
+python3 test/packaging/test_repository.py
+```
+
+In an isolated Linux test runner with GnuPG, APT tools, RPM build/signing tools
+and createrepo-c installed, also run:
+
+```bash
+VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py
+```
+
+Integration uses disposable format fixtures and a temporary test key. It checks
+signatures, APT indexes, tamper rejection and unchanged RPM bytes during metadata
+renewal; it does not install VectorWarp or publish a repository.
+
+## Evidence boundary
+
+Automated replay and fixture tests are not physical receiver, driver, live
+capture, sustained GPU-performance or browser-rendering certification. See
+[UPSTREAM_COMPARISON.md](../docs/UPSTREAM_COMPARISON.md) for the maintained
+separation of implementation, automated tests and hardware evidence.

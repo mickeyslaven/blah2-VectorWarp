@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: CPU unit, API, and replay tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Set up Node 24 for API tests
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
+            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm
+      - name: Bootstrap pinned vcpkg manifest dependencies
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
+          git -C build/ci-deps/vcpkg fetch --depth=1 origin c8696863d371ab7f46e213d8f5ca923c4aef2a00
+          git -C build/ci-deps/vcpkg checkout --detach c8696863d371ab7f46e213d8f5ca923c4aef2a00
+          build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          mkdir -p build/ci-manifest
+          cp lib/vcpkg-kraken.json build/ci-manifest/vcpkg.json
+      - name: Configure CPU-only Kraken test build
+        run: |
+          cmake -S . -B build/ci \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DBLAH2_KRAKEN_ONLY=ON -DBLAH2_GPU=OFF \
+            -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" \
+            -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
+          cmake --build build/ci --parallel 2
+      - name: Run C++ unit and portable replay tests
+        run: ctest --test-dir build/ci --output-on-failure --no-tests=error
+      - name: Run offline full-processor replay harness
+        run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
+      - name: Run repository generator unit and ephemeral integration tests
+        run: |
+          python3 test/packaging/test_repository.py -v
+          VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
+          python3 test/packaging/test_install_release.py -v
+      - name: Run API and UI unit tests
+        env:
+          NODE_PATH: ${{ github.workspace }}/api/node_modules
+        run: |
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          npm test --prefix api
+          npm run test:dom --prefix api
+          node test/ui/deployment.test.js
+      - name: Run staged native-package acceptance checks
+        run: node test/ui/packaging.test.js
+      - name: Syntax-check every workflow shell block and release script
+        run: |
+          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
+          python3 -m py_compile script/build-package-repository.py
+          python3 - <<'PY'
+          import pathlib, subprocess, tempfile, yaml
+          for workflow in pathlib.Path('.github/workflows').glob('*.yml'):
+              document = yaml.safe_load(workflow.read_text())
+              for job in document['jobs'].values():
+                  for step in job.get('steps', []):
+                      if 'run' not in step: continue
+                      with tempfile.NamedTemporaryFile(mode='w', suffix='.sh') as script:
+                          script.write(step['run']); script.flush()
+                          subprocess.run(['bash', '-n', script.name], check=True)
+          release = pathlib.Path('.github/workflows/release-packages.yml').read_text()
+          assert 'release-assets/package-manifest.json' in release
+          assert 'release-assets/repository-manifest.json' in release
+          assert 'cp repository/repository-manifest.json release-assets/package-manifest.json' in release
+          assert 'cp repository/repository-manifest.json release-assets/repository-manifest.json' in release
+          assert 'release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json' in release
+          assert 'script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json' in release
+          for workflow in ('ci.yml', 'release-packages.yml'):
+              text = pathlib.Path('.github/workflows', workflow).read_text()
+              assert 'NODE_PATH: $' + '{{ github.workspace }}/api/node_modules' in text
+              assert 'npm run test:dom --prefix api' in text and 'node test/ui/deployment.test.js' in text
+          helper = pathlib.Path('script/upstream-diff.py').read_text()
+          assert 'git diff --stat' in helper and 'git diff --name-status' in helper
+          assert 'https://github.com/{upstream}.git' in helper and 'moving branch' in helper
+          PY
+      - name: Generate immutable upstream review artifact
+        run: |
+          mkdir release-review
+          python3 script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json \
+            --output release-review/upstream-diff.txt
+          cp docs/UPSTREAM_BASELINE.json release-review/
+      - name: Upload review-only upstream comparison
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upstream-diff-${{ matrix.runner }}-${{ github.sha }}
+          path: release-review/
+          if-no-files-found: error
+          retention-days: 14

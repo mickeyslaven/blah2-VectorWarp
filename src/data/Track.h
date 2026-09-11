@@ -40,6 +40,12 @@ private:
   /// @brief Associated detections in track.
   std::vector<std::vector<Detection>> associated;
 
+  // Retain the entire supported M-of-N window, but send only the last 100
+  // points to the browser. Lifetime counts do not shrink with the history.
+  static constexpr size_t MAX_STATE_HISTORY = 255;
+  static constexpr size_t MAX_DISPLAY_HISTORY = 100;
+  std::vector<uint64_t> nAssociated;
+
   /// @brief Number of updates the track has been tentative/coasting.
   /// @details Forms criteria for track deletion.
   std::vector<uint64_t> nInactive;
@@ -126,6 +132,8 @@ public:
   /// @brief Get number of updates track has been tentative/coasting.
   /// @return Number of updates track has been tentative/coasting.
   uint64_t get_nInactive(uint64_t index);
+
+  uint64_t get_nAssociated(uint64_t index);
 
   /// @brief Update an associated detection.
   /// @param index Index of track to change.

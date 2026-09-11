@@ -1,0 +1,27 @@
+[Unit]
+Description=VectorWarp radar processor
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vectorwarp
+Group=vectorwarp
+SupplementaryGroups=vectorwarp-config
+WorkingDirectory=/var/lib/vectorwarp
+ExecStart=@PREFIX@/current/bin/blah2 --config @SYSCONFDIR@/config.yml
+Restart=on-failure
+RestartSec=3s
+UMask=0007
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/vectorwarp
+
+[Install]
+WantedBy=multi-user.target

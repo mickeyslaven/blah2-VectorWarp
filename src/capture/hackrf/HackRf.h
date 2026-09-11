@@ -3,7 +3,6 @@
 /// @brief A class to capture data on the HackRF.
 /// @author sdn-ninja
 /// @author 30hours
-/// @todo Replay functionality.
 
 #ifndef HACKRF_H
 #define HACKRF_H
@@ -40,7 +39,14 @@ private:
 
 protected:
   /// @brief Array of pointers to HackRF devices.
-  hackrf_device* dev[2];
+  hackrf_device* dev[2]{};
+  bool apiStarted = false;
+  struct ChannelContext {
+    HackRf* source = nullptr;
+    IqData* buffer = nullptr;
+    unsigned channel = 0;
+    uint64_t received = 0;
+  } channels[2];
 
   /// @brief Callback function for HackRF samples.
   /// @param transfer HackRF transfer object.
@@ -78,7 +84,6 @@ public:
   /// @param file Path to file to replay data from.
   /// @param loop True if samples should loop at EOF.
   /// @return Void.
-  void replay(IqData *buffer1, IqData *buffer2, std::string file, bool loop);
 
 };
 

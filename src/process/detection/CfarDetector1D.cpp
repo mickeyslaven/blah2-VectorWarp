@@ -4,10 +4,14 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <stdexcept>
 
 // constructor
 CfarDetector1D::CfarDetector1D(double _pfa, int8_t _nGuard, int8_t _nTrain, int8_t _minDelay, double _minDoppler)
 {
+  if (!std::isfinite(_pfa) || _pfa <= 0 || _pfa >= 1 || _nGuard < 0 ||
+      _nTrain <= 0 || !std::isfinite(_minDoppler) || _minDoppler < 0)
+    throw std::invalid_argument("Invalid CFAR probability, training window or minimum Doppler");
   // input
   pfa = _pfa;
   nGuard = _nGuard;
@@ -58,7 +62,7 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
       std::vector<int> iTrain;
       for (int k = j-nGuard-nTrain; k < j-nGuard; k++)
       {
-        if (k > 0 && k < nDelayBins)
+        if (k >= 0 && k < nDelayBins)
         {
           iTrain.push_back(k);
         }
@@ -73,6 +77,7 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
 
       // compute threshold
       int nCells = iTrain.size();
+      if (nCells == 0) continue;
       double alpha = nCells * (pow(pfa, -1.0 / nCells) - 1);
       double trainNoise = 0.0;
       for (int k = 0; k < nCells; k++)

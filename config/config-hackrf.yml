@@ -11,8 +11,9 @@ capture:
     amp_enable: [false, false]
   replay:
     state: false
-    loop: true
-    file: '/opt/blah2/replay/file.hackrf'
+    loop: false
+    file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
 
 process:
   data:
@@ -60,8 +61,10 @@ network:
 truth:
   adsb:
     enabled: false
-    tar1090: 'adsb.30hours.dev'
-    adsb2dd: 'adsb2dd.30hours.dev'
+    tar1090: 'localhost:8080'
+    poll_interval: 1
+    smoothing_window: 10
+    max_position_age: 30
   ais:
     enabled: false
     ip: 0.0.0.0
@@ -69,19 +72,20 @@ truth:
 
 location:
   rx:
-    latitude: -34.9286
-    longitude: 138.5999
-    altitude: 50
-    name: "Adelaide"
+    # Replace these neutral placeholders before enabling capture or truth data.
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set receiver site"
   tx:
-    latitude: -34.9810
-    longitude: 138.7081
-    altitude: 750
-    name: "Mount Lofty"
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set transmitter site"
 
 save:
-  iq: true
+  iq: false
   map: false
   detection: false
   timing: false
-  path: "/blah2/save/"
+  path: "/var/lib/vectorwarp/recordings/"

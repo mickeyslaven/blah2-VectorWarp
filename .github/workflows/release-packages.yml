@@ -1,0 +1,406 @@
+name: Build release packages
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    # The validation job below enforces exact vMAJOR.MINOR.PATCH semantics;
+    # keep the event filter broad so valid tags are never lost to glob syntax.
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to dry-run, without the v prefix (for example 1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate immutable release version
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      tagged_release: ${{ steps.version.outputs.tagged_release }}
+    steps:
+      - name: Check out tag or dry-run revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Reject mutable or malformed versions
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ${GITHUB_REF_TYPE} == tag ]]; then
+            tag=${GITHUB_REF_NAME}
+            tagged_release=true
+            git show-ref --verify --quiet "refs/tags/${tag}"
+            [[ $(git rev-list -n 1 "${tag}") == "${GITHUB_SHA}" ]]
+            git show-ref --verify --quiet refs/remotes/origin/main
+            [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
+              echo 'Stable tags must point to the exact current main commit.' >&2; exit 1; }
+          elif [[ ${GITHUB_EVENT_NAME} == pull_request ]]; then
+            # PR packaging is unsigned smoke coverage only; it cannot reach
+            # the signing job or its environment-scoped signing secret.
+            tag=v0.0.0
+            tagged_release=false
+          else
+            [[ ${GITHUB_EVENT_NAME} == workflow_dispatch ]]
+            [[ ${GITHUB_REF_TYPE} == branch && ${GITHUB_REF_NAME} == main ]]
+            git show-ref --verify --quiet refs/remotes/origin/main
+            [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
+              echo 'Unsigned test packages must be built from the exact current main commit.' >&2; exit 1; }
+            tag="v$INPUT_VERSION"
+            tagged_release=false
+          fi
+          [[ $tag =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
+            echo 'Version must be an immutable stable vMAJOR.MINOR.PATCH tag.' >&2; exit 1; }
+          printf 'tag=%s\nversion=%s\ntagged_release=%s\n' "$tag" "${tag#v}" "$tagged_release" >> "$GITHUB_OUTPUT"
+  verify:
+    name: Verify CPU unit, API, and replay tests
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the exact release revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Set up Node 24 for API tests
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
+            apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm
+      - name: Bootstrap pinned vcpkg manifest dependencies
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
+          git -C build/ci-deps/vcpkg fetch --depth=1 origin c8696863d371ab7f46e213d8f5ca923c4aef2a00
+          git -C build/ci-deps/vcpkg checkout --detach c8696863d371ab7f46e213d8f5ca923c4aef2a00
+          build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          mkdir -p build/ci-manifest
+          cp lib/vcpkg-kraken.json build/ci-manifest/vcpkg.json
+      - name: Configure and test without GPU hardware
+        run: |
+          cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DBLAH2_KRAKEN_ONLY=ON -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
+          cmake --build build/ci --parallel 2
+          ctest --test-dir build/ci --output-on-failure --no-tests=error
+      - name: Run offline full-processor replay harness
+        run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
+      - name: Run repository generator unit and ephemeral integration tests
+        run: |
+          python3 test/packaging/test_repository.py -v
+          VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
+      - name: Run API and UI unit tests
+        env:
+          NODE_PATH: ${{ github.workspace }}/api/node_modules
+        run: |
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          npm test --prefix api
+          npm run test:dom --prefix api
+          node test/ui/deployment.test.js
+      - name: Run staged native-package acceptance checks
+        run: node test/ui/packaging.test.js
+      - name: Syntax-check every workflow shell block and release script
+        run: |
+          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
+          python3 -m py_compile script/build-package-repository.py
+          python3 - <<'PY'
+          import pathlib, subprocess, tempfile, yaml
+          for workflow in pathlib.Path('.github/workflows').glob('*.yml'):
+              document = yaml.safe_load(workflow.read_text())
+              for job in document['jobs'].values():
+                  for step in job.get('steps', []):
+                      if 'run' not in step: continue
+                      with tempfile.NamedTemporaryFile(mode='w', suffix='.sh') as script:
+                          script.write(step['run']); script.flush()
+                          subprocess.run(['bash', '-n', script.name], check=True)
+          release = pathlib.Path('.github/workflows/release-packages.yml').read_text()
+          assert 'release-assets/package-manifest.json' in release
+          assert 'release-assets/repository-manifest.json' in release
+          assert 'cp repository/repository-manifest.json release-assets/package-manifest.json' in release
+          assert 'cp repository/repository-manifest.json release-assets/repository-manifest.json' in release
+          assert 'release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json' in release
+          assert 'script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json' in release
+          for workflow in ('ci.yml', 'release-packages.yml'):
+              text = pathlib.Path('.github/workflows', workflow).read_text()
+              assert 'NODE_PATH: $' + '{{ github.workspace }}/api/node_modules' in text
+              assert 'npm run test:dom --prefix api' in text and 'node test/ui/deployment.test.js' in text
+          helper = pathlib.Path('script/upstream-diff.py').read_text()
+          assert 'git diff --stat' in helper and 'git diff --name-status' in helper
+          assert 'https://github.com/{upstream}.git' in helper and 'moving branch' in helper
+          PY
+  package:
+    name: ${{ matrix.distro }} ${{ matrix.arch }} package
+    needs: [validate, verify]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, distro: ubuntu22.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
+          - { runner: ubuntu-24.04-arm, distro: ubuntu22.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu22.04, image: docker.io/library/ubuntu@sha256:829f6df217bcbae2b371026e81711d1a787c61b2967ad09d015063663ebafbf7 }
+          - { runner: ubuntu-24.04, distro: ubuntu24.04, format: deb, arch: amd64, node_arch: x64 }
+          - { runner: ubuntu-24.04-arm, distro: ubuntu24.04, format: deb, arch: arm64, node_arch: arm64 }
+          - { runner: ubuntu-24.04, distro: ubuntu26.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
+          - { runner: ubuntu-24.04-arm, distro: ubuntu26.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
+          - { runner: ubuntu-24.04, distro: debian13, format: deb, arch: amd64, node_arch: x64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
+          - { runner: ubuntu-24.04-arm, distro: debian13, format: deb, arch: arm64, node_arch: arm64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
+          - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
+          - { runner: ubuntu-24.04-arm, distro: fedora44, format: rpm, arch: aarch64, node_arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact release revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Build native Debian package
+        if: matrix.distro == 'ubuntu24.04'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
+          sha_var="NODE_SHA_${NODE_ARCH^^}"
+          node_sha=${!sha_var}
+          archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            "https://nodejs.org/dist/v24.21.0/${archive}" --output "$RUNNER_TEMP/${archive}"
+          printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
+          node_root="$RUNNER_TEMP/${archive%.tar.xz}"
+          export PATH="$node_root/bin:$PATH"
+          script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+          script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
+            --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
+          bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+      - name: Build native Ubuntu 22.04/26.04 or Debian 13 package in pinned isolated userspace
+        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          podman run --rm --userns=keep-id --user root --security-opt label=disable \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            ${{ matrix.image }} \
+            bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install --yes --no-install-recommends \
+                build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+                libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
+              archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 \
+                "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
+              tar -C /tmp -xf "/tmp/${archive}"
+              node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
+              script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+              script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
+                --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
+              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
+            '
+      - name: Build native Fedora RPM in isolated Fedora userspace
+        if: matrix.format == 'rpm'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          podman run --rm --userns=keep-id --user root --security-opt label=disable \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
+            -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
+            bash -euo pipefail -c '
+              dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
+                fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
+              archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 \
+                "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
+              tar -C /tmp -xf "/tmp/${archive}"
+              node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
+              script/build-native.sh --backend kraken --gpu auto --build-dir build/package --jobs 2
+              script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
+                --version "$VERSION" --distro fedora44 --output-dir dist
+              bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
+            '
+      - name: Require package metadata from the packager
+        run: |
+          set -euo pipefail
+          package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
+          [[ -n $package && -f "${package}.manifest.json" ]]
+      - name: Upload signed-review inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-${{ matrix.distro }}-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+  sign-and-draft-release:
+    name: Sign RPMs and create reviewable draft release
+    needs: [validate, package]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_type == 'tag' &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.validate.outputs.tagged_release == 'true'
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the immutable release tag
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - name: Collect all package assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+      - name: Generate immutable upstream review artifact
+        run: |
+          mkdir release-review
+          python3 script/upstream-diff.py --baseline docs/UPSTREAM_BASELINE.json \
+            --output release-review/upstream-diff.txt
+          cp docs/UPSTREAM_BASELINE.json release-review/
+      - name: Create and validate aggregate package manifest
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, json, os, pathlib, re
+          manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
+          if len(manifests) != 10:
+              raise SystemExit(f'expected ten package manifests, found {len(manifests)}')
+          entries = [json.loads(path.read_text()) for path in manifests]
+          required = {'name', 'version', 'release', 'format', 'distro', 'distro_version',
+                      'arch', 'filename', 'sha256', 'size', 'backend', 'gpu', 'node_version'}
+          if any(not required.issubset(entry) for entry in entries):
+              raise SystemExit('package manifest is incomplete')
+          version = os.environ['VERSION']
+          source_commit = os.environ['SOURCE_COMMIT']
+          if not re.fullmatch(r'[0-9a-fA-F]{40}', source_commit):
+              raise SystemExit('source commit must be a full Git object ID')
+          if any(entry['version'] != version for entry in entries):
+              raise SystemExit('every package must match the immutable tag version')
+          expected = {
+              ('deb', 'ubuntu', '22.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'ubuntu', '24.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'ubuntu', '26.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'debian', '13', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('rpm', 'fedora', '44', arch) for arch in ('x86_64', 'aarch64')
+          }
+          actual = {(entry['format'], entry['distro'], entry['distro_version'], entry['arch'])
+                    for entry in entries}
+          if actual != expected:
+              raise SystemExit(f'package target matrix mismatch: missing={expected-actual}, extra={actual-expected}')
+          pathlib.Path('packages/package-manifest.json').write_text(json.dumps({
+              'schema': 1, 'generated_at': datetime.datetime.now(datetime.UTC).isoformat(),
+              'version': version, 'source_commit': source_commit.lower(),
+              'packages': entries}, indent=2) + '\n')
+          PY
+      - name: Install repository signing tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends apt-utils createrepo-c gnupg rpm
+      - name: Fail closed unless repository signing is configured
+        env:
+          SIGNING_KEY: ${{ secrets.VECTORWARP_ARCHIVE_SIGNING_KEY }}
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          [[ -n $SIGNING_KEY && $FINGERPRINT =~ ^[A-Fa-f0-9]{40}$ ]]
+          [[ -f packaging/keys/vectorwarp.asc && -f script/build-package-repository.py ]]
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          install -d -m 0700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_KEY" | gpg --batch --import
+          actual=$(gpg --batch --with-colons --fingerprint "$FINGERPRINT" | awk -F: '$1 == "fpr" { print $10; exit }')
+          [[ ${actual^^} == ${FINGERPRINT^^} ]]
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Build signed, bounded repository tree
+        env:
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
+            --output repository --public-key packaging/keys/vectorwarp.asc \
+            --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
+            --installer-template script/install-release.sh \
+            --expected-version "${{ needs.validate.outputs.version }}" \
+            --expected-source-commit "${{ github.sha }}" --require-release-matrix
+          test -f repository/repository-manifest.json
+          test $(du -sm repository | awk '{print $1}') -le 900
+      - name: Collect final signed release assets and checksums
+        env:
+          FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp packages/*.deb release-assets/
+          find repository/rpm -type f -name 'vectorwarp-*.rpm' -exec cp {} release-assets/ \;
+          # Repository RPM signatures change the package bytes. Publish only
+          # the post-signing package identities and checksums from the signed tree.
+          cp repository/repository-manifest.json release-assets/package-manifest.json
+          cp repository/repository-manifest.json release-assets/repository-manifest.json
+          cp packaging/keys/vectorwarp.asc release-assets/vectorwarp-archive-key.asc
+          cp repository/keys/fingerprint.txt release-assets/signing-fingerprint.txt
+          cp release-review/upstream-diff.txt release-review/UPSTREAM_BASELINE.json release-assets/
+          (cd release-assets && sha256sum *.deb *.rpm package-manifest.json repository-manifest.json \
+            upstream-diff.txt UPSTREAM_BASELINE.json vectorwarp-archive-key.asc signing-fingerprint.txt \
+            > SHA256SUMS)
+          gpg --batch --yes --pinentry-mode error --local-user "$FINGERPRINT" --armor --detach-sign \
+            --output release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
+          gpgv --keyring repository/keys/vectorwarp.gpg \
+            release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
+          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 10
+      - name: Create draft release for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null 2>&1 && { echo "Release already exists: $TAG" >&2; exit 1; }
+          gh release create "$TAG" --draft --verify-tag --title "VectorWarp $VERSION" \
+            --notes "Automated native package build. RPM assets and SHA256SUMS are signed; review checksums and provenance before publishing." \
+            release-assets/*.deb release-assets/*.rpm release-assets/SHA256SUMS release-assets/SHA256SUMS.asc \
+            release-assets/vectorwarp-archive-key.asc release-assets/signing-fingerprint.txt \
+            release-assets/package-manifest.json release-assets/repository-manifest.json \
+            release-assets/upstream-diff.txt release-assets/UPSTREAM_BASELINE.json

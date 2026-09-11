@@ -115,6 +115,57 @@ TEST_CASE("Constructor_Round", "[constructor]")
     CHECK(ambiguity.get_nfft() == 6750);
 }
 
+TEST_CASE("Doppler buffer can exceed range FFT", "[process][regression]")
+{
+    const int high = GENERATE(530, 2600);
+    constexpr uint32_t samples = 4800;
+    Ambiguity ambiguity(-2, 4, -high, high, 48000, samples, false);
+    REQUIRE(ambiguity.get_n_doppler_bins() > ambiguity.get_nfft());
+    std::deque<std::complex<double>> reference(samples, {1, 0});
+    IqData surveillance(samples);
+    for (unsigned i = 0; i < samples; ++i) surveillance.push_back({1, 0});
+    const auto* result = ambiguity.process(reference, &surveillance);
+    const unsigned bins = ambiguity.get_n_doppler_bins();
+    for (unsigned d = 0; d < bins; ++d)
+      for (unsigned r = 0; r < result->delay.size(); ++r) {
+        const double expected = d == bins / 2 ?
+          (ambiguity.get_n_corr() - std::abs(result->delay[r])) * bins : 0;
+        CHECK_THAT(std::abs(result->data[d][r] - expected),
+          Catch::Matchers::WithinAbs(0, 1e-8));
+      }
+}
+
+TEST_CASE("Signed delays must fit the correlation block", "[process][regression]")
+{
+    const bool rounded = GENERATE(false, true);
+    // The 400-point rounded FFT has room for index 245, but its 199-sample
+    // blocks cannot distinguish that label from a real negative delay of -155.
+    REQUIRE_THROWS_AS(Ambiguity(-10, 245, -6000, 6000, 2400000, 480000, rounded),
+      std::invalid_argument);
+    REQUIRE_THROWS_AS(Ambiguity(-199, 10, -6000, 6000, 2400000, 480000, rounded),
+      std::invalid_argument);
+    REQUIRE_NOTHROW(Ambiguity(-198, 198, -6000, 6000, 2400000, 480000, rounded));
+    REQUIRE_NOTHROW(Ambiguity(-10, 245, -4000, 4000, 2400000, 480000, rounded));
+}
+
+TEST_CASE("Impulse correlation preserves signed boundary lags", "[process][regression]")
+{
+    const bool rounded = GENERATE(false, true);
+    const int lag = GENERATE(-7, -3, 0, 3, 7);
+    Ambiguity ambiguity(-7, 7, 0, 0, 100, 8, rounded);
+    std::deque<std::complex<double>> reference(8, {0, 0});
+    reference[lag < 0 ? -lag : 0] = {1, 0};
+    IqData surveillance(8);
+    for (int i = 0; i < 8; ++i)
+      surveillance.push_back({i == (lag > 0 ? lag : 0) ? 1.0 : 0.0, 0});
+    const auto* result = ambiguity.process(reference, &surveillance);
+    for (unsigned r = 0; r < result->delay.size(); ++r)
+      CHECK_THAT(std::abs(result->data[0][r] - (result->delay[r] == lag ? 1.0 : 0.0)),
+        Catch::Matchers::WithinAbs(0, 1e-12));
+    REQUIRE_THROWS_AS(Ambiguity(-8, 7, 0, 0, 100, 8, rounded), std::invalid_argument);
+    REQUIRE_THROWS_AS(Ambiguity(-7, 8, 0, 0, 100, 8, rounded), std::invalid_argument);
+}
+
 /// @brief Test simple ambiguity processing.
 TEST_CASE("Process_Simple", "[process]")
 {

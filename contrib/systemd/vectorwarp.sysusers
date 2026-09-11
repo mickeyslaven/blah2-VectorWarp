@@ -1,0 +1,5 @@
+g vectorwarp-config - -
+u vectorwarp - "VectorWarp radar processor" /var/lib/vectorwarp /usr/sbin/nologin
+u vectorwarp-api - "VectorWarp web API" /var/lib/vectorwarp-api /usr/sbin/nologin
+m vectorwarp vectorwarp-config
+m vectorwarp-api vectorwarp-config

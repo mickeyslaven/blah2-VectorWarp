@@ -33,6 +33,16 @@ std::string Timing::to_json()
   document.AddMember("nCpi", n, allocator);
   document.AddMember("uptime_s", uptime/1000.0, allocator);
   document.AddMember("uptime_days", uptime/1000.0/60/60/24, allocator);
+  rapidjson::Value gpu(rapidjson::kObjectType);
+  const auto addText = [&](const char* key, const std::string& value) {
+    gpu.AddMember(rapidjson::Value(key, allocator), rapidjson::Value(value.c_str(), allocator), allocator);
+  };
+  addText("requested", acceleration.requested); addText("active", acceleration.active);
+  addText("device", acceleration.device); addText("state", acceleration.state);
+  addText("reason", acceleration.reason);
+  gpu.AddMember("cpuMs", acceleration.cpuMs, allocator);
+  gpu.AddMember("gpuMs", acceleration.gpuMs, allocator);
+  document.AddMember("acceleration", gpu, allocator);
   rapidjson::Value name_value;
   for (size_t i = 0; i < time.size(); i++)
   {

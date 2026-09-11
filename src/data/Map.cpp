@@ -3,6 +3,19 @@
 #include <iostream>
 #include <cstdlib>
 #include <chrono>
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
+
+namespace {
+// Preserve the existing map display scale while keeping silence finite.
+template<class Value> double mapLevel(Value value) {
+  const double magnitude = std::abs(value);
+  if (!std::isfinite(magnitude))
+    throw std::runtime_error("Radar map contains a non-finite sample");
+  return 10 * std::log10(std::max(1e-30, magnitude));
+}
+}
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -15,6 +28,9 @@ Map<T>::Map(uint32_t _nRows, uint32_t _nCols)
 {
   nRows = _nRows;
   nCols = _nCols;
+  if (!nRows || !nCols) throw std::invalid_argument("Radar map dimensions must be positive");
+  noisePower = 0;
+  maxPower = 0;
   std::vector<std::vector<T>> tmp(nRows, std::vector<T>(nCols, {1}));
   data = tmp;
 }
@@ -78,7 +94,7 @@ Map<double> *Map<T>::get_map_db()
   {
     for (uint32_t j = 0; j < nCols; j++)
     {
-      map->data[i][j] = (double)10 * std::log10(std::abs(data[i][j]));
+      map->data[i][j] = mapLevel(data[i][j]);
     }
   }
 
@@ -126,7 +142,7 @@ std::string Map<T>::to_json(uint64_t timestamp)
     rapidjson::Value subarray(rapidjson::kArrayType);
     for (size_t j = 0; j < data[i].size(); j++)
     {
-      subarray.PushBack(10 * std::log10(std::abs(data[i][j])) - noisePower, document.GetAllocator());
+      subarray.PushBack(mapLevel(data[i][j]) - noisePower, document.GetAllocator());
     }
     array.PushBack(subarray, document.GetAllocator());
   }
@@ -170,6 +186,10 @@ std::string Map<T>::delay_bin_to_km(std::string json, uint32_t fs)
   rapidjson::Document::AllocatorType &allocator = document.GetAllocator();
   document.Parse(json.c_str());
 
+  if (fs == 0 || document.HasParseError() || !document.IsObject() ||
+      !document.HasMember("delay") || !document["delay"].IsArray())
+    throw std::invalid_argument("Cannot convert an invalid radar map or zero sample rate");
+
   document["delay"].Clear();
   for (size_t i = 0; i < delay.size(); i++)
   {
@@ -190,17 +210,17 @@ void Map<T>::set_metrics()
   // get map noise level
   double value;
   double noisePower = 0;
-  double maxPower = 0;
+  double maxPower = -std::numeric_limits<double>::infinity();
   for (uint32_t i = 0; i < nRows; i++)
   {
     for (uint32_t j = 0; j < nCols; j++)
     {
-      value = 10 * std::log10(std::abs(data[i][j]));
+      value = mapLevel(data[i][j]);
       noisePower = noisePower + value;
       maxPower = (maxPower < value) ? value : maxPower;
     }
   }
-  noisePower = noisePower / (nRows * nCols);
+  noisePower = noisePower / (static_cast<double>(nRows) * nCols);
   this->noisePower = noisePower;
   this->maxPower = maxPower - noisePower;
 }

@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <vector>
 #include <string>
+#include "process/ambiguity/AccelerationStatus.h"
 
 class Timing
 {
@@ -30,6 +31,7 @@ private:
 
   /// @brief Names of time differences.
   std::vector<std::string> name;
+  blah2::AccelerationStatus acceleration;
 
 public:
   /// @brief Constructor.
@@ -47,6 +49,7 @@ public:
   /// @brief Generate JSON of the map and metadata.
   /// @return JSON string.
   std::string to_json();
+  void set_acceleration(const blah2::AccelerationStatus& value) { acceleration = value; }
 
   /// @brief Append the map to a save file.
   /// @param json JSON string of map and metadata.

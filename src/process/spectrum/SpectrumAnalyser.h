@@ -22,6 +22,9 @@ private:
   /// @brief Minimum bandwidth of frequency bin (Hz).
   double bandwidth;
 
+  /// @brief Capture center frequency (Hz).
+  double centerFrequency;
+
   /// @brief Decimation factor.
   uint32_t decimation;
 
@@ -45,7 +48,9 @@ public:
   /// @param n Number of samples on input.
   /// @param bandwidth Minimum bandwidth of frequency bin (Hz).
   /// @return The object.
-  SpectrumAnalyser(uint32_t n, double bandwidth);
+  SpectrumAnalyser(uint32_t n, double bandwidth, double centerFrequency, double sampleRate);
+  SpectrumAnalyser(const SpectrumAnalyser&) = delete;
+  SpectrumAnalyser& operator=(const SpectrumAnalyser&) = delete;
 
   /// @brief Destructor.
   /// @return Void.

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <chrono>
+#include <stdexcept>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -90,6 +91,10 @@ std::string Detection::delay_bin_to_km(std::string json, uint32_t fs)
   document.SetObject();
   rapidjson::Document::AllocatorType &allocator = document.GetAllocator();
   document.Parse(json.c_str());
+
+  if (fs == 0 || document.HasParseError() || !document.IsObject() ||
+      !document.HasMember("delay") || !document["delay"].IsArray())
+    throw std::invalid_argument("Cannot convert invalid detections or zero sample rate");
 
   document["delay"].Clear();
   for (size_t i = 0; i < delay.size(); i++)

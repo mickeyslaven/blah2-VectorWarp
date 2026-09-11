@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <cstdlib>
 #include <stdexcept>
+#include <algorithm>
 
 #include "rapidjson/document.h"
 #include "rapidjson/writer.h"
@@ -36,12 +37,17 @@ std::string Track::uint2hex(uint64_t number)
 void Track::set_state(uint64_t index, std::string _state)
 {
   state.at(index).push_back(_state);
+  if (state.at(index).size() > MAX_STATE_HISTORY)
+    state.at(index).erase(state.at(index).begin());
 }
 
 void Track::set_current(uint64_t index, Detection smoothed)
 {
   current.at(index) = smoothed;
   associated.at(index).push_back(smoothed);
+  ++nAssociated.at(index);
+  if (associated.at(index).size() > MAX_STATE_HISTORY)
+    associated.at(index).erase(associated.at(index).begin());
 }
 
 void Track::set_acceleration(uint64_t index, double _acceleration)
@@ -92,6 +98,11 @@ uint64_t Track::get_nInactive(uint64_t index)
   return nInactive.at(index);
 }
 
+uint64_t Track::get_nAssociated(uint64_t index)
+{
+  return nAssociated.at(index);
+}
+
 uint64_t Track::add(Detection initial)
 {
   id.push_back(uint2hex(iNext));
@@ -103,6 +114,7 @@ uint64_t Track::add(Detection initial)
   std::vector<Detection> _associated;
   _associated.push_back(initial);
   associated.push_back(_associated);
+  nAssociated.push_back(1);
   nInactive.push_back(0);
   iNext++;
   if (iNext >= MAX_INDEX)
@@ -114,6 +126,8 @@ uint64_t Track::add(Detection initial)
 
 void Track::promote(uint64_t index, uint32_t m, uint32_t n)
 {
+  if (n == 0 || n > MAX_STATE_HISTORY || m == 0 || m > n)
+    throw std::invalid_argument("Track promotion requires 1 <= M <= N <= 255");
   if (state.at(index).size() >= n)
   {
     uint32_t _m = 0;
@@ -167,6 +181,8 @@ void Track::remove(uint64_t index)
   } else {
     throw std::out_of_range("Index out of bounds for 'associated' vector");
   }
+  nInactive.erase(nInactive.begin() + index);
+  nAssociated.erase(nAssociated.begin() + index);
 }
 
 std::string Track::to_json(uint64_t timestamp)
@@ -195,18 +211,22 @@ std::string Track::to_json(uint64_t timestamp)
         document.GetAllocator());
       object1.AddMember("acceleration", 
         acceleration.at(i), document.GetAllocator());
-      object1.AddMember("n", associated.at(i).size(), 
+      object1.AddMember("n", nAssociated.at(i),
         document.GetAllocator());
       rapidjson::Value associatedDelay(rapidjson::kArrayType);
       rapidjson::Value associatedDoppler(rapidjson::kArrayType);
       rapidjson::Value associatedState(rapidjson::kArrayType);
-      for (size_t j = 0; j < associated.at(i).size(); j++)
+      const size_t count = std::min({MAX_DISPLAY_HISTORY,
+        associated.at(i).size(), state.at(i).size()});
+      for (size_t offset = 0; offset < count; ++offset)
       {
+        const size_t j = associated.at(i).size() - count + offset;
+        const size_t stateIndex = state.at(i).size() - count + offset;
         associatedDelay.PushBack(associated.at(i).at(j).get_delay().at(0), 
           document.GetAllocator());
         associatedDoppler.PushBack(associated.at(i).at(j).get_doppler().at(0), 
           document.GetAllocator());
-        associatedState.PushBack(rapidjson::Value(state.at(i).at(j).c_str(), 
+        associatedState.PushBack(rapidjson::Value(state.at(i).at(stateIndex).c_str(),
           document.GetAllocator()).Move(), document.GetAllocator());
       }
       object1.AddMember("associated_delay", 
