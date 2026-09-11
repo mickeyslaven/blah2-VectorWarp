@@ -122,11 +122,17 @@ class InstallerFailureTests(unittest.TestCase):
         file.chmod(0o755)
 
     def setUp(self):
-        descriptor, path = tempfile.mkstemp(prefix="vectorwarp-installer-log-", dir="/tmp")
-        os.close(descriptor)
-        self.log = Path(path)
+        # Root's fake tools append to a runner-owned log under sudo. Linux
+        # fs.protected_regular can reject that open in sticky /tmp even with
+        # mode 0666. Keep the shared fixture in a non-sticky private directory;
+        # never weaken the host's protection to make this test pass.
+        directory = tempfile.TemporaryDirectory(prefix="vectorwarp-installer-log-")
+        self.addCleanup(directory.cleanup)
+        log_root = Path(directory.name)
+        log_root.chmod(0o755)
+        self.log = log_root / "events.log"
+        self.log.write_text("")
         self.log.chmod(0o666)
-        self.addCleanup(self.log.unlink, missing_ok=True)
 
     def invoke(self, *arguments, environment=None, nonroot=False, simulated_root=False):
         env = {**os.environ, "PATH": self.path, "TEST_LOG": str(self.log),
@@ -150,6 +156,14 @@ class InstallerFailureTests(unittest.TestCase):
     def preflight(self, key, fingerprint=None, *extra):
         return self.invoke("--preflight", "--key-file", str(key), "--fingerprint",
                            fingerprint or self.fingerprint, *extra)
+
+    @unittest.skipUnless(os.geteuid() == 0, "requires root to create a cross-owner log fixture")
+    def test_root_writer_can_append_to_nonroot_fixture_log(self):
+        os.chown(self.log, 65534, 65534)
+        result = run(["sh", "-c", 'printf "event\\n" >> "$TEST_LOG"'],
+                     env={**os.environ, "TEST_LOG": str(self.log)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text(), "event\n")
 
     def test_real_key_wrong_multiple_and_secret_inputs(self):
         passed = self.preflight(self.public)
