@@ -50,30 +50,14 @@ The GPU accelerates clutter FFT/filtering and delay–Doppler processing. Its sm
 FP64 coefficient solve and the remaining radar stages stay on CPU. [Full method,
 settings, deadline counts, accuracy checks, and limitations →](docs/GPU_BENCHMARK_20260911.md)
 
-**Live proof:** in a live two-channel Kraken test at 527 MHz and 2.4 MS/s, a
-native ±40 kHz, 200 ms GPU run averaged **143.9 ms** (p95 273.0 ms; 2/32
-misses), with both clutter and delay–Doppler GPU stages active. The separate
-five-channel array result is 95.5 ms at ±800 Hz and 200 ms CPI. These are live
-capacity results, not matched upstream speed comparisons.
+**Live proof:** at 527 MHz and 2.4 MS/s, a five-channel Kraken array GPU run
+at ±800 Hz and 200 ms CPI averaged **95.5 ms**. This is capacity evidence, not
+a matched upstream speed comparison.
 
-## Wide Doppler for higher-frequency experiments
+## Equal-range Doppler tests
 
-These two-channel Strix tests used the same recorded input and included periodic
-CPU accuracy checks in the processing times.
-
-| Recorded-IQ capacity workload | GPU mean | CPI | Range window |
-| --- | ---: | ---: | --- |
-| ±40 kHz Doppler | 87 ms | 100 ms | 2.623 km excess path |
-| ±40 kHz Doppler | 171 ms | 200 ms | 2.623 km excess path |
-| ±40 kHz Doppler | 419 ms | 500 ms | 2.623 km excess path |
-| ±20 kHz Doppler | 769 ms | 1 s | 6.620 km excess path |
-
-Higher RF carrier frequencies create larger Doppler shifts for the same motion,
-so this opens processing experiments with higher-frequency illuminators such as
-satellite-TV or LEO downlinks. Doppler span is not receiver bandwidth or carrier
-frequency. Periodic accuracy checks can still overrun an interval.
-
-[Wide-Doppler capacity, tails, and experimental context →](docs/GPU_BENCHMARK_20260911.md#wide-doppler-capacity)
+Current public comparisons use delays −10…245 (256 bins; 30.604 km maximum
+excess path). Equal-range wide-Doppler reruns are in progress.
 
 ## Install on Linux
 

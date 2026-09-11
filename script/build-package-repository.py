@@ -84,10 +84,9 @@ and browser controls for live displays, settings, recording and replay.</p>
 VectorWarp GPU missed 2. Periodic accuracy checks can still overrun an interval.</p>
 <p class="scope">GPU acceleration covers clutter FFT/filtering and delay–Doppler work;
 the small FP64 coefficient solve and other radar stages remain on CPU.</p>
-<p><strong>Live two-channel proof:</strong> a native ±40 kHz, 200 ms GPU run at
-527 MHz and 2.4 MS/s averaged 143.9 ms (p95 273.0 ms; 2/32 misses), with both
-GPU stages active. The separate five-channel array result is 95.5 ms at ±800 Hz
-and 200 ms CPI. These are live capacity results, not matched upstream ratios.</p>
+<p><strong>Live array proof:</strong> at 527 MHz and 2.4 MS/s, a five-channel
+array GPU run at ±800 Hz and 200 ms CPI averaged 95.5 ms. This is live capacity
+evidence, not a matched upstream ratio.</p>
 <h2>More radar per frame</h2>
 <p>VectorWarp also completes wider and five-channel configurations where regular
 blah2 has no equivalent mode or cannot safely represent the requested geometry.</p>
