@@ -3,6 +3,8 @@
 #include <iostream>
 #include <cstdlib>
 #include <chrono>
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 #include "rapidjson/document.h"
@@ -83,6 +85,43 @@ std::string Detection::to_json(uint64_t timestamp)
   document.Accept(writer);
 
   return strbuf.GetString();
+}
+
+std::string Detection::to_json_km(uint64_t timestamp, uint32_t fs)
+{
+  const size_t count = get_nDetections();
+  if (doppler.size() < count || snr.size() < count)
+    throw std::invalid_argument("Cannot convert invalid detections or zero sample rate");
+  // Match the legacy parse/write round trip for large scientific notation;
+  // ordinary two-decimal display fields need only one write.
+  const auto ordinary = [](double value) {
+    return std::isfinite(value) && std::abs(value) <= 1e9;
+  };
+  if (!fs || !std::all_of(delay.begin(), delay.end(), [fs](double value) {
+        return std::isfinite(value) &&
+          std::isfinite(1.0 * value * (Constants::c / (double)fs) / 1000);
+      }) ||
+      !std::all_of(doppler.begin(), doppler.begin() + count, ordinary) ||
+      !std::all_of(snr.begin(), snr.begin() + count, ordinary))
+    return delay_bin_to_km(to_json(timestamp), fs);
+
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.SetMaxDecimalPlaces(2);
+  writer.StartObject();
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("delay"); writer.StartArray();
+  for (const auto value : delay)
+    writer.Double(1.0 * value * (Constants::c / (double)fs) / 1000);
+  writer.EndArray();
+  writer.Key("doppler"); writer.StartArray();
+  for (size_t i = 0; i < count; ++i) writer.Double(doppler[i]);
+  writer.EndArray();
+  writer.Key("snr"); writer.StartArray();
+  for (size_t i = 0; i < count; ++i) writer.Double(snr[i]);
+  writer.EndArray();
+  writer.EndObject();
+  return std::string(buffer.GetString(), buffer.GetSize());
 }
 
 std::string Detection::delay_bin_to_km(std::string json, uint32_t fs)

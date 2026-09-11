@@ -179,6 +179,55 @@ std::string Map<T>::to_json(uint64_t timestamp)
 }
 
 template <class T>
+std::string Map<T>::to_json_km(uint64_t timestamp, uint32_t fs)
+{
+  if (doppler.size() < nRows)
+    throw std::invalid_argument("Cannot convert an invalid radar map or zero sample rate");
+  // Ordinary display values have a short, exactly representable decimal
+  // mantissa after the existing two-place formatting. The legacy JSON parser
+  // can perturb large scientific-notation values before its second write, so
+  // retain that path for unusual metadata as well as invalid-value handling.
+  const auto ordinary = [](double value) {
+    return std::isfinite(value) && std::abs(value) <= 1e9;
+  };
+  if (!fs || !ordinary(noisePower) || !ordinary(maxPower) ||
+      !std::all_of(doppler.begin(), doppler.begin() + nRows,
+        ordinary))
+    return delay_bin_to_km(to_json(timestamp), fs);
+
+  // A capacity hint only: unusually long numbers still grow the buffer. Do not
+  // build a DOM, serialize it, then parse and serialize every map cell again
+  // merely to replace the small delay axis.
+  const size_t capacity = nRows <= ((std::numeric_limits<size_t>::max() - 1024) / 12) / nCols
+    ? size_t(nRows) * nCols * 12 + 1024 : 1024;
+  rapidjson::StringBuffer buffer(nullptr, capacity);
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.SetMaxDecimalPlaces(2);
+  writer.StartObject();
+  writer.Key("timestamp"); writer.Uint64(timestamp);
+  writer.Key("nRows"); writer.Uint(nRows);
+  writer.Key("nCols"); writer.Uint(nCols);
+  writer.Key("noisePower"); writer.Double(noisePower);
+  writer.Key("maxPower"); writer.Double(maxPower);
+  writer.Key("delay"); writer.StartArray();
+  for (const auto value : delay)
+    writer.Double(1.0 * value * (Constants::c / (double)fs) / 1000);
+  writer.EndArray();
+  writer.Key("doppler"); writer.StartArray();
+  for (uint32_t i = 0; i < nRows; ++i) writer.Double(doppler[i]);
+  writer.EndArray();
+  writer.Key("data"); writer.StartArray();
+  for (const auto& row : data) {
+    writer.StartArray();
+    for (const auto value : row) writer.Double(mapLevel(value) - noisePower);
+    writer.EndArray();
+  }
+  writer.EndArray();
+  writer.EndObject();
+  return std::string(buffer.GetString(), buffer.GetSize());
+}
+
+template <class T>
 std::string Map<T>::delay_bin_to_km(std::string json, uint32_t fs)
 {
   rapidjson::Document document;

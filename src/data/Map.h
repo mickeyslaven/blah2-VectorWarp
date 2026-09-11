@@ -98,6 +98,10 @@ public:
   /// @return JSON string.
   std::string to_json(uint64_t timestamp);
 
+  /// @brief Generate the same display JSON directly with delay in kilometres.
+  /// @param fs Sampling frequency (Hz), nonzero.
+  std::string to_json_km(uint64_t timestamp, uint32_t fs);
+
   /// @brief Update JSON to convert delay bins to km.
   /// @param json Input JSON string with delay field.
   /// @param fs Sampling frequency (Hz).

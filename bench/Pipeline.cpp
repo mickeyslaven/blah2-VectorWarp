@@ -409,7 +409,11 @@ int main(int argc, char** argv) try {
     const uint64_t timestamp=1700000000000ULL+std::llround(frame*cpi*1000);
     auto tracks=tracker.process(detections.get(), timestamp); tick();
     auto iqJson=reference->to_json(timestamp);
+#ifdef BLAH2_BENCH_FAST
+    auto mapJson=map->to_json_km(timestamp, fs);
+#else
     auto mapJson=map->delay_bin_to_km(map->to_json(timestamp), fs);
+#endif
     auto detectionJson=detections->to_json(timestamp); auto trackJson=tracks->to_json(timestamp);
     jsonBytes+=iqJson.size()+mapJson.size()+detectionJson.size()+trackJson.size(); tick();
     const double pipeline=ms(begin, mark), readMs=ms(beforeRead, begin);
