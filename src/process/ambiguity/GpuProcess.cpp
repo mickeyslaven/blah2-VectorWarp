@@ -29,23 +29,39 @@ namespace blah2 {
 namespace {
 using Clock = std::chrono::steady_clock;
 using Complex = std::complex<float>;
-constexpr uint32_t protocol = 0x42475001;
-enum Operation : uint32_t { initialize = 1, frame = 2, ready = 3, failure = 4, quit = 5 };
+constexpr uint32_t protocol = 0x42475003;
+enum Operation : uint32_t { initialize = 1, frame = 2, ready = 3, failure = 4,
+  quit = 5, clutterFrame = 6, clutterRejected = 7 };
+constexpr uint32_t clutterCapability = 1;
 struct Message {
-  uint32_t version = protocol, operation = 0;
+  uint32_t version = protocol, operation = 0, capabilities = 0;
   uint64_t sequence = 0, memoryBytes = 0;
   GpuGeometry geometry{};
   char id[96]{}, name[256]{}, reason[512]{};
 };
 struct Layout {
-  size_t reference, surveillance, output, bytes;
+  size_t reference, surveillance, output;
+  size_t clutterReference = 0, clutterSurveillance = 0, clutterOutput = 0;
+  size_t clutterOffset = 0, bytes;
   explicit Layout(GpuGeometry g) {
     if (!g.range || g.range > 65535 || !g.doppler || g.doppler > 65535 ||
         !g.delays || g.delays > 65535 || !g.channels || g.channels > 8)
       throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
     const uint64_t r = uint64_t(g.range) * g.doppler;
     const uint64_t s = r * g.channels, o = uint64_t(g.doppler) * g.delays * g.channels;
-    const uint64_t total = (r + s + o) * sizeof(Complex);
+    uint64_t totalElements = r + s + o;
+    clutterOffset = totalElements;
+    if (g.clutterSamples) {
+      if (!g.clutterBins || g.clutterBins > g.clutterSamples ||
+          g.clutterDelayMin <= -int64_t(g.clutterSamples) ||
+          int64_t(g.clutterDelayMin) + g.clutterBins > g.clutterSamples)
+        throw std::runtime_error("GPU clutter dimensions are unsupported; using CPU");
+      clutterReference = g.clutterSamples;
+      clutterSurveillance = uint64_t(g.clutterSamples) * g.channels;
+      clutterOutput = clutterSurveillance;
+      totalElements += clutterReference + clutterSurveillance + clutterOutput;
+    }
+    const uint64_t total = totalElements * sizeof(Complex);
     if (total > (512ULL << 20))
       throw std::runtime_error("GPU shared-memory budget exceeded; using CPU");
     reference = r; surveillance = s; output = o; bytes = total;
@@ -102,7 +118,8 @@ void reap(pid_t process) noexcept {
     }).detach();
   } catch (...) {} // SIGKILL was already sent; parent must still recover.
 }
-class Process final : public GpuBackend {
+class Process final : public GpuBackend, public GpuFrameBackend,
+    public GpuClutterFrameBackend {
   Layout layout_;
   GpuProcessOptions options_;
   int socket_ = -1, memory_ = -1;
@@ -110,6 +127,7 @@ class Process final : public GpuBackend {
   Complex* shared_ = nullptr;
   GpuDevice device_;
   uint64_t sequence_ = 0;
+  bool clutterSupported_ = false;
   void stop() noexcept {
     if (socket_ >= 0) { close(socket_); socket_ = -1; }
     reap(process_); process_ = -1;
@@ -174,6 +192,7 @@ public:
       if (response.operation != ready || response.sequence)
         throw std::runtime_error("GPU worker initialization response is invalid; using CPU");
       device_ = {response.id, response.name, response.memoryBytes};
+      clutterSupported_ = response.capabilities & clutterCapability;
     } catch (...) {
       if (actionsReady) posix_spawn_file_actions_destroy(&actions);
       if (childSocket >= 0) close(childSocket);
@@ -183,6 +202,53 @@ public:
   }
   ~Process() override { stop(); }
   GpuDevice device() const override { return device_; }
+  GpuFrameBuffers frameBuffers() override {
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    return {shared_, layout_.reference,
+      shared_ + layout_.reference, layout_.surveillance,
+      shared_ + layout_.reference + layout_.surveillance, layout_.output};
+  }
+  bool clutterAvailable() const override { return clutterSupported_; }
+  GpuClutterBuffers clutterBuffers() override {
+    if (!clutterSupported_ || !layout_.clutterReference)
+      throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    auto* start = shared_ + layout_.clutterOffset;
+    return {start, layout_.clutterReference,
+      start + layout_.clutterReference, layout_.clutterSurveillance,
+      start + layout_.clutterReference + layout_.clutterSurveillance,
+      layout_.clutterOutput};
+  }
+  void processFrame() override {
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    try {
+      Message request; request.operation = frame; request.sequence = ++sequence_;
+      sendMessage(socket_, request);
+      const auto response = receiveMessage(socket_, options_.frameMs, "frame execution");
+      if (response.operation == failure) throw std::runtime_error(response.reason);
+      if (response.operation != ready || response.sequence != sequence_)
+        throw std::runtime_error("GPU worker returned the wrong frame; using CPU");
+    } catch (...) { stop(); throw; }
+  }
+  bool processClutterFrame() override {
+    if (!clutterSupported_ || !layout_.clutterReference)
+      throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    try {
+      Message request; request.operation = clutterFrame; request.sequence = ++sequence_;
+      sendMessage(socket_, request);
+      const auto response = receiveMessage(socket_, options_.frameMs, "clutter execution");
+      if (response.operation == failure) throw std::runtime_error(response.reason);
+      if ((response.operation != ready && response.operation != clutterRejected) ||
+          response.sequence != sequence_)
+        throw std::runtime_error("GPU worker returned the wrong clutter frame; using CPU");
+      return response.operation == ready;
+    } catch (...) { stop(); throw; }
+  }
   void process(const std::vector<Complex>& reference, const std::vector<Complex>& surveillance,
       std::vector<Complex>& output) override {
     if (socket_ < 0) throw std::runtime_error("GPU worker is no longer available; using CPU");
@@ -191,15 +257,10 @@ public:
     try {
       std::memcpy(shared_, reference.data(), reference.size() * sizeof(Complex));
       std::memcpy(shared_ + layout_.reference, surveillance.data(), surveillance.size() * sizeof(Complex));
-      Message request; request.operation = frame; request.sequence = ++sequence_;
-      sendMessage(socket_, request);
-      const auto response = receiveMessage(socket_, options_.frameMs, "frame execution");
-      if (response.operation == failure) throw std::runtime_error(response.reason);
-      if (response.operation != ready || response.sequence != sequence_)
-        throw std::runtime_error("GPU worker returned the wrong frame; using CPU");
+      processFrame();
       output.assign(shared_ + layout_.reference + layout_.surveillance,
         shared_ + layout_.reference + layout_.surveillance + layout_.output);
-    } catch (...) { stop(); throw; }
+    } catch (...) { if (socket_ >= 0) stop(); throw; }
   }
 };
 }
@@ -236,24 +297,51 @@ int runGpuWorker(const GpuFactory& factory) {
     auto backend = factory(init.geometry, init.id);
     if (!backend) throw std::runtime_error("GPU module did not create a processor");
     const auto device = backend->device();
+    auto* buffers = dynamic_cast<GpuBufferBackend*>(backend.get());
+    auto* clutter = dynamic_cast<GpuClutterBufferBackend*>(backend.get());
     Message response; response.operation = ready; response.memoryBytes = device.memoryBytes;
+    if (clutter && layout.clutterReference) response.capabilities |= clutterCapability;
     std::snprintf(response.id, sizeof(response.id), "%s", device.id.c_str());
     std::snprintf(response.name, sizeof(response.name), "%s", device.name.c_str());
     sendMessage(3, response);
-    std::vector<Complex> reference(layout.reference), surveillance(layout.surveillance), output;
+    std::vector<Complex> reference, surveillance, output;
+    if (!buffers) {
+      reference.resize(layout.reference);
+      surveillance.resize(layout.surveillance);
+    }
     uint64_t sequence = 0;
     for (;;) {
       // Idle waits are not GPU work. Parent death closes the socket or kills us.
       const auto request = receiveMessage(3, INT_MAX, "idle request");
       if (request.operation == quit) break;
-      if (request.operation != frame || request.sequence != ++sequence)
+      if ((request.operation != frame && request.operation != clutterFrame) ||
+          request.sequence != ++sequence)
         throw std::runtime_error("Invalid GPU worker frame request");
-      std::memcpy(reference.data(), shared, layout.reference * sizeof(Complex));
-      std::memcpy(surveillance.data(), shared + layout.reference, layout.surveillance * sizeof(Complex));
-      backend->process(reference, surveillance, output);
-      if (output.size() != layout.output) throw std::runtime_error("GPU returned invalid radar dimensions; using CPU");
-      std::memcpy(static_cast<Complex*>(mapping) + layout.reference + layout.surveillance,
-        output.data(), layout.output * sizeof(Complex));
+      auto* writable = static_cast<Complex*>(mapping);
+      if (request.operation == clutterFrame) {
+        if (!clutter || !layout.clutterReference)
+          throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
+        auto* start = writable + layout.clutterOffset;
+        const bool accepted = clutter->processClutterBuffers(start, layout.clutterReference,
+          start + layout.clutterReference, layout.clutterSurveillance,
+          start + layout.clutterReference + layout.clutterSurveillance,
+          layout.clutterOutput);
+        response.operation = accepted ? ready : clutterRejected;
+      } else if (buffers) {
+        response.operation = ready;
+        buffers->processBuffers(shared, layout.reference,
+          shared + layout.reference, layout.surveillance,
+          writable + layout.reference + layout.surveillance, layout.output);
+      } else {
+        response.operation = ready;
+        std::memcpy(reference.data(), shared, layout.reference * sizeof(Complex));
+        std::memcpy(surveillance.data(), shared + layout.reference, layout.surveillance * sizeof(Complex));
+        backend->process(reference, surveillance, output);
+        if (output.size() != layout.output)
+          throw std::runtime_error("GPU returned invalid radar dimensions; using CPU");
+        std::memcpy(writable + layout.reference + layout.surveillance,
+          output.data(), layout.output * sizeof(Complex));
+      }
       response.sequence = sequence; sendMessage(3, response);
     }
     munmap(mapping, bytes); return 0;

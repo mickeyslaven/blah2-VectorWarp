@@ -64,7 +64,8 @@ bool WienerHopf::process(IqData *x, IqData *y)
   // change deque to std::complex
   for (i = 0; i < nSamples; i++)
   {
-    dataX[i] = xData[(((i - delayMin) % nSamples) + nSamples) % nSamples];
+    const int64_t shifted = (int64_t(i) - delayMin) % int64_t(nSamples);
+    dataX[i] = xData[shifted < 0 ? shifted + nSamples : shifted];
     dataY[i] = yData[i];
   }
 

@@ -27,6 +27,52 @@ struct Backend : blah2::GpuBackend {
     if (state->fault == "shape") output.clear();
   }
 };
+struct FrameBackend : blah2::GpuBackend, blah2::GpuFrameBackend {
+  std::shared_ptr<State> state;
+  std::vector<std::complex<float>> reference, surveillance, output;
+  FrameBackend(std::shared_ptr<State> value, const blah2::GpuGeometry& geometry)
+    : state(std::move(value)),
+      reference(size_t(geometry.range) * geometry.doppler),
+      surveillance(reference.size() * geometry.channels),
+      output(size_t(geometry.doppler) * geometry.delays * geometry.channels) {}
+  blah2::GpuDevice device() const override { return {"frame-test", "Shared-frame test double", 0}; }
+  void process(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&,
+      std::vector<std::complex<float>>&) override {
+    throw std::runtime_error("Legacy vector path used for shared-frame backend");
+  }
+  blah2::GpuFrameBuffers frameBuffers() override {
+    return {reference.data(), reference.size(), surveillance.data(), surveillance.size(),
+      output.data(), output.size()};
+  }
+  void processFrame() override { ++state->calls; output = state->output; }
+};
+struct CombinedBackend : blah2::GpuBackend, blah2::GpuClutterFrameBackend {
+  blah2::GpuGeometry geometry;
+  std::shared_ptr<State> state;
+  std::vector<std::complex<float>> clutterReference, clutterSurveillance, clutterOutput;
+  CombinedBackend(blah2::GpuGeometry value, std::shared_ptr<State> shared) : geometry(value), state(std::move(shared)),
+    clutterReference(value.clutterSamples),
+    clutterSurveillance(size_t(value.clutterSamples)*value.channels),
+    clutterOutput(clutterSurveillance.size()) {}
+  blah2::GpuDevice device() const override { return {"combined", "Combined test double", 1}; }
+  void process(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&,
+      std::vector<std::complex<float>>& output) override {
+    ++state->calls; output=state->output;
+    if(state->fault=="wrong") for(auto& value:output) value*=2;
+  }
+  bool clutterAvailable() const override { return true; }
+  blah2::GpuClutterBuffers clutterBuffers() override {
+    return {clutterReference.data(),clutterReference.size(),
+      clutterSurveillance.data(),clutterSurveillance.size(),
+      clutterOutput.data(),clutterOutput.size()};
+  }
+  bool processClutterFrame() override {
+    std::fill(clutterOutput.begin(),clutterOutput.end(),std::complex<float>{});
+    return true;
+  }
+};
 int main(int argc, char**) {
   try {
     for (const std::string mode : {"cpu", "auto", "gpu"}) {
@@ -161,8 +207,10 @@ int main(int argc, char**) {
     // Forced GPU deliberately has no sustained-speed policy.
     auto forcedState = std::make_shared<State>();
     forcedState->output = state->output;
-    auto forcedFactory = [forcedState](const blah2::GpuGeometry&, const std::string&)
-      -> std::unique_ptr<blah2::GpuBackend> { return std::make_unique<Backend>(forcedState); };
+    auto forcedFactory = [forcedState](const blah2::GpuGeometry& geometry, const std::string&)
+      -> std::unique_ptr<blah2::GpuBackend> {
+      return std::make_unique<FrameBackend>(forcedState, geometry);
+    };
     auto forcedClock = [value = 0.0]() mutable { return value += 1.0; };
     blah2::Acceleration forced("gpu", {cpu.get_nfft(), doppler, delays, 1, -5},
       cpu.get_n_corr(), 48000, 0, "auto", forcedFactory, forcedClock);
@@ -178,6 +226,46 @@ int main(int argc, char**) {
     check(forcedCpuCalls == 3 && forcedState->calls == 13 &&
       forced.status().active == "vulkan" && forced.status().state == "ready",
       "Forced GPU was changed by the sustained AUTO guard");
+
+    // An ambiguity-only numerical rejection must not discard a healthy clutter
+    // accelerator in the same worker. Each stage owns its performance/correctness
+    // fallback; only a worker exception disables both.
+    Ambiguity independentCpu(-5,20,-100,100,48000,samples,true);
+    const blah2::GpuGeometry combinedGeometry{independentCpu.get_nfft(),
+      independentCpu.get_n_doppler_bins(),independentCpu.get_n_delay_bins(),1,-5,
+      samples,1,0};
+    auto combinedState=std::make_shared<State>();
+    combinedState->output=state->output; combinedState->fault="wrong";
+    auto combinedFactory=[combinedState](const blah2::GpuGeometry& geometry,const std::string&)
+      ->std::unique_ptr<blah2::GpuBackend>{return std::make_unique<CombinedBackend>(geometry,combinedState);};
+    blah2::Acceleration independent("gpu",combinedGeometry,independentCpu.get_n_corr(),
+      48000,0,"auto",combinedFactory);
+    IqData independentReference(samples),independentInput(samples);
+    unsigned independentCpuCalls=0, clutterCpuCalls=0;
+    for(unsigned frame=0;frame<blah2::Acceleration::TotalQualificationFrames;++frame){
+      independentReference.replace(std::deque<Complex>(reference));
+      independentInput.replace(std::deque<Complex>(raw));
+      check(independent.processClutter(independentReference,{&independentInput},[&]{
+        ++clutterCpuCalls; return true;
+      }),
+        "Combined clutter qualification failed");
+      independent.process(reference,{&independentInput},{&independentCpu},[&]{
+        ++independentCpuCalls; independentCpu.process(reference,&independentInput);
+      });
+    }
+    check(independent.status().active=="cpu" && independent.clutterStatus().active=="vulkan",
+      "CPU ambiguity did not retain independently qualified GPU clutter");
+    independentReference.replace(std::deque<Complex>(reference));
+    independentInput.replace(std::deque<Complex>(raw));
+    const unsigned beforeClutterCpu=clutterCpuCalls;
+    check(independent.processClutter(independentReference,{&independentInput},[&]{
+      ++clutterCpuCalls; return true;
+    }),"Healthy clutter GPU failed after ambiguity fallback");
+    independent.process(reference,{&independentInput},{&independentCpu},[&]{
+      ++independentCpuCalls; independentCpu.process(reference,&independentInput);
+    });
+    check(clutterCpuCalls==beforeClutterCpu && independent.clutterTiming().gpuExecuted,
+      "GPU clutter was not retained with CPU ambiguity");
     return 0;
   } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
