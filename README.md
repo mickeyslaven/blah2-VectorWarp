@@ -35,14 +35,14 @@ mode checks accuracy before retaining GPU work.
 
 | Same recorded IQ, same CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
 | --- | ---: | ---: | ---: |
-| Strix, 200 ms CPI, ±800 Hz | 84.9 ms | 78.0 ms | **41.7 ms** |
-| RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 240.1 ms | 239.5 ms | **127.8 ms** |
-| Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 308.1 ms | 303.2 ms | **174.6 ms** |
+| Strix, 200 ms CPI, ±800 Hz | 79.8 ms | 79.7 ms | **39.9 ms** |
+| RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 218.7 ms | 210.5 ms | **109.2 ms** |
+| Pavilion AMD GPU, 200 ms CPI, ±2400 Hz | 309.9 ms | 301.8 ms | **174.9 ms** |
 
 The comparison used actual [30hours/blah2 at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de)
 and VectorWarp on each host, replaying the same recorded signal at its original
-rate. On the RTX workload, regular blah2 missed 23 of 24 measured 200 ms
-intervals while VectorWarp GPU missed 2. Periodic accuracy checks can still
+rate. Every comparison used 527 MHz, 2.4 MS/s, delays −10…245 (256 bins; 30.604
+km maximum excess path), and the stated channel count. Periodic accuracy checks can still
 overrun an interval; [full timing distributions and method](docs/GPU_BENCHMARK_20260911.md)
 are available before sizing a live system.
 
@@ -56,8 +56,9 @@ a matched upstream speed comparison.
 
 ## Equal-range Doppler tests
 
-Current public comparisons use delays −10…245 (256 bins; 30.604 km maximum
-excess path). Equal-range wide-Doppler reruns are in progress.
+At this same full range, Strix GPU processing measured 127.9 ms at ±4800 Hz and
+650.5 ms at one-second CPI, versus 231.2 ms and 1192.8 ms in VectorWarp CPU.
+Upstream blah2 is excluded from those geometries because they are unsafe there.
 
 ## Install on Linux
 

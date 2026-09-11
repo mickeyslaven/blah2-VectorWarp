@@ -27,10 +27,10 @@ SPEC.loader.exec_module(repository)
 class HomepageTests(unittest.TestCase):
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
-        for required in ('Matched 200 ms processing workloads', '84.9 ms', '78.0 ms', '41.7 ms',
-                         '240.1 ms',
-                         '239.5 ms', '127.8 ms', '308.1 ms', '303.2 ms',
-                         '174.6 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
+        for required in ('Matched 200 ms processing workloads', '79.8 ms', '79.7 ms', '39.9 ms',
+                         '218.7 ms',
+                         '210.5 ms', '109.2 ms', '309.9 ms', '301.8 ms',
+                         '174.9 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
                          'Live array proof', '95.5 ms',
                          'Same recorded IQ at its original rate', 'Same CPU budget',
                          '23 of 24', 'Periodic accuracy checks',

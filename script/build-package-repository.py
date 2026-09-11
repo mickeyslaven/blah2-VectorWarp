@@ -76,9 +76,9 @@ and browser controls for live displays, settings, recording and replay.</p>
 <table><caption>Matched 200 ms processing workloads; lower is better</caption>
 <thead><tr><th scope="col">Hardware and workload</th><th scope="col">Regular blah2 CPU</th><th scope="col">VectorWarp CPU</th><th scope="col">VectorWarp GPU</th></tr></thead>
 <tbody>
-<tr><th scope="row">Strix, ±800 Hz</th><td>84.9 ms</td><td>78.0 ms</td><td>41.7 ms</td></tr>
-<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>240.1 ms</td><td>239.5 ms</td><td>127.8 ms</td></tr>
-<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>308.1 ms</td><td>303.2 ms</td><td>174.6 ms</td></tr>
+<tr><th scope="row">Strix, ±800 Hz</th><td>79.8 ms</td><td>79.7 ms</td><td>39.9 ms</td></tr>
+<tr><th scope="row">RTX 4050 Laptop, ±800 Hz</th><td>218.7 ms</td><td>210.5 ms</td><td>109.2 ms</td></tr>
+<tr><th scope="row">Pavilion AMD GPU, ±2400 Hz</th><td>309.9 ms</td><td>301.8 ms</td><td>174.9 ms</td></tr>
 </tbody></table></div>
 <p>On the RTX 4050 workload, regular blah2 missed 23 of 24 measured intervals;
 VectorWarp GPU missed 2. Periodic accuracy checks can still overrun an interval.</p>
