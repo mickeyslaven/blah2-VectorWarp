@@ -9,7 +9,7 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster GPU-a
 ## What you get beyond blah2
 
 - **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.
-- **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the live example below.
+- **Wider Doppler coverage:** process valid delay/Doppler combinations that exceed the original processor's buffer limits. See the equal-range results below.
 - **Automatic CPU threading:** size channel workers and FFT threads to the CPU capacity available, with manual controls when you need them.
 - **Settings in your browser:** edit receiver, processing, display, recording, and ADS-B settings in organized sections.
 - **Checked inputs:** dropdowns, range checks, and short explanations help catch invalid settings before they reach the processor.
@@ -33,7 +33,7 @@ VectorWarp's optional Vulkan GPU path can make a practical radar workload keep
 up where regular blah2 falls behind. CPU mode remains available, and Automatic
 mode checks accuracy before retaining GPU work.
 
-| Same recorded IQ, same CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
+| Two channels, same IQ and CPU budget | Regular blah2 CPU | VectorWarp CPU | VectorWarp GPU |
 | --- | ---: | ---: | ---: |
 | Strix, 200 ms CPI, ±800 Hz | 79.8 ms | 79.7 ms | **39.9 ms** |
 | RTX 4050 Laptop, 200 ms CPI, ±800 Hz | 218.7 ms | 210.5 ms | **109.2 ms** |
@@ -56,9 +56,10 @@ a matched upstream speed comparison.
 
 ## Equal-range Doppler tests
 
-At this same full range, Strix GPU processing measured 127.9 ms at ±4800 Hz and
-650.5 ms at one-second CPI, versus 231.2 ms and 1192.8 ms in VectorWarp CPU.
-Upstream blah2 is excluded from those geometries because they are unsafe there.
+At this same full range and **±4800 Hz**, Strix GPU processing averaged **127.9 ms
+per 200 ms CPI**, or **650.5 ms per one-second CPI**. VectorWarp CPU took 231.2 ms
+and 1192.8 ms respectively. Original blah2's Doppler buffer is too small for
+these settings; it was not run with unsafe buffer sizes.
 
 ## Install on Linux
 

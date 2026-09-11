@@ -41,9 +41,11 @@ and adsb2dd PRs to the actual implementation and regression coverage.
 Direct upstream claims come only from the matched recorded-IQ replays in the
 [2026-09-11 GPU benchmark report](GPU_BENCHMARK_20260911.md): same recording,
 same host and CPU budget, pinned `30hours/blah2` baseline. Examples include the
-RTX 4050 standard profile (240.118 ms/CPI upstream, 239.479 VectorWarp CPU,
-127.770 GPU) and the Pavilion AMD wide profile (308.096, 303.164 and 174.629
-ms/CPI respectively). The GPU runs clutter FFT/filtering and ambiguity/
+RTX 4050 standard profile (218.679 ms/CPI upstream, 210.487 VectorWarp CPU,
+109.153 GPU) and the Pavilion AMD wide profile (309.947, 301.840 and 174.882
+ms/CPI respectively). Every current comparison uses 527 MHz, 2.4 MS/s,
+delays -10 through 245 (256 bins; 30.604 km maximum excess path).
+The GPU runs clutter FFT/filtering and ambiguity/
 delay–Doppler work; the small FP64 coefficient solve remains CPU work.
 
 Native live results and wide-Doppler stress demonstrate VectorWarp processing

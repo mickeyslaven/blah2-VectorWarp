@@ -1,5 +1,9 @@
 # Live and sample-clock-paced capacity — 10 September 2026
 
+Historical development evidence, superseded for performance claims by the
+[current fixed-range report](GPU_BENCHMARK_20260911.md), including its separately
+identified native-live results.
+
 VectorWarp kept pace in short live five-channel and wide-Doppler runs on Strix.
 GPU acceleration also reduced processing time against unchanged upstream DSP
 in matched, sample-clock-paced replay. Neither result means GPU is universally

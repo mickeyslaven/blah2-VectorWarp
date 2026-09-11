@@ -1,5 +1,8 @@
 # GPU precision and allocation review — 2026-09-11
 
+Historical correctness review. Its timing references are superseded by the
+[current fixed-range comparison](GPU_BENCHMARK_20260911.md).
+
 Source worktree: `/tmp/vectorwarp-gpu-memory-20260910.09iKbV`.
 No commit, promotion, service restart or physical GPU execution was performed
 by the source reviewer. Hardware acceptance is owned by the coordinating task.

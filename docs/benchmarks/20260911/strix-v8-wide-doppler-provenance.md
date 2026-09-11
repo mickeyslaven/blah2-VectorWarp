@@ -1,5 +1,8 @@
 # Strix v8 wide-Doppler provenance
 
+Archived, ineligible for current performance claims: these tests shortened the
+excess-path window. Use the [fixed-range campaign](../20260911-equal-range/README.md).
+
 - VectorWarp source commit: `907e467`; source freeze SHA-256:
   `8ceb110d4b71854a653789696b17fd7a57a318ab58f6c27212f9899422b666c3`.
 - Input: the recorded five-channel IQ window used by the matched campaign,
