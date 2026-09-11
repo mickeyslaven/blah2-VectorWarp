@@ -31,14 +31,13 @@ class HomepageTests(unittest.TestCase):
                          '240.1 ms',
                          '239.5 ms', '127.8 ms', '308.1 ms', '303.2 ms',
                          '174.6 ms', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
-                         'Live two-channel proof', '95.5 ms', '143.9 ms', '2/32 misses',
+                         'Live array proof', '95.5 ms',
                          'Same recorded IQ at its original rate', 'Same CPU budget',
                          '23 of 24', 'Periodic accuracy checks',
                          'clutter FFT/filtering', 'small FP64 coefficient solve',
                          'cannot safely represent the requested geometry',
                          'NVIDIA, AMD and Intel GPU checks',
-                         'Wide Doppler, practical capacity', '±40 kHz', '769 ms',
-                         'satellite-TV or LEO downlinks', 'not RF bandwidth or carrier frequency',
+                         'Equal-range Doppler tests', '30.604 km excess-path',
                          'GPU_BENCHMARK_20260911.md'):
             self.assertIn(required, page)
 
@@ -46,7 +45,7 @@ class HomepageTests(unittest.TestCase):
         # full comparison, including slower configurations and test boundaries.
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()
         for required in ('240.118', '127.770', 'c821bee3f0d27cf20c8447f3d908ef722905a4de',
-                         '1e-4', '±40 kHz', '769.310', '2.623 km', '6.620 km',
+                         '1e-4', '30.604 km', 'Equal-range wide-Doppler rerun',
                          'not a live radar or\nendurance test',
                          'not bit-exact outputs'):
             self.assertIn(required, report)

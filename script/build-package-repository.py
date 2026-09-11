@@ -93,13 +93,9 @@ blah2 has no equivalent mode or cannot safely represent the requested geometry.<
 <p class="scope">Physical NVIDIA, AMD and Intel GPU checks compare complex maps to a
 CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
-<h2>Wide Doppler, practical capacity</h2>
-<p>On recorded 527 MHz IQ, the GPU processed ±40 kHz at 100, 200 and 500 ms CPIs
-in <strong>87, 171 and 419 ms</strong>; ±20 kHz at one second took <strong>769 ms</strong>.</p>
-<p class="scope">Higher-frequency illuminators produce larger Doppler shifts, so this
-supports processing experiments with satellite-TV or LEO downlinks. It does not add an
-RF frontend or verify Starlink/Ku reception, compensation, link budget or detection.
-Doppler span is not RF bandwidth or carrier frequency. Periodic CPU accuracy checks can overrun an interval.</p>
+<h2>Equal-range Doppler tests</h2>
+<p>Current public comparisons retain the standard 256-bin, 30.604 km excess-path
+window at 527 MHz and 2.4 MS/s. Equal-range wide-Doppler reruns are in progress.</p>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
