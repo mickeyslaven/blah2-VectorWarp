@@ -1,8 +1,8 @@
 # Raspberry Pi GPU setup
 
-Install the matching package with [Installation](INSTALL.md), or use its source
-route for development and unsupported systems. Include GPU build dependencies
-only when building from source.
+Install the matching package from the [download and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
+or use the [source-build guide](INSTALL.md#build-from-source). Include GPU build
+dependencies only when building from source.
 
 VectorWarp uses Vulkan on Raspberry Pi too. GPU-enabled builds include
 the backend, **not a replacement Mesa driver**. A missing or faulty Pi ICD

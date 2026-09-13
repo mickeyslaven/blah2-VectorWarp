@@ -3,6 +3,10 @@
 These instructions install VectorWarp on 64-bit Linux with systemd:
 x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
 
+Use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+for current downloads and APT/DNF setup. The same package-manager steps are
+included below; [building from source](#build-from-source) is a separate route.
+
 ## Install a package
 
 Download the repository installer over HTTPS and inspect it before running it:

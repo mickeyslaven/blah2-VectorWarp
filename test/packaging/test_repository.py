@@ -14,7 +14,9 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -209,7 +211,8 @@ class HomepageTests(unittest.TestCase):
         page = repository.repository_homepage()
         for required in ('lang="en"', 'name="viewport"', '<caption>',
                          'scope="col"', 'scope="row"', 'overflow-x:auto',
-                         'tabindex="0"', 'blah2-VectorWarp#install-on-linux',
+                         'tabindex="0"', 'href="#install"',
+                         'blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source',
                          'https://github.com/30hours/blah2'):
             self.assertIn(required, page)
 
@@ -262,6 +265,187 @@ class HomepageTests(unittest.TestCase):
                         anchors = {re.sub(r'[^\w\- ]', '', heading.lower()).replace(' ', '-')
                                    for heading in headings}
                         self.assertIn(anchor, anchors)
+
+    def test_readme_primary_install_link_uses_the_live_package_page(self):
+        readme = (ROOT / 'README.md').read_text()
+        self.assertIn('[Install](https://mickeyslaven.github.io/blah2-VectorWarp/#install)', readme)
+        guide = (ROOT / 'docs/INSTALL.md').read_text()
+        self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
+        self.assertIn('## Build from source', guide)
+        page = repository.repository_homepage(self.release_manifest())
+        for command in ('sudo bash vectorwarp-install.sh --repo-only', 'sudo apt update',
+                        'sudo apt install vectorwarp', 'sudo dnf install vectorwarp',
+                        'sudo systemctl enable --now vectorwarp-api.service'):
+            self.assertIn(command, guide)
+            self.assertIn(command, page)
+
+    def test_future_release_homepage_has_only_its_own_asset_urls(self):
+        manifest = self.release_manifest()
+        manifest['version'] = '2.4.6'
+        for entry in manifest['packages']:
+            entry['filename'] = entry['filename'].replace('1.2.3', '2.4.6')
+        page = repository.repository_homepage(manifest)
+        base = 'https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v2.4.6'
+        self.assertEqual({link for link in re.findall(r'href="([^"]+)"', page)
+                          if link.endswith(('.deb', '.rpm'))},
+                         {f"{base}/{entry['filename']}" for entry in manifest['packages']})
+        self.assertNotIn('/v1.2.3/', page)
+        self.assertNotIn('/v0.1.0/', page)
+        for command in ('sudo apt update', 'sudo apt install vectorwarp',
+                        'sudo dnf install vectorwarp'):
+            self.assertIn(command, page)
+
+    def _release_selection_script(self):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        match = re.search(r'(?ms)^      - id: release\n.*?^        run: \|\n'
+                          r'((?:^          [^\n]*\n)+)', workflow)
+        self.assertIsNotNone(match, 'workflow must retain the bounded release-selection step')
+        return textwrap.dedent(match.group(1))
+
+    def _select_release_tag(self, event, releases, event_tag='', input_tag='', ref='refs/heads/main'):
+        with tempfile.TemporaryDirectory(prefix='vectorwarp-release-selection-') as temporary:
+            temporary = Path(temporary)
+            fixture = temporary / 'releases.json'
+            fixture.write_text(json.dumps(releases))
+            fake_gh = temporary / 'gh'
+            fake_gh.write_text('#!/bin/sh\n[ "$1" = release ] && [ "$2" = list ] || exit 64\n'
+                               'cat -- "$FAKE_RELEASES"\n')
+            fake_gh.chmod(0o755)
+            output = temporary / 'github-output'
+            environment = {**os.environ, 'PATH': f'{temporary}:{os.environ["PATH"]}',
+                           'GITHUB_EVENT_NAME': event, 'EVENT_TAG': event_tag,
+                           'INPUT_TAG': input_tag, 'GITHUB_OUTPUT': str(output),
+                           'FAKE_RELEASES': str(fixture), 'GITHUB_REF': ref}
+            result = subprocess.run(['bash', '-c', self._release_selection_script()], env=environment,
+                                    text=True, capture_output=True, timeout=5)
+            return result, output.read_text() if output.exists() else ''
+
+    def test_repository_refresh_workflow_selects_only_latest_stable_release(self):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        self.assertRegex(workflow, r'(?m)^  push:\n    branches: \[main\]$')
+        self.assertRegex(workflow, r'(?m)^  release:\n    types: \[published\]$')
+        self.assertRegex(workflow, r'(?m)^  schedule:\n')
+        self.assertNotIn('pull_request:', workflow)
+        self.assertNotIn('pull_request_target:', workflow)
+        self.assertIn('environment: release-signing', workflow)
+        self.assertRegex(workflow, r'uses: actions/checkout@[^\n]+\n        with:\n          ref: main')
+        self.assertIn('case "$GITHUB_EVENT_NAME" in', workflow)
+        self.assertIn('push)', workflow)
+        self.assertIn('[[ $GITHUB_REF == refs/heads/main ]]', workflow)
+
+        releases = [
+            {'tagName': 'v2.4.5', 'isDraft': False, 'isPrerelease': False},
+            {'tagName': 'v2.4.6', 'isDraft': False, 'isPrerelease': False},
+            {'tagName': 'v2.5.0-rc.1', 'isDraft': False, 'isPrerelease': True},
+            {'tagName': 'v9.9.9', 'isDraft': False, 'isPrerelease': True},
+            {'tagName': 'v2.4.7', 'isDraft': True, 'isPrerelease': False},
+        ]
+        for event, event_tag, input_tag in (('release', 'v2.4.6', ''), ('push', '', ''),
+                                            ('schedule', '', ''), ('workflow_dispatch', '', 'v2.4.6')):
+            with self.subTest(event=event):
+                result, output = self._select_release_tag(event, releases, event_tag, input_tag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output, 'tag=v2.4.6\n')
+        for event, event_tag, input_tag, fixture in (
+                ('release', 'v2.4.5', '', releases),
+                ('release', 'v2.4.7', '', releases),
+                ('workflow_dispatch', '', 'v2.4.5', releases),
+                ('pull_request', '', '', releases),
+                ('schedule', '', '', [])):
+            with self.subTest(event=event, tag=event_tag or input_tag):
+                result, _ = self._select_release_tag(event, fixture, event_tag, input_tag)
+                self.assertNotEqual(result.returncode, 0)
+        result, _ = self._select_release_tag('push', releases, ref='refs/heads/untrusted')
+        self.assertNotEqual(result.returncode, 0)
+
+
+class PublicDeploymentTests(unittest.TestCase):
+    """Execute the actual post-deploy shell with offline HTTP fixtures."""
+
+    def run_check(self, mode='current', manifest=None, page_url=None):
+        workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
+        match = re.search(r'(?ms)^      - name: Check public installation page and downloads\n'
+                          r'.*?^        run: \|\n((?:^          [^\n]*\n)+)', workflow)
+        self.assertIsNotNone(match)
+        manifest = manifest if manifest is not None else HomepageTests().release_manifest()
+        with tempfile.TemporaryDirectory(prefix='vectorwarp-public-check-') as directory:
+            directory = Path(directory)
+            staged = directory / 'repository'
+            (staged / 'keys').mkdir(parents=True)
+            for name in ('index.html', 'install.sh', 'keys/vectorwarp.asc'):
+                (staged / name).write_text(f'fixture {name}\n')
+            (staged / 'repository-manifest.json').write_text(json.dumps(manifest))
+            fake_curl = directory / 'curl'
+            fake_curl.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                import os, sys
+                from pathlib import Path
+                from urllib.parse import urlsplit
+                args = sys.argv[1:]
+                url = next(value for value in args if value.startswith('https://'))
+                with open('requests.log', 'a') as log:
+                    log.write(url + '\\n')
+                mode = os.environ['FIXTURE_MODE']
+                if '--head' in args:
+                    sys.exit(22 if mode == 'missing-package' else 0)
+                if mode == 'unavailable':
+                    sys.exit(22)
+                name = urlsplit(url).path.split('/blah2-VectorWarp/', 1)[1]
+                state = Path('retry-state')
+                stale = mode == 'stale' or (mode == 'retry' and not state.exists())
+                state.touch()
+                content = b'stale' if stale else (Path('repository') / name).read_bytes()
+                Path(args[args.index('--output') + 1]).write_bytes(content)
+                '''))
+            fake_curl.chmod(0o755)
+            fake_sleep = directory / 'sleep'
+            fake_sleep.write_text('#!/bin/sh\nexit 0\n')
+            fake_sleep.chmod(0o755)
+            env = {**os.environ, 'PATH': f'{directory}:{os.environ["PATH"]}',
+                   'RUNNER_TEMP': str(directory), 'FIXTURE_MODE': mode, 'GITHUB_RUN_ID': '123',
+                   'PAGE_URL': page_url or 'https://mickeyslaven.github.io/blah2-VectorWarp/'}
+            result = subprocess.run(['bash', '-c', textwrap.dedent(match.group(1))],
+                                    cwd=directory, env=env, text=True, capture_output=True, timeout=10)
+            log = directory / 'requests.log'
+            return result, log.read_text().splitlines() if log.exists() else []
+
+    def test_current_and_eventually_current_files_check_every_package(self):
+        manifest = HomepageTests().release_manifest()
+        expected = {f'https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3/{p["filename"]}'
+                    for p in manifest['packages']}
+        for mode, count in (('current', 14), ('retry', 15)):
+            with self.subTest(mode=mode):
+                result, requests = self.run_check(mode)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(requests), count)
+                self.assertEqual({url for url in requests if '/releases/download/' in url}, expected)
+
+    def test_stale_unavailable_or_missing_downloads_fail(self):
+        for mode in ('stale', 'unavailable', 'missing-package'):
+            with self.subTest(mode=mode):
+                result, requests = self.run_check(mode)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertLessEqual(len(requests), 6)
+        result, requests = self.run_check(page_url='https://untrusted.example/')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(requests, [])
+
+    def test_invalid_package_lists_and_versions_fail_before_download_checks(self):
+        valid = HomepageTests().release_manifest()
+        invalid_manifests = []
+        for packages in ([], None, 'not an array', valid['packages'][:-1],
+                         [valid['packages'][0]] * 10):
+            invalid_manifests.append({**valid, 'packages': packages})
+        for filename in ('../secret.deb', 'bad\\nfile.rpm', '', None, 123):
+            fixture = deepcopy(valid)
+            fixture['packages'][0]['filename'] = filename
+            invalid_manifests.append(fixture)
+        for version in ('latest', None, '../v1.2.3'):
+            invalid_manifests.append({**valid, 'version': version})
+        for manifest in invalid_manifests:
+            with self.subTest(manifest=manifest):
+                result, requests = self.run_check(manifest=manifest)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any('/releases/download/' in url for url in requests))
 
 
 class ManifestTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 # DragonOS package-selection notes
 
-There is no separate DragonOS build. Use the [installation guide](INSTALL.md):
+There is no separate DragonOS build. Use the [package and APT setup page](https://mickeyslaven.github.io/blah2-VectorWarp/#install):
 download and inspect the repository installer, run it with `--repo-only`, then
 use `sudo apt update` and `sudo apt install vectorwarp`. The installer selects
 the matching Ubuntu repository from `/etc/os-release`:
@@ -25,6 +25,6 @@ Current source builds include the receivers selected by `--backend`; see
 [build choices](INSTALL.md#2-choose-the-receivers-to-include).
 
 Inspect the repository installer before running it as root. Direct packages are
-listed in the [installation guide](INSTALL.md#supported-systems).
+listed on the [download page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 The DragonOS project downloads are at
 <https://sourceforge.net/projects/dragonos-focal/files/>.

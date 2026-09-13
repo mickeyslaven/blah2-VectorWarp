@@ -237,7 +237,7 @@ time). It still missed the 200 ms deadline; the driver was not installed system-
 </body></html>
 '''.replace('<!-- VERIFIED_RELEASE_INSTALLATION -->', release_installation(manifest) if manifest else
             '<section id="install"><h2>Install VectorWarp</h2><p>Release downloads are not available in this preview. '
-            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Build from source</a>.</p></section>')
+            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Build from source</a>.</p></section>')
 
 
 def run(command, **kwargs):

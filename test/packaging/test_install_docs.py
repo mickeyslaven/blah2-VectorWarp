@@ -8,7 +8,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.md", "docs/3LIPS_SETUP.md",
           "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
-          "packaging/README.md", "docs/MAINTAINER_RELEASE.md",
+          "packaging/README.md", "docs/MAINTAINER_RELEASE.md", "docs/UPSTREAM_COMPARISON.md",
           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
 
 
@@ -27,6 +27,22 @@ def heading_ids(text):
 
 
 class InstallDocumentationTests(unittest.TestCase):
+    def test_active_install_routes_point_to_the_shared_package_page(self):
+        package_guides = ("README.md", "docs/INSTALL.md", "docs/SETUP.md",
+                          "docs/SDRPLAY_SETUP.md", "docs/PI_GPU_SETUP.md",
+                          "docs/DRAGONOS.md", "packaging/README.md",
+                          "docs/UPSTREAM_COMPARISON.md",
+                          "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
+        for relative in package_guides:
+            with self.subTest(guide=relative):
+                self.assertIn("(https://mickeyslaven.github.io/blah2-VectorWarp/#install)",
+                              (ROOT / relative).read_text())
+        comparison = (ROOT / "docs/UPSTREAM_COMPARISON.md").read_text()
+        self.assertNotIn("No published repository or release yet", comparison)
+        hackrf = (ROOT / "src/capture/hackrf/README.md").read_text()
+        self.assertIn("RSPduo source kit", hackrf)
+        self.assertNotIn("requires the SDRplay SDK", hackrf)
+
     def test_shell_examples_parse_without_execution(self):
         for relative in GUIDES:
             text = (ROOT / relative).read_text()
