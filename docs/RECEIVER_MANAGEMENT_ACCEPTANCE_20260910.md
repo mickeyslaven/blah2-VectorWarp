@@ -1,9 +1,14 @@
 # Receiver setup implementation and acceptance — 2026-09-11
 
+Historical implementation record. For current behavior use
+[receiver setup](SETUP.md) and [release packaging](../packaging/README.md).
+The later unified build and standard SDRplay startup changes supersede the
+unfinished-work and package-policy notes below. No public release is claimed.
+
 ## Final source acceptance update
 
 This update supersedes the historical unfinished-work paragraphs below. See
-`SDR_MANAGEMENT_HANDOFF_20260910.md` for the current integration ledger.
+`SDR_MANAGEMENT_HANDOFF_20260910.md` for that integration's historical ledger.
 
 Durable write-ahead receiver journaling and a packaged read-only processor-start
 interlock are now implemented. Unknown receipts survive API restarts; pending,
@@ -159,7 +164,7 @@ installed versions; missing packages produce `INSTALL_TRANSACTION_REVIEW_REQUIRE
 There is no package-mutation command in the executor. Completion needs a full
 signed transaction resolver, approval of every planned change, a package-manager
 lock and postconditions. SDK installation also cannot add a backend omitted from
-the processor: published packages remain Kraken-only, while selected/all-backend
+the processor: the package build at that stage was Kraken-only, while selected/all-backend
 source builds remain available. Four-backend release artifacts and vendor-aware
 runtime packaging are separate unfinished acceptance work. SDRplay must be
 obtained with the operator's vendor license acceptance; no redistribution or

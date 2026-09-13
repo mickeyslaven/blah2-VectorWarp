@@ -1,5 +1,10 @@
 # SDR management integration handoff — 2026-09-11
 
+Historical handoff, not current setup instructions. The integration and
+package-policy work described as pending here has since changed; follow
+[receiver setup](SETUP.md), [current acceptance](UPSTREAM_COMPARISON.md) and
+[release packaging](../packaging/README.md).
+
 Worktree `/tmp/vectorwarp-sdr-management-20260910.BHprGN`, branch
 `codex/vectorwarp-sdr-management-20260910`, base `ee275eb27939ff7c18479089ec6a889efdc73383`.
 All files in this worktree belong to the scoped SDR change. The dirty shared
@@ -83,8 +88,8 @@ containers to validate APIs. Host package databases were not modified.
 ## Remaining integration boundaries
 
 Parent must merge this source with GPU commits, run final combined full CI/native
-build, and capture the real UI. Current published binary backend availability
-must remain accurately advertised; Kraken-only packages do not become universal
+build, and capture the real UI. Binary backend availability at that stage
+must remain accurately advertised; Kraken-only test builds do not become universal
 receiver builds. Physical SDR vendor acceptance, actual native installation,
 serial/wiring/coherence and SDRplay license acceptance are not claimed by offline
 tests. No ADS-B inference inputs or bearing eligibility changes were introduced.

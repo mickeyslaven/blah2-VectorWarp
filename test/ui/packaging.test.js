@@ -140,7 +140,9 @@ for (const command of rpmHackrfInstalls) {
   assert.match(command, /\buhd-devel\b/);
   assert.match(command, /\bboost-devel\b/, 'Fedora UHD builds require the Boost development headers');
 }
-const sourceSetup = read('docs/SETUP.md').replace(/\\\n\s*/g, ' ');
+assert.match(read('docs/SETUP.md'), /\]\(INSTALL\.md\)/,
+  'Receiver setup must point to the canonical installation instructions');
+const sourceSetup = read('docs/INSTALL.md').replace(/\\\n\s*/g, ' ');
 assert.match(sourceSetup, /sudo apt install[^\n]*\blibuhd-dev\b[^\n]*\blibboost-dev\b[^\n]*\blibhackrf-dev\b[^\n]*\blibusb-1\.0-0-dev\b/,
   'The source quickstart must include both SDK header dependencies');
 assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\bhackrf-devel\b[^\n]*\blibusb1-devel\b/);

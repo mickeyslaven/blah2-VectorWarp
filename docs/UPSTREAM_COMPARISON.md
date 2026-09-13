@@ -4,7 +4,7 @@ This is the wording and capability reference for the README, installation guide
 and release notes. Comparison baseline: upstream
 [`30hours/blah2` at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de),
 not a moving branch. Machine-readable pins are in [UPSTREAM_BASELINE.json](UPSTREAM_BASELINE.json).
-Last acceptance review: 2026-09-11. Source and CI artifacts are not a published release.
+Last acceptance review: 2026-09-13. Source and passing CI are not a published release.
 
 ## Changes and current evidence
 
@@ -14,22 +14,28 @@ Last acceptance review: 2026-09-11. Source and CI artifacts are not a published 
 | Acceleration | CPU/FFTW processing | Isolated Vulkan/VkFFT clutter FFT/filtering and delay–Doppler worker; startup accuracy qualification, automatic selection and independent CPU fallback | Matched upstream comparisons on RTX 4050 Laptop, Radeon 8060S, Intel HD 630 and AMD Polaris12. Earlier native live Strix cases used the version with recurring CPU checks; see the [current report](GPU_BENCHMARK_20260911.md). |
 | CPU scheduling | Fixed FFT threading | Affinity/quota-aware automatic worker and FFT-team sizing; manual overrides | Unit tests. Automatic sizing is conservative, not guaranteed maximum throughput. |
 | Web interface | Original radar/display pages | Redesigned navigation, readable views, fullscreen, configuration, health and recording/replay controls | API and browser-DOM tests; no claim that every browser/GPU combination has been tested. |
-| Configuration | File-based setup | Validated browser editing, disk revision checks, atomic backups, receiver enrollment/readback and save/restart flow | Browser frequency and active-channel prefix synchronize with the configured Kraken Suite endpoint and are checked at startup. Enrollment is needed for privileged local service/package actions, not remote receiver readback. Kraken Suite/USB drivers and proprietary SDRplay installation remain external. |
+| Configuration | File-based setup | Validated browser editing, disk revision checks, atomic backups, receiver enrollment/readback and save/restart flow | Kraken frequency, active-channel prefix and explicit gain synchronize with the configured Suite endpoint. Reviewed local service/package actions use enrollment; standard installed SDRplay services also have the narrow first-install and Save & Restart path described in [SDRplay setup](SDRPLAY_SETUP.md). Receiver software remains external; discovery is read-only. |
 | ADS-B | Separate adsb2dd converter for delay/Doppler overlays | Integrated converter; local decoder discovery or a configured remote tar1090 feed | WGS84, timestamps, derivatives, stale/invalid data, warmup, cache and integration tests. Explicit remote feeds never fall back silently to local data. ADS-B never enters detection/tracking inference. |
-| Recording/replay | Receiver-specific recording; incomplete replay coverage | Portable `.blah2iq` for 2–8 channels, legacy readers, common paced replay, EOF/loop/error reporting, acknowledged recording controls | 13 full-processor replay cases in release and AddressSanitizer builds; the extracted Fedora package also passes these plus three invalid-startup checks. Physical recording evidence remains five-channel Kraken. |
+| Recording/replay | Receiver-specific recording; incomplete replay coverage | Portable `.blah2iq` for 2–8 channels, legacy readers, common paced replay, EOF/loop/error reporting, acknowledged recording controls | Current full-processor suite: 18 cases across four profiles, including Kraken 2–8 channels, invalid inputs and 6 MS/s USRP/HackRF clutter processing. Earlier release/AddressSanitizer evidence covered 13 cases; the historical Fedora package added three invalid-startup checks. Physical recording evidence remains five-channel Kraken. |
 | Tracking/math | Original tracking/spectrum/detection implementations | Bounded histories, corrected association/kinematics, spectrum axes/levels, boundary and nonfinite-value repairs | Focused C++ tests; not proof of real-aircraft tracker accuracy or reliable bearing. |
 | Deployment | Container-oriented setup | Native build/install and isolated service accounts; no container runtime required to run VectorWarp | Staged install, configuration preservation and Node 24 deployment tests. Fedora 44 x86-64 native/live checks; Fedora 44 ARM64 RPM installed on Raspberry Pi 4 with 16/16 replay/startup cases and services disabled. The earlier seven-case Strix live campaign completed, peaked at 77.1°C, and restored the paused receiver without changing its configuration or CPU limits. |
 | Package distribution | No VectorWarp packages | Ten native DEB/RPM targets across Ubuntu, Debian and Fedora; release automation and one signed APT/DNF repository implementation | All ten hosted native build/install-smoke jobs pass. Format/signature fixtures and Jammy/Noble/Resolute/Trixie APT indexes pass. Debian/Pi/DragonOS selector fixtures pass, including 32-bit-userland rejection. Fedora-on-Pi package evidence is recorded; Raspberry Pi OS and DragonOS physical validation remain pending. **No published repository or release yet.** |
 
-At commit `9cfc783ca133308d28b73ef06cb66f89c9b3d367`, both architecture legs of
-[CI](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34534957702)
-passed, including C++/API/replay checks. All ten native build/install-smoke jobs
-passed in the [package run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34534957708):
-Ubuntu 22.04/24.04/26.04 and Debian 13 on x86-64 (amd64 / x86_64) and
-ARM64 (arm64 / aarch64), plus Fedora 44 on both architectures. CI artifacts are
-downloadable for testing; the signing/release job was skipped. These results
-supersede the earlier partial run, but do not establish physical receiver or
-clean-device compatibility on every target.
+At commit `2fcc792eaddf2af4beb0271a54f5721e979f2cfb`, merged through
+[PR #7](https://github.com/mickeyslaven/blah2-VectorWarp/pull/7), all 13 required
+checks passed: both [CPU/API/replay architecture jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032977),
+the package verifier and all ten [native package build/install jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032962).
+The matrix covers x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64).
+Public PR packages contain Kraken, USRP and HackRF for testing only; they are not
+uploaded or accepted as stable release packages. A separate local all-adapter
+build passed 23 native tests, with RSPduo SDK-function stubs and existing vendor
+headers. These tests do not establish physical receiver operation.
+
+The earlier `9cfc783ca133308d28b73ef06cb66f89c9b3d367`
+[CI](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34534957702) and
+[package run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34534957708)
+are historical receipts, not the current installation route. Do not infer current
+package availability from their old artifact-upload behavior. Use [Installation](INSTALL.md).
 
 The initial integration base is the user's
 [Kraken PR #45](https://github.com/30hours/blah2/pull/45). The submitted PR branches

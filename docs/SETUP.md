@@ -1,164 +1,131 @@
-# Source build and receiver setup
+# Receiver setup
 
-This is the working installation route until the first package release is
-published. See [Installation](INSTALL.md) for first startup and browser access.
-VectorWarp runs natively; Docker is not required.
+Install VectorWarp first using the [installation guide](INSTALL.md), then open
+**Settings** in its web interface. Source installation is available now; signed
+packages are not yet published. No Docker runtime is needed.
 
 ## Build from source
 
-Install [Node.js](https://nodejs.org/en/download) 22 or newer with npm. The native services require the Node
-executable at `/usr/bin/node`; a shell-only installation through a version
-manager is not sufficient. Check both before building:
+The [installation guide](INSTALL.md) is the single source for dependencies,
+Node.js requirements, receiver build choices, GPU build packages and startup
+commands. Choose the required `--backend` before building. Installing an SDR
+driver later does not add an adapter that was omitted from the VectorWarp build.
 
-```bash
-/usr/bin/node --version
-npm --version
-```
+## Check receiver software
 
-Install these build dependencies:
+Select your receiver, then choose **Check receiver software**. The result
+separately reports the compiled adapter, its runtime dependencies and detected
+software or devices. This check does not retune a receiver or start services.
 
-Ubuntu/Debian:
-
-```bash
-sudo apt update
-sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
-  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
-```
-
-Fedora:
-
-```bash
-sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm \
-  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel
-```
-
-For GPU support, also install `libvulkan-dev glslang-dev glslang-tools` on
-Ubuntu/Debian or `vulkan-loader-devel glslang-devel vulkan-tools` on Fedora,
-plus your GPU's Vulkan driver. `--gpu auto` builds the optional GPU path when
-its dependencies are available; it does not install drivers. Use `--gpu off`
-for a CPU-only build. See [GPU setup](GPU_ACCELERATION.md).
-
-Choose a build target for the receivers you need:
-
-| `--backend` | Live receivers included | Receiver software needed |
-| --- | --- | --- |
-| `kraken` | Kraken | Local or remote KrakenSDR Suite V2 |
-| `usrp` | USRP and Kraken | UHD 4.1+ |
-| `hackrf` | Dual HackRF and Kraken | libhackrf |
-| `rspduo` | RSPduo and Kraken | Locally installed SDRplay API 3.15, including headers |
-| `all` | All four | All of the above |
-
-These are source-build options, not separate release-package products. Only
-`rspduo` and `all` require the licensed SDRplay SDK at build time; install it
-yourself using the [SDRplay instructions](SDRPLAY_SETUP.md). UHD and HackRF
-development packages are included in the dependency commands above.
-
-This example builds for Kraken. Change `VW_BACKEND` before running it if you
-need a different target; omitting `--backend` defaults to `all`.
-
-```bash
-git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
-cd blah2-VectorWarp
-VW_BACKEND=kraken
-script/build-native.sh --backend "$VW_BACKEND" --preflight --gpu auto
-script/build-native.sh --backend "$VW_BACKEND" --gpu auto
-sudo script/install-native.sh --preflight
-sudo script/install-native.sh
-sudo systemctl start vectorwarp-api.service
-```
-
-The build creates `build/native/artifact`. Installation preserves an existing
-`/etc/vectorwarp/config.yml` and does not start VectorWarp services. A first
-RSPduo-enabled installation may start an already-installed standard SDRplay API
-service; see [SDRplay setup](SDRPLAY_SETUP.md). The final command starts only the
-API. Open `http://localhost:3000/` on that machine, or
-`http://<server-IP>:3000/` from another device, then configure the receiver in
-**Settings** before choosing **Save & Restart**. Neither service is enabled
-at boot by these commands.
-
-Other distributions may work through this route when their compiler,
-dependencies, and SDKs are compatible, but are not packaged release targets.
-
-Give the `vectorwarp` service account only the device access it needs.
-Radio clocks, cabling and coherent reception still need a hardware check.
+If the page offers a local setup action, review it. Run the exact enrollment
+command it displays in an administrator terminal on the radar host, return to
+**Check receiver software**, and approve the proposed action there. Enrollment
+does not install packages or start the service by itself. Remote Kraken setups
+keep using their configured remote endpoint; local actions do not control it.
 
 ## KrakenSDR Suite V2
 
-VectorWarp consumes the calibrated TCP stream from
-[KrakenSDR Suite V2](https://github.com/krakenrf/krakensdr_suite). Keep the
-Kraken installation and USB driver under Suite V2's control. VectorWarp can
-enroll, reuse and start an already-installed allowlisted local service, or use
-a remote endpoint; it does not install Kraken drivers. Apply the browser
-frequency, gain and active channel prefix, then verify the receiver's readback at
-processor startup. This fragment shows five-channel array-reference settings;
-edit the installed configuration rather than replacing it with this fragment:
+1. Install and configure [KrakenSDR Suite V2](https://github.com/krakenrf/krakensdr_suite)
+   on the receiver host. Suite owns the USB devices and calibration; VectorWarp
+   consumes its calibrated TCP stream.
+2. Select **Kraken** in Settings. Enter the Suite host and IQ/control ports
+   (normally 8091/8092). Use the receiver host's address for a remote Suite.
+3. Match VectorWarp's sample rate to Suite's rate, choose the active channel
+   count, and select dedicated or synthesized reference operation. Configure
+   the reference and surveillance channels for the actual antenna connections.
+4. Choose **Save & Restart**. Frequency, channel count and an explicitly chosen
+   gain require a command acknowledgement and a later matching Suite status.
+   A sample-rate mismatch blocks Apply: change it in Suite, then match it here.
 
-```yaml
-capture:
-  fs: 2400000
-  device:
-    type: Kraken
-    heimdall: {host: 127.0.0.1, port: 8091, control_port: 8092}
-    channel_count: 5
-    reference_channel: 0
-    surveillance_channels: [0, 1, 2, 3, 4]
-process:
-  reference_synthesis:
-    mode: array_eigenbeam
-    channels: [0, 1, 2, 3, 4]
-```
+Kraken supports 2–8 coherent input channels. Dedicated-reference mode excludes
+that channel from surveillance. Array-reference mode synthesizes a common
+reference from the selected channels; it is not bearing estimation.
+Gain defaults to **Keep receiver setting**. An explicit `-1` selects Suite
+automatic gain; 0–50 selects manual gain in dB.
 
-Kraken accepts two to eight coherent channels. Dedicated mode excludes the
-reference from surveillance; array-reference mode synthesizes a common
-reference. Set receiver/transmitter coordinates for geometry displays.
+For a local Suite service, **Check receiver software** can offer enrollment and
+startup of an installed service. It does not install Kraken drivers. Set the
+receiver/transmitter sites for geographic views and record the actual array
+layout. Reported settings do not prove antenna order, calibration or RF reception.
+
+## SDRplay RSPduo
+
+Follow [SDRplay setup](SDRPLAY_SETUP.md) to install the vendor API and select a
+build containing the RSPduo adapter. VectorWarp never downloads that API or
+accepts its license.
+
+In Settings, choose the RSPduo profile, then frequency, output sample rate and
+gain settings. With multiple RSPduos, enter the intended device's serial number.
+Reference and surveillance gain reduction are separate values. Choose
+**Save & Restart** to reuse a running API service or start a standard installed
+service before capture. Startup failures appear in the interface.
+
+The adapter applies both tuners' settings through SDRplay API 3.15 and checks
+return codes. It does not independently read back RF tuning or prove coherence.
+
+## USRP / B210
+
+Use a build containing the USRP adapter and install UHD 4.1 or newer. Select
+**USRP** in Settings; enter the intended device address, subdevice, antenna and
+gain, then set frequency and sample rate. Choose **Save & Restart**. UHD opens
+the receiver directly; there is no separate VectorWarp-managed UHD daemon.
+
+Before streaming, the adapter checks both channels through UHD getters:
+sample rate within 0.5 Hz, tuning within 1 Hz, gain within 0.05 dB, and exact
+antenna/subdevice values. Mismatches stop startup. These are software readbacks,
+not RF or clock-source verification; clock/time source is not a web setting.
+
+The 6 MS/s replay path passes with clutter filtering, but this is not a sustained
+B210 hardware test. The upstream B210 timeout/crash report still needs a physical
+endurance test; defensive error handling is not evidence that it is resolved.
+
+## Dual HackRF
+
+1. Use two HackRF units with a shared clock and hardware trigger. Follow the
+   [wiring notes and official hardware guide](../src/capture/hackrf/README.md).
+2. Install libhackrf and use a VectorWarp build containing the HackRF adapter.
+   **Check receiver software** can offer supported native package setup.
+3. Run `hackrf_info` on the receiver host to identify both serial numbers.
+   In Settings, put the reference device first and surveillance device second.
+4. Set frequency, sample rate, LNA/VGA gain and amplifier selection, then choose
+   **Save & Restart**.
+
+The adapter checks both devices' open, setting and start return codes. It does
+not read back frequency, gain or clock synchronization afterward. The 6 MS/s
+replay check is not a physical USB-throughput or coherence test.
 
 ## Receiver settings: application and verification
 
-Choosing a receiver and saving settings does not prove a radio is present. The
-Receiver software check separately reports whether the adapter was compiled,
-whether its runtime module loads, and any read-only discovery evidence. It never
-retunes a device or replaces the saved receiver/remote endpoint.
+**Save for later** stores pending settings without applying them or restarting.
+**Save & Restart** applies settings and restarts processing; previously saved
+changes use **Apply & Restart**. Check fresh processor status after the restart.
+If startup fails, correct the reported issue in Settings before retrying.
 
-| Receiver | Settings sent to software | Verification boundary | Physical hardware status |
-| --- | --- | --- | --- |
-| KrakenSDR Suite V2 | `capture.fc`, `capture.device.channel_count`, and an explicit `capture.device.heimdall.gain` go through Suite TCP control. Gain defaults to `keep` (and an absent old setting also preserves the receiver); `-1` requests Suite automatic gain and 0–50 is manual dB. `capture.fs` is read from Suite status, not set at runtime. Endpoint, reference/surveillance selection and synthesis stay in VectorWarp. | Apply requires the command ACK and a subsequent fresh Suite status readback for each implemented frequency, element-count or explicit-gain control. A sample-rate mismatch blocks Apply. | Software/status only unless a separate receiver run is recorded. A Suite-reported gain is not an actual RF-gain proof. Generic RTL USB descriptors are never treated as Kraken identity. |
-| SDRplay RSPduo | `capture.fc`, `capture.fs`, and `capture.device.serial`, `agcSetPoint`, `bandwidthNumber`, `gainReduction`, `lnaState`, `dabNotch`, `rfNotch` are saved and applied through SDRplay API v3 at processor startup. | SDK return failures reach processor telemetry; there is no independent post-init tuner readback. Save & Restart starts a standard installed SDRplay API service or reuses an active one. Custom stopped services need local administrator review. | Not verified by software discovery alone. The vendor API must be installed under its license; VectorWarp does not download, license or redistribute it. |
-| Ettus USRP / B210 | `capture.fc`, `capture.fs`, and `capture.device.address`, `subdev`, `antenna`, `gain` are UHD startup parameters after **Save & Restart**. | Before IQ streaming, UHD getters check both channels (rate ±0.5 Hz, tuning ±1 Hz, gain ±0.05 dB, exact antenna/subdevice). This is not an instant browser setter or an RF/clock-source proof. | Not verified by software discovery alone. UHD 4.1+ and a compiled adapter are separate requirements; clock/time source is not currently an exposed setting. |
-| Dual HackRF | `capture.fc`, `capture.fs`, and `capture.device.serial`, `gain_lna`, `gain_vga`, `amp_enable` are applied to the two selected serials at processor startup. | Open/set/start return codes are checked; there is no post-set frequency, gain, clock or synchronization readback. | Not verified by software discovery alone; two configured matching serials are required. |
-
-The USRP and HackRF software paths also pass 6 MS/s replay checks with clutter
-filtering. These are correctness tests, not sustained hardware-throughput tests.
-Upstream documents a B210 timeout/crash after 5–10 minutes. Defensive receive
-error handling does not establish that its underlying hardware/driver issue is
-fixed; a physical B210 endurance test is still needed.
-
-The settings page can show this same field-by-field matrix for every profile.
-For a remote Kraken endpoint it performs status/control only at that configured
-endpoint and never manages a local Suite service.
+Suite status/readback, SDK return codes and physical RF verification are
+different checks. The receiver sections above explain each boundary; discovery
+alone does not establish successful radar operation.
 
 ## Recording, replay and browser access
 
 ### ADS-B source
 
 In **Settings → ADS-B planes**, discover a local readsb/dump1090 feed or enter
-a remote tar1090 endpoint. Discovery neither installs nor starts a decoder,
-controls an SDR, nor scans other hosts. The selected source is stored in
-`truth.adsb.tar1090`. Live ADS-B is disabled during replay and preview.
+a remote tar1090 endpoint. Discovery does not install or start a decoder or scan
+other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
+during replay and preview; it is never radar detection or tracking input.
 
 ### Recording replay
 
-Portable `.blah2iq` recordings contain channel-major complex-float32 samples,
-sample rate, frequency, and channel count. Replay validates those values and
-does not open hardware. Legacy RSPduo, Kraken MCHQ, USRP float32, and HackRF
-signed-int8 files require the matching replay format; legacy USRP blocks also
-need their original block length.
+Portable `.blah2iq` files include channel-major complex-float32 IQ, sample rate,
+frequency and channel count. Replay checks those values without opening hardware.
+Legacy RSPduo, Kraken MCHQ, USRP float32 and HackRF signed-int8 files need their
+matching format; legacy USRP also needs the original block length.
 
-The browser/API uses port 3000 by default and has no password. Keep it on a
-trusted LAN/VPN or behind an authenticated gateway. ADS-B is display/evaluation
-data only; it is never a detection or tracking input.
+The browser/API defaults to port 3000 with no password. Use a trusted LAN/VPN
+or an authenticated gateway; see [browser access](INSTALL.md#4-open-the-interface-and-configure-your-receiver).
 
 ## Evidence and limits
 
-See [upstream comparison](UPSTREAM_COMPARISON.md) for implemented, tested,
-planned, and unpublished work, and the [fixed-range benchmark](GPU_BENCHMARK_20260911.md)
-for current processing times and test limits.
+[Upstream comparison](UPSTREAM_COMPARISON.md) distinguishes implemented features,
+automated tests, hardware evidence and planned work. See the
+[fixed-range benchmark](GPU_BENCHMARK_20260911.md) for measured processing times.

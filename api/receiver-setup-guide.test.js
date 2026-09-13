@@ -24,4 +24,10 @@ assert.ok(stopped.some(step => step.command?.endsWith('enroll-service RspDuo')),
 const running = receiverSetupGuide({...base, dependencies: {state: 'installed'},
   managedService: {state: 'running'}}, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
 assert.ok(!running.some(step => step.command?.endsWith('enroll-service RspDuo')));
-console.log('SDRplay setup guidance tests passed.');
+const usrp = receiverSetupGuide({...base, type: 'Usrp',
+  dependencies: {state: 'missing'}}, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
+const uhdSteps = usrp.filter(step => /UHD/.test(step.text));
+assert.equal(uhdSteps.length, 2);
+uhdSteps.forEach(step => assert.match(step.text, /UHD 4\.1 or newer/));
+assert.ok(!usrp.some(step => /4\.8/.test(step.text)));
+console.log('SDRplay startup and UHD minimum-version guidance tests passed.');
