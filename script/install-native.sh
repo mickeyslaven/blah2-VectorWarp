@@ -15,7 +15,8 @@ usage() {
   cat <<'EOF'
 Usage: script/install-native.sh [options]
 
-Install a completed native artifact. This command never enables or starts units.
+Install a completed native artifact without enabling or starting VectorWarp.
+A first RSPduo-enabled install can start an already-installed SDRplay API service.
 
   --artifact PATH         Artifact made by build-native.sh
   --prefix PATH           Application prefix (default: /opt/vectorwarp)
@@ -182,6 +183,8 @@ fi
 target_prefix="$DESTDIR$PREFIX"
 target_sysconf="$DESTDIR$SYSCONFDIR"
 release="$target_prefix/releases/$build_id"
+had_current_link=false
+[[ -L $target_prefix/current ]] && had_current_link=true
 for path_to_check in "$target_prefix" "$target_prefix/releases" "$target_prefix/libexec" "$target_sysconf"; do
   [[ ! -L $path_to_check ]] || die "refusing to follow installation symlink: $path_to_check"
 done
@@ -202,7 +205,7 @@ fi
 say "artifact: $ARTIFACT"
 say "release: $release"
 say "config: $target_sysconf/config.yml (preserved when present)"
-$WITH_SYSTEMD && say 'systemd units will be installed but not enabled or started'
+$WITH_SYSTEMD && say 'VectorWarp systemd units will be installed but not enabled or started'
 if $PREFLIGHT_ONLY; then say 'preflight passed'; exit 0; fi
 
 render() {
@@ -217,6 +220,9 @@ render() {
 
 run install -d -m 0755 "$target_prefix/releases"
 run cp -a "$ARTIFACT" "$release"
+# Artifacts may have been built from a collaborative umask.  This applies only
+# to the newly copied, root-owned release code; saved configuration is untouched.
+run chmod -R go-w "$release"
 if [[ -z $DESTDIR && $EUID -eq 0 ]]; then run chown -R root:root "$release"; fi
 run ln -sfn "releases/$build_id" "$target_prefix/current.next"
 run mv -Tf "$target_prefix/current.next" "$target_prefix/current"
@@ -250,6 +256,13 @@ if $WITH_SYSTEMD; then
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
   if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
     run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
+  fi
+  if [[ -f $ARTIFACT/libexec/vectorwarp-sdrplay-service.py ]]; then
+    render "$ARTIFACT/libexec/vectorwarp-sdrplay-service.py" "$temporary/vectorwarp-sdrplay-service"
+    run install -m 0755 "$temporary/vectorwarp-sdrplay-service" "$target_prefix/libexec/vectorwarp-sdrplay-service"
+  fi
+  if [[ -f $ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js ]]; then
+    run install -m 0644 "$ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js" "$target_prefix/libexec/vectorwarp-prepare-sdrplay.js"
   fi
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     render "$ARTIFACT/systemd/vectorwarp-receiver.service.in" "$temporary/vectorwarp-receiver.service"
@@ -295,7 +308,17 @@ else
 fi
 
 if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then run systemctl daemon-reload; fi
-say 'installation complete; no service was enabled or started'
+say 'installation complete; no VectorWarp service was enabled or started'
+# A first real native install may ask the fixed local SDRplay helper to start
+# an already-installed vendor service. It never downloads vendor software,
+# accepts a license, enables boot, or starts VectorWarp services. The helper
+# independently verifies the compiled RSPduo manifest and local policy.
+if $WITH_SYSTEMD && [[ -z $DESTDIR && $EUID -eq 0 && $DRY_RUN == false && $PREFLIGHT_ONLY == false &&
+    $had_current_link == false && -d /run/systemd/system && $RECEIVER_TYPES == *RspDuo* &&
+    -x $target_prefix/libexec/vectorwarp-sdrplay-service ]]; then
+  /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-sdrplay-service" install ||
+    printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2
+fi
 if $SETUP_PI_GPU; then
   run "$target_prefix/libexec/vectorwarp-gpu-setup" --install-driver ||
     die 'application installed; Pi driver setup was cancelled or unavailable; no GPU acceptance was inferred'

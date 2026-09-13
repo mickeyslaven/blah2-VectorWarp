@@ -282,6 +282,14 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFAC
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-setup" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-setup"
+# Present only in current builds. Keeping these optional preserves the ability
+# to install historical artifacts without inventing an SDRplay action for them.
+if [[ -f $SOURCE_DIR/script/vectorwarp-sdrplay-service.py ]]; then
+  run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sdrplay-service.py" "$ARTIFACT_TMP/libexec/vectorwarp-sdrplay-service.py"
+fi
+if [[ -f $SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js ]]; then
+  run install -m 0644 "$SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js" "$ARTIFACT_TMP/libexec/vectorwarp-prepare-sdrplay.js"
+fi
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 

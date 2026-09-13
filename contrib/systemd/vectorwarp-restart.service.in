@@ -4,6 +4,11 @@ Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
 
 [Service]
 Type=oneshot
+TimeoutStartSec=90
+TimeoutStopSec=5
+RuntimeDirectory=vectorwarp-sdrplay
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 ExecStart=@PREFIX@/libexec/vectorwarp-restart
 PrivateTmp=yes
 ProtectSystem=strict

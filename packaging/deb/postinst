@@ -16,6 +16,16 @@ if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null || true
 fi
 
-# Deliberately do not enable or start either service. A radar receiver must not
-# be activated by package installation or upgrade.
+# First configure only: this optional fixed helper can start an already
+# installed vendor service after independently checking the packaged RSPduo
+# manifest and local policy. It never downloads SDRplay software, accepts a
+# license, enables boot, or starts VectorWarp services. Upgrades never run it.
+if [ "$1" = configure ] && [ -z "${2:-}" ] && [ -d /run/systemd/system ] &&
+    [ -x /opt/vectorwarp/libexec/vectorwarp-sdrplay-service ]; then
+  /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sdrplay-service install ||
+    printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2
+fi
+
+# Deliberately do not enable or start VectorWarp services. The narrow SDRplay
+# helper above is limited to an already-installed vendor service on first configure.
 exit 0

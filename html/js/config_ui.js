@@ -1452,7 +1452,7 @@ function renderReceiverSetup() {
           sdrplayLink();
         }
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
-          paragraph('SDRplay API is installed but stopped. A reviewed Start SDRplay action appears only when this local service is already enrolled.');
+          paragraph('SDRplay API is installed but stopped. Save & Restart starts a standard local service automatically. Custom services need administrator review.');
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
           paragraph('SDRplay API service status could not be checked.');
         if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {

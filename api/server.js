@@ -147,6 +147,7 @@ function currentGpuRuntime(freshness) {
 
 // api server
 const app = express();
+const {readSdrplayStartup} = require('./sdrplay-startup');
 app.use(express.json({limit: '256kb', strict: true}));
 function configWriteOriginAllowed(req) {
   const origin = req.get('Origin');
@@ -291,6 +292,10 @@ app.get('/api/config/capabilities', (req, res) => {
 });
 app.get('/api/system/status', async (req, res) => {
   const document = readConfig(configFile);
+  const sdrplayStartup = readSdrplayStartup(document.revision);
+  const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
+    {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
+      message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
@@ -299,7 +304,7 @@ app.get('/api/system/status', async (req, res) => {
     acceleration: backend.acceleration || null,
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
-    restart: restartState, receiverSynchronization: receiverSyncState,
+    restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
     radar: lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
@@ -346,7 +351,8 @@ const receiverManagement = installReceiverRoutes(app, {
   allowedOrigins: receiverOrigins,
   helperExecutable: process.env.BLAH2_RECEIVER_HELPER,
   extraOrigins: (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean),
-  transactionBusy: () => configWriteInProgress || ['running', 'scheduled'].includes(restartState.state),
+  transactionBusy: () => configWriteInProgress || ['running', 'scheduled'].includes(restartState.state) ||
+    readSdrplayStartup(null)?.inProgress === true,
   processorStatus: () => processorStatusFresh(processorStatus) ? processorStatus.value : null,
   preview: process.env.BLAH2_PREVIEW === 'true',
   compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
@@ -374,6 +380,13 @@ app.put('/api/config', async (req, res) => {
   if (req.query.mode !== undefined && !saveLater)
     return res.status(422).json({ok: false, errors: ['Unknown configuration save mode.']});
   const wantsRestart = req.query.restart === 'true';
+  if (wantsRestart && req.body?.capture?.device?.type === 'RspDuo' &&
+      req.body?.capture?.replay?.state !== true &&
+      (req.get(RECEIVER_SYNC_HEADER) !== RECEIVER_SYNC_INTENT || !sameReceiverOrigin(req, receiverOrigins)))
+    return res.status(428).json({ok: false, code: 'SDRPLAY_START_INTENT_REQUIRED',
+      errors: ['Apply RSPduo settings from the trusted VectorWarp page. Starting installed SDRplay requires explicit same-origin Apply intent.']});
+  if (readSdrplayStartup(null)?.inProgress)
+    return res.status(409).json({ok: false, errors: ['A receiver restart is already in progress. Wait for its result.']});
   if (saveLater && (req.query.restart !== 'false' ||
       req.get(RECEIVER_SYNC_HEADER) !== 'save-pending-v1' || !sameReceiverOrigin(req, receiverOrigins)))
     return res.status(428).json({ok: false, code: 'PENDING_SAVE_INTENT_REQUIRED',
@@ -426,7 +439,7 @@ app.put('/api/config', async (req, res) => {
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.
-    if (restartState.state === 'running' || restartState.state === 'scheduled')
+    if (restartState.state === 'running' || restartState.state === 'scheduled' || readSdrplayStartup(null)?.inProgress)
       return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
     if (readConfig(configFile).revision !== currentDocument.revision)
       return res.status(409).json({ok: false,

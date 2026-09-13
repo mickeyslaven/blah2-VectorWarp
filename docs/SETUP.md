@@ -68,8 +68,10 @@ sudo systemctl start vectorwarp-api.service
 ```
 
 The build creates `build/native/artifact`. Installation preserves an existing
-`/etc/vectorwarp/config.yml` and does not start services. The final command
-starts only the API. Open `http://localhost:3000/` on that machine, or
+`/etc/vectorwarp/config.yml` and does not start VectorWarp services. A first
+RSPduo-enabled installation may start an already-installed standard SDRplay API
+service; see [SDRplay setup](SDRPLAY_SETUP.md). The final command starts only the
+API. Open `http://localhost:3000/` on that machine, or
 `http://<server-IP>:3000/` from another device, then configure the receiver in
 **Settings** before choosing **Save & Restart**. Neither service is enabled
 at boot by these commands.
@@ -120,7 +122,7 @@ retunes a device or replaces the saved receiver/remote endpoint.
 | Receiver | Settings sent to software | Verification boundary | Physical hardware status |
 | --- | --- | --- | --- |
 | KrakenSDR Suite V2 | `capture.fc`, `capture.device.channel_count`, and an explicit `capture.device.heimdall.gain` go through Suite TCP control. Gain defaults to `keep` (and an absent old setting also preserves the receiver); `-1` requests Suite automatic gain and 0–50 is manual dB. `capture.fs` is read from Suite status, not set at runtime. Endpoint, reference/surveillance selection and synthesis stay in VectorWarp. | Apply requires the command ACK and a subsequent fresh Suite status readback for each implemented frequency, element-count or explicit-gain control. A sample-rate mismatch blocks Apply. | Software/status only unless a separate receiver run is recorded. A Suite-reported gain is not an actual RF-gain proof. Generic RTL USB descriptors are never treated as Kraken identity. |
-| SDRplay RSPduo | `capture.fc`, `capture.fs`, and `capture.device.serial`, `agcSetPoint`, `bandwidthNumber`, `gainReduction`, `lnaState`, `dabNotch`, `rfNotch` are saved and applied through SDRplay API v3 at processor startup. | SDK return failures reach processor telemetry; there is no independent post-init tuner readback. An installed running API is reused. Within VectorWarp, starting a stopped API requires an enrolled service and separately approved action; users can also start it using the vendor's instructions. | Not verified by software discovery alone. The vendor API must be installed under its license; VectorWarp does not accept or redistribute it. |
+| SDRplay RSPduo | `capture.fc`, `capture.fs`, and `capture.device.serial`, `agcSetPoint`, `bandwidthNumber`, `gainReduction`, `lnaState`, `dabNotch`, `rfNotch` are saved and applied through SDRplay API v3 at processor startup. | SDK return failures reach processor telemetry; there is no independent post-init tuner readback. Save & Restart starts a standard installed SDRplay API service or reuses an active one. Custom stopped services need local administrator review. | Not verified by software discovery alone. The vendor API must be installed under its license; VectorWarp does not download, license or redistribute it. |
 | Ettus USRP / B210 | `capture.fc`, `capture.fs`, and `capture.device.address`, `subdev`, `antenna`, `gain` are UHD startup parameters after **Save & Restart**. | Before IQ streaming, UHD getters check both channels (rate ±0.5 Hz, tuning ±1 Hz, gain ±0.05 dB, exact antenna/subdevice). This is not an instant browser setter or an RF/clock-source proof. | Not verified by software discovery alone. UHD 4.1+ and a compiled adapter are separate requirements; clock/time source is not currently an exposed setting. |
 | Dual HackRF | `capture.fc`, `capture.fs`, and `capture.device.serial`, `gain_lna`, `gain_vga`, `amp_enable` are applied to the two selected serials at processor startup. | Open/set/start return codes are checked; there is no post-set frequency, gain, clock or synchronization readback. | Not verified by software discovery alone; two configured matching serials are required. |
 

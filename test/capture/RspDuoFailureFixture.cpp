@@ -14,6 +14,8 @@ sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
 bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
+enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB };
+CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
 void* callbackContext = nullptr;
 sdrplay_api_ErrT result(const char* stage) { return failAt == stage ? sdrplay_api_Fail : sdrplay_api_Success; }
@@ -22,6 +24,7 @@ void reset() {
   deviceParameters = {}; tunerA = {}; tunerB = {};
   parameters = {&deviceParameters, &tunerA, &tunerB};
   failAt.clear(); nullParameters = removeOnInit = multipleDevices = stopAfterGain = false;
+  callbackScenario = CallbackScenario::None;
   selectedSerial.clear(); callbackContext = nullptr;
 }
 }
@@ -55,6 +58,30 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
   assert(context); callbackContext = context;
   if (result("init") == sdrplay_api_Success) ++initialized;
   if (removeOnInit) { sdrplay_api_EventParamsT event{}; callbacks->EventCbFn(sdrplay_api_DeviceRemoved, sdrplay_api_Tuner_Both, &event, context); }
+  short ax[] = {1, 3, 5}, aq[] = {2, 4, 6}, bx[] = {7, 9, 11}, bq[] = {8, 10, 12};
+  auto callA = [&](uint32_t first, unsigned count = 2, unsigned reset = 0) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+    callbacks->StreamACbFn(ax, aq, &params, count, reset, context);
+  };
+  auto callB = [&](uint32_t first, unsigned count = 2, unsigned reset = 0) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+    callbacks->StreamBCbFn(bx, bq, &params, count, reset, context);
+  };
+  switch (callbackScenario) {
+    case CallbackScenario::Matched: callA(100); callB(100); run_fg = false; break;
+    case CallbackScenario::BFirst: callB(100); callA(100); callB(100); run_fg = false; break;
+    case CallbackScenario::DuplicateA: callA(100); callB(100); callA(102); callA(102); callB(102); break;
+    case CallbackScenario::LengthMismatch: callA(100); callB(100); callA(102); callB(102, 3); callA(105); callB(105); break;
+    case CallbackScenario::EpochMismatch: callA(100); callB(100); callA(102); callB(103); callA(104); callB(104); break;
+    case CallbackScenario::Wraparound: callA(UINT32_MAX - 1); callB(UINT32_MAX - 1); callA(0); callB(0); run_fg = false; break;
+    case CallbackScenario::Reset: callbacks->StreamACbFn(nullptr, nullptr, nullptr, 0, 1, context); callA(100); callB(100); run_fg = false; break;
+    case CallbackScenario::MalformedA: callbacks->StreamACbFn(nullptr, aq, nullptr, 0, 0, context); break;
+    case CallbackScenario::OversizedB: callB(100, 262145); break;
+    case CallbackScenario::ResetAfterPair: callA(100); callB(100); callA(102, 2, 1); callA(102); callB(102); break;
+    case CallbackScenario::GapAfterPair: callA(100); callB(100); callA(102); callA(104); callB(104); break;
+    case CallbackScenario::Removed: { sdrplay_api_EventParamsT event{}; callbacks->EventCbFn(sdrplay_api_DeviceRemoved, sdrplay_api_Tuner_Both, &event, context); break; }
+    case CallbackScenario::None: break;
+  }
   return result("init");
 }
 sdrplay_api_ErrT sdrplay_api_Uninit(HANDLE) { ++uninitialized; return sdrplay_api_Success; }
@@ -63,12 +90,6 @@ sdrplay_api_ErrT sdrplay_api_Update(HANDLE, sdrplay_api_TunerSelectT tuner,
   if (stopAfterGain && tuner == sdrplay_api_Tuner_B) run_fg = false;
   return result(tuner == sdrplay_api_Tuner_A ? "gain-a" : "gain-b");
 }
-// No IQ buffers are used by this fixture; these satisfy the linked callback
-// methods, and must never execute during an injected startup failure.
-void IqData::lock() { assert(false); }
-void IqData::unlock() { assert(false); }
-void IqData::push_back(std::complex<double>) { assert(false); }
-
 int main() {
   bool record = false;
   for (uint32_t rate : {2000000u, 1000000u, 500000u, 250000u, 125000u, 62500u}) {
@@ -139,5 +160,36 @@ int main() {
     receiver.stop(); receiver.stop();
     assert(opened == closed && locked == unlocked && selected == released && initialized == uninitialized);
   }
-  std::cout << "RSPduo mocked API: 24 complete dual-tuner setting tuples, exact serial/multiple-device refusal, unsupported6MS/s refusal, 15 failure stages and idempotent cleanup passed. No hardware opened.\n";
+  for (const auto scenario : {CallbackScenario::Matched, CallbackScenario::Wraparound,
+    CallbackScenario::BFirst, CallbackScenario::Reset, CallbackScenario::DuplicateA,
+    CallbackScenario::LengthMismatch, CallbackScenario::EpochMismatch, CallbackScenario::ResetAfterPair,
+    CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB}) {
+    reset(); callbackScenario = scenario;
+    RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
+    receiver.start(); IqData reference(16), surveillance(16);
+    bool failed = false; std::string message;
+    try { receiver.process(&reference, &surveillance); }
+    catch (const std::exception& error) { failed = true; message = error.what(); }
+    const bool matched = scenario == CallbackScenario::Matched || scenario == CallbackScenario::Wraparound ||
+      scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset;
+    assert(failed != matched);
+    if (matched) {
+      const auto a = reference.get_data(), b = surveillance.get_data();
+      const unsigned expected = scenario == CallbackScenario::Wraparound ? 4 : 2;
+      assert(a.size() == expected && b.size() == expected);
+      assert(a.front() == std::complex<double>(1, 2));
+      assert(b.front() == std::complex<double>(7, 8));
+    } else if (scenario == CallbackScenario::Removed) {
+      assert(message.find("Receiver disconnected") != std::string::npos);
+      assert(reference.get_length() == 0 && surveillance.get_length() == 0);
+    } else {
+      assert(message.find("callback pairing fault") != std::string::npos);
+      const unsigned expected = (scenario == CallbackScenario::GapAfterPair ||
+        scenario == CallbackScenario::DuplicateA || scenario == CallbackScenario::LengthMismatch ||
+        scenario == CallbackScenario::EpochMismatch || scenario == CallbackScenario::ResetAfterPair) ? 2 : 0;
+      assert(reference.get_length() == expected && surveillance.get_length() == expected);
+    }
+    receiver.stop();
+  }
+  std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

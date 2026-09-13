@@ -48,7 +48,16 @@ fi
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null || true
 fi
-# No service is enabled or started here.
+# Initial install only: the optional fixed helper may start a preinstalled
+# vendor SDRplay service after its own manifest/policy checks. It never
+# downloads vendor software, accepts a license, enables boot, or starts
+# VectorWarp services. Upgrades deliberately skip this action.
+if [ "$1" -eq 1 ] && [ -d /run/systemd/system ] &&
+    [ -x /opt/vectorwarp/libexec/vectorwarp-sdrplay-service ]; then
+  /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sdrplay-service install ||
+    printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2
+fi
+# No VectorWarp service is enabled or started here.
 
 %postun
 if [ -d /run/systemd/system ]; then

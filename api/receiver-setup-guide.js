@@ -12,14 +12,17 @@ function receiverSetupGuide(receiver, helperExecutable) {
   }
   if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
     steps.push({text: receiver.dependencies.state === 'missing' ?
-      'SDRplay API was not found. Obtain it from SDRplay and accept its license locally before enrolling an installed service.' :
-      'Could not verify SDRplay API. Check its local installation before enrolling the service.',
+      'SDRplay API was not found. Download and install it from SDRplay yourself, then return here and choose Save & Restart.' :
+      'Could not verify SDRplay API. Check its local installation; VectorWarp never downloads it or accepts its license.',
     link: 'https://sdrplay.com/hardware-api/', label: 'SDRplay hardware API and supported systems'});
   }
   if (receiver.type === 'Kraken' && receiver.locality === 'remote') {
     steps.push({text: 'Keep the existing remote Suite installation. Enter its saved host and IQ/control ports, then Apply to verify the complete receiver settings. Local service management does not control that host.'});
-  } else if ((receiver.type === 'Kraken' ||
-      (receiver.type === 'RspDuo' && receiver.dependencies.state === 'installed')) &&
+  } else if (receiver.type === 'RspDuo' && receiver.dependencies.state === 'installed' &&
+      receiver.managedService.state !== 'running') {
+    steps.push({text: 'Save & Restart starts an installed standard SDRplay API service and reuses it if already running. Custom or overridden services require local administrator review.',
+      command: `sudo ${helperExecutable} enroll-service RspDuo`});
+  } else if (receiver.type === 'Kraken' &&
       receiver.managedService.state !== 'running') {
     steps.push({text: 'An administrator can enroll an already-installed local receiver service once. Review its exact installed definition in the terminal. Then Check receiver software here and review its start action.',
       command: `sudo ${helperExecutable} enroll-service ${receiver.type}`});

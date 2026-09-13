@@ -71,6 +71,7 @@ const check = async () => {
     dependencyState = 'installed'; serviceState = 'stopped';
     await check();
     assert.match(output.textContent, /installed but stopped/);
+    assert.match(output.textContent, /Save & Restart starts a standard local service automatically/);
     assert.ok([...output.querySelectorAll('button')].some(item =>
       item.textContent === 'Review Start SDRplay'),
     'Installed/stopped guidance must retain the existing reviewed start action.');

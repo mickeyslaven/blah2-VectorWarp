@@ -77,8 +77,14 @@ details; set frequency, sample rate, site coordinates, and a writable recording
 directory; then correct any validation errors. Install and configure
 KrakenSDR Suite separately before using its endpoint.
 
-For SDRplay RSPduo, install and start SDRplay's vendor Hardware API yourself.
-VectorWarp provides detection and guidance, not the vendor software. See
+For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.
+VectorWarp never downloads it or accepts its license. On a first real native or
+package installation only, VectorWarp may prepare an already-installed local
+vendor service when the installed RSPduo adapter and local policy allow it; it
+does not enable it at boot or start VectorWarp itself. If preparation cannot be
+verified, use the official [SDRplay Hardware API page](https://sdrplay.com/hardware-api/),
+then recheck in Settings. Building an RSPduo adapter separately requires the
+licensed API 3.15 headers and library described above. See
 [SDRplay setup](SDRPLAY_SETUP.md).
 
 Choose **Save & Restart** (or **Apply & Restart** for previously saved changes)

@@ -2,7 +2,9 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
 #include <cstring>
+#include <limits>
 
 namespace
 {
@@ -118,4 +120,37 @@ TEST_CASE("Heimdall V2 validates frame dimensions")
   auto header = HeimdallFrame::decode_header(valid_header());
   REQUIRE_THROWS(HeimdallFrame::decode_metadata(header, {}));
   REQUIRE_THROWS(HeimdallFrame::decode_payload(header, {}));
+}
+
+TEST_CASE("Heimdall V2 rejects non-finite channel metadata")
+{
+  const auto nonFinite = std::array<float, 3>{
+    std::numeric_limits<float>::quiet_NaN(),
+    std::numeric_limits<float>::infinity(),
+    -std::numeric_limits<float>::infinity()};
+  for (const float value : nonFinite)
+  {
+    {
+      auto header = HeimdallFrame::decode_header(valid_header());
+      std::vector<uint8_t> metadata;
+      for (uint32_t channel = 0; channel < header.numChannels; channel++)
+      {
+        append_le_float(metadata, channel == 2 ? value : 527000000.0F);
+        append_le_float(metadata, 15.0F);
+      }
+      REQUIRE_THROWS_WITH(HeimdallFrame::decode_metadata(header, metadata),
+        "Invalid Heimdall V2 RF frequency metadata");
+    }
+    {
+      auto header = HeimdallFrame::decode_header(valid_header());
+      std::vector<uint8_t> metadata;
+      for (uint32_t channel = 0; channel < header.numChannels; channel++)
+      {
+        append_le_float(metadata, 527000000.0F);
+        append_le_float(metadata, channel == 2 ? value : 15.0F);
+      }
+      REQUIRE_THROWS_WITH(HeimdallFrame::decode_metadata(header, metadata),
+        "Invalid Heimdall V2 gain metadata");
+    }
+  }
 }
