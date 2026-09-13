@@ -54,46 +54,31 @@ selection through `/etc/os-release`; it is not an independently built or
 boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
 ARM64 (arm64 / aarch64) package; its installation and Pi hardware performance need separate
 validation. No 32-bit or custom SD-card image is produced.
-Each package includes all four receiver adapters and CPU processing with
-Vulkan auto-detection. UHD and libhackrf use native distro dependencies;
-SDRplay's API remains a separately licensed local installation.
+Each package includes compiled Kraken, USRP and dual-HackRF adapters, CPU
+processing with Vulkan auto-detection, and VectorWarp's locally buildable
+RSPduo source kit. The kit is not a compiled RSPduo adapter and contains no
+SDRplay files. The user installs SDRplay's separately licensed API and headers,
+then explicitly chooses **Build SDRplay support** in Settings. UHD, libhackrf,
+normal C++ compiler tools and binutils are native package dependencies.
 
-Before running release builds, provision a licensed SDRplay SDK outside Git
-on each trusted build runner and accept its terms for build use. Set
-`VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` in `release-signing` and
-select either local `BLAH2_SDRPLAY_INCLUDE_DIR` / `BLAH2_SDRPLAY_LIBRARY` paths
-or an absolute local `VECTORWARP_SDRPLAY_SDK_ARCHIVE` path to the pinned 3.15.2
-installer obtained from [SDRplay](https://sdrplay.com/hardware-api/).
-The helper stages headers/link libraries without running or downloading the
-installer. No SDK is retrieved from this repository or its history.
-
-Optional repository/organization variables `VECTORWARP_SDRPLAY_RUNNER_X64`
-and `VECTORWARP_SDRPLAY_RUNNER_ARM64` select trusted runner labels. Do not put
-runner-selection variables in the environment: they are needed before the
-job reaches that environment. Keep SDK paths and license attestation in the
-protected `release-signing` environment, read only by its staging step.
-Leave them unset only when the default hosted runners have separately been
-provisioned with permitted inputs; ordinary hosted runners do not include
-SDRplay. Protect those runners and the existing `release-signing` environment
-from unreviewed refs. Never provide proprietary inputs to a public PR job or
-place them in public Actions artifacts, caches, release assets or container
-images. The staged SDK lives in the runner's private temporary directory and
-is mounted read-only for packaging. Actual packages still require all four
-adapters; missing SDK input fails the build, not silently reduced support.
+Stable and PR package jobs build the same `all` profile on all ten targets:
+`compiled_receivers=Usrp,HackRF,Kraken` and
+`local_build_receivers=RspDuo`. Neither job receives, downloads, accepts terms
+for, caches, uploads or packages the SDRplay SDK. The explicit `rspduo`
+source-build backend remains available only for a developer who has installed
+the SDK locally; it is not the release-package path. PR jobs use the empty
+`pr-packaging` environment and do not upload package assets. Trusted main/tag
+jobs may upload the same checked package inputs for the separate signing flow.
 
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
-   `Build release packages` runs all ten native package smoke checks on public
-   PRs using Kraken, USRP and HackRF, plus hardware-free contracts and fake
-   SDK-input fixtures. The reduced packages are test-only and are not uploaded
-   as release assets; the stable repository generator rejects their receiver
-    profile. Passing these checks does not establish a real RSPduo SDK build.
-   PR builds use the empty `pr-packaging` environment; never place SDK inputs
-   or signing secrets there.
-   Actual all-adapter release packaging runs only from trusted main/tag
-   releases after separately licensed SDK provisioning. Configure and protect
-   `release-signing` before any release tag. Use the immutable
-   `vMAJOR.MINOR.PATCH` tag for a draft release; its manual version input is
-   dry-run only.
+   `Build release packages` runs all ten native package smoke checks on PRs
+   using the same three compiled adapters and RSPduo local source kit as a
+   stable package, without proprietary SDK inputs. Passing these checks proves
+   package/source-kit wiring, not live RSPduo capture. PR jobs do not upload
+   assets and never receive signing secrets. Trusted main/tag builds use the
+   same package contract, then the separate protected `release-signing` flow
+   signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a
+   draft release; its manual version input is dry-run only.
 2. Confirm the ten package assets, `SHA256SUMS`, `package-manifest.json` and
    `repository-manifest.json`. The tag creates a draft release for review; it
    does not publish packages.
@@ -103,8 +88,16 @@ adapters; missing SDK input fails the build, not silently reduced support.
 4. On clean hosts, install from the APT and DNF repositories, verify the signing
    key fingerprint, confirm ordinary package-manager updates, and verify that no
    processor/radio starts automatically.
-5. Only then change the user documentation from **pending first release** to
-   published, with the verified release version and actual validation evidence.
+5. Verify the deployed page, installer, key and every package download return
+   successfully over HTTPS. The generated homepage uses the verified manifest
+   for its OS/architecture table and links to immutable GitHub release assets;
+   it includes signed APT/DNF setup and direct-download verification steps.
+6. Only after deployment and clean-host installation pass, update README's
+   **Install on Linux** and **OS support** sections with the actual release
+   version, per-OS download links and signed installer link. Update INSTALL,
+   packaging/README, DragonOS and Pi setup pages together, removing their
+   **pending first release** wording. Keep source instructions and record which
+   platforms were tested; a successful package build is not a hardware test.
 
 The planned Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public

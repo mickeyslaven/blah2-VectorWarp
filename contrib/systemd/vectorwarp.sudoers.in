@@ -3,3 +3,5 @@
 # live RSPduo settings, a narrowly checked already-installed SDRplay service.
 Defaults:vectorwarp-api !requiretty
 vectorwarp-api ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start vectorwarp-restart.service
+# Compile only the installed, verified source kit; no caller arguments or SDK download.
+vectorwarp-api ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block vectorwarp-sdrplay-build.service

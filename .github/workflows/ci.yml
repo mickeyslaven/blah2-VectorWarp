@@ -65,6 +65,7 @@ jobs:
           python3 test/packaging/test_install_release.py -v
           python3 test/packaging/test_receiver_updates.py -v
           python3 test/packaging/test_sdrplay_build_sdk.py -v
+          sudo python3 test/packaging/test_sdrplay_local_build.py -v
       - name: Run API and UI unit tests
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules

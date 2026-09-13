@@ -148,6 +148,7 @@ function currentGpuRuntime(freshness) {
 // api server
 const app = express();
 const {readSdrplayStartup} = require('./sdrplay-startup');
+const {installSdrplayBuildRoutes, helperStatus} = require('./sdrplay-build');
 app.use(express.json({limit: '256kb', strict: true}));
 function configWriteOriginAllowed(req) {
   const origin = req.get('Origin');
@@ -202,6 +203,21 @@ function restartCommandAvailable() {
     try { fs.accessSync(candidate, fs.constants.X_OK); return true; }
     catch (_) { return false; }
   });
+}
+
+function configuredReceiverTypes() {
+  return process.env.BLAH2_RECEIVER_TYPES?.split(',').map(item => item.trim()).filter(Boolean) || null;
+}
+const localSdrplayHelper = process.env.BLAH2_SDRPLAY_BUILD_HELPER ||
+  '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay';
+function localRspEnrolled() {
+  return process.env.BLAH2_SDRPLAY_LOCAL_BUILD === 'true' &&
+    (process.env.BLAH2_LOCAL_BUILD_RECEIVER_TYPES || '').split(',').map(item => item.trim()).includes('RspDuo');
+}
+async function localRspCurrent() {
+  if (process.env.BLAH2_PREVIEW === 'true' || !localRspEnrolled()) return false;
+  const status = await helperStatus(localSdrplayHelper);
+  return status?.ok === true && status.state === 'current';
 }
 
 function launchRestart() {
@@ -260,10 +276,12 @@ app.get('/api/runtime/config', (req, res) => {
   // with newly saved tuning/site settings until the services have restarted.
   res.json(config);
 });
-app.get('/api/config/capabilities', (req, res) => {
+app.get('/api/config/capabilities', async (req, res) => {
   const document = readConfig(configFile);
-  const compiledLiveTypes = process.env.BLAH2_RECEIVER_TYPES?.split(',')
-    .map(item => item.trim()).filter(Boolean);
+  const compiledLiveTypes = configuredReceiverTypes();
+  // A current local build grants only RSPduo live eligibility. It remains
+  // distinct from `compiledLiveTypes`: this adapter was not shipped compiled.
+  const localRspLive = await localRspCurrent();
   res.json({
     editable: configFileWritable(),
     restartAvailable: restartCommandAvailable(),
@@ -272,8 +290,10 @@ app.get('/api/config/capabilities', (req, res) => {
     // Replay validates all file/profile combinations without loading receiver
     // SDKs. Keep every profile editable, while accurately exposing live support.
     deviceProfiles: getDeviceProfiles().map(item => ({...item,
-      liveAvailable: !compiledLiveTypes || compiledLiveTypes.includes(item.type)})),
+      liveAvailable: !compiledLiveTypes || compiledLiveTypes.includes(item.type) ||
+        (item.type === 'RspDuo' && localRspLive)})),
     compiledLiveTypes: compiledLiveTypes || getDeviceProfiles().map(item => item.type),
+    localBuildLiveTypes: localRspLive ? ['RspDuo'] : [],
     fieldRules: FIELD_RULES,
     receiverSynchronization: {
       intentHeader: RECEIVER_SYNC_HEADER,
@@ -358,6 +378,8 @@ const receiverManagement = installReceiverRoutes(app, {
   compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
     process.env.BLAH2_RECEIVER_TYPES.split(',').map(value => value.trim()).filter(Boolean) : null
 });
+installSdrplayBuildRoutes(app, {allowedOrigins: receiverOrigins,
+  helper: process.env.BLAH2_SDRPLAY_BUILD_HELPER || '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay'});
 app.post('/api/config/validate', async (req, res) => {
   if (!configWriteOriginAllowed(req))
     return res.status(403).json({valid: false,
@@ -401,10 +423,11 @@ app.put('/api/config', async (req, res) => {
   if (configWriteInProgress || receiverManagement.busy())
     return res.status(409).json({ok: false,
       errors: ['Another settings transaction is in progress. Wait for its result.']});
-  const allowedTypes = process.env.BLAH2_RECEIVER_TYPES?.split(',')
-    .map(item => item.trim()).filter(Boolean);
+  const allowedTypes = configuredReceiverTypes();
   const replayRequested = req.body?.capture?.replay?.state === true;
-  if (!saveLater && allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type))
+  const localRspRequested = !saveLater && !replayRequested &&
+    req.body?.capture?.device?.type === 'RspDuo' && allowedTypes && !allowedTypes.includes('RspDuo');
+  if (!saveLater && allowedTypes && !replayRequested && !allowedTypes.includes(req.body?.capture?.device?.type) && !localRspRequested)
     return res.status(422).json({ok: false, errors: [
       'This receiver backend is unavailable for live capture in this installation. Use Save for later, or install a build containing this backend before applying it.'
     ]});
@@ -436,6 +459,11 @@ app.put('/api/config', async (req, res) => {
   let receiverSync = null;
   const previousReceiverReceipt = receiverSyncState.receipt || null;
   try {
+    // Hold the write flag across this bounded read-only query. A stale local
+    // adapter cannot race another Apply into a save or restart.
+    if (localRspRequested && !await localRspCurrent())
+      return res.status(422).json({ok: false, code: 'SDRPLAY_LOCAL_BUILD_REQUIRED',
+        errors: ['Build SDRplay support in Settings after installing the SDRplay API and headers, then apply live RSPduo settings.']});
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.

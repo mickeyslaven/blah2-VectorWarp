@@ -13,6 +13,7 @@ const packageScript = read('script/package-native.sh');
 const releaseInstaller = read('script/install-release.sh');
 const buildScript = read('script/build-native.sh');
 const debPostinst = read('packaging/deb/postinst');
+const debPrerm = read('packaging/deb/prerm');
 const rpmSpec = read('packaging/rpm/vectorwarp.spec.in');
 const nodePin = read('packaging/node-runtime.env');
 
@@ -48,21 +49,34 @@ const gpuSetupCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_gpu_setup.py')], {encoding: 'utf8'});
 assert.equal(gpuSetupCheck.status, 0,
   `Pi-only signed-native GPU setup/access contract: ${gpuSetupCheck.stdout}${gpuSetupCheck.stderr}`);
-assert.match(packageScript, /all receiver adapters in one build/);
+assert.match(packageScript, /published packages require all receiver support in one build/);
 assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
 assert.match(packageScript, /published package receiver manifest is incomplete/);
 assert.match(packageScript, /"test_only": %s/);
-assert.match(packageScript, /It deliberately excludes RSPduo and is not for publication/);
-assert.match(packageScript, /\^the separately installed SDRplay API/);
+assert.match(packageScript, /TEST-ONLY package includes Kraken, USRP and dual HackRF/);
+assert.match(packageScript, /local RSPduo source kit/);
 assert.match(buildScript, /open-test\)/);
-assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; TEST_ONLY=true/);
+assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true/);
+assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=RspDuo; LOCAL_BUILD_RSPDUO=ON; TEST_ONLY=false/);
+assert.match(buildScript, /stage-rspduo-kit\.py/);
+assert.match(buildScript, /local_build_receivers=%s/);
 assert.match(buildScript, /test_only=%s/);
 assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
 assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
+assert.match(debPrerm, /systemctl stop[\s\S]*vectorwarp-sdrplay-build\.service/,
+  'Package removal must stop the local RSPduo build oneshot before removing its files.');
+assert.match(rpmSpec, /%preun[\s\S]*systemctl stop[\s\S]*vectorwarp-sdrplay-build\.service/,
+  'RPM removal must stop the local RSPduo build oneshot before removing its files.');
 const receiverModules = read('cmake/ReceiverModules.cmake');
 assert.doesNotMatch(receiverModules, /INSTALL_RPATH[^\n]*\/usr\/local\/lib/);
 assert.doesNotMatch(rpmSpec, /QA_RPATHS|__brp_check_rpaths/,
   'Universal packages must retain the normal RPM RPATH checks');
+assert.match(packageScript, /strip --strip-unneeded "\$core"/,
+  'Only the core bound into the local kit is normalized before RPM BRP processing.');
+assert.match(packageScript, /rpmbuild rpm rpm2cpio cpio strip python3/,
+  'RPM extraction verifies the final kit/core binding with explicit rpm2cpio and cpio tools.');
+assert.match(packageScript, /final RPM core hash does not match local RSPduo kit/,
+  'The extracted final RPM, not an intermediate staging tree, is authoritative for kit/core binding.');
 assert.match(read('src/capture/ReceiverLoader.cpp'),
   /open_receiver_library\(path, std::strcmp\(module.receiver, "RspDuo"\) == 0 \?\s*"\/usr\/local\/lib\/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3"\)/,
   'Only RSPduo may use the exact fixed vendor-library fallback');
@@ -120,6 +134,8 @@ assert.match(packageSmoke, /--supp-group vectorwarp-config/);
 assert.match(packageSmoke, /exec sudo -- bash "\$0" --test-only --package "\$package_arg"/);
 assert.match(packageSmoke, /test-only smoke requires the exact open-test receiver metadata/);
 assert.match(packageSmoke, /stable smoke requires the all-receiver package metadata/);
+assert.match(packageSmoke, /local_build_receivers/);
+assert.match(packageSmoke, /localBuildable/);
 assert.match(packageSmoke, /\/display\/configuration\//);
 assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
@@ -136,6 +152,7 @@ for (const command of debHackrfInstalls) {
   assert.match(command, /\blibboost-dev\b/, 'UHD public headers require the Boost development headers');
 }
 for (const command of rpmHackrfInstalls) {
+  assert.match(command, /\bcpio\b/, 'Fedora package verification extracts the final RPM with cpio.');
   assert.match(command, /\blibusb1-devel\b/, 'Fedora must also declare the transitive development dependency');
   assert.match(command, /\buhd-devel\b/);
   assert.match(command, /\bboost-devel\b/, 'Fedora UHD builds require the Boost development headers');
@@ -157,14 +174,18 @@ const trustedPackageSteps = packageJob.steps.filter(step =>
   /github\.event_name != 'pull_request'/.test(step.if || '') && /Build native/.test(step.name || ''));
 assert.equal(prPackageSteps.length, 3, 'PRs must smoke Debian, Debian-family, and Fedora package groups');
 assert.equal(trustedPackageSteps.length, 3, 'Trusted builds retain all three package groups');
-assert.equal(prPackageSteps.filter(step => /--backend open-test/.test(step.run || '') &&
-  /script\/package-native\.sh --test-only/.test(step.run || '') &&
-  /smoke-native-package\.sh --test-only/.test(step.run || '')).length, 3,
-  'every PR package group must compile, package, and smoke only open-test');
+assert.equal(prPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
+  /smoke-native-package\.sh --package/.test(step.run || '') &&
+  !/--test-only/.test(step.run || '')).length, 3,
+  'every PR package group must compile, package, and smoke the local-kit release contract');
 assert.equal(trustedPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
   /smoke-native-package\.sh --package/.test(step.run || '') &&
   !/smoke-native-package\.sh --test-only/.test(step.run || '')).length, 3,
   'every trusted package group must compile and smoke the stable all-adapter build');
+assert.doesNotMatch(releaseWorkflow, /prepare-sdrplay-build-sdk\.sh|vectorwarp-sdrplay-sdk|VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED/,
+  'Stable packages stage our local kit without protected vendor SDK inputs.');
+assert.match(releaseWorkflow, /'compiled_receivers',\s*\n\s*'local_build_receivers', 'test_only'/,
+  'The aggregate manifest must retain the receiver contract validated by repository publication.');
 function matrixEntries(workflow) {
   return [...workflow.matchAll(/^\s+- \{([^}]+)\}$/gm)].map(match => Object.fromEntries(
     match[1].split(',').map(field => field.trim().split(/:\s+/, 2))));

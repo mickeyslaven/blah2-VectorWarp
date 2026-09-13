@@ -78,19 +78,25 @@ metadata_field() {
   value=$(sed -n "s/^${field}=//p" "$metadata")
   printf '%s' "$value"
 }
+local_build_receivers=$(metadata_field local_build_receivers)
+local_build_enabled=false
+[[ $local_build_receivers == RspDuo ]] && local_build_enabled=true
 if $TEST_ONLY; then
   [[ $(metadata_field test_only) == true && $(metadata_field backend) == open-test &&
     $(metadata_field compiled_receivers) == Usrp,HackRF,Kraken && $receiver_types == Usrp,HackRF,Kraken ]] ||
     die 'test-only smoke requires the exact open-test receiver metadata'
 else
   [[ $(metadata_field test_only) == false && $(metadata_field backend) == all &&
-    $(metadata_field compiled_receivers) == RspDuo,Usrp,HackRF,Kraken &&
-    $receiver_types == RspDuo,Usrp,HackRF,Kraken ]] ||
+    $(metadata_field compiled_receivers) == Usrp,HackRF,Kraken &&
+    $local_build_receivers == RspDuo &&
+    $receiver_types == Usrp,HackRF,Kraken &&
+    -f /opt/vectorwarp/current/receiver-source/rspduo/kit.json &&
+    -x /opt/vectorwarp/libexec/vectorwarp-build-sdrplay ]] ||
     die 'stable smoke requires the all-receiver package metadata'
 fi
 # This command loads adapter libraries only; it creates no receiver and opens
 # no hardware. Missing SDRplay software must not stop the core or other radios.
-/opt/vectorwarp/current/bin/blah2 --receiver-status | EXPECTED_RECEIVERS="$receiver_types" TEST_ONLY="$TEST_ONLY" "$node" -e '
+/opt/vectorwarp/current/bin/blah2 --receiver-status | EXPECTED_RECEIVERS="$receiver_types" LOCAL_BUILD_RECEIVERS="$local_build_receivers" TEST_ONLY="$TEST_ONLY" "$node" -e '
   let body=""; process.stdin.on("data", data => { body += data; });
   process.stdin.on("end", () => {
     const report = JSON.parse(body);
@@ -104,6 +110,7 @@ fi
       if (item.compiled !== compiled) process.exit(1);
       if (!compiled && item.moduleLoadable !== false) process.exit(1);
       if (compiled && item.receiver !== "RspDuo" && item.moduleLoadable !== true) process.exit(1);
+      if (item.receiver === "RspDuo" && process.env.LOCAL_BUILD_RECEIVERS === "RspDuo" && item.localBuildable !== true) process.exit(1);
     }
   });
 ' || die 'installed universal receiver adapters did not load correctly'
@@ -112,6 +119,8 @@ fi
 # a system service; BLAH2_PREVIEW prevents external truth polling.
 setsid runuser --user vectorwarp-api --group vectorwarp-api --supp-group vectorwarp-config -- \
   env BLAH2_PREVIEW=true BLAH2_SETUP_PORT=39080 BLAH2_RECEIVER_TYPES="$receiver_types" \
+  BLAH2_SDRPLAY_LOCAL_BUILD="$local_build_enabled" BLAH2_LOCAL_BUILD_RECEIVER_TYPES="$local_build_receivers" \
+  BLAH2_SDRPLAY_BUILD_HELPER=/opt/vectorwarp/libexec/vectorwarp-build-sdrplay \
   BLAH2_RECEIVER_STATUS_EXECUTABLE=/opt/vectorwarp/current/bin/blah2 \
   "$node" "$api" "$config" >"$log" 2>&1 &
 api_pid=$!

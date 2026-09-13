@@ -104,7 +104,7 @@ CMake paths:
 ```sh
 script/build-native.sh --backend kraken --gpu auto  # GPU when available, CPU fallback otherwise
 script/build-native.sh --backend kraken --gpu off   # CPU-only artifact
-script/build-native.sh --backend all --gpu on       # require GPU plus all four receiver SDKs
+script/build-native.sh --backend all --gpu on       # require GPU plus UHD and HackRF SDKs; RSPduo stays locally buildable
 ```
 
 Building creates an artifact only; it neither installs drivers nor changes the

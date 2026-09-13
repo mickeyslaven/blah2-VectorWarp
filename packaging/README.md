@@ -7,26 +7,19 @@ DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
 and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
 or hardware validation.
 
-The release-package contract includes Kraken, RSPduo, USRP and dual-HackRF adapters,
-plus all replay formats. UHD and libhackrf are native package dependencies.
-SDRplay's licensed API is installed separately; only our adapter is packaged.
+Each release package includes compiled Kraken, USRP and dual-HackRF support,
+our locally buildable RSPduo adapter source kit, and all replay formats. UHD,
+libhackrf, compiler tools and binutils are native package dependencies.
+Users install SDRplay's licensed API and headers separately, then build our
+adapter from Settings. No vendor files are packaged.
 Kraken still needs Heimdall and its USB setup. Settings can check and reuse
 receiver software, or offer supported setup actions.
 
-Release builders must supply a locally licensed SDK and set
-`VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` after accepting its terms.
-`prepare-sdrplay-build-sdk.sh` stages local `BLAH2_SDRPLAY_INCLUDE_DIR` and
-`BLAH2_SDRPLAY_LIBRARY` inputs, or extracts an explicitly supplied external
-`VECTORWARP_SDRPLAY_SDK_ARCHIVE` matching the pinned vendor 3.15.2 checksum.
-It never downloads or executes an installer, retrieves old Git content, or
-accepts a license. Vendor inputs remain outside the repository and public
-artifacts/caches; packages contain only VectorWarp's adapter.
-
-Public PR checks build and smoke-test packages with Kraken, USRP and HackRF,
-without the proprietary SDK. These reduced builds are test-only and are not
-uploaded as release packages or accepted by the stable repository generator.
-Trusted release builds still require all four adapters and separately supplied
-licensed SDK inputs; they fail before packaging when those inputs are missing. See the
+Public PR checks and trusted release builds use the same unified package
+profile without any proprietary SDK. The `compiled_receivers` and
+`local_build_receivers` fields describe those capabilities separately; package
+smoke tests check the adapter files and source-kit integrity. A passing package
+build is not a physical RSPduo test. See the
 [maintainer setup](../docs/MAINTAINER_RELEASE.md) and
 [SDRplay user setup](../docs/SDRPLAY_SETUP.md).
 
@@ -46,7 +39,7 @@ script/package-native.sh \
 
 Installation creates dedicated users and directories but never enables or
 starts the API or processor. `/etc/vectorwarp/config.yml` is preserved across
-upgrades. A first RSPduo-enabled install may start an already-installed standard
+upgrades. A first install with the local RSPduo kit may start an already-installed standard
 SDRplay API service; it never downloads the API or accepts its license. See
 [SDRplay setup](../docs/SDRPLAY_SETUP.md).
 Repository publication requires a maintainer-controlled OpenPGP key

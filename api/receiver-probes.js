@@ -93,15 +93,18 @@ function receiverStatusFromJson(text) {
   const receivers = {};
   for (const item of report.receivers) {
     if (!item || typeof item !== 'object' || Array.isArray(item) ||
-        Object.keys(item).some(key => !['receiver', 'builtIn', 'compiled', 'moduleLoadable', 'error'].includes(key)) ||
+        Object.keys(item).some(key => !['receiver', 'builtIn', 'compiled', 'moduleLoadable', 'localBuildable', 'error'].includes(key)) ||
         !allowed.has(item.receiver) || receivers[item.receiver] ||
         typeof item.builtIn !== 'boolean' || typeof item.compiled !== 'boolean' ||
-        typeof item.moduleLoadable !== 'boolean' || typeof item.error !== 'string' ||
+        typeof item.moduleLoadable !== 'boolean' ||
+        (item.localBuildable !== undefined && typeof item.localBuildable !== 'boolean') ||
+        typeof item.error !== 'string' ||
         item.error.length > 240 || /[\u0000-\u001f\u007f]/.test(item.error) ||
         (!item.compiled && item.moduleLoadable))
       throw new Error('Invalid receiver capability report.');
     receivers[item.receiver] = {builtIn: item.builtIn, compiled: item.compiled,
-      moduleLoadable: item.moduleLoadable, error: item.error};
+      moduleLoadable: item.moduleLoadable, localBuildable: item.localBuildable === true,
+      error: item.error};
   }
   if (Object.keys(receivers).length !== allowed.size)
     throw new Error('Invalid receiver capability report.');

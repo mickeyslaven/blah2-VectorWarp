@@ -9,6 +9,8 @@ Source0:        vectorwarp-root.tar
 Requires:       systemd
 Requires:       sudo
 Requires:       python3
+Requires:       gcc-c++
+Requires:       binutils
 %if 0%{?fedora} == 44
 Requires:       python3-libdnf5
 Requires:       python3-rpm
@@ -21,9 +23,10 @@ Requires:       python3-rpm
 
 %description
 VectorWarp is a native passive-radar processor and local web interface. This
-package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU
-processing and optional Vulkan acceleration selected at runtime. RSPduo needs
-the separately installed SDRplay API. Receiver software is checked in Settings.
+package includes Kraken, USRP and dual HackRF receiver adapters plus a local
+RSPduo source kit, CPU processing and optional Vulkan acceleration selected at
+runtime. RSPduo needs the separately installed SDRplay API and an explicit
+local build. Receiver software is checked in Settings.
 
 %prep
 
@@ -67,7 +70,8 @@ fi
 %preun
 if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
+    vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 
 %files
@@ -75,6 +79,7 @@ fi
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
 /usr/lib/systemd/system/vectorwarp-restart.service
+/usr/lib/systemd/system/vectorwarp-sdrplay-build.service
 /usr/lib/systemd/system/vectorwarp-receiver.service
 /usr/lib/systemd/system/vectorwarp-receiver.socket
 /usr/lib/systemd/system/vectorwarp-api.service.wants

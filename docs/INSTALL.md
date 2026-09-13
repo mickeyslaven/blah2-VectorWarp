@@ -80,10 +80,12 @@ enough: rebuild and reinstall VectorWarp with those dependencies present.
 | `usrp` | USRP and Kraken | UHD 4.1+ |
 | `hackrf` | Dual HackRF and Kraken | libhackrf |
 | `rspduo` | RSPduo and Kraken | SDRplay Hardware API 3.15 and its development headers |
-| `all` | All four | All of the above |
+| `all` (default) | Kraken, USRP, dual HackRF; locally buildable RSPduo | UHD and libhackrf; SDRplay API only if using RSPduo |
 
 These are source-build choices, not separate release products. UHD and HackRF
-development packages are included above. Before choosing `rspduo` or `all`,
+development packages are included above. `all` does not need the SDRplay SDK at
+build time: it includes our small adapter source kit for local compilation from
+Settings. Before choosing the precompiled `rspduo` source-build option,
 install and license the [SDRplay API yourself](SDRPLAY_SETUP.md).
 Set `BLAH2_SDRPLAY_INCLUDE_DIR` and `BLAH2_SDRPLAY_LIBRARY` if its headers and
 library are outside the standard paths. VectorWarp never downloads the SDK or
@@ -92,12 +94,12 @@ accepts its license.
 ## 3. Build and install
 
 Set `VW_BACKEND` below to your choice. Keep the same value for both build
-commands; omitting `--backend` defaults to `all` and requires the SDRplay SDK.
+commands; omitting `--backend` defaults to `all` without downloading an SDRplay SDK.
 
 ```bash
 git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
 cd blah2-VectorWarp
-VW_BACKEND=kraken
+VW_BACKEND=all
 script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto
 script/build-native.sh --backend "$VW_BACKEND" --gpu auto
 sudo script/install-native.sh --preflight
@@ -135,11 +137,12 @@ Follow the [receiver-specific steps](SETUP.md) for Kraken, RSPduo, USRP or HackR
 For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.
 VectorWarp never downloads it or accepts its license. On a first real native or
 package installation only, VectorWarp may prepare an already-installed local
-vendor service when the installed RSPduo adapter and local policy allow it; it
+vendor service when the local RSPduo kit and policy allow it; it
 does not enable it at boot or start VectorWarp itself. If preparation cannot be
 verified, use the official [SDRplay Hardware API page](https://sdrplay.com/hardware-api/),
-then recheck in Settings. Building an RSPduo adapter separately requires the
-licensed API 3.15 headers and library described above. See
+then recheck in Settings. With the unified package, choose **Build SDRplay support**
+after installing the API and its headers. This compiles only our adapter; it does
+not start radar. Then use **Save & Restart**. See
 [SDRplay setup](SDRPLAY_SETUP.md).
 
 Choose **Save & Restart** (or **Apply & Restart** for previously saved changes)

@@ -1,3 +1,7 @@
 d /var/lib/vectorwarp 0750 vectorwarp vectorwarp -
 d /var/lib/vectorwarp/recordings 0770 vectorwarp vectorwarp-config -
 d /var/lib/vectorwarp-api 0750 vectorwarp-api vectorwarp-api -
+d /var/lib/vectorwarp-adapters 0755 root root -
+d /var/lib/vectorwarp-adapters/rspduo 0755 root root -
+d /run/vectorwarp-sdrplay-build 0755 root root -
+f /run/vectorwarp-rspduo-build.lock 0644 root root -

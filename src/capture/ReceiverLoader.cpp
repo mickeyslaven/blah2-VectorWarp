@@ -1,6 +1,7 @@
 #include "ReceiverLoader.h"
 #include "ReceiverLibrary.h"
 #include "ReceiverCohort.h"
+#include "LocalReceiverGate.h"
 #include <array>
 #include <cstring>
 #include <dlfcn.h>
@@ -41,15 +42,21 @@ struct LoadedModule {
   const Blah2ReceiverApi* api = nullptr;
 };
 LoadedModule open_module(const ModuleSpec& module) {
-  if (!module.compiled)
+  const bool local = !module.compiled && BLAH2_LOCAL_BUILD_RSPDUO &&
+    std::strcmp(module.receiver, "RspDuo") == 0;
+  if (!module.compiled && !local)
     throw std::runtime_error(std::string(module.receiver) +
       " adapter was not compiled into this build. Install the unified VectorWarp package or build with this adapter enabled.");
-  const auto path = executable_directory() + "/" + module.filename;
+  local_receiver::Gate local_gate;
+  if (local) local_gate = local_receiver::verify(executable_directory(),
+    BLAH2_RSPDUO_KIT_ID, BLAH2_RECEIVER_COHORT);
+  const auto path = local ? local_gate.module : executable_directory() + "/" + module.filename;
   // Fedora does not put the vendor's standard /usr/local/lib installation in
   // its loader cache. No configurable path, environment search or sibling SDK
   // preload is permitted; only this exact root-owned SDK file is a fallback.
-  auto library = open_receiver_library(path, std::strcmp(module.receiver, "RspDuo") == 0 ?
-    "/usr/local/lib/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3");
+  auto library = local ? open_pinned_receiver_library(path, local_gate.runtime, "libsdrplay_api.so.3") :
+    open_receiver_library(path, std::strcmp(module.receiver, "RspDuo") == 0 ?
+      "/usr/local/lib/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3");
   if (!library.handle) {
     throw std::runtime_error(std::string(module.receiver) +
       " adapter could not load: " + library.error +
@@ -101,7 +108,9 @@ std::vector<ReceiverModuleStatus> receiver_module_status() {
   std::vector<ReceiverModuleStatus> result{{"Kraken", true, true, true, ""}};
   for (const auto& module : modules) {
     ReceiverModuleStatus status{module.receiver, false, module.compiled, false, ""};
-    try { auto loaded = open_module(module); status.moduleLoadable = true; }
+    status.localBuildable = BLAH2_LOCAL_BUILD_RSPDUO && !module.compiled &&
+      std::strcmp(module.receiver, "RspDuo") == 0;
+    try { auto loaded = open_module(module); status.moduleLoadable = true; status.compiled = true; }
     catch (const std::exception& error) {
       // The UI contract accepts a bounded printable diagnostic. dlerror may
       // contain long paths or arbitrary bytes from the local environment.
@@ -128,6 +137,7 @@ std::string receiver_module_status_json() {
     item.AddMember("receiver", rapidjson::Value(status.receiver.c_str(), allocator), allocator);
     item.AddMember("builtIn", status.builtIn, allocator);
     item.AddMember("compiled", status.compiled, allocator);
+    item.AddMember("localBuildable", status.localBuildable, allocator);
     item.AddMember("moduleLoadable", status.moduleLoadable, allocator);
     item.AddMember("error", rapidjson::Value(status.error.c_str(), allocator), allocator);
     receivers.PushBack(item, allocator);

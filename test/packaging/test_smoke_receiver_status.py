@@ -23,23 +23,25 @@ def validator() -> str:
     return match.group(1)
 
 
-def report(compiled: set[str], *, rsp_loadable: bool = False) -> dict:
+def report(compiled: set[str], *, local_buildable: bool = False, rsp_loadable: bool = False) -> dict:
     return {"schema": 1, "hardwareProbed": False, "receivers": [
         {"receiver": name, "compiled": name in compiled,
-         "moduleLoadable": rsp_loadable if name == "RspDuo" and name in compiled else name in compiled}
+         "moduleLoadable": rsp_loadable if name == "RspDuo" and name in compiled else name in compiled,
+         "localBuildable": local_buildable if name == "RspDuo" else False}
         for name in ("Kraken", "RspDuo", "Usrp", "HackRF")
     ]}
 
 
 class SmokeReceiverStatusTest(unittest.TestCase):
-    def check(self, payload: dict, receivers: str, expected: int) -> None:
-        environment = os.environ | {"EXPECTED_RECEIVERS": receivers, "TEST_ONLY": "true" if receivers != "RspDuo,Usrp,HackRF,Kraken" else "false"}
+    def check(self, payload: dict, receivers: str, expected: int, local: str = "") -> None:
+        environment = os.environ | {"EXPECTED_RECEIVERS": receivers, "LOCAL_BUILD_RECEIVERS": local,
+                                    "TEST_ONLY": "true" if local != "RspDuo" else "false"}
         result = subprocess.run(["node", "-e", validator()], input=json.dumps(payload), text=True,
                                 capture_output=True, env=environment, check=False)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
     def test_accepts_stable_with_missing_optional_sdrplay_runtime(self):
-        self.check(report({"Kraken", "RspDuo", "Usrp", "HackRF"}), "RspDuo,Usrp,HackRF,Kraken", 0)
+        self.check(report({"Kraken", "Usrp", "HackRF"}, local_buildable=True), "Usrp,HackRF,Kraken", 0, "RspDuo")
 
     def test_accepts_open_test_with_uncompiled_sdrplay_profile(self):
         self.check(report({"Kraken", "Usrp", "HackRF"}), "Usrp,HackRF,Kraken", 0)

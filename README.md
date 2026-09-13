@@ -88,7 +88,8 @@ miss deadlines; the full report includes every tested configuration.
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
 
 Source installation is available now. Planned releases use one package per OS
-and architecture with all four receiver adapters; they are not yet published.
+and architecture with Kraken, USRP and HackRF adapters plus locally buildable
+RSPduo support; they are not yet published.
 Choose your receiver in the web settings.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
