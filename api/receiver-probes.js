@@ -158,8 +158,22 @@ function createReceiverProbes(config, options = {}) {
     async serviceStatus({serviceId}, context) {
       const units = SERVICE_UNITS[serviceId];
       if (!units) throw new Error('Unknown receiver service.');
-      return serviceFromProperties(await command('service',
-        ['show', '--no-pager', '--property=LoadState', '--property=ActiveState', '--', ...units], context));
+      // `systemctl show unit-a unit-b` can exit nonzero when one alias is not
+      // installed, even if another alias is active. Observe aliases separately
+      // so an absent historical name cannot conceal a running enrolled service.
+      const observations = [];
+      for (const unit of units) {
+        try {
+          observations.push(await command('service',
+            ['show', '--no-pager', '--property=LoadState', '--property=ActiveState', '--', unit], context));
+        } catch (_) {
+          // An unavailable alias provides no service-state evidence. If every
+          // alias fails, preserve the manager's conservative unknown result.
+        }
+      }
+      if (!observations.length)
+        throw new Error('The read-only receiver service check failed.');
+      return serviceFromProperties(observations.join('\n\n'));
     },
     async configuredUpstreamStatus(endpoint, context) {
       const saved = snapshot.capture?.device?.heimdall;

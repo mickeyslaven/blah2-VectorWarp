@@ -31,6 +31,7 @@ async function main() {
     receivers: []})), /capability/);
 
   const touched = [];
+  const serviceCalls = [];
   const config = {capture: {device: {type: 'Kraken', heimdall: {host: '127.0.0.1', port: 8091}}}};
   let upstreamCalls = 0;
   const probes = createReceiverProbes(config, {
@@ -43,7 +44,9 @@ async function main() {
     run: async (file, args) => {
       assert.equal(file, '/usr/bin/systemctl');
       assert.deepEqual(args.slice(0, 5), ['show', '--no-pager', '--property=LoadState', '--property=ActiveState', '--']);
-      assert.ok(args.slice(5).every(unit => unit.endsWith('.service')));
+      const unit = args[5]; serviceCalls.push(unit);
+      if (unit === 'sdrplay.service') throw new Error('historical alias absent');
+      if (unit === 'sdrplay_apiService.service') return 'LoadState=loaded\nActiveState=active\n';
       return 'LoadState=loaded\nActiveState=inactive\n';
     },
     upstream: async () => { upstreamCalls++; return {available: true, matched: true}; },
@@ -53,7 +56,9 @@ async function main() {
   assert.equal(touched.length, 3);
   assert.ok(touched.every(file => file.startsWith('/sys/bus/usb/devices/1-1/')));
   assert.deepEqual(await probes.serviceStatus({serviceId: 'kraken-suite-v2'}), {state: 'stopped'});
-  assert.deepEqual(await probes.serviceStatus({serviceId: 'sdrplay-api'}), {state: 'stopped'});
+  assert.deepEqual(await probes.serviceStatus({serviceId: 'sdrplay-api'}), {state: 'running'},
+    'An absent historical alias must not mask an active SDRplay service alias.');
+  assert.ok(serviceCalls.includes('sdrplay.service') && serviceCalls.includes('sdrplay_apiService.service'));
   assert.deepEqual(await probes.nativeReceiverStatus({}), status);
   await assert.rejects(probes.serviceStatus({serviceId: 'arbitrary.service'}), /Unknown/);
   assert.equal((await probes.configuredUpstreamStatus({host: '127.0.0.1', dataPort: 8091, controlPort: 8092})).available, true);
@@ -66,6 +71,10 @@ async function main() {
   await assert.rejects(probes.usbInventory({}, {signal: controller.signal}), /cancelled/);
   const oversized = createReceiverProbes(config, {readdir: async () => Array(513).fill('1-1')});
   await assert.rejects(oversized.usbInventory({}), /limit/);
+  const unavailableServices = createReceiverProbes(config, {
+    exists: async () => true, run: async () => { throw new Error('not available'); }
+  });
+  await assert.rejects(unavailableServices.serviceStatus({serviceId: 'sdrplay-api'}), /read-only receiver service check failed/);
   console.log('Read-only receiver probe tests passed; no host, service or hardware was accessed.');
 }
 

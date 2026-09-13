@@ -62,7 +62,8 @@ async function expectReject(promise, pattern) {
   assert.equal(result.configuredType, 'Kraken');
   assert.deepEqual(calls, [
     ['upstream', {host: '127.0.0.1', dataPort: 8091, controlPort: 8092}],
-    ['service', {serviceId: 'kraken-suite-v2'}]
+    ['service', {serviceId: 'kraken-suite-v2'}],
+    ['service', {serviceId: 'sdrplay-api'}]
   ]);
   const byType = Object.fromEntries(result.receivers.map(item => [item.type, item]));
   assert.equal(byType.Kraken.capabilities.detected, true);
@@ -112,7 +113,7 @@ async function expectReject(promise, pattern) {
   assert.equal(rspPlan.actions.find(item => item.id === 'dependency').execution,
     'unsupported');
   assert.equal(rspPlan.actions.find(item => item.id === 'upstream-service').status,
-    'blocked');
+    'not-required');
   assert.equal(rspPlan.actions.find(item => item.id === 'upstream-service').target,
     'sdrplay-api');
 

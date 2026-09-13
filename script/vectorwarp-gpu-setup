@@ -1,0 +1,348 @@
+#!/usr/bin/python3 -I
+"""Read-only Pi GPU diagnosis; explicitly interactive native driver installation.
+
+No driver payload, privileged web action, service start, arbitrary package name,
+repository addition, or global Mesa version requirement is provided here.
+"""
+import argparse
+import grp
+import importlib.util
+import json
+import os
+import pathlib
+import pwd
+import re
+import signal
+import stat
+import subprocess
+import sys
+
+PACKAGE = 'mesa-vulkan-drivers'
+COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver'
+ACCESS_COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access'
+FIX_URL = 'https://gitlab.freedesktop.org/mesa/mesa/-/commit/2cd51a6efcdfde07e219869e3fd663c88da92a04'
+
+
+class Refused(Exception):
+    pass
+
+
+def require(value, message):
+    if not value:
+        raise Refused(message)
+
+
+def read_text(filename, limit=8192):
+    try:
+        with open(filename, 'rb') as handle:
+            data = handle.read(limit + 1)
+        return data.decode('utf-8', errors='replace') if len(data) <= limit else ''
+    except OSError:
+        return ''
+
+
+def host_info():
+    model = read_text('/sys/firmware/devicetree/base/model', 256).rstrip('\0\n')
+    if not model:
+        model = read_text('/proc/device-tree/model', 256).rstrip('\0\n')
+    values = {}
+    for line in read_text('/etc/os-release').splitlines():
+        key, _, value = line.partition('=')
+        values[key] = value.strip('"')
+    distribution = values.get('ID', '')
+    if distribution == 'dragonos' and 'ubuntu' in values.get('ID_LIKE', '').split():
+        distribution = 'ubuntu'
+    # 64-bit Raspberry Pi OS uses Debian's native arm64 Mesa packages. A
+    # Raspbian/armhf repository is not silently treated as a qualified origin.
+    if distribution == 'raspbian' and os.uname().machine == 'aarch64':
+        distribution = 'debian'
+    return {'pi': model.startswith('Raspberry Pi '), 'model': model,
+            'distribution': distribution, 'version': values.get('VERSION_ID', ''),
+            'architecture': os.uname().machine}
+
+
+def run_readonly(command, timeout=5, limit=32768):
+    # Commands here are fixed local executables. No shell or caller-supplied
+    # executable/driver paths. Enumeration is bounded separately from DSP startup.
+    try:
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}) as child:
+            def cancelled(_signal, _frame):
+                child.kill()
+                child.communicate()
+                raise SystemExit(128 + _signal)
+            previous = signal.signal(signal.SIGTERM, cancelled)
+            try:
+                try:
+                    output, _ = child.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    child.kill(); child.communicate()
+                    return None
+            finally:
+                signal.signal(signal.SIGTERM, previous)
+        if child.returncode != 0 or len(output) > limit:
+            return None
+        return output.decode('utf-8', errors='replace').strip()
+    except OSError:
+        return None
+
+
+def installed_version(host):
+    if host['distribution'] == 'fedora':
+        return run_readonly(['/usr/bin/rpm', '-q', '--qf', '%{VERSION}-%{RELEASE}', PACKAGE], timeout=1)
+    if host['distribution'] in ('ubuntu', 'debian'):
+        result = run_readonly(['/usr/bin/dpkg-query', '-W', '-f=${db:Status-Status}\t${Version}', PACKAGE], timeout=1)
+        if result and result.startswith('installed\t'):
+            return result.split('\t', 1)[1]
+    return None
+
+
+def worker_path():
+    directory = pathlib.Path(__file__).resolve().parent
+    # Stable installed libexec or an extracted/source artifact. Never PATH/CWD.
+    for candidate in (directory.parent / 'current/bin/blah2-gpu-worker',
+                      directory.parent / 'bin/blah2-gpu-worker'):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def enumerate_driver():
+    worker = worker_path()
+    if not worker:
+        return {'available': False, 'devices': [], 'error': 'Packaged GPU worker is missing.'}
+    output = run_readonly([worker, '--driver-status'], timeout=6)
+    try:
+        result = json.loads(output or '')
+        require(result.get('version') == 1 and isinstance(result.get('devices'), list)
+                and len(result['devices']) <= 32, 'Unsupported GPU diagnostic response.')
+        return result
+    except (ValueError, Refused, AttributeError):
+        return {'available': False, 'devices': [],
+                'error': 'Driver enumeration failed or exceeded six seconds. No GPU qualification was attempted.'}
+
+
+def mesa_source_fix(version):
+    """Source-boundary hint, never a runtime acceptance or all-Mesa blocklist."""
+    match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)', version or '')
+    if not match:
+        return 'unknown'
+    value = tuple(map(int, match.groups()))
+    if value >= (26, 1, 0) or (26, 0, 7) <= value < (26, 1, 0):
+        return 'upstream-fix-present'
+    return 'backport-or-runtime-check-needed'
+
+
+def render_access():
+    """Only actual DRM render character nodes and their existing owning group."""
+    nodes = []
+    try:
+        account = pwd.getpwnam('vectorwarp')
+        groups = os.getgrouplist(account.pw_name, account.pw_gid)
+    except KeyError:
+        return {'state': 'service-user-missing', 'nodes': []}
+    try:
+        directory = pathlib.Path('/dev/dri').lstat()
+        if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_mode & 0o022:
+            return {'state': 'render-node-missing', 'nodes': []}
+    except OSError:
+        return {'state': 'render-node-missing', 'nodes': []}
+    for filename in sorted(pathlib.Path('/dev/dri').glob('renderD[0-9]*'))[:16]:
+        try:
+            info = filename.lstat()
+            if not re.fullmatch(r'renderD\d+', filename.name) or not stat.S_ISCHR(info.st_mode) or \
+                    info.st_uid != 0 or os.major(info.st_rdev) != 226 or not 128 <= os.minor(info.st_rdev) <= 255:
+                continue
+            group = grp.getgrgid(info.st_gid).gr_name
+            permitted = (account.pw_uid == info.st_uid and info.st_mode & 0o600 == 0o600) or \
+                (info.st_gid in groups and info.st_mode & 0o060 == 0o060) or info.st_mode & 0o006 == 0o006
+            nodes.append({'path': str(filename), 'group': group, 'accessibleByService': bool(permitted)})
+        except (OSError, KeyError):
+            continue
+    return {'state': 'available' if any(node['accessibleByService'] for node in nodes) else
+            'group-access-needed' if nodes else 'render-node-missing', 'nodes': nodes,
+            'check': 'unix-owner-group-mode; ACL, SELinux and actual device opening are not tested'}
+
+
+def classify(host, package, driver, access):
+    result = {'version': 1, 'pi': host['pi'], 'model': host['model'],
+              'distribution': host['distribution'], 'installedPackage': package,
+              'state': 'not-applicable', 'qualification': 'not-run',
+              'driver': driver, 'serviceAccess': access, 'command': COMMAND,
+              'accessCommand': ACCESS_COMMAND, 'fixUrl': FIX_URL,
+              'message': 'Pi-specific driver setup is not required on this host.'}
+    if not host['pi']:
+        return result
+    devices = [item for item in driver.get('devices', []) if isinstance(item, dict) and item.get('driverId') == 19]
+    # VK_DRIVER_ID_MESA_V3DV = 19. Driver identity, not CPU architecture or an
+    # arbitrary vendor-version encoding, decides whether the Mesa hint applies.
+    result['state'] = 'unqualified'
+    result['message'] = 'GPU setup has not passed the configured processing geometry. Start processing explicitly and inspect both GPU stages.'
+    if not devices:
+        result['state'] = 'driver-unavailable' if not package else 'driver-unverified'
+        result['message'] = 'No accessible V3DV GPU was enumerated. Check the native Mesa Vulkan package and DRM render-node permissions.'
+    else:
+        result['sourceFix'] = mesa_source_fix(devices[0].get('mesaVersion'))
+        if result['sourceFix'] != 'upstream-fix-present':
+            result['state'] = 'compiler-risk'
+            result['message'] = ('This V3DV version needs a verified backport or actual startup qualification. '
+                'An older Mesa optimizer can stall while compiling the first FFT shader; normal startup remains bounded to 30 seconds. '
+                'Use a signed native distro Mesa update, then retry the same geometry. Version alone does not prove failure or success.')
+    if access['state'] == 'group-access-needed':
+        result['message'] += ' The vectorwarp service user has no Unix group-mode access to its render node; review the separate local access command (ACL/SELinux permissions are not tested).'
+    return result
+
+
+def status():
+    host = host_info()
+    if not host['pi']:
+        return classify(host, None, {'available': False, 'devices': []}, {'state': 'not-checked', 'nodes': []})
+    return classify(host, installed_version(host), enumerate_driver(), render_access())
+
+
+def adapter(name):
+    spec = importlib.util.spec_from_file_location('gpu_' + name,
+        pathlib.Path(__file__).with_name('vectorwarp-receiver-' + name + '.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def apt_plan(host):
+    import apt
+    import apt_pkg
+    common = adapter('apt')
+    common.verify_sources(); common.configure(apt_pkg)
+    cache = apt.Cache()
+    require(not cache.broken_count and not cache.dpkg_journal_dirty,
+            'Repair interrupted packages locally before GPU setup.')
+    require(PACKAGE in cache and cache[PACKAGE].candidate is not None,
+            'No native Mesa candidate is cached. Refresh signed distro metadata locally (sudo apt-get update), then retry.')
+    root = cache[PACKAGE]
+    root.mark_install(auto_fix=False, auto_inst=True, from_user=True)
+    pins = []
+    for package in cache.get_changes():
+        require(not package.marked_delete and package.candidate is not None,
+                'This driver transaction removes packages; review it outside VectorWarp.')
+        candidate = package.candidate
+        require(not package.installed or apt_pkg.version_compare(candidate.version, package.installed.version) >= 0,
+                'Driver setup will not downgrade packages.')
+        origins = [origin for origin in candidate.origins if origin.site]
+        require(origins and all(origin.trusted and origin.origin == host['distribution'].title()
+            and origin.site in common.NATIVE_SITES[host['distribution']] for origin in origins),
+            'Driver dependencies must come from authenticated native distro repositories, not third-party Mesa builds.')
+        require(re.fullmatch('[0-9a-fA-F]{64}', getattr(candidate, 'sha256', '') or ''),
+                'Native package metadata lacks a SHA256 archive digest.')
+        pins.append(package.name + '=' + candidate.version)
+    require(not cache.broken_count, 'The native driver transaction has unresolved dependencies.')
+    require(len(pins) <= 128, 'Driver dependency transaction is unexpectedly large; review it locally.')
+    require(pins, 'No driver update is available in cached native metadata. Refresh signed distro metadata; if still unchanged, ask your distro for the V3DV fix/backport. No GPU repair was made.')
+    options = ['-o', 'APT::Get::AllowUnauthenticated=false', '-o', 'Acquire::AllowInsecureRepositories=false',
+               '-o', 'Acquire::AllowDowngradeToInsecureRepositories=false', '-o', 'Acquire::AllowWeakRepositories=false',
+               '-o', 'APT::Get::Assume-Yes=false', '-o', 'APT::Get::Assume-No=false']
+    return ['/usr/bin/apt-get', *options, '--no-remove', '--no-install-recommends', 'install', *sorted(pins)]
+
+
+def dnf_plan(host):
+    import libdnf5
+    import rpm
+    common = adapter('dnf')
+    require(host['version'] == '44', 'The guarded native DNF setup currently supports Fedora 44 only.')
+    base = libdnf5.base.Base(); base.load_config()
+    config = base.get_config(); config.get_plugins_option().set(False)
+    base.setup()
+    sack = base.get_repo_sack(); sack.create_repos_from_system_configuration()
+    arch = base.get_vars().get_value('arch')
+    for repo in libdnf5.repo.RepoQuery(base):
+        if repo.get_id() not in ('fedora', 'updates'):
+            repo.get_config().get_enabled_option().set(False)
+        else:
+            common.verify_repo(repo, {'version': '44'}, arch)
+            repo.get_config().get_enabled_option().set(True)
+    sack.load_repos()
+    query = libdnf5.rpm.PackageQuery(base); query.filter_name([PACKAGE]); query.filter_arch([arch])
+    query.filter_available(); query.filter_latest_evr()
+    candidates = list(query)
+    require(candidates, 'No signed native Fedora Mesa candidate is available. Refresh native repository metadata or request the V3DV fix/backport from Fedora.')
+    candidate = candidates[0]
+    installed = libdnf5.rpm.PackageQuery(base); installed.filter_name([PACKAGE]); installed.filter_arch([arch]); installed.filter_installed()
+    label = lambda package: (package.get_epoch() or '0', package.get_version(), package.get_release())
+    require(all(rpm.labelCompare(label(candidate), label(value)) > 0 for value in installed),
+            'Native repositories offer no newer Mesa package. Refresh metadata or request a fixed distro/backport; no GPU repair was made.')
+    # The native manager displays and confirms its actual dependency transaction.
+    # No key import, plugins, extra repository, weak dependency or allowerasing.
+    return ['/usr/bin/dnf', '--disable-plugin=*', '--repo=fedora,updates',
+            '--setopt=gpgcheck=1', '--setopt=sslverify=1', '--setopt=fedora.gpgkey=', '--setopt=updates.gpgkey=',
+            '--setopt=install_weak_deps=False', '--setopt=assumeyes=False', '--setopt=assumeno=False',
+            'install', candidate.get_full_nevra()]
+
+
+def interactive_guard():
+    require(os.geteuid() == 0 and sys.stdin.isatty() and sys.stdout.isatty(),
+            'This action requires an administrator in a local interactive terminal; no unattended/web action is supported.')
+    host = host_info()
+    require(host['pi'], 'Pi-specific setup refuses package or account changes on non-Pi hardware.')
+    require(host['architecture'] == 'aarch64', 'Only the packaged 64-bit Pi platform is supported.')
+    return host
+
+
+def install_driver():
+    host = interactive_guard()
+    require(host['distribution'] in ('fedora', 'debian', 'ubuntu'), 'Use your distro maintainer’s signed native Mesa Vulkan package; this platform is not qualified for installation here.')
+    command = dnf_plan(host) if host['distribution'] == 'fedora' else apt_plan(host)
+    print('The native package manager will display its exact transaction and ask for confirmation.\n'
+          'This can update Mesa and required dependencies, but not the whole system. No radar service will be started.\n'
+          'Afterward, rerun this check and explicitly start processing: package installation is NOT GPU accuracy or speed acceptance.', flush=True)
+    # Fixed program, fixed root package and validated native provenance. Do not
+    # pass ambient APT/DNF configuration, loader injection, or noninteractive env.
+    os.execve(command[0], command, {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C',
+                                 'TERM': 'dumb', 'DEBIAN_FRONTEND': 'readline'})
+
+
+def enable_access():
+    interactive_guard()
+    access = render_access()
+    needed = [node for node in access['nodes'] if not node['accessibleByService']]
+    require(needed, 'No inaccessible render node was found. No account was changed.')
+    groups = {node['group'] for node in needed}
+    require(len(groups) == 1 and next(iter(groups)) in ('render', 'video'),
+            'Render nodes have an unexpected/mixed owner group; review access with your administrator.')
+    group = next(iter(groups))
+    print('Allow the existing vectorwarp processor account to use ' + ', '.join(node['path'] for node in needed) +
+          ' by appending its existing ' + group + ' group. No other groups or node permissions change; no service restarts.')
+    require(input('Type ENABLE GPU ACCESS to confirm: ') == 'ENABLE GPU ACCESS', 'Cancelled; no account was changed.')
+    # Recheck exact nodes after consent; preserve every existing supplementary group.
+    require(render_access() == access, 'Render-node/account state changed during review; retry.')
+    subprocess.run(['/usr/sbin/usermod', '--append', '--groups', group, 'vectorwarp'], check=True,
+                   env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    require(render_access()['state'] == 'available', 'Group update did not establish the expected access; inspect it locally.')
+    print('Account access updated. Existing processes keep their old groups until an explicit restart; GPU qualification is still required.')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument('--status', action='store_true')
+    actions.add_argument('--install-driver', action='store_true')
+    actions.add_argument('--enable-service-access', action='store_true')
+    parser.add_argument('--json', action='store_true')
+    args = parser.parse_args()
+    try:
+        require(not args.json or not (args.install_driver or args.enable_service_access),
+                'JSON mode is read-only; privileged actions require local interactive review.')
+        if args.install_driver:
+            install_driver()
+        elif args.enable_service_access:
+            enable_access()
+        else:
+            result = status()
+            print(json.dumps(result, separators=(',', ':')) if args.json else
+                  result['message'] + ('\nDriver: ' + COMMAND + '\nAccess: ' + ACCESS_COMMAND if result['pi'] else ''))
+        return 0
+    except Exception as error:
+        print('GPU setup: ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

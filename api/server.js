@@ -15,6 +15,8 @@ const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
+const {createGpuSetupStatus} = require('./gpu-setup.js');
+const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
 // parse config file
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
@@ -28,7 +30,13 @@ const serviceErrors = new Map();
 const ownedPorts = new Set();
 let restartState = {state: 'idle'};
 let lastFrameAt = null;
+let lastTimingAt = null;
 let timestampConnections = 0;
+let restartGeneration = 0;
+let timestampGeneration = 0;
+let timingGeneration = 0;
+let activeTimestampConnection = 0;
+let activeTimingConnection = 0;
 let upstreamCache = null;
 let processorStatus = null;
 let configWriteInProgress = false;
@@ -99,6 +107,44 @@ var capture = false;
 var captureStartedAt = null;
 let captureRevision = 0;
 
+function invalidateTimestampTelemetry() {
+  activeTimestampConnection = ++timestampGeneration;
+  lastFrameAt = null;
+  timestamp = '';
+  data_timestamp = '';
+  return {restart: restartGeneration, connection: activeTimestampConnection};
+}
+
+function invalidateTimingTelemetry() {
+  activeTimingConnection = ++timingGeneration;
+  lastTimingAt = null;
+  timing = '';
+  data_timing = '';
+  return {restart: restartGeneration, connection: activeTimingConnection};
+}
+
+function timestampConnectionCurrent(generation) {
+  return generation.restart === restartGeneration && generation.connection === activeTimestampConnection;
+}
+
+function timingConnectionCurrent(generation) {
+  return generation.restart === restartGeneration && generation.connection === activeTimingConnection;
+}
+
+function currentTimingBackend() {
+  try { return JSON.parse(timing) || {}; }
+  catch (_) { return {}; }
+}
+
+function currentGpuRuntime(freshness) {
+  const now = Date.now();
+  const backend = currentTimingBackend();
+  const receiving = lastFrameAt !== null && now - lastFrameAt < freshness;
+  return {acceleration: backend.acceleration, clutterAcceleration: backend.clutterAcceleration,
+    fresh: receiving && lastTimingAt !== null &&
+      now - lastTimingAt < freshness};
+}
+
 // api server
 const app = express();
 app.use(express.json({limit: '256kb', strict: true}));
@@ -158,6 +204,9 @@ function restartCommandAvailable() {
 }
 
 function launchRestart() {
+  restartGeneration += 1;
+  invalidateTimestampTelemetry();
+  invalidateTimingTelemetry();
   const [command, ...args] = restartCommand;
   restartState = {...restartState, state: 'running', startedAt: Date.now(),
     timestampConnections};
@@ -240,12 +289,15 @@ app.get('/api/config/capabilities', (req, res) => {
     configPath: configFile
   });
 });
-app.get('/api/system/status', (req, res) => {
+app.get('/api/system/status', async (req, res) => {
   const document = readConfig(configFile);
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
+  const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
+  const backend = currentTimingBackend();
   res.json({serverId, configRevision: document.revision,
-    acceleration: (() => { try { return JSON.parse(timing)?.acceleration || null; } catch (_) { return null; } })(),
-    clutterAcceleration: (() => { try { return JSON.parse(timing)?.clutterAcceleration || null; } catch (_) { return null; } })(),
+    acceleration: backend.acceleration || null,
+    clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: restartState, receiverSynchronization: receiverSyncState,
     lastFrameAt, timestampConnections,
@@ -692,14 +744,17 @@ listenData(server_tracker, 'track');
 
 // tcp listener timestamp
 const server_timestamp = net.createServer((socket)=>{
+  const generation = invalidateTimestampTelemetry();
   timestampConnections += 1;
   socket.on("data",(msg)=>{
+    if (!timestampConnectionCurrent(generation)) return;
     lastFrameAt = Date.now();
     data_timestamp = data_timestamp + msg.toString();
     timestamp = data_timestamp;
     data_timestamp = '';
   });
   socket.on("close",()=>{
+      if (timestampConnectionCurrent(generation)) invalidateTimestampTelemetry();
       console.log("Connection closed.");
   })
 });
@@ -707,16 +762,20 @@ listenData(server_timestamp, 'timestamp');
 
 // tcp listener timing
 const server_timing = net.createServer((socket)=>{
+  const generation = invalidateTimingTelemetry();
   socket.on("data",(msg)=>{
+    if (!timingConnectionCurrent(generation)) return;
     data_timing = data_timing + msg.toString();
     if (data_timing.slice(-1) === "}")
     {
       timing = data_timing;
+      lastTimingAt = Date.now();
       stash_timing.update_data(timing);
       data_timing = '';
     }
   });
   socket.on("close",()=>{
+      if (timingConnectionCurrent(generation)) invalidateTimingTelemetry();
       console.log("Connection closed.");
   })
 });

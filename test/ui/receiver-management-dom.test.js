@@ -62,7 +62,8 @@ async function click(label) { const button = findButton(label); assert.ok(button
     await click('Check receiver software');
     const text = window.document.querySelector('#receiver-setup').textContent;
     for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF']) assert.ok(text.includes(type));
-    assert.ok(text.includes('license accepted locally'));
+    assert.ok([...window.document.querySelectorAll('#receiver-setup a')].some(link =>
+      link.href === 'https://sdrplay.com/hardware-api/'), 'Unverified SDK state exposes the official vendor link.');
     assert.ok(text.includes('will be reused'));
     assert.ok(text.includes('runtime unavailable'));
     for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF'])

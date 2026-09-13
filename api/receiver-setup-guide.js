@@ -10,15 +10,19 @@ function receiverSetupGuide(receiver, helperExecutable) {
     label: 'Receiver build and installation guide'});
     return steps;
   }
+  if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
+    steps.push({text: receiver.dependencies.state === 'missing' ?
+      'SDRplay API was not found. Obtain it from SDRplay and accept its license locally before enrolling an installed service.' :
+      'Could not verify SDRplay API. Check its local installation before enrolling the service.',
+    link: 'https://sdrplay.com/hardware-api/', label: 'SDRplay hardware API and supported systems'});
+  }
   if (receiver.type === 'Kraken' && receiver.locality === 'remote') {
     steps.push({text: 'Keep the existing remote Suite installation. Enter its saved host and IQ/control ports, then Apply to verify the complete receiver settings. Local service management does not control that host.'});
-  } else if (['Kraken', 'RspDuo'].includes(receiver.type) && receiver.managedService.state !== 'running') {
+  } else if ((receiver.type === 'Kraken' ||
+      (receiver.type === 'RspDuo' && receiver.dependencies.state === 'installed')) &&
+      receiver.managedService.state !== 'running') {
     steps.push({text: 'An administrator can enroll an already-installed local receiver service once. Review its exact installed definition in the terminal. Then Check receiver software here and review its start action.',
       command: `sudo ${helperExecutable} enroll-service ${receiver.type}`});
-  }
-  if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
-    steps.push({text: 'Obtain SDRplay API 3.15 from SDRplay and accept its license locally. Follow its installer for your operating system, then enroll the installed service above.',
-      link: 'https://sdrplay.com/hardware-api/', label: 'SDRplay hardware API and supported systems'});
   }
   if (receiver.type === 'HackRF' && receiver.dependencies.state !== 'installed') {
     steps.push({text: 'On qualified Fedora 44 or Ubuntu/Debian (including an Ubuntu-based DragonOS with native Ubuntu repositories), enroll a complete signed native package transaction in the administrator terminal. Then return here to review every package and run the separately authorized one-use install.',

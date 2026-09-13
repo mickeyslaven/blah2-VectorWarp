@@ -7,6 +7,7 @@ PREFIX=/opt/vectorwarp
 SYSCONFDIR=/etc/vectorwarp
 DESTDIR=
 WITH_SYSTEMD=true
+SETUP_PI_GPU=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
 
@@ -21,6 +22,7 @@ Install a completed native artifact. This command never enables or starts units.
   --sysconfdir PATH       Configuration directory (default: /etc/vectorwarp)
   --destdir PATH          Stage beneath a packaging root without host changes
   --no-systemd            Do not install users, units, tmpfiles or restart policy
+  --setup-pi-gpu          After install, offer a signed native Pi Mesa transaction
   --preflight             Validate inputs and destinations, then stop
   --dry-run               Print planned operations without changing files
   -h, --help              Show this help
@@ -41,6 +43,7 @@ while (($#)); do
     --sysconfdir) (($# >= 2)) || die '--sysconfdir needs a value'; SYSCONFDIR=$2; shift 2 ;;
     --destdir) (($# >= 2)) || die '--destdir needs a value'; DESTDIR=$2; shift 2 ;;
     --no-systemd) WITH_SYSTEMD=false; shift ;;
+    --setup-pi-gpu) SETUP_PI_GPU=true; shift ;;
     --preflight) PREFLIGHT_ONLY=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -57,6 +60,10 @@ if [[ -n $DESTDIR ]]; then
   [[ $DESTDIR == /* && $DESTDIR != / ]] || die '--destdir must be an absolute non-root path'
   DESTDIR=${DESTDIR%/}
 fi
+if $SETUP_PI_GPU; then
+  [[ -z $DESTDIR ]] || die '--setup-pi-gpu is forbidden with --destdir; staging never probes or changes the host GPU'
+  $WITH_SYSTEMD || die '--setup-pi-gpu requires the installed integration helpers'
+fi
 for file in .vectorwarp-build bin/blah2 api/server.js html/index.html config-examples/config.yml; do
   [[ -e $ARTIFACT/$file ]] || die "artifact is incomplete: $file"
 done
@@ -72,7 +79,17 @@ read_manifest_field() {
 read_manifest_field build_id build_id
 [[ $build_id =~ ^[A-Za-z0-9._:-]+$ ]] || die 'artifact has an invalid build_id'
 read_manifest_field backend backend
+test_only=false
+test_only_count=$(grep -c '^test_only=' "$ARTIFACT/.vectorwarp-build" || true)
+((test_only_count <= 1)) || die 'artifact manifest has duplicate test_only fields'
+if ((test_only_count == 1)); then
+  read_manifest_field test_only test_only
+  [[ $test_only == true || $test_only == false ]] || die 'artifact has an invalid test_only marker'
+fi
 case "$backend" in
+  open-test)
+    expected_receivers=Usrp,HackRF,Kraken; initial_config=config-usrp.yml
+    [[ $test_only == true ]] || die 'open-test artifacts must be explicitly marked test-only' ;;
   kraken) expected_receivers=Kraken; initial_config=config-kraken.yml ;;
   rspduo) expected_receivers=RspDuo,Kraken; initial_config=config.yml ;;
   usrp) expected_receivers=Usrp,Kraken; initial_config=config-usrp.yml ;;
@@ -80,6 +97,7 @@ case "$backend" in
   all) expected_receivers=RspDuo,Usrp,HackRF,Kraken; initial_config=config.yml ;;
   *) die 'artifact has an invalid backend' ;;
 esac
+[[ $backend == open-test || $test_only == false ]] || die 'only open-test artifacts may be marked test-only'
 
 # New artifacts state their exact live receiver set. Accept the two historical
 # backend manifests without this field, but never infer or pass through unknown
@@ -230,6 +248,9 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
+  if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
+  fi
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     render "$ARTIFACT/systemd/vectorwarp-receiver.service.in" "$temporary/vectorwarp-receiver.service"
     render "$ARTIFACT/systemd/vectorwarp-receiver-policy.json.in" "$temporary/receivers.json"
@@ -275,4 +296,10 @@ fi
 
 if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then run systemctl daemon-reload; fi
 say 'installation complete; no service was enabled or started'
+if $SETUP_PI_GPU; then
+  run "$target_prefix/libexec/vectorwarp-gpu-setup" --install-driver ||
+    die 'application installed; Pi driver setup was cancelled or unavailable; no GPU acceptance was inferred'
+elif $WITH_SYSTEMD; then
+  say "Pi GPU setup (read-only): $PREFIX/libexec/vectorwarp-gpu-setup --status"
+fi
 say "after review, an administrator may run: systemctl enable --now vectorwarp-api.service vectorwarp-processor.service"

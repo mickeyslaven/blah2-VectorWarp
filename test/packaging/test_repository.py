@@ -198,6 +198,10 @@ class ManifestTests(unittest.TestCase):
 
     def test_receiver_specific_or_incomplete_packages_are_rejected(self):
         for changes in ({"backend": "kraken"},
+                        {"backend": "open-test", "test_only": True,
+                         "compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
+                        {"test_only": True}, {"test_only": "false"},
+                        {"test_only": None}, {"test_only": 0},
                         {"compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
                         {"compiled_receivers": ["Kraken", "RspDuo", "Usrp", "Usrp"]}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):

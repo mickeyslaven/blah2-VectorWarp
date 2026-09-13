@@ -5,6 +5,7 @@ REPOSITORY_URL=https://mickeyslaven.github.io/blah2-VectorWarp
 EXPECTED_FINGERPRINT=@SIGNING_FINGERPRINT@
 KEY_FILE=
 START_WEB=false
+SETUP_PI_GPU=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
 DETECT_PLATFORM_ONLY=false
@@ -16,6 +17,7 @@ Usage: install-release.sh [options]
 Add the signed VectorWarp package repository and install VectorWarp.
 
   --start-web             Explicitly enable and start only the web API
+  --setup-pi-gpu          After install, offer a signed native Pi Mesa transaction
   --repo-url HTTPS_URL    Override the repository base (maintainer/testing)
   --fingerprint HEX       Expected 40-hex signing-key fingerprint
   --key-file PATH         Verify this public key instead of downloading it
@@ -178,6 +180,7 @@ if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
 while (($#)); do
   case "$1" in
     --start-web) START_WEB=true; shift ;;
+    --setup-pi-gpu) SETUP_PI_GPU=true; shift ;;
     --repo-url) (($# >= 2)) || die '--repo-url needs a value'; REPOSITORY_URL=${2%/}; shift 2 ;;
     --fingerprint) (($# >= 2)) || die '--fingerprint needs a value'; EXPECTED_FINGERPRINT=$2; shift 2 ;;
     --key-file) (($# >= 2)) || die '--key-file needs a value'; KEY_FILE=$2; shift 2 ;;
@@ -282,6 +285,13 @@ else
     die 'could not install the DNF repository file; no package manager was run'
   run dnf install vectorwarp ||
     die 'DNF package installation failed; repository configuration was retained for a safe retry'
+fi
+
+if $SETUP_PI_GPU; then
+  run /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver ||
+    die 'VectorWarp installed; Pi driver setup was cancelled or unavailable; rerun the local setup command after review'
+else
+  say 'Pi GPU check: /opt/vectorwarp/libexec/vectorwarp-gpu-setup --status; explicit driver setup: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver'
 fi
 
 if $START_WEB; then

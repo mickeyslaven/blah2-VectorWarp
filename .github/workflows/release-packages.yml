@@ -17,10 +17,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # Maintainer approval covers SDK build use only, never runtime redistribution.
-  VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED: ${{ vars.VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED }}
-
 concurrency:
   group: release-packages-${{ github.ref }}
   cancel-in-progress: false
@@ -54,8 +50,8 @@ jobs:
             [[ $(git rev-parse refs/remotes/origin/main) == "${GITHUB_SHA}" ]] || {
               echo 'Stable tags must point to the exact current main commit.' >&2; exit 1; }
           elif [[ ${GITHUB_EVENT_NAME} == pull_request ]]; then
-            # PR packaging is unsigned smoke coverage only; it cannot reach
-            # the signing job or its environment-scoped signing secret.
+            # PRs build test-only open-backend packages, without SDKs or signing.
+            # They cannot reach protected packaging or signing jobs.
             tag=v0.0.0
             tagged_release=false
           else
@@ -71,6 +67,7 @@ jobs:
             echo 'Version must be an immutable stable vMAJOR.MINOR.PATCH tag.' >&2; exit 1; }
           printf 'tag=%s\nversion=%s\ntagged_release=%s\n' "$tag" "${tag#v}" "$tagged_release" >> "$GITHUB_OUTPUT"
   verify:
+    # Retain the required-check identity; this job does not use a vendor SDK.
     name: Verify CPU unit, API, and replay tests
     needs: validate
     runs-on: ubuntu-24.04
@@ -89,9 +86,6 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             build-essential cmake curl git pkg-config python3-yaml tar unzip xz-utils zip \
             apt-utils createrepo-c gnupg libarmadillo-dev libfftw3-dev rpm libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
-      - name: Prepare approved SDRplay build inputs without installing vendor software
-        run: |
-          script/prepare-sdrplay-build-sdk.sh --output-dir build/ci-sdrplay-sdk
       - name: Bootstrap pinned vcpkg manifest dependencies
         run: |
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
@@ -104,8 +98,7 @@ jobs:
         run: |
           cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
             -DBLAH2_KRAKEN_ONLY=OFF -DBLAH2_GPU=OFF -DBLAH2_OUTPUT_DIR="$PWD/build/ci/bin" \
-            -DBLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/ci-sdrplay-sdk/inc" \
-            -DBLAH2_SDRPLAY_LIBRARY="$PWD/build/ci-sdrplay-sdk/amd64/libsdrplay_api.so.3.15" \
+            -DBLAH2_ENABLE_RSPDUO=OFF -DBLAH2_ENABLE_USRP=ON -DBLAH2_ENABLE_HACKRF=ON \
             -DCMAKE_TOOLCHAIN_FILE="$PWD/build/ci-deps/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_MANIFEST_DIR="$PWD/build/ci-manifest" -DVCPKG_INSTALLED_DIR="$PWD/build/ci/vcpkg_installed"
           cmake --build build/ci --parallel 2
@@ -124,8 +117,13 @@ jobs:
           npm test --prefix api
           npm run test:dom --prefix api
           node test/ui/deployment.test.js
-      - name: Run staged native-package acceptance checks
-        run: node test/ui/packaging.test.js
+      - name: Check packaging policy and fake SDK inputs (no real SDRplay SDK)
+        run: |
+          node test/ui/packaging.test.js
+          python3 test/packaging/test_install_docs.py -v
+          python3 test/packaging/test_smoke_receiver_status.py -v
+          python3 test/packaging/test_sdrplay_build_sdk.py -v
+          python3 test/packaging/test_sdrplay_distribution.py -v
       - name: Syntax-check every workflow shell block and release script
         run: |
           bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
@@ -157,7 +155,10 @@ jobs:
           PY
   package:
     name: ${{ matrix.distro }} ${{ matrix.arch }} package
+    # PRs build only the explicitly test-only open backend. Trusted builds
+    # retain the all-adapter artifact and release-signing environment.
     needs: [validate, verify]
+    environment: ${{ github.event_name == 'pull_request' && 'pr-packaging' || 'release-signing' }}
     strategy:
       fail-fast: false
       matrix:
@@ -172,13 +173,24 @@ jobs:
           - { runner: ubuntu-24.04-arm, distro: debian13, format: deb, arch: arm64, node_arch: arm64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
           - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
           - { runner: ubuntu-24.04-arm, distro: fedora44, format: rpm, arch: aarch64, node_arch: arm64 }
-    runs-on: ${{ matrix.runner }}
+    # SDK-capable labels are used only for trusted all-adapter builds.
+    runs-on: ${{ github.event_name == 'pull_request' && matrix.runner || (matrix.node_arch == 'x64' && (vars.VECTORWARP_SDRPLAY_RUNNER_X64 || matrix.runner) || (vars.VECTORWARP_SDRPLAY_RUNNER_ARM64 || matrix.runner)) }}
     timeout-minutes: 60
     steps:
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Require separately provisioned licensed SDK before building packages
+        if: github.event_name != 'pull_request'
+        env:
+          VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED: ${{ vars.VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED }}
+          VECTORWARP_SDRPLAY_SDK_ARCHIVE: ${{ vars.VECTORWARP_SDRPLAY_SDK_ARCHIVE }}
+          BLAH2_SDRPLAY_INCLUDE_DIR: ${{ vars.BLAH2_SDRPLAY_INCLUDE_DIR }}
+          BLAH2_SDRPLAY_LIBRARY: ${{ vars.BLAH2_SDRPLAY_LIBRARY }}
+        run: |
+          set -euo pipefail
+          script/prepare-sdrplay-build-sdk.sh --output-dir "$RUNNER_TEMP/vectorwarp-sdrplay-sdk"
       - name: Build native Debian package
-        if: matrix.distro == 'ubuntu24.04'
+        if: github.event_name != 'pull_request' && matrix.distro == 'ubuntu24.04'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -199,16 +211,15 @@ jobs:
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
           node_root="$RUNNER_TEMP/${archive%.tar.xz}"
           export PATH="$node_root/bin:$PATH"
-          script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
           case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
-          export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
-          export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+          export BLAH2_SDRPLAY_INCLUDE_DIR="$RUNNER_TEMP/vectorwarp-sdrplay-sdk/inc"
+          export BLAH2_SDRPLAY_LIBRARY="$RUNNER_TEMP/vectorwarp-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
           script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
       - name: Build native Ubuntu 22.04/26.04 or Debian 13 package in pinned isolated userspace
-        if: matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13'
+        if: github.event_name != 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13')
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -217,8 +228,9 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -e VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            -v "$RUNNER_TEMP/vectorwarp-sdrplay-sdk:/opt/vectorwarp-build-sdk:ro" \
             ${{ matrix.image }} \
             bash -euo pipefail -c '
               export DEBIAN_FRONTEND=noninteractive
@@ -233,17 +245,16 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
               case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
-              export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
-              export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+              export BLAH2_SDRPLAY_INCLUDE_DIR="/opt/vectorwarp-build-sdk/inc"
+              export BLAH2_SDRPLAY_LIBRARY="/opt/vectorwarp-build-sdk/$sdk_arch/libsdrplay_api.so.3.15"
               script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
             '
       - name: Build native Fedora RPM in isolated Fedora userspace
-        if: matrix.format == 'rpm'
+        if: github.event_name != 'pull_request' && matrix.format == 'rpm'
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -252,8 +263,9 @@ jobs:
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -e VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 \
             -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            -v "$RUNNER_TEMP/vectorwarp-sdrplay-sdk:/opt/vectorwarp-build-sdk:ro" \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 \
             bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
@@ -265,14 +277,75 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/prepare-sdrplay-build-sdk.sh --output-dir build/package-sdrplay-sdk
               case "$(uname -m)" in x86_64) sdk_arch=amd64 ;; aarch64|arm64) sdk_arch=arm64 ;; esac
-              export BLAH2_SDRPLAY_INCLUDE_DIR="$PWD/build/package-sdrplay-sdk/inc"
-              export BLAH2_SDRPLAY_LIBRARY="$PWD/build/package-sdrplay-sdk/$sdk_arch/libsdrplay_api.so.3.15"
+              export BLAH2_SDRPLAY_INCLUDE_DIR="/opt/vectorwarp-build-sdk/inc"
+              export BLAH2_SDRPLAY_LIBRARY="/opt/vectorwarp-build-sdk/$sdk_arch/libsdrplay_api.so.3.15"
               script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
               script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro fedora44 --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
+            '
+      - name: Build test-only Ubuntu 24.04 package for PR verification
+        if: github.event_name == 'pull_request' && matrix.distro == 'ubuntu24.04'
+        env:
+          VERSION: 0.0.0
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
+            libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
+          sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "$RUNNER_TEMP/${archive}"
+          printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"; node_root="$RUNNER_TEMP/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
+          script/build-native.sh --backend open-test --gpu auto --build-dir build/package --jobs 2
+          script/package-native.sh --test-only --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
+          bash script/smoke-native-package.sh --test-only --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
+      - name: Build test-only Debian-family package for PR verification
+        if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13')
+        env:
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          podman run --rm --userns=keep-id --user root --security-opt label=disable \
+            -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            ${{ matrix.image }} bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install --yes --no-install-recommends build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
+              tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
+              script/build-native.sh --backend open-test --gpu auto --build-dir build/package --jobs 2
+              script/package-native.sh --test-only --format deb --artifact build/package/artifact --node-runtime "$node_root" --version 0.0.0 --distro "${{ matrix.distro_env }}" --output-dir dist
+              bash script/smoke-native-package.sh --test-only --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
+            '
+      - name: Build test-only Fedora package for PR verification
+        if: github.event_name == 'pull_request' && matrix.format == 'rpm'
+        env:
+          NODE_ARCH: ${{ matrix.node_arch }}
+          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+        run: |
+          set -euo pipefail
+          podman run --rm --userns=keep-id --user root --security-opt label=disable \
+            -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 bash -euo pipefail -c '
+              dnf --assumeyes install ca-certificates file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
+              tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
+              script/build-native.sh --backend open-test --gpu auto --build-dir build/package --jobs 2
+              script/package-native.sh --test-only --format rpm --artifact build/package/artifact --node-runtime "$node_root" --version 0.0.0 --distro fedora44 --output-dir dist
+              bash script/smoke-native-package.sh --test-only --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
             '
       - name: Require package metadata from the packager
         run: |
@@ -280,6 +353,7 @@ jobs:
           package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
           [[ -n $package && -f "${package}.manifest.json" ]]
       - name: Upload signed-review inputs
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.distro }}-${{ matrix.arch }}

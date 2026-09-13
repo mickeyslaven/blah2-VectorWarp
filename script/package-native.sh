@@ -11,6 +11,7 @@ VERSION=
 PACKAGE_RELEASE=1
 DRY_RUN=false
 PREFLIGHT_ONLY=false
+TEST_ONLY=false
 
 usage() {
   cat <<'EOF'
@@ -24,6 +25,7 @@ Build a distro-native VectorWarp release package from a native artifact.
   --artifact PATH         Artifact made by build-native.sh
   --node-runtime PATH     Extracted official Node.js 24.21.0 Linux archive
   --output-dir PATH       Destination for package and manifest (default: dist)
+  --test-only             Package only an open-test artifact; never for publication
   --preflight             Validate all inputs and tools, then stop
   --dry-run               Print the staging plan without writing a package
   -h, --help              Show this help
@@ -48,6 +50,7 @@ while (($#)); do
     --artifact) (($# >= 2)) || die '--artifact needs a value'; ARTIFACT=$2; shift 2 ;;
     --node-runtime) (($# >= 2)) || die '--node-runtime needs a value'; NODE_RUNTIME=$2; shift 2 ;;
     --output-dir) (($# >= 2)) || die '--output-dir needs a value'; OUTPUT_DIR=$2; shift 2 ;;
+    --test-only) TEST_ONLY=true; shift ;;
     --preflight) PREFLIGHT_ONLY=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -102,7 +105,7 @@ esac
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
 for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
-  bin/blah2-receiver-hackrf.so bin/blah2-receiver-rspduo.so \
+  bin/blah2-receiver-hackrf.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
   [[ -e $ARTIFACT/$file ]] || die "release artifact is incomplete: $file"
 done
@@ -116,9 +119,18 @@ gpu=$(sed -n 's/^gpu=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_version=$(sed -n 's/^build_os_version=//p' "$ARTIFACT/.vectorwarp-build")
 build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
-[[ $backend == all ]] || die 'published packages require all receiver adapters in one build'
-[[ $(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build") == RspDuo,Usrp,HackRF,Kraken ]] ||
-  die 'published package receiver manifest is incomplete'
+compiled_receivers=$(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build")
+artifact_test_only=$(sed -n 's/^test_only=//p' "$ARTIFACT/.vectorwarp-build")
+if $TEST_ONLY; then
+  [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
+    die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
+else
+  [[ $backend == all ]] || die 'published packages require all receiver adapters in one build'
+  [[ $compiled_receivers == RspDuo,Usrp,HackRF,Kraken && $artifact_test_only == false ]] ||
+    die 'published package receiver manifest is incomplete'
+  [[ -e $ARTIFACT/bin/blah2-receiver-rspduo.so ]] ||
+    die 'published package artifact is missing the RSPduo receiver adapter'
+fi
 [[ $gpu == AUTO ]] || die 'published packages require the CPU plus Vulkan AUTO build'
 [[ $build_os_id == "${ID:-}" && $build_os_version == "${VERSION_ID:-}" && $build_arch == "$(uname -m)" ]] ||
   die 'artifact was not built natively on this exact distribution and architecture'
@@ -153,6 +165,7 @@ fi
 say "native target: $DISTRO ($PACKAGE_ARCH)"
 say "artifact: $ARTIFACT"
 say "private runtime: Node.js ${node_version#v} ($NODE_ARCH)"
+if $TEST_ONLY; then say 'test-only package: not for release publication'; fi
 say 'services will remain disabled and stopped'
 if $PREFLIGHT_ONLY; then say 'preflight passed'; exit 0; fi
 if $DRY_RUN; then
@@ -207,8 +220,9 @@ run rm -rf "$STAGE/opt/vectorwarp/current/systemd" \
 run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-x '{}' +
 run chmod 0644 "$STAGE/opt/vectorwarp/libexec/vectorwarp-wait-api.js"
 
-printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\n' \
+printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\ntest_only=%s\n' \
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
+  "$backend" "$compiled_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
 
 if [[ $FORMAT == deb ]]; then
@@ -239,8 +253,9 @@ if [[ $FORMAT == deb ]]; then
   shlibs=${shlibs_output#shlibs:Depends=}
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n One package includes Kraken, USRP, dual HackRF and RSPduo adapters.\n RSPduo needs the separately installed SDRplay API. Installation never starts radar.\n' \
-    "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" >"$CONTROL/control"
+  if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP, dual HackRF and RSPduo adapters. RSPduo needs the separately installed SDRplay API.'; fi
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
+    "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
     printf '/etc/vectorwarp-management/receivers.json\n' >>"$CONTROL/conffiles"
@@ -261,6 +276,13 @@ else
   RPM_RELEASE="${PACKAGE_RELEASE}.fc44"
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@RPM_RELEASE@|$RPM_RELEASE|g" \
     "$SOURCE_DIR/packaging/rpm/vectorwarp.spec.in" >"$TOPDIR/SPECS/vectorwarp.spec"
+  if $TEST_ONLY; then
+    sed -i 's/package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU/TEST-ONLY package includes Kraken, USRP and dual HackRF receiver adapters, CPU/' \
+      "$TOPDIR/SPECS/vectorwarp.spec"
+    sed -i -e 's/RSPduo needs$/It deliberately excludes RSPduo and is not for publication./' \
+      -e '/^the separately installed SDRplay API\. Receiver software is checked in Settings\.$/d' \
+      "$TOPDIR/SPECS/vectorwarp.spec"
+  fi
   rpmbuild --define "_topdir $TOPDIR" --define "_arch $RPM_ARCH" -bb "$TOPDIR/SPECS/vectorwarp.spec"
   rpm_file=$(find "$TOPDIR/RPMS" -type f -name 'vectorwarp-*.rpm' ! -name '*debuginfo*' -print -quit)
   [[ -n $rpm_file ]] || die 'rpmbuild did not produce a package'
@@ -291,8 +313,9 @@ manifest="$WORK_DIR/$ASSET.manifest.json"
   printf '  "filename": "%s",\n' "$ASSET"
   printf '  "sha256": "%s",\n' "$sha256"
   printf '  "size": %s,\n' "$size"
-  printf '  "backend": "all",\n'
-  printf '  "compiled_receivers": ["Kraken", "RspDuo", "Usrp", "HackRF"],\n'
+  printf '  "backend": "%s",\n' "$backend"
+  if $TEST_ONLY; then printf '  "compiled_receivers": ["Kraken", "Usrp", "HackRF"],\n'; else printf '  "compiled_receivers": ["Kraken", "RspDuo", "Usrp", "HackRF"],\n'; fi
+  printf '  "test_only": %s,\n' "$TEST_ONLY"
   printf '  "gpu": "auto",\n'
   printf '  "node_version": "24.21.0"\n'
   printf '}\n'
@@ -309,4 +332,4 @@ if ! ln "$manifest" "$OUTPUT_DIR/$ASSET.manifest.json"; then
 fi
 say "package ready: $OUTPUT_DIR/$ASSET"
 say "manifest ready: $OUTPUT_DIR/$ASSET.manifest.json"
-say 'package is unsigned; release CI must sign and re-hash it before publication'
+if $TEST_ONLY; then say 'test-only package is unsigned and must not be published'; else say 'package is unsigned; release CI must sign and re-hash it before publication'; fi
