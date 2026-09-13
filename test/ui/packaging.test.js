@@ -71,9 +71,14 @@ const receiverModules = read('cmake/ReceiverModules.cmake');
 assert.doesNotMatch(receiverModules, /INSTALL_RPATH[^\n]*\/usr\/local\/lib/);
 assert.doesNotMatch(rpmSpec, /QA_RPATHS|__brp_check_rpaths/,
   'Universal packages must retain the normal RPM RPATH checks');
-assert.match(packageScript, /strip --strip-unneeded "\$core"/,
-  'Only the core bound into the local kit is normalized before RPM BRP processing.');
-assert.match(packageScript, /rpmbuild rpm rpm2cpio cpio strip python3/,
+assert.doesNotMatch(packageScript, /strip --strip-unneeded/,
+  'Pre-stripping does not replace finalization after the complete RPM BRP chain.');
+assert.match(rpmSpec, /%global vectorwarp_saved_os_install_post %\{__os_install_post\}/,
+  'Keep every distro BRP command before binding the local adapter kit.');
+assert.match(rpmSpec, /%global __os_install_post %\{vectorwarp_saved_os_install_post\} \/usr\/bin\/python3 -I "%\{SOURCE1\}" "%\{buildroot\}"/,
+  'Finalize the kit only after normal distro post-processing.');
+assert.match(packageScript, /SOURCES\/finalize-rspduo-kit\.py/);
+assert.match(packageScript, /rpmbuild rpm rpm2cpio cpio python3/,
   'RPM extraction verifies the final kit/core binding with explicit rpm2cpio and cpio tools.');
 assert.match(packageScript, /final RPM core hash does not match local RSPduo kit/,
   'The extracted final RPM, not an intermediate staging tree, is authoritative for kit/core binding.');

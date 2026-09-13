@@ -6,6 +6,7 @@ License:        MIT
 URL:            https://github.com/mickeyslaven/blah2-VectorWarp
 Packager:       Mickey Slaven <mickeyslaven@gmail.com>
 Source0:        vectorwarp-root.tar
+Source1:        finalize-rspduo-kit.py
 Requires:       systemd
 Requires:       sudo
 Requires:       python3
@@ -17,6 +18,10 @@ Requires:       python3-rpm
 %endif
 
 %global debug_package %{nil}
+# Preserve every distro post-processing step, then bind the kit to the actual
+# final core bytes before RPM calculates its file digests and creates the payload.
+%global vectorwarp_saved_os_install_post %{__os_install_post}
+%global __os_install_post %{vectorwarp_saved_os_install_post} /usr/bin/python3 -I "%{SOURCE1}" "%{buildroot}"
 # The vendor SDRplay API is installed separately under its own license. Its
 # absence must not block installation or use of the other receiver adapters.
 %global __requires_exclude ^libsdrplay_api[.]so.*$

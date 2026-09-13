@@ -159,7 +159,7 @@ esac
 if [[ $FORMAT == deb ]]; then
   for command in dpkg-deb dpkg-shlibdeps; do need_command "$command"; done
 else
-  for command in rpmbuild rpm rpm2cpio cpio strip python3; do need_command "$command"; done
+  for command in rpmbuild rpm rpm2cpio cpio python3; do need_command "$command"; done
 fi
 
 say "native target: $DISTRO ($PACKAGE_ARCH)"
@@ -274,24 +274,10 @@ if [[ $FORMAT == deb ]]; then
 else
   TOPDIR="$WORK_DIR/rpmbuild"
   install -d "$TOPDIR/BUILD" "$TOPDIR/BUILDROOT" "$TOPDIR/RPMS" "$TOPDIR/SOURCES" "$TOPDIR/SPECS" "$TOPDIR/SRPMS"
-  # RPM's normal BRP strip pass may change the core ELF after the local kit
-  # was staged. Apply that same focused ELF normalization before binding the
-  # kit receipt, then verify the extracted final RPM rather than weakening RPM
-  # hardening globally.
-  if ! $TEST_ONLY; then
-    core="$STAGE/opt/vectorwarp/current/bin/libblah2-capture-core.so.1"
-    kit="$STAGE/opt/vectorwarp/current/receiver-source/rspduo/kit.json"
-    strip --strip-unneeded "$core"
-    python3 - "$kit" "$core" <<'PY'
-import hashlib, json, pathlib, sys
-kit, core = map(pathlib.Path, sys.argv[1:])
-value = json.loads(kit.read_text(encoding='utf-8'))
-if value.get('schema') != 1 or value.get('receiver') != 'RspDuo':
-    raise SystemExit('invalid staged local RSPduo kit')
-value['core_sha256'] = hashlib.sha256(core.read_bytes()).hexdigest()
-kit.write_text(json.dumps(value, sort_keys=True, indent=2) + '\n', encoding='utf-8')
-PY
-  fi
+  # The spec appends this finalizer AFTER the complete distro BRP chain. Binding
+  # before brp-strip-comment-note (even after a manual strip) is not sufficient.
+  install -m 0644 "$SOURCE_DIR/script/finalize-rspduo-kit.py" \
+    "$TOPDIR/SOURCES/finalize-rspduo-kit.py"
   tar -C "$STAGE" -cf "$TOPDIR/SOURCES/vectorwarp-root.tar" .
   RPM_RELEASE="${PACKAGE_RELEASE}.fc44"
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@RPM_RELEASE@|$RPM_RELEASE|g" \
