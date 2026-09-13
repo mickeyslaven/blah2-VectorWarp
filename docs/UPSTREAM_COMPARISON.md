@@ -25,6 +25,7 @@ At commit `2fcc792eaddf2af4beb0271a54f5721e979f2cfb`, merged through
 [PR #7](https://github.com/mickeyslaven/blah2-VectorWarp/pull/7), all 13 required
 checks passed: both [CPU/API/replay architecture jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032977),
 the package verifier and all ten [native package build/install jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032962).
+The matrix covers x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64).
 Public PR packages contain Kraken, USRP and HackRF for testing only; they are not
 uploaded or accepted as stable release packages. A separate local all-adapter
 build passed 23 native tests, with RSPduo SDK-function stubs and existing vendor
