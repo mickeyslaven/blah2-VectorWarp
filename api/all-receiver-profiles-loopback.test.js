@@ -14,17 +14,11 @@ const root = path.join(__dirname, '..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-all-receivers-'));
 const filename = path.join(directory, 'config.yml');
 const marker = path.join(directory, 'restart-marker');
-const basePort = 41000 + process.pid % 10000;
-const apiPort = basePort;
-const suitePort = basePort + 20;
+let apiPort, suitePort;
 const clone = value => JSON.parse(JSON.stringify(value));
 const load = name => yaml.load(fs.readFileSync(path.join(root, 'config', name), 'utf8'));
 const initial = load('config-kraken.yml');
 initial.network.ip = '127.0.0.1';
-Object.keys(initial.network.ports).forEach((key, index) => { initial.network.ports[key] = basePort + index; });
-initial.capture.device.heimdall.host = '127.0.0.1';
-initial.capture.device.heimdall.control_port = suitePort;
-fs.writeFileSync(filename, yaml.dump(initial));
 
 const suiteState = {settings: {center_freq: initial.capture.fc, sample_rate: initial.capture.fs},
   num_channels: initial.capture.device.channel_count, max_elements: 8, gain: 0,
@@ -48,6 +42,16 @@ const suite = net.createServer(socket => {
 let child;
 let stderr = '';
 let revision;
+async function reservePorts(count) {
+  const listeners = await Promise.all(Array.from({length: count}, () => new Promise((resolve, reject) => {
+    const listener = net.createServer();
+    listener.once('error', reject);
+    listener.listen(0, '127.0.0.1', () => resolve(listener));
+  })));
+  const ports = listeners.map(listener => listener.address().port);
+  await Promise.all(listeners.map(listener => new Promise(resolve => listener.close(resolve))));
+  return ports;
+}
 function request(method, pathname, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? null : JSON.stringify(body);
@@ -81,6 +85,13 @@ function profile(name, type) {
 
 (async () => {
   try {
+    const ports = await reservePorts(Object.keys(initial.network.ports).length + 1);
+    Object.keys(initial.network.ports).forEach((key, index) => { initial.network.ports[key] = ports[index]; });
+    apiPort = initial.network.ports.api;
+    suitePort = ports.at(-1);
+    initial.capture.device.heimdall.host = '127.0.0.1';
+    initial.capture.device.heimdall.control_port = suitePort;
+    fs.writeFileSync(filename, yaml.dump(initial));
     await new Promise((resolve, reject) => { suite.once('error', reject); suite.listen(suitePort, '127.0.0.1', resolve); });
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {stdio: ['ignore', 'ignore', 'pipe'],
       env: {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken,RspDuo,Usrp,HackRF',
