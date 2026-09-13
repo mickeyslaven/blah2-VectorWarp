@@ -34,9 +34,9 @@ function receiverSetupGuide(receiver, helperExecutable) {
       link: 'https://hackrf.readthedocs.io/en/latest/installing_hackrf_software.html', label: 'Official HackRF installation guide'});
   }
   if (receiver.type === 'Usrp' && receiver.dependencies.state !== 'installed') {
-    steps.push({text: 'On qualified Fedora 44 or Ubuntu/Debian providing UHD 4.8 or newer, enroll the complete signed native package transaction locally. Then review its full package list and authorize installation here.',
+    steps.push({text: 'On qualified Fedora 44 or Ubuntu/Debian providing UHD 4.1 or newer, enroll the complete signed native package transaction locally. Then review its full package list and authorize installation here.',
       command: `sudo ${helperExecutable} enroll-packages Usrp`});
-    steps.push({text: 'Install UHD 4.8 or newer using the signed native distribution repository if that version is available. Review the proposed transaction locally. If the distribution is older, follow the UHD source-build guide; do not replace system packages with an unreviewed repository.',
+    steps.push({text: 'Install UHD 4.1 or newer using the signed native distribution repository if that version is available. Review the proposed transaction locally. If the distribution is older, follow the UHD source-build guide; do not replace system packages with an unreviewed repository.',
       link: 'https://github.com/EttusResearch/uhd/blob/master/host/docs/install.dox', label: 'Official UHD installation guide'});
   }
   steps.push({text: 'Save for later keeps a draft on disk. Apply confirms the supported receiver settings and requests the configured processor restart. Then inspect fresh processor status; software discovery alone does not verify RF, wiring or calibration.'});

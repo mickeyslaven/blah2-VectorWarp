@@ -1,15 +1,14 @@
-# HackRF setup for blah2
+# Dual-HackRF wiring for VectorWarp
 
 This requires 2 HackRF units with a shared clock signal and a shared hardware trigger.
 
-## Instructions
+For installation, device selection and browser settings, follow
+[Dual HackRF setup](../../../docs/SETUP.md#dual-hackrf).
+Source builders can use `--backend hackrf`; `--backend all` also requires the
+separately licensed SDRplay SDK, even when the connected radios are HackRFs.
+
+## Wiring
 
 - The 2 HackRF boards should be wired as per the diagram below.
 - Note the [official guide](https://hackrf.readthedocs.io/en/latest/hardware_triggering.html) on setting up the shared clock and hardware trigger.
-- Install the HackRF package on the host using `sudo apt install hackrf` to access HackRF tools.
-- Run `hackrf_info` to get HackRF serial numbers.
-- Edit the `config/config-hackrf.yml` file to add serial numbers and parameters.
-- Build with `script/build-native.sh --backend all`, then select the HackRF
-  configuration in `/etc/vectorwarp/config.yml` before starting the native units.
-
-![HackRF blah2 wiring diagram](./hackrf-blah2.png "HackRF")
+![Two HackRF units with shared clock and trigger](./hackrf-blah2.png "HackRF")

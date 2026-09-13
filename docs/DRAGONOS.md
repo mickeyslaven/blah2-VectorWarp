@@ -1,7 +1,9 @@
 # DragonOS package-selection notes
 
-VectorWarp does not publish a separate DragonOS build. Its release installer
-selects the matching VectorWarp Ubuntu APT repository from `/etc/os-release`:
+Use the [source installation guide](INSTALL.md) for now; signed VectorWarp
+packages and its APT repository are not yet published. There is no separate
+DragonOS build. The future release installer selects the matching Ubuntu
+repository from `/etc/os-release`:
 
 - Jammy / Ubuntu 22.04
 - Noble / Ubuntu 24.04
@@ -16,10 +18,10 @@ the machine.
 
 The selector is tested with metadata fixtures only. No DragonOS ISO was
 available for this work, so there is no claim of boot, driver, SDR, package
-installation, or radio-operation validation on DragonOS. The package remains
-Kraken/Heimdall live-input capable and can replay all four recording formats.
-For live SDRplay RSPduo, USRP or dual-HackRF, use the all-receiver source build
-and the corresponding vendor software and host permissions.
+installation, or radio-operation validation on DragonOS. Planned release
+packages contain all four receiver adapters; SDRplay's API and Kraken Suite
+remain separate installations. Current source builds include the receivers
+selected by `--backend`; see [build choices](INSTALL.md#2-choose-the-receivers-to-include).
 
 When the signed repository is actually published, inspect its installer before
 running it as root. Until then, the repository and packages remain unpublished.

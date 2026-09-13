@@ -1,7 +1,10 @@
 # Raspberry Pi GPU setup
 
-VectorWarp uses Vulkan on Raspberry Pi too. The application package includes
-its GPU backend, **not a replacement Mesa driver**. A missing or faulty Pi ICD
+Install from source using [Installation](INSTALL.md); signed packages are not
+published yet. Include the GPU build dependencies before building.
+
+VectorWarp uses Vulkan on Raspberry Pi too. GPU-enabled builds include
+the backend, **not a replacement Mesa driver**. A missing or faulty Pi ICD
 does not impose a new Mesa minimum on AMD, Intel, NVIDIA, or CPU-only systems.
 
 Driver versions and distribution backports differ. VectorWarp reports known
@@ -35,7 +38,7 @@ manufacture one**: request a supported update from that distro. The helper
 reports the missing path and makes no GPU-ready claim. Do not install Fedora
 libraries on Debian/Ubuntu or substitute a random downloaded driver.
 
-Both source and release installers accept `--setup-pi-gpu` to offer this
+The source installer and future release installer accept `--setup-pi-gpu` to offer this
 transaction **after** application installation. Package post-install hooks
 never recursively invoke a package manager. Staging (`--destdir`), preflight
 and dry-run never probe hardware or alter accounts; ordinary installation

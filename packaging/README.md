@@ -7,7 +7,7 @@ DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
 and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
 or hardware validation.
 
-Every release package includes Kraken, RSPduo, USRP and dual-HackRF adapters,
+The release-package contract includes Kraken, RSPduo, USRP and dual-HackRF adapters,
 plus all replay formats. UHD and libhackrf are native package dependencies.
 SDRplay's licensed API is installed separately; only our adapter is packaged.
 Kraken still needs Heimdall and its USB setup. Settings can check and reuse
@@ -46,7 +46,10 @@ script/package-native.sh \
 
 Installation creates dedicated users and directories but never enables or
 starts the API or processor. `/etc/vectorwarp/config.yml` is preserved across
-upgrades. Repository publication requires a maintainer-controlled OpenPGP key
+upgrades. A first RSPduo-enabled install may start an already-installed standard
+SDRplay API service; it never downloads the API or accepts its license. See
+[SDRplay setup](../docs/SDRPLAY_SETUP.md).
+Repository publication requires a maintainer-controlled OpenPGP key
 and GitHub Pages; neither a private key nor a live repository is in this tree.
 
 For capability and validation detail, link to the existing

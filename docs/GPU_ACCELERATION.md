@@ -108,7 +108,8 @@ script/build-native.sh --backend all --gpu on       # require GPU plus all four 
 ```
 
 Building creates an artifact only; it neither installs drivers nor changes the
-active service. See [SETUP.md](SETUP.md) for the separate preflight/install step.
+active service. See [Installation](INSTALL.md) for dependencies and the separate
+preflight/install step.
 
 Standalone processing checks do not require an SDR or modify live configuration:
 

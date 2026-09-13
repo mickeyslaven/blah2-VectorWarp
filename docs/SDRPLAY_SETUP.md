@@ -16,8 +16,9 @@ In VectorWarp, open **Settings → Check receiver software**:
   A first installation of an RSPduo-enabled VectorWarp build also attempts this;
   upgrades, staging and dry runs do not. It never enables boot startup.
 - **Custom, ambiguous or overridden service:** automatic startup stops with an
-  error. An administrator can review and start it locally, or use the existing
-  separately authorized service-management action.
+  error. Have an administrator review and start it locally, then recheck in
+  Settings. If **Check receiver software** offers a reviewed service action,
+  follow the [local enrollment steps](SETUP.md#check-receiver-software).
 - **Not found or not verified:** the page shows the official download link.
   If already installed, check its installation and service, then run the check again.
 
