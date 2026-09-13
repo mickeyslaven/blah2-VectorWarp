@@ -75,6 +75,17 @@ def release_installation(manifest):
     fingerprint = escape(manifest["signing_fingerprint"])
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
+<h3>Fedora 44</h3>
+<p>Add the signed repository once, then install with DNF:</p>
+<pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
+less vectorwarp-install.sh
+sudo bash vectorwarp-install.sh --repo-only
+sudo dnf install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service</code></pre>
+<p>Open <code>http://localhost:3000</code>, configure your receiver, and choose
+Save &amp; Restart. Update later with <code>sudo dnf upgrade vectorwarp</code>.</p>
+<h3>Ubuntu, Debian and other supported systems</h3>
 <p>The installer selects the package for your OS and architecture, adds the signed
 APT or DNF repository, and installs VectorWarp. Updates then arrive through your
 normal package manager.</p>

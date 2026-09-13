@@ -88,6 +88,8 @@ class HomepageTests(unittest.TestCase):
     def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
         page = repository.repository_homepage(self.release_manifest())
         for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
+                     'sudo bash vectorwarp-install.sh --repo-only', 'sudo dnf install vectorwarp',
+                     'sudo dnf upgrade', 'sudo systemctl enable --now vectorwarp-api.service',
                      'enables it at boot', 'On a fresh install, radar processing stays stopped',
                      'SHA256SUMS.asc', 'vectorwarp-archive-key.asc', 'A' * 40,
                      'checksum alone does not authenticate', 'gpgv --keyring',
