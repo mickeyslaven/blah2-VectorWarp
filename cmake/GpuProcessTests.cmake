@@ -23,3 +23,19 @@ if(TARGET blah2GpuWorker)
 endif()
 add_test(NAME gpuClutterCpuOracle COMMAND testClutterAcceleration)
 set_tests_properties(gpuClutterCpuOracle PROPERTIES TIMEOUT 30)
+
+# The diagnostic command is tested against a sibling stub, never a host driver.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_library(testGpuDriverModule MODULE ${PROJECT_ROOT}/test/gpu/DriverStatusModule.cpp)
+target_compile_features(testGpuDriverModule PRIVATE cxx_std_17)
+target_include_directories(testGpuDriverModule PRIVATE ${PROJECT_ROOT}/src)
+set_target_properties(testGpuDriverModule PROPERTIES PREFIX "" OUTPUT_NAME "blah2-gpu-vulkan"
+  LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver-status-fixture")
+add_executable(testGpuDriverWorker ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
+target_link_libraries(testGpuDriverWorker PRIVATE blah2GpuProcess ${CMAKE_DL_LIBS})
+set_target_properties(testGpuDriverWorker PROPERTIES OUTPUT_NAME "blah2-gpu-worker"
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver-status-fixture")
+add_dependencies(testGpuDriverWorker testGpuDriverModule)
+add_test(NAME gpuDriverDiagnostics COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/gpu/test_driver_status.py $<TARGET_FILE:testGpuDriverWorker>)
+set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)

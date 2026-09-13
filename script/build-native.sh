@@ -22,7 +22,7 @@ Usage: script/build-native.sh [options]
 
 Build a relocatable VectorWarp artifact without installing it.
 
-  --backend NAME          all (default); kraken, rspduo, usrp or hackrf for development
+  --backend NAME          all (default); open-test, kraken, rspduo, usrp or hackrf for development
   --gpu auto|on|off       Optional Vulkan worker selection (default: auto)
   --build-dir PATH        Build/output directory (default: build/native)
   --deps-dir PATH         Pinned source dependency cache
@@ -60,22 +60,26 @@ while (($#)); do
 done
 
 case "$BACKEND" in
+  open-test)
+    # Open CI-only package coverage: no licensed SDRplay SDK or adapter.
+    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
+    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; TEST_ONLY=true ;;
   kraken)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Kraken ;;
+    COMPILED_RECEIVERS=Kraken; TEST_ONLY=false ;;
   rspduo)
     ENABLE_RSPDUO=ON; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=RspDuo,Kraken ;;
+    COMPILED_RECEIVERS=RspDuo,Kraken; TEST_ONLY=false ;;
   usrp)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Usrp,Kraken ;;
+    COMPILED_RECEIVERS=Usrp,Kraken; TEST_ONLY=false ;;
   hackrf)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=HackRF,Kraken ;;
+    COMPILED_RECEIVERS=HackRF,Kraken; TEST_ONLY=false ;;
   all)
     ENABLE_RSPDUO=ON; ENABLE_USRP=ON; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=RspDuo,Usrp,HackRF,Kraken ;;
-  *) die '--backend must be kraken, rspduo, usrp, hackrf or all' ;;
+    COMPILED_RECEIVERS=RspDuo,Usrp,HackRF,Kraken; TEST_ONLY=false ;;
+  *) die '--backend must be open-test, kraken, rspduo, usrp, hackrf or all' ;;
 esac
 [[ $GPU =~ ^(AUTO|ON|OFF)$ ]] || die '--gpu must be auto, on or off'
 [[ $JOBS =~ ^[1-9][0-9]*$ ]] || die '--jobs must be a positive integer'
@@ -277,6 +281,15 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/l
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-setup" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-setup"
+# Present only in current builds. Keeping these optional preserves the ability
+# to install historical artifacts without inventing an SDRplay action for them.
+if [[ -f $SOURCE_DIR/script/vectorwarp-sdrplay-service.py ]]; then
+  run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sdrplay-service.py" "$ARTIFACT_TMP/libexec/vectorwarp-sdrplay-service.py"
+fi
+if [[ -f $SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js ]]; then
+  run install -m 0644 "$SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js" "$ARTIFACT_TMP/libexec/vectorwarp-prepare-sdrplay.js"
+fi
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
@@ -303,8 +316,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
+  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

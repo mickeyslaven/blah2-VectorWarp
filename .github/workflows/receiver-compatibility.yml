@@ -1,0 +1,271 @@
+name: Watch receiver software compatibility
+
+on:
+  schedule:
+    - cron: '41 8 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: receiver-compatibility-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    name: Discover approved upstream versions (read only)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      has_updates: ${{ steps.watch.outputs.has_updates }}
+      has_open_candidates: ${{ steps.watch.outputs.has_open_candidates }}
+      open_matrix: ${{ steps.watch.outputs.open_matrix }}
+      vectorwarp_commit: ${{ steps.trusted-source.outputs.commit }}
+    steps:
+      - name: Check out the trusted default branch
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - id: trusted-source
+        name: Record the immutable trusted VectorWarp source
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          [[ $commit =~ ^[0-9a-f]{40}$ ]]
+          printf 'commit=%s\n' "$commit" >>"$GITHUB_OUTPUT"
+      - id: watch
+        name: Query only catalogued official sources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 script/check-receiver-updates.py check \
+            --catalog config/receiver-software.json \
+            --output receiver-updates.json \
+            --github-output "$GITHUB_OUTPUT" \
+            --fail-on-errors
+      - name: Run watcher policy and rendering tests
+        run: python3 test/packaging/test_receiver_updates.py -v
+      - name: Upload the bounded discovery report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: receiver-update-discovery
+          path: receiver-updates.json
+          if-no-files-found: error
+          retention-days: 14
+
+  candidate-source-build:
+    name: Compile ${{ matrix.id }} candidate against VectorWarp
+    needs: discover
+    if: needs.discover.outputs.has_open_candidates == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.open_matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the immutable trusted VectorWarp source
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ needs.discover.outputs.vectorwarp_commit }}
+          persist-credentials: false
+          path: vectorwarp
+      - name: Check out the approved immutable candidate commit without credentials
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.commit }}
+          persist-credentials: false
+          path: candidate
+      - name: Set up the Node version required by the native builder
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install bounded build prerequisites before running candidate code
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates cmake curl git libarmadillo-dev \
+            libboost-all-dev libfftw3-dev libncurses-dev libusb-1.0-0-dev ninja-build \
+            pkg-config python3-dev python3-mako python3-numpy python3-requests \
+            python3-ruamel.yaml python3-setuptools tar unzip zip
+      - id: candidate-build
+        name: Build the pinned candidate as a dedicated non-sudo user
+        env:
+          SOFTWARE_ID: ${{ matrix.id }}
+          BACKEND: ${{ matrix.backend }}
+          SOURCE_COMMIT: ${{ matrix.commit }}
+          VECTORWARP_COMMIT: ${{ needs.discover.outputs.vectorwarp_commit }}
+        run: |
+          set -euo pipefail
+          [[ $SOURCE_COMMIT =~ ^[0-9a-f]{40}$ ]]
+          [[ $VECTORWARP_COMMIT =~ ^[0-9a-f]{40}$ ]]
+          [[ $(git -C candidate rev-parse HEAD) == "$SOURCE_COMMIT" ]]
+          [[ $(git -C vectorwarp rev-parse HEAD) == "$VECTORWARP_COMMIT" ]]
+          build_user=receiver-build
+          build_home="$RUNNER_TEMP/receiver-build-home"
+          sudo useradd --system --user-group --create-home --home-dir "$build_home" \
+            --shell /usr/sbin/nologin "$build_user"
+          sudo chown -R "$build_user:$build_user" candidate
+          sudo install -d -o "$build_user" -g "$build_user" \
+            "$RUNNER_TEMP/receiver-sdk" "$RUNNER_TEMP/candidate-build" \
+            "$RUNNER_TEMP/vectorwarp-build" "$RUNNER_TEMP/vectorwarp-deps"
+          sudo --user="$build_user" --set-home /usr/bin/env -i \
+            HOME="$build_home" LANG=C.UTF-8 PATH="$PATH" \
+            SOFTWARE_ID="$SOFTWARE_ID" BACKEND="$BACKEND" \
+            SOURCE_COMMIT="$SOURCE_COMMIT" RUNNER_TEMP="$RUNNER_TEMP" \
+            CANDIDATE_DIR="$GITHUB_WORKSPACE/candidate" \
+            VECTORWARP_DIR="$GITHUB_WORKSPACE/vectorwarp" \
+            /bin/bash -seuo pipefail <<'BUILD'
+          sdk="$RUNNER_TEMP/receiver-sdk"
+          case "$SOFTWARE_ID" in
+            uhd)
+              cmake -S "$CANDIDATE_DIR/host" -B "$RUNNER_TEMP/candidate-build" -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$sdk" \
+                -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_MANUAL=OFF \
+                -DENABLE_PYTHON_API=OFF -DENABLE_DPDK=OFF
+              ;;
+            libhackrf)
+              cmake -S "$CANDIDATE_DIR/host" -B "$RUNNER_TEMP/candidate-build" -G Ninja \
+                -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$sdk" \
+                -DINSTALL_UDEV_RULES=OFF
+              ;;
+            *) echo 'Unapproved candidate matrix identity.' >&2; exit 2 ;;
+          esac
+          cmake --build "$RUNNER_TEMP/candidate-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/candidate-build"
+          pkg_paths=$(find "$sdk" -type d -name pkgconfig -print | paste -sd: -)
+          export PATH="$sdk/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$sdk"
+          export PKG_CONFIG_PATH="${pkg_paths}${pkg_paths:+:}${PKG_CONFIG_PATH:-}"
+          export LD_LIBRARY_PATH="$sdk/lib:$sdk/lib64:${LD_LIBRARY_PATH:-}"
+          cd "$VECTORWARP_DIR"
+          script/build-native.sh --backend "$BACKEND" --gpu off --jobs 1 \
+            --build-dir "$RUNNER_TEMP/vectorwarp-build" \
+            --deps-dir "$RUNNER_TEMP/vectorwarp-deps"
+          manifest="$RUNNER_TEMP/vectorwarp-build/artifact/.vectorwarp-build"
+          case "$SOFTWARE_ID" in
+            uhd) expected='Usrp,Kraken' ;;
+            libhackrf) expected='HackRF,Kraken' ;;
+          esac
+          grep -Fx "backend=$BACKEND" "$manifest"
+          grep -Fx "compiled_receivers=$expected" "$manifest"
+          BUILD
+      - name: Record candidate compile evidence without a hardware claim
+        if: always()
+        env:
+          SOFTWARE_ID: ${{ matrix.id }}
+          IDENTITY: ${{ matrix.identity }}
+          SOURCE_COMMIT: ${{ matrix.commit }}
+          VECTORWARP_COMMIT: ${{ needs.discover.outputs.vectorwarp_commit }}
+          BACKEND: ${{ matrix.backend }}
+          BUILD_OUTCOME: ${{ steps.candidate-build.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate-result
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess
+          software = os.environ['SOFTWARE_ID']
+          expected = {'uhd': 'Usrp,Kraken', 'libhackrf': 'HackRF,Kraken'}[software]
+          source_commit = os.environ['SOURCE_COMMIT']
+          expected_vectorwarp_commit = os.environ['VECTORWARP_COMMIT']
+          vectorwarp_commit = subprocess.check_output(
+              ['git', '-C', 'vectorwarp', 'rev-parse', 'HEAD'], text=True).strip()
+          if not re.fullmatch(r'[0-9a-f]{40}', source_commit) or not re.fullmatch(
+                  r'[0-9a-f]{40}', vectorwarp_commit) or vectorwarp_commit != expected_vectorwarp_commit:
+              raise SystemExit('candidate provenance is not an immutable commit identity')
+          result = {
+              'schemaVersion': 1,
+              'id': software,
+              'identity': os.environ['IDENTITY'],
+              'sourceCommit': source_commit,
+              'vectorwarpCommit': vectorwarp_commit,
+              'backend': os.environ['BACKEND'],
+              'status': 'passed' if os.environ['BUILD_OUTCOME'] == 'success' else 'failed',
+              'compiledReceivers': expected,
+              'hardwareValidated': False,
+          }
+          pathlib.Path('candidate-result', f'{software}.json').write_text(
+              json.dumps(result, indent=2, sort_keys=True) + '\n')
+          PY
+      - name: Upload candidate compile evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: receiver-candidate-${{ matrix.id }}
+          path: candidate-result/
+          if-no-files-found: error
+          retention-days: 14
+
+  notify:
+    name: Deduplicate compatibility-review issues from trusted default branch
+    needs: [discover, candidate-source-build]
+    if: >-
+      always() &&
+      needs.discover.result == 'success' &&
+      needs.discover.outputs.has_updates == 'true' &&
+      github.ref_name == github.event.repository.default_branch &&
+      github.repository == 'mickeyslaven/blah2-VectorWarp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check out the same immutable trusted issue renderer
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ needs.discover.outputs.vectorwarp_commit }}
+          persist-credentials: false
+      - name: Download trusted discovery result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5a8093 # v4.3.0
+        with:
+          name: receiver-update-discovery
+          path: notification-input
+      - name: Download any candidate compile results
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5a8093 # v4.3.0
+        with:
+          pattern: receiver-candidate-*
+          path: candidate-results
+          merge-multiple: true
+      - name: Render validated bounded issue descriptions
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate-results issue-descriptors
+          python3 script/check-receiver-updates.py render-issues \
+            --report notification-input/receiver-updates.json \
+            --candidate-results candidate-results \
+            --output-dir issue-descriptors \
+            --run-url "$RUN_URL"
+      - name: Create only missing review issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          descriptors=(issue-descriptors/*.json)
+          ((${#descriptors[@]} > 0))
+          for descriptor in "${descriptors[@]}"; do
+            title=$(jq -er '.title | select(type == "string" and length > 0 and length <= 180)' "$descriptor")
+            marker=$(jq -er '.marker | select(test("^receiver-update-[0-9a-f]{24}$"))' "$descriptor")
+            body_file="$RUNNER_TEMP/receiver-issue-body.md"
+            jq -er '.body | select(type == "string" and length > 0 and length <= 12000)' "$descriptor" >"$body_file"
+            existing=$(gh issue list --repo "$GH_REPO" --state all --limit 100 \
+              --search "$marker in:body" --json body --jq "[.[] | select(.body | contains(\"$marker\"))] | length")
+            if [[ $existing == 0 ]]; then
+              gh issue create --repo "$GH_REPO" --title "$title" --body-file "$body_file"
+            else
+              echo "Review issue already exists for $marker"
+            fi
+          done

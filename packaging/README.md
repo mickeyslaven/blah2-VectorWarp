@@ -13,13 +13,22 @@ SDRplay's licensed API is installed separately; only our adapter is packaged.
 Kraken still needs Heimdall and its USB setup. Settings can check and reuse
 receiver software, or offer supported setup actions.
 
-Release builders need `VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` after
-the maintainer accepts SDRplay's SDK license for build use. The pinned
-`prepare-sdrplay-build-sdk.sh` extracts only headers and a link library into a
-private build directory. It never runs the vendor installer; no SDK, vendor
-runtime or service is copied into release packages. Locally supplied licensed
-SDKs can instead be selected with `BLAH2_SDRPLAY_INCLUDE_DIR` and
-`BLAH2_SDRPLAY_LIBRARY`.
+Release builders must supply a locally licensed SDK and set
+`VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` after accepting its terms.
+`prepare-sdrplay-build-sdk.sh` stages local `BLAH2_SDRPLAY_INCLUDE_DIR` and
+`BLAH2_SDRPLAY_LIBRARY` inputs, or extracts an explicitly supplied external
+`VECTORWARP_SDRPLAY_SDK_ARCHIVE` matching the pinned vendor 3.15.2 checksum.
+It never downloads or executes an installer, retrieves old Git content, or
+accepts a license. Vendor inputs remain outside the repository and public
+artifacts/caches; packages contain only VectorWarp's adapter.
+
+Public PR checks build and smoke-test packages with Kraken, USRP and HackRF,
+without the proprietary SDK. These reduced builds are test-only and are not
+uploaded as release packages or accepted by the stable repository generator.
+Trusted release builds still require all four adapters and separately supplied
+licensed SDK inputs; they fail before packaging when those inputs are missing. See the
+[maintainer setup](../docs/MAINTAINER_RELEASE.md) and
+[SDRplay user setup](../docs/SDRPLAY_SETUP.md).
 
 `package-native.sh` uses an already extracted, checksum-verified official Node
 runtime from `node-runtime.env`; it never downloads one. It packages required

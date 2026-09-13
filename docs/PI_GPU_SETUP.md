@@ -1,0 +1,80 @@
+# Raspberry Pi GPU setup
+
+VectorWarp uses Vulkan on Raspberry Pi too. The application package includes
+its GPU backend, **not a replacement Mesa driver**. A missing or faulty Pi ICD
+does not impose a new Mesa minimum on AMD, Intel, NVIDIA, or CPU-only systems.
+
+Driver versions and distribution backports differ. VectorWarp reports known
+compiler-risk hints but does not reject an older driver by version alone.
+Startup numerical checks decide whether the selected device and processing
+settings can use GPU acceleration.
+
+## Check, install, qualify
+
+Run on the Pi, after installing VectorWarp:
+
+```bash
+/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status
+sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver
+```
+
+The second command requires an interactive administrator terminal. It offers
+the native package manager's normal transaction review and confirmation for
+`mesa-vulkan-drivers` and required dependencies. APT candidates must be signed
+native Debian/Ubuntu packages; Fedora 44 uses only its verified release and
+updates repositories, installed native keys, and package signature checks.
+No third-party Mesa repository, private ICD, whole-system upgrade, key import,
+unattended confirmation, driver-version bypass, or radar restart is added.
+Use the same command on supported 64-bit Ubuntu, Debian/Raspberry Pi OS, or
+Fedora; distro availability still determines what can actually be installed.
+
+If cached repositories contain no candidate/update, refresh the distribution's
+signed metadata locally (`sudo apt-get update`, or `sudo dnf makecache --refresh`)
+and retry. If the distro still offers no usable fix/backport, **setup cannot
+manufacture one**: request a supported update from that distro. The helper
+reports the missing path and makes no GPU-ready claim. Do not install Fedora
+libraries on Debian/Ubuntu or substitute a random downloaded driver.
+
+Both source and release installers accept `--setup-pi-gpu` to offer this
+transaction **after** application installation. Package post-install hooks
+never recursively invoke a package manager. Staging (`--destdir`), preflight
+and dry-run never probe hardware or alter accounts; ordinary installation
+does not silently change the graphics driver.
+
+If the check reports that the processor account cannot access the render node:
+
+```bash
+sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access
+```
+
+This separately confirmed action appends only the actual DRM render node's
+existing `render` or `video` group to the existing `vectorwarp` account. It
+preserves other groups, refuses unexpected or mixed owner groups, and never
+creates groups, changes device permissions, follows a render-node symlink, or
+starts/restarts services. Missing nodes remain a diagnostic—not a guessed
+static service group. An already-running process needs an explicit restart
+before a changed group membership applies.
+The access check inspects Unix owner/group/mode metadata; it does not prove
+ACL or SELinux access. Actual driver opening and processing qualification are
+still required.
+
+Finally, choose Automatic or GPU and explicitly start processing with the
+desired settings. Settings displays **delay–Doppler and clutter separately**.
+An enumerated GPU or installed package is only *unqualified*. Fresh telemetry
+can report either stage, or both, as startup-qualified. The display clears this
+status after a restart or telemetry reconnection and rechecks freshness after
+diagnosis finishes. A working distro backport overrides the version warning.
+The report is tied to the current telemetry connections; it does not establish
+processor identity, endurance or real-time performance for other settings.
+
+## Safety and current limit
+
+`blah2-gpu-worker --driver-status` is a separate, read-only diagnostic. It
+enumerates hardware and driver properties without creating FFT plans or
+opening a radio. The API bounds it through the local helper and caches the
+read-only result for one minute. It exposes no privileged install endpoint.
+Normal GPU ABI 3, the 30-second startup deadline, numerical acceptance gates,
+finite/error checks and bounded CPU fallback are unchanged.
+
+Passing the startup checks does not establish that a selected workload meets
+its processing deadline. Check live processing timing before increasing load.

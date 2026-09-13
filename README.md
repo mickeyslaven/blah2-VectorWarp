@@ -87,12 +87,13 @@ miss deadlines; the full report includes every tested configuration.
 
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
 
-One package per OS and architecture includes every supported receiver adapter.
-Choose your receiver in the web settings—no SDR-specific VectorWarp download.
+Source installation is available now. Planned releases use one package per OS
+and architecture with all four receiver adapters; they are not yet published.
+Choose your receiver in the web settings.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
 - **USRP (including B210) and dual HackRF:** receiver settings are passed to UHD or libhackrf when processing starts.
-- **SDRplay RSPduo:** uses your locally installed SDRplay API; Settings checks whether it needs installation or startup.
+- **SDRplay RSPduo:** uses your locally installed SDRplay API; Settings checks installation and service status and links to [SDRplay setup](docs/SDRPLAY_SETUP.md) when needed.
 
 The Kraken multi-channel foundation is also offered to blah2 in
 [our upstream PR #45](https://github.com/30hours/blah2/pull/45).

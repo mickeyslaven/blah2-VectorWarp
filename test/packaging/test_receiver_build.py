@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BUILD_SCRIPT = ROOT / "script/build-native.sh"
 INSTALL_SCRIPT = ROOT / "script/install-native.sh"
 RECEIVERS = {
+    "open-test": ("Usrp,HackRF,Kraken", ("OFF", "ON", "ON")),
     "kraken": ("Kraken", ("OFF", "OFF", "OFF")),
     "rspduo": ("RspDuo,Kraken", ("ON", "OFF", "OFF")),
     "usrp": ("Usrp,Kraken", ("OFF", "ON", "OFF")),
@@ -180,7 +181,7 @@ endif()
                 log = self.temp / "pkg-config.log"
                 if log.exists():
                     log.unlink()
-                environment = self.build_environment(backend in {"usrp", "all"})
+                environment = self.build_environment(backend in {"open-test", "usrp", "all"})
                 if backend == "usrp":
                     environment["BLAH2_SDRPLAY_INCLUDE_DIR"] = str(self.temp / "absent/include")
                     environment["BLAH2_SDRPLAY_LIBRARY"] = str(self.temp / "absent/libsdrplay.so")
@@ -197,8 +198,8 @@ endif()
                     "env CMAKE_POLICY_VERSION_MINIMUM=3.5 cmake -G Ninja", result.stdout)
                 self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
                 calls = log.read_text(encoding="utf-8")
-                self.assertEqual("libhackrf" in calls, backend in {"hackrf", "all"})
-                self.assertEqual("libusb-1.0" in calls, backend in {"hackrf", "all"})
+                self.assertEqual("libhackrf" in calls, backend in {"open-test", "hackrf", "all"})
+                self.assertEqual("libusb-1.0" in calls, backend in {"open-test", "hackrf", "all"})
                 self.assertEqual("BLAH2_SDRPLAY_INCLUDE_DIR" in result.stdout,
                                  backend in {"rspduo", "all"})
 
@@ -206,7 +207,19 @@ endif()
             "bash", str(BUILD_SCRIPT), "--backend", "airspy", "--preflight"
         ], cwd=ROOT, text=True, capture_output=True, check=False)
         self.assertNotEqual(invalid.returncode, 0)
-        self.assertIn("kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+        self.assertIn("open-test, kraken, rspduo, usrp, hackrf or all", invalid.stderr)
+
+    def test_open_test_preflight_needs_uhd_and_hackrf_but_not_sdrplay(self):
+        environment = self.build_environment(True)
+        environment["BLAH2_SDRPLAY_INCLUDE_DIR"] = str(self.temp / "absent/include")
+        environment["BLAH2_SDRPLAY_LIBRARY"] = str(self.temp / "absent/libsdrplay.so")
+        result = subprocess.run([
+            "bash", str(BUILD_SCRIPT), "--backend", "open-test", "--gpu", "off",
+            "--preflight", "--deps-dir", str(self.dependencies),
+            "--build-dir", str(self.temp / "open-test-preflight"),
+        ], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("backend=open-test receivers=Usrp,HackRF,Kraken", result.stdout)
 
     def test_missing_hackrf_transitive_headers_fail_before_dependency_build(self):
         for backend in ("hackrf", "all"):
@@ -262,7 +275,8 @@ endif()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("does not match host aarch64", result.stderr)
 
-    def make_artifact(self, backend: str, compiled_receivers: str | None) -> Path:
+    def make_artifact(self, backend: str, compiled_receivers: str | None,
+                      test_only: str | None = None) -> Path:
         artifact = self.temp / f"artifact-{backend}-{len(list(self.temp.glob('artifact-*')))}"
         for directory in ("bin", "api", "html", "config-examples", "systemd", "libexec"):
             (artifact / directory).mkdir(parents=True, exist_ok=True)
@@ -280,6 +294,8 @@ endif()
         lines = ["build_id=receiver-test", f"backend={backend}"]
         if compiled_receivers is not None:
             lines.append(f"compiled_receivers={compiled_receivers}")
+        if test_only is not None:
+            lines.append(f"test_only={test_only}")
         (artifact / ".vectorwarp-build").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return artifact
 
@@ -294,7 +310,8 @@ endif()
             with self.subTest(backend=backend):
                 # Order is not semantic; the installer emits one canonical list.
                 supplied = ",".join(reversed(receivers.split(",")))
-                artifact = self.make_artifact(backend, supplied)
+                artifact = self.make_artifact(backend, supplied,
+                                              "true" if backend == "open-test" else "false")
                 stage = self.temp / f"stage-{backend}"
                 result = self.install(artifact, stage)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -309,6 +326,11 @@ endif()
         self.assertIn('Environment="BLAH2_RECEIVER_TYPES=Kraken"',
                       (legacy_stage / "usr/lib/systemd/system/vectorwarp-api.service").read_text(
                           encoding="utf-8"))
+
+        unmarked = self.make_artifact("open-test", "Usrp,HackRF,Kraken")
+        result = self.install(unmarked, self.temp / "open-test-unmarked", "--no-systemd", "--preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("explicitly marked test-only", result.stderr)
 
     def test_installer_rejects_unknown_duplicate_or_inaccurate_receiver_lists(self):
         for compiled in ("Usrp,Airspy,Kraken", "Usrp,Usrp,Kraken", "Usrp", ""):

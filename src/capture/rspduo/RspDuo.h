@@ -24,6 +24,7 @@
 #include "data/IqData.h"
 
 #include <stdint.h>
+#include <atomic>
 #include <string>
 
 #define BUFFER_SIZE_NR 1024
@@ -38,6 +39,9 @@ private:
   bool deviceSelected = false;
   bool deviceInitialized = false;
   std::atomic<bool> deviceRemoved{false};
+  std::atomic<bool> callbackFault{false};
+  std::atomic<bool> streamEstablished{false};
+  void signal_callback_fault() noexcept;
   void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)
   int agc_bandwidth_nr;

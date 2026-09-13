@@ -541,7 +541,14 @@ function createReceiverManager(options = {}) {
         }
       }
     }
-    if (request.configuredType === 'RspDuo') {
+    // SDRplay's service is relevant when it is configured, when its SDK/adapter
+    // is present, or when a matching USB descriptor was observed. Do not let a
+    // different saved receiver hide an already-running local SDRplay service.
+    const rspDuoRelevant = request.configuredType === 'RspDuo' ||
+      dependencies.RspDuo.state === 'installed' ||
+      nativeStatus?.RspDuo?.moduleLoadable === true ||
+      usb.some(device => usbMatches('RspDuo', device));
+    if (rspDuoRelevant) {
       const rawService = await runProbe('service-status', probes.serviceStatus,
         {serviceId: 'sdrplay-api'}, timeoutMs, errors, null);
       if (rawService !== null) {

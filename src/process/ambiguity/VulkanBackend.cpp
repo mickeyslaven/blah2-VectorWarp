@@ -2,6 +2,7 @@
 // vendor-specific CUDA/ROCm runtimes. VkFFT supplies the FFT kernels; the two
 // small shaders below implement the same correlation/gather as CPU Ambiguity.
 #include "GpuBackend.h"
+#include "GpuDriverStatus.h"
 #include "GpuMemory.h"
 #include <vulkan/vulkan.h>
 #include <glslang/Include/glslang_c_interface.h>
@@ -118,11 +119,23 @@ void checkFft(VkFFTResult result) {
 }
 struct Instance {
   VkInstance handle = VK_NULL_HANDLE;
-  Instance() {
+  bool diagnosticProperties = false;
+  explicit Instance(bool diagnostic = false) {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "blah2"; app.apiVersion = VK_API_VERSION_1_0;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &app;
+    const char* extension = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+    if (diagnostic) {
+      uint32_t count = 0;
+      check(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr), "extension discovery");
+      std::vector<VkExtensionProperties> extensions(count);
+      check(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()), "extension discovery");
+      diagnosticProperties = std::any_of(extensions.begin(), extensions.end(), [&](const auto& value) {
+        return std::strcmp(value.extensionName, extension) == 0;
+      });
+      if (diagnosticProperties) { info.enabledExtensionCount = 1; info.ppEnabledExtensionNames = &extension; }
+    }
     startupTrace("vkCreateInstance begin");
     check(vkCreateInstance(&info, nullptr, &handle), "driver initialization");
     startupTrace("vkCreateInstance complete");
@@ -1010,6 +1023,51 @@ extern "C" std::vector<blah2::GpuDevice> blah2_gpu_devices() {
   std::vector<blah2::GpuDevice> result;
   for (const auto& item : blah2::enumerate(instance)) result.push_back(item.info);
   return result;
+}
+extern "C" std::string blah2_gpu_driver_status(unsigned version) {
+  if (version != 1) throw std::runtime_error("Unsupported GPU diagnostic version");
+  blah2::Instance instance(true);
+  auto getProperties = reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2KHR>(
+    vkGetInstanceProcAddr(instance.handle, "vkGetPhysicalDeviceProperties2KHR"));
+  std::ostringstream json;
+  json << "{\"version\":1,\"available\":true,\"qualification\":\"not-run\",\"devices\":[";
+  bool first = true;
+  for (const auto& item : blah2::enumerate(instance)) {
+    VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    uint32_t count = 0;
+    blah2::check(vkEnumerateDeviceExtensionProperties(item.physical, nullptr, &count, nullptr), "driver extension discovery");
+    std::vector<VkExtensionProperties> extensions(count);
+    blah2::check(vkEnumerateDeviceExtensionProperties(item.physical, nullptr, &count, extensions.data()), "driver extension discovery");
+    const bool supported = item.properties.apiVersion >= VK_API_VERSION_1_2 ||
+      std::any_of(extensions.begin(), extensions.end(), [](const auto& value) {
+        return std::strcmp(value.extensionName, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME) == 0;
+      });
+    if (instance.diagnosticProperties && getProperties && supported) {
+      VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+      properties.pNext = &driver;
+      getProperties(item.physical, &properties);
+    }
+    if (!first) json << ',';
+    first = false;
+    json << "{\"id\":" << blah2::gpuDiagnosticString(item.info.id)
+      << ",\"name\":" << blah2::gpuDiagnosticString(item.info.name)
+      << ",\"vendorId\":" << item.properties.vendorID
+      << ",\"deviceId\":" << item.properties.deviceID
+      << ",\"driverId\":" << driver.driverID
+      << ",\"driverName\":" << blah2::gpuDiagnosticString(driver.driverName)
+      << ",\"driverInfo\":" << blah2::gpuDiagnosticString(driver.driverInfo)
+      << ",\"driverVersionRaw\":" << item.properties.driverVersion
+      << ",\"mesaVersion\":";
+    // Packed Mesa versions are meaningful here only for the identified V3DV
+    // driver, not NVIDIA's different encoding or an unknown vendor's driver.
+    if (driver.driverID == VK_DRIVER_ID_MESA_V3DV) {
+      const uint32_t v = item.properties.driverVersion;
+      json << '"' << VK_VERSION_MAJOR(v) << '.' << VK_VERSION_MINOR(v) << '.' << VK_VERSION_PATCH(v) << '"';
+    } else json << "null";
+    json << '}';
+  }
+  json << "]}";
+  return json.str();
 }
 extern "C" blah2::GpuBackend* blah2_gpu_create(unsigned abi, const blah2::GpuGeometry* geometry, const char* requested) {
   if (abi != blah2::GPU_ABI || !geometry) throw std::runtime_error("GPU module version mismatch");

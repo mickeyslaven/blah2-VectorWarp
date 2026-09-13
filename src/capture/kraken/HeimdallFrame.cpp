@@ -1,5 +1,6 @@
 #include "HeimdallFrame.h"
 
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -68,8 +69,14 @@ void HeimdallFrame::decode_metadata(
   for (uint32_t channel = 0; channel < header.numChannels; channel++)
   {
     const std::size_t offset = static_cast<std::size_t>(channel) * 8;
-    header.frequencies[channel] = read_le_float(bytes.data() + offset);
-    header.gains[channel] = read_le_float(bytes.data() + offset + 4);
+    const float frequency = read_le_float(bytes.data() + offset);
+    const float gain = read_le_float(bytes.data() + offset + 4);
+    if (!std::isfinite(frequency))
+      throw std::runtime_error("Invalid Heimdall V2 RF frequency metadata");
+    if (!std::isfinite(gain))
+      throw std::runtime_error("Invalid Heimdall V2 gain metadata");
+    header.frequencies[channel] = frequency;
+    header.gains[channel] = gain;
   }
 }
 

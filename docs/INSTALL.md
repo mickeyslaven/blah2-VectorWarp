@@ -1,69 +1,133 @@
-# First install
+# Install VectorWarp
 
-Signed packages are planned but **not published**. When the first release is
-announced, use this guide; until then use the [source build](SETUP.md).
+These instructions install VectorWarp on 64-bit Linux with systemd:
+x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
+Build from source for now; the first signed DEB/RPM
+release is not yet published.
 
-Planned packages support Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on
-x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). DragonOS may use the
-matching Ubuntu package when its OS metadata matches; it is not a separately
-validated DragonOS image. See [DragonOS notes](DRAGONOS.md).
+## Build from source
 
-## Raspberry Pi
-
-Choose the package for the installed 64-bit OS, not the board:
-
-| Operating system | Planned package |
-| --- | --- |
-| Fedora 44 | Fedora 44 ARM64 RPM |
-| Supported Ubuntu | Matching Ubuntu ARM64 DEB |
-| Debian 13 or Raspberry Pi OS Trixie | Debian 13 ARM64 DEB |
-
-No custom SD image is required. The installer does not change boot firmware or
-Wi-Fi. Pi 4 replay/startup validation exists, but live real-time capture and
-Raspberry Pi OS installation are not yet validated; see [Pi limits](PI4_VALIDATION_20260910.md).
-
-## Install and open settings
-
-After publication, inspect and run the bootstrap:
+Install [Node.js](https://nodejs.org/en/download) 22 or later with npm, then
+the build dependencies below. On Ubuntu or Debian:
 
 ```bash
-curl -fLO https://mickeyslaven.github.io/blah2-VectorWarp/install.sh
-less install.sh
-sudo bash install.sh --start-web
+sudo apt update
+sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
+  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
 ```
 
-`--start-web` starts only the settings/API service. It does not start radar
-processing or open a receiver. Open `http://HOST:3000/` from a trusted browser.
-
-## Configure and receive
-
-In **Settings**:
-
-1. Select a receiver profile and enter its connection details.
-2. Set frequency, sample rate, receiver/transmitter coordinates, and a writable
-   recording directory.
-3. For Kraken, confirm the Heimdall host, ports, channel count and reference
-   mode. Applying settings synchronizes the browser frequency and active-channel
-   prefix with the receiver, then reads them back at processor startup.
-4. Correct validation errors, then choose **Save & Restart**. This starts the
-   processor with the saved configuration.
-
-Enable the processor at boot only when you want it to start automatically:
+On Fedora:
 
 ```bash
-sudo systemctl enable vectorwarp-processor.service
+sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm \
+  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel
 ```
 
-Keep the UI on a trusted LAN/VPN: it has no login.
+The native installer requires Node.js 22 or newer at `/usr/bin/node`, not only
+inside your shell's version manager. Check it before building:
 
-## Limits
+```bash
+/usr/bin/node --version
+npm --version
+```
 
-- Each package includes Kraken, USRP, dual-HackRF and RSPduo adapters. Kraken
-  Suite and its USB drivers remain external: VectorWarp can enroll, reuse and
-  start an already-installed allowlisted local service, or use a remote endpoint.
-- UHD and libhackrf are installed as native package dependencies. RSPduo still
-  needs the vendor's locally installed SDRplay API. Settings checks whether it
-  is running; starting a local service requires enrollment and one-use local
-  approval. That is not an unconditional one-click driver installer.
-- Replay does not open radio hardware. macOS and Windows are browser clients,
-  not processor hosts.
+For GPU support, install the [Vulkan build dependencies](SETUP.md#build-from-source)
+and your GPU's driver before building. `--gpu auto` does not install them.
+If the GPU module was omitted from a build, installing a driver alone is not
+enough: rebuild and reinstall VectorWarp with those dependencies present.
+
+Build and install VectorWarp:
+
+```bash
+git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
+cd blah2-VectorWarp
+script/build-native.sh --preflight --backend kraken --gpu auto
+script/build-native.sh --backend kraken --gpu auto
+sudo script/install-native.sh --preflight
+sudo script/install-native.sh
+```
+
+Installation preserves an existing `/etc/vectorwarp/config.yml` and installs
+systemd units without enabling or starting them.
+
+The command above builds the Kraken route. Select `--backend usrp`, `hackrf`,
+or `rspduo` for those source routes instead. `--backend all` builds the four
+adapters together, but RSPduo requires a locally licensed SDRplay API 3.15
+development installation. Set `BLAH2_SDRPLAY_INCLUDE_DIR` and
+`BLAH2_SDRPLAY_LIBRARY` when its headers and library are not in standard paths.
+Use the same backend for both build commands. See the
+[receiver build options](SETUP.md#build-from-source).
+
+## Start the interface and configure VectorWarp
+
+Start only the web API first:
+
+```bash
+sudo systemctl start vectorwarp-api.service
+```
+
+On the server, open `http://localhost:3000/`. From another device, use
+`http://<server-IP>:3000/`, replacing `<server-IP>` with the Linux machine's
+address. Do not use `localhost` from your phone or another computer.
+The default configuration listens on all network interfaces. The UI has no
+login: keep it on a trusted LAN/VPN or behind an authenticated gateway.
+
+In **Settings**, select a receiver profile; supply its endpoint or device
+details; set frequency, sample rate, site coordinates, and a writable recording
+directory; then correct any validation errors. Install and configure
+KrakenSDR Suite separately before using its endpoint.
+
+For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.
+VectorWarp never downloads it or accepts its license. On a first real native or
+package installation only, VectorWarp may prepare an already-installed local
+vendor service when the installed RSPduo adapter and local policy allow it; it
+does not enable it at boot or start VectorWarp itself. If preparation cannot be
+verified, use the official [SDRplay Hardware API page](https://sdrplay.com/hardware-api/),
+then recheck in Settings. Building an RSPduo adapter separately requires the
+licensed API 3.15 headers and library described above. See
+[SDRplay setup](SDRPLAY_SETUP.md).
+
+Choose **Save & Restart** (or **Apply & Restart** for previously saved changes)
+to apply the settings and start processing. **Save for later**, when offered,
+writes the configuration without applying receiver changes or starting radar.
+The page shows restart progress and any startup error. Software discovery does not prove
+that the receiver is correctly wired or receiving a coherent signal.
+
+To start VectorWarp automatically after future reboots, enable the services
+after confirming the configuration works:
+
+```bash
+sudo systemctl enable vectorwarp-api.service vectorwarp-processor.service
+```
+
+Check either service with:
+
+```bash
+systemctl status vectorwarp-api.service vectorwarp-processor.service
+```
+
+## Raspberry Pi and GPU acceleration
+
+Use a 64-bit operating system and the same source route. GPU acceleration is
+optional. After installation, inspect the native driver status:
+
+```bash
+/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status
+```
+
+The separate administrator command can offer the operating system's Mesa
+packages when needed:
+
+```bash
+sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver
+```
+
+It does not start or restart radar processing. See [Pi GPU setup](PI_GPU_SETUP.md)
+for driver and account-access details.
+
+## Future package route
+
+The repository contains package-install tooling for Ubuntu 22.04/24.04/26.04,
+Debian 13, Fedora 44, matching DragonOS bases, and 64-bit Raspberry Pi OS
+Trixie. Packages will be linked here when published. For now, use the source
+commands above; the planned APT/DNF bootstrap is not an available installer.

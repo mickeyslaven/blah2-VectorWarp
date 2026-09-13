@@ -108,6 +108,14 @@ void RspDuo::start()
   validate();
   run_fg = true;
   deviceRemoved = false;
+  callbackFault = false;
+  streamEstablished = false;
+  {
+    std::lock_guard<std::mutex> pairingLock(buffer_16_mutex);
+    if (buffer_16_ar) free(buffer_16_ar);
+    buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
+    expected_first_sample_valid = false;
+  }
   try {
     open_api();
     get_device();
@@ -160,6 +168,16 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
     sleep(1);
   }
   if (deviceRemoved) throw std::runtime_error("[RspDuo] Receiver disconnected. Reconnect it and check the SDRplay API service before restarting.");
+  if (callbackFault)
+    throw std::runtime_error("[RspDuo] Dual-tuner callback pairing fault. Input is stopping; restart after checking the SDRplay API service and receiver connection.");
+}
+
+void RspDuo::signal_callback_fault() noexcept
+{
+  // SDK callbacks must never throw into vendor C code.  Stop the process loop
+  // and let its owning C++ thread publish the actionable failure instead.
+  callbackFault.store(true, std::memory_order_relaxed);
+  run_fg = false;
 }
 
 void RspDuo::validate() {
@@ -352,10 +370,14 @@ sdrplay_api_StreamCbParamsT *params, unsigned int numSamples,
 unsigned int reset, void *cbContext)
 {
   std::lock_guard<std::mutex> lock(buffer_16_mutex);
-  if (reset || !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES ||
-      (expected_first_sample_valid && !rspduo_sequence::continues(expected_first_sample, params->firstSampleNum))) {
+  if (!run_fg || callbackFault.load(std::memory_order_relaxed)) return;
+  const bool malformed = !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES;
+  const bool discontinuity = !malformed && expected_first_sample_valid &&
+    !rspduo_sequence::continues(expected_first_sample, params->firstSampleNum);
+  if (reset || malformed || discontinuity) {
     if (buffer_16_ar) { free(buffer_16_ar); buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0; }
     expected_first_sample_valid = false;
+    if ((malformed && !reset) || streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
     if (recordingSource) recordingSource->recording_discontinuity(
       "RSPduo stream A reset, invalid sample count, or sample sequence discontinuity");
     return;
@@ -363,6 +385,7 @@ unsigned int reset, void *cbContext)
   if (buffer_16_ar) {
     free(buffer_16_ar); buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
     expected_first_sample_valid = false;
+    if (streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
     if (recordingSource) recordingSource->recording_discontinuity("RSPduo callback pairing gap before stream A");
     return;
   }
@@ -376,7 +399,7 @@ unsigned int reset, void *cbContext)
   {
     std::cout << "Error: stream_a_callback, malloc failed" << std::endl;
     if (recordingSource) recordingSource->recording_discontinuity("RSPduo stream A allocation failed");
-    run_fg = false;
+    signal_callback_fault();
     return;
   }
   buffer_16_samples = numSamples;
@@ -415,12 +438,15 @@ unsigned int reset, void *cbContext)
   short* paired = NULL;
   {
     std::lock_guard<std::mutex> lock(buffer_16_mutex);
-    if (reset || !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES ||
-        !buffer_16_ar || buffer_16_samples != numSamples ||
-        buffer_16_first_sample != params->firstSampleNum) {
+    if (!run_fg || callbackFault.load(std::memory_order_relaxed)) return;
+    const bool malformed = !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES;
+    const bool pairingMismatch = !malformed && (!buffer_16_ar || buffer_16_samples != numSamples ||
+        buffer_16_first_sample != params->firstSampleNum);
+    if (reset || malformed || pairingMismatch) {
       if (buffer_16_ar) free(buffer_16_ar);
       buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
       expected_first_sample_valid = false;
+      if ((malformed && !reset) || streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
       if (recordingSource) recordingSource->recording_discontinuity(
         "RSPduo callback pairing reset, gap, sample-count, or epoch mismatch");
       return;
@@ -429,6 +455,7 @@ unsigned int reset, void *cbContext)
     buffer_16_ar = NULL; buffer_16_samples = 0; buffer_16_first_sample = 0;
     expected_first_sample = rspduo_sequence::next(params->firstSampleNum, numSamples);
     expected_first_sample_valid = true;
+    streamEstablished.store(true, std::memory_order_relaxed);
   }
   unsigned int i = 0;
   unsigned int j = 0;

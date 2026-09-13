@@ -201,6 +201,8 @@ def load_manifest(file, packages):
             expected_filename = f"vectorwarp-{version}-{release}.{entry['arch']}.rpm"
         if filename != expected_filename:
             raise ValueError(f"Package filename disagrees with its immutable identity: {filename}")
+        if entry.get("test_only", False) is not False:
+            raise ValueError(f"Test-only packages cannot be published: {filename}")
         if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
                 "all", "auto", "24.21.0"):
             raise ValueError(f"Unexpected package build profile: {filename}")

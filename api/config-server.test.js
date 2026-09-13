@@ -126,6 +126,19 @@ async function waitForServer() {
   throw new Error(`API did not start: ${childError}`);
 }
 
+async function waitForSystemStatus(predicate, message) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const status = (await request('GET', '/api/system/status')).body;
+    if (predicate(status)) return status;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error(message);
+}
+
+function closeSocket(socket) {
+  return new Promise(resolve => { socket.once('close', resolve); socket.end(); });
+}
+
 (async () => {
   try {
     const capabilities = await waitForServer();
@@ -257,23 +270,37 @@ async function waitForServer() {
     ].entries()) {
       const frame = {timestamp: 1001 + index, cpi: 10, acceleration: ambiguityBackend,
         ...(clutterBackend ? {clutterAcceleration: clutterBackend} : {})};
-      await new Promise((resolve, reject) => {
-        const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing},
-          () => socket.end(JSON.stringify(frame)));
-        socket.on('close', resolve); socket.on('error', reject);
+      const socket = await new Promise((resolve, reject) => {
+        const connection = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing}, () => {
+          connection.write(JSON.stringify(frame)); resolve(connection);
+        });
+        connection.on('error', reject);
       });
-      const reported = (await request('GET', '/api/system/status')).body;
+      const reported = await waitForSystemStatus(status => status.acceleration?.active === 'vulkan',
+        'Timing frame was not observed while its socket remained connected');
       assert.deepEqual(reported.acceleration, ambiguityBackend, 'Existing ambiguity telemetry is unchanged');
       assert.deepEqual(reported.clutterAcceleration, clutterBackend,
         'Clutter state and execution flags propagate independently; older timing frames clear the field');
+      await closeSocket(socket);
+      assert.equal((await request('GET', '/api/system/status')).body.acceleration, null,
+        'A closed timing stream must not leave GPU qualification telemetry current');
     }
-    // Test-only frame marker; never touches a physical receiver.
-    await new Promise((resolve, reject) => {
-      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp},
-        () => socket.end(String(Date.now())));
-      socket.on('close', resolve);
+    const reconnectedTimingSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing}, () => resolve(socket));
       socket.on('error', reject);
     });
+    assert.equal((await request('GET', '/api/system/status')).body.acceleration, null,
+      'A new timing connection cannot reuse telemetry from the previous generation');
+    await closeSocket(reconnectedTimingSocket);
+    // Test-only frame marker; never touches a physical receiver.
+    const timestampSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
+        socket.write(String(Date.now())); resolve(socket);
+      });
+      socket.on('error', reject);
+    });
+    await waitForSystemStatus(status => status.lastFrameAt !== null,
+      'Timestamp frame was not observed while its socket remained connected');
     const startedCapture = await request('GET', '/capture/toggle');
     assert.equal(startedCapture.body.requested, true);
     assert.equal(startedCapture.body.recording, false);
@@ -309,6 +336,16 @@ async function waitForServer() {
     assert.equal(failedCapture.body.requested, false,
       'A writer failure must clear the request instead of leaving Starting recording forever');
     assert.equal(failedCapture.body.recordingError, 'Disk full recording stopped');
+    await closeSocket(timestampSocket);
+    assert.equal((await request('GET', '/api/system/status')).body.lastFrameAt, null,
+      'A closed timestamp stream must not leave a frame current');
+    const reconnectedTimestampSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => resolve(socket));
+      socket.on('error', reject);
+    });
+    assert.equal((await request('GET', '/api/system/status')).body.lastFrameAt, null,
+      'A new timestamp connection cannot reuse a frame from the previous generation');
+    await closeSocket(reconnectedTimestampSocket);
 
     const foreign = await request('PUT', '/api/config?restart=true', config, {
       Origin: 'https://unrelated.example'
@@ -332,6 +369,22 @@ async function waitForServer() {
     const updated = JSON.parse(JSON.stringify(config));
     updated.process.data.cpi = 0.25;
     updated.process.performance.fft_threads = 0;
+    const liveTimingSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timing}, () => {
+        socket.write(JSON.stringify({timestamp: 2001, cpi: 10, acceleration: ambiguityBackend})); resolve(socket);
+      });
+      socket.on('error', reject);
+    });
+    const liveTimestampSocket = await new Promise((resolve, reject) => {
+      const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
+        socket.write(String(Date.now())); resolve(socket);
+      });
+      socket.on('error', reject);
+    });
+    const liveStatus = await waitForSystemStatus(status => status.acceleration?.active === 'vulkan' &&
+      status.lastFrameAt !== null, 'Live timing and timestamp streams were not observed before restart');
+    assert.deepEqual(liveStatus.acceleration, ambiguityBackend,
+      'Live streams make their own current telemetry visible before a restart');
     const accepted = await request('PUT', '/api/config?restart=true', updated, {
       Origin: `http://127.0.0.1:49152`
     });
@@ -343,6 +396,12 @@ async function waitForServer() {
       await new Promise(resolve => setTimeout(resolve, 20));
     assert.ok(fs.existsSync(restartMarker),
       'Configured restart command was not executed');
+    const afterRestart = (await request('GET', '/api/system/status')).body;
+    assert.equal(afterRestart.lastFrameAt, null,
+      'Restart invalidates the old timestamp generation before a new connection reports frames');
+    assert.equal(afterRestart.acceleration, null,
+      'Restart invalidates the old timing generation before it can qualify GPU setup');
+    await Promise.all([closeSocket(liveTimingSocket), closeSocket(liveTimestampSocket)]);
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).process.data.cpi,
       0.25);
     assert.equal((await request('GET', '/api/runtime/config')).body.process.data.cpi,

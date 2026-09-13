@@ -58,16 +58,39 @@ Each package includes all four receiver adapters and CPU processing with
 Vulkan auto-detection. UHD and libhackrf use native distro dependencies;
 SDRplay's API remains a separately licensed local installation.
 
-Before running release builds, accept SDRplay's SDK license for build use and
-set repository variable `VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED` to `true`.
-The build extracts the pinned SDK's headers/link library without executing its
-installer. The package contains only our adapter, never the vendor SDK/runtime.
+Before running release builds, provision a licensed SDRplay SDK outside Git
+on each trusted build runner and accept its terms for build use. Set
+`VECTORWARP_SDRPLAY_BUILD_LICENSE_ACCEPTED=true` in `release-signing` and
+select either local `BLAH2_SDRPLAY_INCLUDE_DIR` / `BLAH2_SDRPLAY_LIBRARY` paths
+or an absolute local `VECTORWARP_SDRPLAY_SDK_ARCHIVE` path to the pinned 3.15.2
+installer obtained from [SDRplay](https://sdrplay.com/hardware-api/).
+The helper stages headers/link libraries without running or downloading the
+installer. No SDK is retrieved from this repository or its history.
+
+Optional repository/organization variables `VECTORWARP_SDRPLAY_RUNNER_X64`
+and `VECTORWARP_SDRPLAY_RUNNER_ARM64` select trusted runner labels. Do not put
+runner-selection variables in the environment: they are needed before the
+job reaches that environment. Keep SDK paths and license attestation in the
+protected `release-signing` environment, read only by its staging step.
+Leave them unset only when the default hosted runners have separately been
+provisioned with permitted inputs; ordinary hosted runners do not include
+SDRplay. Protect those runners and the existing `release-signing` environment
+from unreviewed refs. Never provide proprietary inputs to a public PR job or
+place them in public Actions artifacts, caches, release assets or container
+images. The staged SDK lives in the runner's private temporary directory and
+is mounted read-only for packaging. Actual packages still require all four
+adapters; missing SDK input fails the build, not silently reduced support.
 
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
-   `Build release packages` additionally tests all receiver modules and vendor
-   mocks, then performs unsigned `0.0.0` packaging smoke
-   builds on pull requests targeting `main`; that path has no signing job and
-   does not consume an environment-scoped signing secret. Configure and protect
+   `Build release packages` runs all ten native package smoke checks on public
+   PRs using Kraken, USRP and HackRF, plus hardware-free contracts and fake
+   SDK-input fixtures. The reduced packages are test-only and are not uploaded
+   as release assets; the stable repository generator rejects their receiver
+    profile. Passing these checks does not establish a real RSPduo SDK build.
+   PR builds use the empty `pr-packaging` environment; never place SDK inputs
+   or signing secrets there.
+   Actual all-adapter release packaging runs only from trusted main/tag
+   releases after separately licensed SDK provisioning. Configure and protect
    `release-signing` before any release tag. Use the immutable
    `vMAJOR.MINOR.PATCH` tag for a draft release; its manual version input is
    dry-run only.

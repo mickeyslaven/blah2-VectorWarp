@@ -1378,6 +1378,13 @@ function renderReceiverSetup() {
     output.appendChild(element);
     return element;
   };
+  const sdrplayLink = () => {
+    const link = document.createElement('a');
+    link.href = 'https://sdrplay.com/hardware-api/';
+    link.textContent = 'SDRplay hardware API and supported systems';
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    output.appendChild(link);
+  };
   const settingApplication = (receiver, item) => {
     if (item.direction === 'browser-to-upstream-after-ack-and-readback')
       return `${item.configField}: sent to Suite V2 control; require its acknowledgement and a fresh status readback.`;
@@ -1438,10 +1445,16 @@ function renderReceiverSetup() {
         if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: the saved upstream endpoint is available and will be reused. Its reported settings still require a fresh check when saving.`);
         if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
           paragraph('SDRplay API is already running and will be reused without restart.');
-        if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed')
-          paragraph('SDRplay API must be obtained from the vendor with its license accepted locally. Automatic redistribution is unavailable.');
+        if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
+          paragraph(receiver.dependencies.state === 'missing' ?
+            'SDRplay API was not found. Download it from SDRplay and accept its license locally.' :
+            'Could not verify SDRplay API. If it is not installed, use the download link below.');
+          sdrplayLink();
+        }
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
-          paragraph('SDRplay API is installed but stopped. A reviewed Start SDRplay action appears only when this local service is already enrolled.');
+          paragraph('SDRplay API is installed but stopped. Save & Restart starts a standard local service automatically. Custom services need administrator review.');
+        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
+          paragraph('SDRplay API service status could not be checked.');
         if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
           for (const step of receiver.setupGuide) {
             paragraph(step.text);
@@ -1722,7 +1735,23 @@ async function refreshConfigDiagnostics() {
     const status = await readRadarState();
     const acceleration = document.getElementById('acceleration-status');
     if (acceleration) {
-      acceleration.textContent = accelerationSummary(status.acceleration, status.radar);
+      acceleration.textContent = `Delay–Doppler: ${accelerationSummary(status.acceleration, status.radar)}. ` +
+        `Clutter: ${accelerationSummary(status.clutterAcceleration, status.radar)}.`;
+      if (status.gpuSetup?.pi) {
+        const setup = document.createElement('div');
+        setup.textContent = `Pi GPU setup: ${status.gpuSetup.message}`;
+        acceleration.append(setup);
+        if (!['qualified', 'partially-qualified'].includes(status.gpuSetup.state)) {
+          const command = document.createElement('code');
+          command.textContent = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver';
+          setup.append(document.createTextNode(' Local administrator command: '), command);
+        }
+        if (status.gpuSetup.serviceAccess?.state === 'group-access-needed') {
+          const access = document.createElement('div');
+          access.textContent = 'Render-node access: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access';
+          setup.append(access);
+        }
+      }
     }
     target.textContent = status.errors?.length ? status.errors.join(' ') :
       status.restart?.state === 'failed' ? status.restart.message :

@@ -1,4 +1,5 @@
 # The web API may queue exactly one root-owned oneshot. That unit invokes an
-# argument-free helper which names only the two VectorWarp units.
+# argument-free helper for the two VectorWarp units and, for explicitly applied
+# live RSPduo settings, a narrowly checked already-installed SDRplay service.
 Defaults:vectorwarp-api !requiretty
 vectorwarp-api ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start vectorwarp-restart.service

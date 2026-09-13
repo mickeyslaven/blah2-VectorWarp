@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "software": [
+    {
+      "id": "kraken-suite-v2",
+      "displayName": "KrakenSDR Suite V2",
+      "receiverType": "Kraken",
+      "source": {
+        "kind": "github-branch",
+        "repository": "krakenrf/krakensdr_suite",
+        "branch": "main"
+      },
+      "lastSeen": {
+        "identity": "15c1a7ee3f05d909c0c5835addd126849a7d8deb",
+        "version": "main@15c1a7ee3f05"
+      },
+      "compatibility": {
+        "candidateCheck": "manual-protocol-review",
+        "backend": "kraken"
+      },
+      "licensePolicy": {
+        "automaticSourceCheckout": false,
+        "automaticVendorInstall": false
+      }
+    },
+    {
+      "id": "uhd",
+      "displayName": "Ettus Research UHD",
+      "receiverType": "Usrp",
+      "source": {
+        "kind": "github-release",
+        "repository": "EttusResearch/uhd"
+      },
+      "lastSeen": {
+        "identity": "v4.10.0.0",
+        "version": "4.10.0.0",
+        "sourceCommit": "2af4ddb96219a99d2300804830e0971f79557b23"
+      },
+      "compatibility": {
+        "candidateCheck": "source-build",
+        "backend": "usrp"
+      },
+      "licensePolicy": {
+        "automaticSourceCheckout": true,
+        "automaticVendorInstall": false
+      }
+    },
+    {
+      "id": "libhackrf",
+      "displayName": "Great Scott Gadgets HackRF",
+      "receiverType": "HackRF",
+      "source": {
+        "kind": "github-release",
+        "repository": "greatscottgadgets/hackrf"
+      },
+      "lastSeen": {
+        "identity": "v2026.01.3",
+        "version": "2026.01.3",
+        "sourceCommit": "1cfe7dfe98d333450217d50e3f3a1ad0702e000f"
+      },
+      "compatibility": {
+        "candidateCheck": "source-build",
+        "backend": "hackrf"
+      },
+      "licensePolicy": {
+        "automaticSourceCheckout": true,
+        "automaticVendorInstall": false
+      }
+    },
+    {
+      "id": "sdrplay-api",
+      "displayName": "SDRplay Hardware API for Linux",
+      "receiverType": "RspDuo",
+      "source": {
+        "kind": "sdrplay-download-page",
+        "url": "https://sdrplay.com/download/hardware-api-linux/"
+      },
+      "lastSeen": {
+        "identity": "3.15",
+        "version": "3.15"
+      },
+      "compatibility": {
+        "candidateCheck": "manual-licensed-build",
+        "backend": "rspduo"
+      },
+      "licensePolicy": {
+        "automaticSourceCheckout": false,
+        "automaticVendorInstall": false
+      }
+    }
+  ]
+}

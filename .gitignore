@@ -4,6 +4,9 @@ bin/*
 !bin/README.md
 *.a
 *.so
+# SDRplay's licensed installer and private build SDK must never be committed.
+SDRplay_RSP_API-Linux-*.run
+sdrplay-build-sdk/
 .vscode/
 doc/html/*
 doc/latex/*

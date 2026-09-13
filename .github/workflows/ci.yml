@@ -63,6 +63,8 @@ jobs:
           python3 test/packaging/test_repository.py -v
           VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
           python3 test/packaging/test_install_release.py -v
+          python3 test/packaging/test_receiver_updates.py -v
+          python3 test/packaging/test_sdrplay_build_sdk.py -v
       - name: Run API and UI unit tests
         env:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
@@ -73,7 +75,10 @@ jobs:
           npm run test:dom --prefix api
           node test/ui/deployment.test.js
       - name: Run staged native-package acceptance checks
-        run: node test/ui/packaging.test.js
+        run: |
+          node test/ui/packaging.test.js
+          python3 test/packaging/test_sdrplay_distribution.py -v
+          python3 test/packaging/test_install_docs.py -v
       - name: Syntax-check every workflow shell block and release script
         run: |
           bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh

@@ -4,12 +4,22 @@
 set -euo pipefail
 
 die() { printf 'smoke-native-package: %s\n' "$*" >&2; exit 1; }
-[[ $# == 2 && $1 == --package ]] || die 'usage: smoke-native-package.sh --package PATH'
+TEST_ONLY=false
+package_arg=
+while (($#)); do
+  case "$1" in
+    --test-only) TEST_ONLY=true; shift ;;
+    --package) (($# >= 2)) || die '--package needs a path'; package_arg=$2; shift 2 ;;
+    *) die 'usage: smoke-native-package.sh [--test-only] --package PATH' ;;
+  esac
+done
+[[ -n $package_arg ]] || die 'usage: smoke-native-package.sh [--test-only] --package PATH'
 if [[ $EUID -ne 0 ]]; then
   command -v sudo >/dev/null || die 'sudo is required for a hosted package smoke test'
-  exec sudo -- bash "$0" "$@"
+  if $TEST_ONLY; then exec sudo -- bash "$0" --test-only --package "$package_arg"; fi
+  exec sudo -- bash "$0" --package "$package_arg"
 fi
-package=$(realpath "$2")
+package=$(realpath "$package_arg")
 [[ -f $package && ! -L $package ]] || die 'package must be a regular file'
 log=$(mktemp)
 api_pid=
@@ -59,17 +69,41 @@ as_root runuser --user vectorwarp-api --group vectorwarp-api --supp-group vector
 receiver_types=$(sed -n 's/^Environment="BLAH2_RECEIVER_TYPES=\(.*\)"$/\1/p' \
   /usr/lib/systemd/system/vectorwarp-api.service)
 [[ -n $receiver_types ]] || die 'installed API service lacks receiver-type build metadata'
+metadata=/opt/vectorwarp/PACKAGE-METADATA
+[[ -f $metadata ]] || die 'installed package lacks backend metadata'
+metadata_field() {
+  local field=$1 value count
+  count=$(grep -c "^${field}=" "$metadata" || true)
+  [[ $count == 1 ]] || die "installed package has invalid $field metadata"
+  value=$(sed -n "s/^${field}=//p" "$metadata")
+  printf '%s' "$value"
+}
+if $TEST_ONLY; then
+  [[ $(metadata_field test_only) == true && $(metadata_field backend) == open-test &&
+    $(metadata_field compiled_receivers) == Usrp,HackRF,Kraken && $receiver_types == Usrp,HackRF,Kraken ]] ||
+    die 'test-only smoke requires the exact open-test receiver metadata'
+else
+  [[ $(metadata_field test_only) == false && $(metadata_field backend) == all &&
+    $(metadata_field compiled_receivers) == RspDuo,Usrp,HackRF,Kraken &&
+    $receiver_types == RspDuo,Usrp,HackRF,Kraken ]] ||
+    die 'stable smoke requires the all-receiver package metadata'
+fi
 # This command loads adapter libraries only; it creates no receiver and opens
 # no hardware. Missing SDRplay software must not stop the core or other radios.
-/opt/vectorwarp/current/bin/blah2 --receiver-status | "$node" -e '
+/opt/vectorwarp/current/bin/blah2 --receiver-status | EXPECTED_RECEIVERS="$receiver_types" TEST_ONLY="$TEST_ONLY" "$node" -e '
   let body=""; process.stdin.on("data", data => { body += data; });
   process.stdin.on("end", () => {
     const report = JSON.parse(body);
-    if (report.schema !== 1 || report.hardwareProbed !== false || report.receivers?.length !== 4) process.exit(1);
-    const names = new Set(report.receivers.map(item => item.receiver));
-    if (["Kraken", "RspDuo", "Usrp", "HackRF"].some(name => !names.has(name))) process.exit(1);
+    const expected = process.env.EXPECTED_RECEIVERS.split(",");
+    const known = ["Kraken", "RspDuo", "Usrp", "HackRF"];
+    if (report.schema !== 1 || report.hardwareProbed !== false || report.receivers?.length !== known.length) process.exit(1);
+    const byName = new Map(report.receivers.map(item => [item.receiver, item]));
+    if (byName.size !== known.length || known.some(name => !byName.has(name))) process.exit(1);
     for (const item of report.receivers) {
-      if (!item.compiled || (item.receiver !== "RspDuo" && !item.moduleLoadable)) process.exit(1);
+      const compiled = expected.includes(item.receiver);
+      if (item.compiled !== compiled) process.exit(1);
+      if (!compiled && item.moduleLoadable !== false) process.exit(1);
+      if (compiled && item.receiver !== "RspDuo" && item.moduleLoadable !== true) process.exit(1);
     }
   });
 ' || die 'installed universal receiver adapters did not load correctly'

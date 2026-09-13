@@ -36,11 +36,27 @@ const receiverBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_receiver_build.py')], {encoding: 'utf8'});
 assert.equal(receiverBuildCheck.status, 0,
   `receiver build/install contract: ${receiverBuildCheck.stdout}${receiverBuildCheck.stderr}`);
+const receiverSmokeCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_smoke_receiver_status.py')], {encoding: 'utf8'});
+assert.equal(receiverSmokeCheck.status, 0,
+  `receiver smoke schema: ${receiverSmokeCheck.stdout}${receiverSmokeCheck.stderr}`);
 const sdkBuildCheck = spawnSync('python3', [path.join(root,
   'test/packaging/test_sdrplay_build_sdk.py')], {encoding: 'utf8'});
 assert.equal(sdkBuildCheck.status, 0,
   `build-only SDK consent/extraction: ${sdkBuildCheck.stdout}${sdkBuildCheck.stderr}`);
+const gpuSetupCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_gpu_setup.py')], {encoding: 'utf8'});
+assert.equal(gpuSetupCheck.status, 0,
+  `Pi-only signed-native GPU setup/access contract: ${gpuSetupCheck.stdout}${gpuSetupCheck.stderr}`);
 assert.match(packageScript, /all receiver adapters in one build/);
+assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
+assert.match(packageScript, /published package receiver manifest is incomplete/);
+assert.match(packageScript, /"test_only": %s/);
+assert.match(packageScript, /It deliberately excludes RSPduo and is not for publication/);
+assert.match(packageScript, /\^the separately installed SDRplay API/);
+assert.match(buildScript, /open-test\)/);
+assert.match(buildScript, /COMPILED_RECEIVERS=Usrp,HackRF,Kraken; TEST_ONLY=true/);
+assert.match(buildScript, /test_only=%s/);
 assert.match(packageScript, /must not contain the SDRplay vendor SDK or runtime/);
 assert.match(rpmSpec, /__requires_exclude.*libsdrplay_api/);
 const receiverModules = read('cmake/ReceiverModules.cmake');
@@ -101,7 +117,9 @@ assert.match(packageSmoke, /\/api\/system\/status/);
 assert.match(packageSmoke, /\/api\/config\/capabilities/);
 assert.match(packageSmoke, /runuser --user vectorwarp-api/);
 assert.match(packageSmoke, /--supp-group vectorwarp-config/);
-assert.match(packageSmoke, /exec sudo -- bash "\$0" "\$@"/);
+assert.match(packageSmoke, /exec sudo -- bash "\$0" --test-only --package "\$package_arg"/);
+assert.match(packageSmoke, /test-only smoke requires the exact open-test receiver metadata/);
+assert.match(packageSmoke, /stable smoke requires the all-receiver package metadata/);
 assert.match(packageSmoke, /\/display\/configuration\//);
 assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
@@ -109,8 +127,8 @@ const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
 const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
 const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
 assert.doesNotMatch(releaseWorkflow, /\blibhackrf-devel\b/, 'Fedora calls its SDK package hackrf-devel');
-assert.equal(debHackrfInstalls.length, 3, 'Verifier and both Debian-family package paths need the complete SDK');
-assert.equal(rpmHackrfInstalls.length, 1, 'The Fedora package path needs the complete SDK');
+assert.ok(debHackrfInstalls.length >= 3, 'Every Debian-family build path needs the complete SDK');
+assert.ok(rpmHackrfInstalls.length >= 1, 'Every Fedora build path needs the complete SDK');
 for (const command of debHackrfInstalls) {
   assert.match(command, /\blibusb-1\.0-0-dev\b/, 'HackRF pkg-config exposes libusb headers on Debian-family builds');
   assert.match(command, /\blibuhd-dev\b/);
@@ -127,8 +145,24 @@ assert.match(sourceSetup, /sudo apt install[^\n]*\blibuhd-dev\b[^\n]*\blibboost-
   'The source quickstart must include both SDK header dependencies');
 assert.match(sourceSetup, /sudo dnf install[^\n]*\buhd-devel\b[^\n]*\bboost-devel\b[^\n]*\bhackrf-devel\b[^\n]*\blibusb1-devel\b/);
 assert.doesNotMatch(sourceSetup, /\blibhackrf-devel\b/);
-assert.equal((releaseWorkflow.match(/bash script\/smoke-native-package\.sh/g) || []).length, 3,
-  'the Ubuntu 24, Ubuntu 22/26, and Fedora target groups must smoke every native package');
+const workflowCheck = spawnSync('node', ['-e',
+  "const fs=require('fs'),yaml=require('js-yaml');process.stdout.write(JSON.stringify(yaml.load(fs.readFileSync(process.argv[1],'utf8'))));",
+  path.join(root, '.github/workflows/release-packages.yml')], {cwd: path.join(root, 'api'), encoding: 'utf8'});
+assert.equal(workflowCheck.status, 0, workflowCheck.stderr);
+const packageJob = JSON.parse(workflowCheck.stdout).jobs.package;
+const prPackageSteps = packageJob.steps.filter(step => /PR verification/.test(step.name || ''));
+const trustedPackageSteps = packageJob.steps.filter(step =>
+  /github\.event_name != 'pull_request'/.test(step.if || '') && /Build native/.test(step.name || ''));
+assert.equal(prPackageSteps.length, 3, 'PRs must smoke Debian, Debian-family, and Fedora package groups');
+assert.equal(trustedPackageSteps.length, 3, 'Trusted builds retain all three package groups');
+assert.equal(prPackageSteps.filter(step => /--backend open-test/.test(step.run || '') &&
+  /script\/package-native\.sh --test-only/.test(step.run || '') &&
+  /smoke-native-package\.sh --test-only/.test(step.run || '')).length, 3,
+  'every PR package group must compile, package, and smoke only open-test');
+assert.equal(trustedPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
+  /smoke-native-package\.sh --package/.test(step.run || '') &&
+  !/smoke-native-package\.sh --test-only/.test(step.run || '')).length, 3,
+  'every trusted package group must compile and smoke the stable all-adapter build');
 function matrixEntries(workflow) {
   return [...workflow.matchAll(/^\s+- \{([^}]+)\}$/gm)].map(match => Object.fromEntries(
     match[1].split(',').map(field => field.trim().split(/:\s+/, 2))));

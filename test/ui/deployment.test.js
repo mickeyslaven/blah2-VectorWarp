@@ -147,7 +147,7 @@ function fetchHttp(url, options = {}) {
     assert.match(helper, /systemctl start vectorwarp-processor\.service/);
     assert.match(helper, /"\$#" -ne 0/);
     assert.match(installer, /PREFIX=\/opt\/vectorwarp/);
-    assert.match(installer, /no service was enabled or started/);
+    assert.match(installer, /no VectorWarp service was enabled or started/);
     console.log('Native deployment acceptance passed: one-origin UI/API, config save, raw ADS-B, error propagation and scoped non-root units.');
   } finally {
     child.kill('SIGTERM');
