@@ -1,7 +1,8 @@
 # Raspberry Pi GPU setup
 
-Install from source using [Installation](INSTALL.md); signed packages are not
-published yet. Include the GPU build dependencies before building.
+Install the matching package with [Installation](INSTALL.md), or use its source
+route for development and unsupported systems. Include GPU build dependencies
+only when building from source.
 
 VectorWarp uses Vulkan on Raspberry Pi too. GPU-enabled builds include
 the backend, **not a replacement Mesa driver**. A missing or faulty Pi ICD
@@ -38,7 +39,7 @@ manufacture one**: request a supported update from that distro. The helper
 reports the missing path and makes no GPU-ready claim. Do not install Fedora
 libraries on Debian/Ubuntu or substitute a random downloaded driver.
 
-The source installer and future release installer accept `--setup-pi-gpu` to offer this
+The source and repository installers accept `--setup-pi-gpu` to offer this
 transaction **after** application installation. Package post-install hooks
 never recursively invoke a package manager. Staging (`--destdir`), preflight
 and dry-run never probe hardware or alter accounts; ordinary installation
@@ -81,3 +82,33 @@ finite/error checks and bounded CPU fallback are unchanged.
 
 Passing the startup checks does not establish that a selected workload meets
 its processing deadline. Check live processing timing before increasing load.
+
+## Pi 4 driver diagnostic
+
+The tested Fedora 44 Pi 4's installed Mesa `26.0.3-4` timed out during VkFFT
+pipeline creation and fell back to CPU. Loading signed Fedora Mesa `26.1.8-1`
+for the test allowed the unchanged shader to compile within the existing
+30-second startup limit. The driver was extracted privately, not installed
+system-wide; no processing code or numerical qualification limits were relaxed.
+
+The matched CPU/GPU replay used the [Pi CPU comparison's](PI4_PERFORMANCE_20260911.md)
+retained recording and standard profile: **527 MHz, 2.4 MS/s, two channels,
+200 ms CPI, ±800 Hz, delays −10…245 and 30.604 km maximum excess path**.
+
+| VectorWarp mode | Mean processing time per CPI | Less time than CPU |
+| --- | ---: | ---: |
+| CPU | 797.228 ms | — |
+| GPU | 579.252 ms | 27.3% |
+| Automatic | 578.138 ms | 27.5% |
+
+Each mode had two 20-CPI runs, excluding the first eight CPIs per run: 24
+measured CPIs per mode. These are full-pipeline processing times, not file-read
+or startup time. GPU clutter and delay–Doppler paths were selected on all 24
+measured frames in both GPU modes; the clutter solve still used the CPU.
+All modes missed every 200 ms deadline. This is a separate driver comparison,
+not a live-RF test or a rerun of the three-way upstream comparison.
+
+For a normal installation, use the `--status` and `--install-driver` commands
+above. They offer the signed Mesa version available from your own distribution;
+they do not install this private override or guarantee that a particular fix is
+available. After updating, check status again and test your processing settings.

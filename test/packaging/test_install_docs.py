@@ -61,6 +61,8 @@ class InstallDocumentationTests(unittest.TestCase):
                 self.assertIn("python3-apt", text)
                 self.assertIn("python3-libdnf5", text)
                 self.assertIn("python3-rpm", text)
+                self.assertIn("gnupg", text)
+                self.assertIn("gnupg2", text)
                 self.assertIn("/usr/bin/node --version", text)
                 self.assertIn("npm --version", text)
                 self.assertIn("--backend", text)
@@ -98,28 +100,30 @@ class InstallDocumentationTests(unittest.TestCase):
         self.assertIn("../../../api/config-manager.js", rsp)
         self.assertNotIn("default value of", rsp)
 
-    def test_default_startup_does_not_enable_boot_capture(self):
+    def test_explicit_package_startup_does_not_enable_boot_capture(self):
         install = (ROOT / "docs/INSTALL.md").read_text()
         self.assertIn("sudo systemctl start vectorwarp-api.service", install)
-        self.assertNotIn("enable --now", install)
+        self.assertIn("sudo systemctl enable --now vectorwarp-api.service", install)
+        self.assertIn("enables the web API at boot", install)
+        self.assertIn("does not enable or start VectorWarp services", install)
         self.assertIn("Save for later", install)
         self.assertIn("Save & Restart", install)
         for unit in re.findall(r"\bvectorwarp-[a-z-]+\.service\b", install):
             self.assertTrue((ROOT / "contrib/systemd" / (unit + ".in")).is_file())
 
-    def test_3lips_guide_keeps_external_integration_distinct(self):
+    def test_3lips_guide_documents_the_builtin_converter_change(self):
         guide = " ".join((ROOT / "docs/3LIPS_SETUP.md").read_text().split())
         api = (ROOT / "api/server.js").read_text()
-        ui = (ROOT / "html/js/config_ui.js").read_text()
-        for route in ("/api/config", "/api/detection", "/api/adsb/delay-doppler"):
-            self.assertIn(route, guide)
-            self.assertIn(route, api)
-        self.assertIn("http://adsb2dd.30hours.dev/api/dd", guide)
-        self.assertIn("Neither change is included in VectorWarp", guide)
-        self.assertIn("not an end-to-end multi-node hardware test", guide)
-        for label in ("Minimum delay bin", "Maximum delay bin", "Save & Restart"):
-            self.assertIn(label, guide)
-            self.assertIn(label, ui)
+        self.assertIn("event/algorithm/associator/AdsbAssociator.py", guide)
+        self.assertIn("generate_api_url", guide)
+        self.assertIn('return f"http://{radar}/api/adsb/delay-doppler"', guide)
+        self.assertIn("/api/adsb/delay-doppler", api)
+        self.assertIn("docker compose up -d --build event", guide)
+        self.assertIn("separate aircraft map-feed setting", guide)
+        self.assertIn("simulated data, not a live multi-node test", guide)
+        self.assertNotIn("http://adsb2dd.30hours.dev/api/dd", guide)
+        self.assertNotIn("Minimum delay bin", guide)
+        self.assertNotIn("Maximum delay bin", guide)
 
 
 if __name__ == "__main__":

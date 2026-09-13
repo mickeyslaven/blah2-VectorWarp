@@ -2,18 +2,56 @@
 
 These instructions install VectorWarp on 64-bit Linux with systemd:
 x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
-Build from source for now; the first signed DEB/RPM
-release is not yet published.
+
+## Install a package
+
+Download the repository installer over HTTPS and inspect it before running it:
+it requires `curl` and GnuPG (`gnupg` on Ubuntu/Debian, `gnupg2` on Fedora).
+Install either missing tool from the normal distribution repository first.
+
+```bash
+curl --fail --location --proto '=https' --tlsv1.2 \
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
+less vectorwarp-install.sh
+```
+
+On Ubuntu or Debian, add the matching signed APT repository, then install:
+
+```bash
+sudo bash vectorwarp-install.sh --repo-only
+sudo apt update
+sudo apt install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service
+```
+
+On Fedora, add the matching signed DNF repository, then install:
+
+```bash
+sudo bash vectorwarp-install.sh --repo-only
+sudo dnf install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service
+```
+
+The explicit `systemctl` command enables the web API at boot and starts only
+that service; it does not enable radar processing. Open
+`http://localhost:3000/` and configure a receiver in Settings. To update,
+use `sudo apt update && sudo apt install --only-upgrade vectorwarp` on APT or
+`sudo dnf upgrade vectorwarp` on Fedora. Processing begins after receiver
+configuration is saved and applied.
 
 ## Supported systems
 
-| System | Version or base | Architecture |
-| --- | --- | --- |
-| Ubuntu | 22.04, 24.04, 26.04 | x86-64 or ARM64 |
-| Debian | 13 (Trixie) | x86-64 or ARM64 |
-| Fedora | 44 | x86-64 or ARM64 |
-| [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 |
+| System | Version or base | Architecture | Direct package |
+| --- | --- | --- | --- |
+| Ubuntu | 22.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_arm64.deb) |
+| Ubuntu | 24.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_arm64.deb) |
+| Ubuntu | 26.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_arm64.deb) |
+| Debian | 13 (Trixie) | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
+| Fedora | 44 | x86-64 or ARM64 | [x86_64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.x86_64.rpm), [aarch64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.aarch64.rpm) |
+| [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | Matching Ubuntu package selected from OS metadata |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
+
+Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 A Raspberry Pi can also use a listed 64-bit Fedora, Debian or Ubuntu release;
 follow that operating system's instructions. These are build/package targets,
@@ -23,7 +61,11 @@ clean-host installation claim. A 32-bit operating system is not supported.
 
 <a id="build-from-source"></a>
 
-## 1. Install build dependencies
+## Build from source
+
+Use this route for development or a system outside the package targets.
+
+### 1. Install build dependencies
 
 Install [Node.js](https://nodejs.org/en/download) 22 or later with npm, then
 the build dependencies below. On Ubuntu or Debian:
@@ -72,7 +114,7 @@ not install drivers or development packages.
 If the GPU module was omitted from a build, installing a driver alone is not
 enough: rebuild and reinstall VectorWarp with those dependencies present.
 
-## 2. Choose the receivers to include
+### 2. Choose the receivers to include
 
 | `--backend` | Live receivers included | Additional receiver software |
 | --- | --- | --- |
@@ -91,7 +133,7 @@ Set `BLAH2_SDRPLAY_INCLUDE_DIR` and `BLAH2_SDRPLAY_LIBRARY` if its headers and
 library are outside the standard paths. VectorWarp never downloads the SDK or
 accepts its license.
 
-## 3. Build and install
+### 3. Build and install
 
 Set `VW_BACKEND` below to your choice. Keep the same value for both build
 commands; omitting `--backend` defaults to `all` without downloading an SDRplay SDK.
@@ -114,7 +156,7 @@ SDRplay API service; upgrades do not. See [SDRplay setup](SDRPLAY_SETUP.md).
 
 <a id="start-the-interface-and-configure-vectorwarp"></a>
 
-## 4. Open the interface and configure your receiver
+### 4. Open the interface and configure your receiver
 
 Start only the web API first:
 
@@ -189,10 +231,8 @@ for driver and account-access details.
 
 <a id="future-package-route"></a>
 
-### Package availability
+### Package notes
 
-The repository contains package-install tooling for Ubuntu 22.04/24.04/26.04,
-Debian 13, Fedora 44, matching DragonOS bases, and 64-bit Raspberry Pi OS
-Trixie. Packages will be linked here when published. For now, use the source
-commands above; the planned APT/DNF bootstrap is not an available installer.
-See [DragonOS](DRAGONOS.md) for supported Ubuntu-base selection.
+The repository installer and direct-package links above cover Ubuntu 22.04,
+24.04, and 26.04; Debian 13; Fedora 44; matching DragonOS bases; and 64-bit
+Raspberry Pi OS Trixie. See [DragonOS](DRAGONOS.md) for Ubuntu-base selection.

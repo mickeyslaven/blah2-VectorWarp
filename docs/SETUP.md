@@ -1,8 +1,11 @@
 # Receiver setup
 
 Install VectorWarp first using the [installation guide](INSTALL.md), then open
-**Settings** in its web interface. Source installation is available now; signed
-packages are not yet published. No Docker runtime is needed.
+**Settings** in its web interface. On a supported OS, use the package route in
+that guide: run the reviewed repository installer with `--repo-only`, then use
+`apt update` and `apt install vectorwarp` or `dnf install vectorwarp`. Source
+installation remains available for development and unsupported systems. No
+Docker runtime is needed.
 
 ## Build from source
 

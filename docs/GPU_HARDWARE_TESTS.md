@@ -62,6 +62,13 @@ against an independent direct CPU correlation/DFT calculation, with worst
 relative RMS error `1.37223e-7`. This was a separate source-built diagnostic,
 not the full matrix above or installed-package GPU acceptance. Production-size
 recorded-IQ initialization still exceeded the 30-second deadline during driver
-pipeline creation and safely fell back to CPU. No Pi GPU speedup is established.
+pipeline creation and safely fell back to CPU. That installed-driver test
+established no GPU speedup.
 The [Pi report](PI4_VALIDATION_20260910.md) records versions, geometry and limits;
 [GPU diagnostics](GPU_DIAGNOSTICS.md) describes the opt-in test.
+
+A later [private Mesa 26.1.8-1 diagnostic](PI_GPU_SETUP.md#pi-4-driver-diagnostic)
+ran production-size recorded IQ with both GPU stages. Automatic mode reduced
+full-pipeline processing from 797.228 to 578.138 ms/CPI versus its matched CPU
+runs, still missing every 200 ms deadline. This did not install a driver or
+validate GPU operation in the released package.

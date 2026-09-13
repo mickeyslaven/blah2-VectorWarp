@@ -56,8 +56,10 @@ macros as this compiler's default. This is a same-Pi-4 processing comparison,
 not a test of its Pi 5/RSPduo acquisition, Docker deployment or web interface.
 
 Pi GPU investigation is separate. No Pi GPU speedup follows from this CPU
-table. See [GPU diagnostics](GPU_DIAGNOSTICS.md) and the
-[historical Pi GPU evidence](PI4_VALIDATION_20260910.md).
+table. A later [matched driver diagnostic](PI_GPU_SETUP.md#pi-4-driver-diagnostic)
+reduced VectorWarp's processing time further with GPU acceleration. That page
+also explains the supported driver-update path. The
+[initial Pi GPU failure](PI4_VALIDATION_20260910.md) remains part of the record.
 
 ## Evidence
 

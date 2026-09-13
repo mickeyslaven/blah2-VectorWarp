@@ -1,9 +1,9 @@
 # DragonOS package-selection notes
 
-Use the [source installation guide](INSTALL.md) for now; signed VectorWarp
-packages and its APT repository are not yet published. There is no separate
-DragonOS build. The future release installer selects the matching Ubuntu
-repository from `/etc/os-release`:
+There is no separate DragonOS build. Use the [installation guide](INSTALL.md):
+download and inspect the repository installer, run it with `--repo-only`, then
+use `sudo apt update` and `sudo apt install vectorwarp`. The installer selects
+the matching Ubuntu repository from `/etc/os-release`:
 
 - Jammy / Ubuntu 22.04
 - Noble / Ubuntu 24.04
@@ -18,13 +18,13 @@ the machine.
 
 The selector is tested with metadata fixtures only. No DragonOS ISO was
 available for this work, so there is no claim of boot, driver, SDR, package
-installation, or radio-operation validation on DragonOS. Planned release
-packages contain compiled Kraken, USRP and dual-HackRF adapters plus a local
+installation, or radio-operation validation on DragonOS. Packages contain
+compiled Kraken, USRP and dual-HackRF adapters plus a local
 RSPduo source kit; SDRplay's API and Kraken Suite remain separate installations.
 Current source builds include the receivers selected by `--backend`; see
 [build choices](INSTALL.md#2-choose-the-receivers-to-include).
 
-When the signed repository is actually published, inspect its installer before
-running it as root. Until then, the repository and packages remain unpublished.
+Inspect the repository installer before running it as root. Direct packages are
+listed in the [installation guide](INSTALL.md#supported-systems).
 The DragonOS project downloads are at
 <https://sourceforge.net/projects/dragonos-focal/files/>.

@@ -87,10 +87,13 @@ class HomepageTests(unittest.TestCase):
 
     def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
         page = repository.repository_homepage(self.release_manifest())
-        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
-                     'sudo bash vectorwarp-install.sh --repo-only', 'sudo dnf install vectorwarp',
+        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --repo-only',
+                     'sudo apt update', 'sudo apt install vectorwarp',
+                     'sudo apt install --only-upgrade vectorwarp', 'sudo dnf install vectorwarp',
                      'sudo dnf upgrade', 'sudo systemctl enable --now vectorwarp-api.service',
-                     'enables it at boot', 'On a fresh install, radar processing stays stopped',
+                     'enables the browser interface at boot', 'starts only that service',
+                     '<code>gnupg2</code>', '<code>gnupg</code>',
+                     'On a fresh install, radar processing stays stopped',
                      'SHA256SUMS.asc', 'vectorwarp-archive-key.asc', 'A' * 40,
                      'checksum alone does not authenticate', 'gpgv --keyring',
                      'sha256sum --check --strict --ignore-missing'):
@@ -214,7 +217,22 @@ class HomepageTests(unittest.TestCase):
         # Wrapping and headings are editorial choices. Keep the measured scope,
         # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
-        self.assertIn('first signed APT/DNF release is being prepared', readme)
+        self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
+        self.assertIn('sudo apt update', readme)
+        self.assertIn('sudo apt install vectorwarp', readme)
+        self.assertIn('sudo dnf install vectorwarp', readme)
+        for asset in (
+                'vectorwarp_0.1.0-1_ubuntu22.04_amd64.deb',
+                'vectorwarp_0.1.0-1_ubuntu22.04_arm64.deb',
+                'vectorwarp_0.1.0-1_ubuntu24.04_amd64.deb',
+                'vectorwarp_0.1.0-1_ubuntu24.04_arm64.deb',
+                'vectorwarp_0.1.0-1_ubuntu26.04_amd64.deb',
+                'vectorwarp_0.1.0-1_ubuntu26.04_arm64.deb',
+                'vectorwarp_0.1.0-1_debian13_amd64.deb',
+                'vectorwarp_0.1.0-1_debian13_arm64.deb',
+                'vectorwarp-0.1.0-1.fc44.x86_64.rpm',
+                'vectorwarp-0.1.0-1.fc44.aarch64.rpm'):
+            self.assertIn(asset, readme)
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
