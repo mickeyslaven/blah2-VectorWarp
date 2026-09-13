@@ -28,6 +28,8 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
+Using several radar nodes with 3lips? See [3lips setup](docs/3LIPS_SETUP.md), including its separate ADS-B requirements.
+
 ## Faster processing in practice
 
 VectorWarp's optional Vulkan GPU path can make a practical radar workload keep

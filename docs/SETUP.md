@@ -118,6 +118,9 @@ Discovery does not install or start a decoder or scan
 other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
 during replay and preview; it is never radar detection or tracking input.
 
+Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
+Stock 3lips uses an external adsb2dd service rather than this built-in converter.
+
 ### Recording replay
 
 Portable `.blah2iq` files include channel-major complex-float32 IQ, sample rate,
