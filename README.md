@@ -72,6 +72,11 @@ On a Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took **798.2 ms
 versus **905.1 ms** in original blah2 and **905.9 ms** in Off World Labs' ARM
 fork. [Pi comparison and workload limits](docs/PI4_PERFORMANCE_20260911.md)
 
+A separate Pi 4 replay with a newer Mesa driver reduced processing from
+**797.2 ms CPU-only to 578.1 ms with GPU Automatic**—another **27.5% less time**
+on that workload. The driver was loaded only for the test; this still did not
+meet the 200 ms deadline. [Pi GPU results and driver update instructions](docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic)
+
 
 At this same full range and **±4800 Hz**, Strix GPU processing averaged **67.0 ms
 per 200 ms CPI**, or **325.5 ms per one-second CPI**. VectorWarp CPU took 173.8 ms
@@ -87,12 +92,44 @@ miss deadlines; the full report includes every tested configuration.
 
 ## Install on Linux
 
-Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
+Start with [downloads and APT/DNF setup](https://mickeyslaven.github.io/blah2-VectorWarp/#install), then follow [receiver setup](docs/SETUP.md). The [full installation guide](docs/INSTALL.md) also covers source builds.
 
-Source installation is available now. Planned releases use one package per OS
-and architecture with Kraken, USRP and HackRF adapters plus locally buildable
-RSPduo support; they are not yet published.
-Choose your receiver in the web settings.
+Packages are available for the systems below: one package per OS and
+architecture, with Kraken, USRP and HackRF adapters plus locally buildable
+RSPduo support. Start with the repository installer, inspect it, then install
+with your system package manager:
+
+If curl or GnuPG is missing, install `curl` and `gnupg` on Ubuntu/Debian or
+`curl` and `gnupg2` on Fedora from the normal distribution repository first.
+
+```bash
+curl --fail --location --proto '=https' --tlsv1.2 \
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
+less vectorwarp-install.sh
+```
+
+On Ubuntu or Debian:
+
+```bash
+sudo bash vectorwarp-install.sh --repo-only
+sudo apt update
+sudo apt install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service
+```
+
+On Fedora:
+
+```bash
+sudo bash vectorwarp-install.sh --repo-only
+sudo dnf install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service
+```
+
+The `systemctl` command starts the web API now and enables it at boot;
+it does not enable radar processing. Open `http://localhost:3000/`, then choose
+your receiver in Settings. Update
+with `sudo apt update && sudo apt install --only-upgrade vectorwarp` or
+`sudo dnf upgrade vectorwarp`.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
 - **USRP (including B210) and dual HackRF:** receiver settings are passed to UHD or libhackrf when processing starts.
@@ -105,16 +142,21 @@ the PR remains separate.
 
 ## OS support
 
-The first signed APT/DNF release is being prepared. Source installation is
-available now; package targets are listed below.
+The repository installer chooses the matching signed APT or DNF repository.
+Direct packages are also available below. Source installation remains available
+for development or unsupported systems.
 
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04, 24.04, 26.04 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | DEB for the matching Ubuntu version |
-| Debian | 13 (Trixie) | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Debian 13 DEB |
-| Fedora | 44 | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Fedora 44 RPM |
-| DragonOS | Ubuntu 22.04, 24.04, or 26.04 base | x86-64 (amd64 / x86_64), ARM64 (arm64 / aarch64) | Matching Ubuntu DEB selected from OS metadata |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 (arm64 / aarch64) | Debian 13 ARM64 DEB |
+| Ubuntu | 22.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_arm64.deb) |
+| Ubuntu | 24.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_arm64.deb) |
+| Ubuntu | 26.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_arm64.deb) |
+| Debian | 13 (Trixie) | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
+| Fedora | 44 | x86-64, ARM64 | [x86_64 RPM](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.x86_64.rpm), [aarch64 RPM](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.aarch64.rpm) |
+| DragonOS | Ubuntu 22.04, 24.04, or 26.04 base | x86-64, ARM64 | Use the matching Ubuntu link selected from OS metadata |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
+
+Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 ## Credits and license
 

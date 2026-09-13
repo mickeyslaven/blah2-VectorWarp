@@ -1,6 +1,10 @@
 # Native release packaging
 
-Packages are **not published**. This directory describes the release build for
+To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+This document covers building and maintaining the packages.
+
+Packages are published through the signed APT/DNF repositories and direct
+release assets. This directory describes the release build for
 Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)
 and ARM64 (arm64 / aarch64). Ubuntu/Debian produce DEBs; Fedora produces RPMs.
 DragonOS selects a matching Ubuntu repository only when its OS metadata matches,

@@ -2,10 +2,11 @@
 
 This requires 2 HackRF units with a shared clock signal and a shared hardware trigger.
 
-For installation, device selection and browser settings, follow
+Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install), then follow
 [Dual HackRF setup](../../../docs/SETUP.md#dual-hackrf).
-Source builders can use `--backend hackrf`; `--backend all` also requires the
-separately licensed SDRplay SDK, even when the connected radios are HackRFs.
+Source builders can use `--backend hackrf`. The `--backend all` option includes
+a locally buildable RSPduo source kit; it does not require SDRplay's SDK when
+building VectorWarp.
 
 ## Wiring
 

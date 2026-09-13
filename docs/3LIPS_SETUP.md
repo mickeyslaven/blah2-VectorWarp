@@ -1,106 +1,57 @@
-# Using VectorWarp with 3lips
+# Use VectorWarp as a 3lips node
 
-[3lips](https://github.com/30hours/3lips) combines observations from multiple
-passive-radar geometries to estimate target positions. VectorWarp retains the
-blah2 detection and configuration interfaces it reads. However, **stock 3lips
-does not use VectorWarp's built-in ADS-B converter**; its external adsb2dd
-dependency still needs to be addressed.
+Install [3lips](https://github.com/30hours/3lips#usage) separately and follow its
+normal setup. VectorWarp already supplies the radar API it expects.
 
-## Prepare the radar nodes
+## 1. Add your VectorWarp nodes
 
-1. On each VectorWarp node, set **Settings → Sites** to the actual receiver and
-   illuminator positions, including elevation. Check the center frequency under
-   **Receiver** and enable **Radar → Detection → Detect targets**.
-2. Choose **Save & Restart** and confirm fresh detections. Saving settings for
-   later is not enough: 3lips reads the saved configuration, so it must match
-   the running processor.
-3. From the machine running 3lips, check each node's `/api/config` and
-   `/api/detection` endpoints. The default VectorWarp web/API port is 3000.
-   For example, replacing this documentation address with your node's address:
-
-   ```bash
-   curl --fail http://192.0.2.10:3000/api/config
-   curl --fail http://192.0.2.10:3000/api/detection
-   ```
-
-Detection output contains delay in kilometres of **excess path**, Doppler in
-Hz, SNR, and a millisecond timestamp. Keep the hosts' clocks synchronized.
-Use a trusted LAN or VPN; do not expose VectorWarp's unauthenticated settings
-API to the public Internet just to connect 3lips.
-
-The current 3lips localization path requires associated detections from at least
-three radar geometries. Five Kraken channels at one receiver, observing one
-illuminator, are still **one geometry**, not five independent radar nodes.
-
-## Configure 3lips
-
-Install 3lips separately using its [upstream instructions](https://github.com/30hours/3lips#usage).
-Its stock deployment uses Docker Compose; VectorWarp itself remains native.
-In the **3lips** `config/config.yml`, replace the `radar` list with your nodes:
+In **3lips's** `config/config.yml`, add each node under `radar`:
 
 ```yaml
 radar:
-  - name: Radar A
+  - name: My radar
     url: 192.0.2.10:3000
-  - name: Radar B
-    url: 192.0.2.11:3000
-  - name: Radar C
-    url: 192.0.2.12:3000
 ```
 
-These are example addresses. Use addresses reachable from the 3lips event
-process, including from inside its container if applicable. Omit `http://`
-and `/api` here: stock 3lips adds them. Keep the other configuration sections,
-set the map position for your area, and configure its separate `map.tar1090`
-aircraft feed. The current map-truth reader adds `https://` and
-`/data/aircraft.json` to that feed address.
+Replace the example IP with your VectorWarp host. Include its port, but **do not
+add `http://` or `/api`**. In VectorWarp, check the receiver/transmitter locations
+and frequency, enable target detection and ADS-B, then **Save & Restart**.
 
-After starting 3lips, open its interface on port 49156, select your radar nodes,
-ADS-B association, and a localization method suitable for their geometry.
-Correct API responses alone do not establish that enough aircraft are detected
-across the nodes to produce positions.
+## 2. Use VectorWarp's built-in ADS-B converter
 
-## The ADS-B limitation
+Stock 3lips calls an external adsb2dd server instead of VectorWarp. That can work
+with a reachable public aircraft feed, but not a decoder file or LAN-only feed.
 
-VectorWarp converts its configured local or remote aircraft feed internally
-and serves the result at **`/api/adsb/delay-doppler`**. Stock 3lips ignores
-that endpoint. Instead, its associator reads each radar's
-`truth.adsb.tar1090` value and sends a request to the hardcoded external service
-**`http://adsb2dd.30hours.dev/api/dd`**.
+To use our converter, open this file in your **3lips installation**:
 
-This has three practical consequences:
+`event/algorithm/associator/AdsbAssociator.py`
 
-- The external service must be available and able to reach the aircraft feed.
-  It cannot read a local decoder file or reach a LAN-only server.
-- Stock 3lips prepends `http://` to that setting. A full URL accepted by
-  VectorWarp, such as `http://receiver/tar1090`, becomes an invalid doubled-scheme
-  URL in that request.
-- A working aircraft overlay in VectorWarp does not mean ADS-B association
-  will work in 3lips. 3lips also has the separate map feed described above.
+Replace the whole `generate_api_url` method, stopping before `closest_point`,
+with this code. Keep it inside the existing class:
 
-For a local-only setup, 3lips needs an integration change to read each node's
-built-in delay–Doppler endpoint, or a configurable, reachable separate converter.
-**Neither change is included in VectorWarp.** Do not make a private feed public
-to work around this. 3lips uses ADS-B to associate detections; VectorWarp still
-uses ADS-B only for display and evaluation, not radar detection or tracking.
+```python
+  def generate_api_url(self, radar, radar_data):
+    return f"http://{radar}/api/adsb/delay-doppler"
+```
 
-## Change the delay coverage
+This uses each node's configured aircraft feed. **You do not need a separate
+adsb2dd service with this change.** It does not change 3lips's separate aircraft
+map-feed setting; configure that normally.
 
-In VectorWarp, open **Settings → Radar → Search area**, edit **Minimum delay
-bin** and **Maximum delay bin**, then choose **Save & Restart**. These controls
-change the calculated delay range, not just the plot zoom. Validation checks
-the limits against the sample rate, CPI and Doppler span.
+## 3. Rebuild and open 3lips
 
-One bin represents `299792458 / sample_rate` metres of excess path. At
-2.4 MS/s, maximum bin 245 is about 30.6 km. This is the extra transmitter–target–
-receiver path compared with the direct path, **not distance from the receiver**.
-Increasing coverage can increase processing and output work.
+For its standard Docker Compose installation, run from the 3lips directory:
 
-## Compatibility check
+```bash
+docker compose up -d --build event
+```
 
-This guide was checked against the VectorWarp API/UI source and
-[3lips at `897cfdc`](https://github.com/30hours/3lips/tree/897cfdcdf7fc9a922b562bca4238d9729f80f8db),
-particularly its [event loop](https://github.com/30hours/3lips/blob/897cfdcdf7fc9a922b562bca4238d9729f80f8db/event/event.py),
-[ADS-B associator](https://github.com/30hours/3lips/blob/897cfdcdf7fc9a922b562bca4238d9729f80f8db/event/algorithm/associator/AdsbAssociator.py),
-and [map-truth reader](https://github.com/30hours/3lips/blob/897cfdcdf7fc9a922b562bca4238d9729f80f8db/event/algorithm/truth/AdsbTruth.py).
-It is an interface review, not an end-to-end multi-node hardware test.
+Open 3lips on port **49156** and select your radar nodes. VectorWarp itself
+still runs without Docker. Keep the radar APIs on a trusted LAN or VPN.
+
+3lips position solving needs at least three suitable receiver/transmitter
+geometries. Five antennas at one receiver observing one transmitter count as
+one geometry.
+
+This change targets [3lips `897cfdc`](https://github.com/30hours/3lips/blob/897cfdcdf7fc9a922b562bca4238d9729f80f8db/event/algorithm/associator/AdsbAssociator.py)
+and was checked with simulated data, not a live multi-node test.

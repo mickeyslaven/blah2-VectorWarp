@@ -1,6 +1,6 @@
 # RSPduo adapter
 
-For installation and browser setup, use the current
+Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install), then use the
 [SDRplay setup guide](../../../docs/SDRPLAY_SETUP.md).
 
 The adapter uses two tuners. `capture.device.gainReduction` contains exactly

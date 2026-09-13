@@ -1,5 +1,8 @@
 # SDRplay RSPduo setup
 
+Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install) first,
+then add SDRplay's API as described below.
+
 The unified VectorWarp package includes our RSPduo adapter source kit, not
 SDRplay's proprietary API or installer. You install the API, then VectorWarp
 compiles the adapter locally from **Settings → Build SDRplay support**.

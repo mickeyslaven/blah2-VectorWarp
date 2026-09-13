@@ -8,7 +8,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.md", "docs/3LIPS_SETUP.md",
           "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
-          "packaging/README.md", "docs/MAINTAINER_RELEASE.md",
+          "packaging/README.md", "docs/MAINTAINER_RELEASE.md", "docs/UPSTREAM_COMPARISON.md",
           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
 
 
@@ -27,6 +27,22 @@ def heading_ids(text):
 
 
 class InstallDocumentationTests(unittest.TestCase):
+    def test_active_install_routes_point_to_the_shared_package_page(self):
+        package_guides = ("README.md", "docs/INSTALL.md", "docs/SETUP.md",
+                          "docs/SDRPLAY_SETUP.md", "docs/PI_GPU_SETUP.md",
+                          "docs/DRAGONOS.md", "packaging/README.md",
+                          "docs/UPSTREAM_COMPARISON.md",
+                          "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
+        for relative in package_guides:
+            with self.subTest(guide=relative):
+                self.assertIn("(https://mickeyslaven.github.io/blah2-VectorWarp/#install)",
+                              (ROOT / relative).read_text())
+        comparison = (ROOT / "docs/UPSTREAM_COMPARISON.md").read_text()
+        self.assertNotIn("No published repository or release yet", comparison)
+        hackrf = (ROOT / "src/capture/hackrf/README.md").read_text()
+        self.assertIn("RSPduo source kit", hackrf)
+        self.assertNotIn("requires the SDRplay SDK", hackrf)
+
     def test_shell_examples_parse_without_execution(self):
         for relative in GUIDES:
             text = (ROOT / relative).read_text()
@@ -61,6 +77,8 @@ class InstallDocumentationTests(unittest.TestCase):
                 self.assertIn("python3-apt", text)
                 self.assertIn("python3-libdnf5", text)
                 self.assertIn("python3-rpm", text)
+                self.assertIn("gnupg", text)
+                self.assertIn("gnupg2", text)
                 self.assertIn("/usr/bin/node --version", text)
                 self.assertIn("npm --version", text)
                 self.assertIn("--backend", text)
@@ -98,28 +116,30 @@ class InstallDocumentationTests(unittest.TestCase):
         self.assertIn("../../../api/config-manager.js", rsp)
         self.assertNotIn("default value of", rsp)
 
-    def test_default_startup_does_not_enable_boot_capture(self):
+    def test_explicit_package_startup_does_not_enable_boot_capture(self):
         install = (ROOT / "docs/INSTALL.md").read_text()
         self.assertIn("sudo systemctl start vectorwarp-api.service", install)
-        self.assertNotIn("enable --now", install)
+        self.assertIn("sudo systemctl enable --now vectorwarp-api.service", install)
+        self.assertIn("enables the web API at boot", install)
+        self.assertIn("does not enable or start VectorWarp services", install)
         self.assertIn("Save for later", install)
         self.assertIn("Save & Restart", install)
         for unit in re.findall(r"\bvectorwarp-[a-z-]+\.service\b", install):
             self.assertTrue((ROOT / "contrib/systemd" / (unit + ".in")).is_file())
 
-    def test_3lips_guide_keeps_external_integration_distinct(self):
+    def test_3lips_guide_documents_the_builtin_converter_change(self):
         guide = " ".join((ROOT / "docs/3LIPS_SETUP.md").read_text().split())
         api = (ROOT / "api/server.js").read_text()
-        ui = (ROOT / "html/js/config_ui.js").read_text()
-        for route in ("/api/config", "/api/detection", "/api/adsb/delay-doppler"):
-            self.assertIn(route, guide)
-            self.assertIn(route, api)
-        self.assertIn("http://adsb2dd.30hours.dev/api/dd", guide)
-        self.assertIn("Neither change is included in VectorWarp", guide)
-        self.assertIn("not an end-to-end multi-node hardware test", guide)
-        for label in ("Minimum delay bin", "Maximum delay bin", "Save & Restart"):
-            self.assertIn(label, guide)
-            self.assertIn(label, ui)
+        self.assertIn("event/algorithm/associator/AdsbAssociator.py", guide)
+        self.assertIn("generate_api_url", guide)
+        self.assertIn('return f"http://{radar}/api/adsb/delay-doppler"', guide)
+        self.assertIn("/api/adsb/delay-doppler", api)
+        self.assertIn("docker compose up -d --build event", guide)
+        self.assertIn("separate aircraft map-feed setting", guide)
+        self.assertIn("simulated data, not a live multi-node test", guide)
+        self.assertNotIn("http://adsb2dd.30hours.dev/api/dd", guide)
+        self.assertNotIn("Minimum delay bin", guide)
+        self.assertNotIn("Maximum delay bin", guide)
 
 
 if __name__ == "__main__":

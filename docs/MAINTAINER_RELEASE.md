@@ -106,7 +106,7 @@ jobs may upload the same checked package inputs for the separate signing flow.
    followed by `sudo apt update && sudo apt install vectorwarp`, or use the
    automatic installer with `--start-web`. Updates use normal DNF/APT commands.
 
-The planned Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
+The Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public
 key. It is a contract for the release workflow, not proof that those endpoints
 currently exist.
@@ -130,12 +130,20 @@ Do not disable repository signature checks to install a test package. Update
 the README separately for downloadable test packages and the signed repository;
 publishing one does not make the other available.
 
-## Renewal
+## Automatic page updates and renewal
 
-The repository is rebuilt weekly at Monday 03:17 UTC from the latest published
-stable release. The renewal checksum-verifies published release assets before
-generating and signing a fresh repository; it leaves the existing Pages content
-unchanged if release selection, signing or generation fails.
+The package page and repository regenerate when a reviewed release is published,
+after changes merge to `main`, and weekly on Monday at 03:17 UTC. Download links
+come from the latest stable release's verified manifest; there is no package
+list to edit in the page. A main-branch refresh does not publish a new software
+release or replace package files.
+
+Every refresh verifies the release signatures, checksums and immutable tag before
+generating and signing metadata. Failed verification or generation leaves the
+existing page unchanged. After deployment, the workflow checks the public page,
+installer, manifest, key and every package download; missing or stale content
+fails the workflow. CI also checks the install link, download matrix and APT/DNF
+commands.
 
 The configured policy permits only `main` and `v*` tags in `release-signing`
 and `github-pages`, without required environment reviewers. The owner approves

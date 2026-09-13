@@ -1,8 +1,9 @@
 # Receiver setup
 
-Install VectorWarp first using the [installation guide](INSTALL.md), then open
-**Settings** in its web interface. Source installation is available now; signed
-packages are not yet published. No Docker runtime is needed.
+Install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
+then open **Settings** in its web interface. Use the
+[source-build guide](INSTALL.md#build-from-source) for development or unsupported
+systems. No Docker runtime is needed.
 
 ## Build from source
 

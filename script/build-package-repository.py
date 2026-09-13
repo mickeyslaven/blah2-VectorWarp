@@ -77,6 +77,8 @@ def release_installation(manifest):
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>Fedora 44</h3>
 <p>Add the signed repository once, then install with DNF:</p>
+<p>If curl or GnuPG is missing, install <code>curl</code> and
+<code>gnupg2</code> from Fedora first.</p>
 <pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
 less vectorwarp-install.sh
@@ -86,19 +88,22 @@ sudo systemctl enable --now vectorwarp-api.service</code></pre>
 <p>Open <code>http://localhost:3000</code>, configure your receiver, and choose
 Save &amp; Restart. Update later with <code>sudo dnf upgrade vectorwarp</code>.</p>
 <h3>Ubuntu, Debian and other supported systems</h3>
-<p>The installer selects the package for your OS and architecture, adds the signed
-APT or DNF repository, and installs VectorWarp. Updates then arrive through your
-normal package manager.</p>
+<p>Add the signed APT repository once, then install with APT:</p>
+<p>If curl or GnuPG is missing, install <code>curl</code> and
+<code>gnupg</code> from your distribution first.</p>
 <pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
 less vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --start-web</code></pre>
-<p><code>--start-web</code> starts the browser interface and enables it at boot.
+sudo bash vectorwarp-install.sh --repo-only
+sudo apt update
+sudo apt install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service</code></pre>
+<p>The explicit <code>systemctl</code> command enables the browser interface at boot and starts only that service.
 Open <code>http://localhost:3000</code> on the installed machine, or
 <code>http://&lt;server-IP&gt;:3000</code> from another device on your trusted network.
 On a fresh install, radar processing stays stopped until you configure it and
-choose Save &amp; Restart. Omit
-<code>--start-web</code> to install without starting the interface.</p>
+choose Save &amp; Restart. Update later with
+<code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>.</p>
 <p>Each package includes Kraken, USRP and dual HackRF adapters, plus the source
 kit to build RSPduo support from Settings after installing SDRplay's API. Receiver
 hardware and external software are separate; RSPduo needs the locally installed
@@ -213,6 +218,10 @@ configurations, a separate before/after comparison and remaining processing cost
 in VectorWarp, versus 905.1 ms in original blah2 and 905.9 ms in Off World Labs'
 ARM fork, with NEON FFTW enabled for all three.
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PERFORMANCE_20260911.md">Pi comparison and workload limits →</a></p>
+<p>A separate Pi 4 replay loaded a newer Mesa driver for the test and reduced
+processing from 797.2 ms CPU-only to 578.1 ms with GPU Automatic (27.5% less
+time). It still missed the 200 ms deadline; the driver was not installed system-wide.
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">Pi GPU results and supported driver updates →</a></p>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
@@ -228,7 +237,7 @@ ARM fork, with NEON FFTW enabled for all three.
 </body></html>
 '''.replace('<!-- VERIFIED_RELEASE_INSTALLATION -->', release_installation(manifest) if manifest else
             '<section id="install"><h2>Install VectorWarp</h2><p>Release downloads are not available in this preview. '
-            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Build from source</a>.</p></section>')
+            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Build from source</a>.</p></section>')
 
 
 def run(command, **kwargs):

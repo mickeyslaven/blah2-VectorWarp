@@ -1,6 +1,8 @@
 name: Publish verified package repository
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   schedule:
@@ -38,9 +40,16 @@ jobs:
           latest=$(jq -r '.[] | select(.isDraft == false and .isPrerelease == false) | .tagName' <<<"$releases" |
             grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n 1)
           [[ -n $latest ]]
-          if [[ $GITHUB_EVENT_NAME == release ]]; then tag=$EVENT_TAG
-          elif [[ $GITHUB_EVENT_NAME == schedule ]]; then tag="v$latest"
-          else tag=$INPUT_TAG; fi
+          case "$GITHUB_EVENT_NAME" in
+            release) tag=$EVENT_TAG ;;
+            schedule) tag="v$latest" ;;
+            push)
+              [[ $GITHUB_REF == refs/heads/main ]] || {
+                echo 'Automatic refresh requires the protected main branch.' >&2; exit 1; }
+              tag="v$latest" ;;
+            workflow_dispatch) tag=$INPUT_TAG ;;
+            *) echo 'Unsupported repository publication event.' >&2; exit 1 ;;
+          esac
           [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           selected=$(jq -r --arg tag "$tag" '.[] | select(.tagName == $tag) | select(.isDraft == false and .isPrerelease == false) | .tagName' <<<"$releases")
           [[ $selected == "$tag" ]]
@@ -154,3 +163,33 @@ jobs:
       - id: deployment
         name: Deploy reviewed repository
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+      - name: Check public installation page and downloads
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          [[ $PAGE_URL == https://mickeyslaven.github.io/blah2-VectorWarp/ ]]
+          # Allow bounded CDN propagation, but never call a stale page success.
+          for file in index.html install.sh repository-manifest.json keys/vectorwarp.asc; do
+            matched=false
+            for attempt in 1 2 3 4 5 6; do
+              if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+                --connect-timeout 10 --max-time 20 --header 'Cache-Control: no-cache' \
+                "${PAGE_URL}${file}?deployment=${GITHUB_RUN_ID}" --output "$RUNNER_TEMP/vectorwarp-public-file" &&
+                cmp --silent "repository/$file" "$RUNNER_TEMP/vectorwarp-public-file"; then
+                matched=true; break
+              fi
+              sleep 5
+            done
+            $matched || { echo "Public repository file is unavailable or stale: $file" >&2; exit 1; }
+          done
+          version=$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' repository/repository-manifest.json)
+          filenames=$(jq -er '.packages | select(type == "array" and length == 10) |
+            map(.filename) | select(all(.[]; type == "string" and
+            test("^vectorwarp[-_][A-Za-z0-9_.+-]+\\.(deb|rpm)$"))) |
+            select(length == (unique | length)) | .[]' repository/repository-manifest.json)
+          while IFS= read -r filename; do
+            curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' \
+              --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
+              "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${filename}"
+          done <<< "$filenames"

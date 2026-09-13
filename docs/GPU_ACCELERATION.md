@@ -7,12 +7,12 @@ verification is limited to the devices and driver versions in
 Capture, reference synthesis, the small FP64 clutter coefficient solve,
 detection and tracking remain on the CPU.
 
-On a Raspberry Pi 4 running Fedora 44, production-size attempts in Automatic
-and GPU modes timed out during driver pipeline creation and fell back to CPU.
-A separate source-built diagnostic verified six small frames on its real V3D
-GPU against an independent CPU reference. Production-size Pi GPU processing
-and speedup remain unverified. See the [Pi validation report](PI4_VALIDATION_20260910.md)
-and [startup diagnostics](GPU_DIAGNOSTICS.md).
+On the Fedora 44 Pi 4, installed Mesa 26.0.3-4 timed out during production-size
+pipeline creation and fell back to CPU. A later diagnostic loaded Mesa 26.1.8-1
+without installing it and ran both GPU stages, reducing processing from
+797.228 ms/CPI on CPU to 578.138 ms in Automatic mode. That replay still missed
+its 200 ms deadline. See [Pi results and supported driver updates](PI_GPU_SETUP.md#pi-4-driver-diagnostic)
+and the [initial validation report](PI4_VALIDATION_20260910.md).
 
 ## Selection
 
@@ -108,7 +108,7 @@ script/build-native.sh --backend all --gpu on       # require GPU plus UHD and H
 ```
 
 Building creates an artifact only; it neither installs drivers nor changes the
-active service. See [Installation](INSTALL.md) for dependencies and the separate
+active service. See [building from source](INSTALL.md#build-from-source) for dependencies and the separate
 preflight/install step.
 
 Standalone processing checks do not require an SDR or modify live configuration:

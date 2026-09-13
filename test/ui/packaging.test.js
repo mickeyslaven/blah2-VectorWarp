@@ -215,20 +215,23 @@ function nativeTarget(entry) {
   throw new Error(`release target ${entry.distro} has no README support-table mapping`);
 }
 const architectureLabels = Object.freeze({
-  amd64: 'x86-64 (amd64 / x86_64)',
-  x86_64: 'x86-64 (amd64 / x86_64)',
-  arm64: 'ARM64 (arm64 / aarch64)',
-  aarch64: 'ARM64 (arm64 / aarch64)'
+  amd64: 'x86-64',
+  x86_64: 'x86-64',
+  arm64: 'ARM64',
+  aarch64: 'ARM64'
 });
+const architectureAliasLegend =
+  'Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.';
 function assertMatrixDocumented(entries, rows) {
   assert.ok(entries.length, 'release package matrix must not be empty');
   assert.equal(new Set(entries.map(entry => `${entry.distro}/${entry.format}/${entry.arch}`)).size, entries.length,
     'release package matrix must not duplicate a target');
   for (const entry of entries) {
     const target = nativeTarget(entry);
-    const row = rows.find(candidate => candidate.os === target.os);
-    assert.ok(row, `README lacks an OS support row for ${target.os}`);
-    assert.ok(row.versions.includes(target.version), `README lacks ${target.os} ${target.version}`);
+    const osRows = rows.filter(candidate => candidate.os === target.os);
+    assert.ok(osRows.length, `README lacks an OS support row for ${target.os}`);
+    const row = osRows.find(candidate => candidate.versions.includes(target.version));
+    assert.ok(row, `README lacks ${target.os} ${target.version}`);
     assert.ok(Object.hasOwn(architectureLabels, entry.arch) &&
       row.architectures.includes(architectureLabels[entry.arch]),
     `README lacks ${target.os} ${entry.arch}`);
@@ -246,25 +249,37 @@ assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0]
   /lacks Ubuntu riscv64/);
 assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.filter(row => row.os !== 'Debian')),
   /lacks an OS support row for Debian/);
+assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, versions: []} : row)),
+  /lacks Ubuntu 22\.04/);
+assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
+  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, architectures: ['ARM64']} : row)),
+  /lacks Ubuntu amd64/);
 for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
-  assert.deepEqual(readmeRows.find(row => row.os === os)?.architectures,
-    [architectureLabels.amd64, architectureLabels.arm64],
-    `${os} must use the same public architecture labels`);
+  for (const row of readmeRows.filter(row => row.os === os))
+    assert.deepEqual(row.architectures, [architectureLabels.amd64, architectureLabels.arm64],
+      `${os} must use the same public architecture labels`);
 const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Trixie', '64-bit']);
-assert.match(piRow.package, /Debian 13 ARM64 DEB/);
+assert.match(piRow.package,
+  /\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/download\/v0\.1\.0\/vectorwarp_0\.1\.0-1_debian13_arm64\.deb\)$/,
+  'Raspberry Pi OS must link to the Debian 13 ARM64 release asset');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
 })), readmeRows);
 assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
   row.os === 'Fedora' ? {...row, architectures: ['x86_64', 'aarch64']} : row)),
   /lacks Fedora/, 'Native-only labels must not reintroduce inconsistent documentation');
+assert.equal(read('README.md').includes(architectureAliasLegend), true,
+  'README must explain package-manager architecture aliases once near its compact OS grid');
 for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
   'packaging/README.md', 'docs/UPSTREAM_COMPARISON.md']) {
   const document = read(file);
-  assert.ok(document.includes(architectureLabels.amd64), `${file}: explain both x86-64 aliases`);
-  assert.ok(document.includes(architectureLabels.arm64), `${file}: explain both ARM64 aliases`);
+  assert.ok(document.includes('x86-64 (amd64 / x86_64)') || document.includes(architectureAliasLegend),
+    `${file}: explain both x86-64 aliases`);
+  assert.ok(document.includes('ARM64 (arm64 / aarch64)') || document.includes(architectureAliasLegend),
+    `${file}: explain both ARM64 aliases`);
 }
 assert.match(releaseWorkflow, /expected ten package manifests/);
 assert.match(releaseWorkflow, /-eq 10/);
