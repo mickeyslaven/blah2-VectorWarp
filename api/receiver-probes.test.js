@@ -27,6 +27,13 @@ async function main() {
       error: index === 1 ? 'Runtime dependency unavailable.' : ''}))}));
   assert.equal(status.Kraken.builtIn, true);
   assert.equal(status.RspDuo.moduleLoadable, false);
+  const localKit = receiverStatusFromJson(JSON.stringify({schema: 1, hardwareProbed: false,
+    receivers: ['Kraken', 'RspDuo', 'Usrp', 'HackRF'].map(receiver => ({receiver,
+      builtIn: receiver === 'Kraken', compiled: receiver !== 'RspDuo',
+      moduleLoadable: receiver !== 'RspDuo', ...(receiver === 'RspDuo' ? {localBuildable: true} : {}), error: ''}))}));
+  assert.equal(localKit.RspDuo.compiled, false);
+  assert.equal(localKit.RspDuo.localBuildable, true,
+    'A local source kit is preserved without claiming a compiled adapter.');
   assert.throws(() => receiverStatusFromJson(JSON.stringify({schema: 1, hardwareProbed: true,
     receivers: []})), /capability/);
 

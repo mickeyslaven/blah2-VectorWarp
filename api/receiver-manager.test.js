@@ -84,6 +84,22 @@ async function expectReject(promise, pattern) {
   assert.match(byType.HackRF.detection.evidence[0], /^2 matching/);
   assert.equal(result.errors.length, 0);
 
+  const localBuildManager = createReceiverManager({probes: {
+    usbInventory: async () => [], dependencyInventory: async () => ({RspDuo: {state: 'installed'}}),
+    nativeReceiverStatus: async () => ({
+      Kraken: {builtIn: true, compiled: true, moduleLoadable: true, error: ''},
+      RspDuo: {builtIn: false, compiled: false, moduleLoadable: false, localBuildable: true, error: 'Local adapter has not been built.'},
+      Usrp: {builtIn: false, compiled: true, moduleLoadable: true, error: ''},
+      HackRF: {builtIn: false, compiled: true, moduleLoadable: true, error: ''}
+    }), configuredUpstreamStatus: async () => ({available: false}), serviceStatus: async () => ({state: 'stopped'})
+  }});
+  const localBuildDiscovery = await localBuildManager.discover({config: baseConfig, compiledLiveTypes: ['Kraken', 'Usrp', 'HackRF']});
+  const localRsp = localBuildDiscovery.receivers.find(item => item.type === 'RspDuo');
+  assert.equal(localRsp.capabilities.liveCompiled, false);
+  assert.equal(localRsp.capabilities.localBuildable, true);
+  assert.equal(localRsp.capabilities.possible, false);
+  assert.equal(localBuildManager.plan({receiverType: 'RspDuo'}, localBuildDiscovery).actions.find(item => item.id === 'backend').execution, 'explicit-local-build');
+
   const fsMapping = getSettingsMapping('Kraken').find(item =>
     item.configField === 'capture.fs');
   assert.equal(fsMapping.direction, 'upstream-authoritative-mismatch-block');

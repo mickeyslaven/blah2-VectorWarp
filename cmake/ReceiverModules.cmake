@@ -11,8 +11,12 @@ string(SHA256 BLAH2_RECEIVER_COHORT "${BLAH2_RECEIVER_ABI_INPUT}")
 set(BLAH2_BUILT_USRP ${BLAH2_ENABLE_USRP})
 set(BLAH2_BUILT_HACKRF ${BLAH2_ENABLE_HACKRF})
 set(BLAH2_BUILT_RSPDUO ${BLAH2_ENABLE_RSPDUO})
+include(${PROJECT_ROOT}/cmake/RspduoLocalKit.cmake)
 configure_file("${PROJECT_ROOT}/cmake/ReceiverCohort.h.in"
   "${PROJECT_BINARY_DIR}/receiver-generated/ReceiverCohort.h" @ONLY)
+if(BLAH2_LOCAL_BUILD_RSPDUO)
+  blah2_write_rspduo_plan()
+endif()
 
 add_library(blah2CaptureCore SHARED
   ${PROJECT_ROOT}/src/capture/Source.cpp

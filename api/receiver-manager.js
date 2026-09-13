@@ -342,14 +342,17 @@ function normalizeNativeReceiverStatus(value) {
   for (const type of RECEIVER_TYPES) {
     const item = value[type];
     if (!plainObject(item)) throw new Error(`Native receiver status for ${type} is invalid.`);
-    exactKeys(item, ['builtIn', 'compiled', 'moduleLoadable', 'error'], `nativeStatus.${type}`);
+    exactKeys(item, ['builtIn', 'compiled', 'moduleLoadable', 'localBuildable', 'error'], `nativeStatus.${type}`);
     if (typeof item.builtIn !== 'boolean' || typeof item.compiled !== 'boolean' ||
-        typeof item.moduleLoadable !== 'boolean' || typeof item.error !== 'string' ||
+        typeof item.moduleLoadable !== 'boolean' ||
+        (item.localBuildable !== undefined && typeof item.localBuildable !== 'boolean') ||
+        typeof item.error !== 'string' ||
         item.error.length > 240 || /[\u0000-\u001f\u007f]/.test(item.error) ||
         (!item.compiled && item.moduleLoadable))
       throw new Error(`Native receiver status for ${type} is invalid.`);
     result[type] = {builtIn: item.builtIn, compiled: item.compiled,
-      moduleLoadable: item.moduleLoadable, error: item.error};
+      moduleLoadable: item.moduleLoadable, localBuildable: item.localBuildable === true,
+      error: item.error};
   }
   return result;
 }
@@ -387,11 +390,18 @@ function planReceiverSetup(request, discovery) {
       status === 'blocked' ? 'blocked' : 'pending', message)
   });
 
-  if (!receiver.capabilities.liveCompiled) {
+  const localBuildAvailable = request.receiverType === 'RspDuo' &&
+    receiver.capabilities.localBuildable === true;
+  if (!receiver.capabilities.liveCompiled && !localBuildAvailable) {
     add('backend', 'provide-live-backend', request.receiverType, 'blocked',
       'unsupported', 'This installed VectorWarp binary does not contain the selected live backend.');
     errors.push(errorRecord('BACKEND_NOT_COMPILED', request.receiverType,
       'Install a reviewed build containing this receiver backend.'));
+  } else if (!receiver.capabilities.liveCompiled) {
+    add('backend', 'build-local-backend', request.receiverType, 'blocked',
+      'explicit-local-build', 'The local RSPduo source kit is available, but its adapter is not compiled. Use Build SDRplay support, then check receiver software again.');
+    errors.push(errorRecord('LOCAL_BUILD_REQUIRED', request.receiverType,
+      'The RSPduo adapter must be built locally before it can be used for live capture.'));
   } else if (receiver.capabilities.runtimeLoadable === false) {
     add('backend', 'provide-live-backend', request.receiverType, 'blocked',
       'runtime-unavailable', 'The selected adapter is compiled, but its runtime module or SDK is unavailable.');
@@ -581,6 +591,9 @@ function createReceiverManager(options = {}) {
       // a conservative fallback while upgrading installations.
       const liveCompiled = native ? native.compiled : request.compiledLiveTypes.has(type);
       const runtimeLoadable = native ? native.moduleLoadable : null;
+      // A source kit is an explicit local-build capability, not evidence that
+      // an adapter is compiled, loadable, or ready for live capture.
+      const localBuildable = type === 'RspDuo' && native?.localBuildable === true;
       // Successful loading resolves the adapter's actual SDK dependencies. A
       // local licensed SDRplay API need not appear in ldconfig's cache; this
       // evidence establishes software presence, never a device or running API.
@@ -598,7 +611,7 @@ function createReceiverManager(options = {}) {
         ownedByVectorWarp: false, controlAvailable: false};
       return {
         type, label: DEFINITIONS[type].label, locality,
-        capabilities: {detected, possible, configured, liveCompiled,
+        capabilities: {detected, possible, configured, liveCompiled, localBuildable,
           runtimeLoadable, runtimeError: native?.error || null,
           ...(native ? {builtIn: native.builtIn} : {}),
           sourceSupported: DEFINITIONS[type].sourceSupported},

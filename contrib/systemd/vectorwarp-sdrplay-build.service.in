@@ -1,0 +1,43 @@
+[Unit]
+Description=Build the local VectorWarp SDRplay adapter
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md
+ConditionPathExists=@PREFIX@/current/receiver-source/rspduo/kit.json
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I @PREFIX@/libexec/vectorwarp-build-sdrplay service
+WorkingDirectory=/
+Environment=PATH=/usr/bin:/bin
+Environment=LANG=C
+Environment=LC_ALL=C
+UMask=0022
+Restart=no
+TimeoutStartSec=180
+TimeoutStopSec=5
+KillMode=control-group
+SendSIGKILL=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_SETGID CAP_SETUID CAP_KILL
+RestrictAddressFamilies=AF_UNIX
+InaccessiblePaths=-/etc/vectorwarp -/etc/vectorwarp-management -/var/lib/vectorwarp -/var/lib/vectorwarp-api
+ReadWritePaths=/var/lib/vectorwarp-adapters /run/vectorwarp-sdrplay-build /run/vectorwarp-rspduo-build.lock
+CPUQuota=100%
+MemoryMax=1536M
+TasksMax=40
+LimitCORE=0

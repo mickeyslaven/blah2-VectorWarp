@@ -6,6 +6,7 @@ discovery remains read-only; custom services retain the reviewed broker route.
 """
 import importlib.machinery
 import importlib.util
+import json
 import os
 import pathlib
 import re
@@ -21,6 +22,7 @@ _loader.exec_module(broker)
 
 DOWNLOAD = 'https://sdrplay.com/hardware-api/'
 MANIFEST = '@PREFIX@/current/.vectorwarp-build'
+LOCAL_BUILD_HELPER = '@PREFIX@/libexec/vectorwarp-build-sdrplay'
 UNITS = broker.SERVICE_UNITS['RspDuo']
 EMPTY = ('DropInPaths', 'ExecStartPre', 'ExecStartPost', 'ExecCondition',
          'ExecStop', 'ExecStopPost', 'Environment', 'EnvironmentFiles',
@@ -121,14 +123,61 @@ def start_service(run=broker.command, trust=broker.trusted_path, exists=os.path.
     return 'SDRplay API service started. Radio capture is checked separately by the processor.'
 
 
-def main(argv):
+def local_kit_available(trust=broker.trusted_path):
+    """Recognize only the installed all-profile local-kit declaration.
+
+    This permits the first-install service preparation.  It does not claim that
+    an adapter is loadable; `start` below separately asks the fixed local builder
+    for its current, hash-verified result.
+    """
+    trust(MANIFEST)
+    values = {}
+    for line in broker.bounded_read(MANIFEST).decode().splitlines():
+        key, separator, value = line.partition('=')
+        require(separator and key not in values,
+                'Installed build manifest is malformed.')
+        values[key] = value
+    require(values.get('backend') == 'all' and
+            values.get('local_build_receivers') == 'RspDuo',
+            'Installed build has no local RSPduo source kit.')
+    trust(LOCAL_BUILD_HELPER)
+    return True
+
+
+def local_build_is_current(run=broker.command, trust=broker.trusted_path):
+    """Use the fixed read-only builder status; never load a module as root."""
+    trust(LOCAL_BUILD_HELPER)
+    result = run(['/usr/bin/python3', '-I', LOCAL_BUILD_HELPER, 'status'], timeout=5)
+    require(not result.get('timedOut') and result.get('exitCode') == 0,
+            'Could not verify the locally built RSPduo adapter. Build SDRplay support in Settings first.')
+    try:
+        status = json.loads(result.get('output', ''))
+    except (TypeError, ValueError) as error:
+        raise broker.Refused('SDRPLAY_START_BLOCKED',
+                             'Local RSPduo build status is invalid; rebuild SDRplay support in Settings.') from error
+    require(isinstance(status, dict) and status.get('ok') is True and status.get('state') == 'current' and
+            isinstance(status.get('kit_id'), str) and re.fullmatch(r'[a-f0-9]{64}', status['kit_id']) and
+            isinstance(status.get('cohort'), str) and re.fullmatch(r'[a-f0-9]{64}', status['cohort']),
+            'Local RSPduo build is not current; Build SDRplay support in Settings before starting capture.')
+    return True
+
+
+def main(argv, run=broker.command, trust=broker.trusted_path):
     require(os.geteuid() == 0, 'Starting SDRplay requires the installed privileged restart helper.')
     require(argv in (['install'], ['start']), 'This helper accepts only install or start, without paths or service names.')
-    if 'RspDuo' not in broker.parse_manifest(MANIFEST):
-        if argv == ['install']:
-            return 'This VectorWarp build has no RSPduo adapter; no SDRplay service was changed.'
-        require(False, 'Install a VectorWarp build containing the RSPduo adapter before starting live RSPduo capture.')
-    return start_service()
+    compiled = 'RspDuo' in broker.parse_manifest(MANIFEST)
+    local_kit = False
+    if not compiled:
+        try:
+            local_kit = local_kit_available(trust)
+        except broker.Refused:
+            if argv == ['install']:
+                return 'This VectorWarp build has no RSPduo adapter or local source kit; no SDRplay service was changed.'
+            raise
+    if not compiled and argv == ['start']:
+        require(local_kit and local_build_is_current(run, trust),
+                'Build SDRplay support in Settings before starting live RSPduo capture.')
+    return start_service(run, trust)
 
 
 if __name__ == '__main__':

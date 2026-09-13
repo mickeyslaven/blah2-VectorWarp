@@ -6,24 +6,32 @@ License:        MIT
 URL:            https://github.com/mickeyslaven/blah2-VectorWarp
 Packager:       Mickey Slaven <mickeyslaven@gmail.com>
 Source0:        vectorwarp-root.tar
+Source1:        finalize-rspduo-kit.py
 Requires:       systemd
 Requires:       sudo
 Requires:       python3
+Requires:       gcc-c++
+Requires:       binutils
 %if 0%{?fedora} == 44
 Requires:       python3-libdnf5
 Requires:       python3-rpm
 %endif
 
 %global debug_package %{nil}
+# Preserve every distro post-processing step, then bind the kit to the actual
+# final core bytes before RPM calculates its file digests and creates the payload.
+%global vectorwarp_saved_os_install_post %{__os_install_post}
+%global __os_install_post %{vectorwarp_saved_os_install_post} /usr/bin/python3 -I "%{SOURCE1}" "%{buildroot}"
 # The vendor SDRplay API is installed separately under its own license. Its
 # absence must not block installation or use of the other receiver adapters.
 %global __requires_exclude ^libsdrplay_api[.]so.*$
 
 %description
 VectorWarp is a native passive-radar processor and local web interface. This
-package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU
-processing and optional Vulkan acceleration selected at runtime. RSPduo needs
-the separately installed SDRplay API. Receiver software is checked in Settings.
+package includes Kraken, USRP and dual HackRF receiver adapters plus a local
+RSPduo source kit, CPU processing and optional Vulkan acceleration selected at
+runtime. RSPduo needs the separately installed SDRplay API and an explicit
+local build. Receiver software is checked in Settings.
 
 %prep
 
@@ -67,7 +75,8 @@ fi
 %preun
 if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
+    vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 
 %files
@@ -75,6 +84,7 @@ fi
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
 /usr/lib/systemd/system/vectorwarp-restart.service
+/usr/lib/systemd/system/vectorwarp-sdrplay-build.service
 /usr/lib/systemd/system/vectorwarp-receiver.service
 /usr/lib/systemd/system/vectorwarp-receiver.socket
 /usr/lib/systemd/system/vectorwarp-api.service.wants

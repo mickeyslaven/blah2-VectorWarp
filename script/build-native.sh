@@ -63,22 +63,22 @@ case "$BACKEND" in
   open-test)
     # Open CI-only package coverage: no licensed SDRplay SDK or adapter.
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; TEST_ONLY=true ;;
+    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=true ;;
   kraken)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Kraken; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
   rspduo)
     ENABLE_RSPDUO=ON; ENABLE_USRP=OFF; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=RspDuo,Kraken; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=RspDuo,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
   usrp)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=OFF
-    COMPILED_RECEIVERS=Usrp,Kraken; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=Usrp,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
   hackrf)
     ENABLE_RSPDUO=OFF; ENABLE_USRP=OFF; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=HackRF,Kraken; TEST_ONLY=false ;;
+    COMPILED_RECEIVERS=HackRF,Kraken; LOCAL_BUILD_RECEIVERS=; LOCAL_BUILD_RSPDUO=OFF; TEST_ONLY=false ;;
   all)
-    ENABLE_RSPDUO=ON; ENABLE_USRP=ON; ENABLE_HACKRF=ON
-    COMPILED_RECEIVERS=RspDuo,Usrp,HackRF,Kraken; TEST_ONLY=false ;;
+    ENABLE_RSPDUO=OFF; ENABLE_USRP=ON; ENABLE_HACKRF=ON
+    COMPILED_RECEIVERS=Usrp,HackRF,Kraken; LOCAL_BUILD_RECEIVERS=RspDuo; LOCAL_BUILD_RSPDUO=ON; TEST_ONLY=false ;;
   *) die '--backend must be open-test, kraken, rspduo, usrp, hackrf or all' ;;
 esac
 [[ $GPU =~ ^(AUTO|ON|OFF)$ ]] || die '--gpu must be auto, on or off'
@@ -90,7 +90,7 @@ BUILD_ARCH=$(uname -m)
 [[ $BUILD_DIR != "$SOURCE_DIR" && $DEPS_DIR != "$SOURCE_DIR" ]] ||
   die 'build and dependency directories must not replace the source tree'
 
-for command in cmake git node npm curl tar zip unzip pkg-config cc c++ ninja; do need_command "$command"; done
+for command in cmake git node npm curl tar zip unzip pkg-config cc c++ ninja python3; do need_command "$command"; done
 node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
 ((node_major >= 22)) || die 'Node.js 22 or newer is required'
 for file in CMakeLists.txt lib/vcpkg.json lib/vcpkg-kraken.json api/package.json html/index.html; do
@@ -230,6 +230,7 @@ cmake_args=("${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAK
   -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
   -DBLAH2_KRAKEN_ONLY="$KRAKEN_ONLY" -DBLAH2_GPU="$GPU"
   -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO"
+  -DBLAH2_LOCAL_BUILD_RSPDUO="$LOCAL_BUILD_RSPDUO"
   -DBLAH2_ENABLE_USRP="$ENABLE_USRP"
   -DBLAH2_ENABLE_HACKRF="$ENABLE_HACKRF"
   -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"
@@ -290,6 +291,16 @@ fi
 if [[ -f $SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js ]]; then
   run install -m 0644 "$SOURCE_DIR/script/vectorwarp-prepare-sdrplay.js" "$ARTIFACT_TMP/libexec/vectorwarp-prepare-sdrplay.js"
 fi
+if [[ $LOCAL_BUILD_RSPDUO == ON && $DRY_RUN == false ]]; then
+  [[ -f $CMAKE_DIR/receiver-generated/rspduo-plan.json ]] || die 'local RSPduo kit plan was not generated'
+  run python3 "$SOURCE_DIR/script/stage-rspduo-kit.py" --source "$SOURCE_DIR" \
+    --generated "$CMAKE_DIR/receiver-generated" --core "$ARTIFACT_TMP/bin/libblah2-capture-core.so.1" \
+    --output "$ARTIFACT_TMP/receiver-source/rspduo"
+fi
+if [[ $LOCAL_BUILD_RSPDUO == ON && -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
+  run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay.py" \
+    "$ARTIFACT_TMP/libexec/vectorwarp-build-sdrplay.py"
+fi
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
@@ -316,8 +327,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
+  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

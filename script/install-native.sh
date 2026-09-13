@@ -16,7 +16,7 @@ usage() {
 Usage: script/install-native.sh [options]
 
 Install a completed native artifact without enabling or starting VectorWarp.
-A first RSPduo-enabled install can start an already-installed SDRplay API service.
+A first install with the local RSPduo kit can start an already-installed SDRplay API service.
 
   --artifact PATH         Artifact made by build-native.sh
   --prefix PATH           Application prefix (default: /opt/vectorwarp)
@@ -95,7 +95,7 @@ case "$backend" in
   rspduo) expected_receivers=RspDuo,Kraken; initial_config=config.yml ;;
   usrp) expected_receivers=Usrp,Kraken; initial_config=config-usrp.yml ;;
   hackrf) expected_receivers=HackRF,Kraken; initial_config=config-hackrf.yml ;;
-  all) expected_receivers=RspDuo,Usrp,HackRF,Kraken; initial_config=config.yml ;;
+  all) expected_receivers=Usrp,HackRF,Kraken; initial_config=config.yml ;;
   *) die 'artifact has an invalid backend' ;;
 esac
 [[ $backend == open-test || $test_only == false ]] || die 'only open-test artifacts may be marked test-only'
@@ -137,6 +137,28 @@ else
   done
   [[ $RECEIVER_TYPES == "$expected_receivers" ]] ||
     die 'artifact backend and compiled_receivers disagree'
+fi
+
+# A local source kit is deliberately separate from compiled live adapters.
+# Historical artifacts omit this field; new stable all builds require exactly
+# the one reviewed RSPduo kit and do not advertise it as compiled.
+local_build_count=$(grep -c '^local_build_receivers=' "$ARTIFACT/.vectorwarp-build" || true)
+((local_build_count <= 1)) || die 'artifact manifest has duplicate local_build_receivers fields'
+LOCAL_BUILD_RECEIVER_TYPES=
+LOCAL_BUILD_ENABLED=false
+if ((local_build_count == 1)); then
+  read_manifest_field local_build_receivers LOCAL_BUILD_RECEIVER_TYPES
+  [[ -z $LOCAL_BUILD_RECEIVER_TYPES || $LOCAL_BUILD_RECEIVER_TYPES == RspDuo ]] ||
+    die 'artifact has an invalid local_build_receivers list'
+fi
+[[ -z $LOCAL_BUILD_RECEIVER_TYPES ]] || LOCAL_BUILD_ENABLED=true
+if [[ $backend == all && $compiled_count -gt 0 ]]; then
+  [[ $RECEIVER_TYPES == Usrp,HackRF,Kraken && $LOCAL_BUILD_RECEIVER_TYPES == RspDuo ]] ||
+    die 'stable artifact must have three compiled receivers and the RSPduo local build kit'
+  [[ -f $ARTIFACT/receiver-source/rspduo/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]] ||
+    die 'stable artifact lacks the local RSPduo build kit or helper'
+  [[ -f $ARTIFACT/systemd/vectorwarp-sdrplay-build.service.in ]] ||
+    die 'stable artifact lacks the local RSPduo build service template'
 fi
 
 if $WITH_SYSTEMD; then
@@ -214,7 +236,9 @@ render() {
     printf '+ render %q -> %q\n' "$input" "$output"
   else
     sed -e "s|@PREFIX@|$PREFIX|g" -e "s|@SYSCONFDIR@|$SYSCONFDIR|g" \
-      -e "s|@RECEIVER_TYPES@|$RECEIVER_TYPES|g" "$input" >"$output"
+      -e "s|@RECEIVER_TYPES@|$RECEIVER_TYPES|g" \
+      -e "s|@LOCAL_BUILD_RECEIVER_TYPES@|$LOCAL_BUILD_RECEIVER_TYPES|g" \
+      -e "s|@LOCAL_BUILD_ENABLED@|$LOCAL_BUILD_ENABLED|g" "$input" >"$output"
   fi
 }
 
@@ -264,6 +288,14 @@ if $WITH_SYSTEMD; then
   if [[ -f $ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js ]]; then
     run install -m 0644 "$ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js" "$target_prefix/libexec/vectorwarp-prepare-sdrplay.js"
   fi
+  if [[ $LOCAL_BUILD_ENABLED == true && -f $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]]; then
+    render "$ARTIFACT/libexec/vectorwarp-build-sdrplay.py" "$temporary/vectorwarp-build-sdrplay"
+    run install -m 0755 "$temporary/vectorwarp-build-sdrplay" "$target_prefix/libexec/vectorwarp-build-sdrplay"
+  fi
+  if [[ $LOCAL_BUILD_ENABLED == true && -f $ARTIFACT/systemd/vectorwarp-sdrplay-build.service.in ]]; then
+    render "$ARTIFACT/systemd/vectorwarp-sdrplay-build.service.in" "$temporary/vectorwarp-sdrplay-build.service"
+    run install -m 0644 "$temporary/vectorwarp-sdrplay-build.service" "$unit_dir/vectorwarp-sdrplay-build.service"
+  fi
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     render "$ARTIFACT/systemd/vectorwarp-receiver.service.in" "$temporary/vectorwarp-receiver.service"
     render "$ARTIFACT/systemd/vectorwarp-receiver-policy.json.in" "$temporary/receivers.json"
@@ -312,9 +344,11 @@ say 'installation complete; no VectorWarp service was enabled or started'
 # A first real native install may ask the fixed local SDRplay helper to start
 # an already-installed vendor service. It never downloads vendor software,
 # accepts a license, enables boot, or starts VectorWarp services. The helper
-# independently verifies the compiled RSPduo manifest and local policy.
+# independently verifies either a compiled RSPduo adapter or the local-kit
+# declaration and local policy.
 if $WITH_SYSTEMD && [[ -z $DESTDIR && $EUID -eq 0 && $DRY_RUN == false && $PREFLIGHT_ONLY == false &&
-    $had_current_link == false && -d /run/systemd/system && $RECEIVER_TYPES == *RspDuo* &&
+    $had_current_link == false && -d /run/systemd/system &&
+    ( $RECEIVER_TYPES == *RspDuo* || $LOCAL_BUILD_RECEIVER_TYPES == *RspDuo* ) &&
     -x $target_prefix/libexec/vectorwarp-sdrplay-service ]]; then
   /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-sdrplay-service" install ||
     printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2

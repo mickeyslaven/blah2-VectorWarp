@@ -5,6 +5,7 @@ REPOSITORY_URL=https://mickeyslaven.github.io/blah2-VectorWarp
 EXPECTED_FINGERPRINT=@SIGNING_FINGERPRINT@
 KEY_FILE=
 START_WEB=false
+REPO_ONLY=false
 SETUP_PI_GPU=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
@@ -17,6 +18,7 @@ Usage: install-release.sh [options]
 Add the signed VectorWarp package repository and install VectorWarp.
 
   --start-web             Explicitly enable and start only the web API
+  --repo-only             Add the signed repository without installing packages
   --setup-pi-gpu          After install, offer a signed native Pi Mesa transaction
   --repo-url HTTPS_URL    Override the repository base (maintainer/testing)
   --fingerprint HEX       Expected 40-hex signing-key fingerprint
@@ -180,6 +182,7 @@ if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
 while (($#)); do
   case "$1" in
     --start-web) START_WEB=true; shift ;;
+    --repo-only) REPO_ONLY=true; shift ;;
     --setup-pi-gpu) SETUP_PI_GPU=true; shift ;;
     --repo-url) (($# >= 2)) || die '--repo-url needs a value'; REPOSITORY_URL=${2%/}; shift 2 ;;
     --fingerprint) (($# >= 2)) || die '--fingerprint needs a value'; EXPECTED_FINGERPRINT=$2; shift 2 ;;
@@ -191,6 +194,10 @@ while (($#)); do
     *) die "unknown option: $1" ;;
   esac
 done
+
+if $REPO_ONLY && { $START_WEB || $SETUP_PI_GPU; }; then
+  die '--repo-only cannot be combined with --start-web or --setup-pi-gpu'
+fi
 
 validate_repository_url "$REPOSITORY_URL"
 [[ -r /etc/os-release ]] || die 'cannot identify this distribution'
@@ -265,12 +272,15 @@ if [[ $manager == apt ]]; then
     die 'could not install the APT keyring; no package manager was run'
   run install -m 0644 "$source_file" /etc/apt/sources.list.d/vectorwarp.sources ||
     die 'could not install the APT source; the keyring may have been updated and a retry is safe'
-  run apt-get update ||
-    die 'APT metadata refresh failed; repository configuration was retained for a safe retry'
-  run apt-get install vectorwarp ||
-    die 'APT package installation failed; repository configuration was retained for a safe retry'
+  if ! $REPO_ONLY; then
+    run apt-get update ||
+      die 'APT metadata refresh failed; repository configuration was retained for a safe retry'
+    run apt-get install vectorwarp ||
+      die 'APT package installation failed; repository configuration was retained for a safe retry'
+  fi
 else
   repo_file="$TEMP_DIR/vectorwarp.repo"
+  installed_key=/etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp
   {
     printf '[vectorwarp]\n'
     printf 'name=VectorWarp signed packages\n'
@@ -278,13 +288,33 @@ else
     printf 'enabled=1\n'
     printf 'gpgcheck=1\n'
     printf 'repo_gpgcheck=1\n'
-    printf 'gpgkey=%s/keys/vectorwarp.asc\n' "$REPOSITORY_URL"
+    printf 'gpgkey=file://%s\n' "$installed_key"
   } >"$repo_file"
+  [[ ! -L $installed_key ]] || die 'refusing symlink signing-key destination'
   [[ ! -L /etc/yum.repos.d/vectorwarp.repo ]] || die 'refusing symlink repository destination'
+  # DNF must use the exact key verified above, not download it again later.
+  run install -D -m 0644 "$downloaded_key" "$installed_key" ||
+    die 'could not install the DNF signing key; no package manager was run'
   run install -m 0644 "$repo_file" /etc/yum.repos.d/vectorwarp.repo ||
-    die 'could not install the DNF repository file; no package manager was run'
-  run dnf install vectorwarp ||
-    die 'DNF package installation failed; repository configuration was retained for a safe retry'
+    die 'could not install the DNF repository file; the signing key may have been updated and a retry is safe'
+  if ! $REPO_ONLY; then
+    run dnf install vectorwarp ||
+      die 'DNF package installation failed; repository configuration was retained for a safe retry'
+  fi
+fi
+
+if $REPO_ONLY; then
+  if $DRY_RUN; then
+    say 'repository setup dry run; no system configuration was changed'
+  else
+    say 'repository configured; no package manager or service was started'
+  fi
+  if [[ $manager == apt ]]; then
+    say 'install: sudo apt update && sudo apt install vectorwarp'
+  else
+    say 'install: sudo dnf install vectorwarp'
+  fi
+  exit 0
 fi
 
 if $SETUP_PI_GPU; then

@@ -36,6 +36,14 @@ class InstallerFailureTests(unittest.TestCase):
         cls.installer = cls.root / "install-release.sh"
         shutil.copy2(INSTALLER, cls.installer)
         cls.installer.chmod(0o755)
+        # Exercise the full Fedora branch without changing the host OS metadata
+        # or adding a production environment override for platform validation.
+        cls.fedora_installer = cls.root / "fedora-install-release.sh"
+        source = cls.installer.read_text()
+        assert source.count(". /etc/os-release\n") == 1
+        cls.fedora_installer.write_text(source.replace(
+            ". /etc/os-release\n", "ID=fedora\nVERSION_ID=44\n"))
+        cls.fedora_installer.chmod(0o755)
         cls.keys = cls.root / "keys"
         cls.keys.mkdir(mode=0o755)
         cls.public, cls.secret, cls.fingerprint = cls.make_key("one")
@@ -60,10 +68,20 @@ class InstallerFailureTests(unittest.TestCase):
               install) exit "${TEST_APT_INSTALL_EXIT:-0}" ;;
             esac
         """)
+        cls.write_executable("dnf", """
+            printf 'dnf %s\n' "$*" >>"$TEST_LOG"
+            exit "${TEST_DNF_INSTALL_EXIT:-0}"
+        """)
         cls.write_executable("install", """
             case " $* " in
-              *' /usr/share/keyrings/'*|*' /etc/apt/sources.list.d/'*|*' /etc/yum.repos.d/'*)
+              *' /usr/share/keyrings/'*|*' /etc/apt/sources.list.d/'*|*' /etc/yum.repos.d/'*|*' /etc/pki/rpm-gpg/'*)
                 printf 'install-system %s\n' "$*" >>"$TEST_LOG"
+                previous=; last=
+                for argument do previous=$last; last=$argument; done
+                if [ "$last" = /etc/yum.repos.d/vectorwarp.repo ]; then
+                  /usr/bin/grep '^gpgkey=' "$previous" >>"$TEST_LOG"
+                fi
+                if [ "$last" = "${TEST_INSTALL_FAIL_DEST:-}" ]; then exit 1; fi
                 exit "${TEST_INSTALL_EXIT:-0}" ;;
               *) exec /usr/bin/install "$@" ;;
             esac
@@ -134,10 +152,11 @@ class InstallerFailureTests(unittest.TestCase):
         self.log.write_text("")
         self.log.chmod(0o666)
 
-    def invoke(self, *arguments, environment=None, nonroot=False, simulated_root=False):
+    def invoke(self, *arguments, environment=None, nonroot=False, simulated_root=False,
+               fedora=False):
         env = {**os.environ, "PATH": self.path, "TEST_LOG": str(self.log),
                "TEST_CURL_SOURCE": str(self.public), **(environment or {})}
-        command = ["bash", str(self.installer), *arguments]
+        command = ["bash", str(self.fedora_installer if fedora else self.installer), *arguments]
         if simulated_root and os.geteuid() != 0:
             sudo = shutil.which("sudo")
             if not sudo:
@@ -249,6 +268,85 @@ class InstallerFailureTests(unittest.TestCase):
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("installation requires root", refused.stderr)
         self.assertEqual(self.log.read_text(), "")
+
+    def test_repository_only_verifies_key_and_never_runs_package_manager_or_service(self):
+        common = ("--repo-only", "--key-file", str(self.public),
+                  "--fingerprint", self.fingerprint)
+        for fedora, instruction, writes in (
+                (False, "sudo apt update && sudo apt install vectorwarp", 2),
+                (True, "sudo dnf install vectorwarp", 2)):
+            with self.subTest(fedora=fedora):
+                self.log.write_text("")
+                result = self.invoke(*common, simulated_root=True, fedora=fedora)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("verified signing key", result.stdout)
+                self.assertIn(instruction, result.stdout)
+                events = self.log.read_text().splitlines()
+                self.assertEqual(sum(event.startswith("install-system ") for event in events), writes)
+                other = [event for event in events if not event.startswith("install-system ")]
+                self.assertEqual(other, ["gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp"]
+                                 if fedora else [])
+                self.log.write_text("")
+                denied = self.invoke("--repo-only", "--key-file", str(self.public),
+                                     "--fingerprint", "0" * 40,
+                                     simulated_root=True, fedora=fedora)
+                self.assertNotEqual(denied.returncode, 0)
+                self.assertIn("fingerprint", denied.stderr)
+                self.assertEqual(self.log.read_text(), "")
+
+    def test_repository_only_rejects_post_install_actions_without_side_effects(self):
+        for flag in ("--start-web", "--setup-pi-gpu"):
+            with self.subTest(flag=flag):
+                result = self.invoke("--repo-only", flag)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("cannot be combined", result.stderr)
+        self.assertEqual(self.log.read_text(), "")
+
+    def test_repository_only_dry_run_never_installs_or_runs_services(self):
+        for fedora in (False, True):
+            with self.subTest(fedora=fedora):
+                result = self.invoke("--repo-only", "--dry-run", "--key-file",
+                                     str(self.public), "--fingerprint", self.fingerprint,
+                                     nonroot=True, fedora=fedora)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = [line for line in result.stdout.splitlines() if line.startswith("+")]
+                self.assertTrue(commands)
+                self.assertTrue(all(line.startswith("+ install ") for line in commands), commands)
+        self.assertEqual(self.log.read_text(), "")
+
+    def test_fedora_default_still_installs_and_surfaces_dnf_failure(self):
+        common = ("--key-file", str(self.public), "--fingerprint", self.fingerprint)
+        result = self.invoke(*common, simulated_root=True, fedora=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("dnf install vectorwarp", self.log.read_text())
+        self.assertIn("/etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp", self.log.read_text())
+        self.assertIn("gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp", self.log.read_text())
+        self.assertNotIn("systemctl", self.log.read_text())
+        failed = self.invoke(*common, simulated_root=True, fedora=True,
+                             environment={"TEST_DNF_INSTALL_EXIT": "1"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("DNF package installation failed", failed.stderr)
+
+    def test_fedora_key_and_repo_write_failures_stop_before_package_actions(self):
+        common = ("--key-file", str(self.public), "--fingerprint", self.fingerprint)
+        for destination, message, attempted_writes in (
+                ("/etc/pki/rpm-gpg/RPM-GPG-KEY-vectorwarp",
+                 "could not install the DNF signing key; no package manager was run", 1),
+                ("/etc/yum.repos.d/vectorwarp.repo",
+                 "the signing key may have been updated and a retry is safe", 2)):
+            with self.subTest(destination=destination):
+                self.log.write_text("")
+                failed = self.invoke(*common, "--start-web", simulated_root=True, fedora=True,
+                                     environment={"TEST_INSTALL_FAIL_DEST": destination})
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn(message, failed.stderr)
+                events = self.log.read_text()
+                self.assertEqual(events.count("install-system "), attempted_writes)
+                self.assertNotIn("dnf ", events)
+                self.assertNotIn("systemctl ", events)
+                retry = self.invoke(*common, simulated_root=True, fedora=True)
+                self.assertEqual(retry.returncode, 0, retry.stderr)
+                self.assertIn("dnf install vectorwarp", self.log.read_text())
 
     def test_default_install_is_retryable_and_never_starts_a_service(self):
         arguments = ("--key-file", str(self.public), "--fingerprint", self.fingerprint)

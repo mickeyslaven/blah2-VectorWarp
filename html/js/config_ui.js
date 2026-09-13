@@ -93,7 +93,7 @@ const CONFIG_META = {
   'network.ports.config': ['Configuration port', 'Reserved for configuration control; it must remain unique.'],
   'truth.adsb': ['ADS-B planes', 'Aircraft overlay and comparison feed'],
   'truth.adsb.enabled': ['Show ADS-B planes', 'Show configured aircraft overlays'],
-  'truth.adsb.tar1090': ['ADS-B source', 'Discover a local decoder or connect to a tar1090 server on another device.'],
+  'truth.adsb.tar1090': ['ADS-B source', 'Local decoder or server base address; data/aircraft.json is added automatically.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
@@ -616,7 +616,7 @@ function typedInput(value, path) {
     endpoint.type = 'text';
     endpoint.value = serverAddress;
     endpoint.placeholder = 'http://192.168.1.50/tar1090';
-    endpoint.setAttribute('aria-label', 'tar1090 server address');
+    endpoint.setAttribute('aria-label', 'ADS-B server address');
     endpoint.hidden = local;
     endpoint.required = !local;
     const mode = selectInput([...rule.sourceChoices,
@@ -1358,10 +1358,12 @@ function renderReceiverSetup() {
   check.textContent = 'Check receiver software';
   const output = document.createElement('div');
   output.setAttribute('role', 'status'); output.setAttribute('aria-live', 'polite');
+  let buildPolls = 0;
+  let buildPollTimer = null;
   const paragraph = text => { const p = document.createElement('p'); p.textContent = text; output.appendChild(p); return p; };
-  const post = async (route, body, timeout = 30000) => {
+  const post = async (route, body, timeout = 30000, intent = 'receiver-management-v1') => {
     const response = await configFetch(liveApiUrl(route), {method: 'POST', headers: {
-      'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'receiver-management-v1'}, body: JSON.stringify(body)}, timeout);
+      'Content-Type': 'application/json', 'X-VectorWarp-Intent': intent}, body: JSON.stringify(body)}, timeout);
     const result = await response.json();
     if (!response.ok) throw new Error(result.errors?.join(' ') || result.message || 'Receiver software check failed.');
     return result;
@@ -1384,6 +1386,15 @@ function renderReceiverSetup() {
     link.textContent = 'SDRplay hardware API and supported systems';
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     output.appendChild(link);
+  };
+  const refreshBuildStatus = () => {
+    if (buildPollTimer) window.clearTimeout(buildPollTimer);
+    if (buildPolls >= 40 || !section.isConnected) return;
+    buildPollTimer = window.setTimeout(() => {
+      buildPollTimer = null;
+      buildPolls++;
+      discover();
+    }, 5000);
   };
   const settingApplication = (receiver, item) => {
     if (item.direction === 'browser-to-upstream-after-ack-and-readback')
@@ -1427,6 +1438,7 @@ function renderReceiverSetup() {
     });
   }
   async function discover() {
+    if (buildPollTimer) { window.clearTimeout(buildPollTimer); buildPollTimer = null; }
     check.disabled = true;
     output.replaceChildren();
     paragraph('Checking receiver software…');
@@ -1455,6 +1467,27 @@ function renderReceiverSetup() {
           paragraph('SDRplay API is installed but stopped. Save & Restart starts a standard local service automatically. Custom services need administrator review.');
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
           paragraph('SDRplay API service status could not be checked.');
+        if (receiver.type === 'RspDuo') {
+          try {
+            const response = await configFetch(liveApiUrl('/api/sdrplay-build'), {}, 5000);
+            const build = await response.json();
+            const relevantProgress = build.progress && (!build.progress.kit_id ||
+              build.progress.kit_id === build.kit_id) ? build.progress : null;
+            if (build.buildable && ['missing', 'stale'].includes(build.state)) {
+              paragraph(`Local adapter build status: ${relevantProgress?.state || build.state}. ${relevantProgress?.reason || build.reason || 'This does not start radar.'}`);
+              sdrplayLink();
+              button('Build SDRplay support', async element => {
+                element.textContent = 'Requesting local build…';
+                const result = await post('/api/sdrplay-build', {}, 10000, 'sdrplay-local-build-v1');
+                paragraph(result.message || 'Local adapter build requested. Recheck receiver software for progress.');
+                buildPolls = 0;
+                refreshBuildStatus();
+              });
+            } else if (build.buildable && build.state === 'current') paragraph('Locally built SDRplay adapter is current. Receiver discovery and service status remain separate checks.');
+            else if (build.buildable) { paragraph(build.reason || 'Local SDRplay adapter status is unavailable; no build was requested.'); sdrplayLink(); }
+            if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
+          } catch (_) { paragraph('Local SDRplay adapter build status is unavailable; no build was requested.'); }
+        }
         if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
           for (const step of receiver.setupGuide) {
             paragraph(step.text);
@@ -1475,9 +1508,12 @@ function renderReceiverSetup() {
           paragraph(`${receiver.label}: software application and verification boundary; this is not physical receiver proof.`);
           for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
         });
-        if (receiver.capabilities.liveCompiled) button(`Choose ${receiver.label} for settings`, () => {
+        if (receiver.capabilities.liveCompiled ||
+            (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Choose ${receiver.label} for settings`, () => {
           switchDevice(receiver.type);
-          paragraph(`${receiver.label} is now the unsaved selection. Discovery did not change it automatically.`);
+          paragraph(receiver.capabilities.liveCompiled ?
+            `${receiver.label} is now the unsaved selection. Discovery did not change it automatically.` :
+            `${receiver.label} is now the unsaved selection. Build its local adapter before live capture; discovery did not change it automatically.`);
         });
         for (const action of result.management?.actions?.filter(item =>
           receiver.capabilities.liveCompiled && item.receiverType === receiver.type) || []) {

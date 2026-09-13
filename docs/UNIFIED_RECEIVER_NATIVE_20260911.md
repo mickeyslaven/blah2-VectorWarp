@@ -1,5 +1,9 @@
 # Unified native receiver architecture and acceptance
 
+> Historical acceptance record (2026-09-11). It describes the then-current
+> precompiled RSPduo module design. Current packages instead ship three compiled
+> adapters and a local RSPduo source kit; see [release packaging](../packaging/README.md).
+
 One processor executable retains built-in Kraken and recording replay. Optional
 USRP, dual-HackRF and RSPduo adapters are separate modules in the **same package**;
 missing vendor runtimes do not prevent another receiver or replay from starting.
@@ -9,7 +13,8 @@ is selected following an adapter failure.
 ## Cohort and packaging contract
 
 - CMake: `BLAH2_ENABLE_USRP`, `BLAH2_ENABLE_HACKRF`, `BLAH2_ENABLE_RSPDUO` select
-  source-build modules. Unified packages enable all three. Kraken is always built.
+  source-build modules. In this historical record, unified packages enabled all
+  three. Kraken is always built.
 - `blah2` depends on enabled targets `blah2ReceiverUsrp`, `blah2ReceiverHackrf`,
   `blah2ReceiverRspduo`. `blah2CaptureCore` is always built, even Kraken-only.
 - Ship adjacent `blah2`, `libblah2-capture-core.so.1.0.0` and its `.so.1` / `.so`

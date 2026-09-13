@@ -50,9 +50,9 @@ layout. Reported settings do not prove antenna order, calibration or RF receptio
 
 ## SDRplay RSPduo
 
-Follow [SDRplay setup](SDRPLAY_SETUP.md) to install the vendor API and select a
-build containing the RSPduo adapter. VectorWarp never downloads that API or
-accepts its license.
+Follow [SDRplay setup](SDRPLAY_SETUP.md) to install the vendor API and use the
+local RSPduo source kit in the unified package or `--backend all` source build.
+VectorWarp never downloads that API or accepts its license.
 
 In Settings, choose the RSPduo profile, then frequency, output sample rate and
 gain settings. With multiple RSPduos, enter the intended device's serial number.
@@ -110,9 +110,16 @@ alone does not establish successful radar operation.
 ### ADS-B source
 
 In **Settings → ADS-B planes**, discover a local readsb/dump1090 feed or enter
-a remote tar1090 endpoint. Discovery does not install or start a decoder or scan
+a remote ADS-B server address. Like upstream adsb2dd, a server address such as
+`http://receiver/tar1090` is read at `http://receiver/tar1090/data/aircraft.json`;
+enter the base address, not the JSON filename. A compatible dump1090/readsb
+web endpoint works too. Local decoder-file discovery does not require tar1090.
+Discovery does not install or start a decoder or scan
 other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
 during replay and preview; it is never radar detection or tracking input.
+
+Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
+Stock 3lips uses an external adsb2dd service rather than this built-in converter.
 
 ### Recording replay
 

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 import gzip
 import hashlib
+from html import escape
 import json
 import os
 from pathlib import Path
@@ -35,7 +36,104 @@ RELEASE_TARGETS = {
 }
 
 
-def repository_homepage():
+def release_installation(manifest):
+    """Render download links only for packages in the verified release manifest."""
+    version = manifest["version"]
+    if not isinstance(version, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+        raise ValueError("Download links require an immutable release version")
+    base = f"https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v{version}"
+    packages = {}
+    for entry in manifest["packages"]:
+        filename = entry["filename"]
+        if not isinstance(filename, str) or not FILENAME.fullmatch(filename):
+            raise ValueError("Download links require plain package filenames")
+        if entry["format"] not in ("deb", "rpm"):
+            raise ValueError("Unsupported package download format")
+        key = (entry["distro"], entry["distro_version"], entry["arch"])
+        if key in packages:
+            raise ValueError("Duplicate package download target")
+        packages[key] = f'<a href="{base}/{escape(filename)}">Download {entry["format"].upper()}</a>'
+
+    rows = []
+
+    def row(label, distro, distro_version, pi=False):
+        architectures = ("x86_64", "aarch64") if distro == "fedora" else ("amd64", "arm64")
+        links = [packages.get((distro, distro_version, arch)) for arch in architectures]
+        if pi:
+            links[0] = None
+        if any(links):
+            cells = "".join(f'<td>{link or "—"}</td>' for link in links)
+            rows.append(f'<tr><th scope="row">{escape(label)}</th>{cells}</tr>')
+
+    for distro, distro_version in (("ubuntu", "22.04"), ("ubuntu", "24.04"),
+                                   ("ubuntu", "26.04"), ("debian", "13"), ("fedora", "44")):
+        row(f"{distro.title()} {distro_version}", distro, distro_version)
+    for distro_version in ("22.04", "24.04", "26.04"):
+        row(f"DragonOS · Ubuntu {distro_version} base", "ubuntu", distro_version)
+    row("Raspberry Pi OS · 64-bit Trixie", "debian", "13", pi=True)
+    table_rows = "\n".join(rows)
+    fingerprint = escape(manifest["signing_fingerprint"])
+    return f'''<section class="panel" aria-labelledby="install">
+<h2 id="install">Install VectorWarp {version}</h2>
+<h3>Fedora 44</h3>
+<p>Add the signed repository once, then install with DNF:</p>
+<pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
+less vectorwarp-install.sh
+sudo bash vectorwarp-install.sh --repo-only
+sudo dnf install vectorwarp
+sudo systemctl enable --now vectorwarp-api.service</code></pre>
+<p>Open <code>http://localhost:3000</code>, configure your receiver, and choose
+Save &amp; Restart. Update later with <code>sudo dnf upgrade vectorwarp</code>.</p>
+<h3>Ubuntu, Debian and other supported systems</h3>
+<p>The installer selects the package for your OS and architecture, adds the signed
+APT or DNF repository, and installs VectorWarp. Updates then arrive through your
+normal package manager.</p>
+<pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
+  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
+less vectorwarp-install.sh
+sudo bash vectorwarp-install.sh --start-web</code></pre>
+<p><code>--start-web</code> starts the browser interface and enables it at boot.
+Open <code>http://localhost:3000</code> on the installed machine, or
+<code>http://&lt;server-IP&gt;:3000</code> from another device on your trusted network.
+On a fresh install, radar processing stays stopped until you configure it and
+choose Save &amp; Restart. Omit
+<code>--start-web</code> to install without starting the interface.</p>
+<p>Each package includes Kraken, USRP and dual HackRF adapters, plus the source
+kit to build RSPduo support from Settings after installing SDRplay's API. Receiver
+hardware and external software are separate; RSPduo needs the locally installed
+SDRplay API. Follow <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/SETUP.md">receiver setup</a>
+after installing.</p>
+<h3>Direct downloads</h3>
+<p>Prefer the installer above for automatic updates. For a manual installation,
+choose the package matching your OS version and architecture.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Package downloads by operating system and architecture">
+<table><caption>VectorWarp {version} · one package per OS and architecture</caption>
+<thead><tr><th scope="col">Operating system</th><th scope="col">x86-64<br>(amd64 / x86_64)</th><th scope="col">ARM64<br>(arm64 / aarch64)</th></tr></thead>
+<tbody>{table_rows}</tbody></table></div>
+<p class="scope">x86-64 covers Intel and AMD PCs. DragonOS uses its Ubuntu base;
+check <code>/etc/os-release</code>. Raspberry Pi OS Trixie uses Debian 13 ARM64.
+No 32-bit package is provided. For other systems, use the
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
+<details><summary>Verify a direct download</summary>
+<p>Save your package, <a href="{base}/SHA256SUMS">checksums</a>,
+<a href="{base}/SHA256SUMS.asc">checksum signature</a>, and
+<a href="{base}/vectorwarp-archive-key.asc">public signing key</a> in the same folder.
+The release key fingerprint is <code>{fingerprint}</code>; compare it with the
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MAINTAINER_RELEASE.md#one-time-setup">maintainer's published fingerprint</a>
+before trusting the key.</p>
+<pre><code>gpg --show-keys --with-fingerprint vectorwarp-archive-key.asc
+gpg --dearmor --output vectorwarp-release-keyring.gpg vectorwarp-archive-key.asc &amp;&amp; \\
+  gpgv --keyring ./vectorwarp-release-keyring.gpg SHA256SUMS.asc SHA256SUMS &amp;&amp; \\
+  sha256sum --check --strict --ignore-missing SHA256SUMS</code></pre>
+<p>Continue only if the key matches and both the signature and your package's
+checksum pass. A checksum alone does not authenticate a download.</p></details>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v{version}">Release notes and all assets</a>
+· <a href="repository-manifest.json">Package manifest</a></p>
+</section>'''
+
+
+def repository_homepage(manifest=None):
     """Selected measured capabilities; full evidence stays in the linked report."""
     return '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -57,6 +155,8 @@ section{margin:0 0 2.5rem}.panel{background:#fff;border:1px solid #e6e0d7;border
 caption{text-align:left;font-weight:600;margin-bottom:.5rem}th,td{padding:.85rem;text-align:left;border-bottom:1px solid #e6e0d7;vertical-align:top}
 th:first-child{padding-left:0}td:last-child{font-weight:700;color:#873200}
 .scope{font-size:.85rem;color:#59544b}.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}
+pre{max-width:100%;overflow-x:auto;padding:1rem;background:#f3f0eb;border-radius:.4rem;font-size:.85rem;line-height:1.5}
+code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer;font-weight:650}details{margin-top:1rem}
 .features h3{font-size:1rem;margin:0}.features p{margin:.3rem 0 0}footer{font-size:.85rem;color:#59544b}
 @media(max-width:40rem){main,header,footer{padding:1rem}.panel{padding:1rem}}
 </style></head><body>
@@ -66,9 +166,10 @@ th:first-child{padding-left:0}td:last-child{font-weight:700;color:#873200}
 <h1>More channels. Wider Doppler. Faster radar.</h1>
 <p>Native Linux passive radar with multicore processing, optional GPU acceleration,
 and browser controls for live displays, settings, recording and replay.</p>
-<div class="actions"><a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Get started</a>
+<div class="actions"><a class="button" href="#install">Get started</a>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Explore the project</a></div>
 </section>
+<!-- VERIFIED_RELEASE_INSTALLATION -->
 <section class="panel" aria-labelledby="results">
 <h2 id="results">Faster than regular blah2</h2>
 <p>Same recorded IQ at its original rate. Same CPU budget on each host.</p>
@@ -122,18 +223,12 @@ ARM fork, with NEON FFTW enabled for all three.
 <div><h3>Record and replay</h3><p>Capture IQ and return to the same recording for another look.</p></div>
 </div>
 </section>
-<section class="panel" aria-labelledby="install">
-<h2 id="install">Native Linux. Normal package updates.</h2>
-<p>Signed APT and DNF packages for Ubuntu, Debian and Fedora, with matching
-packages for DragonOS and 64-bit Raspberry Pi OS. Each package includes Kraken,
-USRP, dual HackRF and RSPduo adapters. Choose your receiver in Settings;
-RSPduo needs the separately installed SDRplay API.</p>
-<a class="button" href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">Installation guide</a>
-</section>
 </main>
 <footer>Built on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>. MIT licensed.</footer>
 </body></html>
-'''
+'''.replace('<!-- VERIFIED_RELEASE_INSTALLATION -->', release_installation(manifest) if manifest else
+            '<section id="install"><h2>Install VectorWarp</h2><p>Release downloads are not available in this preview. '
+            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp#install-on-linux">Build from source</a>.</p></section>')
 
 
 def run(command, **kwargs):
@@ -206,8 +301,9 @@ def load_manifest(file, packages):
         if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
                 "all", "auto", "24.21.0"):
             raise ValueError(f"Unexpected package build profile: {filename}")
-        if entry.get("compiled_receivers") != ["Kraken", "RspDuo", "Usrp", "HackRF"]:
-            raise ValueError(f"Package must contain every receiver adapter: {filename}")
+        if (entry.get("compiled_receivers") != ["Usrp", "HackRF", "Kraken"] or
+                entry.get("local_build_receivers") != ["RspDuo"]):
+            raise ValueError(f"Package must contain three compiled adapters and the local RSPduo source kit: {filename}")
         identity = (entry["format"], entry["distro"], entry["distro_version"], entry["arch"], version, release)
         if identity in identities:
             raise ValueError("Duplicate package target/version")
@@ -402,7 +498,7 @@ def build(args):
                 raise ValueError("Installer template has no signing-fingerprint placeholder")
             (site / "install.sh").write_text(template.replace("@SIGNING_FINGERPRINT@", fingerprint))
         (site / ".nojekyll").touch()
-        (site / "index.html").write_text(repository_homepage())
+        (site / "index.html").write_text(repository_homepage(document))
         if sum(file.stat().st_size for file in site.rglob("*") if file.is_file()) > MAX_BYTES:
             raise ValueError("Signed repository exceeds the 900-MiB Pages budget")
         site.rename(output)

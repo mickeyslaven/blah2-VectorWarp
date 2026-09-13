@@ -6,7 +6,7 @@ import unittest
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[2]
-GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.md",
+GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.md", "docs/3LIPS_SETUP.md",
           "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
           "packaging/README.md", "docs/MAINTAINER_RELEASE.md",
           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
@@ -106,6 +106,20 @@ class InstallDocumentationTests(unittest.TestCase):
         self.assertIn("Save & Restart", install)
         for unit in re.findall(r"\bvectorwarp-[a-z-]+\.service\b", install):
             self.assertTrue((ROOT / "contrib/systemd" / (unit + ".in")).is_file())
+
+    def test_3lips_guide_keeps_external_integration_distinct(self):
+        guide = " ".join((ROOT / "docs/3LIPS_SETUP.md").read_text().split())
+        api = (ROOT / "api/server.js").read_text()
+        ui = (ROOT / "html/js/config_ui.js").read_text()
+        for route in ("/api/config", "/api/detection", "/api/adsb/delay-doppler"):
+            self.assertIn(route, guide)
+            self.assertIn(route, api)
+        self.assertIn("http://adsb2dd.30hours.dev/api/dd", guide)
+        self.assertIn("Neither change is included in VectorWarp", guide)
+        self.assertIn("not an end-to-end multi-node hardware test", guide)
+        for label in ("Minimum delay bin", "Maximum delay bin", "Save & Restart"):
+            self.assertIn(label, guide)
+            self.assertIn(label, ui)
 
 
 if __name__ == "__main__":

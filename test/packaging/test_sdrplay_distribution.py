@@ -32,31 +32,31 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn('secrets.', text)
         self.assertNotIn('VECTORWARP_SDRPLAY', str(workflow.get('env', {})))
 
-    def test_actual_packages_require_protected_all_receiver_build(self):
+    def test_actual_packages_stage_local_rspduo_kit_without_sdk_inputs(self):
         workflow = workflow_document()
         package = workflow['jobs']['package']
         self.assertEqual(package['environment'], "${{ github.event_name == 'pull_request' && 'pr-packaging' || 'release-signing' }}")
         text = str(package)
-        self.assertEqual(text.count('--backend all'), 3)
-        self.assertIn('prepare-sdrplay-build-sdk.sh', text)
-        self.assertIn('$RUNNER_TEMP/vectorwarp-sdrplay-sdk', text)
-        self.assertNotIn('build/package-sdrplay-sdk', text)
+        self.assertEqual(text.count('--backend all'), 6)
+        self.assertNotIn('prepare-sdrplay-build-sdk.sh', text)
+        self.assertNotIn('vectorwarp-sdrplay-sdk', text)
+        self.assertNotIn('VECTORWARP_SDRPLAY', text)
+        self.assertNotIn('release-signing', str(package.get('runs-on')))
         self.assertNotIn('actions/cache', text)
         uploads = [step for step in package['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
         self.assertEqual([step['with']['path'] for step in uploads], ['dist/'])
         packager = (ROOT / 'script/package-native.sh').read_text()
         self.assertIn('release artifact must not contain the SDRplay vendor SDK or runtime', packager)
 
-    def test_pr_matrix_builds_only_the_explicit_open_test_package(self):
+    def test_pr_matrix_builds_the_same_local_kit_contract(self):
         package = workflow_document()['jobs']['package']
         self.assertEqual(len(package['strategy']['matrix']['include']), 10)
         pr_steps = [step for step in package['steps']
                     if 'PR verification' in step.get('name', '')]
         self.assertEqual(len(pr_steps), 3)
         text = str(pr_steps)
-        self.assertEqual(text.count('--backend open-test'), 3)
-        self.assertEqual(text.count('script/package-native.sh --test-only'), 3)
-        self.assertEqual(text.count('smoke-native-package.sh --test-only'), 3)
+        self.assertEqual(text.count('--backend all'), 3)
+        self.assertNotIn('--test-only', text)
         self.assertNotIn('vectorwarp-sdrplay-sdk', text)
         self.assertNotIn('VECTORWARP_SDRPLAY', text)
         uploads = [step for step in package['steps']

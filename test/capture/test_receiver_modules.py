@@ -72,9 +72,13 @@ def main():
         receivers = {item["receiver"]: item for item in status["receivers"]}
         assert set(receivers) == {"Kraken", "Usrp", "HackRF", "RspDuo"}
         assert receivers["Kraken"] == dict(receiver="Kraken", compiled=True, builtIn=True,
-                                          moduleLoadable=True, error="")
+                                          moduleLoadable=True, localBuildable=False, error="")
         assert receivers["Usrp"]["moduleLoadable"] and receivers["HackRF"]["moduleLoadable"]
         assert not receivers["RspDuo"]["moduleLoadable"] and receivers["RspDuo"]["compiled"]
+        # This fixture contains only compiled sibling modules; no local source
+        # kit is staged. Keep every receiver's false capability explicit.
+        assert all(receivers[name]["localBuildable"] is False
+                   for name in ("Kraken", "Usrp", "HackRF", "RspDuo"))
         assert all(len(item["error"]) <= 240 and all(32 <= ord(c) <= 126 for c in item["error"])
                    for item in status["receivers"])
         assert all(event.endswith((":loaded", ":unloaded")) for event in events), events

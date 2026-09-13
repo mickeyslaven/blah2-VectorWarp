@@ -120,16 +120,17 @@ build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_version=$(sed -n 's/^build_os_version=//p' "$ARTIFACT/.vectorwarp-build")
 build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
 compiled_receivers=$(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build")
+local_build_receivers=$(sed -n 's/^local_build_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 artifact_test_only=$(sed -n 's/^test_only=//p' "$ARTIFACT/.vectorwarp-build")
 if $TEST_ONLY; then
   [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
     die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
 else
-  [[ $backend == all ]] || die 'published packages require all receiver adapters in one build'
-  [[ $compiled_receivers == RspDuo,Usrp,HackRF,Kraken && $artifact_test_only == false ]] ||
+  [[ $backend == all ]] || die 'published packages require all receiver support in one build'
+  [[ $compiled_receivers == Usrp,HackRF,Kraken && $local_build_receivers == RspDuo && $artifact_test_only == false ]] ||
     die 'published package receiver manifest is incomplete'
-  [[ -e $ARTIFACT/bin/blah2-receiver-rspduo.so ]] ||
-    die 'published package artifact is missing the RSPduo receiver adapter'
+  [[ -f $ARTIFACT/receiver-source/rspduo/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]] ||
+    die 'published package artifact is missing the local RSPduo source kit or helper'
 fi
 [[ $gpu == AUTO ]] || die 'published packages require the CPU plus Vulkan AUTO build'
 [[ $build_os_id == "${ID:-}" && $build_os_version == "${VERSION_ID:-}" && $build_arch == "$(uname -m)" ]] ||
@@ -158,8 +159,7 @@ esac
 if [[ $FORMAT == deb ]]; then
   for command in dpkg-deb dpkg-shlibdeps; do need_command "$command"; done
 else
-  need_command rpmbuild
-  need_command rpm
+  for command in rpmbuild rpm rpm2cpio cpio python3; do need_command "$command"; done
 fi
 
 say "native target: $DISTRO ($PACKAGE_ARCH)"
@@ -222,9 +222,9 @@ run rm -rf "$STAGE/opt/vectorwarp/current/systemd" \
 run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-x '{}' +
 run chmod 0644 "$STAGE/opt/vectorwarp/libexec/vectorwarp-wait-api.js"
 
-printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\ntest_only=%s\n' \
+printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
-  "$backend" "$compiled_receivers" "$TEST_ONLY" \
+  "$backend" "$compiled_receivers" "$local_build_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
 
 if [[ $FORMAT == deb ]]; then
@@ -255,8 +255,8 @@ if [[ $FORMAT == deb ]]; then
   shlibs=${shlibs_output#shlibs:Depends=}
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
-  if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP, dual HackRF and RSPduo adapters. RSPduo needs the separately installed SDRplay API.'; fi
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
+  if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP and dual HackRF adapters plus a local RSPduo source kit. RSPduo requires the separately installed SDRplay API and an explicit local build.'; fi
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
@@ -274,15 +274,19 @@ if [[ $FORMAT == deb ]]; then
 else
   TOPDIR="$WORK_DIR/rpmbuild"
   install -d "$TOPDIR/BUILD" "$TOPDIR/BUILDROOT" "$TOPDIR/RPMS" "$TOPDIR/SOURCES" "$TOPDIR/SPECS" "$TOPDIR/SRPMS"
+  # The spec appends this finalizer AFTER the complete distro BRP chain. Binding
+  # before brp-strip-comment-note (even after a manual strip) is not sufficient.
+  install -m 0644 "$SOURCE_DIR/script/finalize-rspduo-kit.py" \
+    "$TOPDIR/SOURCES/finalize-rspduo-kit.py"
   tar -C "$STAGE" -cf "$TOPDIR/SOURCES/vectorwarp-root.tar" .
   RPM_RELEASE="${PACKAGE_RELEASE}.fc44"
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@RPM_RELEASE@|$RPM_RELEASE|g" \
     "$SOURCE_DIR/packaging/rpm/vectorwarp.spec.in" >"$TOPDIR/SPECS/vectorwarp.spec"
   if $TEST_ONLY; then
-    sed -i 's/package includes Kraken, USRP, dual HackRF and RSPduo receiver adapters, CPU/TEST-ONLY package includes Kraken, USRP and dual HackRF receiver adapters, CPU/' \
-      "$TOPDIR/SPECS/vectorwarp.spec"
-    sed -i -e 's/RSPduo needs$/It deliberately excludes RSPduo and is not for publication./' \
-      -e '/^the separately installed SDRplay API\. Receiver software is checked in Settings\.$/d' \
+    sed -i -e '/^package includes Kraken, USRP and dual HackRF receiver adapters plus a local$/c\TEST-ONLY package includes Kraken, USRP and dual HackRF receiver adapters; it deliberately excludes RSPduo and is not for publication.' \
+      -e '/^RSPduo source kit, CPU processing and optional Vulkan acceleration selected at$/d' \
+      -e '/^runtime\. RSPduo needs the separately installed SDRplay API and an explicit$/d' \
+      -e '/^local build\. Receiver software is checked in Settings\.$/d' \
       "$TOPDIR/SPECS/vectorwarp.spec"
   fi
   rpmbuild --define "_topdir $TOPDIR" --define "_arch $RPM_ARCH" -bb "$TOPDIR/SPECS/vectorwarp.spec"
@@ -295,6 +299,19 @@ else
     die "RPM package identity mismatch: $rpm_identity"
   if rpm -qp --requires "$WORK_DIR/$ASSET" | grep -Fxq /usr/bin/node; then
     die 'RPM incorrectly depends on system Node instead of its private runtime'
+  fi
+  if ! $TEST_ONLY; then
+    extracted="$WORK_DIR/rpm-verify"
+    install -d "$extracted"
+    (cd "$extracted" && rpm2cpio "$WORK_DIR/$ASSET" | cpio -idm --quiet)
+    python3 - "$extracted/opt/vectorwarp/current/receiver-source/rspduo/kit.json" \
+      "$extracted/opt/vectorwarp/current/bin/libblah2-capture-core.so.1" <<'PY'
+import hashlib, json, pathlib, sys
+kit, core = map(pathlib.Path, sys.argv[1:])
+value = json.loads(kit.read_text(encoding='utf-8'))
+if hashlib.sha256(core.read_bytes()).hexdigest() != value.get('core_sha256'):
+    raise SystemExit('final RPM core hash does not match local RSPduo kit')
+PY
   fi
   MANIFEST_RELEASE=$RPM_RELEASE
 fi
@@ -316,7 +333,7 @@ manifest="$WORK_DIR/$ASSET.manifest.json"
   printf '  "sha256": "%s",\n' "$sha256"
   printf '  "size": %s,\n' "$size"
   printf '  "backend": "%s",\n' "$backend"
-  if $TEST_ONLY; then printf '  "compiled_receivers": ["Kraken", "Usrp", "HackRF"],\n'; else printf '  "compiled_receivers": ["Kraken", "RspDuo", "Usrp", "HackRF"],\n'; fi
+  if $TEST_ONLY; then printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": [],\n'; else printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": ["RspDuo"],\n'; fi
   printf '  "test_only": %s,\n' "$TEST_ONLY"
   printf '  "gpu": "auto",\n'
   printf '  "node_version": "24.21.0"\n'

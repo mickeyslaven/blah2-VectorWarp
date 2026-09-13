@@ -16,6 +16,10 @@ if(BLAH2_KRAKEN_ONLY)
 endif()
 option(BLAH2_ENABLE_RSPDUO "Build the SDRplay RSPduo live capture backend"
   ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
+option(BLAH2_LOCAL_BUILD_RSPDUO "Ship our RSPduo source kit for local compilation against a user-installed SDK" OFF)
+if(BLAH2_LOCAL_BUILD_RSPDUO AND BLAH2_ENABLE_RSPDUO)
+  message(FATAL_ERROR "Select either a precompiled RSPduo adapter or its local build kit")
+endif()
 option(BLAH2_ENABLE_USRP "Build the Ettus USRP live capture backend"
   ${BLAH2_OPTIONAL_RECEIVER_DEFAULT})
 option(BLAH2_ENABLE_HACKRF "Build the HackRF live capture backend"

@@ -1,6 +1,7 @@
 #pragma once
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <link.h>
 #include <memory>
 #include <string>
 #include <sys/stat.h>
@@ -11,6 +12,41 @@ struct ReceiverLibrary {
   std::shared_ptr<void> handle;
   std::string error;
 };
+
+// Local builds are bound to the SDK recorded by their receipt, including when
+// another same-SONAME runtime is visible in the dynamic loader's search path.
+inline ReceiverLibrary open_pinned_receiver_library(const std::string& modulePath,
+    std::shared_ptr<int> runtimeFd, const char* runtimeSoname) {
+  struct stat expected{};
+  if (!runtimeFd || fstat(*runtimeFd, &expected) || !S_ISREG(expected.st_mode))
+    return {{}, "The verified receiver runtime is no longer available"};
+  if (void* existing = dlopen(runtimeSoname, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD)) {
+    dlclose(existing);
+    // A loaded object's old pathname can now refer to a replacement inode.
+    // Without retained mapping provenance, reject even a matching pathname.
+    return {{}, "An SDRplay runtime is already loaded; restart VectorWarp before loading the verified local adapter"};
+  }
+  const auto fixed = "/proc/self/fd/" + std::to_string(*runtimeFd);
+  void* handle = dlopen(fixed.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!handle) return {{}, "The verified SDRplay runtime could not load"};
+  // Keep the descriptor for the complete mapping lifetime: its /proc path
+  // cannot be recycled to a different file during subsequent dlopen calls.
+  auto runtime = std::shared_ptr<void>(handle, [runtimeFd = std::move(runtimeFd)](void* value) mutable {
+    dlclose(value); runtimeFd.reset();
+  });
+  void* bySoname = dlopen(runtimeSoname, RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+  const bool same = bySoname == handle;
+  if (bySoname) dlclose(bySoname);
+  if (!same) return {{}, "The verified SDRplay library does not provide the required runtime identity"};
+  void* module = dlopen(modulePath.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!module) {
+    const char* error = dlerror();
+    return {{}, error ? error : "Local receiver adapter could not load"};
+  }
+  return {std::shared_ptr<void>(module, [runtime = std::move(runtime)](void* value) mutable {
+    dlclose(value); runtime.reset();
+  }), {}};
+}
 
 // The production caller supplies a fixed vendor path only for RSPduo. Keeping
 // this primitive separate permits relocated fake-runtime tests without writing

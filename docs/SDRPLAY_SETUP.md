@@ -1,19 +1,31 @@
 # SDRplay RSPduo setup
 
-RSPduo-enabled VectorWarp builds include our adapter, not SDRplay's proprietary
-API or installer. Source builds need `--backend rspduo` or `--backend all`;
-the Kraken-only quickstart does not compile this adapter.
+The unified VectorWarp package includes our RSPduo adapter source kit, not
+SDRplay's proprietary API or installer. You install the API, then VectorWarp
+compiles the adapter locally from **Settings → Build SDRplay support**.
+Source builders can use `--backend all` for the same workflow, or
+`--backend rspduo` to compile the adapter before installation.
 Obtain the compatible **SDRplay Hardware API 3.15** from
 [SDRplay's official hardware API page](https://sdrplay.com/hardware-api/),
 accept its terms yourself, and follow its installation instructions.
 SDRconnect is a different product; installing it alone is not this API setup.
 
-In VectorWarp, open **Settings → Check receiver software**:
+Install the API's development headers as well as its runtime. For the packaged
+local builder, these belong in `/usr/local/include` and `/usr/local/lib` as
+installed by the standard vendor installer. The package provides the normal
+compiler tools; it never downloads SDRplay files or accepts their terms.
+
+In VectorWarp, select RSPduo in **Settings**, then choose **Build SDRplay support**
+when offered. The build checks the installed source kit, compiler and API;
+progress or a specific error appears in Settings. Rebuild when the package or
+SDK changes. Building does not start radar.
+
+Then open **Check receiver software**:
 
 - **Installed and running:** VectorWarp reuses the API without restarting it.
 - **Installed but stopped:** select RSPduo and choose **Save & Restart**.
   VectorWarp starts a standard installed SDRplay service before processing.
-  A first installation of an RSPduo-enabled VectorWarp build also attempts this;
+  A first installation with the local RSPduo kit also attempts this;
   upgrades, staging and dry runs do not. It never enables boot startup.
 - **Custom, ambiguous or overridden service:** automatic startup stops with an
   error. Have an administrator review and start it locally, then recheck in
@@ -38,5 +50,5 @@ VectorWarp does not start processing. Service activity alone does not prove RF c
 
 Source builders also need the vendor's development headers and link library.
 Use `BLAH2_SDRPLAY_INCLUDE_DIR` and `BLAH2_SDRPLAY_LIBRARY` for nonstandard
-locations. End users installing VectorWarp packages do not need those build
-headers. Vendor software is not downloaded or licensed automatically.
+locations. These custom paths apply to source builds; the packaged local builder
+uses only the standard paths above. Vendor software is not downloaded or licensed automatically.

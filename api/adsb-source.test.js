@@ -9,6 +9,11 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     tar1090: 'receiver.local:8080', smoothing_window: 10, max_position_age: 30}},
   location: {rx: {latitude: 1, longitude: 2, altitude: 3}, tx: {latitude: 4, longitude: 5, altitude: 6}}};
   assert.equal(aircraftUrl(config).href, 'http://receiver.local:8080/data/aircraft.json');
+  for (const base of ['tar1090', 'dump1090-fa', 'dump1090']) {
+    const compatible = {...config, truth: {adsb: {...config.truth.adsb,
+      tar1090: `http://receiver.local/${base}`}}};
+    assert.equal(aircraftUrl(compatible).href, `http://receiver.local/${base}/data/aircraft.json`);
+  }
   assert.equal(sourceAddress('https://receiver.example/tar1090').href, 'https://receiver.example/tar1090/');
   assert.equal(sourceAddress('[::1]:8080/tar1090').href, 'http://[::1]:8080/tar1090/');
   for (const address of ['file:///etc/passwd', 'ftp://receiver', 'http://name:password@receiver', 'receiver?url=other', 'receiver#bad', 'bad host'])

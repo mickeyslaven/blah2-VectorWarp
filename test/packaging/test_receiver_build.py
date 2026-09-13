@@ -21,7 +21,7 @@ RECEIVERS = {
     "rspduo": ("RspDuo,Kraken", ("ON", "OFF", "OFF")),
     "usrp": ("Usrp,Kraken", ("OFF", "ON", "OFF")),
     "hackrf": ("HackRF,Kraken", ("OFF", "OFF", "ON")),
-    "all": ("RspDuo,Usrp,HackRF,Kraken", ("ON", "ON", "ON")),
+    "all": ("Usrp,HackRF,Kraken", ("OFF", "ON", "ON")),
 }
 
 
@@ -194,6 +194,7 @@ endif()
                 self.assertIn(f"receivers={receivers}", result.stdout)
                 for name, flag in zip(("RSPDUO", "USRP", "HACKRF"), flags):
                     self.assertIn(f"-DBLAH2_ENABLE_{name}={flag}", result.stdout)
+                self.assertIn(f"-DBLAH2_LOCAL_BUILD_RSPDUO={'ON' if backend == 'all' else 'OFF'}", result.stdout)
                 self.assertIn(
                     "env CMAKE_POLICY_VERSION_MINIMUM=3.5 cmake -G Ninja", result.stdout)
                 self.assertNotIn("VCPKG_FORCE_SYSTEM_BINARIES", result.stdout)
@@ -201,7 +202,7 @@ endif()
                 self.assertEqual("libhackrf" in calls, backend in {"open-test", "hackrf", "all"})
                 self.assertEqual("libusb-1.0" in calls, backend in {"open-test", "hackrf", "all"})
                 self.assertEqual("BLAH2_SDRPLAY_INCLUDE_DIR" in result.stdout,
-                                 backend in {"rspduo", "all"})
+                                 backend == "rspduo")
 
         invalid = subprocess.run([
             "bash", str(BUILD_SCRIPT), "--backend", "airspy", "--preflight"
@@ -296,6 +297,13 @@ endif()
             lines.append(f"compiled_receivers={compiled_receivers}")
         if test_only is not None:
             lines.append(f"test_only={test_only}")
+        if backend == "all":
+            lines.append("local_build_receivers=RspDuo")
+            (artifact / "receiver-source/rspduo").mkdir(parents=True)
+            (artifact / "receiver-source/rspduo/kit.json").write_text('{"schema":1,"receiver":"RspDuo"}\n')
+            shutil.copy2(ROOT / "script/vectorwarp-build-sdrplay.py", artifact / "libexec/vectorwarp-build-sdrplay.py")
+            (artifact / "libexec/vectorwarp-build-sdrplay.py").chmod(0o755)
+            shutil.copy2(ROOT / "contrib/systemd/vectorwarp-sdrplay-build.service.in", artifact / "systemd/vectorwarp-sdrplay-build.service.in")
         (artifact / ".vectorwarp-build").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return artifact
 
@@ -318,6 +326,10 @@ endif()
                 unit = (stage / "usr/lib/systemd/system/vectorwarp-api.service").read_text(
                     encoding="utf-8")
                 self.assertIn(f'Environment="BLAH2_RECEIVER_TYPES={receivers}"', unit)
+                if backend == "all":
+                    self.assertIn('Environment="BLAH2_SDRPLAY_LOCAL_BUILD=true"', unit)
+                    self.assertIn('Environment="BLAH2_LOCAL_BUILD_RECEIVER_TYPES=RspDuo"', unit)
+                    self.assertTrue((stage / "opt/vectorwarp/libexec/vectorwarp-build-sdrplay").is_file())
 
         legacy = self.make_artifact("kraken", None)
         legacy_stage = self.temp / "stage-legacy"
@@ -342,6 +354,18 @@ endif()
         result = self.install(missing, self.temp / "unused-stage", "--no-systemd", "--preflight")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("lacks compiled_receivers", result.stderr)
+
+    def test_stable_local_kit_contract_rejects_missing_or_spoofed_kit_metadata(self):
+        artifact = self.make_artifact("all", "Usrp,HackRF,Kraken", "false")
+        manifest = artifact / ".vectorwarp-build"
+        manifest.write_text(manifest.read_text().replace("local_build_receivers=RspDuo", "local_build_receivers=HackRF"))
+        result = self.install(artifact, self.temp / "bad-local-kit", "--no-systemd", "--preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid local_build_receivers", result.stderr)
+        manifest.write_text(manifest.read_text().replace("local_build_receivers=HackRF\n", ""))
+        result = self.install(artifact, self.temp / "missing-local-kit", "--no-systemd", "--preflight")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("three compiled receivers", result.stderr)
 
     def test_receiver_helper_staging_preserves_separate_root_policy(self):
         artifact = self.make_artifact('kraken', 'Kraken')

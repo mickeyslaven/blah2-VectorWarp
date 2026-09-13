@@ -211,6 +211,51 @@ class SdrplayServiceTest(unittest.TestCase):
         text = (ROOT / 'script/vectorwarp-sdrplay-service.py').read_text()
         self.assertNotIn('urllib', text); self.assertNotIn('requests', text)
 
+    def test_main_allows_initial_service_preparation_for_a_verified_local_kit_only(self):
+        with mock.patch.object(service.os, 'geteuid', return_value=0), \
+             mock.patch.object(service.broker, 'parse_manifest', return_value=('Kraken',)), \
+             mock.patch.object(service, 'local_kit_available', return_value=True) as kit, \
+             mock.patch.object(service, 'local_build_is_current') as current, \
+             mock.patch.object(service, 'start_service', return_value='started') as start:
+            self.assertEqual(service.main(['install']), 'started')
+            kit.assert_called_once()
+            current.assert_not_called()
+            start.assert_called_once()
+
+    def test_main_requires_current_local_build_before_live_start(self):
+        with mock.patch.object(service.os, 'geteuid', return_value=0), \
+             mock.patch.object(service.broker, 'parse_manifest', return_value=('Kraken',)), \
+             mock.patch.object(service, 'local_kit_available', return_value=True), \
+             mock.patch.object(service, 'local_build_is_current', return_value=True) as current, \
+             mock.patch.object(service, 'start_service', return_value='started') as start:
+            self.assertEqual(service.main(['start']), 'started')
+            current.assert_called_once()
+            start.assert_called_once()
+        with mock.patch.object(service.os, 'geteuid', return_value=0), \
+             mock.patch.object(service.broker, 'parse_manifest', return_value=('Kraken',)), \
+             mock.patch.object(service, 'local_kit_available', return_value=True), \
+             mock.patch.object(service, 'local_build_is_current', return_value=False), \
+             mock.patch.object(service, 'start_service') as start:
+            self.assert_refused(lambda: service.main(['start']), 'Build SDRplay support')
+            start.assert_not_called()
+
+    def test_local_status_requires_fixed_helper_and_current_schema(self):
+        trusted = []
+        def trust(path):
+            trusted.append(path)
+            return Path(path)
+        current = {'ok': True, 'state': 'current', 'kit_id': 'a' * 64, 'cohort': 'b' * 64}
+        run = mock.Mock(return_value={'exitCode': 0, 'timedOut': False, 'output': __import__('json').dumps(current)})
+        self.assertTrue(service.local_build_is_current(run, trust))
+        run.assert_called_once_with(['/usr/bin/python3', '-I', service.LOCAL_BUILD_HELPER, 'status'], timeout=5)
+        self.assertEqual(trusted, [service.LOCAL_BUILD_HELPER])
+        for result in ({'exitCode': 1, 'timedOut': False, 'output': ''},
+                       {'exitCode': 0, 'timedOut': False, 'output': '{'},
+                       {'exitCode': 0, 'timedOut': False, 'output': '{"ok":true,"state":"stale"}'}):
+            with self.subTest(result=result):
+                self.assert_refused(lambda: service.local_build_is_current(lambda *_args, **_kwargs: result, trust),
+                                    'SDRplay')
+
     def test_main_allows_only_fixed_operations_for_rspduo_builds(self):
         with mock.patch.object(service.os, 'geteuid', return_value=0), \
              mock.patch.object(service.broker, 'parse_manifest', return_value=('Kraken', 'RspDuo')), \

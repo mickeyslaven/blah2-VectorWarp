@@ -28,6 +28,8 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
+Using several radar nodes with 3lips? See [3lips setup](docs/3LIPS_SETUP.md), including its separate ADS-B requirements.
+
 ## Faster processing in practice
 
 VectorWarp's optional Vulkan GPU path can make a practical radar workload keep
@@ -88,7 +90,8 @@ miss deadlines; the full report includes every tested configuration.
 Start with [the installation guide](docs/INSTALL.md), then follow [receiver setup](docs/SETUP.md).
 
 Source installation is available now. Planned releases use one package per OS
-and architecture with all four receiver adapters; they are not yet published.
+and architecture with Kraken, USRP and HackRF adapters plus locally buildable
+RSPduo support; they are not yet published.
 Choose your receiver in the web settings.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.

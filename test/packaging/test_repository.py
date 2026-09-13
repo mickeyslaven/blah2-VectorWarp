@@ -6,6 +6,7 @@ them with a temporary test-only key. Run that mode in an isolated test runner.
 import argparse
 from copy import deepcopy
 import importlib.util
+from html import unescape
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,80 @@ SPEC.loader.exec_module(repository)
 
 
 class HomepageTests(unittest.TestCase):
+    def release_manifest(self):
+        entries = []
+        for (format, distro, version), (_, architectures) in repository.TARGETS.items():
+            for arch in sorted(architectures):
+                label = f"{distro}{version}"
+                filename = (f"vectorwarp_1.2.3-1_{label}_{arch}.deb" if format == "deb" else
+                            f"vectorwarp-1.2.3-1.fc44.{arch}.rpm")
+                entries.append(dict(format=format, distro=distro, distro_version=version,
+                                    arch=arch, filename=filename))
+        return dict(version="1.2.3", source_commit="a" * 40,
+                    signing_fingerprint="A" * 40, packages=entries)
+
+    def test_downloads_use_exact_release_assets_and_all_os_rows(self):
+        manifest = self.release_manifest()
+        page = repository.repository_homepage(manifest)
+        links = re.findall(r'href="([^"]+)"', page)
+        package_links = {link for link in links if link.endswith((".deb", ".rpm"))}
+        base = "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3"
+        self.assertEqual(package_links, {f"{base}/{entry['filename']}" for entry in manifest['packages']})
+        self.assertEqual(len(package_links), 10)
+        for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 13', 'Fedora 44',
+                      'DragonOS · Ubuntu 22.04 base', 'DragonOS · Ubuntu 24.04 base',
+                      'DragonOS · Ubuntu 26.04 base', 'Raspberry Pi OS · 64-bit Trixie',
+                      'amd64 / x86_64', 'arm64 / aarch64'):
+            self.assertIn(label, page)
+        pi_row = next(row for row in re.findall(r'<tr>.*?</tr>', page) if 'Raspberry Pi OS' in row)
+        self.assertIn('<td>—</td>', pi_row)
+        self.assertIn('debian13_arm64.deb', pi_row)
+        self.assertNotIn('amd64.deb', pi_row)
+        self.assertLess(page.index('id="install"'), page.index('id="results"'))
+
+    def test_download_preview_and_partial_manifests_never_invent_assets(self):
+        preview = repository.repository_homepage()
+        self.assertIn('downloads are not available in this preview', preview)
+        self.assertNotIn('/releases/download/', preview)
+        manifest = self.release_manifest()
+        manifest['packages'] = [entry for entry in manifest['packages'] if
+                                (entry['distro'], entry['arch']) == ('fedora', 'aarch64')]
+        page = repository.repository_homepage(manifest)
+        self.assertNotIn('Download DEB', page)
+        self.assertNotIn('Raspberry Pi OS · 64-bit Trixie', page)
+        self.assertEqual(page.count('Download RPM'), 1)
+
+    def test_downloads_reject_unsafe_or_duplicate_identities(self):
+        for invalid in ('latest', '../main', '1.2.3?bad', '<script>'):
+            manifest = self.release_manifest()
+            manifest['version'] = invalid
+            with self.subTest(version=invalid), self.assertRaises(ValueError):
+                repository.repository_homepage(manifest)
+        for invalid in ('../../package.deb', '" onclick="bad', None):
+            manifest = self.release_manifest()
+            manifest['packages'][0]['filename'] = invalid
+            with self.subTest(filename=invalid), self.assertRaises(ValueError):
+                repository.repository_homepage(manifest)
+        manifest = self.release_manifest()
+        manifest['packages'].append(manifest['packages'][0])
+        with self.assertRaises(ValueError):
+            repository.repository_homepage(manifest)
+
+    def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
+        page = repository.repository_homepage(self.release_manifest())
+        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
+                     'sudo bash vectorwarp-install.sh --repo-only', 'sudo dnf install vectorwarp',
+                     'sudo dnf upgrade', 'sudo systemctl enable --now vectorwarp-api.service',
+                     'enables it at boot', 'On a fresh install, radar processing stays stopped',
+                     'SHA256SUMS.asc', 'vectorwarp-archive-key.asc', 'A' * 40,
+                     'checksum alone does not authenticate', 'gpgv --keyring',
+                     'sha256sum --check --strict --ignore-missing'):
+            self.assertIn(text, page)
+        for code in re.findall(r'<pre><code>(.*?)</code></pre>', page, re.DOTALL):
+            result = subprocess.run(['bash', '-n'], input=unescape(code), text=True,
+                                    capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
         for required in ('Matched 200 ms processing workloads', 'RTX 4050 Laptop', 'Pavilion AMD GPU',
@@ -182,7 +257,7 @@ class ManifestTests(unittest.TestCase):
                           distro="ubuntu", distro_version="24.04", codename="noble", arch="amd64",
                           filename=self.package.name, size=self.package.stat().st_size,
                           sha256=repository.sha256(self.package), backend="all", gpu="auto",
-                          compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"],
+                          compiled_receivers=["Usrp", "HackRF", "Kraken"], local_build_receivers=["RspDuo"],
                           node_version="24.21.0")
         self.manifest = self.root / "manifest.json"
 
@@ -202,7 +277,7 @@ class ManifestTests(unittest.TestCase):
                          "compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
                         {"test_only": True}, {"test_only": "false"},
                         {"test_only": None}, {"test_only": 0},
-                        {"compiled_receivers": ["Kraken", "Usrp", "HackRF"]},
+                        {"local_build_receivers": []},
                         {"compiled_receivers": ["Kraken", "RspDuo", "Usrp", "Usrp"]}):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.load([{**self.entry, **changes}])
@@ -396,7 +471,7 @@ class SignedRepositoryTests(unittest.TestCase):
                       format=format, distro=distro, distro_version=version, arch=arch,
                       filename=file.name, sha256=repository.sha256(file), size=file.stat().st_size,
                       backend="all", gpu="auto", node_version="24.21.0",
-                      compiled_receivers=["Kraken", "RspDuo", "Usrp", "HackRF"])
+                      compiled_receivers=["Usrp", "HackRF", "Kraken"], local_build_receivers=["RspDuo"])
         if codename:
             result["codename"] = codename
         return result

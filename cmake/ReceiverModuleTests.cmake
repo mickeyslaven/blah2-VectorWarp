@@ -1,11 +1,16 @@
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(receiver_fixture_dir "${PROJECT_BINARY_DIR}/receiver-fixtures")
-# Exercise all loader branches even in the intentionally reduced source build.
-foreach(receiver USRP HACKRF RSPDUO)
-  set(BLAH2_BUILT_${receiver} 1)
-endforeach()
-configure_file("${PROJECT_ROOT}/cmake/ReceiverCohort.h.in"
-  "${receiver_fixture_dir}/include/ReceiverCohort.h" @ONLY)
+# Exercise all loader branches even in an enclosing local-kit build, without
+# allowing that build's RSPduo source-kit flag into this non-local fixture ABI.
+function(blah2_configure_receiver_module_fixture_cohort)
+  foreach(receiver USRP HACKRF RSPDUO)
+    set(BLAH2_BUILT_${receiver} 1)
+  endforeach()
+  set(BLAH2_LOCAL_BUILD_RSPDUO OFF)
+  configure_file("${PROJECT_ROOT}/cmake/ReceiverCohort.h.in"
+    "${receiver_fixture_dir}/include/ReceiverCohort.h" @ONLY)
+endfunction()
+blah2_configure_receiver_module_fixture_cohort()
 add_executable(testReceiverModule ${PROJECT_ROOT}/test/capture/ReceiverModuleFixture.cpp
   ${PROJECT_ROOT}/src/capture/ReceiverLoader.cpp)
 target_compile_features(testReceiverModule PRIVATE cxx_std_17)

@@ -26,8 +26,10 @@ At commit `2fcc792eaddf2af4beb0271a54f5721e979f2cfb`, merged through
 checks passed: both [CPU/API/replay architecture jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032977),
 the package verifier and all ten [native package build/install jobs](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34732032962).
 The matrix covers x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64).
-Public PR packages contain Kraken, USRP and HackRF for testing only; they are not
-uploaded or accepted as stable release packages. A separate local all-adapter
+That PR's packages contained Kraken, USRP and HackRF for testing only; they were
+not uploaded or accepted as stable release packages. The current workflow instead
+tests the unified package with a local RSPduo source kit on PRs and releases.
+A separate earlier local all-adapter
 build passed 23 native tests, with RSPduo SDK-function stubs and existing vendor
 headers. These tests do not establish physical receiver operation.
 
@@ -85,9 +87,10 @@ For every release:
 1. Keep the comparison baseline pinned; record a separate upstream merge if it changes.
 2. Review the actual diff and update this table plus the focused fix list.
 3. Separate implemented code, automated tests, physical-hardware tests and planned work.
-4. Keep package adapters separate from external receiver software: all four
-   adapters ship together, while SDRplay's licensed API and Kraken Suite remain
-   separate installations. A loadable adapter is not proof of RF reception.
+4. Keep package receiver support separate from external receiver software: three
+   adapters ship compiled and RSPduo ships as a local source kit, while SDRplay's
+   licensed API and Kraken Suite remain separate installations. A loadable adapter
+   is not proof of RF reception.
 5. Use verified workflow artifacts and installation checks before changing package
    distribution from “unpublished” to “available.”
 6. Preserve user-facing compatibility keys and 30hours attribution. Do not rewrite

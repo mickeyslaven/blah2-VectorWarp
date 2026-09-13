@@ -5,6 +5,7 @@ set -e
 # current service state unchanged and never cause the radar to start.
 if [ "${1:-}" = remove ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
+    vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 exit 0

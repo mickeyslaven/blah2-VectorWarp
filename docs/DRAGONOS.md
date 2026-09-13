@@ -19,9 +19,10 @@ the machine.
 The selector is tested with metadata fixtures only. No DragonOS ISO was
 available for this work, so there is no claim of boot, driver, SDR, package
 installation, or radio-operation validation on DragonOS. Planned release
-packages contain all four receiver adapters; SDRplay's API and Kraken Suite
-remain separate installations. Current source builds include the receivers
-selected by `--backend`; see [build choices](INSTALL.md#2-choose-the-receivers-to-include).
+packages contain compiled Kraken, USRP and dual-HackRF adapters plus a local
+RSPduo source kit; SDRplay's API and Kraken Suite remain separate installations.
+Current source builds include the receivers selected by `--backend`; see
+[build choices](INSTALL.md#2-choose-the-receivers-to-include).
 
 When the signed repository is actually published, inspect its installer before
 running it as root. Until then, the repository and packages remain unpublished.

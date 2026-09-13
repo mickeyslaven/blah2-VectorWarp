@@ -32,7 +32,7 @@ class SdrplayInstallContractTest(unittest.TestCase):
         self.assertIn('$DRY_RUN == false', text)
         self.assertIn('$PREFLIGHT_ONLY == false', text)
         self.assertIn('-d /run/systemd/system', text)
-        self.assertIn('$RECEIVER_TYPES == *RspDuo*', text)
+        self.assertIn('$RECEIVER_TYPES == *RspDuo* || $LOCAL_BUILD_RECEIVER_TYPES == *RspDuo*', text)
         self.assertIn('/usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-sdrplay-service" install ||', text)
         self.assertIn(URL, text)
 
