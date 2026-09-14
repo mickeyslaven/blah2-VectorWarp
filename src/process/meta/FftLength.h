@@ -6,6 +6,15 @@
 
 namespace blah2 {
 
+// The two processing stages run concurrently, so their plans have to share the
+// four cores rather than each claiming all of them. Measured per-plan on a Pi 5
+// at the shipped geometry, the clutter transforms prefer 2 threads to 4 anyway
+// (1e6 points: 118.15 ms against 146.80 ms per CPI, and 87.31 against 92.39 at
+// the padded length below), so the front stage gains from halving. The
+// ambiguity batch transforms are the ones that pay.
+inline constexpr int kFrontStageThreads = 2;
+inline constexpr int kBackStageThreads = 2;
+
 // The length the clutter convolution is padded to.
 //
 // 1016064 = 2^8 * 3^4 * 7^2. Measured, not derived. The shipped geometry
