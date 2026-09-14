@@ -301,8 +301,7 @@ int main(int argc, char **argv)
           socket_iqdata.sendData(jsonIqData);
 
           // output map data
-          mapJson = map->to_json(time[0]/1000);
-          mapJson = map->delay_bin_to_km(mapJson, fs);
+          mapJson = map->to_json_km(time[0]/1000, fs);
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
@@ -312,8 +311,7 @@ int main(int argc, char **argv)
           // output detection data
           if (isDetection)
           {
-            detectionJson = detection->to_json(time[0]/1000);
-            detectionJson = detection->delay_bin_to_km(detectionJson, fs);
+            detectionJson = detection->to_json_km(time[0]/1000, fs);
             socket_detection.sendData(detectionJson);
           }
 
