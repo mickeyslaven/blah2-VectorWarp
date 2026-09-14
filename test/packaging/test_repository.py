@@ -225,16 +225,16 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('sudo apt install vectorwarp', readme)
         self.assertIn('sudo dnf install vectorwarp', readme)
         for asset in (
-                'vectorwarp_0.1.0-1_ubuntu22.04_amd64.deb',
-                'vectorwarp_0.1.0-1_ubuntu22.04_arm64.deb',
-                'vectorwarp_0.1.0-1_ubuntu24.04_amd64.deb',
-                'vectorwarp_0.1.0-1_ubuntu24.04_arm64.deb',
-                'vectorwarp_0.1.0-1_ubuntu26.04_amd64.deb',
-                'vectorwarp_0.1.0-1_ubuntu26.04_arm64.deb',
-                'vectorwarp_0.1.0-1_debian13_amd64.deb',
-                'vectorwarp_0.1.0-1_debian13_arm64.deb',
-                'vectorwarp-0.1.0-1.fc44.x86_64.rpm',
-                'vectorwarp-0.1.0-1.fc44.aarch64.rpm'):
+                'vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb',
+                'vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb',
+                'vectorwarp_0.1.1-1_ubuntu24.04_amd64.deb',
+                'vectorwarp_0.1.1-1_ubuntu24.04_arm64.deb',
+                'vectorwarp_0.1.1-1_ubuntu26.04_amd64.deb',
+                'vectorwarp_0.1.1-1_ubuntu26.04_arm64.deb',
+                'vectorwarp_0.1.1-1_debian13_amd64.deb',
+                'vectorwarp_0.1.1-1_debian13_arm64.deb',
+                'vectorwarp-0.1.1-1.fc44.x86_64.rpm',
+                'vectorwarp-0.1.1-1.fc44.aarch64.rpm'):
             self.assertIn(asset, readme)
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('CPU budget', readme)

@@ -47,13 +47,13 @@ configuration is saved and applied.
 
 | System | Version or base | Architecture | Direct package |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu22.04_arm64.deb) |
-| Ubuntu | 24.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu24.04_arm64.deb) |
-| Ubuntu | 26.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_ubuntu26.04_arm64.deb) |
-| Debian | 13 (Trixie) | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
-| Fedora | 44 | x86-64 or ARM64 | [x86_64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.x86_64.rpm), [aarch64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp-0.1.0-1.fc44.aarch64.rpm) |
+| Ubuntu | 22.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb) |
+| Ubuntu | 24.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_arm64.deb) |
+| Ubuntu | 26.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_arm64.deb) |
+| Debian | 13 (Trixie) | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
+| Fedora | 44 | x86-64 or ARM64 | [x86_64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.x86_64.rpm), [aarch64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.aarch64.rpm) |
 | [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | Matching Ubuntu package selected from OS metadata |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.0/vectorwarp_0.1.0-1_debian13_arm64.deb) |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
