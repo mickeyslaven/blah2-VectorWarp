@@ -92,7 +92,7 @@ int main() {
     run(128, -2, -1);
     run(31, -2, 2); // Already-fast convolution length (36).
     run(32, 0, 32); // Tap count equal to CPI sample count.
-    for (const auto bounds : {std::pair<int, int>{0, 0}, {5, 2}, {0, 65},
+    for (const auto& bounds : {std::pair<int, int>{0, 0}, {5, 2}, {0, 65},
                               {INT32_MIN, INT32_MAX}}) {
       bool rejected = false;
       try { WienerHopf invalid(bounds.first, bounds.second, 64); }
