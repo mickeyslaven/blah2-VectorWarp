@@ -263,7 +263,7 @@ const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Trixie', '64-bit']);
 assert.match(piRow.package,
-  /\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/download\/v0\.1\.0\/vectorwarp_0\.1\.0-1_debian13_arm64\.deb\)$/,
+  /\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/download\/v0\.1\.1\/vectorwarp_0\.1\.1-1_debian13_arm64\.deb\)$/,
   'Raspberry Pi OS must link to the Debian 13 ARM64 release asset');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
