@@ -169,6 +169,14 @@ add_executable(testAccelerationFallback
 target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
 add_test(NAME testAccelerationFallback COMMAND testAccelerationFallback)
 
+add_executable(testClutterFft
+  test/unit/process/clutter/TestClutterFft.cpp
+  src/process/clutter/WienerHopf.cpp src/data/IqData.cpp)
+target_compile_features(testClutterFft PRIVATE cxx_std_17)
+target_link_libraries(testClutterFft PRIVATE blah2RapidJson armadillo fftw3 Threads::Threads)
+add_test(NAME clutterFftPadding COMMAND testClutterFft)
+set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
+
 add_executable(testCfarEfficiency
   test/unit/process/detection/TestCfarEfficiency.cpp
   src/process/detection/CfarDetector1D.cpp src/data/Detection.cpp src/data/Map.cpp)
