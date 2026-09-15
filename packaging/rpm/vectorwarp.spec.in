@@ -55,6 +55,11 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
 fi
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null || true
+  # Always repair the browser interface on install or upgrade. This is the
+  # only VectorWarp unit package installation manages: radar processing stays
+  # opt-in until the operator applies receiver settings in the UI.
+  systemctl enable --now vectorwarp-api.service >/dev/null 2>&1 ||
+    printf '%s\n' 'VectorWarp installed, but its web API did not start; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
 fi
 # Initial install only: the optional fixed helper may start a preinstalled
 # vendor SDRplay service after its own manifest/policy checks. It never
@@ -65,7 +70,7 @@ if [ "$1" -eq 1 ] && [ -d /run/systemd/system ] &&
   /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sdrplay-service install ||
     printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2
 fi
-# No VectorWarp service is enabled or started here.
+# Package installation never starts radar processing.
 
 %postun
 if [ -d /run/systemd/system ]; then

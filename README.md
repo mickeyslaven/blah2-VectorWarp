@@ -108,26 +108,25 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 less vectorwarp-install.sh
 ```
 
-On Ubuntu or Debian:
+On Ubuntu or Debian, add the signed repository, install the package, and start
+only the browser interface in one command:
 
 ```bash
-sudo bash vectorwarp-install.sh --repo-only
-sudo apt update
-sudo apt install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service
+sudo bash vectorwarp-install.sh --start-web
 ```
 
 On Fedora:
 
 ```bash
-sudo bash vectorwarp-install.sh --repo-only
-sudo dnf install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service
+sudo bash vectorwarp-install.sh --start-web
 ```
 
-The `systemctl` command starts the web API now and enables it at boot;
-it does not enable radar processing. Open `http://localhost:3000/`, then choose
-your receiver in Settings. Update
+`--start-web` enables the web API at boot and starts only that service; it does
+not enable radar processing. Open `http://localhost:3000/`, then choose your
+receiver in Settings. If an earlier install completed but the page does not
+open, run `sudo systemctl enable --now vectorwarp-api.service` and then
+`sudo systemctl status vectorwarp-api.service --no-pager`. Package updates also
+repair this web API service automatically; they never start radar processing. Update
 with `sudo apt update && sudo apt install --only-upgrade vectorwarp` or
 `sudo dnf upgrade vectorwarp`.
 

@@ -89,10 +89,9 @@ class HomepageTests(unittest.TestCase):
 
     def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
         page = repository.repository_homepage(self.release_manifest())
-        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --repo-only',
-                     'sudo apt update', 'sudo apt install vectorwarp',
-                     'sudo apt install --only-upgrade vectorwarp', 'sudo dnf install vectorwarp',
-                     'sudo dnf upgrade', 'sudo systemctl enable --now vectorwarp-api.service',
+        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
+                     'sudo apt install --only-upgrade vectorwarp', 'sudo dnf upgrade',
+                     'sudo systemctl enable --now vectorwarp-api.service',
                      'enables the browser interface at boot', 'starts only that service',
                      '<code>gnupg2</code>', '<code>gnupg</code>',
                      'On a fresh install, radar processing stays stopped',
@@ -221,9 +220,7 @@ class HomepageTests(unittest.TestCase):
         # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
-        self.assertIn('sudo apt update', readme)
-        self.assertIn('sudo apt install vectorwarp', readme)
-        self.assertIn('sudo dnf install vectorwarp', readme)
+        self.assertIn('sudo bash vectorwarp-install.sh --start-web', readme)
         for asset in (
                 'vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb',
                 'vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb',
@@ -273,8 +270,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
-        for command in ('sudo bash vectorwarp-install.sh --repo-only', 'sudo apt update',
-                        'sudo apt install vectorwarp', 'sudo dnf install vectorwarp',
+        for command in ('sudo bash vectorwarp-install.sh --start-web',
                         'sudo systemctl enable --now vectorwarp-api.service'):
             self.assertIn(command, guide)
             self.assertIn(command, page)
@@ -291,8 +287,8 @@ class HomepageTests(unittest.TestCase):
                          {f"{base}/{entry['filename']}" for entry in manifest['packages']})
         self.assertNotIn('/v1.2.3/', page)
         self.assertNotIn('/v0.1.0/', page)
-        for command in ('sudo apt update', 'sudo apt install vectorwarp',
-                        'sudo dnf install vectorwarp'):
+        for command in ('sudo bash vectorwarp-install.sh --start-web',
+                        'sudo systemctl enable --now vectorwarp-api.service'):
             self.assertIn(command, page)
 
     def _release_selection_script(self):

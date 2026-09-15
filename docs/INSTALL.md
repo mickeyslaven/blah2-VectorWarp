@@ -19,29 +19,35 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 less vectorwarp-install.sh
 ```
 
-On Ubuntu or Debian, add the matching signed APT repository, then install:
+On Ubuntu or Debian, add the matching signed APT repository, install the
+package, and start only the browser interface in one command:
 
 ```bash
-sudo bash vectorwarp-install.sh --repo-only
-sudo apt update
-sudo apt install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service
+sudo bash vectorwarp-install.sh --start-web
 ```
 
-On Fedora, add the matching signed DNF repository, then install:
+On Fedora:
 
 ```bash
-sudo bash vectorwarp-install.sh --repo-only
-sudo dnf install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service
+sudo bash vectorwarp-install.sh --start-web
 ```
 
-The explicit `systemctl` command enables the web API at boot and starts only
-that service; it does not enable radar processing. Open
-`http://localhost:3000/` and configure a receiver in Settings. To update,
+`--start-web` enables the web API at boot and starts only that service; it does
+not enable radar processing. Open `http://localhost:3000/` and configure a
+receiver in Settings. If an earlier installation completed but the page does
+not load, start and inspect only the web API:
+
+```bash
+sudo systemctl enable --now vectorwarp-api.service
+sudo systemctl status vectorwarp-api.service --no-pager
+```
+
+To update,
 use `sudo apt update && sudo apt install --only-upgrade vectorwarp` on APT or
-`sudo dnf upgrade vectorwarp` on Fedora. Processing begins after receiver
-configuration is saved and applied.
+`sudo dnf upgrade vectorwarp` on Fedora. An update enables and starts only the
+web API, including on an older installation where it was not running; it never
+starts radar processing. Processing begins after receiver configuration is
+saved and applied.
 
 ## Supported systems
 
