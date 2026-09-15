@@ -425,6 +425,16 @@ int main(int argc, char **argv)
           if (interval_ms > 0)
           {
             dutyCycle = (tCpi * 1000.0) / interval_ms * 100.0;
+            // A radar cannot process more of the stream than arrives, so
+            // anything above 100 is jitter in a single inter-CPI gap, not
+            // information. Clamped so the figure reads as the fraction of the
+            // signal actually examined.
+            //
+            // The cost of clamping: a geometry where the configured CPI does
+            // not match what capture delivers would read a steady 100% rather
+            // than an implausible 105%. That is a config fault, not a
+            // throughput one, and it is not what this number is for.
+            if (dutyCycle > 100.0) dutyCycle = 100.0;
           }
         }
         previousCpiEnd = cpiEnd;
