@@ -114,6 +114,30 @@ RUN set -ex \
     && cp -v /opt/blah2/bin/blah2 /blah2/bin/ \
     && chmod +x /blah2/bin/blah2
 
+# Run the unit tests here, in the build stage, because this is the only image
+# that has them: the runtime stage deliberately ships the binary alone. The
+# workflow used to run them against the runtime image, where the directory does
+# not exist, and swallowed that with `exit 0`, so no test had ever actually
+# executed in CI.
+#
+# set -e means a failing test fails the build. The emptiness checks mean a
+# missing or empty test directory fails the build too, rather than passing
+# silently the way the old step did.
+RUN set -eu; \
+    cd /opt/blah2/bin/test/unit; \
+    if [ -z "$(ls -A .)" ]; then echo "FAIL: no unit tests were built"; exit 1; fi; \
+    export BLAH2_FFT_CACHE=/tmp/blah2-fft-length.cache; \
+    count=0; \
+    for t in *; do \
+      if [ -f "$t" ] && [ -x "$t" ]; then \
+        echo "==== $t ===="; \
+        ./"$t"; \
+        count=$((count+1)); \
+      fi; \
+    done; \
+    if [ "$count" -eq 0 ]; then echo "FAIL: no executable unit tests found"; exit 1; fi; \
+    echo "==== $count unit test binaries passed ===="
+
 WORKDIR /blah2/bin
 
 # =============================================================================
