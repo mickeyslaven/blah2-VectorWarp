@@ -29,6 +29,9 @@ private:
   /// @brief Number of samples per CPI.
   uint32_t nSamples;
 
+  /// @brief Padded length of the convolution FFTs.
+  uint32_t nFilter;
+
   /// @brief True if clutter filter processing is successful.
   bool success;
 
@@ -66,6 +69,10 @@ public:
   /// @param nSamples Number of samples per CPI.
   /// @return The object.
   WienerHopf(int32_t delayMin, int32_t delayMax, uint32_t nSamples);
+
+  /// @brief Padded length the convolution FFTs are planned at.
+  /// @return Number of points.
+  uint32_t filter_fft_length() const { return nFilter; }
 
   /// @brief Destructor.
   /// @return Void.
