@@ -169,6 +169,7 @@ code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer
 <main>
 <section class="hero">
 <h1>More channels. Wider Doppler. Faster radar.</h1>
+<p><strong>THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!</strong></p>
 <p>Native Linux passive radar with multicore processing, optional GPU acceleration,
 and browser controls for live displays, settings, recording and replay.</p>
 <div class="actions"><a class="button" href="#install">Get started</a>
