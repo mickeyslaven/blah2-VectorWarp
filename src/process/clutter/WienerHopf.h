@@ -10,6 +10,7 @@
 #define WIENERHOPF_H
 
 #include "data/IqData.h"
+#include "process/meta/FftLength.h"
 #include <stdint.h>
 #include <fftw3.h>
 #include <armadillo>

@@ -1,5 +1,10 @@
 var timestamp = -1;
-var nRows = 3;
+// Signature of the trace set currently plotted. The stash has no nRows, so the
+// old `data.nRows != nRows` test compared undefined against undefined and was
+// false after the first fetch: traces were built once and a field that
+// appeared later, or stopped appearing, was never picked up.
+var plottedKeys = '';
+var keys = [];
 var host = window.location.hostname;
 var isLocalHost = is_localhost(host);
 
@@ -64,6 +69,23 @@ var layout = {
     autosize: false,
     categoryorder: "total descending"
   },
+  // Duty cycle is a percentage, so it cannot share a millisecond axis. 0-100
+  // is fixed rather than autoscaled: the whole point is where the value sits
+  // against "keeping up with the receiver", and an autoscaled axis hides that.
+  yaxis2: {
+    title: {
+      text: 'duty cycle (%)',
+      font: {
+        size: 16
+      }
+    },
+    overlaying: 'y',
+    side: 'right',
+    range: [0, 100],
+    showgrid: false,
+    ticks: '',
+    ticksuffix: '%'
+  },
   legend: {
     orientation: "h",
     bgcolor: "#ffffff",
@@ -101,9 +123,14 @@ var intervalId = window.setInterval(function () {
         $.getJSON(urlTiming, function () { })
           .done(function (data) {
 
-            // case draw new plot
-            if (data.nRows != nRows) {
-              nRows = data.nRows;
+            // rebuild whenever the set of reported stages changes
+            var incoming = Object.keys(data)
+              .filter(item => item !== "timestamp" && item !== "uptime_s" && item !== "uptime_days")
+              .sort()
+              .join(',');
+
+            if (incoming != plottedKeys) {
+              plottedKeys = incoming;
 
               // timestamp posix to js
               for (i = 0; i < data["timestamp"].length; i++)
@@ -115,14 +142,17 @@ var intervalId = window.setInterval(function () {
               keys = Object.keys(data);
               keys = keys.filter(item => item !== "timestamp" && item !== "uptime_s" && item !== "uptime_days");
               for (i = 0; i < keys.length; i++) {
+                var isDuty = keys[i] === "duty_cycle";
                 var trace = {
                   x: data["timestamp"],
                   y: data[keys[i]],
                   mode: 'lines+markers',
                   type: 'scatter',
-                  name: keys[i],
+                  name: isDuty ? 'duty cycle' : keys[i],
+                  yaxis: isDuty ? 'y2' : 'y',
                   line: {
-                    width: 5
+                    width: 5,
+                    dash: isDuty ? 'dot' : 'solid'
                   },
                   marker: {
                     size: 12
