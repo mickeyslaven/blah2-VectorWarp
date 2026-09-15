@@ -76,34 +76,34 @@ def release_installation(manifest):
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>Fedora 44</h3>
-<p>Add the signed repository once, then install with DNF:</p>
+<p>Add the signed repository, install VectorWarp, and start only the browser interface:</p>
 <p>If curl or GnuPG is missing, install <code>curl</code> and
 <code>gnupg2</code> from Fedora first.</p>
 <pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
 less vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo dnf install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service</code></pre>
+sudo bash vectorwarp-install.sh --start-web</code></pre>
 <p>Open <code>http://localhost:3000</code>, configure your receiver, and choose
-Save &amp; Restart. Update later with <code>sudo dnf upgrade vectorwarp</code>.</p>
+Save &amp; Restart. If an earlier installation completed but the page does not
+load, run <code>sudo systemctl enable --now vectorwarp-api.service</code> and
+inspect it with <code>sudo systemctl status vectorwarp-api.service --no-pager</code>.
+Update later with <code>sudo dnf upgrade vectorwarp</code>; an update repairs
+the web API automatically and never starts radar processing.</p>
 <h3>Ubuntu, Debian and other supported systems</h3>
-<p>Add the signed APT repository once, then install with APT:</p>
+<p>Add the signed APT repository, install VectorWarp, and start only the browser interface:</p>
 <p>If curl or GnuPG is missing, install <code>curl</code> and
 <code>gnupg</code> from your distribution first.</p>
 <pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
 less vectorwarp-install.sh
-sudo bash vectorwarp-install.sh --repo-only
-sudo apt update
-sudo apt install vectorwarp
-sudo systemctl enable --now vectorwarp-api.service</code></pre>
-<p>The explicit <code>systemctl</code> command enables the browser interface at boot and starts only that service.
+sudo bash vectorwarp-install.sh --start-web</code></pre>
+<p><code>--start-web</code> enables the browser interface at boot and starts only that service.
 Open <code>http://localhost:3000</code> on the installed machine, or
 <code>http://&lt;server-IP&gt;:3000</code> from another device on your trusted network.
 On a fresh install, radar processing stays stopped until you configure it and
 choose Save &amp; Restart. Update later with
-<code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>.</p>
+<code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>;
+an update repairs the web API automatically and never starts radar processing.</p>
 <p>Each package includes Kraken, USRP and dual HackRF adapters, plus the source
 kit to build RSPduo support from Settings after installing SDRplay's API. Receiver
 hardware and external software are separate; RSPduo needs the locally installed

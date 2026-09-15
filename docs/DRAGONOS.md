@@ -1,9 +1,11 @@
 # DragonOS package-selection notes
 
 There is no separate DragonOS build. Use the [package and APT setup page](https://mickeyslaven.github.io/blah2-VectorWarp/#install):
-download and inspect the repository installer, run it with `--repo-only`, then
-use `sudo apt update` and `sudo apt install vectorwarp`. The installer selects
-the matching Ubuntu repository from `/etc/os-release`:
+download and inspect the repository installer, then run it with `--start-web`.
+This adds the matching Ubuntu repository, installs
+VectorWarp, and starts only its browser interface; it does not start radar
+processing. The installer selects the matching Ubuntu repository from
+`/etc/os-release`:
 
 - Jammy / Ubuntu 22.04
 - Noble / Ubuntu 24.04
