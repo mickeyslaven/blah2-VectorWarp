@@ -51,13 +51,13 @@ public:
   /// @param i Index of row to update.
   /// @param row Data to update.
   /// @return Void.
-  void set_row(uint32_t i, std::vector<T> row);
+  void set_row(uint32_t i, const std::vector<T> &row);
 
   /// @brief Update a column in the 2D map.
   /// @param i Index of column to update.
   /// @param col Data to update.
   /// @return Void.
-  void set_col(uint32_t i, std::vector<T> col);
+  void set_col(uint32_t i, const std::vector<T> &col);
 
   /// @brief Create map metrics (noise power, dynamic range).
   /// @return Void.
@@ -103,6 +103,14 @@ public:
   /// @param fs Sampling frequency (Hz).
   /// @return JSON string.
   std::string delay_bin_to_km(std::string json, uint32_t fs);
+
+  /// @brief Serialise to JSON with the delay axis already in km.
+  /// @details Equivalent to delay_bin_to_km(to_json(timestamp), fs) but in a
+  /// single pass, without building or re-parsing a DOM.
+  /// @param timestamp Timestamp of the map (ms).
+  /// @param fs Sampling frequency (Hz).
+  /// @return JSON string.
+  std::string to_json_km(uint64_t timestamp, uint32_t fs);
 
   /// @brief Append the map to a save file.
   /// @param json JSON string of map and metadata.

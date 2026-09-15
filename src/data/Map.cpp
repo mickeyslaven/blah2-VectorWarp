@@ -21,7 +21,7 @@ Map<T>::Map(uint32_t _nRows, uint32_t _nCols)
 }
 
 template <class T>
-void Map<T>::set_row(uint32_t i, std::vector<T> row)
+void Map<T>::set_row(uint32_t i, const std::vector<T> &row)
 {
   //data[i].swap(row);
   for (uint32_t j = 0; j < nCols; j++)
@@ -31,7 +31,7 @@ void Map<T>::set_row(uint32_t i, std::vector<T> row)
 }
 
 template <class T>
-void Map<T>::set_col(uint32_t i, std::vector<T> col)
+void Map<T>::set_col(uint32_t i, const std::vector<T> &col)
 {
   for (uint32_t j = 0; j < nRows; j++)
   {
@@ -159,6 +159,63 @@ std::string Map<T>::to_json(uint64_t timestamp)
   rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
   writer.SetMaxDecimalPlaces(2);
   document.Accept(writer);
+
+  return strbuf.GetString();
+}
+
+template <class T>
+std::string Map<T>::to_json_km(uint64_t timestamp, uint32_t fs)
+{
+  // One pass, no DOM. The pair to_json() + delay_bin_to_km() serialised the
+  // whole map, parsed all of it back, rewrote the delay axis and serialised
+  // again, so a 301 x 411 map went through the writer twice and the parser
+  // once to convert 411 delay values. Key order and SetMaxDecimalPlaces match
+  // the old pair exactly, so the bytes are identical.
+  rapidjson::StringBuffer strbuf;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(strbuf);
+  writer.SetMaxDecimalPlaces(2);
+
+  writer.StartObject();
+  writer.Key("timestamp");
+  writer.Uint64(timestamp);
+  writer.Key("nRows");
+  writer.Uint(nRows);
+  writer.Key("nCols");
+  writer.Uint(nCols);
+  writer.Key("noisePower");
+  writer.Double(noisePower);
+  writer.Key("maxPower");
+  writer.Double(maxPower);
+
+  writer.Key("delay");
+  writer.StartArray();
+  for (size_t i = 0; i < delay.size(); i++)
+  {
+    writer.Double(1.0 * delay[i] * (Constants::c / (double)fs) / 1000);
+  }
+  writer.EndArray();
+
+  writer.Key("doppler");
+  writer.StartArray();
+  for (uint32_t i = 0; i < get_nRows(); i++)
+  {
+    writer.Double(doppler[i]);
+  }
+  writer.EndArray();
+
+  writer.Key("data");
+  writer.StartArray();
+  for (size_t i = 0; i < data.size(); i++)
+  {
+    writer.StartArray();
+    for (size_t j = 0; j < data[i].size(); j++)
+    {
+      writer.Double(10 * std::log10(std::abs(data[i][j])) - noisePower);
+    }
+    writer.EndArray();
+  }
+  writer.EndArray();
+  writer.EndObject();
 
   return strbuf.GetString();
 }
