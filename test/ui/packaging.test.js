@@ -310,10 +310,12 @@ assert.match(buildScript, /REAL_IQ_BENCHMARK_PLAN\.md/);
 
 assert.match(debPostinst, /systemd-sysusers/);
 assert.match(debPostinst, /systemd-tmpfiles/);
-assert.doesNotMatch(debPostinst, /systemctl (enable|start|restart)/);
+assert.match(debPostinst, /systemctl enable --now vectorwarp-api\.service/);
+assert.doesNotMatch(debPostinst, /systemctl[^\n]*vectorwarp-processor\.service/);
 assert.match(rpmSpec, /%config\(noreplace\).*\/etc\/vectorwarp\/config\.yml/);
-assert.doesNotMatch(rpmSpec.match(/%post\n([\s\S]*?)\n%postun/)[1],
-  /systemctl (enable|start|restart)/);
+const rpmPost = rpmSpec.match(/%post\n([\s\S]*?)\n%postun/)[1];
+assert.match(rpmPost, /systemctl enable --now vectorwarp-api\.service/);
+assert.doesNotMatch(rpmPost, /systemctl[^\n]*vectorwarp-processor\.service/);
 
 assert.match(releaseInstaller, /EXPECTED_FINGERPRINT=@SIGNING_FINGERPRINT@/);
 assert.match(releaseInstaller, /\[0-9A-F\]\{40\}/);
