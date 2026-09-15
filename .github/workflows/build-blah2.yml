@@ -82,21 +82,20 @@ jobs:
           echo "Loaded images:"
           docker images | grep ${{ inputs.tag }}
 
-      - name: Run blah2 unit tests
+      # The unit tests now run inside the build stage (see Dockerfile), which is
+      # the only image that contains them. A failing test fails the build job,
+      # so there is nothing left to run here.
+      #
+      # This step used to run them against the runtime image, which ships the
+      # binary alone, so it always printed "No unit tests directory found" and
+      # exited 0. It reported success without executing a single test.
+      - name: Confirm the runtime image carries no test binaries
         run: |
-          echo "Running blah2 unit tests..."
-          docker run --rm blah2:${{ inputs.tag }} sh -c '
-            cd /opt/blah2/bin/test/unit 2>/dev/null || { echo "No unit tests directory found"; exit 0; }
-            TEST_COUNT=0
-            for test in *; do
-              if [ -x "$test" ] && [ -f "$test" ]; then
-                echo "Running: $test"
-                ./"$test" || exit 1
-                TEST_COUNT=$((TEST_COUNT + 1))
-              fi
-            done
-            echo "Ran $TEST_COUNT unit tests"
-          '
+          if docker run --rm blah2:${{ inputs.tag }} sh -c 'test -d /opt/blah2/bin/test/unit'; then
+            echo "Unexpected: test binaries shipped in the runtime image"
+            exit 1
+          fi
+          echo "Runtime image is test-free, as intended. Tests ran during the build."
 
       - name: Check image size
         run: |
