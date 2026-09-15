@@ -405,15 +405,44 @@ int main(int argc, char **argv)
         timing_name.push_back("cpi");
         timing_time.push_back(delta_ms);
 
-        // Wall clock between CPIs leaving the pipeline. With the stages
-        // overlapped this, not "cpi", is the throughput the radar achieves.
+        // Fraction of the incoming stream this radar actually processes.
+        //
+        // With the stages overlapped "cpi" is latency, not throughput, so it
+        // rises even as the radar gets faster and cannot be read as a health
+        // number. Wall clock between CPIs can, and expressed against the CPI
+        // duration it says the thing an operator wants to know: 100% means
+        // keeping up with the receiver, 50% means half the signal is going
+        // unlooked at.
+        //
+        // Always emitted, including 0 for the first CPI where there is no
+        // interval yet. A key that comes and goes leaves stale frozen traces
+        // in the timing stash, which is what the previous cpi_interval did.
         uint64_t cpiEnd = current_time_us();
+        double dutyCycle = 0;
         if (previousCpiEnd != 0)
         {
-          timing_name.push_back("cpi_interval");
-          timing_time.push_back((double)(cpiEnd - previousCpiEnd) / 1000);
+          const double interval_ms = (double)(cpiEnd - previousCpiEnd) / 1000;
+          if (interval_ms > 0)
+          {
+            dutyCycle = (tCpi * 1000.0) / interval_ms * 100.0;
+          }
         }
         previousCpiEnd = cpiEnd;
+        timing_name.push_back("duty_cycle");
+        timing_time.push_back(dutyCycle);
+
+        // pipeline_wait is a stage boundary rather than a cost: the next
+        // stage's delta is measured from its timestamp, so it has to be taken,
+        // but idle time is not work and reporting it alongside the stages
+        // invited the wrong reading.
+        std::vector<std::string> reportName;
+        std::vector<double> reportTime;
+        for (size_t i = 0; i < timing_name.size(); i++)
+        {
+          if (timing_name[i] == "pipeline_wait") continue;
+          reportName.push_back(timing_name[i]);
+          reportTime.push_back(timing_time[i]);
+        }
 
         if (verbose)
         {
@@ -421,7 +450,7 @@ int main(int argc, char **argv)
         }
 
         // output timing data
-        timing->update(time[0]/1000, timing_time, timing_name);
+        timing->update(time[0]/1000, reportTime, reportName);
         jsonTiming = timing->to_json();
         socket_timing.sendData(jsonTiming);
 

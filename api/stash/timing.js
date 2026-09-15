@@ -33,6 +33,19 @@ function update_data(callback) {
               keys = Object.keys(cpi);
               keys = keys.filter(item => item !== "uptime");
               keys = keys.filter(item => item !== "nCpi");
+
+              // Drop anything blah2 has stopped reporting. Without this a key
+              // that disappears, because the build changed or a stage was
+              // removed, keeps its last values forever and the plot shows a
+              // frozen line that looks like a live measurement. Observed after
+              // swapping builds: cpi_interval and pipeline_wait were still
+              // being served long after blah2 stopped emitting them.
+              for (const stale of Object.keys(output)) {
+                if (!keys.includes(stale)) {
+                  delete output[stale];
+                }
+              }
+
               for (i = 0; i < keys.length; i++) {
                 if (!(keys[i] in output)) {
                   output[keys[i]] = [];
