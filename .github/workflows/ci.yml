@@ -64,6 +64,7 @@ jobs:
           VECTORWARP_REPOSITORY_INTEGRATION=1 python3 test/packaging/test_repository.py -v
           python3 test/packaging/test_install_release.py -v
           python3 test/packaging/test_receiver_updates.py -v
+          sudo python3 test/packaging/test_receiver_workflow.py -v
           python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_rpm_local_kit.py -v
           sudo python3 test/packaging/test_sdrplay_local_build.py -v
