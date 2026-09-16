@@ -93,7 +93,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential ca-certificates cmake curl git libarmadillo-dev \
-            libboost-all-dev libfftw3-dev libncurses-dev libusb-1.0-0-dev ninja-build \
+            libboost-all-dev libfftw3-dev libgrpc++-dev libncurses-dev libprotobuf-dev \
+            libusb-1.0-0-dev ninja-build protobuf-compiler protobuf-compiler-grpc \
             pkg-config python3-dev python3-mako python3-numpy python3-requests \
             python3-ruamel.yaml python3-setuptools tar unzip zip
       - id: candidate-build
@@ -110,25 +111,37 @@ jobs:
           [[ $(git -C candidate rev-parse HEAD) == "$SOURCE_COMMIT" ]]
           [[ $(git -C vectorwarp rev-parse HEAD) == "$VECTORWARP_COMMIT" ]]
           build_user=receiver-build
-          build_home="$RUNNER_TEMP/receiver-build-home"
-          sudo useradd --system --user-group --create-home --home-dir "$build_home" \
+          sudo useradd --system --user-group --no-create-home \
             --shell /usr/sbin/nologin "$build_user"
-          sudo chown -R "$build_user:$build_user" candidate
-          sudo install -d -o "$build_user" -g "$build_user" \
-            "$RUNNER_TEMP/receiver-sdk" "$RUNNER_TEMP/candidate-build" \
-            "$RUNNER_TEMP/vectorwarp-build" "$RUNNER_TEMP/vectorwarp-deps"
+          # Runner-owned parents can be private. Stage everything the build user
+          # needs outside them; do not open the runner's home or grant sudo.
+          build_root=$(sudo bash vectorwarp/script/prepare-receiver-build.sh \
+            "$GITHUB_WORKSPACE/candidate" "$GITHUB_WORKSPACE/vectorwarp" \
+            "$(id -u "$build_user")" "$(id -g "$build_user")")
+          build_home="$build_root/home"
           sudo --user="$build_user" --set-home /usr/bin/env -i \
             HOME="$build_home" LANG=C.UTF-8 PATH="$PATH" \
             SOFTWARE_ID="$SOFTWARE_ID" BACKEND="$BACKEND" \
-            SOURCE_COMMIT="$SOURCE_COMMIT" RUNNER_TEMP="$RUNNER_TEMP" \
-            CANDIDATE_DIR="$GITHUB_WORKSPACE/candidate" \
-            VECTORWARP_DIR="$GITHUB_WORKSPACE/vectorwarp" \
+            SOURCE_COMMIT="$SOURCE_COMMIT" VECTORWARP_COMMIT="$VECTORWARP_COMMIT" \
+            RUNNER_TEMP="$build_root" \
+            CANDIDATE_DIR="$build_root/candidate" \
+            VECTORWARP_DIR="$build_root/vectorwarp" \
             /bin/bash -seuo pipefail <<'BUILD'
+          # Only this root-owned source snapshot is trusted for Git metadata.
+          git config --global --add safe.directory "$VECTORWARP_DIR"
+          [[ $(git -C "$CANDIDATE_DIR" rev-parse HEAD) == "$SOURCE_COMMIT" ]]
+          [[ $(git -C "$VECTORWARP_DIR" rev-parse HEAD) == "$VECTORWARP_COMMIT" ]]
+          [[ -r "$CANDIDATE_DIR/host/CMakeLists.txt" ]]
+          [[ -x "$VECTORWARP_DIR/script/build-native.sh" ]]
+          [[ -w "$HOME" && ! -w "$VECTORWARP_DIR" ]]
+          node --version
+          npm --version
           sdk="$RUNNER_TEMP/receiver-sdk"
           case "$SOFTWARE_ID" in
             uhd)
               cmake -S "$CANDIDATE_DIR/host" -B "$RUNNER_TEMP/candidate-build" -G Ninja \
                 -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$sdk" \
+                -DPYTHON_EXECUTABLE=/usr/bin/python3 \
                 -DENABLE_EXAMPLES=OFF -DENABLE_TESTS=OFF -DENABLE_MANUAL=OFF \
                 -DENABLE_PYTHON_API=OFF -DENABLE_DPDK=OFF
               ;;
@@ -225,13 +238,13 @@ jobs:
           ref: ${{ needs.discover.outputs.vectorwarp_commit }}
           persist-credentials: false
       - name: Download trusted discovery result
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5a8093 # v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: receiver-update-discovery
           path: notification-input
       - name: Download any candidate compile results
         continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5a8093 # v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: receiver-candidate-*
           path: candidate-results
