@@ -127,6 +127,7 @@ jobs:
             CANDIDATE_DIR="$build_root/candidate" \
             VECTORWARP_DIR="$build_root/vectorwarp" \
             /bin/bash -seuo pipefail <<'BUILD'
+          cd "$RUNNER_TEMP"
           # Only this root-owned source snapshot is trusted for Git metadata.
           git config --global --add safe.directory "$VECTORWARP_DIR"
           [[ $(git -C "$CANDIDATE_DIR" rev-parse HEAD) == "$SOURCE_COMMIT" ]]
