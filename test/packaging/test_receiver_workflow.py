@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -131,6 +132,39 @@ class BuildIdentityTests(unittest.TestCase):
         self.assertEqual((before.st_uid, before.st_gid, before.st_mode),
                          (after.st_uid, after.st_gid, after.st_mode))
         self.assertTrue((self.stage / "candidate/external-link").is_symlink())
+
+    def test_exact_git_preflight_leaves_inaccessible_inherited_working_directory(self):
+        commits = []
+        for source in (self.candidate, self.vectorwarp):
+            subprocess.run(["git", "init", "-q", str(source)], check=True)
+            subprocess.run([
+                "git", "-C", str(source), "-c", "user.name=Fixture",
+                "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-qm", "fixture",
+            ], check=True)
+            commits.append(subprocess.check_output(
+                ["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip())
+        self.stage_sources()
+        # Execute the actual workflow's Git/permission preflight, not a copy.
+        preflight = textwrap.dedent(WORKFLOW.read_text().split("<<'BUILD'\n", 1)[1]
+                                   .split("          node --version", 1)[0])
+        leave_private_cwd = 'cd "$RUNNER_TEMP"\n'
+        self.assertTrue(preflight.startswith(leave_private_cwd))
+        command = [
+            "setpriv", "--reuid=65534", "--regid=65534", "--clear-groups",
+            "--no-new-privs", "/usr/bin/env", "-i", f"PATH={os.environ['PATH']}",
+            f"HOME={self.stage}/home", f"RUNNER_TEMP={self.stage}",
+            f"CANDIDATE_DIR={self.stage}/candidate", f"VECTORWARP_DIR={self.stage}/vectorwarp",
+            f"SOURCE_COMMIT={commits[0]}", f"VECTORWARP_COMMIT={commits[1]}",
+            "bash", "-seuo", "pipefail",
+        ]
+        old = subprocess.run(command, input=preflight.removeprefix(leave_private_cwd),
+                             cwd=self.private, text=True, capture_output=True)
+        self.assertNotEqual(old.returncode, 0)
+        # Git versions differ between "failed to stat" and "error reading .git".
+        self.assertIn(str(self.private), old.stderr)
+        subprocess.run(command, input=preflight, cwd=self.private,
+                       text=True, capture_output=True, check=True)
 
 
 if __name__ == "__main__":
