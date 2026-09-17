@@ -95,6 +95,26 @@ function availablePort(usedPorts) {
     assert.deepEqual(legacyDocument.config.process.performance, {surveillance_workers: 1, fft_threads: 4, acceleration: 'auto'});
     assert.equal(legacyDocument.setupRequired, false, 'Valid old configs must not require setup just for optional defaults');
 
+    // Kraken gain is a declared string/number union: a "keep" profile default
+    // must not replace a persisted Suite gain while recovering a document.
+    const kraken = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', 'config-kraken.yml'), 'utf8'));
+    for (const gain of [-1, 0, 28.7, 49.6, 50]) {
+      kraken.capture.device.heimdall.gain = gain;
+      fs.writeFileSync(file, yaml.dump(kraken));
+      const persisted = readConfig(file);
+      assert.equal(persisted.config.capture.device.heimdall.gain, gain);
+      assert.equal(persisted.setupRequired, false, `valid Kraken gain ${gain} must not require setup`);
+      const saved = saveConfig(file, persisted.config, persisted.revision);
+      assert.equal(saved.config.capture.device.heimdall.gain, gain);
+      assert.equal(yaml.load(fs.readFileSync(file, 'utf8')).capture.device.heimdall.gain, gain);
+    }
+    kraken.capture.device.heimdall.gain = 50.1;
+    fs.writeFileSync(file, yaml.dump(kraken));
+    const invalidGain = readConfig(file);
+    assert.equal(invalidGain.config.capture.device.heimdall.gain, 50.1,
+      'Recovery must expose invalid values for repair instead of replacing them');
+    assert.equal(invalidGain.validation.valid, false, 'invalid gain remains rejected by normal validation');
+
     await new Promise(resolve => conflict.listen(0, '0.0.0.0', resolve));
     const usedPorts = new Set([conflict.address().port]);
     const config = repaired.config;

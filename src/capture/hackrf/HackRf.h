@@ -20,7 +20,7 @@ class HackRf : public Source
 private:
 
   /// @brief Vector of serial numbers.
-  /// @details Serial as given by hackrf_info.
+  /// @details Full serial or a unique, case-sensitive suffix from hackrf_info.
   std::vector<std::string> serial;
 
   /// @brief RX LNA (IF) gain, 0-40dB, 8dB steps.

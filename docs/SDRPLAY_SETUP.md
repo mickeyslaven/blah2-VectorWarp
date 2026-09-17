@@ -17,11 +17,30 @@ Install the API's development headers as well as its runtime. For the packaged
 local builder, these belong in `/usr/local/include` and `/usr/local/lib` as
 installed by the standard vendor installer. The package provides the normal
 compiler tools; it never downloads SDRplay files or accepts their terms.
+Before building, VectorWarp checks the API 3.15 headers and the library's CPU
+architecture. Missing or mismatched files produce a Settings error. The processor
+also checks the version reported by the vendor API at startup; these checks do
+not establish compatibility with a service running in a different OS environment.
 
 In VectorWarp, select RSPduo in **Settings**, then choose **Build SDRplay support**
 when offered. The build checks the installed source kit, compiler and API;
 progress or a specific error appears in Settings. Rebuild when the package or
 SDK changes. Building does not start radar.
+
+Set the receiver options, then choose **Save & Restart** to apply them.
+**SDRplay startup** shows whether the SDK accepted the settings, the selected
+serial number, and whether fresh radar frames have arrived. Expand its details
+to compare the requested settings and completed SDK calls. This is not an
+independent measurement of RF performance or phase coherence. Older adapters
+without this report must be rebuilt to provide it.
+
+LNA choices follow the tuned frequency: states 0–6 below 60 MHz, 0–9 from
+60 MHz to below 1 GHz, and 0–8 from 1–2 GHz, for the two 50-ohm inputs used by
+this adapter. State 0 provides the least gain reduction. Changing frequency
+does not silently replace an existing LNA setting; choose a valid state before
+saving. These limits match the published RSPduo table in section 5 of the
+[SDRplay API 3.09 specification](https://www.sdrplay.com/docs/SDRplay_API_Specification_v3.09.pdf).
+The current adapter has separately been tested with API 3.15 on a physical RSPduo.
 
 Then open **Check receiver software**:
 

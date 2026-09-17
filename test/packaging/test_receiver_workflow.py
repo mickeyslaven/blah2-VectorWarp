@@ -10,6 +10,8 @@ import tempfile
 import textwrap
 import unittest
 
+import yaml
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HELPER = ROOT / "script/prepare-receiver-build.sh"
 WORKFLOW = ROOT / ".github/workflows/receiver-compatibility.yml"
@@ -17,6 +19,28 @@ DOWNLOAD_PIN = "d3f86a106a0bac45b974a628896c90dbdf5c8093"  # upstream v4.3.0
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_every_package_target_requires_installed_browser_and_processor_checks(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
+        job = workflow['jobs']['package']
+        self.assertTrue(job['strategy']['matrix']['include'])
+        steps = [step for step in job['steps']
+                 if 'bash script/test-installed-package.sh' in step.get('run', '')]
+        self.assertEqual(len(steps), 1)
+        # No PR, platform or release-only exemption, and failure must fail the job.
+        self.assertNotIn('if', steps[0])
+        self.assertNotIn('continue-on-error', steps[0])
+        self.assertNotIn('continue-on-error', job)
+        self.assertIn('--package "$package"', steps[0]['run'])
+        self.assertIn('set -euo pipefail', steps[0]['run'])
+        wrapper = (ROOT / 'script/test-installed-package.sh').read_text()
+        self.assertIn('set -euo pipefail', wrapper)
+        self.assertIn('python3 /tmp/installed_service_test.py --verify-replay', wrapper)
+        self.assertIn('node "$source_root/test/browser/installed-settings.cjs"', wrapper)
+        self.assertIn('runuser -u vectorwarp -- python3 /tmp/processor_replay_test.py', wrapper)
+        self.assertIn('-u vectorwarp-processor', wrapper)
+        # Local source-overlay diagnostics must never become a CI bypass.
+        self.assertNotIn('--overlay', wrapper)
+
     def test_download_action_matches_the_verified_release_pin(self):
         pins = re.findall(r"uses: actions/download-artifact@(\S+)", WORKFLOW.read_text())
         self.assertEqual(pins, [DOWNLOAD_PIN, DOWNLOAD_PIN])

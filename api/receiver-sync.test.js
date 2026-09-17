@@ -168,12 +168,12 @@ async function rejected(promise, code, pattern) {
       readbackTimeoutMs: 300}).synchronize(candidate);
     assert.equal(result.status, 'synchronized');
     assert.deepEqual(suite.commands, [
-      {command: 'set_num_elements', num_elements: 3},
-      {command: 'set_frequency', frequency: 204640000}
+      {command: 'set_frequency', frequency: 204640000},
+      {command: 'set_num_elements', num_elements: 3}
     ]);
     assert.deepEqual(result.operations.map(item => [item.operation,
       item.acknowledged, item.readbackMatched]), [
-      ['set_num_elements', true, true], ['set_frequency', true, true]
+      ['set_frequency', true, true], ['set_num_elements', true, true]
     ]);
     const gainConfig = config(suite.port, {device: {heimdall: {host: '127.0.0.1',
       port: suite.port + 1, control_port: suite.port, gain: 12.5}}});
@@ -275,7 +275,7 @@ async function rejected(promise, code, pattern) {
     'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
     assert.deepEqual(error.receiverSync.operations.map(item =>
       [item.operation, item.readbackMatched]), [
-      ['set_num_elements', false]
+      ['set_frequency', false]
     ]);
   } finally { await staleAcrossOperations.close(); }
 

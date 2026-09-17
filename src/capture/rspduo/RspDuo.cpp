@@ -15,6 +15,33 @@
 #include <mutex>
 #include <stdexcept>
 #include <cmath>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
+
+// The licensed local source kit has only standard C++ and SDRplay headers.
+// Serial text is printable ASCII after validate()/sdk_serial(), but JSON still
+// needs to escape quotes and backslashes rather than trust the input bytes.
+static std::string json_string(const std::string& value)
+{
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string escaped;
+  escaped.reserve(value.size() + 2);
+  escaped += '"';
+  for (const unsigned char character : value) {
+    if (character == '"' || character == '\\') {
+      escaped += '\\';
+      escaped += static_cast<char>(character);
+    } else if (character < 32 || character >= 127) {
+      escaped += "\\u00";
+      escaped += hex[character >> 4];
+      escaped += hex[character & 15];
+    } else escaped += static_cast<char>(character);
+  }
+  escaped += '"';
+  return escaped;
+}
 
 static void require_api(sdrplay_api_ErrT result, const char* operation)
 {
@@ -22,12 +49,23 @@ static void require_api(sdrplay_api_ErrT result, const char* operation)
     throw std::runtime_error(std::string("[RspDuo] ") + operation + ": " + sdrplay_api_GetErrorString(result));
 }
 
+static std::string sdk_serial(const sdrplay_api_DeviceT& device)
+{
+  const auto length = strnlen(device.SerNo, sizeof(device.SerNo));
+  if (length == 0 || length == sizeof(device.SerNo))
+    throw std::runtime_error("[RspDuo] API returned an invalid receiver serial.");
+  for (std::size_t i = 0; i < length; ++i)
+    if (static_cast<unsigned char>(device.SerNo[i]) < 32 ||
+        static_cast<unsigned char>(device.SerNo[i]) > 126)
+      throw std::runtime_error("[RspDuo] API returned a non-printable receiver serial.");
+  return std::string(device.SerNo, length);
+}
+
 // class static constants
 const double RspDuo::MAX_FREQUENCY_NR = 2000000000;
 const int RspDuo::MIN_AGC_SET_POINT_NR = -72;        // min agc set point
 const int RspDuo::MIN_GAIN_REDUCTION_NR = 20;        // min gain reduction
 const int RspDuo::MAX_GAIN_REDUCTION_NR = 59;        // max gain reduction
-const int RspDuo::MAX_LNA_STATE_NR = 9;              // max lna state
 const int RspDuo::DEF_SAMPLE_RATE_NR = 2000000;      // default sample rate
 
 // global variables (SDRPlay)
@@ -105,7 +143,15 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
 void RspDuo::start()
 {
   std::lock_guard<std::mutex> lock(lifecycleMutex);
+  {
+    std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    startupStages = {};
+  }
   validate();
+  {
+    std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    startupStages.settingsValidated = true;
+  }
   run_fg = true;
   deviceRemoved = false;
   callbackFault = false;
@@ -151,8 +197,16 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
   // update gains after initialization
   require_api(sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_A,
     sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None), "Update tuner A gain");
+  {
+    std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    startupStages.gainUpdateA = true;
+  }
   require_api(sdrplay_api_Update(chosenDevice->dev, sdrplay_api_Tuner_B,
     sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None), "Update tuner B gain");
+  {
+    std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    startupStages.gainUpdateB = true;
+  }
   lock.unlock();
 
   // control loop
@@ -216,10 +270,17 @@ void RspDuo::validate() {
         std::cerr << "Error: Gain reduction must be between " << MIN_GAIN_REDUCTION_NR << " and " << MAX_GAIN_REDUCTION_NR << std::endl;
         throw std::invalid_argument("[RspDuo] Tuner B gain reduction must be between 20 and 59 dB.");
     }
-    if (lna_state_nr < 1 || lna_state_nr > MAX_LNA_STATE_NR) {
-        std::cerr << "Error: LNA state must be between 1 and " << MAX_LNA_STATE_NR << std::endl;
-        throw std::invalid_argument("[RspDuo] LNA state must be between 1 and 9.");
+    // Published SDRplay API 3.09 section 5, RSPduo 50-ohm ports.
+    const int maxLna = fc < 60000000 ? 6 : (fc < 1000000000 ? 9 : 8);
+    if (lna_state_nr < 0 || lna_state_nr > maxLna) {
+        throw std::invalid_argument("[RspDuo] LNA state is outside the RSPduo frequency-band range.");
     }
+
+    if (requestedSerial.size() >= sizeof(devs[0].SerNo))
+        throw std::invalid_argument("[RspDuo] Receiver serial is too long.");
+    for (const unsigned char character : requestedSerial)
+        if (character < 32 || character > 126)
+            throw std::invalid_argument("[RspDuo] Receiver serial must be printable ASCII.");
 
     // validate notch filters
 
@@ -245,9 +306,18 @@ void RspDuo::open_api()
   float ver = 0.0;
   require_api(sdrplay_api_Open(), "Open API; check that the SDRplay API service is running");
   apiOpened = true;
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.open = true; }
   require_api(sdrplay_api_ApiVersion(&ver), "Read API version");
+  if (std::isfinite(ver) && ver > 0 && ver <= 100) {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    startupStages.sdkVersion = ver;
+  }
   if (!std::isfinite(ver) || std::abs(ver - SDRPLAY_API_VERSION) > 0.001f)
     throw std::runtime_error("[RspDuo] Installed SDRplay API version does not match this receiver build.");
+  {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    startupStages.apiVersion = true;
+  }
 }
 
 void RspDuo::get_device()
@@ -258,9 +328,11 @@ void RspDuo::get_device()
 
   require_api(sdrplay_api_LockDeviceApi(), "Lock API for device selection");
   apiLocked = true;
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.lock = true; }
   require_api(sdrplay_api_GetDevices(devs, &ndev, sizeof(devs) / sizeof(sdrplay_api_DeviceT)), "Enumerate receivers");
   if (ndev > sizeof(devs) / sizeof(sdrplay_api_DeviceT))
     throw std::runtime_error("[RspDuo] API returned an invalid receiver count.");
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.enumerate = true; }
 
   std::cerr << "[RspDuo] MaxDevs=" << sizeof(devs) / 
     sizeof(sdrplay_api_DeviceT) << " NumDevs=" << ndev << std::endl;
@@ -277,7 +349,7 @@ void RspDuo::get_device()
   for (i = 0; i < ndev; i++)
   {
     if (devs[i].hwVer == SDRPLAY_RSPduo_ID &&
-        (requestedSerial.empty() || requestedSerial == devs[i].SerNo))
+        (requestedSerial.empty() || requestedSerial == sdk_serial(devs[i])))
     {
       chosenIdx = i;
       ++matching;
@@ -292,6 +364,7 @@ void RspDuo::get_device()
     throw std::runtime_error("[RspDuo] Multiple RSPduos found; select one serial in Receiver settings before starting.");
 
   chosenDevice = &devs[chosenIdx];
+  const auto selectedSerial = sdk_serial(*chosenDevice);
   chosenDevice->tuner = sdrplay_api_Tuner_Both;
   chosenDevice->rspDuoMode = sdrplay_api_RspDuoMode_Dual_Tuner;
 
@@ -303,9 +376,18 @@ void RspDuo::get_device()
 
   require_api(sdrplay_api_SelectDevice(chosenDevice), "Select RSPduo in dual-tuner mode");
   deviceSelected = true;
+  {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    startupStages.select = true;
+    startupStages.selectedSerial = selectedSerial;
+    startupStages.deviceIndex = chosenIdx;
+    startupStages.hardwareVersion = chosenDevice->hwVer;
+  }
   require_api(sdrplay_api_UnlockDeviceApi(), "Unlock device API");
   apiLocked = false;
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.unlock = true; }
   require_api(sdrplay_api_DebugEnable(chosenDevice->dev, sdrplay_api_DbgLvl_Verbose), "Enable API diagnostic logging");
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.debugEnable = true; }
 
   return;
 }
@@ -322,6 +404,7 @@ void RspDuo::set_device_parameters()
     std::cout << "Error: Device parameters pointer is null" << std::endl;
     throw std::runtime_error("[RspDuo] API omitted device or dual-tuner parameters.");
   }
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.getDeviceParams = true; }
 
   // set USB mode
   if (usb_bulk_fg)
@@ -550,6 +633,7 @@ void RspDuo::initialise_device()
 {
   require_api(sdrplay_api_Init(chosenDevice->dev, &cbFns, this), "Initialize dual-tuner streaming");
   deviceInitialized = true;
+  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.init = true; }
 }
 
 void RspDuo::uninitialise_device()
@@ -569,4 +653,56 @@ void RspDuo::cleanup_api() noexcept
   if (apiOpened) { report(sdrplay_api_Close(), "close"); apiOpened = false; }
   chosenDevice = nullptr;
   deviceParams = nullptr;
+}
+
+std::string RspDuo::startup_receipt_json() const
+{
+  StartupStages stages;
+  {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    stages = startupStages;
+  }
+  // The API must still receive the base error status for malformed direct
+  // YAML. Such a request cannot satisfy the receipt contract.
+  if (!stages.settingsValidated) return {};
+  const bool accepted = stages.open && stages.apiVersion && stages.lock &&
+    stages.enumerate && stages.select && stages.unlock && stages.debugEnable &&
+    stages.getDeviceParams && stages.init && stages.gainUpdateA && stages.gainUpdateB;
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::boolalpha << std::setprecision(std::numeric_limits<float>::max_digits10);
+  out << "{\"schema\":1,\"receiver\":\"RspDuo\",\"status\":\""
+      << (accepted ? "accepted" : "pending")
+      << "\",\"hardwareVerified\":false,\"readbackAvailable\":false,\"requested\":{"
+      << "\"serial\":" << json_string(requestedSerial)
+      << ",\"frequency\":" << fc << ",\"sampleRate\":" << fs
+      << ",\"agcSetPoint\":" << agc_set_point_nr
+      << ",\"bandwidthNumber\":" << agc_bandwidth_nr
+      << ",\"gainReduction\":[" << gain_reduction_nr_a << ',' << gain_reduction_nr_b << ']'
+      << ",\"lnaState\":" << lna_state_nr
+      << ",\"dabNotch\":" << dab_notch_fg << ",\"rfNotch\":" << rf_notch_fg
+      << ",\"ifBandwidthKhz\":" << static_cast<int>(bwType)
+      << ",\"ifFrequencyKhz\":" << static_cast<int>(ifType)
+      << ",\"decimation\":" << nDecimation << "},\"selected\":";
+  if (stages.select)
+    out << "{\"serial\":" << json_string(stages.selectedSerial)
+        << ",\"deviceIndex\":" << stages.deviceIndex
+        << ",\"hardwareVersion\":" << stages.hardwareVersion
+        << ",\"tuner\":\"Both\",\"mode\":\"Dual_Tuner\"}";
+  else out << "null";
+  out << ",\"sdk\":{\"version\":";
+  if (stages.sdkVersion > 0) out << stages.sdkVersion;
+  else out << "null";
+  out << ",\"stages\":{\"open\":" << stages.open
+      << ",\"apiVersion\":" << stages.apiVersion
+      << ",\"lock\":" << stages.lock
+      << ",\"enumerate\":" << stages.enumerate
+      << ",\"select\":" << stages.select
+      << ",\"unlock\":" << stages.unlock
+      << ",\"debugEnable\":" << stages.debugEnable
+      << ",\"getDeviceParams\":" << stages.getDeviceParams
+      << ",\"init\":" << stages.init
+      << ",\"gainUpdateA\":" << stages.gainUpdateA
+      << ",\"gainUpdateB\":" << stages.gainUpdateB << "}}}";
+  return out.str();
 }

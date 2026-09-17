@@ -66,14 +66,17 @@ endif()
 # fixture provides every SDK function itself; never link the vendor runtime.
 if(BLAH2_ENABLE_RSPDUO)
   add_executable(testRspDuoFailures ${PROJECT_ROOT}/test/capture/RspDuoFailureFixture.cpp
+    ${PROJECT_ROOT}/src/capture/ReceiverFactory.cpp
     ${PROJECT_ROOT}/src/capture/rspduo/RspDuo.cpp
     ${PROJECT_ROOT}/src/capture/Source.cpp
     ${PROJECT_ROOT}/src/capture/Recording.cpp
     ${PROJECT_ROOT}/src/data/IqData.cpp
     ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
   target_compile_features(testRspDuoFailures PRIVATE cxx_std_17)
+  target_compile_definitions(testRspDuoFailures PRIVATE BLAH2_MODULE_RSPDUO=1)
   target_include_directories(testRspDuoFailures PRIVATE ${PROJECT_ROOT}/src
-    ${PROJECT_ROOT}/src/capture ${BLAH2_SDRPLAY_INCLUDE_DIR})
+    ${PROJECT_ROOT}/src/capture ${BLAH2_SDRPLAY_INCLUDE_DIR}
+    "${PROJECT_BINARY_DIR}/receiver-generated")
   target_compile_options(testRspDuoFailures PRIVATE -UNDEBUG)
   target_link_libraries(testRspDuoFailures PRIVATE Threads::Threads blah2RapidJson)
   add_test(NAME rspduoStructuredFailures COMMAND testRspDuoFailures)

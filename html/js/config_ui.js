@@ -1,5 +1,6 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
+const CONFIG_SAVE_TIMEOUT_MS = 90000;
 const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],
@@ -31,7 +32,7 @@ const CONFIG_META = {
   'capture.device.agcSetPoint': ['AGC target', 'RSPduo automatic-gain target, from -72 to 0 dBFS.'],
   'capture.device.bandwidthNumber': ['AGC speed', 'RSPduo automatic-gain response: off, 5, 50 or 100 Hz.'],
   'capture.device.gainReduction': ['Gain reduction', 'Two RSPduo gain reductions in dB. Each must be 20–59.'],
-  'capture.device.lnaState': ['LNA state', 'RSPduo low-noise amplifier state, from 1 to 9.'],
+  'capture.device.lnaState': ['LNA state', 'Gain-reduction step; available states depend on frequency. 0 is least reduction.'],
   'capture.device.dabNotch': ['DAB notch filter', 'Suppress digital-audio broadcast interference'],
   'capture.device.rfNotch': ['RF notch filter', 'Enable the RSPduo RF notch filter'],
   'capture.replay': ['Replay', 'Use a recording instead of live radio.'],
@@ -410,6 +411,13 @@ function setValue(path, value) {
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
+  if (path.join('.') === 'capture.fc' && activeConfig.capture?.device?.type === 'RspDuo') {
+    const control = document.getElementById('config-capture-device-lnaState-0');
+    if (control) {
+      const next = rspDuoLnaInput(activeConfig.capture.device.lnaState);
+      control.replaceChildren(...Array.from(next.childNodes));
+    }
+  }
   if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig)) {
     geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
     refreshGeometryEditor();
@@ -500,6 +508,14 @@ function selectInput(options, value, onChange) {
   }
   select.addEventListener('change', () => onChange(select.value));
   return select;
+}
+
+function rspDuoLnaInput(value) {
+  const rule = capabilities.fieldRules?.['capture.device.lnaState'] || {};
+  const band = rule.frequencyBands?.find(item => activeConfig.capture.fc < item.belowHz);
+  const choices = (rule.choices || [value]).filter(item => !band || item <= band.max);
+  return selectInput(choices, value, selected =>
+    setValue(['capture', 'device', 'lnaState'], Number(selected)));
 }
 
 function frequencyInput(value, path) {
@@ -675,6 +691,7 @@ function typedInput(value, path) {
     return label;
   }
   if (key === 'capture.fc') return frequencyInput(value, path);
+  if (key === 'capture.device.lnaState') return rspDuoLnaInput(value);
   if (key === 'process.performance.acceleration')
     return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
       {value: 'gpu', label: 'GPU (with CPU fallback)'}], value,
@@ -1335,6 +1352,13 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
+      if (activeConfig.capture?.device?.type === 'RspDuo') {
+        const startup = document.createElement('section');
+        startup.id = 'receiver-startup';
+        startup.className = 'upstream-status receiver-startup';
+        panel.appendChild(startup);
+        renderReceiverStartup(null, startup);
+      }
       panel.appendChild(renderReceiverSetup());
       if (upstream) panel.appendChild(upstream);
     }
@@ -1345,6 +1369,72 @@ function renderEditor() {
   displayFieldErrors(validationErrors);
   displayValidationNotices();
   updateDirtyState();
+}
+
+function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
+  if (!target) return;
+  const detailsOpen = target.querySelector('details')?.open === true;
+  const heading = document.createElement('h3');
+  heading.textContent = 'SDRplay startup';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  const processor = status?.processorFresh && status.processor?.receiver === 'RspDuo' &&
+    status.processor?.input === 'live' ? status.processor : null;
+  const receipt = processor?.receiverStartup;
+  if (!processor) message.textContent = 'No fresh live RSPduo status. Saved settings apply when processing starts.';
+  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (!receipt) message.textContent = 'This adapter does not report startup settings. Rebuild SDRplay support to add this check.';
+  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through SDRplay…';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. The last startup settings were accepted by SDRplay.';
+  else message.textContent = status.radar === 'receiving' ?
+    'Startup settings accepted by SDRplay; live radar frames received.' :
+    'Startup settings accepted by SDRplay; waiting for radar frames.';
+  target.replaceChildren(heading, message);
+  if (!receipt) return;
+  const requested = receipt.requested;
+  const device = activeConfig.capture.device;
+  const matches = requested.frequency === activeConfig.capture.fc &&
+    requested.sampleRate === activeConfig.capture.fs && requested.serial === (device.serial || '') &&
+    ['agcSetPoint', 'bandwidthNumber', 'gainReduction', 'lnaState', 'dabNotch', 'rfNotch']
+      .every(key => JSON.stringify(requested[key]) === JSON.stringify(device[key]));
+  if (!matches) {
+    const mismatch = document.createElement('p');
+    mismatch.textContent = 'The running receiver settings differ from this form. Save & Restart to apply your changes.';
+    target.appendChild(mismatch);
+  }
+  const details = document.createElement('details');
+  details.open = detailsOpen;
+  const summary = document.createElement('summary');
+  summary.textContent = 'Startup settings and SDK checks';
+  const table = document.createElement('table');
+  const caption = document.createElement('caption');
+  caption.textContent = 'Requested values, not independent tuner readback';
+  table.appendChild(caption);
+  const rows = [
+    ['Selected receiver', receipt.selected?.serial || 'Not selected'],
+    ['SDRplay API', receipt.sdk.version === null ? 'Not checked' : Number(receipt.sdk.version).toFixed(2)],
+    ['Frequency', `${requested.frequency / 1000000} MHz`],
+    ['Output sample rate', `${requested.sampleRate} S/s`],
+    ['AGC', requested.bandwidthNumber ? `${requested.bandwidthNumber} Hz; ${requested.agcSetPoint} dBFS target` : 'Off'],
+    ['Gain reduction A / B', `${requested.gainReduction.join(' / ')} dB`],
+    ['LNA state', requested.lnaState],
+    ['DAB / RF notch', `${requested.dabNotch ? 'On' : 'Off'} / ${requested.rfNotch ? 'On' : 'Off'}`],
+    ['IF / bandwidth', `${requested.ifFrequencyKhz} / ${requested.ifBandwidthKhz} kHz`],
+    ['Decimation', `${requested.decimation}×`],
+    ['SDK stages completed', Object.entries(receipt.sdk.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(', ') || 'None']
+  ];
+  for (const [name, value] of rows) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row'; label.textContent = name;
+    const cell = document.createElement('td');
+    cell.textContent = String(value);
+    row.append(label, cell); table.appendChild(row);
+  }
+  const note = document.createElement('p');
+  note.textContent = 'SDK acceptance does not measure RF performance, filtering or phase coherence.';
+  details.append(summary, table, note);
+  target.appendChild(details);
 }
 
 function renderReceiverSetup() {
@@ -1571,9 +1661,10 @@ async function saveConfiguration(mode) {
         'X-VectorWarp-Intent': 'config-write-v1',
         'X-VectorWarp-Receiver-Sync': saveLater ? 'save-pending-v1' : 'synchronize-v1'},
       body
-    // Maximum server budgets: 10s initial status + two 30s operations, plus
-    // bounded network checks and response overhead. Transport loss stays unknown.
-    }, 90000);
+    // Receiver synchronization has a 75s absolute deadline across all commands
+    // and idle waits. Allow another 15s for bind checks and response transport.
+    // Transport loss still leaves the outcome unknown; never retry automatically.
+    }, CONFIG_SAVE_TIMEOUT_MS);
     const result = await response.json();
     responseReceived = true;
     if (!response.ok) {
@@ -1772,6 +1863,7 @@ async function refreshConfigDiagnostics() {
   if (!target) return;
   try {
     const status = await readRadarState();
+    renderReceiverStartup(status);
     const acceleration = document.getElementById('acceleration-status');
     if (acceleration) {
       acceleration.textContent = `Delay–Doppler: ${accelerationSummary(status.acceleration, status.radar)}. ` +
@@ -1797,7 +1889,10 @@ async function refreshConfigDiagnostics() {
       status.configRevision !== status.loadedRevision ?
         'The saved file differs from the API startup config. Restart the API and processor to apply all settings.' :
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
-  } catch (_) { target.textContent = 'Cannot read service status. Settings may be offline; check the API connection.'; }
+  } catch (_) {
+    renderReceiverStartup(null);
+    target.textContent = 'Cannot read service status. Settings may be offline; check the API connection.';
+  }
 }
 
 function accelerationSummary(value, radar) {
@@ -1811,4 +1906,4 @@ function accelerationSummary(value, radar) {
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
-    accelerationSummary};
+    accelerationSummary, CONFIG_SAVE_TIMEOUT_MS};

@@ -63,3 +63,17 @@ const Blah2ReceiverApi api{BLAH2_RECEIVER_ABI, sizeof(Blah2ReceiverApi),
 
 extern "C" __attribute__((visibility("default")))
 const Blah2ReceiverApi* blah2_receiver_api_v1() noexcept { return &api; }
+
+#if defined(BLAH2_MODULE_RSPDUO)
+// Optional telemetry export. The v1 factory and Source layout remain unchanged.
+// The returned buffer belongs to this thread and is copied by the caller.
+extern "C" __attribute__((visibility("default")))
+const char* blah2_rspduo_startup_receipt_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string receipt;
+    receipt = static_cast<const RspDuo*>(source)->startup_receipt_json();
+    return receipt.c_str();
+  } catch (...) { return nullptr; }
+}
+#endif

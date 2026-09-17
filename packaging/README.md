@@ -14,6 +14,14 @@ or hardware validation.
 Each release package includes compiled Kraken, USRP and dual-HackRF support,
 our locally buildable RSPduo adapter source kit, and all replay formats. UHD,
 libhackrf, compiler tools and binutils are native package dependencies.
+HackRF One USB access follows each distribution's native rule. Ubuntu/Debian
+install the processor account into the existing `plugdev` group; Fedora's
+packaged VectorWarp udev rule grants the `vectorwarp` group access without
+changing the vendor mode or desktop-seat ACL. The web API account receives
+neither grant. Start or restart the processor explicitly to load its new group
+membership; on Fedora also reconnect a HackRF so udev applies the rule.
+Administrators can mask it with an identically named rule in
+`/etc/udev/rules.d`.
 Users install SDRplay's licensed API and headers separately, then build our
 adapter from Settings. No vendor files are packaged.
 Kraken still needs Heimdall and its USB setup. Settings can check and reuse

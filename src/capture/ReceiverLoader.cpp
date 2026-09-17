@@ -85,6 +85,12 @@ void ReceiverSourceDeleter::operator()(Source* source) const noexcept {
   else delete source;
 }
 
+std::string receiver_startup_receipt(const ReceiverSource& source) {
+  if (!source || !source.get_deleter().startupReceipt) return {};
+  const char* value = source.get_deleter().startupReceipt(source.get());
+  return value ? std::string(value) : std::string();
+}
+
 ReceiverSource load_receiver(const std::string& receiver,
     const Blah2ReceiverConfig& config) {
   if (config.abi != BLAH2_RECEIVER_ABI || config.size != sizeof(config) ||
@@ -99,7 +105,15 @@ ReceiverSource load_receiver(const std::string& receiver,
       throw std::runtime_error(receiver + " adapter creation failed: " +
         (error[0] ? error.data() : "unspecified error"));
     }
-    return ReceiverSource(source, ReceiverSourceDeleter{std::move(loaded.library), loaded.api->destroy});
+    const char* (*startupReceipt)(const Source*) noexcept = nullptr;
+    if (receiver == "RspDuo") {
+      dlerror();
+      startupReceipt = reinterpret_cast<decltype(startupReceipt)>(
+        dlsym(loaded.library.get(), "blah2_rspduo_startup_receipt_json_v1"));
+      if (dlerror()) startupReceipt = nullptr; // Older matching modules have no receipt.
+    }
+    return ReceiverSource(source, ReceiverSourceDeleter{
+      std::move(loaded.library), loaded.api->destroy, startupReceipt});
   }
   throw std::invalid_argument("Unknown receiver type; no receiver was opened");
 }

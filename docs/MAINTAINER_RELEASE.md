@@ -73,8 +73,10 @@ jobs may upload the same checked package inputs for the separate signing flow.
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
    `Build release packages` runs all ten native package smoke checks on PRs
    using the same three compiled adapters and RSPduo local source kit as a
-   stable package, without proprietary SDK inputs. Passing these checks proves
-   package/source-kit wiring, not live RSPduo capture. PR jobs do not upload
+   stable package, without proprietary SDK inputs. Each target also runs the
+   [installed service and browser checks](PACKAGE_TESTING.md): Save & Restart,
+   fresh synthetic replay frames, failure/recovery and service permissions.
+   These test installed wiring, not physical receiver operation. PR jobs do not upload
    assets and never receive signing secrets. Trusted main/tag builds use the
    same package contract, then the separate protected `release-signing` flow
    signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a

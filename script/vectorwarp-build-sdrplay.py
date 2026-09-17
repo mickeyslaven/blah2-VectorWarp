@@ -179,9 +179,28 @@ def kit_state(check_compiler=False):
         require(compiler_identity() == {k:c[k] for k in ('id','version','target')}, 'local compiler does not match the source kit')
     return manifest
 def sdk_state():
-    require(LIBRARY.is_file(), 'SDRplay API library is missing; install the Hardware API from SDRplay yourself')
+    require(LIBRARY.is_file(), 'SDRplay API 3.15 library is missing from /usr/local/lib; install the Hardware API from https://sdrplay.com/hardware-api/ yourself')
     trusted(LIBRARY); headers = sorted(pathlib.Path(x) for x in glob.glob(str(INCLUDE / 'sdrplay_api*.h')))
-    require((INCLUDE / 'sdrplay_api.h') in headers and headers, 'SDRplay API headers are missing; install them from SDRplay yourself')
+    require((INCLUDE / 'sdrplay_api.h') in headers and headers,
+            'SDRplay API 3.15 headers are missing from /usr/local/include; install them from https://sdrplay.com/hardware-api/ yourself')
+    trusted(INCLUDE / 'sdrplay_api.h')
+    with open(INCLUDE / 'sdrplay_api.h', 'rb') as handle:
+        main_header = handle.read(131073)
+    require(len(main_header) <= 131072, 'SDRplay API header is unexpectedly large; review the installed SDK')
+    versions = re.findall(rb'(?m)^[ \t]*#[ \t]*define[ \t]+SDRPLAY_API_VERSION\b([^\r\n]*)', main_header)
+    require(len(versions) == 1, 'SDRplay API header version is missing or ambiguous; install matching API 3.15 headers')
+    expression = versions[0].split(b'//', 1)[0].split(b'/*', 1)[0]
+    expression = re.sub(rb'\s+', b'', expression)
+    require(expression in (b'(float)(3.15)', b'(3.15)', b'3.15', b'3.15f', b'3.15F'),
+            'SDRplay API header is not version 3.15; install matching API 3.15 headers and library')
+    machine = {'x86_64': 62, 'aarch64': 183, 'arm64': 183}.get(os.uname().machine)
+    require(machine is not None, 'This host architecture is not supported by the local SDRplay adapter builder')
+    with open(LIBRARY, 'rb') as handle:
+        elf = handle.read(20)
+    require(len(elf) == 20 and elf[:7] == b'\x7fELF\x02\x01\x01' and
+            int.from_bytes(elf[16:18], 'little') == 3 and
+            int.from_bytes(elf[18:20], 'little') == machine,
+            'SDRplay API library is not an ELF64 shared object for this host architecture; install the matching API 3.15 library')
     result = {}
     for h in headers: trusted(h); result[str(h)] = sha(h)
     return {'headers':result, 'library':{'path':str(LIBRARY),'sha256':sha(LIBRARY)}}

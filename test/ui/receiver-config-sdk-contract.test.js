@@ -32,11 +32,13 @@ for (const call of ['device.set_rx_subdev_spec(subdevices, 0)',
   'device.set_rx_freq(frequency, channel)', 'device.set_rx_gain(gain[channel], channel)',
   'verify_usrp_readback(device, frequency, sampleRate, gain, antenna, subdevices.to_string())'])
   assert.ok(usrpSettings.includes(call), `USRP settings helper omits ${call}`);
-for (const call of ['hackrf_open_by_serial', 'hackrf_set_freq',
+for (const call of ['hackrf_device_list_open', 'hackrf_set_freq',
   'hackrf_set_sample_rate', 'hackrf_set_amp_enable', 'hackrf_set_lna_gain',
   'hackrf_set_vga_gain', 'hackrf_set_hw_sync_mode',
   'hackrf_set_clkout_enable'])
   assert.ok(hackrf.includes(call), `HackRF startup omits ${call}`);
+assert.equal(hackrf.includes('hackrf_open_by_serial('), false,
+  'HackRF must open the uniquely resolved list index, not rerun an ambiguous suffix search');
 for (const assignment of ['rfFreq.rfHz = fc', 'agc.setPoint_dBfs',
   'gain.gRdB = gain_reduction_nr_a', 'gain.gRdB = gain_reduction_nr_b',
   'gain.LNAstate = lna_state_nr', 'rfNotchEnable = rf_notch_fg',

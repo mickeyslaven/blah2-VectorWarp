@@ -25,7 +25,7 @@ struct Lifetime {
 class FakeSource : public Source {
 public:
   explicit FakeSource(const Blah2ReceiverConfig& c)
-    : Source("Usrp", c.frequency, c.sampleRate, c.recordingPath, c.saveIq) {
+    : Source(FIXTURE_RECEIVER, c.frequency, c.sampleRate, c.recordingPath, c.saveIq) {
     if (c.frequency != 527000000 || c.sampleRate != 6000000 || c.channels != 2)
       std::abort();
     event("created");

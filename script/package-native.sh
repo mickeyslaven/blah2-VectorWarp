@@ -187,7 +187,7 @@ WORK_DIR=$(mktemp -d "$OUTPUT_DIR/.vectorwarp-package.XXXXXX")
 trap 'rm -rf "$WORK_DIR"' EXIT
 STAGE="$WORK_DIR/root"
 run mkdir -p "$STAGE"
-run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE"
+run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE" --target-distro "$DISTRO_NAME"
 
 NODE_TARGET="$STAGE/opt/vectorwarp/runtime/node"
 run install -d -m 0755 "$NODE_TARGET/bin"

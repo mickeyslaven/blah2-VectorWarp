@@ -15,7 +15,10 @@ const rules = {
   'capture.device.heimdall.gain': {type: 'gain', optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
-  'capture.device.lnaState': {...integer(1, 9), choices: [1,2,3,4,5,6,7,8,9]},
+  // Published SDRplay API 3.09 section 5: RSPduo 50-ohm inputs, not Hi-Z.
+  'capture.device.lnaState': {...integer(0, 9), choices: [0,1,2,3,4,5,6,7,8,9],
+    frequencyBands: [{belowHz: 60000000, max: 6},
+      {belowHz: 1000000000, max: 9}, {belowHz: 2000000001, max: 8}]},
   'capture.replay.format': {type: 'string', choices: ['auto', 'blah2', 'mchq', 's16-interleaved', 's8-interleaved', 'usrp-blocks'], optional: true},
   'capture.replay.legacy_block_samples': {...integer(1, 262144), optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},

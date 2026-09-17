@@ -40,7 +40,7 @@ cleanup() {
   trap - EXIT
   if [[ -n $container ]]; then
     podman logs "$container" >"$evidence/container-boot.log" 2>&1 || true
-    podman exec "$container" journalctl --no-pager -u vectorwarp-api -u vectorwarp-receiver -u vectorwarp-restart >"$evidence/journal.log" 2>&1 || true
+    podman exec "$container" journalctl --no-pager -u vectorwarp-api -u vectorwarp-receiver -u vectorwarp-restart -u vectorwarp-processor >"$evidence/journal.log" 2>&1 || true
     podman inspect "$container" >"$evidence/container.json" || true
     podman stop --time 10 "$container" >/dev/null 2>&1 || true
     podman rm "$container" >/dev/null 2>&1 || true
@@ -92,13 +92,18 @@ else
 fi
 podman cp "$source_root/test/packaging/installed_reinstall_test.py" "$container:/tmp/installed_reinstall_test.py"
 podman exec "$container" python3 /tmp/installed_reinstall_test.py "/tmp/package.$format" >"$evidence/reinstall.log" 2>&1
+podman cp "$source_root/test/recording/processor_replay_test.py" "$container:/tmp/processor_replay_test.py"
 podman cp "$source_root/test/packaging/installed_service_test.py" "$container:/tmp/installed_service_test.py"
 podman exec "$container" python3 /tmp/installed_service_test.py >"$evidence/services.log" 2>&1
 address=$(podman inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")
 [[ $address =~ ^10\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'expected a private test container address'
 NODE_PATH="$browser_modules" node "$source_root/test/browser/installed-settings.cjs" \
   "http://$address:3000" "$evidence" >"$evidence/browser.log" 2>&1
-podman cp "$source_root/test/recording/processor_replay_test.py" "$container:/tmp/processor_replay_test.py"
+podman exec "$container" python3 /tmp/installed_service_test.py --verify-replay \
+  >"$evidence/services-replay.log" 2>&1
+# Keep the independently tested direct 18-case replay harness from competing
+# with the installed looping service for the runner's bounded CPU allowance.
+podman exec "$container" systemctl stop vectorwarp-processor.service
 # This tests the actual installed processor and shared libraries with synthetic
 # IQ and loopback sinks. It is not a live receiver or detection-accuracy claim.
 podman exec "$container" runuser -u vectorwarp -- python3 /tmp/processor_replay_test.py \

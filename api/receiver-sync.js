@@ -6,6 +6,10 @@ const RECEIVER_TYPES = Object.freeze(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
 const MAX_FRAME_BYTES = 65536;
 const DEFAULT_STATUS_TIMEOUT_MS = 2200;
 const DEFAULT_READBACK_TIMEOUT_MS = 15000;
+const RECEIVER_SYNC_BUDGET = Object.freeze({
+  defaultTransactionTimeoutMs: 75000,
+  maxTransactionTimeoutMs: 75000
+});
 
 function plainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -139,17 +143,9 @@ function validateInitialStatus(status, wanted) {
 
 function operationList(status, wanted) {
   const operations = [];
-  // Suite refuses element-count work once a retune recovery has started, but
-  // its frequency handler explicitly supports retuning during recovery and
-  // defers to that full calibration. Reconfigure the active prefix first.
-  if (status.channelCount !== wanted.channelCount) operations.push({
-    id: 'set_num_elements', field: 'capture.device.channel_count',
-    value: wanted.channelCount,
-    command: {command: 'set_num_elements', num_elements: wanted.channelCount},
-    acknowledgementField: 'num_elements',
-    matches: observed => observed.channelCount === wanted.channelCount &&
-      observed.reconfiguring === false
-  });
+  // Retunes and explicit gain changes start a cooldown.  Wait for their
+  // calibration to settle before changing the active prefix: element changes
+  // start an asynchronous full recovery, so they must be last.
   if (status.centerFrequency !== wanted.frequency) operations.push({
     id: 'set_frequency', field: 'capture.fc', value: wanted.frequency,
     command: {command: 'set_frequency', frequency: wanted.frequency},
@@ -160,6 +156,14 @@ function operationList(status, wanted) {
     id: 'set_gain', field: 'capture.device.heimdall.gain', value: wanted.gain,
     command: {command: 'set_gain', gain: wanted.gain}, acknowledgementField: 'gain',
     matches: observed => observed.gain === wanted.gain
+  });
+  if (status.channelCount !== wanted.channelCount) operations.push({
+    id: 'set_num_elements', field: 'capture.device.channel_count',
+    value: wanted.channelCount,
+    command: {command: 'set_num_elements', num_elements: wanted.channelCount},
+    acknowledgementField: 'num_elements',
+    matches: observed => observed.channelCount === wanted.channelCount &&
+      observed.reconfiguring === false
   });
   return operations;
 }
@@ -189,10 +193,14 @@ function createKrakenControlClient(options = {}) {
   const connector = options.connector || net.createConnection;
   const statusTimeoutMs = options.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
   const readbackTimeoutMs = options.readbackTimeoutMs ?? DEFAULT_READBACK_TIMEOUT_MS;
+  const transactionTimeoutMs = options.transactionTimeoutMs ??
+    RECEIVER_SYNC_BUDGET.defaultTransactionTimeoutMs;
   if (typeof connector !== 'function' || !Number.isInteger(statusTimeoutMs) ||
       statusTimeoutMs < 50 || statusTimeoutMs > 10000 ||
       !Number.isInteger(readbackTimeoutMs) || readbackTimeoutMs < 50 ||
-      readbackTimeoutMs > 30000)
+      readbackTimeoutMs > 30000 || !Number.isInteger(transactionTimeoutMs) ||
+      transactionTimeoutMs < 100 ||
+      transactionTimeoutMs > RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs)
     throw receiverError('INVALID_RECEIVER_SYNC', 'Receiver synchronization options are invalid.', 500);
 
   function synchronize(config, {readOnly = false} = {}) {
@@ -203,6 +211,7 @@ function createKrakenControlClient(options = {}) {
       let buffer = '';
       let bufferedBytes = 0;
       let timer;
+      let transactionTimer;
       let settled = false;
       let initialStatus = null;
       let lastStatus = null;
@@ -210,6 +219,9 @@ function createKrakenControlClient(options = {}) {
       let current = null;
       let currentAcknowledged = false;
       let currentRejected = false;
+      let currentSent = false;
+      let waitingForIdle = false;
+      let expectedReadback = null;
       let acknowledgedAfterStatus = 0;
       let statusSequence = 0;
       const receipt = createReceipt(endpoint, wanted, null);
@@ -221,17 +233,18 @@ function createKrakenControlClient(options = {}) {
       };
       const close = () => {
         clearTimeout(timer);
+        clearTimeout(transactionTimer);
         if (socket) socket.destroy();
       };
       const failureReceipt = () => {
         const attempted = current ? [{operation: current.id, field: current.field,
-          requested: current.value, commandSent: true,
-          acknowledged: currentAcknowledged,
-          commandOutcome: currentRejected ? 'rejected' :
+          requested: current.value, commandSent: currentSent,
+          acknowledged: currentSent && currentAcknowledged,
+          commandOutcome: !currentSent ? 'not-sent' : currentRejected ? 'rejected' :
             currentAcknowledged ? 'acknowledged' : 'unknown',
           readbackMatched: false}] : [];
         const status = receipt.operations.length || currentAcknowledged ? 'partial' :
-          current && !currentRejected ? 'indeterminate' : 'failed';
+          currentSent && !currentRejected ? 'indeterminate' : 'failed';
         return {...receipt,
           status,
           after: publicStatus(lastStatus),
@@ -244,6 +257,9 @@ function createKrakenControlClient(options = {}) {
         if (!error.receiverSync) error.receiverSync = failureReceipt();
         reject(error);
       };
+      transactionTimer = setTimeout(() => fail(receiverError('KRAKEN_TRANSACTION_TIMEOUT',
+        'Suite V2 synchronization exceeded the bounded transaction deadline.', 504,
+        failureReceipt())), transactionTimeoutMs);
       const finish = () => {
         if (settled) return;
         if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
@@ -255,15 +271,39 @@ function createKrakenControlClient(options = {}) {
         receipt.after = publicStatus(lastStatus);
         resolve(receipt);
       };
-      const next = () => {
-        current = operations.shift() || null;
+      const suiteIdle = observed => observed && !observed.reconfiguring &&
+        !observed.recovering && !observed.cooldownActive;
+      const sendCurrent = () => {
+        expectedReadback = {frequency: lastStatus.centerFrequency,
+          channelCount: lastStatus.channelCount,
+          gain: wanted.gain === undefined ? undefined : lastStatus.gain};
+        if (current.id === 'set_frequency') expectedReadback.frequency = current.value;
+        if (current.id === 'set_gain') expectedReadback.gain = current.value;
+        if (current.id === 'set_num_elements') expectedReadback.channelCount = current.value;
+        // A delayed response from an earlier command must not authorize this
+        // operation. Only the exact write below establishes its ACK window.
         currentAcknowledged = false;
         currentRejected = false;
-        if (!current) return finish();
+        currentSent = true;
         acknowledgedAfterStatus = statusSequence;
         arm(readbackTimeoutMs,
           `Suite V2 did not acknowledge and report ${current.field}=${current.value} before the deadline.`);
         socket.write(`${JSON.stringify(current.command)}\n`);
+      };
+      const next = () => {
+        current = operations.shift() || null;
+        currentAcknowledged = false;
+        currentRejected = false;
+        currentSent = false;
+        expectedReadback = null;
+        if (!current) return finish();
+        if (!suiteIdle(lastStatus)) {
+          waitingForIdle = true;
+          arm(readbackTimeoutMs,
+            `Suite V2 did not become idle before sending ${current.field}=${current.value}.`);
+          return;
+        }
+        sendCurrent();
       };
       const acceptReadback = () => {
         receipt.operations.push({operation: current.id, field: current.field,
@@ -293,18 +333,19 @@ function createKrakenControlClient(options = {}) {
               'Suite settings differ from saved receiver settings. Apply them in Settings before starting live processing.', 409));
           return next();
         }
-        // A count operation precedes retuning: validate its expected intermediate
-        // tuple, then require the complete final tuple after the frequency ACK.
-        const frequency = current?.id === 'set_num_elements' ?
-          initialStatus.centerFrequency : wanted.frequency;
+        if (waitingForIdle) {
+          if (!suiteIdle(observed)) return;
+          waitingForIdle = false;
+          return sendCurrent();
+        }
         if (current && currentAcknowledged && statusSequence > acknowledgedAfterStatus &&
-            current.matches(observed) && matchesTuple(observed, frequency, wanted.channelCount,
-              current.id === 'set_gain' ? wanted.gain : undefined))
+            current.matches(observed) && matchesTuple(observed, expectedReadback.frequency,
+              expectedReadback.channelCount, expectedReadback.gain))
           acceptReadback();
       };
       const handleResponse = frame => {
-        if (!current) return fail(receiverError('KRAKEN_UNEXPECTED_RESPONSE',
-          'Suite V2 returned a command response when none was pending.', 502));
+        if (!current || !currentSent) return fail(receiverError('KRAKEN_UNEXPECTED_RESPONSE',
+          'Suite V2 returned a command response before a command was sent.', 502));
         if (frame.status !== 'success') {
           currentRejected = true;
           return fail(receiverError('KRAKEN_COMMAND_REJECTED',
@@ -445,5 +486,5 @@ function createReceiverSynchronizer(options = {}) {
 }
 
 module.exports = {createKrakenControlClient, createReceiverSynchronizer,
-  endpointFrom, normalizeStatus, receiverAcceptanceBoundary,
+  endpointFrom, normalizeStatus, receiverAcceptanceBoundary, RECEIVER_SYNC_BUDGET,
   requiresReceiverSynchronization};

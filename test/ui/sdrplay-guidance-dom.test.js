@@ -81,6 +81,41 @@ const check = async () => {
     assert.match(output.textContent, /already running/);
     assert.equal([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'), false,
       'An observed installed SDK must not be prompted for download.');
+    Object.assign(saved, setupDefaults());
+    await window.renderConfiguration();
+    const startup = window.document.getElementById('receiver-startup');
+    assert.match(startup.textContent, /No fresh live RSPduo status/);
+    const receipt = {schema: 1, receiver: 'RspDuo', status: 'accepted',
+      hardwareVerified: false, readbackAvailable: false,
+      requested: {...saved.capture.device, frequency: saved.capture.fc,
+        sampleRate: saved.capture.fs, serial: '', ifFrequencyKhz: 1620,
+        ifBandwidthKhz: 1536, decimation: 1},
+      selected: {serial: '<img src=x onerror=alert(1)>'},
+      sdk: {version: 3.15, stages: {open: true, init: true, gainUpdateA: true, gainUpdateB: true}}};
+    const live = {radar: 'receiving', processorFresh: true,
+      processor: {receiver: 'RspDuo', input: 'live', state: 'live', receiverStartup: receipt}};
+    window.renderReceiverStartup(live);
+    assert.match(startup.textContent, /Startup settings accepted.*live radar frames/);
+    assert.match(startup.textContent, /not independent tuner readback/);
+    assert.equal(startup.querySelector('img'), null, 'Receipt strings must be text, not HTML');
+    assert.doesNotMatch(startup.textContent, /differ from this form/);
+    startup.querySelector('details').open = true;
+    window.renderReceiverStartup(live);
+    assert.equal(startup.querySelector('details').open, true, 'Polling must keep the details open');
+    receipt.requested.frequency += 1000;
+    window.renderReceiverStartup(live);
+    assert.match(startup.textContent, /differ from this form/);
+    receipt.status = 'pending';
+    window.renderReceiverStartup(live);
+    assert.match(startup.textContent, /Applying settings/);
+    live.processor.state = 'error'; live.processor.error = 'Init rejected settings';
+    window.renderReceiverStartup(live);
+    assert.match(startup.textContent, /Receiver error: Init rejected/);
+    window.renderReceiverStartup({...live, processorFresh: false});
+    assert.match(startup.textContent, /No fresh live RSPduo status/);
+    assert.equal(startup.querySelector('table'), null, 'Stale receipts must not appear current');
+    window.renderReceiverStartup({...live, processor: {...live.processor, input: 'replay'}});
+    assert.match(startup.textContent, /No fresh live RSPduo status/);
     console.log('SDRplay guidance DOM fixture passed.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

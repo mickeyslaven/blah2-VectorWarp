@@ -54,6 +54,10 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload ||
+    printf '%s\n' 'HackRF udev rule reload needs local review; reconnect after reloading rules.' >&2
+fi
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sudoers-migrate ||
   printf '%s\n' 'VectorWarp sudoers needs administrator review; customized content was preserved.' >&2
 # Only existing render/video groups owning trusted DRM nodes; no driver or service changes.
@@ -81,6 +85,9 @@ fi
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null || true
 fi
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload >/dev/null 2>&1 || true
+fi
 
 %preun
 if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
@@ -99,6 +106,7 @@ fi
 /usr/lib/systemd/system/vectorwarp-receiver.socket
 /usr/lib/systemd/system/vectorwarp-api.service.wants
 /usr/lib/sysusers.d/vectorwarp.conf
+/usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules
 /usr/lib/tmpfiles.d/vectorwarp.conf
 %config(noreplace) /etc/sudoers.d/vectorwarp
 %dir /etc/vectorwarp-management

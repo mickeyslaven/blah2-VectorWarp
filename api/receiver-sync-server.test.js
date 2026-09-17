@@ -54,9 +54,9 @@ const suite = net.createServer(socket => {
       const command = JSON.parse(line);
       commands.push(command);
       diskAtCommand.push(yaml.load(fs.readFileSync(filename, 'utf8')));
-      if (suiteBehavior === 'reject-frequency' && command.command === 'set_frequency') {
+      if (suiteBehavior === 'reject-count' && command.command === 'set_num_elements') {
         suiteBehavior = 'confirm';
-        send(socket, {status: 'error', message: 'simulated frequency rejection after count change'});
+        send(socket, {status: 'error', message: 'simulated element-count rejection after tuning change'});
         continue;
       }
       if (suiteBehavior === 'reject') {
@@ -84,6 +84,11 @@ const suite = net.createServer(socket => {
       } else if (command.command === 'set_num_elements') {
         send(socket, {status: 'success', num_elements: command.num_elements,
           message: 'reconfiguration started'});
+        if (suiteBehavior === 'disconnect-after-count-ack') {
+          suiteBehavior = 'confirm';
+          socket.end();
+          continue;
+        }
         suiteState.reconfiguring = true;
         send(socket, suiteStatus());
         setTimeout(() => {
@@ -199,10 +204,10 @@ function withSixChannels(config) {
     assert.equal(accepted.body.receiverSync.status, 'synchronized');
     assert.equal(accepted.body.receiverSync.configPersisted, true);
     assert.deepEqual(accepted.body.receiverSync.operations.map(item => item.operation),
-      ['set_num_elements', 'set_frequency']);
+      ['set_frequency', 'set_num_elements']);
     assert.deepEqual(commands, [
-      {command: 'set_num_elements', num_elements: 6},
-      {command: 'set_frequency', frequency: changed.capture.fc}
+      {command: 'set_frequency', frequency: changed.capture.fc},
+      {command: 'set_num_elements', num_elements: 6}
     ]);
     assert.ok(diskAtCommand.every(value => value.capture.fc === original.capture.fc &&
       value.capture.device.channel_count === original.capture.device.channel_count),
@@ -211,8 +216,8 @@ function withSixChannels(config) {
       changed.capture.fc);
     revision = accepted.body.revision;
 
-    // Save operator statements, then leave a count operation applied while a
-    // later frequency command fails. YAML must stay intact on that failure.
+    // Save operator statements, then leave tuning applied while the final
+    // count operation fails. YAML must stay intact on that failure.
     changed.capture.device.array_geometry.mapping_confirmed = true;
     changed.capture.device.array_geometry.geometry_confirmed = true;
     const statements = await request(apiPort, 'PUT', '/api/config?restart=false', changed, revision, intent);
@@ -224,11 +229,12 @@ function withSixChannels(config) {
     failedNext.capture.device.surveillance_channels = [0, 1, 2, 3, 4];
     failedNext.process.reference_synthesis.channels = [0, 1, 2, 3, 4];
     failedNext.capture.fc += 2000000;
-    suiteBehavior = 'reject-frequency';
+    suiteBehavior = 'reject-count';
     const rejectedSecond = await request(apiPort, 'PUT', '/api/config?restart=false', failedNext, revision, intent);
     assert.equal(rejectedSecond.status, 409);
     assert.equal(rejectedSecond.body.receiverSync.status, 'partial');
-    assert.equal(suiteState.channels, 5);
+    assert.equal(suiteState.channels, 6);
+    assert.equal(suiteState.frequency, failedNext.capture.fc);
     let unchanged = yaml.load(fs.readFileSync(filename, 'utf8'));
     assert.equal(unchanged.capture.device.channel_count, 6);
     assert.equal(unchanged.capture.device.array_geometry.mapping_confirmed, true, 'Failed receiver transaction must not rewrite YAML');
@@ -270,7 +276,7 @@ function withSixChannels(config) {
     const beforeRepair = commands.length;
     const repaired = await request(apiPort, 'PUT', '/api/config?restart=false', unchanged, revision, intent);
     assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
-    assert.deepEqual(commands.slice(beforeRepair), [{command: 'set_num_elements', num_elements: 6}]);
+    assert.deepEqual(commands.slice(beforeRepair), [{command: 'set_frequency', frequency: changed.capture.fc}]);
     assert.equal(repaired.body.config.capture.device.array_geometry.mapping_confirmed, false);
     assert.equal(repaired.body.config.capture.device.array_geometry.geometry_confirmed, false);
     assert.equal(repaired.body.receiverSync.hardwareVerified, false);
@@ -366,6 +372,27 @@ function withSixChannels(config) {
     assert.equal(unconfirmed.body.receiverSync.operations[0].readbackMatched, false);
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.fc,
       reconcile.capture.fc, 'Acknowledgement without readback must leave YAML unchanged');
+
+    // A real Suite crash during count reconfiguration left earlier tuning
+    // applied and the final count acknowledged but unconfirmed. Exercise that
+    // protocol failure without crashing a receiver or scheduling a restart.
+    const disconnectCandidate = clone(failedNext);
+    disconnectCandidate.capture.fc = reconcile.capture.fc + 300000;
+    const diskBeforeDisconnect = fs.readFileSync(filename, 'utf8');
+    suiteBehavior = 'disconnect-after-count-ack';
+    const disconnected = await request(apiPort, 'PUT', '/api/config?restart=true',
+      disconnectCandidate, revision, intent);
+    assert.equal(disconnected.status, 502, JSON.stringify(disconnected.body));
+    assert.equal(disconnected.body.code, 'KRAKEN_CONNECTION_CLOSED');
+    assert.equal(disconnected.body.receiverSync.status, 'partial');
+    assert.equal(disconnected.body.receiverSync.configPersisted, false);
+    assert.equal(disconnected.body.receiverSync.operations.at(-1).acknowledged, true);
+    assert.equal(disconnected.body.receiverSync.operations.at(-1).readbackMatched, false);
+    assert.equal(fs.readFileSync(filename, 'utf8'), diskBeforeDisconnect);
+    const afterDisconnect = await request(apiPort, 'GET', '/api/system/status');
+    assert.equal(afterDisconnect.status, 200, 'Web API stays available after receiver disconnect');
+    assert.equal(afterDisconnect.body.restart.state, 'idle');
+    assert.equal(afterDisconnect.body.receiverSynchronization.reconciliationRequired, true);
 
     suiteState.sampleRate = 2000000;
     const commandsBeforeMismatch = commands.length;
