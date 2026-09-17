@@ -33,9 +33,19 @@ const runtime = {acceleration: ready, clutterAcceleration: ready, fresh: true};
   await Promise.all([get(runtime), get(runtime)]); assert.equal(calls, 1);
   assert.equal((await get({...runtime, fresh: false})).state, 'compiler-risk', 'Cached enumeration never caches live acceptance');
   at = 60001; await get(runtime); assert.equal(calls, 2);
-  const none = createGpuSetupStatus({pi: false, execute}); await none(runtime); assert.equal(calls, 2);
+  const desktop = createGpuSetupStatus({pi: false, execute: (_p, _a, _o, callback) => {
+    calls++;
+    callback(null, JSON.stringify({...older, pi: false, state: 'service-access-needed',
+      serviceAccess: {state: 'group-access-needed'}}));
+  }});
+  assert.equal((await desktop({fresh: false})).state, 'service-access-needed'); assert.equal(calls, 3);
+  const brokerMissing = createGpuSetupStatus({pi: false, execute: (_p, _a, _o, callback) => {
+    callback(null, JSON.stringify({...older, pi: false, state: 'driver-unverified',
+      serviceAccess: {state: 'unavailable'}, message: 'Activate the updated receiver helper'}));
+  }});
+  assert.equal((await brokerMissing(runtime)).serviceAccess.state, 'unavailable');
   const preview = createGpuSetupStatus({pi: true, preview: true, execute});
-  assert.equal((await preview(runtime)).qualification, 'not-run'); assert.equal(calls, 2);
+  assert.equal((await preview(runtime)).qualification, 'not-run'); assert.equal(calls, 3);
   let completeDelayedSetup;
   let delayedFresh = true;
   const delayed = createGpuSetupStatus({pi: true, execute: (_p, _a, _o, callback) => {

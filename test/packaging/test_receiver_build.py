@@ -290,7 +290,7 @@ endif()
                      "vectorwarp-restart.service.in", "vectorwarp.sysusers",
                      "vectorwarp.tmpfiles", "vectorwarp.sudoers.in"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js"):
+        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         lines = ["build_id=receiver-test", f"backend={backend}"]
         if compiled_receivers is not None:
@@ -385,15 +385,54 @@ endif()
         self.assertEqual(policy.read_bytes(), sentinel)
         self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-activate-web').is_file())
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
         service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()
         self.assertIn('ExecStart=/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-receiver-helper serve', service)
         self.assertNotIn('receiver-helper', (stage / 'etc/sudoers.d/vectorwarp').read_text())
+        api_unit = (stage / 'usr/lib/systemd/system/vectorwarp-api.service').read_text()
+        self.assertIn('/opt/vectorwarp/libexec/vectorwarp-receiver-helper', api_unit)
+        self.assertIn('request-restart', api_unit)
+        self.assertNotIn('/usr/bin/sudo', api_unit)
+        self.assertNotIn('vectorwarp-restart.service', (stage / 'etc/sudoers.d/vectorwarp').read_text())
         fresh_stage = self.temp / 'stage-management-default'
         result = self.install(artifact, fresh_stage)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads((fresh_stage / 'etc/vectorwarp-management/receivers.json').read_text())['actions'], [])
+
+    def test_package_web_activation_defers_running_broker_and_api(self):
+        for hook in ('packaging/deb/postinst', 'packaging/rpm/vectorwarp.spec.in'):
+            self.assertIn('/opt/vectorwarp/libexec/vectorwarp-activate-web', (ROOT / hook).read_text())
+        executable(self.tools / 'systemctl', '''#!/bin/sh
+printf '%s\\n' "$*" >> "$ACTIVATION_LOG"
+case "$*" in
+  'is-active --quiet vectorwarp-api.service') [ "$API_ACTIVE" = 1 ]; exit $? ;;
+  'is-active --quiet vectorwarp-receiver.service') [ "$BROKER_ACTIVE" = 1 ]; exit $? ;;
+  'enable vectorwarp-api.service'|'enable --now vectorwarp-api.service')
+    [ "$ENABLE_FAIL" != 1 ]; exit $? ;;
+  *) exit 99 ;;
+esac
+''')
+        for api_active, broker_active, failure in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)):
+            with self.subTest(api=api_active, broker=broker_active, failure=failure):
+                log = self.temp / 'activation.log'
+                log.unlink(missing_ok=True)
+                env = os.environ | {'PATH': f'{self.tools}:{os.environ["PATH"]}',
+                                    'ACTIVATION_LOG': str(log), 'API_ACTIVE': str(api_active),
+                                    'BROKER_ACTIVE': str(broker_active), 'ENABLE_FAIL': str(failure)}
+                result = subprocess.run(['sh', str(ROOT / 'script/vectorwarp-activate-web')],
+                                        env=env, text=True, capture_output=True, check=False)
+                calls = log.read_text().splitlines()
+                self.assertEqual(result.returncode == 0, failure == 0)
+                if api_active or broker_active:
+                    self.assertIn('enable vectorwarp-api.service', calls)
+                    self.assertNotIn('enable --now vectorwarp-api.service', calls)
+                    self.assertIn('Do not refresh while a receiver-management action is running', result.stderr)
+                    self.assertIn('systemctl restart vectorwarp-receiver.service && systemctl restart vectorwarp-api.service', result.stderr)
+                else:
+                    self.assertIn('enable --now vectorwarp-api.service', calls)
+                self.assertFalse(any('vectorwarp-processor.service' in call for call in calls))
 
     def test_receiver_policy_symlink_is_rejected_before_staging_any_release(self):
         artifact = self.make_artifact('kraken', 'Kraken')

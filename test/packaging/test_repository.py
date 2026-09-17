@@ -91,7 +91,11 @@ class HomepageTests(unittest.TestCase):
         page = repository.repository_homepage(self.release_manifest())
         for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
                      'sudo apt install --only-upgrade vectorwarp', 'sudo dnf upgrade',
+                     'sudo apt install ./matching.deb', 'sudo dnf install ./matching.rpm',
                      'sudo systemctl enable --now vectorwarp-api.service',
+                     'sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service',
+                     'Do not run it mid-transaction', 'vectorwarp-processor.service',
+                     'FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,\nnot Ubuntu 26.04',
                      'enables the browser interface at boot', 'starts only that service',
                      '<code>gnupg2</code>', '<code>gnupg</code>',
                      'On a fresh install, radar processing stays stopped',
@@ -221,18 +225,8 @@ class HomepageTests(unittest.TestCase):
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
         self.assertIn('sudo bash vectorwarp-install.sh --start-web', readme)
-        for asset in (
-                'vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb',
-                'vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb',
-                'vectorwarp_0.1.1-1_ubuntu24.04_amd64.deb',
-                'vectorwarp_0.1.1-1_ubuntu24.04_arm64.deb',
-                'vectorwarp_0.1.1-1_ubuntu26.04_amd64.deb',
-                'vectorwarp_0.1.1-1_ubuntu26.04_arm64.deb',
-                'vectorwarp_0.1.1-1_debian13_amd64.deb',
-                'vectorwarp_0.1.1-1_debian13_arm64.deb',
-                'vectorwarp-0.1.1-1.fc44.x86_64.rpm',
-                'vectorwarp-0.1.1-1.fc44.aarch64.rpm'):
-            self.assertIn(asset, readme)
+        self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
+        self.assertNotRegex(readme, r'/releases/download/v[0-9]')
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
@@ -274,6 +268,12 @@ class HomepageTests(unittest.TestCase):
                         'sudo systemctl enable --now vectorwarp-api.service'):
             self.assertIn(command, guide)
             self.assertIn(command, page)
+
+    def test_install_docs_use_canonical_page_not_hardcoded_release_assets(self):
+        for document in ('README.md', 'docs/INSTALL.md'):
+            text = (ROOT / document).read_text()
+            self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', text)
+            self.assertNotRegex(text, r'https://github\.com/mickeyslaven/blah2-VectorWarp/releases/download/v')
 
     def test_future_release_homepage_has_only_its_own_asset_urls(self):
         manifest = self.release_manifest()

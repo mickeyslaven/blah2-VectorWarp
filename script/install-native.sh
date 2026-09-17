@@ -166,7 +166,8 @@ if $WITH_SYSTEMD; then
   for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
     [[ -f $ARTIFACT/systemd/$file ]] || die "systemd artifact is incomplete: $file"
   done
-  [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js ]] ||
+  [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
+     -x $ARTIFACT/libexec/vectorwarp-activate-web ]] ||
     die 'restart helpers are missing'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     [[ -f $ARTIFACT/libexec/vectorwarp-receiver-apt.py ]] || die 'receiver package adapter is missing'
@@ -277,6 +278,7 @@ if $WITH_SYSTEMD; then
   run install -d -m 0755 "$target_prefix/libexec"
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
+  run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
   if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
     run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
@@ -313,8 +315,9 @@ if $WITH_SYSTEMD; then
     if [[ ! -e $management_policy_dir/receivers.json ]]; then
       run install -m 0644 "$temporary/receivers.json" "$management_policy_dir/receivers.json"
     fi
-    # Socket activation enables read-only discovery. Every mutation still needs
-    # an installed reviewed policy plus an exact one-use local administrator grant.
+    # Socket activation enables read-only discovery. Receiver software actions
+    # need reviewed policy and a one-use local grant; the fixed restart request
+    # is separately limited to the API account by peer credentials.
     run install -d -m 0755 "$unit_dir/vectorwarp-api.service.wants"
     run ln -sfn ../vectorwarp-receiver.socket "$unit_dir/vectorwarp-api.service.wants/vectorwarp-receiver.socket"
   fi
@@ -322,6 +325,10 @@ if $WITH_SYSTEMD; then
   if [[ -z $DESTDIR ]]; then
     run systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf
     run systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
+    if [[ -x $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
+      run /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-gpu-setup" --configure-service-access ||
+        say 'GPU access needs local review; run vectorwarp-gpu-setup --enable-service-access'
+    fi
   fi
 fi
 

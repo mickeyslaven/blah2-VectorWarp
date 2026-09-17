@@ -227,21 +227,33 @@ function launchRestart() {
   const [command, ...args] = restartCommand;
   restartState = {...restartState, state: 'running', startedAt: Date.now(),
     timestampConnections};
-  const child = spawn(command, args, {detached: true, stdio: 'ignore'});
+  const child = spawn(command, args, {detached: true, stdio: ['ignore', 'ignore', 'pipe']});
+  let settled = false;
+  let diagnostic = '';
+  child.stderr.on('data', chunk => {
+    if (diagnostic.length < 512)
+      diagnostic += chunk.toString('utf8').replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 512 - diagnostic.length);
+  });
   const timeout = setTimeout(() => {
+    if (settled) return;
+    settled = true;
     restartState = {...restartState, state: 'failed',
-      message: 'The restart command did not finish within 30 seconds. Check the service manager before retrying.'};
+      message: 'Restart request outcome is unknown after 30 seconds. Check the service manager before retrying.'};
   }, 30000);
   timeout.unref();
   child.on('error', error => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
     restartState = {...restartState, state: 'failed', message: `Restart could not start: ${error.message}`};
   });
-  child.on('exit', (code, signal) => {
+  child.on('close', (code, signal) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
     restartState = {...restartState, state: code === 0 ? 'command-complete' : 'failed',
-      message: code === 0 ? 'Restart command finished. Waiting for a new radar connection.' :
-        `Restart command failed (${signal || `exit ${code}`}). Check the service manager.`};
+      message: code === 0 ? 'Restart request accepted. Waiting for a new radar connection.' :
+        `Restart request failed (${signal || `exit ${code}`}). ${diagnostic.trim() || 'Check the local service manager.'}`};
   });
   child.unref();
 }

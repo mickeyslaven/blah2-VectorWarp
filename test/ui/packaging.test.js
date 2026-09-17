@@ -265,8 +265,8 @@ const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Trixie', '64-bit']);
 assert.match(piRow.package,
-  /\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/download\/v0\.1\.1\/vectorwarp_0\.1\.1-1_debian13_arm64\.deb\)$/,
-  'Raspberry Pi OS must link to the Debian 13 ARM64 release asset');
+  /\[Debian 13 ARM64 DEB\]\(https:\/\/mickeyslaven\.github\.io\/blah2-VectorWarp\/#install\)$/,
+  'Raspberry Pi OS must identify Debian 13 ARM64 and link to the current package page');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
 })), readmeRows);
@@ -312,11 +312,15 @@ assert.match(buildScript, /REAL_IQ_BENCHMARK_PLAN\.md/);
 
 assert.match(debPostinst, /systemd-sysusers/);
 assert.match(debPostinst, /systemd-tmpfiles/);
-assert.match(debPostinst, /systemctl enable --now vectorwarp-api\.service/);
+assert.match(debPostinst, /\/opt\/vectorwarp\/libexec\/vectorwarp-activate-web/);
+const webActivation = read('script/vectorwarp-activate-web');
+assert.match(webActivation, /is-active --quiet vectorwarp-api\.service/);
+assert.match(webActivation, /is-active --quiet vectorwarp-receiver\.service/);
+assert.match(webActivation, /systemctl enable --now vectorwarp-api\.service/);
 assert.doesNotMatch(debPostinst, /systemctl[^\n]*vectorwarp-processor\.service/);
 assert.match(rpmSpec, /%config\(noreplace\).*\/etc\/vectorwarp\/config\.yml/);
 const rpmPost = rpmSpec.match(/%post\n([\s\S]*?)\n%postun/)[1];
-assert.match(rpmPost, /systemctl enable --now vectorwarp-api\.service/);
+assert.match(rpmPost, /\/opt\/vectorwarp\/libexec\/vectorwarp-activate-web/);
 assert.doesNotMatch(rpmPost, /systemctl[^\n]*vectorwarp-processor\.service/);
 
 assert.match(releaseInstaller, /EXPECTED_FINGERPRINT=@SIGNING_FINGERPRINT@/);

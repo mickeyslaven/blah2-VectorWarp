@@ -59,6 +59,21 @@ class SetupTests(unittest.TestCase):
                 setattr(info, attribute, previous)
             directory_info.st_mode = gpu.stat.S_IFLNK | 0o777
             self.assertEqual(gpu.render_access()['nodes'], [])
+            directory_info.st_mode = gpu.stat.S_IFDIR | 0o777
+            self.assertEqual(gpu.render_access()['nodes'], [])
+            directory_info.st_mode = gpu.stat.S_IFDIR | 0o755
+            directory_info.st_uid = 1000
+            self.assertEqual(gpu.render_access()['nodes'], [])
+            directory_info.st_uid = 0
+            info.st_mode = gpu.stat.S_IFCHR | 0o600
+            self.assertFalse(gpu.render_access()['nodes'][0]['groupAllowsAccess'])
+            info.st_mode = gpu.stat.S_IFCHR | 0o660
+            for minor, expected in ((127, False), (128, True), (255, True), (256, False)):
+                info.st_rdev = gpu.os.makedev(226, minor)
+                self.assertEqual(bool(gpu.render_access()['nodes']), expected)
+            info.st_rdev = gpu.os.makedev(226, 128)
+            with mock.patch.object(gpu.os, 'getgrouplist', return_value=[200, 44]):
+                self.assertEqual(gpu.render_access()['state'], 'available')
 
     def test_pi_detection_is_device_tree_not_cpu(self):
         for model, expected in [('Raspberry Pi 4 Model B\0', True), ('Generic ARM64 board', False), ('', False)]:
@@ -66,11 +81,45 @@ class SetupTests(unittest.TestCase):
                  mock.patch.object(gpu.os, 'uname', return_value=types.SimpleNamespace(machine='aarch64')):
                 self.assertEqual(gpu.host_info()['pi'], expected)
 
-    def test_non_pi_never_probes_driver_or_package(self):
+    def test_non_pi_checks_service_access_not_api_driver_or_package(self):
         with mock.patch.object(gpu, 'host_info', return_value={**HOST, 'pi': False}), \
-             mock.patch.object(gpu, 'installed_version') as package, mock.patch.object(gpu, 'enumerate_driver') as driver:
-            self.assertEqual(gpu.status()['state'], 'not-applicable')
+             mock.patch.object(gpu, 'installed_version') as package, mock.patch.object(gpu, 'enumerate_driver') as driver, \
+             mock.patch.object(gpu, 'service_render_access', return_value=ACCESS):
+            self.assertEqual(gpu.status()['state'], 'access-configured')
             package.assert_not_called(); driver.assert_not_called()
+        for distribution in ('ubuntu', 'debian', 'fedora'):
+            result = gpu.classify({**HOST, 'pi': False, 'distribution': distribution}, None, {},
+                                 {'state': 'group-access-needed', 'nodes': []})
+            self.assertEqual(result['state'], 'service-access-needed')
+            self.assertEqual(result['qualification'], 'not-run')
+        unavailable = gpu.classify({**HOST, 'pi': False}, None, {}, {'state': 'unavailable', 'nodes': []})
+        self.assertEqual(unavailable['state'], 'driver-unverified')
+        self.assertIn('Activate the updated receiver helper', unavailable['message'])
+
+    def test_private_devices_api_uses_readonly_broker_metadata(self):
+        receipt = {'ok': True, 'serviceAccess': {'state': 'group-access-needed', 'nodes': []}}
+        connection = mock.MagicMock()
+        connection.__enter__.return_value = connection
+        connection.makefile.return_value.readline.return_value = (json.dumps(receipt) + '\n').encode()
+        with mock.patch.object(gpu.pwd, 'getpwuid', return_value=types.SimpleNamespace(pw_name='vectorwarp-api')), \
+             mock.patch.object(gpu.socket, 'socket', return_value=connection), \
+             mock.patch.object(gpu, 'render_access') as local:
+            self.assertEqual(gpu.service_render_access(), receipt['serviceAccess'])
+            connection.sendall.assert_called_once_with(b'{"verb":"gpu-access"}\n')
+            connection.connect.assert_called_once_with('/run/vectorwarp-receiver/management.sock')
+            connection.settimeout.assert_called_once_with(2)
+            local.assert_not_called()
+            for response in (b'{}\n', b'[]\n', b'bad\n', b'x' * 16385, b'{"ok":false}\n'):
+                connection.makefile.return_value.readline.return_value = response
+                self.assertEqual(gpu.service_render_access()['state'], 'unavailable')
+            connection.connect.side_effect = OSError('broker stopped')
+            self.assertEqual(gpu.service_render_access()['state'], 'unavailable')
+
+    def test_local_status_does_not_need_root_broker(self):
+        with mock.patch.object(gpu.pwd, 'getpwuid', return_value=types.SimpleNamespace(pw_name='regular-user')), \
+             mock.patch.object(gpu, 'render_access', return_value=ACCESS), mock.patch.object(gpu.socket, 'socket') as connect:
+            self.assertEqual(gpu.service_render_access(), ACCESS)
+            connect.assert_not_called()
 
     def test_missing_and_inaccessible_are_not_qualification(self):
         missing = {'available': False, 'devices': []}
@@ -114,7 +163,7 @@ class SetupTests(unittest.TestCase):
             with self.assertRaises(gpu.Refused): gpu.interactive_guard()
 
     def test_group_access_is_explicit_append_only(self):
-        original = {'state': 'group-access-needed', 'nodes': [{'path': '/dev/dri/renderD128', 'group': 'render', 'accessibleByService': False}]}
+        original = {'state': 'group-access-needed', 'nodes': [{'path': '/dev/dri/renderD128', 'group': 'render', 'accessibleByService': False, 'groupAllowsAccess': True}]}
         with mock.patch.object(gpu, 'interactive_guard'), mock.patch('builtins.input', return_value='ENABLE GPU ACCESS'), \
              mock.patch.object(gpu, 'render_access', side_effect=[original, original, ACCESS]), \
              mock.patch.object(gpu.subprocess, 'run') as run:
@@ -127,6 +176,42 @@ class SetupTests(unittest.TestCase):
                  mock.patch.object(gpu.subprocess, 'run') as run:
                 with self.assertRaises(gpu.Refused): gpu.enable_access()
                 run.assert_not_called()
+
+    def test_package_access_is_root_only_bounded_and_idempotent(self):
+        nodes = [{'path': '/dev/dri/renderD128', 'group': 'render', 'accessibleByService': False, 'groupAllowsAccess': True},
+                 {'path': '/dev/dri/renderD129', 'group': 'video', 'accessibleByService': False, 'groupAllowsAccess': True}]
+        access = {'state': 'group-access-needed', 'nodes': nodes}
+        with mock.patch.object(gpu.os, 'geteuid', return_value=0), \
+             mock.patch.object(gpu, 'render_access', side_effect=[access, access, ACCESS]), \
+             mock.patch('builtins.input') as prompt, mock.patch.object(gpu.subprocess, 'run') as run:
+            gpu.enable_access(automatic=True)
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ['/usr/sbin/usermod', '--append', '--groups', 'render,video', 'vectorwarp'])
+            prompt.assert_not_called()
+        with mock.patch.object(gpu.os, 'geteuid', return_value=1000), mock.patch.object(gpu.subprocess, 'run') as run:
+            with self.assertRaises(gpu.Refused): gpu.enable_access(automatic=True)
+            run.assert_not_called()
+        for state in ('available', 'render-node-missing', 'service-user-missing'):
+            with mock.patch.object(gpu.os, 'geteuid', return_value=0), \
+                 mock.patch.object(gpu, 'render_access', return_value={'state': state, 'nodes': []}), \
+                 mock.patch.object(gpu.subprocess, 'run') as run:
+                gpu.enable_access(automatic=True)
+                run.assert_not_called()
+        for change in ({'group': 'root'}, {'group': 'wheel'}, {'groupAllowsAccess': False}):
+            unsafe = {'state': 'group-access-needed', 'nodes': [{**nodes[0], **change}]}
+            with mock.patch.object(gpu.os, 'geteuid', return_value=0), \
+                 mock.patch.object(gpu, 'render_access', return_value=unsafe), \
+                 mock.patch.object(gpu.subprocess, 'run') as run:
+                with self.assertRaises(gpu.Refused): gpu.enable_access(automatic=True)
+                run.assert_not_called()
+
+    def test_non_pi_access_interactive_but_driver_install_stays_pi_only(self):
+        with mock.patch.object(gpu.os, 'geteuid', return_value=0), \
+             mock.patch.object(gpu.sys.stdin, 'isatty', return_value=True), \
+             mock.patch.object(gpu.sys.stdout, 'isatty', return_value=True), \
+             mock.patch.object(gpu, 'host_info', return_value={**HOST, 'pi': False, 'architecture': 'x86_64'}):
+            self.assertFalse(gpu.interactive_guard(pi_only=False)['pi'])
+            with self.assertRaises(gpu.Refused): gpu.interactive_guard()
 
     def test_install_delegates_native_confirmation_without_injection(self):
         command = ['/usr/bin/apt-get', '--no-remove', 'install', 'mesa-vulkan-drivers=26.1.8-1']
@@ -147,6 +232,10 @@ class SetupTests(unittest.TestCase):
         for filename in ['packaging/deb/postinst', 'packaging/rpm/vectorwarp.spec.in']:
             text = (ROOT / filename).read_text()
             self.assertNotIn('--install-driver', text, 'Never invoke another package manager while its install lock is held')
+            self.assertIn('--configure-service-access', text)
+        self.assertIn('--configure-service-access', install)
+        self.assertIn('Requires:       shadow-utils', (ROOT / 'packaging/rpm/vectorwarp.spec.in').read_text())
+        self.assertIn('python3-apt, passwd,', (ROOT / 'script/package-native.sh').read_text())
 
 
 class AptPlanTests(unittest.TestCase):

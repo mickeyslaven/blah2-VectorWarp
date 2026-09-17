@@ -16,7 +16,7 @@ Environment="BLAH2_SDRPLAY_LOCAL_BUILD=@LOCAL_BUILD_ENABLED@"
 Environment="BLAH2_LOCAL_BUILD_RECEIVER_TYPES=@LOCAL_BUILD_RECEIVER_TYPES@"
 Environment="BLAH2_SDRPLAY_BUILD_HELPER=@PREFIX@/libexec/vectorwarp-build-sdrplay"
 Environment="BLAH2_RECEIVER_HELPER=@PREFIX@/libexec/vectorwarp-receiver-helper"
-Environment="BLAH2_CONFIG_RESTART_COMMAND=[\"/usr/bin/sudo\",\"-n\",\"/usr/bin/systemctl\",\"--no-block\",\"start\",\"vectorwarp-restart.service\"]"
+Environment="BLAH2_CONFIG_RESTART_COMMAND=[\"@PREFIX@/libexec/vectorwarp-receiver-helper\",\"request-restart\"]"
 ExecStart=/usr/bin/node @PREFIX@/current/api/server.js @SYSCONFDIR@/config.yml
 Restart=on-failure
 RestartSec=3s

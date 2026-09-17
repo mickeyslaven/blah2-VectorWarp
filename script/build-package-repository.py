@@ -87,8 +87,12 @@ sudo bash vectorwarp-install.sh --start-web</code></pre>
 Save &amp; Restart. If an earlier installation completed but the page does not
 load, run <code>sudo systemctl enable --now vectorwarp-api.service</code> and
 inspect it with <code>sudo systemctl status vectorwarp-api.service --no-pager</code>.
-Update later with <code>sudo dnf upgrade vectorwarp</code>; an update repairs
-the web API automatically and never starts radar processing.</p>
+Update later with <code>sudo dnf upgrade vectorwarp</code>. A package update
+does not restart a running API or receiver helper. After receiver-management
+actions finish and pending authorizations expire, an administrator may run
+<code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
+to activate updated code. Do not run it mid-transaction; it does not restart
+<code>vectorwarp-processor.service</code> or radar processing.</p>
 <h3>Ubuntu, Debian and other supported systems</h3>
 <p>Add the signed APT repository, install VectorWarp, and start only the browser interface:</p>
 <p>If curl or GnuPG is missing, install <code>curl</code> and
@@ -102,8 +106,12 @@ Open <code>http://localhost:3000</code> on the installed machine, or
 <code>http://&lt;server-IP&gt;:3000</code> from another device on your trusted network.
 On a fresh install, radar processing stays stopped until you configure it and
 choose Save &amp; Restart. Update later with
-<code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>;
-an update repairs the web API automatically and never starts radar processing.</p>
+<code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>.
+A package update does not restart a running API or receiver helper.
+After receiver-management actions finish and pending authorizations expire, an
+administrator may run <code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
+to activate updated code. Do not run it mid-transaction; it does not restart
+<code>vectorwarp-processor.service</code> or radar processing.</p>
 <p>Each package includes Kraken, USRP and dual HackRF adapters, plus the source
 kit to build RSPduo support from Settings after installing SDRplay's API. Receiver
 hardware and external software are separate; RSPduo needs the locally installed
@@ -111,14 +119,18 @@ SDRplay API. Follow <a href="https://github.com/mickeyslaven/blah2-VectorWarp/bl
 after installing.</p>
 <h3>Direct downloads</h3>
 <p>Prefer the installer above for automatic updates. For a manual installation,
-choose the package matching your OS version and architecture.</p>
+choose the package matching your OS version and architecture. Install it with
+<code>sudo apt install ./matching.deb</code> on Ubuntu, Debian, or DragonOS, or
+<code>sudo dnf install ./matching.rpm</code> on Fedora, so dependencies resolve.
+Do not use <code>dpkg</code> alone or manually mix release libraries.</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Package downloads by operating system and architecture">
 <table><caption>VectorWarp {version} · one package per OS and architecture</caption>
 <thead><tr><th scope="col">Operating system</th><th scope="col">x86-64<br>(amd64 / x86_64)</th><th scope="col">ARM64<br>(arm64 / aarch64)</th></tr></thead>
 <tbody>{table_rows}</tbody></table></div>
 <p class="scope">x86-64 covers Intel and AMD PCs. DragonOS uses its Ubuntu base;
-check <code>/etc/os-release</code>. Raspberry Pi OS Trixie uses Debian 13 ARM64.
-No 32-bit package is provided. For other systems, use the
+check <code>/etc/os-release</code>. FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,
+not Ubuntu 26.04. Raspberry Pi OS Trixie uses Debian 13 ARM64. No 32-bit package
+is provided. For other systems, use the
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
 <details><summary>Verify a direct download</summary>
 <p>Save your package, <a href="{base}/SHA256SUMS">checksums</a>,

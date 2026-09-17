@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+# Package activation must not kill an in-flight receiver-management action.
+# An older running broker cannot report whether an authorized plan is active,
+# so leave both running processes untouched until an administrator coordinates
+# the refresh. The package never starts radar processing.
+if systemctl is-active --quiet vectorwarp-api.service ||
+   systemctl is-active --quiet vectorwarp-receiver.service; then
+  systemctl enable vectorwarp-api.service
+  printf '%s\n' \
+    'VectorWarp files installed; running API/receiver broker were not interrupted.' \
+    'Do not refresh while a receiver-management action is running or an authorized plan is pending.' \
+    'After actions finish and pending plans expire, an administrator may activate the new code with:' \
+    '  systemctl restart vectorwarp-receiver.service && systemctl restart vectorwarp-api.service' \
+    'Radar processing is not restarted by package activation.' >&2
+  exit 0
+fi
+
+systemctl enable --now vectorwarp-api.service

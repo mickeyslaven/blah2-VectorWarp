@@ -127,9 +127,13 @@ sudo bash vectorwarp-install.sh --start-web
 not enable radar processing. Open `http://localhost:3000/`, then choose your
 receiver in Settings. If an earlier install completed but the page does not
 open, run `sudo systemctl enable --now vectorwarp-api.service` and then
-`sudo systemctl status vectorwarp-api.service --no-pager`. Package updates also
-repair this web API service automatically; they never start radar processing. Update
-with `sudo apt update && sudo apt install --only-upgrade vectorwarp` or
+`sudo systemctl status vectorwarp-api.service --no-pager`. Updates do not
+restart a running API or receiver helper. After receiver-management actions
+finish and pending authorizations expire, activate updated code manually with
+`sudo systemctl restart vectorwarp-receiver.service && sudo systemctl restart
+vectorwarp-api.service`. Do not run that command mid-transaction; it does not
+restart `vectorwarp-processor.service` or radar processing. Update with
+`sudo apt update && sudo apt install --only-upgrade vectorwarp` or
 `sudo dnf upgrade vectorwarp`.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
@@ -144,18 +148,18 @@ the PR remains separate.
 ## OS support
 
 The repository installer chooses the matching signed APT or DNF repository.
-Direct packages are also available below. Source installation remains available
-for development or unsupported systems.
+For a direct download, use the current, auto-generated
+[installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
+which lists only packages in the selected release. Source installation remains
+available for development or unsupported systems.
 
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb) |
-| Ubuntu | 24.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_arm64.deb) |
-| Ubuntu | 26.04 | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_arm64.deb) |
-| Debian | 13 (Trixie) | x86-64, ARM64 | [amd64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_amd64.deb), [arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
-| Fedora | 44 | x86-64, ARM64 | [x86_64 RPM](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.x86_64.rpm), [aarch64 RPM](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.aarch64.rpm) |
-| DragonOS | Ubuntu 22.04, 24.04, or 26.04 base | x86-64, ARM64 | Use the matching Ubuntu link selected from OS metadata |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
+| Ubuntu | 22.04, 24.04, 26.04 | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 

@@ -53,7 +53,7 @@ sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access
 
 This separately confirmed action appends only the actual DRM render node's
 existing `render` or `video` group to the existing `vectorwarp` account. It
-preserves other groups, refuses unexpected or mixed owner groups, and never
+preserves other groups, refuses unexpected owner groups, and never
 creates groups, changes device permissions, follows a render-node symlink, or
 starts/restarts services. Missing nodes remain a diagnostic—not a guessed
 static service group. An already-running process needs an explicit restart

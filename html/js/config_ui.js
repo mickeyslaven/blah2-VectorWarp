@@ -1177,7 +1177,9 @@ async function readRadarState() {
 
 async function monitorRadarRestart(previousState) {
   const started = Date.now();
-  const timeout = 45000;
+  // The installed restart oneshot may run for 90 seconds; keep polling long
+  // enough to receive its final receipt and a newly produced radar frame.
+  const timeout = 130000;
   let upstreamCheckedAt = 0;
   while (Date.now() - started < timeout) {
     let state;
@@ -1210,7 +1212,7 @@ async function monitorRadarRestart(previousState) {
     if (state) setRestartProgress(50, state.restart?.message || 'Waiting for a new radar connection…');
     await wait(600);
   }
-  throw new Error('Settings were saved, but live radar data did not resume within 45 seconds. Correct the setting and use Retry restart, or check the VectorWarp service error.');
+  throw new Error('Settings were saved, but restart and fresh radar data could not be confirmed within 130 seconds. Check VectorWarp service status before retrying.');
 }
 
 function upstreamRestartError(status) {
@@ -1773,11 +1775,11 @@ async function refreshConfigDiagnostics() {
     if (acceleration) {
       acceleration.textContent = `Delay–Doppler: ${accelerationSummary(status.acceleration, status.radar)}. ` +
         `Clutter: ${accelerationSummary(status.clutterAcceleration, status.radar)}.`;
-      if (status.gpuSetup?.pi) {
+      if (status.gpuSetup?.pi || ['group-access-needed', 'unavailable'].includes(status.gpuSetup?.serviceAccess?.state)) {
         const setup = document.createElement('div');
-        setup.textContent = `Pi GPU setup: ${status.gpuSetup.message}`;
+        setup.textContent = `GPU setup: ${status.gpuSetup.message}`;
         acceleration.append(setup);
-        if (!['qualified', 'partially-qualified'].includes(status.gpuSetup.state)) {
+        if (status.gpuSetup.pi && !['qualified', 'partially-qualified'].includes(status.gpuSetup.state)) {
           const command = document.createElement('code');
           command.textContent = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver';
           setup.append(document.createTextNode(' Local administrator command: '), command);

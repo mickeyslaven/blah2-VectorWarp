@@ -10,6 +10,7 @@ Source1:        finalize-rspduo-kit.py
 Requires:       systemd
 Requires:       sudo
 Requires:       python3
+Requires:       shadow-utils
 Requires:       gcc-c++
 Requires:       binutils
 %if 0%{?fedora} == 44
@@ -53,13 +54,15 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+# Only existing render/video groups owning trusted DRM nodes; no driver or service changes.
+/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-gpu-setup --configure-service-access ||
+  printf '%s\n' 'GPU access needs local review: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access' >&2
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null || true
-  # Always repair the browser interface on install or upgrade. This is the
-  # only VectorWarp unit package installation manages: radar processing stays
-  # opt-in until the operator applies receiver settings in the UI.
-  systemctl enable --now vectorwarp-api.service >/dev/null 2>&1 ||
-    printf '%s\n' 'VectorWarp installed, but its web API did not start; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+  # A running old broker may own an authorized transaction. Defer its and the
+  # API's code refresh to an administrator; start only when both are inactive.
+  /opt/vectorwarp/libexec/vectorwarp-activate-web ||
+    printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
 fi
 # Initial install only: the optional fixed helper may start a preinstalled
 # vendor SDRplay service after its own manifest/policy checks. It never
