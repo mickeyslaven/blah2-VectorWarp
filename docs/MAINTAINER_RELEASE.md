@@ -106,13 +106,15 @@ jobs may upload the same checked package inputs for the separate signing flow.
    **pending first release** wording. Keep source instructions and record which
    platforms were tested; a successful package build is not a hardware test.
    Put the short Fedora path first: download and inspect the installer, run it
-   with `--repo-only`, then `sudo dnf install vectorwarp` and
-   `vectorwarp`. The repository-only
+   with `--repo-only`, then `sudo dnf install vectorwarp` and `vectorwarp`.
+   The repository-only
    option verifies the pinned key and adds repository configuration without
-   installing packages or starting services. Package installation starts the web
-   interface; use `vectorwarp` to open it. Give APT users the same option
-   followed by `sudo apt update && sudo apt install vectorwarp`, or use the
-   automatic installer with `--start-web`. Updates use normal DNF/APT commands.
+   installing packages or starting services. A fresh package installation
+   activates only the web interface; `vectorwarp` opens it. Give APT users the same option
+   followed by `sudo apt update` and `sudo apt install vectorwarp`, or use the
+   automatic installer with `--start-web`. For later updates, leave repository
+   configuration in place: use `sudo dnf upgrade --refresh vectorwarp` on Fedora,
+   or `sudo apt update` then `sudo apt install vectorwarp` on APT.
 
 The Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public

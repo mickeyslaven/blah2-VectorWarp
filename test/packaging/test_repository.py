@@ -90,7 +90,9 @@ class HomepageTests(unittest.TestCase):
     def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
         page = repository.repository_homepage(self.release_manifest())
         for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
-                     'sudo apt install --only-upgrade vectorwarp', 'sudo dnf upgrade',
+                     'sudo bash vectorwarp-install.sh --repo-only',
+                     'sudo apt update &amp;&amp;\nsudo apt install vectorwarp', 'sudo dnf install vectorwarp',
+                     'sudo dnf upgrade --refresh vectorwarp',
                      'sudo apt install ./matching.deb', 'sudo dnf install ./matching.rpm',
                      '<code>vectorwarp</code>', '<code>vectorwarp start</code>',
                      '<code>vectorwarp stop</code>', '<code>vectorwarp status</code>',
@@ -104,10 +106,16 @@ class HomepageTests(unittest.TestCase):
                      'checksum alone does not authenticate', 'gpgv --keyring',
                      'sha256sum --check --strict --ignore-missing'):
             self.assertIn(text, page)
+        self.assertNotIn('--only-upgrade', page)
         for code in re.findall(r'<pre><code>(.*?)</code></pre>', page, re.DOTALL):
+            if 'sudo apt' in code:
+                self.assertNotIn('sudo dnf', code, 'Do not mix OS commands in one copyable block')
             result = subprocess.run(['bash', '-n'], input=unescape(code), text=True,
                                     capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
+        for heading in ('1. Install for your OS', '2. Configure and start radar',
+                        '3. Start, stop and check services', '4. Update'):
+            self.assertIn(f'<h3>{heading}</h3>', page)
 
     def test_install_guidance_tracks_verified_release_version(self):
         manifest = self.release_manifest()
@@ -131,6 +139,8 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('Successful upgrades restart previously running VectorWarp services', new_page)
         self.assertNotIn('A package update does not restart a running API', new_page)
         self.assertNotIn('sudo systemctl restart vectorwarp-receiver.service', new_page)
+        self.assertNotIn('--only-upgrade', old_page)
+        self.assertNotIn('--only-upgrade', new_page)
 
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
@@ -248,7 +258,7 @@ class HomepageTests(unittest.TestCase):
         # actual upstream comparison, and release boundaries under test.
         readme = ' '.join((ROOT / 'README.md').read_text().split())
         self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
-        self.assertIn('sudo bash vectorwarp-install.sh --start-web', readme)
+        self.assertIn('sudo bash vectorwarp-install.sh --repo-only', readme)
         self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
         self.assertNotRegex(readme, r'/releases/download/v[0-9]')
         self.assertIn('replaying the same recorded signal at its original rate', readme)
@@ -288,7 +298,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
-        for command in ('sudo bash vectorwarp-install.sh --start-web',
+        for command in ('sudo bash vectorwarp-install.sh --repo-only',
                         'vectorwarp start', 'vectorwarp stop', 'vectorwarp status'):
             self.assertIn(command, guide)
             self.assertIn(command, page)

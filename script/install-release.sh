@@ -28,8 +28,10 @@ Add the signed VectorWarp package repository and install VectorWarp.
   --dry-run               Print package/repository operations; change nothing
   -h, --help              Show this help
 
-The radar processor is never enabled or started by this script. Review
-/etc/vectorwarp/config.yml before starting vectorwarp-processor.service.
+On a fresh install, radar stays stopped. On upgrade, package hooks may restore
+previously running services. Run vectorwarp, configure the receiver in Settings,
+then choose Save & Restart to start radar. Later, vectorwarp start uses saved
+settings. Run vectorwarp help for all commands (0.1.7+).
 EOF
 }
 
@@ -327,8 +329,9 @@ fi
 if $START_WEB; then
   run systemctl enable --now vectorwarp-api.service ||
     die 'package installation succeeded but enabling or starting the web API failed; installer did not start radar; existing service state was not verified'
-  say 'web API enabled; a previously running API or receiver broker still needs the coordinated refresh printed by the package hook after receiver actions finish; installer did not start radar; existing radar service state was not verified'
+  say 'web API enabled; configure the receiver in Settings before starting radar'
 else
-  say 'package installed; installer did not start radar; existing service state was not verified'
+  say 'package installed; configure the receiver in Settings before starting radar'
 fi
-say 'review /etc/vectorwarp/config.yml before explicitly starting radar processing'
+say 'installer did not start radar directly; package upgrade hooks may restore previously running services'
+say 'VectorWarp 0.1.7+: run vectorwarp to open Settings; vectorwarp help lists all commands'

@@ -94,54 +94,78 @@ miss deadlines; the full report includes every tested configuration.
 
 ## Install on Linux
 
-Start with [downloads and APT/DNF setup](https://mickeyslaven.github.io/blah2-VectorWarp/#install), then follow [receiver setup](docs/SETUP.md). The [full installation guide](docs/INSTALL.md) also covers source builds.
+Start with [downloads and APT/DNF setup](https://mickeyslaven.github.io/blah2-VectorWarp/#install). The [full installation guide](docs/INSTALL.md) also covers source builds.
 
-Packages are available for the systems below: one package per OS and
-architecture, with Kraken, USRP and HackRF adapters plus locally buildable
-RSPduo support. Start with the repository installer, inspect it, then install
-with your system package manager:
+### 1. Install VectorWarp
 
-If curl or GnuPG is missing, install `curl` and `gnupg` on Ubuntu/Debian or
-`curl` and `gnupg2` on Fedora from the normal distribution repository first.
-
-```bash
-curl --fail --location --proto '=https' --tlsv1.2 \
-  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
-less vectorwarp-install.sh
-```
-
-On Ubuntu or Debian, add the signed repository, install the package, and start
-only the browser interface in one command:
+There is one package per OS and architecture, with Kraken, USRP and HackRF
+adapters plus locally buildable RSPduo support. Packages cover the listed
+64-bit Ubuntu, Debian and Fedora releases. Choose
+one block for your OS. Each downloads over HTTPS, lets you inspect the script
+before privilege is requested, configures the signed repository, installs the
+package, and opens the web interface. If needed first, install `curl` and
+`gnupg` (Ubuntu/Debian) or `gnupg2` (Fedora) from your distribution.
+When the script opens in `less`, press **q** after reviewing it to continue.
 
 ```bash
-sudo bash vectorwarp-install.sh --start-web
+# Ubuntu or Debian
+curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
+  less vectorwarp-install.sh && \
+  sudo bash vectorwarp-install.sh --repo-only && \
+  sudo apt update && sudo apt install vectorwarp && \
+  vectorwarp
 ```
-
-On Fedora:
 
 ```bash
-sudo bash vectorwarp-install.sh --start-web
+# Fedora
+curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
+  less vectorwarp-install.sh && \
+  sudo bash vectorwarp-install.sh --repo-only && \
+  sudo dnf install vectorwarp && \
+  vectorwarp
 ```
 
-`--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. With version 0.1.7 or newer, run `vectorwarp`
-to open the web interface (or print its address over SSH), then choose your
-receiver in Settings. `vectorwarp start` brings up the VectorWarp receiver
-helper, web API and checked radar processor; `vectorwarp stop` safely stops
-those VectorWarp services, including the web page. `vectorwarp restart` stops
-and starts them in order. Use `vectorwarp status` and `vectorwarp logs` to
-check the result, or `vectorwarp help` for all commands. See the
-[install guide](docs/INSTALL.md#install-a-package). Service changes may ask
-for your administrator password. Neither these commands nor package upgrades
-stop shared Kraken Suite or SDRplay services.
+`--repo-only` verifies the pinned key and adds repository configuration without
+installing a package or starting services. `--start-web` remains an optional
+one-step installer route; it enables and starts only the web API directly.
+On upgrades, package hooks may restore previously running radar.
 
-Update with
-`sudo apt update && sudo apt install --only-upgrade vectorwarp` or
-`sudo dnf upgrade vectorwarp`. Upgrades to version 0.1.7 or newer restore only
-the VectorWarp services that were running; intentionally stopped radar stays
-stopped.
+### 2. Configure and start radar
+
+In **Settings**, select and configure the receiver, then choose **Save &
+Restart**. This saves the first configuration and starts radar; no separate
+`vectorwarp start` is needed. See [receiver setup](docs/SETUP.md) for receiver
+details.
+
+### 3. Use controls and help
+
+`vectorwarp` (or `vectorwarp open`) opens only the web interface.
+`vectorwarp start` starts the full VectorWarp stack; `vectorwarp stop` stops it,
+including the web page; and `vectorwarp restart` restarts it in order.
+Use `vectorwarp status`, `vectorwarp logs` and `vectorwarp version` to check it,
+or `vectorwarp help` for all commands. These commands and upgrades never stop shared Kraken Suite or SDRplay
+services.
+
+### 4. Update
+
+Keep the configured repository; do not rerun the installer. Choose one block:
+
+```bash
+# Ubuntu or Debian
+sudo apt update && sudo apt install vectorwarp
+```
+
+```bash
+# Fedora
+sudo dnf upgrade --refresh vectorwarp
+```
+
+Upgrades to version 0.1.7 or newer restore only the VectorWarp services that
+were running; intentionally stopped radar stays stopped.
 Finish receiver setup/build actions before updating. If the upgrade cannot
 stop a helper safely, it reports the problem before unpacking new files.
+
+## SDR support
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
 - **USRP (including B210) and dual HackRF:** receiver settings are passed to UHD or libhackrf when processing starts.
