@@ -29,6 +29,8 @@ container AppArmor/SELinux profile is disabled; it receives no host filesystem
 mounts, host namespaces or physical devices. VectorWarp's installed service
 accounts and systemd sandbox remain enabled and are checked by the tests. This
 is not a test of every host AppArmor/SELinux policy.
+The test runtime also supplies systemd's required core-dump hard limit and
+waits for its service bus before installing the package; host limits are not changed.
 
 To reproduce the package check on a disposable Linux test host with Podman,
 Node 24 and the checked-out source:

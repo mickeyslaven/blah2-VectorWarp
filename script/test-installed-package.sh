@@ -62,11 +62,24 @@ podman build --jobs=1 --memory=2g --memory-swap=2g --cpu-period=100000 --cpu-quo
 # No --privileged, host namespace, host filesystem mount, or device passthrough.
 container=$(podman run -d --name "$name" --systemd=always --cgroupns=private \
   --cap-add=SYS_ADMIN --security-opt=label=disable --security-opt=apparmor=unconfined \
+  --ulimit core=-1:-1 \
   --cpus="$test_cpus" "${cpu_set[@]}" --memory=2g --memory-swap=2g \
   --pids-limit=512 "$test_image")
 # Wait for boot mounts/tmpfiles before copying fixtures into /tmp. A container
 # can be running while systemd has not mounted its final temporary filesystem.
-boot_state=$(podman exec "$container" timeout 60 systemctl is-system-running --wait || true)
+# Newer systemd needs an unlimited core hard limit at PID 1 startup; hosted
+# runners may otherwise inherit zero. Set it through the container runtime,
+# without adding SYS_RESOURCE to VectorWarp or changing any host limit.
+# systemctl --wait cannot wait for a bus that does not exist yet. Poll through
+# that initial race as well as systemd's subsequent boot states.
+boot_state=
+boot_deadline=$((SECONDS + 60))
+while ((SECONDS < boot_deadline)); do
+  boot_state=$(podman exec "$container" timeout 5 systemctl is-system-running 2>/dev/null || true)
+  if [[ $boot_state == running || $boot_state == degraded ]]; then break; fi
+  [[ $(podman inspect --format '{{.State.Running}}' "$container") == true ]] || break
+  sleep .25
+done
 if [[ $boot_state != running && $boot_state != degraded ]]; then
   podman logs "$container" >&2 || true
   die "test systemd did not finish boot: $boot_state"
