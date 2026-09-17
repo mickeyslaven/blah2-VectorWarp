@@ -134,6 +134,8 @@ assert.match(packageSmoke, /dnf --assumeyes install/);
 assert.match(packageSmoke, /opt\/vectorwarp\/runtime\/node\/bin\/node/);
 assert.match(packageSmoke, /\/api\/system\/status/);
 assert.match(packageSmoke, /\/api\/config\/capabilities/);
+assert.match(packageSmoke, /test\/packaging\/check_api_address_families\.py/,
+  'Package smoke must exercise the API under the rendered address-family filter.');
 assert.match(packageSmoke, /runuser --user vectorwarp-api/);
 assert.match(packageSmoke, /--supp-group vectorwarp-config/);
 assert.match(packageSmoke, /exec sudo -- bash "\$0" --test-only --package "\$package_arg"/);

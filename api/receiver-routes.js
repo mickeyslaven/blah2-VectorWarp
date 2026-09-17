@@ -7,17 +7,25 @@ const {createReceiverHelperClient} = require('./receiver-helper-client');
 const {receiverSetupGuide} = require('./receiver-setup-guide');
 const INTENT = 'receiver-management-v1';
 
-function trustedOrigins(port, extra = []) {
-  const addresses = new Set(['127.0.0.1', '::1', 'localhost']);
-  for (const group of Object.values(os.networkInterfaces()))
-    for (const entry of group || []) if (!entry.address.includes('%')) addresses.add(entry.address);
-  const origins = [...addresses].map(address => new URL(`http://${address.includes(':') ? `[${address}]` : address}:${port}`).origin);
+function trustedOrigins(port, extra = [], networkInterfaces = os.networkInterfaces, warn = console.warn) {
+  const explicit = [];
   for (const value of extra) {
     const url = new URL(value);
     if (!['http:', 'https:'].includes(url.protocol) || value !== url.origin)
       throw new Error('BLAH2_RECEIVER_ORIGINS must contain exact HTTP(S) origins.');
-    origins.push(value);
+    explicit.push(value);
   }
+  const addresses = new Set(['127.0.0.1', '::1', 'localhost']);
+  let interfaces = {};
+  try {
+    interfaces = networkInterfaces();
+  } catch (error) {
+    warn(`Unable to enumerate local network interfaces; allowing loopback and explicit BLAH2_RECEIVER_ORIGINS only (${error.code || error.message}).`);
+  }
+  for (const group of Object.values(interfaces))
+    for (const entry of group || []) if (!entry.address.includes('%')) addresses.add(entry.address);
+  const origins = [...addresses].map(address => new URL(`http://${address.includes(':') ? `[${address}]` : address}:${port}`).origin);
+  origins.push(...explicit);
   return new Set(origins);
 }
 
@@ -39,7 +47,8 @@ function installReceiverRoutes(app, options) {
   const {readDocument, preview = false, compiledLiveTypes = null} = options;
   const createProbes = options.createProbes || createReceiverProbes;
   const createManager = options.createManager || createReceiverManager;
-  const allowed = options.allowedOrigins || trustedOrigins(options.port || 3000, options.extraOrigins || []);
+  const allowed = options.allowedOrigins || trustedOrigins(options.port || 3000, options.extraOrigins || [],
+    options.networkInterfaces || os.networkInterfaces, options.warn || console.warn);
   const helper = options.helper || createReceiverHelperClient();
   const now = options.now || Date.now;
   const helperExecutable = options.helperExecutable || '/opt/vectorwarp/libexec/vectorwarp-receiver-helper';

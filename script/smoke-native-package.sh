@@ -56,6 +56,12 @@ api=/opt/vectorwarp/current/api/server.js
 config=/etc/vectorwarp/config.yml
 [[ -x $node && -f $api && -f $config ]] || die 'installed package lacks its private runtime, API, or config'
 [[ $($node --version) == v24.21.0 ]] || die 'installed private Node runtime is not v24.21.0'
+# Run the actual private Node under the installed socket-family allowlist. A
+# direct API launch alone cannot catch a service-only interface-query failure.
+# This check applies only child-local seccomp; no system service is started.
+source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+python3 "$source_root/test/packaging/check_api_address_families.py" \
+  --unit /usr/lib/systemd/system/vectorwarp-api.service --node "$node"
 test -f /opt/vectorwarp/current/html/display/configuration/index.html
 test -f /opt/vectorwarp/current/html/js/common.js
 getent passwd vectorwarp-api >/dev/null || die 'package did not create vectorwarp-api'
