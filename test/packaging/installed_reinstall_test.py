@@ -38,16 +38,21 @@ def stack_state():
 
 
 def assert_web_only():
-    # API pulls in its receiver-management socket, but no receiver helper or
-    # radar processor may run until an explicit start. This is the package's
-    # intended default/open shape, not merely an API reachability check.
+    # API pulls in its receiver-management socket. A request for read-only
+    # discovery or GPU-access status may socket-activate the root broker; it has no capture
+    # path without a reviewed, authorized action. Radar remains strictly off
+    # until an explicit start: processor and restart must not be running.
     assert property_of('vectorwarp-api.service', 'ActiveState') == 'active'
     assert int(property_of('vectorwarp-api.service', 'MainPID')) > 0
     assert property_of('vectorwarp-receiver.socket', 'ActiveState') == 'active'
-    for unit in ('vectorwarp-processor.service', 'vectorwarp-restart.service',
-                 'vectorwarp-receiver.service'):
+    for unit in ('vectorwarp-processor.service', 'vectorwarp-restart.service'):
         assert property_of(unit, 'ActiveState') in ('inactive', 'failed'), unit
         assert property_of(unit, 'MainPID') == '0', unit
+    broker_state = property_of('vectorwarp-receiver.service', 'ActiveState')
+    broker_pid = property_of('vectorwarp-receiver.service', 'MainPID')
+    assert broker_state in ('inactive', 'failed', 'active'), broker_state
+    assert (int(broker_pid) > 0 if broker_state == 'active' else broker_pid == '0'), \
+        (broker_state, broker_pid)
 
 
 def assert_restarted(unit, previous_pid):
@@ -214,8 +219,9 @@ assert run('systemctl', 'is-enabled', 'vectorwarp-api.service') == 'enabled'
 assert_web_only()
 pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service')
 assert int(pid) > 0
-# Default and explicit open must both be real installed launcher paths. Neither
-# may start the receiver helper or processing; explicit open must reuse API.
+# Default and explicit open must both be real installed launcher paths. Their
+# management socket may activate a read-only broker, but never processing;
+# explicit open must reuse API.
 assert 'http://127.0.0.1:3000/' in run('vectorwarp')
 assert property_of('vectorwarp-api.service', 'MainPID') == pid, 'Opening must reuse the running API'
 assert_web_only()
