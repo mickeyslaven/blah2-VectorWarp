@@ -16,9 +16,14 @@ import urllib.request
 
 
 def run(*args):
-    result = subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
+    result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=180,
                             env=os.environ | {'DEBIAN_FRONTEND': 'noninteractive'})
+    if result.returncode:
+        # The disposable CI evidence must include sudo/PAM failures; check=True
+        # otherwise discards this captured combined output in the traceback.
+        print(f'FAILED command {args!r} (exit {result.returncode}):\n{result.stdout}', flush=True)
+        raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout)
     return result.stdout.strip()
 
 
