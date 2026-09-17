@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert/strict');
-const {installReceiverRoutes, sameReceiverOrigin} = require('./receiver-routes');
+const {installReceiverRoutes, sameReceiverOrigin, trustedOrigins} = require('./receiver-routes');
 const {receiverSetupGuide} = require('./receiver-setup-guide');
 
 function request(origin, host = '127.0.0.1:3000', body = {}) {
@@ -16,6 +16,22 @@ function response() {
 }
 
 async function main() {
+  const enumerated = trustedOrigins(3000, [], () => ({ethernet: [
+    {address: '192.0.2.44'}, {address: '2001:db8::44'}
+  ]}));
+  assert(enumerated.has('http://192.0.2.44:3000'));
+  assert(enumerated.has('http://[2001:db8::44]:3000'));
+  const warnings = [];
+  const noNetlink = () => { const error = new Error('Address family not supported'); error.code = 'EAFNOSUPPORT'; throw error; };
+  const fallback = trustedOrigins(3000, ['https://receiver.example'], noNetlink, warning => warnings.push(warning));
+  assert.deepEqual([...fallback].sort(), ['http://127.0.0.1:3000', 'http://[::1]:3000',
+    'http://localhost:3000', 'https://receiver.example'].sort());
+  assert.match(warnings[0], /EAFNOSUPPORT/);
+  assert.throws(() => trustedOrigins(3000, ['not-an-origin'], noNetlink, () => {}));
+  assert.throws(() => trustedOrigins(3000, ['ftp://receiver.example'], noNetlink, () => {}),
+    /exact HTTP\(S\) origins/);
+  assert.throws(() => trustedOrigins(3000, ['https://receiver.example/path'], noNetlink, () => {}),
+    /exact HTTP\(S\) origins/);
   const receiver = {type: 'HackRF', capabilities: {liveCompiled: false}};
   let guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
   assert.equal(guide.length, 1);
@@ -34,13 +50,25 @@ async function main() {
   assert.equal(sameReceiverOrigin(request('null')), false);
   assert.equal(sameReceiverOrigin(request(undefined)), false);
   assert.equal(sameReceiverOrigin(request('http://rebound.invalid:3000', 'rebound.invalid:3000')), false);
+  assert.equal(sameReceiverOrigin(request('http://192.0.2.44:3000', '192.0.2.44:3000'), fallback), false,
+    'A discovered-but-unavailable LAN address must not be trusted during fallback');
+  const explicitRequest = request('https://receiver.example', 'receiver.example');
+  explicitRequest.protocol = 'https';
+  assert.equal(sameReceiverOrigin(explicitRequest, fallback), true,
+    'An exact explicitly configured origin remains available during fallback');
+  assert.equal(sameReceiverOrigin(request('https://receiver.example', 'receiver.example'), fallback), false,
+    'A request Host must not make an explicit HTTPS origin valid over HTTP');
+  const mutationWithoutOrigin = request(undefined);
+  mutationWithoutOrigin.method = 'POST';
+  assert.equal(sameReceiverOrigin(mutationWithoutOrigin, fallback), false,
+    'Mutations without Origin must remain denied during fallback');
   const routes = {};
   const app = {get: (path, handler) => { routes[`GET ${path}`] = handler; },
     post: (path, handler) => { routes[`POST ${path}`] = handler; }};
   let discoveryCalls = 0;
   let revision = 'original';
   installReceiverRoutes(app, {
-    preview: true, compiledLiveTypes: ['Kraken'],
+    preview: true, compiledLiveTypes: ['Kraken'], networkInterfaces: noNetlink, warn: () => {},
     readDocument: () => ({revision, config: {capture: {device: {type: 'Kraken'}}}}),
     createProbes: () => { throw new Error('Preview must never construct host probes.'); },
     createManager: () => ({
