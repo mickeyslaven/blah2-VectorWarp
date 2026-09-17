@@ -448,6 +448,24 @@ const server = app.listen(0, '127.0.0.1', () => {
 '''
         with tempfile.TemporaryDirectory() as directory:
             os.chmod(directory, 0o755)
+            # Hosted CI checkouts may live under a private runner home. Stage
+            # only public test sources/dependencies; do not relax that home or
+            # run the API as root just to make the credential test pass.
+            staged_api = pathlib.Path(directory) / 'api'
+            staged_api.mkdir(mode=0o755)
+            for source in (ROOT / 'api').glob('*.js'):
+                shutil.copyfile(source, staged_api / source.name)
+                (staged_api / source.name).chmod(0o644)
+            dependency_env = os.environ | {'NODE_PATH': str(ROOT / 'api/node_modules') +
+                                          os.pathsep + os.environ.get('NODE_PATH', '')}
+            express = subprocess.run([node, '-p', "require.resolve('express/package.json')"],
+                cwd=ROOT / 'api', env=dependency_env, capture_output=True, text=True,
+                check=True, timeout=5)
+            modules = pathlib.Path(express.stdout.strip()).parent.parent
+            shutil.copytree(modules, staged_api / 'node_modules')
+            for item in (staged_api / 'node_modules').rglob('*'):
+                item.chmod(0o755 if item.is_dir() else 0o644)
+            (staged_api / 'node_modules').chmod(0o755)
             address = str(pathlib.Path(directory) / 'broker.sock')
             listener = socket.socket(socket.AF_UNIX)
             with listener:
@@ -458,12 +476,18 @@ const server = app.listen(0, '127.0.0.1', () => {
                         os._exit(91)
                     if os.getuid() == 0:
                         os.setgroups([]); os.setgid(api_uid); os.setuid(api_uid)
-                env = os.environ | {'TEST_ROOT': str(ROOT), 'TEST_SOCKET': address,
-                                    'NODE_PATH': str(ROOT / 'api/node_modules') + os.pathsep + os.environ.get('NODE_PATH', '')}
+                env = os.environ | {'TEST_ROOT': directory, 'TEST_SOCKET': address,
+                                    'NODE_PATH': str(staged_api / 'node_modules')}
                 child = subprocess.Popen([node, '-e', javascript], env=env, preexec_fn=restricted,
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                         cwd=directory, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True)
                 try:
-                    connection, _ = listener.accept()
+                    try:
+                        connection, _ = listener.accept()
+                    except socket.timeout:
+                        child.kill()
+                        stdout, stderr = child.communicate(timeout=2)
+                        self.fail('Unprivileged API did not reach broker: ' + stderr[-2000:])
                     with mock.patch.object(helper, 'trusted_path'), \
                          mock.patch.object(helper, 'bounded_read', return_value=b'local_build_receivers=RspDuo\n'):
                         helper.serve_client(connection, broker)
