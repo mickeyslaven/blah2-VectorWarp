@@ -1,10 +1,13 @@
 """No host services: exact launcher command/privilege routing regressions."""
 import contextlib
+import ast
 import importlib.machinery
 import importlib.util
 import io
 import os
 import json
+import re
+import stat
 from pathlib import Path
 import subprocess
 import tempfile
@@ -328,6 +331,71 @@ class LauncherTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     with launcher.upgrade_guard():
                         self.fail('Symlink was followed')
+
+
+class InstalledHarnessPacingTests(unittest.TestCase):
+    """Load only pure fixture helpers, never execute installed-service tests."""
+
+    def setUp(self):
+        tree = ast.parse((ROOT / 'test/packaging/installed_reinstall_test.py').read_text())
+        helpers = ast.Module(body=[item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name in
+            ('start_limit_seconds', 'separate_lifecycle_cases',
+             'diagnose_test_administrator')], type_ignores=[])
+        self.state = {'re': re, 'time': Mock(), 'property_of': Mock(),
+                      'STACK': ('api', 'processor', 'broker', 'socket', 'restart')}
+        exec(compile(helpers, '<installed-fixture-helpers>', 'exec'), self.state)
+
+    def test_start_limit_duration_parsing_is_bounded(self):
+        parse = self.state['start_limit_seconds']
+        for value, expected in (('0', 0), ('0s', 0), ('10s', 10),
+                                ('250ms', .25), ('1s 500ms', 1.5), ('100us', .0001)):
+            with self.subTest(value=value):
+                self.assertAlmostEqual(parse(value), expected)
+        for value in ('', 'infinity', '-1s', '31s', '1min', '10s garbage'):
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                parse(value)
+
+    def test_pacing_waits_longest_unit_window_without_service_mutations(self):
+        query = self.state['property_of']
+        query.side_effect = ['10s', '2s', '20s', '5s', '0']
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.state['separate_lifecycle_cases']()
+        self.assertEqual(query.call_args_list,
+                         [unittest.mock.call(unit, 'StartLimitIntervalUSec')
+                          for unit in self.state['STACK']])
+        self.state['time'].sleep.assert_called_once_with(20.25)
+
+    def test_disabled_start_limit_does_not_sleep(self):
+        self.state['property_of'].return_value = '0'
+        self.state['separate_lifecycle_cases']()
+        self.state['time'].sleep.assert_not_called()
+
+    def test_account_diagnostics_never_print_password_fields(self):
+        process = Mock(PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+                       DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired)
+        process.run.side_effect = [
+            Mock(returncode=0, stdout='fixture:PASSWD_SECRET:1000:1000::/home/fixture:/bin/sh\n'),
+            Mock(returncode=0, stdout='SHADOW_SECRET'),
+            Mock(returncode=0, stdout='(root) NOPASSWD: /usr/bin/vectorwarp\n'),
+            Mock(returncode=0, stdout='parsed OK\n'),
+        ]
+        shadow = Mock()
+        shadow.lstat.return_value = Mock(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640)
+        self.state.update(Path=Mock(return_value=shadow), stat=stat, subprocess=process)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.state['diagnose_test_administrator']('fixture', 'privacy-test')
+        self.assertNotIn('SECRET', output.getvalue())
+        self.assertIn('account=fixture uid=1000 gid=1000', output.getvalue())
+        self.assertIn('getent shadow: exit=0', output.getvalue())
+        shadow_call = process.run.call_args_list[1]
+        self.assertEqual(shadow_call.args, (('getent', 'shadow', 'fixture'),))
+        self.assertEqual(shadow_call.kwargs['stdout'], subprocess.DEVNULL)
+        self.assertEqual(shadow_call.kwargs['stderr'], subprocess.DEVNULL)
+        for call in process.run.call_args_list:
+            self.assertFalse(call.kwargs['check'])
+            self.assertEqual(call.kwargs['timeout'], 15)
 
 
 if __name__ == '__main__':

@@ -8,8 +8,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import socket
+import stat
 import sys
 import time
 import urllib.request
@@ -29,6 +31,31 @@ def run(*args):
 
 def property_of(unit, name):
     return run('systemctl', 'show', '-p', name, '--value', unit)
+
+
+def start_limit_seconds(value):
+    """Parse systemctl's duration output; reject unbounded fixture delays."""
+    if value == '0':
+        return 0.0
+    factors = {'us': 1e-6, 'ms': .001, 's': 1, 'min': 60, 'h': 3600}
+    pattern = r'(\d+(?:\.\d+)?)(us|ms|min|s|h)'
+    parts = re.findall(pattern, value)
+    if not parts or re.sub(pattern, '', value).strip():
+        raise AssertionError(('Unsupported service start-limit duration', value))
+    seconds = sum(float(number) * factors[unit] for number, unit in parts)
+    if not 0 <= seconds <= 30:
+        raise AssertionError(('Service start-limit duration exceeds fixture budget', value))
+    return seconds
+
+
+def separate_lifecycle_cases():
+    """Let prior cases age out without resetting or disabling crash protection."""
+    seconds = max(start_limit_seconds(property_of(unit, 'StartLimitIntervalUSec'))
+                  for unit in STACK)
+    if seconds:
+        print(f'Waiting {seconds + .25:g}s between independent lifecycle cases '
+              '(installed systemd start limits remain enabled).', flush=True)
+        time.sleep(seconds + .25)
 
 
 STACK = ('vectorwarp-api.service', 'vectorwarp-processor.service',
@@ -160,7 +187,47 @@ def grant_test_administrator():
     grant.write_text(account + ' ALL=(root) NOPASSWD: /usr/bin/vectorwarp\n')
     grant.chmod(0o440)
     run('visudo', '-cf', str(grant))
+    diagnose_test_administrator(account, 'after-account-creation')
     return account
+
+
+def diagnose_test_administrator(account, stage):
+    """Record account/PAM evidence without exposing a shadow password field."""
+    print(f'ADMIN_ACCOUNT_DIAGNOSTICS {stage}', flush=True)
+    shadow = Path('/etc/shadow')
+    try:
+        info = shadow.lstat()
+        print(f'/etc/shadow: uid={info.st_uid} gid={info.st_gid} '
+              f'mode={stat.S_IMODE(info.st_mode):04o} regular={stat.S_ISREG(info.st_mode)}',
+              flush=True)
+    except OSError as error:
+        print(f'/etc/shadow: stat_error={type(error).__name__}', flush=True)
+    checks = (
+        ('getent passwd', ('getent', 'passwd', account), True),
+        ('getent shadow', ('getent', 'shadow', account), False),
+        ('sudo -l -U', ('sudo', '-n', '-l', '-U', account), True),
+        ('visudo -c', ('visudo', '-c'), True),
+    )
+    for label, command, show_output in checks:
+        try:
+            result = subprocess.run(command, text=True,
+                                    stdout=subprocess.PIPE if show_output else subprocess.DEVNULL,
+                                    stderr=subprocess.STDOUT if show_output else subprocess.DEVNULL,
+                                    timeout=15, check=False)
+            print(f'{label}: exit={result.returncode}', flush=True)
+            if label == 'getent passwd':
+                # Non-shadow systems can place a password hash in field 2.
+                # Only account identity is relevant to this diagnostic.
+                for line in result.stdout.splitlines():
+                    fields = line.split(':')
+                    if len(fields) == 7:
+                        print(f'account={fields[0]} uid={fields[2]} gid={fields[3]}', flush=True)
+                    else:
+                        print('Unexpected passwd record omitted', flush=True)
+            elif show_output:
+                print(result.stdout.strip(), flush=True)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f'{label}: error={type(error).__name__}', flush=True)
 
 
 assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
@@ -181,6 +248,7 @@ assert 'version=' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '--v
 
 if sys.argv[2:] == ['--running-replay']:
     ready_replay(0)
+    separate_lifecycle_cases()
     assert 'http://127.0.0.1:3000/' in run('vectorwarp')
     api_before = property_of('vectorwarp-api.service', 'MainPID')
     processor_before = property_of('vectorwarp-processor.service', 'MainPID')
@@ -224,6 +292,7 @@ assert run('systemctl', 'is-enabled', 'vectorwarp-api.service') == 'enabled'
 assert_web_only()
 pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service')
 assert int(pid) > 0
+separate_lifecycle_cases()
 # Default and explicit open must both be real installed launcher paths. Their
 # management socket may activate a read-only broker, but never processing;
 # explicit open must reuse API.
@@ -260,8 +329,13 @@ assert_web_only()
 run('vectorwarp', 'stop')
 assert_stopped_stack()
 administrator = grant_test_administrator()
-assert 'http://127.0.0.1:3000/' in run('runuser', '-u', administrator, '--', 'vectorwarp', 'open')
+try:
+    assert 'http://127.0.0.1:3000/' in run('runuser', '-u', administrator, '--', 'vectorwarp', 'open')
+except (AssertionError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    diagnose_test_administrator(administrator, 'failed-open')
+    raise
 assert_web_only()
 run('vectorwarp', 'stop')
 assert_stopped_stack()
+separate_lifecycle_cases()
 print('PASS: fresh install starts only API; reinstall preserves configuration; installed default/open, readers and rejected input are safe from stopped stacks')
