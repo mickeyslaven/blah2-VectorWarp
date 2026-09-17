@@ -40,6 +40,7 @@ case "$1" in
       --property=ActiveState:vectorwarp-restart.service) echo "${RESTART_STATE:-inactive}" ;;
       --property=ActiveState:vectorwarp-sdrplay-build.service) echo "${BUILD_STATE:-inactive}" ;;
       --property=Job:*) echo "${JOB_STATE:-}" ;;
+      --property=MainPID:*) echo "${MAIN_PID:-0}" ;;
       --property=FragmentPath:vectorwarp-receiver.socket) echo "$SOCKET_UNIT" ;;
       --property=DropInPaths:vectorwarp-receiver.socket) echo ;;
       --property=NeedDaemonReload:vectorwarp-receiver.socket) echo no ;;
@@ -64,9 +65,11 @@ esac
                                  'SOCKET_UNIT': str(self.socket_unit),
                                  'SOCKET_STATE_FILE': str(self.base / 'socket.state')}
 
-    def script(self, relative):
+    def script(self, relative, prefix='/opt/vectorwarp'):
         source = (ROOT / relative).read_text()
+        source = source.replace('@PREFIX@', prefix)
         source = source.replace('/run/systemd/system', str(self.systemd))
+        source = source.replace('/run/vectorwarp-manual-stop.', str(self.base / 'manual-stop.'))
         source = source.replace('/run/vectorwarp-package-upgrade.state', str(self.state))
         source = source.replace('/run/vectorwarp-package-upgrade.lock', str(self.base / 'upgrade.lock'))
         source = source.replace('/usr/lib/systemd/system/vectorwarp-receiver.socket', str(self.socket_unit))
@@ -144,6 +147,61 @@ esac
         self.assertEqual(self.call(pre, 'install').returncode, 0)
         self.assertFalse(self.state.exists())
         self.assertFalse(self.log.exists())
+
+    def test_manual_stop_stops_every_own_unit_and_removes_only_its_snapshot(self):
+        result = self.call(self.script('packaging/deb/preinst'), 'manual-stop', SOCKET_STATE='active')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text().splitlines()
+        self.assertIn('stop vectorwarp-api.service', calls)
+        self.assertIn('stop vectorwarp-receiver.service vectorwarp-receiver.socket vectorwarp-processor.service', calls)
+        self.assertIn('stop vectorwarp-restart.service vectorwarp-api.service', calls)
+        for unit in ('api', 'receiver', 'processor', 'restart'):
+            self.assertIn(f'show --property=MainPID --value vectorwarp-{unit}.service', calls)
+        self.assertIn('VectorWarp stopped: radar, web interface', result.stdout)
+        self.assertFalse(self.state.exists())
+        self.assertEqual(list(self.base.glob('manual-stop.*')), [])
+        self.assertFalse(any('krakensdr' in call or 'sdrplay_apiService' in call for call in calls))
+
+    def test_manual_stop_preserves_pending_package_marker_without_service_actions(self):
+        self.state.write_text('pending package activation\n')
+        result = self.call(self.script('packaging/deb/preinst'), 'manual-stop')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('package update has not completed', result.stderr)
+        self.assertEqual(self.state.read_text(), 'pending package activation\n')
+        self.assertFalse(self.log.exists())
+        self.assertEqual(list(self.base.glob('manual-stop.*')), [])
+
+    def test_manual_stop_busy_refusal_changes_no_service(self):
+        script = self.script('packaging/deb/preinst')
+        for state in ({'BUILD_STATE': 'active'}, {'RESTART_STATE': 'active'}, {'JOB_STATE': '123'}):
+            with self.subTest(state=state):
+                self.log.unlink(missing_ok=True)
+                result = self.call(script, 'manual-stop', **state)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(any(line.startswith(('stop ', 'start '))
+                                     for line in self.log.read_text().splitlines()))
+                self.assertFalse(self.state.exists())
+                self.assertEqual(list(self.base.glob('manual-stop.*')), [])
+
+    def test_manual_stop_rendered_custom_prefix_refuses_before_any_service_call(self):
+        result = self.call(self.script('packaging/deb/preinst', prefix='/srv/vectorwarp'), 'manual-stop')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('custom installation prefix', result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse(self.state.exists())
+
+    def test_manual_stop_requires_systemd_and_zero_remaining_processes(self):
+        script = self.script('packaging/deb/preinst')
+        result = self.call(script, 'manual-stop', MAIN_PID='123')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('still has a running process', result.stderr)
+        self.assertNotIn('VectorWarp stopped:', result.stdout)
+        self.assertFalse(self.state.exists())
+        self.assertEqual(list(self.base.glob('manual-stop.*')), [])
+        self.systemd.rmdir()
+        result = self.call(script, 'manual-stop')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires a running systemd', result.stderr)
 
     def test_upgrade_refuses_an_inflight_launcher_action_before_quiesce(self):
         pre = self.script('packaging/deb/preinst')

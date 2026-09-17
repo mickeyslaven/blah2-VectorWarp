@@ -87,7 +87,9 @@ append `vectorwarp` to an existing `render` or `video` group only when that grou
 owns a root-owned DRM render device with group read/write access. The API account
 does not receive GPU access. Installation does not change device permissions,
 drivers, or running services; an already-running processor needs an explicit
-restart to acquire its new groups.
+restart to acquire its new groups. With VectorWarp 0.1.7 or newer, use
+`vectorwarp restart` for an ordered stop/start of the VectorWarp services;
+it does not stop or restart vendor receiver services.
 
 If a GPU is added later, or Settings reports missing service access, run:
 
@@ -153,8 +155,9 @@ GPU drivers run in a separate worker process. Startup has a 30-second deadline;
 individual GPU frames have a five-second deadline. A timeout, worker crash or
 invalid response disables GPU use and retries the same frame on CPU. These are
 failure deadlines, not promises that a failed frame meets real-time cadence.
-The processor does not repeatedly restart a failed worker. A restart of VectorWarp
-allows a fresh GPU attempt.
+The processor does not repeatedly restart a failed worker. Use **Apply &
+Restart** in Settings or `vectorwarp restart` (version 0.1.7 or newer) for a
+fresh GPU attempt; merely reopening the web page does not restart processing.
 
 This isolates user-space driver faults. It cannot reset a broken kernel driver
 or recover a host-wide GPU/kernel failure. CPU mode does not start the worker.

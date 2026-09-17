@@ -33,16 +33,40 @@ sudo bash vectorwarp-install.sh --start-web
 ```
 
 `--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. Run `vectorwarp` to open the configured web
-address (or print it over SSH), then configure a receiver in Settings.
-`vectorwarp --help` lists the fixed start, stop, restart, status and log actions.
-For the usual command-line controls:
+not enable radar processing. The following launcher and automatic-upgrade
+behavior is included in version 0.1.7 and newer. Run `vectorwarp` to open the
+configured web address (or print it over SSH), then configure a receiver in
+Settings. `vectorwarp --help` lists its fixed actions:
 
 ```bash
+vectorwarp          # Open the web page; start only the web API if needed
 vectorwarp start
 vectorwarp stop
+vectorwarp restart
 vectorwarp status
+vectorwarp logs
+vectorwarp help
 ```
+
+`open` (the default) starts only the web API. `start` brings up VectorWarp's
+receiver helper and web API, waits for the API to become ready, then starts
+the radar processor through the checked **Save & Restart** path if it is not
+already running. If radar is active but the web page is down, `start` repairs
+the web and helper without interrupting radar; use `restart` to apply changed
+settings. `stop` safely drains privileged receiver work before stopping the
+VectorWarp processor, web API, helper and socket; `restart` stops and starts
+those services in order. A
+pending package upgrade, receiver build or restart can make a command refuse
+until it is safe to retry. Neither these commands nor package upgrades stop
+shared Kraken Suite, SDRplay API or other vendor services. Checked receiver
+startup can still start an approved installed receiver service when the
+selected profile requires it.
+Check `status` or `logs` after a request. A service-changing command may ask
+for your administrator password. If your user cannot read the system journal,
+use `sudo vectorwarp logs`. For an installed version
+older than 0.1.7, follow the versioned [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+and use the web address and administrator `systemctl` guidance it provides;
+that package does not contain the launcher.
 
 If an earlier installation completed but the page does not load, start and
 inspect only the web API:
@@ -53,13 +77,19 @@ sudo systemctl status vectorwarp-api.service --no-pager
 ```
 
 To update, use `sudo apt update && sudo apt install --only-upgrade vectorwarp`
-on APT or `sudo dnf upgrade vectorwarp` on Fedora. The package pauses its own
-services before replacing files, waits for privileged receiver work to finish,
+on APT or `sudo dnf upgrade vectorwarp` on Fedora. On an upgrade to version
+0.1.7 or newer, the package pauses its own services before replacing files,
+waits for privileged receiver work to finish,
 and restarts only VectorWarp services that were running beforehand. A stopped
 processor stays stopped. Pending receiver-management approvals expire; review
 them again after the upgrade. An active local SDRplay build or Save & Restart
 blocks the upgrade until it finishes. No Kraken Suite, SDRplay API or other
-vendor service is stopped or upgraded by these hooks.
+vendor software is upgraded by these hooks.
+If you use a locally built RSPduo adapter, a changed VectorWarp core can make
+that adapter stale. The package does not build it automatically: check
+**Receiver setup → Build SDRplay support** in Settings and rebuild if prompted,
+then use **Save & Restart**. Restarting the previously active processor unit
+does not guarantee that its receiver became ready.
 
 If preflight reports that the broker cannot be safely drained (for example on
 an unsupported cgroup layout or an overridden broker unit), no new package
@@ -211,17 +241,32 @@ SDRplay API service; upgrades do not. See [SDRplay setup](SDRPLAY_SETUP.md).
 
 ### 4. Open the interface and configure your receiver
 
-Start only the web API first:
+Open the web interface without starting radar processing:
 
 ```bash
-sudo systemctl start vectorwarp-api.service
+vectorwarp
 ```
 
-On the server, open `http://localhost:3000/`. From another device, use
+The default launcher action starts only the web API when needed and prints its
+configured address; on a local desktop it also opens the browser. The default address on
+the server is `http://localhost:3000/`. From another device, use
 `http://<server-IP>:3000/`, replacing `<server-IP>` with the Linux machine's
 address. Do not use `localhost` from your phone or another computer.
 The default configuration listens on all network interfaces. The UI has no
 login: keep it on a trusted LAN/VPN or behind an authenticated gateway.
+If the launcher reports a web-service error, an administrator can inspect and
+retry that unit directly:
+
+```bash
+sudo systemctl status vectorwarp-api.service --no-pager
+sudo systemctl start vectorwarp-api.service
+```
+
+This starts only the API, not radar processing.
+For a native source installation using a custom prefix, the full-stack
+`vectorwarp stop` and `vectorwarp restart` actions refuse rather than assume
+the standard package service layout. After receiver actions finish, an
+administrator must inspect that installation's units and stop them manually.
 
 In **Settings**, select a receiver profile; supply its endpoint or device
 details; set frequency, sample rate, site coordinates, and a writable recording
@@ -246,18 +291,24 @@ writes the configuration without applying receiver changes or starting radar.
 The page shows restart progress and any startup error. Software discovery does not prove
 that the receiver is correctly wired or receiving a coherent signal.
 
-To start VectorWarp automatically after future reboots, enable the services
-after confirming the configuration works:
+To start only the web interface automatically after future reboots, enable its
+service. Enable radar processing at boot separately, only after confirming the
+receiver configuration works and choosing that behavior deliberately:
 
 ```bash
-sudo systemctl enable vectorwarp-api.service vectorwarp-processor.service
+sudo systemctl enable vectorwarp-api.service
+# Optional: also start radar processing after reboot
+sudo systemctl enable vectorwarp-processor.service
 ```
 
-Check either service with:
+For ordinary status and recent web/radar logs, use:
 
 ```bash
-systemctl status vectorwarp-api.service vectorwarp-processor.service
+vectorwarp status
+vectorwarp logs
 ```
+
+Administrators can still use `systemctl status` for detailed unit-level repair.
 
 ## Optional setup
 

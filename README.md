@@ -124,15 +124,22 @@ sudo bash vectorwarp-install.sh --start-web
 ```
 
 `--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. Run `vectorwarp` to open the web interface, then
-choose your receiver in Settings. Use `vectorwarp start`, `vectorwarp stop`,
-or `vectorwarp status` from a terminal; service changes may ask for your
-administrator password. Headless systems print the web address instead.
+not enable radar processing. With version 0.1.7 or newer, run `vectorwarp`
+to open the web interface (or print its address over SSH), then choose your
+receiver in Settings. `vectorwarp start` brings up the VectorWarp receiver
+helper, web API and checked radar processor; `vectorwarp stop` safely stops
+those VectorWarp services, including the web page. `vectorwarp restart` stops
+and starts them in order. Use `vectorwarp status` and `vectorwarp logs` to
+check the result, or `vectorwarp help` for all commands. See the
+[install guide](docs/INSTALL.md#install-a-package). Service changes may ask
+for your administrator password. Neither these commands nor package upgrades
+stop shared Kraken Suite or SDRplay services.
 
 Update with
 `sudo apt update && sudo apt install --only-upgrade vectorwarp` or
-`sudo dnf upgrade vectorwarp`. Successful upgrades restart the VectorWarp
-services that were running; intentionally stopped radar stays stopped.
+`sudo dnf upgrade vectorwarp`. Upgrades to version 0.1.7 or newer restore only
+the VectorWarp services that were running; intentionally stopped radar stays
+stopped.
 Finish receiver setup/build actions before updating. If the upgrade cannot
 stop a helper safely, it reports the problem before unpacking new files.
 

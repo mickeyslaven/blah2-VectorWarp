@@ -1,10 +1,31 @@
 #!/bin/sh
 set -eu
 
-# This script is also embedded in the RPM %pre scriptlet. It must not depend on
-# newly unpacked files: upgrades from v0.1.6 need the same safe quiesce path.
-case "${1:-}" in upgrade|2) ;; *) exit 0 ;; esac
-[ -d /run/systemd/system ] || exit 0
+# One quiesce implementation serves DEB/RPM upgrades and the installed launcher.
+# Package preflight must not depend on newly unpacked files.
+manual_stop=false
+case "${1:-}" in
+  upgrade|2) ;;
+  manual-stop)
+    [ "$#" -eq 1 ] || exit 64
+    manual_stop=true
+    [ "$(id -u)" = 0 ] || { printf '%s\n' 'VectorWarp shutdown requires administrator authentication.' >&2; exit 1; }
+    # Rendered only for the installed launcher helper. A custom source prefix
+    # must not accidentally control the fixed /opt/vectorwarp package layout.
+    case '@PREFIX@' in
+      '@''PREFIX@'|/opt/vectorwarp) ;;
+      *) printf '%s\n' 'Full-stack shutdown cannot verify this custom installation prefix. Finish receiver actions, then inspect and stop its VectorWarp systemd units manually.' >&2; exit 1 ;;
+    esac
+    ;;
+  *) exit 0 ;;
+esac
+if [ ! -d /run/systemd/system ]; then
+  if $manual_stop; then
+    printf '%s\n' 'VectorWarp service control requires a running systemd installation.' >&2
+    exit 1
+  fi
+  exit 0
+fi
 
 state=/run/vectorwarp-package-upgrade.state
 api=vectorwarp-api.service
@@ -14,7 +35,9 @@ receiver_socket=vectorwarp-receiver.socket
 restart=vectorwarp-restart.service
 build=vectorwarp-sdrplay-build.service
 
-fail() { printf 'VectorWarp upgrade preflight: %s\n' "$*" >&2; exit 1; }
+operation='VectorWarp upgrade preflight'
+$manual_stop && operation='VectorWarp shutdown'
+fail() { printf '%s: %s\n' "$operation" "$*" >&2; exit 1; }
 lock=/run/vectorwarp-package-upgrade.lock
 [ ! -L "$lock" ] || fail 'unsafe package-upgrade lock symlink'
 [ ! -e "$lock" ] || [ -f "$lock" ] || fail 'package-upgrade lock is not a regular file'
@@ -22,6 +45,14 @@ umask 077
 exec 9>>"$lock" || fail 'cannot open package-upgrade lock'
 [ "$(stat -c %u:%a "$lock")" = 0:600 ] || fail 'untrusted package-upgrade lock'
 flock -n 9 || fail 'another VectorWarp service action or package upgrade is running'
+if $manual_stop; then
+  [ ! -e "$state" ] && [ ! -L "$state" ] ||
+    fail 'a package update has not completed; finish the APT/DNF transaction before shutdown'
+  state=$(mktemp /run/vectorwarp-manual-stop.XXXXXX) || fail 'could not create shutdown state'
+  # The package marker is never used or removed by manual shutdown. Delete
+  # only this invocation's private root-owned snapshot, even on failure.
+  trap 'rm -f -- "$state"' 0
+fi
 active_state() {
   value=$(systemctl show --property=ActiveState --value "$1") || return 1
   case "$value" in
@@ -40,9 +71,11 @@ busy_work() {
 
 # A stale record must never later revive a service which an administrator
 # deliberately stopped after an aborted transaction.
-[ ! -L "$state" ] || fail "unsafe upgrade-state symlink at $state"
-rm -f -- "$state" || fail 'could not clear stale upgrade state'
-busy_work || fail 'restart or local SDRplay build is active; wait for it to finish, then retry the package upgrade'
+[ ! -L "$state" ] || fail "unsafe state symlink at $state"
+if ! $manual_stop; then
+  rm -f -- "$state" || fail 'could not clear stale upgrade state'
+fi
+busy_work || fail 'restart or local SDRplay build is active; wait for it to finish, then retry this command'
 socket_unit=/usr/lib/systemd/system/vectorwarp-receiver.socket
 [ ! -L "$socket_unit" ] && [ -f "$socket_unit" ] &&
   [ "$(stat -c %u:%g:%a "$socket_unit")" = 0:0:644 ] &&
@@ -71,6 +104,8 @@ restore() {
   # units. A failed drain leaves the original socket pathname in place.
   socket_now=$(active_state "$receiver_socket") || socket_now=unknown
   broker_now=$(active_state "$broker") || broker_now=unknown
+  context='VectorWarp upgrade was not unpacked.'
+  $manual_stop && context='VectorWarp shutdown did not complete.'
   if [ "$was_socket" = 1 ] && [ "$socket_now" != 1 ] && [ "$broker_now" != 0 ]; then
     # A broker may have activated from a queued connection just as the socket
     # was stopped. Starting a new socket under that old process would not pass
@@ -78,8 +113,8 @@ restore() {
     # is not. Do not kill its possibly active handler or restart dependent
     # units. An administrator must wait for the action, then recover explicitly.
     rm -f -- "$state"
-    printf 'VectorWarp upgrade was not unpacked. A receiver action may still be active with its socket stopped. Wait for it to finish; then stop vectorwarp-receiver.service, start vectorwarp-receiver.socket, and start only previously active VectorWarp units (API=%s processor=%s broker=%s). Do not stop a busy broker.\n' \
-      "$was_api" "$was_processor" "$was_broker" >&2
+    printf '%s A receiver action may still be active with its socket stopped. Wait for it to finish; then stop vectorwarp-receiver.service, start vectorwarp-receiver.socket, and start only previously active VectorWarp units (API=%s processor=%s broker=%s). Do not stop a busy broker.\n' \
+      "$context" "$was_api" "$was_processor" "$was_broker" >&2
     return
   fi
   [ "$was_socket" = 0 ] || systemctl start "$receiver_socket" || true
@@ -88,24 +123,24 @@ restore() {
     # A newly accepted asynchronous restart/build owns the next processor/API
     # transition. Do not race it while unwinding a failed package preflight.
     rm -f -- "$state"
-    printf '%s\n' 'VectorWarp upgrade was not unpacked; a restart/build became active. API/processor were not restored by this hook. Wait for that action, then inspect their systemctl status and retry.' >&2
+    printf '%s %s\n' "$context" 'A restart/build became active. API/processor were not restored. Wait for that action, then inspect their systemctl status and retry.' >&2
     return
   fi
   [ "$was_api" = 0 ] || systemctl start "$api" || true
   [ "$was_processor" = 0 ] || systemctl start "$processor" || true
   rm -f -- "$state"
-  printf '%s\n' 'VectorWarp upgrade did not unpack new files. Verify service state with systemctl status vectorwarp-api.service vectorwarp-processor.service vectorwarp-receiver.socket.' >&2
+  printf '%s %s\n' "$context" 'Verify service state with systemctl status vectorwarp-api.service vectorwarp-processor.service vectorwarp-receiver.socket.' >&2
 }
-abort() { printf 'VectorWarp upgrade preflight: %s\n' "$*" >&2; restore; exit 1; }
+abort() { printf '%s: %s\n' "$operation" "$*" >&2; restore; exit 1; }
 
-systemctl stop "$api" || abort 'could not stop API before unpack'
+systemctl stop "$api" || abort 'could not stop API'
 
 drain_broker() {
   # Only the reviewed legacy broker has the invariant that every request runs
   # in a separate task. Freeze its cgroup *before* closing its socket name;
   # busy retries thaw with the original pathname intact. A queued connection
   # cannot become new privileged work after the frozen singleton check.
-  /usr/bin/python3 -I - <<'PY' || abort 'could not safely drain the receiver broker; no new package files were unpacked'
+  /usr/bin/python3 -I - <<'PY' || abort 'could not safely drain the receiver broker; no files were replaced'
 import hashlib
 import os
 from pathlib import Path
@@ -274,6 +309,19 @@ else
 fi
 
 busy_work || abort 'a restart or local adapter build started while quiescing'
-systemctl stop "$broker" "$receiver_socket" "$processor" || abort 'could not stop own services before unpack'
+systemctl stop "$broker" "$receiver_socket" "$processor" || abort 'could not stop own services'
 busy_work || abort 'a restart or local adapter build raced with quiesce'
+if $manual_stop; then
+  systemctl stop "$restart" "$api" || abort 'could not finish stopping VectorWarp'
+  for unit in "$processor" "$restart" "$broker" "$receiver_socket" "$api"; do
+    [ "$(active_state "$unit")" = 0 ] || abort "$unit remains active"
+    case "$unit" in
+      *.service)
+        [ "$(systemctl show --property=MainPID --value "$unit")" = 0 ] ||
+          abort "$unit still has a running process"
+        ;;
+    esac
+  done
+  printf '%s\n' 'VectorWarp stopped: radar, web interface and receiver-management helper.'
+fi
 exit 0

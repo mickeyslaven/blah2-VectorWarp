@@ -295,6 +295,8 @@ endif()
                      "vectorwarp-sudoers-migrate.py"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         (artifact / 'libexec/vectorwarp').chmod(0o755)
+        shutil.copy2(ROOT / 'packaging/deb/preinst', artifact / 'libexec/vectorwarp-quiesce')
+        (artifact / 'libexec/vectorwarp-quiesce').chmod(0o755)
         (artifact / "libexec/vectorwarp-sudoers-migrate.py").rename(
             artifact / "libexec/vectorwarp-sudoers-migrate")
         (artifact / "libexec/vectorwarp-sudoers-migrate").chmod(0o755)
@@ -455,6 +457,10 @@ endif()
         launcher = (stage / 'usr/bin/vectorwarp').read_text()
         self.assertIn('PREFIX = Path(\'/opt/vectorwarp\')', launcher)
         self.assertIn("CONFIG = Path('/etc/vectorwarp')", launcher)
+        quiesce = stage / 'opt/vectorwarp/libexec/vectorwarp-quiesce'
+        self.assertEqual(quiesce.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(quiesce.read_text(),
+                         (ROOT / 'packaging/deb/preinst').read_text().replace('@PREFIX@', '/opt/vectorwarp'))
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
         service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()

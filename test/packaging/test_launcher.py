@@ -30,45 +30,145 @@ class LauncherTests(unittest.TestCase):
         self.guard.stop()
         self.redirect.__exit__(None, None, None)
 
+    @staticmethod
+    def unit_reply(args, **kwargs):
+        if args[:2] == [launcher.SYSTEMCTL, 'show']:
+            unit = args[-1]
+            pid = '0' if unit != launcher.BROKER else '41'
+            state = 'inactive' if unit == launcher.PROCESSOR else 'active'
+            if unit == launcher.SOCKET:
+                return Mock(stdout='ActiveState=active\n')
+            return Mock(stdout=f'ActiveState={state}\nMainPID={pid}\n')
+        return Mock(stdout='')
+
     def test_default_opens_only_web(self):
         with patch.object(launcher, 'open_web') as open_web:
             self.assertEqual(launcher.main([]), 0)
             open_web.assert_called_once_with()
 
     def test_start_uses_checked_service_not_root_dsp(self):
-        with patch.object(launcher.os, 'geteuid', return_value=0), patch.object(launcher, 'run') as run:
-            run.return_value.stdout = 'inactive\n'
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher, 'run', side_effect=self.unit_reply) as run, \
+             patch.object(launcher, 'api_url', return_value='http://127.0.0.1:3000/'), \
+             patch.object(launcher, 'wait_web') as wait_web:
             launcher.main(['start'])
             self.assertEqual(run.call_args_list[-1].args[0],
                              ['/usr/bin/systemctl', 'start', 'vectorwarp-restart.service'])
-            self.assertEqual(run.call_count, 2)
+            self.assertEqual([call.args[0] for call in run.call_args_list[:3]], [
+                ['/usr/bin/systemctl', 'start', launcher.SOCKET],
+                ['/usr/bin/systemctl', 'start', launcher.BROKER],
+                ['/usr/bin/systemctl', 'start', launcher.API]])
+            wait_web.assert_called_once_with('http://127.0.0.1:3000/')
 
     def test_start_does_not_interrupt_already_running_radar(self):
-        with patch.object(launcher.os, 'geteuid', return_value=0), patch.object(launcher, 'run') as run:
-            run.return_value.stdout = 'active\n'
+        def active(args, **kwargs):
+            result = self.unit_reply(args, **kwargs)
+            if args[-1:] == [launcher.PROCESSOR]:
+                return Mock(stdout='ActiveState=active\nMainPID=77\n')
+            return result
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher, 'run', side_effect=active) as run, \
+             patch.object(launcher, 'api_url', return_value='http://127.0.0.1:3000/'), \
+             patch.object(launcher, 'wait_web'):
             launcher.main(['start'])
-            self.assertEqual(run.call_count, 1)
+            self.assertNotIn([launcher.SYSTEMCTL, 'start', launcher.RESTART],
+                             [call.args[0] for call in run.call_args_list])
             self.assertIn('already running', self.output.getvalue())
 
-    def test_stop_leaves_web_and_vendor_services_alone(self):
-        with patch.object(launcher.os, 'geteuid', return_value=0), patch.object(launcher, 'run') as run:
-            run.return_value.stdout = 'inactive\n'
+    def test_stop_uses_exclusive_helper_without_shared_launcher_guard(self):
+        self.guard.stop()
+        def stopped(args, **kwargs):
+            return Mock(stdout='ActiveState=inactive\nMainPID=0\n')
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher, 'upgrade_guard') as guard, \
+             patch.object(launcher.subprocess, 'run') as process, \
+             patch.object(launcher, 'run', side_effect=stopped) as run:
             launcher.main(['stop'])
-            self.assertEqual(run.call_args_list[0].args[0], ['/usr/bin/systemctl', 'stop',
-                             'vectorwarp-restart.service', 'vectorwarp-processor.service'])
-            self.assertEqual(run.call_count, 3)
+            guard.assert_not_called()
+            process.assert_called_once_with([str(launcher.QUIESCE), 'manual-stop'], check=True)
+            self.assertEqual([call.args[0][-1] for call in run.call_args_list],
+                             [launcher.API, launcher.PROCESSOR, launcher.RESTART,
+                              launcher.BROKER, launcher.SOCKET])
+            self.assertIn('web interface', self.output.getvalue())
 
-    def test_stop_does_not_claim_success_if_restart_remains_running(self):
-        with patch.object(launcher.os, 'geteuid', return_value=0), patch.object(launcher, 'run') as run:
-            run.return_value.stdout = 'activating\n'
-            with self.assertRaises(RuntimeError):
+    def test_stop_does_not_claim_success_if_a_service_remains_running(self):
+        def busy(args, **kwargs):
+            if args[-1] == launcher.RESTART:
+                return Mock(stdout='ActiveState=activating\nMainPID=87\n')
+            return Mock(stdout='ActiveState=inactive\nMainPID=0\n')
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher.subprocess, 'run'), \
+             patch.object(launcher, 'run', side_effect=busy):
+            with self.assertRaisesRegex(RuntimeError, 'still running'):
                 launcher.main(['stop'])
-            self.assertNotIn('Radar stopped.', self.output.getvalue())
+            self.assertNotIn('services stopped', self.output.getvalue())
+
+    def test_stop_failure_never_starts_any_service(self):
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, ['quiesce'])), \
+             patch.object(launcher, 'run') as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                launcher.main(['restart'])
+            run.assert_not_called()
+
+    def test_restart_quiesces_then_reacquires_guard_for_full_start(self):
+        events = []
+        @contextlib.contextmanager
+        def guarded():
+            events.append('guard-enter')
+            try:
+                yield
+            finally:
+                events.append('guard-exit')
+        def process(args, **kwargs):
+            events.append(('quiesce', args, kwargs))
+            return Mock()
+        def command(args, **kwargs):
+            events.append(('systemctl', args))
+            if args[:2] == [launcher.SYSTEMCTL, 'show']:
+                unit = args[-1]
+                if events[0][0] == 'quiesce' and unit in (launcher.API, launcher.PROCESSOR,
+                                                         launcher.RESTART, launcher.BROKER,
+                                                         launcher.SOCKET):
+                    # All stop verification observations occur before guard.
+                    if 'guard-enter' not in events:
+                        return Mock(stdout='ActiveState=inactive\nMainPID=0\n')
+            return self.unit_reply(args, **kwargs)
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher, 'upgrade_guard', guarded), \
+             patch.object(launcher.subprocess, 'run', side_effect=process), \
+             patch.object(launcher, 'run', side_effect=command), \
+             patch.object(launcher, 'api_url', return_value='http://127.0.0.1:3000/'), \
+             patch.object(launcher, 'wait_web'):
+            launcher.main(['restart'])
+        self.assertEqual(events[0][0], 'quiesce')
+        self.assertEqual(events[6], 'guard-enter')
+        self.assertEqual(events[-1], 'guard-exit')
+
+    def test_restart_intervening_upgrade_leaves_stack_stopped(self):
+        def stopped(args, **kwargs):
+            return Mock(stdout='ActiveState=inactive\nMainPID=0\n')
+        with patch.object(launcher.os, 'geteuid', return_value=0), \
+             patch.object(launcher.subprocess, 'run'), \
+             patch.object(launcher, 'run', side_effect=stopped) as run, \
+             patch.object(launcher, 'upgrade_guard', side_effect=RuntimeError('package update')):
+            with self.assertRaisesRegex(RuntimeError, 'package update'):
+                launcher.main(['restart'])
+            self.assertEqual(run.call_count, 5)
 
     def test_nonroot_start_uses_standard_administrator_authentication(self):
-        with patch.object(launcher.os, 'geteuid', return_value=1000), patch.object(launcher, 'run') as run:
+        with patch.object(launcher.os, 'geteuid', return_value=1000), \
+             patch.object(launcher.subprocess, 'run', return_value=Mock(stdout='')) as run:
             launcher.main(['start'])
             self.assertEqual(run.call_args.args[0], ['/usr/bin/sudo', '--', '/usr/bin/vectorwarp', 'start'])
+            self.assertNotIn('timeout', run.call_args.kwargs)
+
+    def test_nonroot_stop_does_not_timeout_privileged_drain(self):
+        with patch.object(launcher.os, 'geteuid', return_value=1000), \
+             patch.object(launcher.subprocess, 'run', return_value=Mock(stdout='')) as run:
+            launcher.main(['stop'])
+            self.assertEqual(run.call_args.args[0], ['/usr/bin/sudo', '--', '/usr/bin/vectorwarp', 'stop'])
+            self.assertNotIn('timeout', run.call_args.kwargs)
 
     def test_unknown_command_never_reaches_systemctl(self):
         with patch.object(launcher, 'run') as run, contextlib.redirect_stderr(io.StringIO()):

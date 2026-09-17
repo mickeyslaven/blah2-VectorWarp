@@ -19,7 +19,8 @@ install the processor account into the existing `plugdev` group; Fedora's
 packaged VectorWarp udev rule grants the `vectorwarp` group access without
 changing the vendor mode or desktop-seat ACL. The web API account receives
 neither grant. Start or restart the processor explicitly to load its new group
-membership; on Fedora also reconnect a HackRF so udev applies the rule.
+membership; with version 0.1.7 or newer, use the checked `vectorwarp restart`
+action. On Fedora also reconnect a HackRF so udev applies the rule.
 Administrators can mask it with an identically named rule in
 `/etc/udev/rules.d`.
 Users install SDRplay's licensed API and headers separately, then build our
@@ -50,12 +51,17 @@ script/package-native.sh \
 ```
 
 Installation creates dedicated users and directories and starts the web API,
-but never starts radar processing. The installed `/usr/bin/vectorwarp` launcher
-opens the web page or provides fixed service actions. Upgrades quiesce only
-VectorWarp's own services before unpack and reactivate only those previously
-running; stopped processing remains stopped. `/etc/vectorwarp/config.yml` is
-preserved. A first install with the local RSPduo kit may start an already-installed standard
-SDRplay API service; it never downloads the API or accepts its license. See
+but never starts radar processing. Starting with version 0.1.7, the installed
+`/usr/bin/vectorwarp` launcher opens the web page without starting radar, or
+provides fixed VectorWarp service start, safe stop and ordered restart actions
+plus status/logs. Stop includes VectorWarp's web API and helper, but never
+separately managed receiver/vendor services. Upgrades to 0.1.7 or newer quiesce
+only VectorWarp's own services before unpack and reactivate only those
+previously running; stopped processing remains stopped. They do not rebuild a
+stale locally compiled RSPduo adapter or restart vendor services.
+`/etc/vectorwarp/config.yml` is preserved. A first install with the local
+RSPduo kit may start an already-installed standard SDRplay API service; it
+never downloads the API or accepts its license. See
 [SDRplay setup](../docs/SDRPLAY_SETUP.md).
 Repository publication requires a maintainer-controlled OpenPGP key
 and GitHub Pages; neither a private key nor a live repository is in this tree.

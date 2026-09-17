@@ -91,7 +91,9 @@ jobs may upload the same checked package inputs for the separate signing flow.
    key fingerprint, confirm ordinary package-manager updates, and verify that no
    processor/radio starts automatically on a fresh install. On upgrade, verify
    that previously running VectorWarp services restart and a stopped processor
-   stays stopped; test the installed `vectorwarp` launcher as well.
+   stays stopped; test the version-0.1.7-or-newer `vectorwarp` launcher's
+   web-only default and full VectorWarp service start, stop and restart as well. The
+   commands must not stop separately managed receiver/vendor services.
 5. Verify the deployed page, installer, key and every package download return
    successfully over HTTPS. The generated homepage uses the verified manifest
    for its OS/architecture table and links to immutable GitHub release assets;

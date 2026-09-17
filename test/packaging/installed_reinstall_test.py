@@ -32,6 +32,28 @@ def assert_restarted(unit, previous_pid):
     assert int(new_pid) > 0 and new_pid != previous_pid, (unit, previous_pid, new_pid)
 
 
+def assert_stopped_stack():
+    for unit in ('vectorwarp-api.service', 'vectorwarp-processor.service',
+                 'vectorwarp-restart.service', 'vectorwarp-receiver.service',
+                 'vectorwarp-receiver.socket'):
+        state = property_of(unit, 'ActiveState')
+        pid = property_of(unit, 'MainPID')
+        assert state in ('inactive', 'failed'), (unit, state)
+        # systemd sockets have no MainPID property at all.
+        if unit == 'vectorwarp-receiver.socket':
+            assert pid in ('', '0'), (unit, pid)
+        else:
+            assert pid == '0', (unit, pid)
+
+
+def assert_management_stack():
+    for unit in ('vectorwarp-api.service', 'vectorwarp-receiver.service',
+                 'vectorwarp-receiver.socket'):
+        assert property_of(unit, 'ActiveState') == 'active', (unit, 'not active')
+        if unit != 'vectorwarp-receiver.socket':
+            assert int(property_of(unit, 'MainPID')) > 0, (unit, 'missing PID')
+
+
 def reinstall(package, success=True):
     if package.suffix == '.deb':
         args = ['apt-get', '--yes', '--reinstall', '-o', 'Dpkg::Options::=--force-confold', 'install', str(package)]
@@ -80,6 +102,7 @@ config = Path('/etc/vectorwarp/config.yml')
 before = hashlib.sha256(config.read_bytes()).hexdigest()
 assert Path('/usr/bin/vectorwarp').is_file(), 'Every DEB/RPM must install the launcher in PATH'
 assert 'Usage: vectorwarp' in run('vectorwarp', '--help')
+assert 'vectorwarp stop' in run('vectorwarp', 'help')
 assert 'version=' in run('vectorwarp', 'version')
 
 if sys.argv[2:] == ['--running-replay']:
@@ -98,17 +121,17 @@ if sys.argv[2:] == ['--running-replay']:
     ready_replay(started)
     print('PASS: reinstall restarts running API/broker/processor and produces fresh replay frames')
     run('vectorwarp', 'stop')
-    assert property_of('vectorwarp-processor.service', 'ActiveState') == 'inactive'
-    assert property_of('vectorwarp-restart.service', 'ActiveState') in ('inactive', 'failed')
-    assert property_of('vectorwarp-api.service', 'ActiveState') == 'active'
+    assert_stopped_stack()
     started = int(time.time() * 1000)
     run('vectorwarp', 'start')
+    assert_management_stack()
     ready_replay(started)
     started = int(time.time() * 1000)
     run('vectorwarp', 'restart')
+    assert_management_stack()
     ready_replay(started)
     assert hashlib.sha256(config.read_bytes()).hexdigest() == before
-    print('PASS: installed launcher stop/start/restart uses restricted processor and real replay')
+    print('PASS: installed launcher full-stack stop/start/restart uses restricted processor and real replay')
     sys.exit(0)
 # Do not repair a broken install hook by starting the API in the test. A fresh
 # package must make its web interface available without an extra service command.

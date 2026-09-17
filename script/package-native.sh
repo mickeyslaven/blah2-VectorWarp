@@ -115,6 +115,7 @@ done
 [[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker ]] ||
   die 'release processor binaries are not executable'
 [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'installed launcher is missing from release artifact'
+[[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing from release artifact'
 backend=$(sed -n 's/^backend=//p' "$ARTIFACT/.vectorwarp-build")
 gpu=$(sed -n 's/^gpu=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")

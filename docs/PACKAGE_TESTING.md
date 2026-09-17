@@ -16,7 +16,7 @@ The checks start the installed systemd units and verify:
 - A restart request crosses the real unprivileged-to-root broker boundary; missing receiver software produces an error instead of an endless restart screen.
 - The installed processor handles synthetic recording/replay inputs for the supported receiver profiles, including Kraken channel counts from two through eight.
 - Real service accounts try to open a synthetic file with the distro's HackRF device permissions. The processor must have access; the web API and unrelated users must not. Debian/Ubuntu retain the vendor `plugdev` group; Fedora uses a narrowly matched HackRF rule.
-- Reinstalling during synthetic replay must replace the API, broker and processor and produce fresh frames afterward. The installed `vectorwarp` launcher opens the page and stops, starts and restarts the same restricted processor through systemd.
+- Reinstalling during synthetic replay must replace the API, broker and processor and produce fresh frames afterward. The installed `vectorwarp` launcher opens only the web page by default; its checked start, safe stop and ordered restart manage all VectorWarp services without stopping separate receiver/vendor services.
 
 These checks run on all ten OS/architecture package targets, for PRs as well as
 releases, against the newly built package—not a source overlay. The jobs retain

@@ -183,6 +183,7 @@ if $WITH_SYSTEMD; then
      -x $ARTIFACT/libexec/vectorwarp-activate-web ]] ||
     die 'restart helpers are missing'
   [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
+  [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing'
   [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
     die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
@@ -284,6 +285,7 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp" "$temporary/vectorwarp-launcher"
   run install -d -m 0755 "$DESTDIR/usr/bin"
   run install -m 0755 "$temporary/vectorwarp-launcher" "$DESTDIR/usr/bin/vectorwarp"
+  render "$ARTIFACT/libexec/vectorwarp-quiesce" "$temporary/vectorwarp-quiesce"
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
   render "$ARTIFACT/systemd/vectorwarp-restart.service.in" "$temporary/vectorwarp-restart.service"
@@ -314,6 +316,7 @@ if $WITH_SYSTEMD; then
     run install -m 0440 "$temporary/vectorwarp" "$sudoers_dir/vectorwarp"
   fi
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
+  run install -m 0755 "$temporary/vectorwarp-quiesce" "$target_prefix/libexec/vectorwarp-quiesce"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"

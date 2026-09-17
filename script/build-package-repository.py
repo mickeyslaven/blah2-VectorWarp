@@ -78,8 +78,11 @@ def release_installation(manifest):
     has_launcher = tuple(map(int, version.split("."))) >= (0, 1, 7)
     if has_launcher:
         fedora_guidance = '''Run <code>vectorwarp</code> to open the web interface, configure your receiver,
-and choose Save &amp; Restart. Use <code>vectorwarp start</code>,
-<code>vectorwarp stop</code> or <code>vectorwarp status</code> from a terminal.
+and choose Save &amp; Restart. Use <code>vectorwarp start</code> to start its
+services, <code>vectorwarp stop</code> to stop them including the web interface,
+or <code>vectorwarp restart</code> for an ordered stop/start.
+<code>vectorwarp status</code> checks services; <code>vectorwarp help</code>
+lists all commands. Shared receiver/vendor services are not stopped.
 Service changes may ask for your administrator password; headless systems print
 the web address. Update later with <code>sudo dnf upgrade vectorwarp</code>.
 Successful upgrades restart previously running VectorWarp services and leave
@@ -88,8 +91,11 @@ updating; a helper that cannot be safely stopped blocks unpacking with an error.
         apt_guidance = '''Successful upgrades restart previously running VectorWarp services and leave
 intentionally stopped radar stopped. Finish receiver setup/build actions before
 updating. Run <code>vectorwarp</code> to open the page, or use
-<code>vectorwarp start</code>, <code>vectorwarp stop</code> and
-<code>vectorwarp status</code> from the terminal.'''
+<code>vectorwarp start</code>, <code>vectorwarp stop</code>,
+<code>vectorwarp restart</code> and <code>vectorwarp status</code> from the
+terminal. Stop includes the web interface; restart performs an ordered
+stop/start. Shared receiver/vendor services are not stopped.
+<code>vectorwarp help</code> lists all commands.'''
     else:
         fedora_guidance = '''Open <code>http://localhost:3000</code>, configure your receiver, and choose
 Save &amp; Restart. If an earlier installation completed but the page does not

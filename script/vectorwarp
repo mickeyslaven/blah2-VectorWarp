@@ -19,20 +19,33 @@ LAUNCHER = '/usr/bin/vectorwarp'
 SYSTEMCTL = '/usr/bin/systemctl'
 API = 'vectorwarp-api.service'
 PROCESSOR = 'vectorwarp-processor.service'
+BROKER = 'vectorwarp-receiver.service'
+SOCKET = 'vectorwarp-receiver.socket'
+RESTART = 'vectorwarp-restart.service'
+QUIESCE = PREFIX / 'libexec/vectorwarp-quiesce'
 UPGRADE_LOCK = Path('/run/vectorwarp-package-upgrade.lock')
 UPGRADE_STATE = Path('/run/vectorwarp-package-upgrade.state')
-HELP = '''Usage: vectorwarp [open|start|stop|restart|status|logs|version]
+HELP = '''Usage: vectorwarp [open|start|stop|restart|status|logs|version|help]
 
-  open       Open the web interface (default); does not start radar processing
-  start      Start radar using the saved settings
-  stop       Stop radar; leave the web interface available
-  restart    Reload settings and restart radar
-  status     Show web, receiver-helper and radar service status
-  logs       Show recent web and radar logs
+  open       Open the web interface (default); do not start radar processing
+  start      Start VectorWarp services and radar using saved settings
+  stop       Stop all VectorWarp services, including the web interface
+  restart    Stop, then start all VectorWarp services with saved settings
+  status     Show VectorWarp service status
+  logs       Show recent VectorWarp service logs
   version    Show installed package version
+  help       Show this help
+
+Examples:
+  vectorwarp                 Open the web interface
+  vectorwarp start           Start the complete VectorWarp stack
+  vectorwarp stop            Stop the complete VectorWarp stack
+  vectorwarp restart         Apply saved settings with a full restart
 
 Service changes may ask for your administrator password. On an SSH/headless
-session, the launcher prints the web address instead of opening a browser.
+session, open prints the web address instead of opening a browser. Stop never
+stops shared receiver/vendor services. Start uses the checked receiver path,
+which may prepare a required already-installed vendor service.
 '''
 
 
@@ -109,12 +122,37 @@ def privileged(command, capture=False):
     if os.geteuid() == 0:
         return action(command)
     # Normal administrator authentication, not a new passwordless sudo grant.
-    result = run(['/usr/bin/sudo', '--', LAUNCHER, command],
-                 stdout=subprocess.PIPE if capture else None, text=True)
+    # No outer timeout: stop/restart can spend up to the helper's bounded
+    # drain time. Killing only sudo would leave a privileged action running.
+    result = subprocess.run(['/usr/bin/sudo', '--', LAUNCHER, command], check=True,
+                            stdout=subprocess.PIPE if capture else None, text=True)
     return result.stdout.strip() if capture else None
 
 
+def unit_properties(unit):
+    output = run([SYSTEMCTL, 'show', '-p', 'ActiveState', '-p', 'MainPID', unit],
+                 text=True, capture_output=True).stdout
+    properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
+    state, pid = properties.get('ActiveState'), properties.get('MainPID', '')
+    # Socket units have no MainPID property; an active listening socket is
+    # still checked by ActiveState, while services require an explicit PID.
+    if unit == SOCKET and not pid:
+        pid = '0'
+    if not pid.isdigit():
+        raise RuntimeError('Could not verify ' + unit + ' service identity.')
+    return state, int(pid)
+
+
 def action(command):
+    if command == 'stop':
+        # The helper owns the exclusive package-upgrade lock and broker drain.
+        # Do not hold a shared lock while asking it to acquire the exclusive one.
+        return service_action('stop')
+    if command == 'restart':
+        service_action('stop')
+        # An intervening package upgrade must leave the stack safely stopped.
+        with upgrade_guard():
+            return service_action('start')
     with upgrade_guard():
         return service_action(command)
 
@@ -125,27 +163,39 @@ def service_action(command):
         url = api_url()
         wait_web(url)
         return url
-    if command in ('start', 'restart'):
-        if command == 'start':
-            state = run([SYSTEMCTL, 'show', '-p', 'ActiveState', '--value', PROCESSOR],
-                        text=True, capture_output=True).stdout.strip()
-            if state == 'active':
-                print('Radar is already running. Use vectorwarp restart to apply changed settings.')
-                return None
-            if state not in ('inactive', 'failed'):
-                raise RuntimeError('Radar is changing state. Wait, then check vectorwarp status.')
+    if command == 'start':
+        # A stopped stack must restore its management path before checked
+        # processor startup. Repeated start may repair the web/broker without
+        # interrupting an already-running processor.
+        run([SYSTEMCTL, 'start', SOCKET])
+        run([SYSTEMCTL, 'start', BROKER])
+        run([SYSTEMCTL, 'start', API])
+        wait_web(api_url())
+        socket_state, _ = unit_properties(SOCKET)
+        broker_state, broker_pid = unit_properties(BROKER)
+        if socket_state != 'active' or broker_state != 'active' or broker_pid <= 0:
+            raise RuntimeError('Receiver management did not become ready. Run: vectorwarp status')
+        state, processor_pid = unit_properties(PROCESSOR)
+        if state == 'active':
+            if processor_pid <= 0:
+                raise RuntimeError('Radar reports active without a processor PID. Run: vectorwarp status')
+            print('Radar is already running. Use vectorwarp restart to apply changed settings.')
+            return None
+        if state not in ('inactive', 'failed'):
+            raise RuntimeError('Radar is changing state. Wait, then check vectorwarp status.')
         # Same checked startup path used by Save & Restart. Never launch the
         # DSP as root or bypass receiver reconciliation/local SDK checks.
-        run([SYSTEMCTL, 'start', 'vectorwarp-restart.service'])
+        run([SYSTEMCTL, 'start', RESTART])
         print('Radar start requested. Check vectorwarp status or the web interface for receiver readiness.')
     elif command == 'stop':
-        run([SYSTEMCTL, 'stop', 'vectorwarp-restart.service', PROCESSOR])
-        for unit in ('vectorwarp-restart.service', PROCESSOR):
-            state = run([SYSTEMCTL, 'show', '-p', 'ActiveState', '--value', unit],
-                        text=True, capture_output=True).stdout.strip()
-            if state not in ('inactive', 'failed'):
-                raise RuntimeError('Radar is still stopping. Run: vectorwarp status')
-        print('Radar stopped. The web interface remains available.')
+        # The helper has its own bounded drain and cleanup. A launcher timeout
+        # could kill its parent shell while a freezer child still owns the lock.
+        subprocess.run([str(QUIESCE), 'manual-stop'], check=True)
+        for unit in (API, PROCESSOR, RESTART, BROKER, SOCKET):
+            state, pid = unit_properties(unit)
+            if state not in ('inactive', 'failed') or pid != 0:
+                raise RuntimeError('VectorWarp service is still running: ' + unit)
+        print('All VectorWarp services stopped, including the web interface.')
     return None
 
 
@@ -183,10 +233,11 @@ def main(args):
         print(action(command))
     elif command == 'status':
         return subprocess.run([SYSTEMCTL, '--no-pager', '--full', 'status', API,
-                               'vectorwarp-receiver.service', PROCESSOR], check=False).returncode
+                               SOCKET, BROKER, PROCESSOR, RESTART], check=False).returncode
     elif command == 'logs':
         return subprocess.run(['/usr/bin/journalctl', '--no-pager', '-n', '100',
-                               '-u', API, '-u', PROCESSOR], check=False).returncode
+                               '-u', API, '-u', BROKER, '-u', PROCESSOR,
+                               '-u', RESTART], check=False).returncode
     elif command in ('version', '--version'):
         metadata = PREFIX / 'PACKAGE-METADATA'
         if not metadata.is_file():

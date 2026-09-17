@@ -27,6 +27,14 @@ when offered. The build checks the installed source kit, compiler and API;
 progress or a specific error appears in Settings. Rebuild when the package or
 SDK changes. Building does not start radar.
 
+An upgrade to VectorWarp 0.1.7 or newer restores only VectorWarp services that
+were running before the upgrade; it does not rebuild this locally compiled
+adapter or restart the separate SDRplay API service. If the installed core or
+SDK changed, the old adapter may be marked stale and RSPduo processing will
+refuse startup. Check **Build SDRplay support** in Settings, rebuild when
+prompted, then use **Save & Restart**. An active processor service alone is
+not proof of fresh RSPduo capture.
+
 Set the receiver options, then choose **Save & Restart** to apply them.
 **SDRplay startup** shows whether the SDK accepted the settings, the selected
 serial number, and whether fresh radar frames have arrived. Expand its details

@@ -118,12 +118,16 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('sudo systemctl enable --now vectorwarp-api.service', old_page)
         self.assertIn('sudo systemctl restart vectorwarp-receiver.service', old_page)
         self.assertNotIn('<code>vectorwarp start</code>', old_page)
+        self.assertNotIn('<code>vectorwarp help</code>', old_page)
         self.assertNotIn('Successful upgrades restart previously running VectorWarp services', old_page)
 
         manifest['version'] = '0.1.7'
         new_page = repository.repository_homepage(manifest)
         self.assertIn('Install VectorWarp 0.1.7', new_page)
         self.assertIn('<code>vectorwarp start</code>', new_page)
+        self.assertIn('<code>vectorwarp restart</code>', new_page)
+        self.assertIn('<code>vectorwarp help</code>', new_page)
+        self.assertIn('Stop includes the web interface', new_page)
         self.assertIn('Successful upgrades restart previously running VectorWarp services', new_page)
         self.assertNotIn('A package update does not restart a running API', new_page)
         self.assertNotIn('sudo systemctl restart vectorwarp-receiver.service', new_page)
