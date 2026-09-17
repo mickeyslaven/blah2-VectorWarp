@@ -1,0 +1,7 @@
+{
+  "name": "vectorwarp-installed-browser-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "CI-only browser checks; not included in VectorWarp packages",
+  "devDependencies": {"playwright": "1.55.1"}
+}

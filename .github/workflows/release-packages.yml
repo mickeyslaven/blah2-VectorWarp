@@ -117,6 +117,12 @@ jobs:
           npm test --prefix api
           npm run test:dom --prefix api
           node test/ui/deployment.test.js
+      - name: Exercise real unprivileged broker requests with NoNewPrivileges
+        run: |
+          sudo env "PATH=$PATH" "VECTORWARP_TEST_NODE=$(command -v node)" \
+            "NODE_PATH=$GITHUB_WORKSPACE/api/node_modules" \
+            python3 test/packaging/test_receiver_helper.py -v
+          sudo python3 test/packaging/test_sudoers_migration.py -v
       - name: Check packaging policy and fake SDK inputs (no real SDRplay SDK)
         run: |
           node test/ui/packaging.test.js
@@ -129,7 +135,7 @@ jobs:
           python3 test/packaging/test_rpm_local_kit.py -v
       - name: Syntax-check every workflow shell block and release script
         run: |
-          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh
+          bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh script/test-installed-package.sh
           python3 -m py_compile script/build-package-repository.py
           python3 - <<'PY'
           import pathlib, subprocess, tempfile, yaml
@@ -330,6 +336,41 @@ jobs:
               script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" --version 0.0.0 --distro fedora44 --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
             '
+      - name: Set up browser-test Node (test runner only)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install isolated browser-test dependencies (not packaged)
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/vectorwarp-test-browsers
+        run: |
+          npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
+          test/browser/node_modules/.bin/playwright install --with-deps chromium --only-shell
+      - name: Prove a fresh package starts its installed services and works in Chromium
+        env:
+          DISTRO: ${{ matrix.distro }}
+          PINNED_IMAGE: ${{ matrix.image }}
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/vectorwarp-test-browsers
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            ubuntu24.04) image=docker.io/library/ubuntu:24.04 ;;
+            fedora44) image=registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 ;;
+            *) image=$PINNED_IMAGE ;;
+          esac
+          package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
+          sudo env "PATH=$PATH" "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" \
+            bash script/test-installed-package.sh --package "$package" --image "$image" \
+            --evidence service-evidence --browser-modules test/browser/node_modules
+      - name: Preserve installed-service logs and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installed-service-${{ matrix.distro }}-${{ matrix.arch }}-${{ github.sha }}
+          path: service-evidence/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Require package metadata from the packager
         run: |
           set -euo pipefail

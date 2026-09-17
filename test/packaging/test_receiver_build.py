@@ -290,8 +290,12 @@ endif()
                      "vectorwarp-restart.service.in", "vectorwarp.sysusers",
                      "vectorwarp.tmpfiles", "vectorwarp.sudoers.in"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web"):
+        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
+                     "vectorwarp-sudoers-migrate.py"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
+        (artifact / "libexec/vectorwarp-sudoers-migrate.py").rename(
+            artifact / "libexec/vectorwarp-sudoers-migrate")
+        (artifact / "libexec/vectorwarp-sudoers-migrate").chmod(0o755)
         lines = ["build_id=receiver-test", f"backend={backend}"]
         if compiled_receivers is not None:
             lines.append(f"compiled_receivers={compiled_receivers}")
@@ -344,6 +348,19 @@ endif()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("explicitly marked test-only", result.stderr)
 
+    def test_historical_artifact_without_migration_helper_still_installs(self):
+        artifact = self.make_artifact('kraken', None)
+        (artifact / 'libexec/vectorwarp-sudoers-migrate').unlink()
+        stage = self.temp / 'historical-without-migrator'
+        sudoers = stage / 'etc/sudoers.d/vectorwarp'
+        sudoers.parent.mkdir(parents=True)
+        previous = b'# Existing administrator policy must not be overwritten.\n'
+        sudoers.write_bytes(previous)
+        result = self.install(artifact, stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sudoers.read_bytes(), previous)
+        self.assertFalse((stage / 'opt/vectorwarp/libexec/vectorwarp-sudoers-migrate').exists())
+
     def test_installer_rejects_unknown_duplicate_or_inaccurate_receiver_lists(self):
         for compiled in ("Usrp,Airspy,Kraken", "Usrp,Usrp,Kraken", "Usrp", ""):
             with self.subTest(compiled=compiled):
@@ -395,6 +412,8 @@ endif()
         self.assertIn('/opt/vectorwarp/libexec/vectorwarp-receiver-helper', api_unit)
         self.assertIn('request-restart', api_unit)
         self.assertNotIn('/usr/bin/sudo', api_unit)
+        self.assertIn('NoNewPrivileges=yes', api_unit)
+        self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-sudoers-migrate').is_file())
         self.assertNotIn('vectorwarp-restart.service', (stage / 'etc/sudoers.d/vectorwarp').read_text())
         fresh_stage = self.temp / 'stage-management-default'
         result = self.install(artifact, fresh_stage)
@@ -404,6 +423,7 @@ endif()
     def test_package_web_activation_defers_running_broker_and_api(self):
         for hook in ('packaging/deb/postinst', 'packaging/rpm/vectorwarp.spec.in'):
             self.assertIn('/opt/vectorwarp/libexec/vectorwarp-activate-web', (ROOT / hook).read_text())
+            self.assertIn('/opt/vectorwarp/libexec/vectorwarp-sudoers-migrate', (ROOT / hook).read_text())
         executable(self.tools / 'systemctl', '''#!/bin/sh
 printf '%s\\n' "$*" >> "$ACTIVATION_LOG"
 case "$*" in

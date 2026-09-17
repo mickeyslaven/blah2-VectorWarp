@@ -5,8 +5,10 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import socket
 import struct
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -118,6 +120,25 @@ class BrokerTest(unittest.TestCase):
                                                   'vectorwarp-restart.service'], 5)])
         self.assertEqual(self.broker.handle({'verb': 'restart'}, 1001)['status'], 'accepted',
                          'A repeated fixed start remains idempotent at systemd; it cannot select another unit.')
+
+    def test_sdrplay_build_is_fixed_enrolled_and_api_only(self):
+        self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'sdrplay-build'}, 9999))
+        self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'sdrplay-build'}, 0))
+        for extra in ({'unit': 'other.service'}, {'path': '/tmp/kit'}, {'command': '/bin/sh'}):
+            self.refused('INVALID_REQUEST', lambda: self.broker.handle({'verb': 'sdrplay-build', **extra}, 1001))
+        self.broker.policy['artifactManifest'] = '/fixture/manifest'
+        with mock.patch.object(helper, 'trusted_path'), mock.patch.object(helper, 'bounded_read', return_value=b'local_build_receivers=\n'):
+            self.refused('LOCAL_BUILD_UNAVAILABLE', lambda: self.broker.handle({'verb': 'sdrplay-build'}, 1001))
+        with mock.patch.object(helper, 'trusted_path'), mock.patch.object(helper, 'bounded_read', return_value=b'local_build_receivers=RspDuo\n'):
+            self.assertEqual(self.broker.handle({'verb': 'sdrplay-build'}, 1001)['status'], 'accepted')
+            self.assertEqual(self.inspector.calls, [(['/usr/bin/systemctl', 'start', '--no-block',
+                                                      'vectorwarp-sdrplay-build.service'], 5)])
+            self.broker.operation.acquire()
+            self.refused('MANAGEMENT_BUSY', lambda: self.broker.handle({'verb': 'sdrplay-build'}, 1001))
+            self.broker.operation.release()
+            self.inspector.exit_code = 1
+            self.refused('BUILD_REQUEST_FAILED', lambda: self.broker.handle({'verb': 'sdrplay-build'}, 1001))
+            self.assertFalse(self.broker.operation.locked())
 
     def test_restart_failure_timeout_and_busy_are_not_accepted(self):
         for field in ('exit_code', 'timeout'):
@@ -393,6 +414,69 @@ class LocalBoundaryTest(unittest.TestCase):
                     self.assertEqual(len(inspector.calls), 1)
                 finally:
                     os.close(read_fd)
+
+    def test_sdrplay_http_request_crosses_real_peer_socket_under_no_new_privileges(self):
+        if not hasattr(socket, 'SO_PEERCRED'):
+            self.skipTest('Linux peer credentials required')
+        node = os.environ.get('VECTORWARP_TEST_NODE') or shutil.which('node')
+        if not node:
+            self.skipTest('Node runtime required for HTTP integration')
+        api_uid = 65534 if os.getuid() == 0 else os.getuid()
+        inspector = FakeInspector()
+        broker = helper.Broker({'actions': [], 'artifactManifest': '/fixture/manifest'}, api_uid, inspector)
+        javascript = r'''
+const net = require('net'), http = require('http'), express = require('express');
+const {installSdrplayBuildRoutes, startBuild, INTENT} = require(process.env.TEST_ROOT + '/api/sdrplay-build');
+const {createReceiverHelperClient} = require(process.env.TEST_ROOT + '/api/receiver-helper-client');
+const origin = 'http://127.0.0.1:3000';
+const app = express(); app.use(express.json());
+const requestBroker = createReceiverHelperClient({connect: () => net.createConnection({path: process.env.TEST_SOCKET})});
+installSdrplayBuildRoutes(app, {allowedOrigins: new Set([origin]), enabled: true,
+  status: async () => ({ok: true, state: 'missing', kit_id: 'a'.repeat(64), cohort: 'b'.repeat(64)}),
+  start: () => startBuild(requestBroker)});
+const server = app.listen(0, '127.0.0.1', () => {
+  const request = http.request({host: '127.0.0.1', port: server.address().port,
+    path: '/api/sdrplay-build', method: 'POST',
+    headers: {Host: '127.0.0.1:3000', Origin: origin, 'Content-Type': 'application/json',
+      'X-VectorWarp-Intent': INTENT}}, response => {
+      let body = ''; response.on('data', chunk => body += chunk);
+      response.on('end', () => server.close(() => { console.log(JSON.stringify({status: response.statusCode, body: JSON.parse(body)})); }));
+    });
+  request.on('error', error => { console.error(error); process.exitCode = 1; server.close(); });
+  request.end('{}');
+});
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            os.chmod(directory, 0o755)
+            address = str(pathlib.Path(directory) / 'broker.sock')
+            listener = socket.socket(socket.AF_UNIX)
+            with listener:
+                listener.bind(address); os.chmod(address, 0o666)
+                listener.listen(1); listener.settimeout(5)
+                def restricted():
+                    if ctypes.CDLL(None).prctl(38, 1, 0, 0, 0) != 0:
+                        os._exit(91)
+                    if os.getuid() == 0:
+                        os.setgroups([]); os.setgid(api_uid); os.setuid(api_uid)
+                env = os.environ | {'TEST_ROOT': str(ROOT), 'TEST_SOCKET': address,
+                                    'NODE_PATH': str(ROOT / 'api/node_modules') + os.pathsep + os.environ.get('NODE_PATH', '')}
+                child = subprocess.Popen([node, '-e', javascript], env=env, preexec_fn=restricted,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    connection, _ = listener.accept()
+                    with mock.patch.object(helper, 'trusted_path'), \
+                         mock.patch.object(helper, 'bounded_read', return_value=b'local_build_receivers=RspDuo\n'):
+                        helper.serve_client(connection, broker)
+                    stdout, stderr = child.communicate(timeout=5)
+                    self.assertEqual(child.returncode, 0, stderr)
+                    result = json.loads(stdout.strip().splitlines()[-1])
+                    self.assertEqual(result['status'], 202, result)
+                    self.assertEqual(result['body']['state'], 'queued')
+                    self.assertEqual(inspector.calls, [(['/usr/bin/systemctl', 'start', '--no-block',
+                                                        'vectorwarp-sdrplay-build.service'], 5)])
+                finally:
+                    if child.poll() is None:
+                        child.kill(); child.wait(timeout=2)
 
 
 if __name__ == '__main__':

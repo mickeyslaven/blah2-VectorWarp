@@ -281,6 +281,7 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libex
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/libexec/vectorwarp-activate-web"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFACT_TMP/libexec/vectorwarp-sudoers-migrate"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-setup" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-setup"

@@ -104,7 +104,8 @@ function fetchHttp(url, options = {}) {
       const candidate = await saved.json();
       candidate.location.rx.name = 'Acceptance test site';
       const written = await context.fetchStatusResource('/api/config?restart=false', {method: 'PUT',
-        headers: {'Content-Type': 'application/json', 'If-Match': saved.headers.get('etag')}, body: JSON.stringify(candidate)});
+        headers: {'Content-Type': 'application/json', 'If-Match': saved.headers.get('etag'),
+          'X-VectorWarp-Intent': 'config-write-v1'}, body: JSON.stringify(candidate)});
       assert.equal(written.status, 200, origin + ': config writes must survive proxy origin checks');
       assert.equal((await (await context.fetchStatusResource('/api/adsb')).json()).aircraft[0].hex, 'abc123');
       assert.deepEqual(await (await context.fetchStatusResource('/api/adsb/delay-doppler')).json(), {},

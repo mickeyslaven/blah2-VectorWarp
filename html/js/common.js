@@ -107,7 +107,7 @@ async function toggleRecording() {
   renderRecordingState();
   try {
     const response = await fetchStatusResource(liveApiUrl('/capture/toggle'),
-      {cache: 'no-store'});
+      {method: 'POST', headers: {'X-VectorWarp-Intent': 'recording-toggle-v1'}, cache: 'no-store'});
     if (!response.ok) throw new Error('Recording control unavailable');
     let state = null;
     try { state = await response.json(); } catch (_) { /* Older API. */ }

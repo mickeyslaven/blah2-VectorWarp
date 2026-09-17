@@ -57,7 +57,10 @@ function request(method, pathname, body, headers = {}) {
     const payload = body === undefined ? null : JSON.stringify(body);
     const req = http.request({hostname: '127.0.0.1', port: apiPort, path: pathname, method,
       headers: {...(payload ? {'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload)} : {}),
-        ...(revision ? {'If-Match': `"${revision}"`} : {}), ...headers}}, response => {
+        ...(revision ? {'If-Match': `"${revision}"`} : {}),
+        ...(['PUT', 'POST'].includes(method) ? {Origin: `http://127.0.0.1:${apiPort}`} : {}),
+        ...(method === 'PUT' ? {'X-VectorWarp-Intent': 'config-write-v1'} : {}),
+        ...headers}}, response => {
       let text = ''; response.setEncoding('utf8'); response.on('data', block => { text += block; });
       response.on('end', () => resolve({status: response.statusCode, body: text ? JSON.parse(text) : null}));
     });

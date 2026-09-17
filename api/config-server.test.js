@@ -63,7 +63,8 @@ Object.keys(config.network.ports).forEach((key, index) => {
 fs.writeFileSync(filename, yaml.dump(config));
 
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
-  env: {...process.env, BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([
+  env: {...process.env, BLAH2_RECEIVER_ORIGINS: 'http://127.0.0.1:49153',
+    BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([
     process.execPath, '-e',
     `const fs=require('fs');fs.writeFileSync(${JSON.stringify(restartMarker)}, 'ok');if(fs.readFileSync(${JSON.stringify(filename)},'utf8').includes('RESTART_FAIL')){console.error('The fixed restart request was refused by the mock broker.');process.exit(23)}`
   ]), BLAH2_RECEIVER_TYPES: 'Kraken'},
@@ -82,7 +83,9 @@ function requestOnce(method, pathname, body, headers = {}) {
       path: pathname,
       method,
       headers: {
-        ...(method === 'PUT' ? {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'} : {}),
+        ...(method === 'PUT' ? {'X-VectorWarp-Receiver-Sync': 'synchronize-v1',
+          'X-VectorWarp-Intent': 'config-write-v1'} : {}),
+        ...(['PUT', 'POST'].includes(method) ? {Origin: `http://127.0.0.1:${config.network.ports.api}`} : {}),
         ...(revision ? {'If-Match': `"${revision}"`} : {}),
         ...(payload ? {'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)} : {}),
@@ -92,11 +95,11 @@ function requestOnce(method, pathname, body, headers = {}) {
       let text = '';
       response.setEncoding('utf8');
       response.on('data', chunk => { text += chunk; });
-      response.on('end', () => resolve({
-        status: response.statusCode,
-        headers: response.headers,
-        body: text ? JSON.parse(text) : null
-      }));
+      response.on('end', () => {
+        let body = text;
+        try { body = text ? JSON.parse(text) : null; } catch (_) { /* A 404 may be HTML. */ }
+        resolve({status: response.statusCode, headers: response.headers, body});
+      });
     });
     req.on('error', reject);
     if (payload) req.write(payload);
@@ -242,7 +245,9 @@ function closeSocket(socket) {
     assert.equal(idleCapture.body.elapsedSeconds, 0);
     assert.equal(idleCapture.body.available, false);
     assert.deepEqual((await request('GET', '/capture/request')).body, {recording: false, revision: 0});
-    assert.equal((await request('GET', '/capture/toggle')).status, 409);
+    assert.equal((await request('POST', '/capture/toggle', undefined,
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-toggle-v1'})).status, 409);
     // Histories update from their own stream, even before the separate frame
     // marker arrives. Exercise real TCP -> stash -> HTTP in this isolated API.
     for (const [stream, endpoint, frame] of [
@@ -301,7 +306,9 @@ function closeSocket(socket) {
     });
     await waitForSystemStatus(status => status.lastFrameAt !== null,
       'Timestamp frame was not observed while its socket remained connected');
-    const startedCapture = await request('GET', '/capture/toggle');
+    const startedCapture = await request('POST', '/capture/toggle', undefined,
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-toggle-v1'});
     assert.equal(startedCapture.body.requested, true);
     assert.equal(startedCapture.body.recording, false);
     assert.equal(startedCapture.body.revision, 1);
@@ -319,7 +326,9 @@ function closeSocket(socket) {
     assert.equal(activeCapture.body.acknowledged, true);
     assert.equal(activeCapture.body.recordingFile, '/tmp/new.blah2');
     assert.equal(activeCapture.body.recordedSamples, 128);
-    const stoppedCapture = await request('GET', '/capture/toggle');
+    const stoppedCapture = await request('POST', '/capture/toggle', undefined,
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-toggle-v1'});
     assert.equal(stoppedCapture.body.requested, false);
     assert.equal(stoppedCapture.body.revision, 2);
     assert.equal(stoppedCapture.body.recording, true);
@@ -328,7 +337,16 @@ function closeSocket(socket) {
       ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
     })).status, 204);
     assert.equal((await request('GET', '/capture/status')).body.acknowledged, true);
-    assert.equal((await request('GET', '/capture/toggle')).body.requested, true);
+    assert.equal((await request('GET', '/capture/toggle')).status, 404);
+    assert.equal((await request('POST', '/capture/toggle', undefined,
+      {Origin: 'https://unrelated.example', 'X-VectorWarp-Intent': 'recording-toggle-v1'})).status, 403);
+    assert.equal((await request('POST', '/capture/toggle', undefined,
+      {Origin: '', 'X-VectorWarp-Intent': 'recording-toggle-v1'})).status, 403);
+    assert.equal((await request('POST', '/capture/toggle', undefined,
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`})).status, 403);
+    assert.equal((await request('POST', '/capture/toggle', undefined,
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-toggle-v1'})).body.requested, true);
     assert.equal((await request('POST', '/api/processor/status', {
       ...liveRecording, recording: false, recordingRequestId: 3, recordingError: 'Disk full\nrecording stopped'
     })).status, 204);
@@ -351,6 +369,14 @@ function closeSocket(socket) {
       Origin: 'https://unrelated.example'
     });
     assert.equal(foreign.status, 403);
+    assert.equal((await request('PUT', '/api/config?restart=true', config,
+      {Origin: ''})).status, 403);
+    assert.equal((await request('PUT', '/api/config?restart=true', config,
+      {Origin: `https://127.0.0.1:${config.network.ports.api}`})).status, 403);
+    assert.equal((await request('PUT', '/api/config?restart=true', config,
+      {Host: 'rebound.invalid:3000', Origin: 'http://rebound.invalid:3000'})).status, 403);
+    assert.equal((await request('PUT', '/api/config?restart=true', config,
+      {'X-VectorWarp-Intent': 'wrong'})).status, 403);
 
     const invalid = JSON.parse(JSON.stringify(config));
     invalid.unexpected = true;
@@ -385,9 +411,18 @@ function closeSocket(socket) {
       status.lastFrameAt !== null, 'Live timing and timestamp streams were not observed before restart');
     assert.deepEqual(liveStatus.acceleration, ambiguityBackend,
       'Live streams make their own current telemetry visible before a restart');
-    const accepted = await request('PUT', '/api/config?restart=true', updated, {
-      Origin: `http://127.0.0.1:49152`
-    });
+    assert.equal((await request('PUT', '/api/config?restart=true', updated, {
+      Origin: 'http://127.0.0.1:49152'
+    })).status, 403);
+    const preflight = await request('OPTIONS', '/api/config', undefined,
+      {Origin: 'http://127.0.0.1:49153', 'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'content-type,if-match,x-vectorwarp-intent'});
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers['access-control-allow-origin'], 'http://127.0.0.1:49153');
+    assert.match(preflight.headers['access-control-allow-headers'], /X-VectorWarp-Intent/);
+    const accepted = await request('PUT', '/api/config?restart=true', updated,
+      {Origin: 'http://127.0.0.1:49153'});
+    assert.equal(accepted.headers['access-control-allow-origin'], 'http://127.0.0.1:49153');
     assert.equal(accepted.status, 200);
     assert.equal(accepted.body.restarting, true);
     revision = accepted.body.revision;

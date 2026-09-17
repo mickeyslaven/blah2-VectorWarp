@@ -33,7 +33,7 @@ async function ports(count) {
 async function request(method, route, body, intent = 'synchronize-v1') {
   const response = await fetch(`${origin}${route}`, {method, headers: {
     Origin: origin, 'Content-Type': 'application/json', 'If-Match': `"${revision}"`,
-    'X-VectorWarp-Receiver-Sync': intent
+    'X-VectorWarp-Receiver-Sync': intent, 'X-VectorWarp-Intent': 'config-write-v1'
   }, ...(body === undefined ? {} : {body: JSON.stringify(body)})});
   return {status: response.status, body: await response.json()};
 }

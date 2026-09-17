@@ -1568,6 +1568,7 @@ async function saveConfiguration(mode) {
       `/api/config?restart=${capabilities.restartAvailable ? 'true' : 'false'}`), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json', 'If-Match': `"${configRevision}"`,
+        'X-VectorWarp-Intent': 'config-write-v1',
         'X-VectorWarp-Receiver-Sync': saveLater ? 'save-pending-v1' : 'synchronize-v1'},
       body
     // Maximum server budgets: 10s initial status + two 30s operations, plus

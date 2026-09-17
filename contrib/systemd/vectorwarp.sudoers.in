@@ -1,3 +1,2 @@
-# Compile only the installed, verified source kit; no caller arguments or SDK download.
-Defaults:vectorwarp-api !requiretty
-vectorwarp-api ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block vectorwarp-sdrplay-build.service
+# Privileged VectorWarp requests use the peer-credential-checked local broker.
+# No sudo grant is needed by the unprivileged web API.
