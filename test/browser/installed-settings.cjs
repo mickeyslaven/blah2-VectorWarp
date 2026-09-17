@@ -51,7 +51,8 @@ fs.mkdirSync(output, {recursive: true});
     assert.equal((await restored).status(), 200);
     await page.getByRole('tab').first().click();
     await page.getByRole('button', {name: 'Check receiver software', exact: true}).click();
-    await page.locator('#receiver-setup a[href="https://sdrplay.com/hardware-api/"]').waitFor();
+    // Both SDK detection and adapter guidance can show this official link.
+    await page.locator('#receiver-setup a[href="https://sdrplay.com/hardware-api/"]').first().waitFor();
     await page.screenshot({path: path.join(output, 'installed-settings.png'), fullPage: true});
     assert.deepEqual(errors, [], 'No browser JavaScript errors');
     fs.writeFileSync(path.join(output, 'browser.json'), JSON.stringify({passed: true,

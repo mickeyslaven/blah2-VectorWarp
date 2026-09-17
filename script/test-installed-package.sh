@@ -39,6 +39,7 @@ cleanup() {
   local status=$?
   trap - EXIT
   if [[ -n $container ]]; then
+    podman logs "$container" >"$evidence/container-boot.log" 2>&1 || true
     podman exec "$container" journalctl --no-pager -u vectorwarp-api -u vectorwarp-receiver -u vectorwarp-restart >"$evidence/journal.log" 2>&1 || true
     podman inspect "$container" >"$evidence/container.json" || true
     podman stop --time 10 "$container" >/dev/null 2>&1 || true
@@ -49,19 +50,27 @@ cleanup() {
 }
 trap cleanup EXIT
 sha256sum "$package" >"$evidence/package.sha256"
+podman info --format json >"$evidence/test-runtime.json"
 podman build --jobs=1 --memory=2g --memory-swap=2g --cpu-period=100000 --cpu-quota="$quota" "${cpu_set[@]}" \
   --build-arg "BASE_IMAGE=$image" -t "$test_image" \
   -f "$source_root/test/packaging/Containerfile.service-$format" "$source_root/test/packaging" \
   >"$evidence/base-image.log" 2>&1
 # SYS_ADMIN permits systemd's own mount namespaces inside the private container.
+# The outer container's generic AppArmor/SELinux profile cannot permit these
+# nested mounts on every runner. This exemption is for this disposable test OS,
+# not VectorWarp's installed units: their own sandbox remains enabled and tested.
 # No --privileged, host namespace, host filesystem mount, or device passthrough.
 container=$(podman run -d --name "$name" --systemd=always --cgroupns=private \
-  --cap-add=SYS_ADMIN --security-opt=label=disable --cpus="$test_cpus" "${cpu_set[@]}" --memory=2g --memory-swap=2g \
+  --cap-add=SYS_ADMIN --security-opt=label=disable --security-opt=apparmor=unconfined \
+  --cpus="$test_cpus" "${cpu_set[@]}" --memory=2g --memory-swap=2g \
   --pids-limit=512 "$test_image")
 # Wait for boot mounts/tmpfiles before copying fixtures into /tmp. A container
 # can be running while systemd has not mounted its final temporary filesystem.
 boot_state=$(podman exec "$container" timeout 60 systemctl is-system-running --wait || true)
-[[ $boot_state == running || $boot_state == degraded ]] || die "test systemd did not finish boot: $boot_state"
+if [[ $boot_state != running && $boot_state != degraded ]]; then
+  podman logs "$container" >&2 || true
+  die "test systemd did not finish boot: $boot_state"
+fi
 podman cp "$package" "$container:/tmp/package.$format"
 if [[ $format == deb ]]; then
   podman exec "$container" env DEBIAN_FRONTEND=noninteractive apt-get --yes install /tmp/package.deb >"$evidence/install.log" 2>&1

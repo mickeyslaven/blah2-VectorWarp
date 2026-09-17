@@ -24,6 +24,12 @@ GPU drivers, or every kernel and desktop environment. Live receiver tests are
 recorded separately. The test containers and browser dependencies are CI tools,
 not dependencies of VectorWarp installations.
 
+The disposable test OS needs mount-namespace privileges for systemd. Its outer
+container AppArmor/SELinux profile is disabled; it receives no host filesystem
+mounts, host namespaces or physical devices. VectorWarp's installed service
+accounts and systemd sandbox remain enabled and are checked by the tests. This
+is not a test of every host AppArmor/SELinux policy.
+
 To reproduce the package check on a disposable Linux test host with Podman,
 Node 24 and the checked-out source:
 
