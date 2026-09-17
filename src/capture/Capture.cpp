@@ -152,6 +152,16 @@ std::string Capture::status_json() const {
   text("recordingFile",recording.file); text("recordingError",recording.error);
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);
+  if (type == "RspDuo" && device) {
+    const auto receiptJson = blah2::receiver_startup_receipt(device);
+    rapidjson::Document receipt;
+    receipt.Parse(receiptJson.c_str());
+    if (!receipt.HasParseError() && receipt.IsObject()) {
+      rapidjson::Value copied;
+      copied.CopyFrom(receipt, a);
+      document.AddMember("receiverStartup", copied, a);
+    }
+  }
   rapidjson::StringBuffer buffer; rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   document.Accept(writer); return buffer.GetString();
 }

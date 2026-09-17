@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig, writeConfigAtomically} = require('./config-manager');
+const FIELD_RULES = require('./config-rules');
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 
 // Neutral first-run form, not a running radar configuration or site claim.
@@ -87,14 +88,24 @@ function readConfig(filename) {
     }
   }
   const suppliedDefaults = [];
+  const acceptsUnionType = (base, current, prefix) => {
+    const type = FIELD_RULES[prefix]?.type;
+    // The form has two deliberately polymorphic settings.  Their profile
+    // defaults select only one member of the valid union, so comparing to the
+    // default's JavaScript type would discard a valid persisted alternative.
+    if (type === 'gain') return typeof current === 'string' || typeof current === 'number';
+    if (type === 'serial') return typeof current === 'string' || Array.isArray(current);
+    return false;
+  };
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
       if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.'))
         suppliedDefaults.push(prefix);
       return base;
     }
-    if ((Array.isArray(base) && !Array.isArray(current)) ||
-        (base !== null && typeof base !== 'object' && typeof current !== typeof base)) {
+    if (((Array.isArray(base) && !Array.isArray(current)) ||
+        (base !== null && typeof base !== 'object' && typeof current !== typeof base)) &&
+        !acceptsUnionType(base, current, prefix)) {
       suppliedDefaults.push(prefix);
       return base;
     }

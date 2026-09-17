@@ -114,6 +114,7 @@ jobs:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
           npm test --prefix api
           npm run test:dom --prefix api
           node test/ui/deployment.test.js
@@ -129,6 +130,7 @@ jobs:
           python3 test/packaging/test_install_docs.py -v
           python3 test/packaging/test_gpu_setup.py -v
           python3 test/packaging/test_receiver_build.py -v
+          sudo python3 test/packaging/test_package_upgrade.py -v
           python3 test/packaging/test_smoke_receiver_status.py -v
           python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v

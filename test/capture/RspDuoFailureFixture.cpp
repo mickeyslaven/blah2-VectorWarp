@@ -4,8 +4,11 @@
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <locale>
 #include <stdexcept>
+#include <rapidjson/document.h>
 extern std::atomic<bool> run_fg;
+extern "C" const char* blah2_rspduo_startup_receipt_json_v1(const Source*) noexcept;
 
 namespace {
 std::string failAt;
@@ -17,7 +20,14 @@ bool nullParameters = false, removeOnInit = false, multipleDevices = false, stop
 enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB };
 CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
+std::string mockSerial = "mock-only";
 void* callbackContext = nullptr;
+rapidjson::Document receipt(const RspDuo& receiver) {
+  rapidjson::Document parsed;
+  parsed.Parse(receiver.startup_receipt_json().c_str());
+  assert(!parsed.HasParseError() && parsed.IsObject());
+  return parsed;
+}
 sdrplay_api_ErrT result(const char* stage) { return failAt == stage ? sdrplay_api_Fail : sdrplay_api_Success; }
 void reset() {
   opened = closed = locked = unlocked = selected = released = initialized = uninitialized = 0;
@@ -25,19 +35,24 @@ void reset() {
   parameters = {&deviceParameters, &tunerA, &tunerB};
   failAt.clear(); nullParameters = removeOnInit = multipleDevices = stopAfterGain = false;
   callbackScenario = CallbackScenario::None;
-  selectedSerial.clear(); callbackContext = nullptr;
+  selectedSerial.clear(); mockSerial = "mock-only"; callbackContext = nullptr;
 }
 }
 
 sdrplay_api_ErrT sdrplay_api_Open() { if (result("open") == sdrplay_api_Success) ++opened; return result("open"); }
 sdrplay_api_ErrT sdrplay_api_Close() { ++closed; return sdrplay_api_Success; }
-sdrplay_api_ErrT sdrplay_api_ApiVersion(float* version) { *version = failAt == "version-mismatch" ? 1.0f : SDRPLAY_API_VERSION; return result("version"); }
+sdrplay_api_ErrT sdrplay_api_ApiVersion(float* version) {
+  *version = failAt == "version-mismatch" ? 1.0f :
+    failAt == "version-unusual" ? 101.0f : SDRPLAY_API_VERSION;
+  return result("version");
+}
 sdrplay_api_ErrT sdrplay_api_LockDeviceApi() { if (result("lock") == sdrplay_api_Success) ++locked; return result("lock"); }
 sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi() { ++unlocked; return sdrplay_api_Success; }
 sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT* devices, unsigned* count, unsigned) {
   *count = failAt == "none" ? 0 : (multipleDevices ? 2 : 1);
   devices[0] = {}; devices[0].hwVer = failAt == "wrong-model" ? SDRPLAY_RSP1_ID : SDRPLAY_RSPduo_ID;
-  std::strcpy(devices[0].SerNo, "mock-only");
+  std::strcpy(devices[0].SerNo, mockSerial.c_str());
+  if (failAt == "bad-serial") std::strcpy(devices[0].SerNo, "bad\nserial");
   if (multipleDevices) { devices[1] = devices[0]; std::strcpy(devices[1].SerNo, "mock-second"); }
   return result("enumerate");
 }
@@ -97,7 +112,15 @@ int main() {
       reset(); multipleDevices = true; stopAfterGain = true;
       RspDuo receiver("RspDuo", 527000000, rate, "/unused", &record,
         -37, agc, 25, 47, 5, agc != 0, agc == 0, "mock-second");
+      assert(receiver.startup_receipt_json().empty());
       receiver.start();
+      const auto started = receipt(receiver);
+      assert(std::strcmp(started["status"].GetString(), "pending") == 0);
+      assert(started["sdk"]["stages"]["getDeviceParams"].GetBool());
+      assert(!started["sdk"]["stages"]["init"].GetBool());
+      assert(std::strcmp(started["selected"]["serial"].GetString(), "mock-second") == 0);
+      assert(started["requested"]["sampleRate"].GetUint() == rate);
+      assert(started["requested"]["gainReduction"][0].GetInt() == 25);
       assert(selectedSerial == "mock-second");
       for (auto* tuner : {&tunerA, &tunerB}) {
         assert(tuner->tunerParams.rfFreq.rfHz == 527000000);
@@ -114,11 +137,36 @@ int main() {
       }
       assert(tunerA.tunerParams.gain.gRdB == 25 && tunerB.tunerParams.gain.gRdB == 47);
       receiver.process(nullptr, nullptr); // Fake SDK stops the test loop after both accepted Updates.
+      const auto accepted = receipt(receiver);
+      rapidjson::Document exported;
+      exported.Parse(blah2_rspduo_startup_receipt_json_v1(&receiver));
+      assert(!exported.HasParseError() && exported["status"] == "accepted");
+      assert(std::strcmp(accepted["status"].GetString(), "accepted") == 0);
+      assert(accepted["hardwareVerified"].GetBool() == false);
+      assert(accepted["readbackAvailable"].GetBool() == false);
+      assert(accepted["sdk"]["stages"]["gainUpdateA"].GetBool());
+      assert(accepted["sdk"]["stages"]["gainUpdateB"].GetBool());
       assert(initialized == 1 && callbackContext == &receiver);
       receiver.stop(); receiver.stop();
       assert(opened == closed && locked == unlocked && selected == released && initialized == uninitialized);
     }
   }
+  struct CommaDecimal : std::numpunct<char> {
+    char do_decimal_point() const override { return ','; }
+  };
+  reset(); mockSerial = "mock-\"\\serial"; stopAfterGain = true;
+  RspDuo escaped("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false, mockSerial);
+  escaped.start(); escaped.process(nullptr, nullptr);
+  const auto previousLocale = std::locale::global(
+    std::locale(std::locale::classic(), new CommaDecimal));
+  const auto escapedReceipt = receipt(escaped);
+  std::locale::global(previousLocale);
+  assert(std::strcmp(escapedReceipt["status"].GetString(), "accepted") == 0);
+  assert(std::string(escapedReceipt["requested"]["serial"].GetString()) == mockSerial);
+  assert(std::string(escapedReceipt["selected"]["serial"].GetString()) == mockSerial);
+  assert(escapedReceipt["sdk"]["version"].IsNumber());
+  escaped.stop();
   for (const std::string serial : {"", "not-present"}) {
     reset(); multipleDevices = true;
     RspDuo receiver("RspDuo", 527000000, 2000000, "/unused", &record,
@@ -130,13 +178,22 @@ int main() {
   reset();
   RspDuo tooFast("RspDuo", 527000000, 6000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
   try { tooFast.start(); assert(false); } catch (const std::exception&) {}
+  assert(tooFast.startup_receipt_json().empty());
   assert(opened == 0); // Six-MS/s output is not offered by this dual-tuner adapter.
-  for (const auto& stage : {"open", "version", "version-mismatch", "lock", "enumerate", "none", "wrong-model", "select", "debug", "parameters"}) {
+  for (const auto& stage : {"open", "version", "version-mismatch", "version-unusual", "lock", "enumerate", "none", "wrong-model", "bad-serial", "select", "debug", "parameters"}) {
     reset(); failAt = stage;
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
     bool failed = false;
     try { receiver.start(); } catch (const std::exception& error) { failed = true; assert(std::string(error.what()).find("[RspDuo]") != std::string::npos); }
     assert(failed); receiver.stop(); receiver.stop();
+    const auto incomplete = receipt(receiver);
+    assert(std::strcmp(incomplete["status"].GetString(), "pending") == 0);
+    if (stage == std::string("version-mismatch")) {
+      assert(!incomplete["sdk"]["stages"]["apiVersion"].GetBool());
+      assert(incomplete["sdk"]["version"].GetFloat() == 1.0f);
+    }
+    if (stage == std::string("version-unusual"))
+      assert(incomplete["sdk"]["version"].IsNull());
     assert(opened == closed && locked == unlocked && selected == released);
     assert(initialized == 0 && uninitialized == 0);
   }
@@ -157,8 +214,42 @@ int main() {
     bool failed = false;
     try { receiver.process(nullptr, nullptr); } catch (const std::exception&) { failed = true; }
     assert(failed && callbackContext == &receiver);
+    const auto incomplete = receipt(receiver);
+    assert(std::strcmp(incomplete["status"].GetString(),
+      stage == std::string("removed") ? "accepted" : "pending") == 0);
+    if (stage == std::string("gain-b")) {
+      assert(incomplete["sdk"]["stages"]["init"].GetBool());
+      assert(incomplete["sdk"]["stages"]["gainUpdateA"].GetBool());
+      assert(!incomplete["sdk"]["stages"]["gainUpdateB"].GetBool());
+    }
     receiver.stop(); receiver.stop();
     assert(opened == closed && locked == unlocked && selected == released && initialized == uninitialized);
+  }
+  // Published SDRplay API 3.09 section 5, 50-ohm RSPduo LNA boundaries.
+  for (const auto& candidate : {
+      std::pair<uint32_t, int>{59999999, 6}, {60000000, 9},
+      {999999999, 9}, {1000000000, 8}, {2000000000, 0}}) {
+    reset();
+    RspDuo receiver("RspDuo", candidate.first, 2000000, "/unused", &record,
+      -30, 50, 30, 31, candidate.second, false, false);
+    receiver.start(); receiver.stop();
+    assert(opened == closed);
+  }
+  for (const auto& candidate : {
+      std::pair<uint32_t, int>{59999999, 7}, {1000000000, 9}}) {
+    reset();
+    RspDuo receiver("RspDuo", candidate.first, 2000000, "/unused", &record,
+      -30, 50, 30, 31, candidate.second, false, false);
+    try { receiver.start(); assert(false); } catch (const std::invalid_argument&) {}
+    assert(receiver.startup_receipt_json().empty());
+    assert(opened == 0);
+  }
+  for (const auto& serial : {std::string("bad\nserial"), std::string(100, 'x')}) {
+    reset();
+    RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record,
+      -30, 50, 30, 31, 3, false, false, serial);
+    try { receiver.start(); assert(false); } catch (const std::invalid_argument&) {}
+    assert(receiver.startup_receipt_json().empty() && opened == 0);
   }
   for (const auto scenario : {CallbackScenario::Matched, CallbackScenario::Wraparound,
     CallbackScenario::BFirst, CallbackScenario::Reset, CallbackScenario::DuplicateA,

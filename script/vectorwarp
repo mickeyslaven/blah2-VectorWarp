@@ -1,0 +1,260 @@
+#!/usr/bin/python3 -I
+"""Installed VectorWarp launcher; services retain their own restricted identities."""
+import os
+import json
+import contextlib
+import fcntl
+from pathlib import Path
+import shutil
+import subprocess
+import stat
+import sys
+import time
+import urllib.error
+import urllib.request
+
+PREFIX = Path('@PREFIX@')
+CONFIG = Path('@SYSCONFDIR@') / 'config.yml'
+LAUNCHER = '/usr/bin/vectorwarp'
+SYSTEMCTL = '/usr/bin/systemctl'
+API = 'vectorwarp-api.service'
+PROCESSOR = 'vectorwarp-processor.service'
+BROKER = 'vectorwarp-receiver.service'
+SOCKET = 'vectorwarp-receiver.socket'
+RESTART = 'vectorwarp-restart.service'
+QUIESCE = PREFIX / 'libexec/vectorwarp-quiesce'
+UPGRADE_LOCK = Path('/run/vectorwarp-package-upgrade.lock')
+UPGRADE_STATE = Path('/run/vectorwarp-package-upgrade.state')
+HELP = '''Usage: vectorwarp [open|start|stop|restart|status|logs|version|help]
+
+  open       Open the web interface (default); do not start radar processing
+  start      Start VectorWarp services and radar using saved settings
+  stop       Stop all VectorWarp services, including the web interface
+  restart    Stop, then start all VectorWarp services with saved settings
+  status     Show VectorWarp service status
+  logs       Show recent VectorWarp service logs
+  version    Show installed package version
+  help       Show this help
+
+Examples:
+  vectorwarp                 Open the web interface
+  vectorwarp start           Start the complete VectorWarp stack
+  vectorwarp stop            Stop the complete VectorWarp stack
+  vectorwarp restart         Apply saved settings with a full restart
+
+Service changes may ask for your administrator password. On an SSH/headless
+session, open prints the web address instead of opening a browser. Stop never
+stops shared receiver/vendor services. Start uses the checked receiver path,
+which may prepare a required already-installed vendor service.
+'''
+
+
+def run(args, **kwargs):
+    return subprocess.run(args, check=True, timeout=180, **kwargs)
+
+
+@contextlib.contextmanager
+def upgrade_guard():
+    fd = os.open(UPGRADE_LOCK, os.O_NOFOLLOW | os.O_CLOEXEC | os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600:
+            raise RuntimeError('Untrusted package-upgrade lock; inspect the installed service state.')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('A package update is in progress. Retry after it finishes.') from None
+        if UPGRADE_STATE.exists() or UPGRADE_STATE.is_symlink():
+            raise RuntimeError('A package update has not completed. Finish the APT/DNF transaction before starting VectorWarp.')
+        yield
+    finally:
+        os.close(fd)
+
+
+def api_url():
+    # Use exactly the API's recovery/validation rules, never source YAML as
+    # shell code. Invalid configuration still opens the usable setup page.
+    node = PREFIX / 'runtime/node/bin/node'
+    if not node.is_file():
+        node = Path('/usr/bin/node')
+    reader = '''
+const net = require('net'), path = require('path');
+const c = require(path.join(process.argv[1], 'config-store.js')).readConfig(process.argv[2]).config;
+let host = net.isIP(c?.network?.ip || '') ? c.network.ip : '0.0.0.0';
+if (host === '0.0.0.0') host = '127.0.0.1';
+if (host === '::') host = '::1';
+if (net.isIP(host) === 6) host = '[' + host + ']';
+const p = c?.network?.ports?.api;
+const port = Number.isInteger(p) && p > 0 && p <= 65535 ? p : 3000;
+process.stdout.write('http://' + host + ':' + port + '/');
+'''
+    result = run([str(node), '-e', reader, str(PREFIX / 'current/api'), str(CONFIG)],
+                 text=True, capture_output=True,
+                 env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8'})
+    return result.stdout.strip()
+
+
+def wait_web(url):
+    # Ignore proxy environment variables for this local service check.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(url + 'api/system/status', timeout=1) as response:
+                if response.status == 200:
+                    payload = response.read(262145)
+                    if len(payload) > 262144:
+                        raise ValueError('Oversized status response')
+                    status = json.loads(payload)
+                    pid = run([SYSTEMCTL, 'show', '-p', 'MainPID', '--value', API],
+                              text=True, capture_output=True).stdout.strip()
+                    if (pid.isdigit() and int(pid) > 0 and isinstance(status, dict) and
+                            str(status.get('serverId', '')).startswith(pid + '-') and
+                            isinstance(status.get('restart'), dict)):
+                        return
+        except (OSError, ValueError, urllib.error.URLError):
+            pass
+        time.sleep(.2)
+    raise RuntimeError('Web interface did not become ready. Run: vectorwarp logs')
+
+
+def privileged(command, capture=False):
+    if os.geteuid() == 0:
+        return action(command)
+    # Normal administrator authentication, not a new passwordless sudo grant.
+    # No outer timeout: stop/restart can spend up to the helper's bounded
+    # drain time. Killing only sudo would leave a privileged action running.
+    result = subprocess.run(['/usr/bin/sudo', '--', LAUNCHER, command], check=True,
+                            stdout=subprocess.PIPE if capture else None, text=True)
+    return result.stdout.strip() if capture else None
+
+
+def unit_properties(unit):
+    output = run([SYSTEMCTL, 'show', '-p', 'ActiveState', '-p', 'MainPID', unit],
+                 text=True, capture_output=True).stdout
+    properties = dict(line.split('=', 1) for line in output.splitlines() if '=' in line)
+    state, pid = properties.get('ActiveState'), properties.get('MainPID', '')
+    # Socket units have no MainPID property; an active listening socket is
+    # still checked by ActiveState, while services require an explicit PID.
+    if unit == SOCKET and not pid:
+        pid = '0'
+    if not pid.isdigit():
+        raise RuntimeError('Could not verify ' + unit + ' service identity.')
+    return state, int(pid)
+
+
+def action(command):
+    if command == 'stop':
+        # The helper owns the exclusive package-upgrade lock and broker drain.
+        # Do not hold a shared lock while asking it to acquire the exclusive one.
+        return service_action('stop')
+    if command == 'restart':
+        service_action('stop')
+        # An intervening package upgrade must leave the stack safely stopped.
+        with upgrade_guard():
+            return service_action('start')
+    with upgrade_guard():
+        return service_action(command)
+
+
+def service_action(command):
+    if command == '_web':
+        run([SYSTEMCTL, 'start', API], stdout=subprocess.DEVNULL)
+        url = api_url()
+        wait_web(url)
+        return url
+    if command == 'start':
+        # A stopped stack must restore its management path before checked
+        # processor startup. Repeated start may repair the web/broker without
+        # interrupting an already-running processor.
+        run([SYSTEMCTL, 'start', SOCKET])
+        run([SYSTEMCTL, 'start', BROKER])
+        run([SYSTEMCTL, 'start', API])
+        wait_web(api_url())
+        socket_state, _ = unit_properties(SOCKET)
+        broker_state, broker_pid = unit_properties(BROKER)
+        if socket_state != 'active' or broker_state != 'active' or broker_pid <= 0:
+            raise RuntimeError('Receiver management did not become ready. Run: vectorwarp status')
+        state, processor_pid = unit_properties(PROCESSOR)
+        if state == 'active':
+            if processor_pid <= 0:
+                raise RuntimeError('Radar reports active without a processor PID. Run: vectorwarp status')
+            print('Radar is already running. Use vectorwarp restart to apply changed settings.')
+            return None
+        if state not in ('inactive', 'failed'):
+            raise RuntimeError('Radar is changing state. Wait, then check vectorwarp status.')
+        # Same checked startup path used by Save & Restart. Never launch the
+        # DSP as root or bypass receiver reconciliation/local SDK checks.
+        run([SYSTEMCTL, 'start', RESTART])
+        print('Radar start requested. Check vectorwarp status or the web interface for receiver readiness.')
+    elif command == 'stop':
+        # The helper has its own bounded drain and cleanup. A launcher timeout
+        # could kill its parent shell while a freezer child still owns the lock.
+        subprocess.run([str(QUIESCE), 'manual-stop'], check=True)
+        for unit in (API, PROCESSOR, RESTART, BROKER, SOCKET):
+            state, pid = unit_properties(unit)
+            if state not in ('inactive', 'failed') or pid != 0:
+                raise RuntimeError('VectorWarp service is still running: ' + unit)
+        print('All VectorWarp services stopped, including the web interface.')
+    return None
+
+
+def open_web():
+    url = privileged('_web', capture=True)
+    print('VectorWarp: ' + url, flush=True)
+    graphical = bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+    remote = bool(os.environ.get('SSH_CONNECTION') or os.environ.get('SSH_TTY'))
+    # Browser must run as the desktop user, never via sudo/root.
+    if os.geteuid() != 0 and graphical and not remote:
+        opener = shutil.which('xdg-open')
+        if opener:
+            result = subprocess.run([opener, url], timeout=15, check=False,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if result.returncode:
+                print('Open the address above in your browser.')
+            return
+    print('On another device, use this computer\'s address instead of the loopback address, if configured to listen on the network.')
+
+
+def main(args):
+    if len(args) > 1:
+        print(HELP, file=sys.stderr)
+        return 64
+    command = args[0] if args else 'open'
+    if command in ('-h', '--help', 'help'):
+        print(HELP)
+    elif command == 'open':
+        open_web()
+    elif command in ('start', 'stop', 'restart'):
+        privileged(command)
+    elif command == '_web':
+        if os.geteuid() != 0:
+            raise RuntimeError('Internal web activation requires administrator authentication.')
+        print(action(command))
+    elif command == 'status':
+        return subprocess.run([SYSTEMCTL, '--no-pager', '--full', 'status', API,
+                               SOCKET, BROKER, PROCESSOR, RESTART], check=False).returncode
+    elif command == 'logs':
+        return subprocess.run(['/usr/bin/journalctl', '--no-pager', '-n', '100',
+                               '-u', API, '-u', BROKER, '-u', PROCESSOR,
+                               '-u', RESTART], check=False).returncode
+    elif command in ('version', '--version'):
+        metadata = PREFIX / 'PACKAGE-METADATA'
+        if not metadata.is_file():
+            metadata = PREFIX / 'current/.vectorwarp-build'
+        lines = metadata.read_text().splitlines()
+        print('\n'.join(line for line in lines if line.split('=', 1)[0] in
+                        ('version', 'release', 'build_id', 'revision', 'commit', 'distro', 'architecture')))
+    else:
+        print(HELP, file=sys.stderr)
+        return 64
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (OSError, subprocess.SubprocessError, RuntimeError) as error:
+        print('VectorWarp: ' + str(error), file=sys.stderr)
+        print('Inspect services with vectorwarp status and vectorwarp logs.', file=sys.stderr)
+        sys.exit(1)

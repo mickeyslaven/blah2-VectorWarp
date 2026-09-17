@@ -57,13 +57,16 @@ preserves other groups, refuses unexpected owner groups, and never
 creates groups, changes device permissions, follows a render-node symlink, or
 starts/restarts services. Missing nodes remain a diagnostic—not a guessed
 static service group. An already-running process needs an explicit restart
-before a changed group membership applies.
+before a changed group membership applies; use `vectorwarp restart` on version
+0.1.7 or newer, or **Apply & Restart** in Settings.
 The access check inspects Unix owner/group/mode metadata; it does not prove
 ACL or SELinux access. Actual driver opening and processing qualification are
 still required.
 
 Finally, choose Automatic or GPU and explicitly start processing with the
-desired settings. Settings displays **delay–Doppler and clutter separately**.
+desired settings (**Save & Restart** in Settings, or `vectorwarp start` with
+version 0.1.7 or newer after saving them). Settings displays the
+**delay–Doppler** and **clutter** stages separately.
 An enumerated GPU or installed package is only *unqualified*. Fresh telemetry
 can report either stage, or both, as startup-qualified. The display clears this
 status after a restart or telemetry reconnection and rechecks freshness after

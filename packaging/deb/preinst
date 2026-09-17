@@ -1,0 +1,327 @@
+#!/bin/sh
+set -eu
+
+# One quiesce implementation serves DEB/RPM upgrades and the installed launcher.
+# Package preflight must not depend on newly unpacked files.
+manual_stop=false
+case "${1:-}" in
+  upgrade|2) ;;
+  manual-stop)
+    [ "$#" -eq 1 ] || exit 64
+    manual_stop=true
+    [ "$(id -u)" = 0 ] || { printf '%s\n' 'VectorWarp shutdown requires administrator authentication.' >&2; exit 1; }
+    # Rendered only for the installed launcher helper. A custom source prefix
+    # must not accidentally control the fixed /opt/vectorwarp package layout.
+    case '@PREFIX@' in
+      '@''PREFIX@'|/opt/vectorwarp) ;;
+      *) printf '%s\n' 'Full-stack shutdown cannot verify this custom installation prefix. Finish receiver actions, then inspect and stop its VectorWarp systemd units manually.' >&2; exit 1 ;;
+    esac
+    ;;
+  *) exit 0 ;;
+esac
+if [ ! -d /run/systemd/system ]; then
+  if $manual_stop; then
+    printf '%s\n' 'VectorWarp service control requires a running systemd installation.' >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+state=/run/vectorwarp-package-upgrade.state
+api=vectorwarp-api.service
+processor=vectorwarp-processor.service
+broker=vectorwarp-receiver.service
+receiver_socket=vectorwarp-receiver.socket
+restart=vectorwarp-restart.service
+build=vectorwarp-sdrplay-build.service
+
+operation='VectorWarp upgrade preflight'
+$manual_stop && operation='VectorWarp shutdown'
+fail() { printf '%s: %s\n' "$operation" "$*" >&2; exit 1; }
+lock=/run/vectorwarp-package-upgrade.lock
+[ ! -L "$lock" ] || fail 'unsafe package-upgrade lock symlink'
+[ ! -e "$lock" ] || [ -f "$lock" ] || fail 'package-upgrade lock is not a regular file'
+umask 077
+exec 9>>"$lock" || fail 'cannot open package-upgrade lock'
+[ "$(stat -c %u:%a "$lock")" = 0:600 ] || fail 'untrusted package-upgrade lock'
+flock -n 9 || fail 'another VectorWarp service action or package upgrade is running'
+if $manual_stop; then
+  [ ! -e "$state" ] && [ ! -L "$state" ] ||
+    fail 'a package update has not completed; finish the APT/DNF transaction before shutdown'
+  state=$(mktemp /run/vectorwarp-manual-stop.XXXXXX) || fail 'could not create shutdown state'
+  # The package marker is never used or removed by manual shutdown. Delete
+  # only this invocation's private root-owned snapshot, even on failure.
+  trap 'rm -f -- "$state"' 0
+fi
+active_state() {
+  value=$(systemctl show --property=ActiveState --value "$1") || return 1
+  case "$value" in
+    active) printf 1 ;;
+    inactive|failed) printf 0 ;;
+    *) return 1 ;; # Do not snapshot a unit in transition.
+  esac
+}
+busy_work() {
+  [ "$(active_state "$restart")" = 0 ] || return 1
+  [ "$(active_state "$build")" = 0 ] || return 1
+  restart_job=$(systemctl show --property=Job --value "$restart") || return 1
+  build_job=$(systemctl show --property=Job --value "$build") || return 1
+  case "$restart_job:$build_job" in :|0:|:0|0:0) return 0 ;; *) return 1 ;; esac
+}
+
+# A stale record must never later revive a service which an administrator
+# deliberately stopped after an aborted transaction.
+[ ! -L "$state" ] || fail "unsafe state symlink at $state"
+if ! $manual_stop; then
+  rm -f -- "$state" || fail 'could not clear stale upgrade state'
+fi
+busy_work || fail 'restart or local SDRplay build is active; wait for it to finish, then retry this command'
+socket_unit=/usr/lib/systemd/system/vectorwarp-receiver.socket
+[ ! -L "$socket_unit" ] && [ -f "$socket_unit" ] &&
+  [ "$(stat -c %u:%g:%a "$socket_unit")" = 0:0:644 ] &&
+  [ "$(sha256sum "$socket_unit" | cut -d ' ' -f 1)" = a5c8565cbde6a594942db8c217bba1cb83ce8cfc5723f6d9cf47e2597242eb09 ] ||
+  fail 'receiver socket unit differs from the reviewed package'
+socket_fragment=$(systemctl show --property=FragmentPath --value "$receiver_socket") ||
+  fail 'cannot inspect receiver socket unit'
+socket_dropins=$(systemctl show --property=DropInPaths --value "$receiver_socket") ||
+  fail 'cannot inspect receiver socket overrides'
+socket_reload=$(systemctl show --property=NeedDaemonReload --value "$receiver_socket") ||
+  fail 'cannot inspect receiver socket reload state'
+[ "$(readlink -f "$socket_fragment")" = "$(readlink -f "$socket_unit")" ] &&
+  [ -z "$socket_dropins" ] && [ "$socket_reload" = no ] ||
+  fail 'receiver socket has an unreviewed override or pending unit change'
+was_api=$(active_state "$api") || fail 'cannot inspect API state'
+was_processor=$(active_state "$processor") || fail 'cannot inspect processor state'
+was_socket=$(active_state "$receiver_socket") || fail 'cannot inspect receiver socket state'
+was_broker=$(active_state "$broker") || fail 'cannot inspect receiver broker state'
+[ "$was_broker" = 0 ] || [ "$was_socket" = 1 ] || fail 'broker is active without its managed socket'
+
+umask 077
+printf 'api=%s\nprocessor=%s\nsocket=%s\nbroker=%s\n' \
+  "$was_api" "$was_processor" "$was_socket" "$was_broker" >"$state" || fail 'could not record active services'
+restore() {
+  # If quiesce fails before package unpack, restore only the original active
+  # units. A failed drain leaves the original socket pathname in place.
+  socket_now=$(active_state "$receiver_socket") || socket_now=unknown
+  broker_now=$(active_state "$broker") || broker_now=unknown
+  context='VectorWarp upgrade was not unpacked.'
+  $manual_stop && context='VectorWarp shutdown did not complete.'
+  if [ "$was_socket" = 1 ] && [ "$socket_now" != 1 ] && [ "$broker_now" != 0 ]; then
+    # A broker may have activated from a queued connection just as the socket
+    # was stopped. Starting a new socket under that old process would not pass
+    # the new listener fd to it, making management appear available when it
+    # is not. Do not kill its possibly active handler or restart dependent
+    # units. An administrator must wait for the action, then recover explicitly.
+    rm -f -- "$state"
+    printf '%s A receiver action may still be active with its socket stopped. Wait for it to finish; then stop vectorwarp-receiver.service, start vectorwarp-receiver.socket, and start only previously active VectorWarp units (API=%s processor=%s broker=%s). Do not stop a busy broker.\n' \
+      "$context" "$was_api" "$was_processor" "$was_broker" >&2
+    return
+  fi
+  [ "$was_socket" = 0 ] || systemctl start "$receiver_socket" || true
+  [ "$was_broker" = 0 ] || systemctl start "$broker" || true
+  if ! busy_work; then
+    # A newly accepted asynchronous restart/build owns the next processor/API
+    # transition. Do not race it while unwinding a failed package preflight.
+    rm -f -- "$state"
+    printf '%s %s\n' "$context" 'A restart/build became active. API/processor were not restored. Wait for that action, then inspect their systemctl status and retry.' >&2
+    return
+  fi
+  [ "$was_api" = 0 ] || systemctl start "$api" || true
+  [ "$was_processor" = 0 ] || systemctl start "$processor" || true
+  rm -f -- "$state"
+  printf '%s %s\n' "$context" 'Verify service state with systemctl status vectorwarp-api.service vectorwarp-processor.service vectorwarp-receiver.socket.' >&2
+}
+abort() { printf '%s: %s\n' "$operation" "$*" >&2; restore; exit 1; }
+
+systemctl stop "$api" || abort 'could not stop API'
+
+drain_broker() {
+  # Only the reviewed legacy broker has the invariant that every request runs
+  # in a separate task. Freeze its cgroup *before* closing its socket name;
+  # busy retries thaw with the original pathname intact. A queued connection
+  # cannot become new privileged work after the frozen singleton check.
+  /usr/bin/python3 -I - <<'PY' || abort 'could not safely drain the receiver broker; no files were replaced'
+import hashlib
+import os
+from pathlib import Path
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+UNIT = 'vectorwarp-receiver.service'
+TRUSTED = {
+    '/opt/vectorwarp/libexec/vectorwarp-receiver-helper': {
+        # Reviewed v0.1.3, v0.1.5 and v0.1.6 dispatch each request in a
+        # separate worker thread; older/modified brokers must not be killed
+        # based on a singleton-task assumption.
+        '61c06299e33f1783fee473d1738175d70c999845209173765dc321cdaf20824c',
+        '5f74b7a8e7cf1efe46e099203b46ad272aa8b2b3ede01238b45072c84db97654',
+        '7d62dda529e84f41682effc331949c4719eb3bc8e3b75e109e1ef387217ba996',
+    },
+    '/usr/lib/systemd/system/vectorwarp-receiver.service': {
+        '5adbc6060313c6c0ad22318db9f2baa4bb34d673ec4b29449454999cb317a957',
+    },
+}
+
+def fail(message):
+    raise RuntimeError(message)
+
+def unit_value(property_name, unit=UNIT):
+    return subprocess.check_output(
+        ['/usr/bin/systemctl', 'show', '--property=' + property_name,
+         '--value', unit], text=True, timeout=5).strip()
+
+def cgroup_lines(path):
+    return path.read_text().splitlines()
+
+try:
+    for name, digests in TRUSTED.items():
+        path = Path(name)
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            fail('untrusted installed broker file: ' + name)
+        if hashlib.sha256(path.read_bytes()).hexdigest() not in digests:
+            fail('unknown installed broker implementation: ' + name)
+    fragment = Path(unit_value('FragmentPath'))
+    if fragment.resolve() != Path('/usr/lib/systemd/system/vectorwarp-receiver.service').resolve():
+        fail('receiver broker uses an unexpected systemd unit')
+    drop_ins = unit_value('DropInPaths')
+    if drop_ins:
+        # Fedora 44 ships this global, timeout-only systemd drop-in. It does
+        # not alter ExecStart, credentials, cgroup ownership or stop ordering.
+        fedora_drop_in = '/usr/lib/systemd/system/service.d/10-timeout-abort.conf'
+        if drop_ins != fedora_drop_in:
+            fail('receiver broker has unreviewed systemd overrides')
+        info = Path(fedora_drop_in).lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+                info.st_mode & 0o022 or
+                hashlib.sha256(Path(fedora_drop_in).read_bytes()).hexdigest() !=
+                'ae6b234f92bc22f1201a7572b59b454c9809f33c80d13f361b9674e1801acc37'):
+            fail('receiver broker global systemd drop-in changed')
+    if unit_value('NeedDaemonReload') != 'no':
+        fail('receiver broker has unapplied unit changes')
+    pid = int(unit_value('MainPID'))
+    invocation = unit_value('InvocationID')
+    if pid <= 1 or len(invocation) != 32:
+        fail('receiver broker has no pinned main process')
+    cmdline = Path('/proc') / str(pid) / 'cmdline'
+    if cmdline.read_bytes().rstrip(b'\0').split(b'\0') != [
+            b'/usr/bin/python3', b'-I',
+            b'/opt/vectorwarp/libexec/vectorwarp-receiver-helper', b'serve']:
+        fail('receiver broker main process is not the reviewed implementation')
+    group = unit_value('ControlGroup')
+    if group != '/system.slice/vectorwarp-receiver.service':
+        fail('receiver broker has an unexpected cgroup')
+    root = Path('/sys/fs/cgroup') / group.lstrip('/')
+    freeze, events = root / 'cgroup.freeze', root / 'cgroup.events'
+    if not freeze.is_file() or not events.is_file() or freeze.read_text().strip() != '0':
+        fail('unified cgroup freeze is unavailable or broker was already frozen')
+    pidfd = os.pidfd_open(pid)
+    try:
+        deadline = time.monotonic() + 210
+        while time.monotonic() < deadline:
+            owned_freeze = False
+            try:
+                freeze.write_text('1')
+                owned_freeze = True
+                for _ in range(50):
+                    if 'frozen 1' in cgroup_lines(events):
+                        break
+                    time.sleep(0.1)
+                else:
+                    fail('receiver broker cgroup did not freeze')
+                processes = cgroup_lines(root / 'cgroup.procs')
+                threads = cgroup_lines(root / 'cgroup.threads')
+                descendants = [item for item in root.iterdir() if item.is_dir()]
+                if (processes == [str(pid)] and threads == [str(pid)] and
+                        not descendants and
+                        unit_value('MainPID') == str(pid) and
+                        unit_value('InvocationID') == invocation):
+                    # Stop only the socket, ignoring its Requires edge: the
+                    # broker must remain frozen and untouched until the next
+                    # singleton check. A queued connection cannot activate a
+                    # replacement once the socket has reached inactive.
+                    subprocess.run(['/usr/bin/systemctl', '--job-mode=ignore-dependencies',
+                                    '--no-block', 'stop',
+                                    'vectorwarp-receiver.socket'], check=True, timeout=5)
+                    for _ in range(50):
+                        if unit_value('ActiveState', 'vectorwarp-receiver.socket') == 'inactive':
+                            break
+                        time.sleep(0.1)
+                    else:
+                        fail('receiver socket did not stop while broker was frozen')
+                    if (not freeze.exists() or 'frozen 1' not in cgroup_lines(events) or
+                            cgroup_lines(root / 'cgroup.procs') != [str(pid)] or
+                            cgroup_lines(root / 'cgroup.threads') != [str(pid)] or
+                            unit_value('MainPID') != str(pid) or
+                            unit_value('InvocationID') != invocation or
+                            unit_value('Job') not in ('', '0')):
+                        fail('receiver broker changed while stopping only its socket')
+                    try:
+                        signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # systemd may have killed the idle broker first.
+                    for _ in range(50):
+                        if not (root / 'cgroup.procs').exists() or not cgroup_lines(root / 'cgroup.procs'):
+                            print('VectorWarp upgrade: idle legacy broker quiesced; pending plans invalidated.', file=sys.stderr)
+                            break
+                        time.sleep(0.1)
+                    else:
+                        fail('idle broker did not exit after fatal signal')
+                    break
+            finally:
+                if owned_freeze and freeze.exists():
+                    freeze.write_text('0')
+            time.sleep(1)
+        else:
+            fail('receiver action did not drain within 210 seconds')
+    finally:
+        os.close(pidfd)
+except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+    print('VectorWarp upgrade: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+# A socket activation may have raced the original state snapshot. Decide from
+# the actual post-API-stop state, not only from was_broker.
+current_broker=$(active_state "$broker") || abort 'broker state changed during quiesce'
+if [ "$current_broker" = 1 ]; then
+  drain_broker
+else
+  systemctl --job-mode=ignore-dependencies --no-block stop "$receiver_socket" ||
+    abort 'could not stop receiver socket'
+  attempts=0
+  until [ "$(active_state "$receiver_socket")" = 0 ]; do
+    attempts=$((attempts + 1))
+    [ "$attempts" -le 50 ] || abort 'receiver socket did not stop'
+    sleep 0.1
+  done
+  current_broker=$(active_state "$broker") || abort 'broker state changed after socket stop'
+  if [ "$current_broker" = 1 ]; then
+    drain_broker
+  else
+    broker_job=$(systemctl show --property=Job --value "$broker") || abort 'cannot inspect broker job'
+    case "$broker_job" in ''|0) ;; *) abort 'broker activation remained queued after socket stop' ;; esac
+  fi
+fi
+
+busy_work || abort 'a restart or local adapter build started while quiescing'
+systemctl stop "$broker" "$receiver_socket" "$processor" || abort 'could not stop own services'
+busy_work || abort 'a restart or local adapter build raced with quiesce'
+if $manual_stop; then
+  systemctl stop "$restart" "$api" || abort 'could not finish stopping VectorWarp'
+  for unit in "$processor" "$restart" "$broker" "$receiver_socket" "$api"; do
+    [ "$(active_state "$unit")" = 0 ] || abort "$unit remains active"
+    case "$unit" in
+      *.service)
+        [ "$(systemctl show --property=MainPID --value "$unit")" = 0 ] ||
+          abort "$unit still has a running process"
+        ;;
+    esac
+  done
+  printf '%s\n' 'VectorWarp stopped: radar, web interface and receiver-management helper.'
+fi
+exit 0

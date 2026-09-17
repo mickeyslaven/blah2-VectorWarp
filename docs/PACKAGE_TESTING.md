@@ -7,19 +7,26 @@ carried into that environment.
 The checks start the installed systemd units and verify:
 
 - Fresh installation enables and starts the API without the test starting it; radar processing stays stopped. The API opens with its service account, writable configuration and security restrictions.
-- Reinstalling the package removes the known legacy sudo grant while preserving custom policy, saved settings and a running API; it does not start radar processing.
-- Chromium opens all six settings tabs, saves a frame-interval change and reads it back after reload.
+- Reinstalling the package removes the known legacy sudo grant while preserving custom policy and saved settings. Running API/broker processes must be replaced; an intentionally stopped processor must remain stopped.
+- Chromium opens all six settings tabs, saves settings and reads them back after reload.
+- Chromium applies a generated IQ replay through **Save & Restart**. The real API, credential broker and systemd restart the installed non-root processor; the check requires a new API instance, the saved revision and fresh radar frames.
+- A missing replay file produces a visible error without reusing old frames. Correcting the path and restarting must produce new frames again.
 - Missing SDRplay software produces setup guidance and the official download link, without downloading the SDK.
 - Invalid settings and requests from unapproved browser origins cannot change configuration.
 - A restart request crosses the real unprivileged-to-root broker boundary; missing receiver software produces an error instead of an endless restart screen.
 - The installed processor handles synthetic recording/replay inputs for the supported receiver profiles, including Kraken channel counts from two through eight.
+- Real service accounts try to open a synthetic file with the distro's HackRF device permissions. The processor must have access; the web API and unrelated users must not. Debian/Ubuntu retain the vendor `plugdev` group; Fedora uses a narrowly matched HackRF rule.
+- Reinstalling during synthetic replay must replace the API, broker and processor and produce fresh frames afterward. The installed `vectorwarp` launcher opens only the web page by default; its checked start, safe stop and ordered restart manage all VectorWarp services without stopping separate receiver/vendor services.
 
-The jobs retain package hashes, installation and service logs, a browser
+These checks run on all ten OS/architecture package targets, for PRs as well as
+releases, against the newly built package—not a source overlay. The jobs retain
+package hashes, installation and service logs, a browser
 screenshot, and replay results. Separate broker tests inject denied requests,
 timeouts and failed actions under `NoNewPrivileges`; they mock privileged
 commands rather than configuring a radio on the runner.
 
-These checks do not verify physical USB access, RF reception, a vendor SDK,
+The permission fixture is not a USB device or a udev hotplug test. These checks
+do not verify physical USB access, RF reception, a vendor SDK,
 GPU drivers, or every kernel and desktop environment. Live receiver tests are
 recorded separately. The test containers and browser dependencies are CI tools,
 not dependencies of VectorWarp installations.

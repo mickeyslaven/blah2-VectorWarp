@@ -73,6 +73,45 @@ def release_installation(manifest):
     row("Raspberry Pi OS · 64-bit Trixie", "debian", "13", pi=True)
     table_rows = "\n".join(rows)
     fingerprint = escape(manifest["signing_fingerprint"])
+    # The site can be rebuilt from main before the next release exists. Describe
+    # only behavior shipped by the verified packages in this manifest.
+    has_launcher = tuple(map(int, version.split("."))) >= (0, 1, 7)
+    if has_launcher:
+        fedora_guidance = '''Run <code>vectorwarp</code> to open the web interface, configure your receiver,
+and choose Save &amp; Restart. Use <code>vectorwarp start</code> to start its
+services, <code>vectorwarp stop</code> to stop them including the web interface,
+or <code>vectorwarp restart</code> for an ordered stop/start.
+<code>vectorwarp status</code> checks services; <code>vectorwarp help</code>
+lists all commands. Shared receiver/vendor services are not stopped.
+Service changes may ask for your administrator password; headless systems print
+the web address. Update later with <code>sudo dnf upgrade vectorwarp</code>.
+Successful upgrades restart previously running VectorWarp services and leave
+intentionally stopped radar stopped. Finish receiver setup/build actions before
+updating; a helper that cannot be safely stopped blocks unpacking with an error.'''
+        apt_guidance = '''Successful upgrades restart previously running VectorWarp services and leave
+intentionally stopped radar stopped. Finish receiver setup/build actions before
+updating. Run <code>vectorwarp</code> to open the page, or use
+<code>vectorwarp start</code>, <code>vectorwarp stop</code>,
+<code>vectorwarp restart</code> and <code>vectorwarp status</code> from the
+terminal. Stop includes the web interface; restart performs an ordered
+stop/start. Shared receiver/vendor services are not stopped.
+<code>vectorwarp help</code> lists all commands.'''
+    else:
+        fedora_guidance = '''Open <code>http://localhost:3000</code>, configure your receiver, and choose
+Save &amp; Restart. If an earlier installation completed but the page does not
+load, run <code>sudo systemctl enable --now vectorwarp-api.service</code> and
+inspect it with <code>sudo systemctl status vectorwarp-api.service --no-pager</code>.
+Update later with <code>sudo dnf upgrade vectorwarp</code>. A package update
+does not restart a running API or receiver helper. After receiver-management
+actions finish and pending authorizations expire, an administrator may run
+<code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
+to activate updated code. Do not run it mid-transaction; it does not restart
+<code>vectorwarp-processor.service</code> or radar processing.'''
+        apt_guidance = '''A package update does not restart a running API or receiver helper.
+After receiver-management actions finish and pending authorizations expire, an
+administrator may run <code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
+to activate updated code. Do not run it mid-transaction; it does not restart
+<code>vectorwarp-processor.service</code> or radar processing.'''
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>Fedora 44</h3>
@@ -83,16 +122,7 @@ def release_installation(manifest):
   https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
 less vectorwarp-install.sh
 sudo bash vectorwarp-install.sh --start-web</code></pre>
-<p>Open <code>http://localhost:3000</code>, configure your receiver, and choose
-Save &amp; Restart. If an earlier installation completed but the page does not
-load, run <code>sudo systemctl enable --now vectorwarp-api.service</code> and
-inspect it with <code>sudo systemctl status vectorwarp-api.service --no-pager</code>.
-Update later with <code>sudo dnf upgrade vectorwarp</code>. A package update
-does not restart a running API or receiver helper. After receiver-management
-actions finish and pending authorizations expire, an administrator may run
-<code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
-to activate updated code. Do not run it mid-transaction; it does not restart
-<code>vectorwarp-processor.service</code> or radar processing.</p>
+<p>{fedora_guidance}</p>
 <h3>Ubuntu, Debian and other supported systems</h3>
 <p>Add the signed APT repository, install VectorWarp, and start only the browser interface:</p>
 <p>If curl or GnuPG is missing, install <code>curl</code> and
@@ -107,11 +137,7 @@ Open <code>http://localhost:3000</code> on the installed machine, or
 On a fresh install, radar processing stays stopped until you configure it and
 choose Save &amp; Restart. Update later with
 <code>sudo apt update &amp;&amp; sudo apt install --only-upgrade vectorwarp</code>.
-A package update does not restart a running API or receiver helper.
-After receiver-management actions finish and pending authorizations expire, an
-administrator may run <code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
-to activate updated code. Do not run it mid-transaction; it does not restart
-<code>vectorwarp-processor.service</code> or radar processing.</p>
+{apt_guidance}</p>
 <p>Each package includes Kraken, USRP and dual HackRF adapters, plus the source
 kit to build RSPduo support from Settings after installing SDRplay's API. Receiver
 hardware and external software are separate; RSPduo needs the locally installed

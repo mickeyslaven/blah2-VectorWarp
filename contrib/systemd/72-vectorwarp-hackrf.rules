@@ -1,0 +1,4 @@
+# Fedora's HackRF rule sets mode 0660 and desktop uaccess, but no service group.
+# Set only the group on HackRF One nodes; retain vendor mode and seat ACL.
+# Administrators can override this rule with the same name under /etc/udev.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1d50", ATTR{idProduct}=="6089", GROUP="vectorwarp"

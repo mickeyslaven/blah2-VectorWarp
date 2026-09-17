@@ -101,7 +101,22 @@ function change(input, value, event = 'input') {
     assert.equal(query('process.data.overlap'), null);
     assert.equal(window.document.querySelector('[data-config-group="process.data"]').querySelectorAll('.config-field').length, 1);
     assert.ok(query('process.data.buffer').closest('[data-config-group="process.performance"]'));
-    assert.equal(query('capture.device.lnaState').querySelector('select').options.length, 9);
+    const lna = query('capture.device.lnaState').querySelector('select');
+    assert.equal(lna.options.length, 10);
+    const mhz = query('capture.fc').querySelector('input');
+    change(lna, '9', 'change');
+    change(mhz, '30');
+    assert.equal(lna.value, '9', 'Retuning must not silently replace the selected gain');
+    assert.match(lna.selectedOptions[0].textContent, /current value.*review/);
+    assert.deepEqual([...lna.options].slice(0, -1).map(option => Number(option.value)), [0,1,2,3,4,5,6]);
+    assert.equal(await window.validateActiveConfiguration(), false);
+    change(lna, '0', 'change');
+    assert.equal(await window.validateActiveConfiguration(), true);
+    change(mhz, '1500');
+    assert.deepEqual([...lna.options].map(option => Number(option.value)), [0,1,2,3,4,5,6,7,8]);
+    change(mhz, '204');
+    change(lna, '1', 'change');
+    assert.equal(await window.validateActiveConfiguration(), true);
     for (const field of window.document.querySelectorAll('.config-field')) {
       assert.ok(field.querySelector('label').htmlFor, field.dataset.path);
       assert.ok(field.querySelector('small').textContent, field.dataset.path);

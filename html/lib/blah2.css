@@ -69,6 +69,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .state-pill { padding:4px 7px; border:1px solid var(--line); border-radius:999px; color:var(--muted); font-size:9px; font-weight:800; letter-spacing:.04em; }.state-pill.active,.state-pill.associated { border-color:#256b5a; color:#7ce5c8; }.state-pill.coasting { border-color:#665126; color:#f7d889; }
 .config-shell { max-width:1180px; }
 .config-tab-panel > .upstream-status { margin:12px; }
+.receiver-startup table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; table-layout:fixed; }
+.receiver-startup caption { text-align:left; color:var(--muted); margin-bottom:6px; }
+.receiver-startup th, .receiver-startup td { padding:6px; text-align:left; vertical-align:top; overflow-wrap:anywhere; border-bottom:1px solid var(--line); }
+.receiver-startup th { width:40%; }
+.receiver-startup details { margin-top:10px; font-size:12px; }
 .site-controls { display:grid; gap:8px; min-width:0; }
 .config-field .site-controls select { width:100%; }
 .site-actions,.site-dialog-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; }

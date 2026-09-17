@@ -6,6 +6,7 @@ ARTIFACT="$SOURCE_DIR/build/native/artifact"
 PREFIX=/opt/vectorwarp
 SYSCONFDIR=/etc/vectorwarp
 DESTDIR=
+TARGET_DISTRO=
 WITH_SYSTEMD=true
 SETUP_PI_GPU=false
 DRY_RUN=false
@@ -22,6 +23,7 @@ A first install with the local RSPduo kit can start an already-installed SDRplay
   --prefix PATH           Application prefix (default: /opt/vectorwarp)
   --sysconfdir PATH       Configuration directory (default: /etc/vectorwarp)
   --destdir PATH          Stage beneath a packaging root without host changes
+  --target-distro NAME    Required with --destdir: ubuntu, debian or fedora
   --no-systemd            Do not install users, units, tmpfiles or restart policy
   --setup-pi-gpu          After install, offer a signed native Pi Mesa transaction
   --preflight             Validate inputs and destinations, then stop
@@ -43,6 +45,7 @@ while (($#)); do
     --prefix) (($# >= 2)) || die '--prefix needs a value'; PREFIX=$2; shift 2 ;;
     --sysconfdir) (($# >= 2)) || die '--sysconfdir needs a value'; SYSCONFDIR=$2; shift 2 ;;
     --destdir) (($# >= 2)) || die '--destdir needs a value'; DESTDIR=$2; shift 2 ;;
+    --target-distro) (($# >= 2)) || die '--target-distro needs a value'; TARGET_DISTRO=$2; shift 2 ;;
     --no-systemd) WITH_SYSTEMD=false; shift ;;
     --setup-pi-gpu) SETUP_PI_GPU=true; shift ;;
     --preflight) PREFLIGHT_ONLY=true; shift ;;
@@ -60,6 +63,12 @@ ARTIFACT=$(realpath -m "$ARTIFACT")
 if [[ -n $DESTDIR ]]; then
   [[ $DESTDIR == /* && $DESTDIR != / ]] || die '--destdir must be an absolute non-root path'
   DESTDIR=${DESTDIR%/}
+  [[ $TARGET_DISTRO == ubuntu || $TARGET_DISTRO == debian || $TARGET_DISTRO == fedora ]] ||
+    die '--destdir requires --target-distro ubuntu, debian or fedora'
+else
+  [[ -z $TARGET_DISTRO ]] || die '--target-distro is only valid with --destdir'
+  [[ -r /etc/os-release ]] || die 'cannot identify host distribution'
+  TARGET_DISTRO=$(. /etc/os-release; printf '%s' "$ID")
 fi
 if $SETUP_PI_GPU; then
   [[ -z $DESTDIR ]] || die '--setup-pi-gpu is forbidden with --destdir; staging never probes or changes the host GPU'
@@ -163,12 +172,20 @@ fi
 
 if $WITH_SYSTEMD; then
   [[ -f $ARTIFACT/config-examples/$initial_config ]] || die "artifact lacks $initial_config"
+  if [[ $TARGET_DISTRO == fedora && $RECEIVER_TYPES == *HackRF* ]]; then
+    [[ -f $ARTIFACT/systemd/72-vectorwarp-hackrf.rules ]] ||
+      die 'Fedora HackRF rule is missing from artifact'
+  fi
   for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
     [[ -f $ARTIFACT/systemd/$file ]] || die "systemd artifact is incomplete: $file"
   done
   [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
      -x $ARTIFACT/libexec/vectorwarp-activate-web ]] ||
     die 'restart helpers are missing'
+  [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
+  [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing'
+  [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
+    die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     [[ -f $ARTIFACT/libexec/vectorwarp-receiver-apt.py ]] || die 'receiver package adapter is missing'
     [[ -f $ARTIFACT/libexec/vectorwarp-receiver-dnf.py ]] || die 'receiver DNF adapter is missing'
@@ -254,16 +271,21 @@ run mv -Tf "$target_prefix/current.next" "$target_prefix/current"
 
 if $WITH_SYSTEMD; then
   unit_dir="$DESTDIR/usr/lib/systemd/system"
+  udev_rule_dir="$DESTDIR/usr/lib/udev/rules.d"
   sysusers_dir="$DESTDIR/usr/lib/sysusers.d"
   tmpfiles_dir="$DESTDIR/usr/lib/tmpfiles.d"
   sudoers_dir="$DESTDIR/etc/sudoers.d"
-  run install -d -m 0755 "$unit_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir"
+  run install -d -m 0755 "$unit_dir" "$udev_rule_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir"
   if $DRY_RUN; then
     temporary=/tmp/vectorwarp-install-dry-run
   else
     temporary=$(mktemp -d)
     trap 'rm -rf "$temporary"' EXIT
   fi
+  render "$ARTIFACT/libexec/vectorwarp" "$temporary/vectorwarp-launcher"
+  run install -d -m 0755 "$DESTDIR/usr/bin"
+  run install -m 0755 "$temporary/vectorwarp-launcher" "$DESTDIR/usr/bin/vectorwarp"
+  render "$ARTIFACT/libexec/vectorwarp-quiesce" "$temporary/vectorwarp-quiesce"
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
   render "$ARTIFACT/systemd/vectorwarp-restart.service.in" "$temporary/vectorwarp-restart.service"
@@ -273,6 +295,11 @@ if $WITH_SYSTEMD; then
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.sysusers" "$sysusers_dir/vectorwarp.conf"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.tmpfiles" "$tmpfiles_dir/vectorwarp.conf"
+  # Fedora's packaged HackRF rule has no group; Debian/Ubuntu already grant
+  # plugdev. Never override that existing distro group with a second rule.
+  if [[ $TARGET_DISTRO == fedora && $RECEIVER_TYPES == *HackRF* ]]; then
+    run install -m 0644 "$ARTIFACT/systemd/72-vectorwarp-hackrf.rules" "$udev_rule_dir/72-vectorwarp-hackrf.rules"
+  fi
   if command -v visudo >/dev/null 2>&1 && ! $DRY_RUN; then visudo -cf "$temporary/vectorwarp"; fi
   run install -d -m 0755 "$target_prefix/libexec"
   if [[ -f $ARTIFACT/libexec/vectorwarp-sudoers-migrate ]]; then
@@ -289,6 +316,7 @@ if $WITH_SYSTEMD; then
     run install -m 0440 "$temporary/vectorwarp" "$sudoers_dir/vectorwarp"
   fi
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
+  run install -m 0755 "$temporary/vectorwarp-quiesce" "$target_prefix/libexec/vectorwarp-quiesce"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
@@ -337,6 +365,16 @@ if $WITH_SYSTEMD; then
   if [[ -z $DESTDIR ]]; then
     run systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf
     run systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
+    if [[ $RECEIVER_TYPES == *HackRF* && $TARGET_DISTRO != fedora ]]; then
+      if getent group plugdev >/dev/null && getent passwd vectorwarp >/dev/null; then
+        run usermod --append --groups plugdev vectorwarp
+      else
+        say 'HackRF access needs local review: expected plugdev group and vectorwarp account'
+      fi
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+      run udevadm control --reload || say 'udev rule reload needs local review; reconnect HackRF after reloading rules'
+    fi
     if [[ -x $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
       run /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-gpu-setup" --configure-service-access ||
         say 'GPU access needs local review; run vectorwarp-gpu-setup --enable-service-access'

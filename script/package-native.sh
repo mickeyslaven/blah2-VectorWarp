@@ -114,6 +114,8 @@ for notice in asio cpp-httplib rapidjson ryml VkFFT; do
 done
 [[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker ]] ||
   die 'release processor binaries are not executable'
+[[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'installed launcher is missing from release artifact'
+[[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing from release artifact'
 backend=$(sed -n 's/^backend=//p' "$ARTIFACT/.vectorwarp-build")
 gpu=$(sed -n 's/^gpu=//p' "$ARTIFACT/.vectorwarp-build")
 build_os_id=$(sed -n 's/^build_os_id=//p' "$ARTIFACT/.vectorwarp-build")
@@ -187,7 +189,7 @@ WORK_DIR=$(mktemp -d "$OUTPUT_DIR/.vectorwarp-package.XXXXXX")
 trap 'rm -rf "$WORK_DIR"' EXIT
 STAGE="$WORK_DIR/root"
 run mkdir -p "$STAGE"
-run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE"
+run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE" --target-distro "$DISTRO_NAME"
 
 NODE_TARGET="$STAGE/opt/vectorwarp/runtime/node"
 run install -d -m 0755 "$NODE_TARGET/bin"
@@ -227,6 +229,8 @@ printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\n
   "$backend" "$compiled_receivers" "$local_build_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
 
+install -m 0755 "$SOURCE_DIR/packaging/activate-upgrade" "$STAGE/opt/vectorwarp/libexec/vectorwarp-activate-upgrade"
+
 if [[ $FORMAT == deb ]]; then
   CONTROL="$STAGE/DEBIAN"
   install -d -m 0755 "$CONTROL" "$WORK_DIR/debian"
@@ -256,13 +260,14 @@ if [[ $FORMAT == deb ]]; then
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
   if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP and dual HackRF adapters plus a local RSPduo source kit. RSPduo requires the separately installed SDRplay API and an explicit local build.'; fi
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, passwd, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, passwd, util-linux, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Fresh installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
     printf '/etc/vectorwarp-management/receivers.json\n' >>"$CONTROL/conffiles"
   fi
   install -m 0755 "$SOURCE_DIR/packaging/deb/postinst" "$CONTROL/postinst"
+  install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$CONTROL/preinst"
   install -m 0755 "$SOURCE_DIR/packaging/deb/prerm" "$CONTROL/prerm"
   install -m 0755 "$SOURCE_DIR/packaging/deb/postrm" "$CONTROL/postrm"
   ASSET="vectorwarp_${VERSION}-${PACKAGE_RELEASE}_${DISTRO}_${DEB_ARCH}.deb"
@@ -281,7 +286,15 @@ else
   tar -C "$STAGE" -cf "$TOPDIR/SOURCES/vectorwarp-root.tar" .
   RPM_RELEASE="${PACKAGE_RELEASE}.fc44"
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@RPM_RELEASE@|$RPM_RELEASE|g" \
-    "$SOURCE_DIR/packaging/rpm/vectorwarp.spec.in" >"$TOPDIR/SPECS/vectorwarp.spec"
+    "$SOURCE_DIR/packaging/rpm/vectorwarp.spec.in" |
+    awk -v script="$SOURCE_DIR/packaging/deb/preinst" '
+      $0 == "@UPGRADE_PRE_SCRIPT@" {
+        while ((getline line < script) > 0) print line
+        close(script)
+        next
+      }
+      { print }
+    ' >"$TOPDIR/SPECS/vectorwarp.spec"
   if $TEST_ONLY; then
     sed -i -e '/^package includes Kraken, USRP and dual HackRF receiver adapters plus a local$/c\TEST-ONLY package includes Kraken, USRP and dual HackRF receiver adapters; it deliberately excludes RSPduo and is not for publication.' \
       -e '/^RSPduo source kit, CPU processing and optional Vulkan acceleration selected at$/d' \

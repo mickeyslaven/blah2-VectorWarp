@@ -146,6 +146,18 @@ for (const mutate of [
   assert.equal(validateConfig(invalidHackRf).valid, false);
 }
 
+for (const serial of [['0001', '001'], ['ABCD', 'BCD']]) {
+  const overlappingHackRf = switchedTo('HackRF');
+  overlappingHackRf.capture.device.serial = serial;
+  const result = validateConfig(overlappingHackRf);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some(error => error.includes('serial suffixes')));
+}
+const distinctShortHackRf = switchedTo('HackRF');
+distinctShortHackRf.capture.device.serial = ['a1', 'b2'];
+assert.equal(validateConfig(distinctShortHackRf).valid, true,
+  'unique short suffixes remain valid and are resolved against hardware at native startup');
+
 for (const mutate of [
   config => { config.capture.fs = 1500000; },
   config => { config.capture.fc = 2000000001; },
@@ -157,6 +169,18 @@ for (const mutate of [
   const invalidRspDuo = switchedTo('RspDuo');
   mutate(invalidRspDuo);
   assert.equal(validateConfig(invalidRspDuo).valid, false);
+}
+
+for (const [frequency, maximum] of [[1000000, 6], [59999999, 6],
+  [60000000, 9], [999999999, 9], [1000000000, 8], [2000000000, 8]]) {
+  const config = switchedTo('RspDuo');
+  config.capture.fc = frequency;
+  for (const state of [0, maximum]) {
+    config.capture.device.lnaState = state;
+    assert.equal(validateConfig(config).valid, true, `RSPduo LNA ${state} at ${frequency}`);
+  }
+  config.capture.device.lnaState = maximum + 1;
+  assert.equal(validateConfig(config).valid, false, `RSPduo LNA limit at ${frequency}`);
 }
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-config-test-'));

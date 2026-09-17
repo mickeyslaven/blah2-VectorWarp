@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Offline contracts for the fixed-path local RSPduo adapter builder."""
-import fcntl, hashlib, importlib.util, json, os, pathlib, signal, stat, subprocess, tempfile, unittest
+import fcntl, hashlib, importlib.util, json, os, pathlib, shutil, signal, stat, subprocess, tempfile, unittest
 from unittest import mock
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('builder',ROOT/'script/vectorwarp-build-sdrplay.py'); builder=importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
 def digest(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 class LocalBuild(unittest.TestCase):
   def setUp(self):
-    self.t=tempfile.TemporaryDirectory(); base=pathlib.Path(self.t.name); self.k=base/'kit'; self.k.mkdir(); self.o=base/'out'; self.o.mkdir(); self.core=base/'core'; self.core.write_bytes(b'core'); self.inc=base/'inc'; self.inc.mkdir(); (self.inc/'sdrplay_api.h').write_bytes(b'header'); self.lib=base/'lib'; self.lib.write_bytes(b'library')
+    self.t=tempfile.TemporaryDirectory(); base=pathlib.Path(self.t.name); self.k=base/'kit'; self.k.mkdir(); self.o=base/'out'; self.o.mkdir(); self.core=base/'core'; self.core.write_bytes(b'core'); self.inc=base/'inc'; self.inc.mkdir(); (self.inc/'sdrplay_api.h').write_bytes(b'#define SDRPLAY_API_VERSION (float)(3.15)\n'); self.lib=base/'lib'; self.lib.write_bytes(b'\x7fELF\x02\x01\x01'+bytes(9)+(3).to_bytes(2,'little')+({'x86_64':62,'aarch64':183,'arm64':183}.get(os.uname().machine,62)).to_bytes(2,'little'))
     for n in builder.REQUIRED:
       p=self.k/n; p.parent.mkdir(parents=True,exist_ok=True); p.write_text(n)
     self.man={'schema':1,'receiver':'RspDuo','kit_id':'a'*64,'cohort':'b'*64,'compiler':{'id':'GNU','version':'12.2.0','target':'x86_64-linux-gnu','cxx_flags':['-D_GLIBCXX_USE_CXX11_ABI=1']},'sources':{n:digest(self.k/n) for n in builder.REQUIRED},'core_sha256':digest(self.core)}; (self.k/'kit.json').write_text(json.dumps(self.man))
@@ -20,6 +20,24 @@ class LocalBuild(unittest.TestCase):
   def test_status_never_executes_compiler(self):
     with mock.patch.object(builder,'compiler_identity',side_effect=AssertionError('status executed compiler')):
       self.assertEqual(builder.status()['state'],'missing')
+  def test_sdk_version_and_host_architecture_are_checked_before_build(self):
+    header=self.inc/'sdrplay_api.h'
+    header.write_bytes(b'#define SDRPLAY_API_VERSION (float)(3.16)\n')
+    self.assertIn('not version 3.15', builder.status()['reason'])
+    header.write_bytes(b'#define SDRPLAY_API_VERSION (float)(3.15)\n')
+    original=self.lib.read_bytes()
+    other=183 if int.from_bytes(original[18:20],'little')==62 else 62
+    self.lib.write_bytes(original[:18]+other.to_bytes(2,'little'))
+    self.assertIn('host architecture', builder.status()['reason'])
+    self.lib.write_bytes(b'not an ELF library')
+    self.assertIn('ELF64', builder.status()['reason'])
+    self.lib.write_bytes(original)
+    self.assertEqual(builder.status()['state'],'missing')
+  def test_missing_sdk_guides_to_vendor_without_download(self):
+    self.lib.unlink()
+    result=builder.status()
+    self.assertEqual(result['state'],'unavailable')
+    self.assertIn('https://sdrplay.com/hardware-api/', result['reason'])
   def test_build_rejects_wrong_compiler(self):
     with mock.patch.object(builder,'compiler_identity',return_value={'id':'GNU','version':'0.0','target':'wrong'}):
       with self.assertRaisesRegex(builder.Refused,'does not match'): builder.kit_state(check_compiler=True)
@@ -39,6 +57,27 @@ class LocalBuild(unittest.TestCase):
     text=(ROOT/'script/vectorwarp-build-sdrplay.py').read_text(); self.assertNotIn('urllib',text); self.assertNotIn('requests',text)
     for argv in (['build','--path','/tmp'], ['status','extra'], ['download']):
       with self.assertRaises(builder.Refused): builder.main(argv)
+  def test_packaged_adapter_needs_only_kit_and_vendor_headers(self):
+    # Use the standalone helper's source list and include roots. A dependency
+    # scan fails if a future adapter accidentally pulls a host-only header into
+    # the Pi source kit, even if that header happens to exist on this host.
+    include=pathlib.Path(os.environ.get('BLAH2_SDRPLAY_TEST_INCLUDE','/usr/local/include'))
+    if not (include/'sdrplay_api.h').is_file(): self.skipTest('local SDRplay header unavailable')
+    with tempfile.TemporaryDirectory() as temporary:
+      kit=pathlib.Path(temporary)
+      for name in builder.REQUIRED - {'generated/ReceiverCohort.h'}:
+        target=kit/name; target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(ROOT/name,target)
+      generated=kit/'generated/ReceiverCohort.h'; generated.parent.mkdir(parents=True,exist_ok=True)
+      generated.write_text('#define BLAH2_RECEIVER_COHORT "fixture"\n')
+      for name in ('src/capture/ReceiverFactory.cpp','src/capture/rspduo/RspDuo.cpp'):
+        dependencies=kit/(pathlib.Path(name).name+'.d')
+        command=[builder.COMPILER,'-std=c++17','-fsyntax-only','-DBLAH2_MODULE_RSPDUO=1',
+          '-I',str(kit/'src'),'-I',str(kit/'generated'),'-I',str(include),
+          '-MD','-MF',str(dependencies),str(kit/name)]
+        result=subprocess.run(command,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr[-2000:])
+        self.assertNotIn('rapidjson',dependencies.read_text().lower())
   def test_real_tiny_shared_elf_passes_fixed_readelf_validation(self):
     with tempfile.TemporaryDirectory() as temporary:
       root=pathlib.Path(temporary); source=root/'tiny.cpp'; output=root/'tiny.so'
@@ -113,7 +152,7 @@ class LocalBuild(unittest.TestCase):
     def fake(kit,sdk,out): pathlib.Path(out).write_bytes(b'module')
     with mock.patch.object(builder.os,'geteuid',return_value=0), mock.patch.object(builder.pwd,'getpwnam',return_value=type('U',(),{'pw_uid':65534,'pw_gid':65534})()), mock.patch.object(builder.os,'chown'), mock.patch.object(builder,'compile_module',side_effect=fake), mock.patch.object(builder,'validate_output'):
       builder.build(); base=self.o/('a'*64); old=os.readlink(base/'current')
-      self.lib.write_bytes(b'updated SDK')
+      self.lib.write_bytes(self.lib.read_bytes()+b'updated SDK')
       with mock.patch.object(builder,'swap_current',side_effect=OSError('injected interruption')):
         with self.assertRaises(OSError): builder.build()
       self.assertEqual(os.readlink(base/'current'),old)

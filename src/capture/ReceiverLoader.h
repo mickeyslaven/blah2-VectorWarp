@@ -13,9 +13,11 @@ struct ReceiverSourceDeleter {
   // returned. Keeping this handle in Source itself would unload too early.
   std::shared_ptr<void> library;
   void (*destroy)(Source*) noexcept = nullptr;
+  const char* (*startupReceipt)(const Source*) noexcept = nullptr;
   void operator()(Source* source) const noexcept;
 };
 using ReceiverSource = std::unique_ptr<Source, ReceiverSourceDeleter>;
+std::string receiver_startup_receipt(const ReceiverSource& source);
 
 struct ReceiverModuleStatus {
   std::string receiver;

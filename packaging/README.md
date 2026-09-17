@@ -14,6 +14,15 @@ or hardware validation.
 Each release package includes compiled Kraken, USRP and dual-HackRF support,
 our locally buildable RSPduo adapter source kit, and all replay formats. UHD,
 libhackrf, compiler tools and binutils are native package dependencies.
+HackRF One USB access follows each distribution's native rule. Ubuntu/Debian
+install the processor account into the existing `plugdev` group; Fedora's
+packaged VectorWarp udev rule grants the `vectorwarp` group access without
+changing the vendor mode or desktop-seat ACL. The web API account receives
+neither grant. Start or restart the processor explicitly to load its new group
+membership; with version 0.1.7 or newer, use the checked `vectorwarp restart`
+action. On Fedora also reconnect a HackRF so udev applies the rule.
+Administrators can mask it with an identically named rule in
+`/etc/udev/rules.d`.
 Users install SDRplay's licensed API and headers separately, then build our
 adapter from Settings. No vendor files are packaged.
 Kraken still needs Heimdall and its USB setup. Settings can check and reuse
@@ -41,10 +50,18 @@ script/package-native.sh \
   --output-dir dist
 ```
 
-Installation creates dedicated users and directories but never enables or
-starts the API or processor. `/etc/vectorwarp/config.yml` is preserved across
-upgrades. A first install with the local RSPduo kit may start an already-installed standard
-SDRplay API service; it never downloads the API or accepts its license. See
+Installation creates dedicated users and directories and starts the web API,
+but never starts radar processing. Starting with version 0.1.7, the installed
+`/usr/bin/vectorwarp` launcher opens the web page without starting radar, or
+provides fixed VectorWarp service start, safe stop and ordered restart actions
+plus status/logs. Stop includes VectorWarp's web API and helper, but never
+separately managed receiver/vendor services. Upgrades to 0.1.7 or newer quiesce
+only VectorWarp's own services before unpack and reactivate only those
+previously running; stopped processing remains stopped. They do not rebuild a
+stale locally compiled RSPduo adapter or restart vendor services.
+`/etc/vectorwarp/config.yml` is preserved. A first install with the local
+RSPduo kit may start an already-installed standard SDRplay API service; it
+never downloads the API or accepts its license. See
 [SDRplay setup](../docs/SDRPLAY_SETUP.md).
 Repository publication requires a maintainer-controlled OpenPGP key
 and GitHub Pages; neither a private key nor a live repository is in this tree.

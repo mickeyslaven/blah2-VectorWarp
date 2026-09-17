@@ -288,11 +288,15 @@ endif()
             shutil.copy2(ROOT / "config" / name, artifact / "config-examples" / name)
         for name in ("vectorwarp-api.service.in", "vectorwarp-processor.service.in",
                      "vectorwarp-restart.service.in", "vectorwarp.sysusers",
-                     "vectorwarp.tmpfiles", "vectorwarp.sudoers.in"):
+                     "vectorwarp.tmpfiles", "vectorwarp.sudoers.in",
+                     "72-vectorwarp-hackrf.rules"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
+        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
                      "vectorwarp-sudoers-migrate.py"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
+        (artifact / 'libexec/vectorwarp').chmod(0o755)
+        shutil.copy2(ROOT / 'packaging/deb/preinst', artifact / 'libexec/vectorwarp-quiesce')
+        (artifact / 'libexec/vectorwarp-quiesce').chmod(0o755)
         (artifact / "libexec/vectorwarp-sudoers-migrate.py").rename(
             artifact / "libexec/vectorwarp-sudoers-migrate")
         (artifact / "libexec/vectorwarp-sudoers-migrate").chmod(0o755)
@@ -311,10 +315,15 @@ endif()
         (artifact / ".vectorwarp-build").write_text("\n".join(lines) + "\n", encoding="utf-8")
         return artifact
 
-    def install(self, artifact: Path, stage: Path, *extra: str) -> subprocess.CompletedProcess:
+    def install(self, artifact: Path, stage: Path, *extra: str,
+                target_distro: str | None = None) -> subprocess.CompletedProcess:
+        if target_distro is None:
+            target_distro = next((line.split('=', 1)[1].strip('"') for line in
+                                  Path('/etc/os-release').read_text().splitlines()
+                                  if line.startswith('ID=')), '')
         return subprocess.run([
             "bash", str(INSTALL_SCRIPT), "--artifact", str(artifact),
-            "--destdir", str(stage), *extra,
+            "--destdir", str(stage), "--target-distro", target_distro, *extra,
         ], cwd=ROOT, text=True, capture_output=True, check=False)
 
     def test_installer_renders_the_validated_compiled_receiver_manifest(self):
@@ -330,6 +339,15 @@ endif()
                 unit = (stage / "usr/lib/systemd/system/vectorwarp-api.service").read_text(
                     encoding="utf-8")
                 self.assertIn(f'Environment="BLAH2_RECEIVER_TYPES={receivers}"', unit)
+                hackrf_rule = stage / "usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules"
+                distro = next((line.split('=', 1)[1].strip('"') for line in
+                               Path('/etc/os-release').read_text().splitlines()
+                               if line.startswith('ID=')), '')
+                if distro == 'fedora' and 'HackRF' in receivers:
+                    self.assertEqual(hackrf_rule.read_bytes(),
+                                     (ROOT / "contrib/systemd/72-vectorwarp-hackrf.rules").read_bytes())
+                else:
+                    self.assertFalse(hackrf_rule.exists())
                 if backend == "all":
                     self.assertIn('Environment="BLAH2_SDRPLAY_LOCAL_BUILD=true"', unit)
                     self.assertIn('Environment="BLAH2_LOCAL_BUILD_RECEIVER_TYPES=RspDuo"', unit)
@@ -347,6 +365,39 @@ endif()
         result = self.install(unmarked, self.temp / "open-test-unmarked", "--no-systemd", "--preflight")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("explicitly marked test-only", result.stderr)
+
+    def test_usb_rule_stage_requires_explicit_target_and_preserves_debian_group(self):
+        artifact = self.make_artifact('hackrf', 'HackRF,Kraken')
+        missing = subprocess.run([
+            'bash', str(INSTALL_SCRIPT), '--artifact', str(artifact),
+            '--destdir', str(self.temp / 'missing-target')],
+            cwd=ROOT, text=True, capture_output=True, check=False)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn('--destdir requires --target-distro', missing.stderr)
+        fedora = self.temp / 'fedora-stage'
+        debian = self.temp / 'debian-stage'
+        for distro, stage in [('fedora', fedora), ('debian', debian)]:
+            result = self.install(artifact, stage, target_distro=distro)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rule = 'usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules'
+        self.assertEqual((fedora / rule).read_bytes(),
+                         (ROOT / 'contrib/systemd/72-vectorwarp-hackrf.rules').read_bytes())
+        self.assertFalse((debian / rule).exists())
+
+        missing_rule = self.make_artifact('hackrf', 'HackRF,Kraken')
+        (missing_rule / 'systemd/72-vectorwarp-hackrf.rules').unlink()
+        refused_stage = self.temp / 'fedora-rule-missing'
+        refused = self.install(missing_rule, refused_stage, target_distro='fedora')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('Fedora HackRF rule is missing', refused.stderr)
+        self.assertFalse(refused_stage.exists(), 'preflight must fail before staging any files')
+
+        kraken = self.make_artifact('kraken', 'Kraken')
+        (kraken / 'systemd/72-vectorwarp-hackrf.rules').unlink()
+        kraken_stage = self.temp / 'fedora-kraken-only'
+        result = self.install(kraken, kraken_stage, target_distro='fedora')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((kraken_stage / rule).exists())
 
     def test_historical_artifact_without_migration_helper_still_installs(self):
         artifact = self.make_artifact('kraken', None)
@@ -403,6 +454,13 @@ endif()
         self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-activate-web').is_file())
+        launcher = (stage / 'usr/bin/vectorwarp').read_text()
+        self.assertIn('PREFIX = Path(\'/opt/vectorwarp\')', launcher)
+        self.assertIn("CONFIG = Path('/etc/vectorwarp')", launcher)
+        quiesce = stage / 'opt/vectorwarp/libexec/vectorwarp-quiesce'
+        self.assertEqual(quiesce.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(quiesce.read_text(),
+                         (ROOT / 'packaging/deb/preinst').read_text().replace('@PREFIX@', '/opt/vectorwarp'))
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
         service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()

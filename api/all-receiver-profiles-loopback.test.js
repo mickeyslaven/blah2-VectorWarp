@@ -20,8 +20,8 @@ const load = name => yaml.load(fs.readFileSync(path.join(root, 'config', name), 
 const initial = load('config-kraken.yml');
 initial.network.ip = '127.0.0.1';
 
-const suiteState = {settings: {center_freq: initial.capture.fc, sample_rate: initial.capture.fs},
-  num_channels: initial.capture.device.channel_count, max_elements: 8, gain: 0,
+const suiteState = {settings: {center_freq: initial.capture.fc, sample_rate: initial.capture.fs, gain: 0},
+  num_channels: initial.capture.device.channel_count, max_elements: 8,
   operating_mode: 'coherent', reconfiguring: false, recovering: false};
 const suite = net.createServer(socket => {
   socket.write(`${JSON.stringify(suiteState)}\n`);
@@ -94,6 +94,7 @@ function profile(name, type) {
     suitePort = ports.at(-1);
     initial.capture.device.heimdall.host = '127.0.0.1';
     initial.capture.device.heimdall.control_port = suitePort;
+    initial.capture.device.heimdall.gain = 49.6;
     fs.writeFileSync(filename, yaml.dump(initial));
     await new Promise((resolve, reject) => { suite.once('error', reject); suite.listen(suitePort, '127.0.0.1', resolve); });
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {stdio: ['ignore', 'ignore', 'pipe'],
@@ -103,6 +104,13 @@ function profile(name, type) {
     child.stderr.on('data', value => { stderr += value; });
     const capabilities = await waitForApi(); revision = capabilities.body.configRevision;
     assert.deepEqual(capabilities.body.compiledLiveTypes, ['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
+    assert.equal(capabilities.body.setupRequired, false,
+      'a valid numeric Kraken gain must not mark Settings as incomplete');
+    let readback = await request('GET', '/api/config');
+    assert.equal(readback.status, 200);
+    assert.equal(readback.body.capture.device.heimdall.gain, 49.6,
+      'the Settings API must return the numeric gain present at API startup');
+    assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.heimdall.gain, 49.6);
 
     for (const [name, type] of [['config-kraken.yml', 'Kraken'], ['config.yml', 'RspDuo'],
       ['config-usrp.yml', 'Usrp'], ['config-hackrf.yml', 'HackRF']]) {
@@ -117,6 +125,36 @@ function profile(name, type) {
       revision = saved.body.revision;
       assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.type, type);
     }
+    for (const gain of [28.7, -1, 'keep']) {
+      const candidate = profile('config-kraken.yml', 'Kraken');
+      candidate.capture.device.heimdall.gain = gain;
+      const saved = await request('PUT', '/api/config?restart=false', candidate,
+        {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'});
+      assert.equal(saved.status, 200, `Kraken gain ${gain}: ${JSON.stringify(saved.body)}`);
+      assert.equal(saved.body.config.capture.device.heimdall.gain, gain,
+        'save response must match the requested gain');
+      revision = saved.body.revision;
+      readback = await request('GET', '/api/config');
+      assert.equal(readback.body.capture.device.heimdall.gain, gain,
+        'Settings API readback must match the saved gain');
+      assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.heimdall.gain, gain,
+        'Settings API must agree with raw YAML');
+      assert.equal((await request('GET', '/api/config/capabilities')).body.setupRequired, false);
+    }
+    child.kill('SIGTERM');
+    await new Promise(resolve => child.once('exit', resolve));
+    child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {stdio: ['ignore', 'ignore', 'pipe'],
+      env: {...process.env, BLAH2_RECEIVER_TYPES: 'Kraken,RspDuo,Usrp,HackRF',
+        BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([process.execPath, '-e',
+          `require('fs').writeFileSync(${JSON.stringify(marker)}, 'unexpected restart')`])}});
+    child.stderr.on('data', value => { stderr += value; });
+    const restarted = await waitForApi(); revision = restarted.body.configRevision;
+    assert.equal(restarted.body.setupRequired, false,
+      'cold API startup must accept the saved gain without requiring setup');
+    readback = await request('GET', '/api/config');
+    assert.equal(readback.body.capture.device.heimdall.gain, 'keep',
+      'cold API startup must return the raw saved gain');
+    assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.device.heimdall.gain, 'keep');
     assert.equal(fs.existsSync(marker), false, 'restart=false must never invoke the restart command');
     console.log('All four receiver profiles validated and saved through loopback API; only Kraken used a simulated upstream.');
   } finally {

@@ -26,7 +26,8 @@ def main():
             if module == "malformed":
                 (directory / "blah2-receiver-usrp.so").write_bytes(b"not an ELF module")
             elif module:
-                shutil.copy2(fixtures / (module + ".so"), directory / "blah2-receiver-usrp.so")
+                filename = "blah2-receiver-rspduo.so" if mode == "rspduo-legacy" else "blah2-receiver-usrp.so"
+                shutil.copy2(fixtures / (module + ".so"), directory / filename)
             # Loading a selected USRP must not eagerly load the other adapter.
             shutil.copy2(fixtures / "hackrf.so", directory / "blah2-receiver-hackrf.so")
             event_file = directory / "events"
@@ -43,6 +44,10 @@ def main():
 
         text, events = run("valid", module="valid", expected=0)
         assert events == ["Usrp:" + step for step in (
+            "loaded", "created", "started", "processed", "stopped", "destroyed", "unloaded")], events
+        assert "shared IQ interface passed" in text
+        text, events = run("rspduo-legacy", mode="rspduo-legacy", module="rspduoLegacy", expected=0)
+        assert events == ["RspDuo:" + step for step in (
             "loaded", "created", "started", "processed", "stopped", "destroyed", "unloaded")], events
         assert "shared IQ interface passed" in text
         text, events = run("missing")

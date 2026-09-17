@@ -34,6 +34,16 @@ class RspDuo : public Source
 private:
   std::string requestedSerial;
   std::mutex lifecycleMutex;
+  mutable std::mutex receiptMutex;
+  struct StartupStages {
+    bool settingsValidated = false;
+    bool open = false, apiVersion = false, lock = false, enumerate = false;
+    bool select = false, unlock = false, debugEnable = false;
+    bool getDeviceParams = false, init = false, gainUpdateA = false, gainUpdateB = false;
+    float sdkVersion = 0;
+    std::string selectedSerial;
+    unsigned deviceIndex = 0, hardwareVersion = 0;
+  } startupStages;
   bool apiOpened = false;
   bool apiLocked = false;
   bool deviceSelected = false;
@@ -73,8 +83,6 @@ private:
   static const int MIN_GAIN_REDUCTION_NR;
   /// @brief Maximum gain reduction.
   static const int MAX_GAIN_REDUCTION_NR;
-  /// @brief Max LNA state.
-  static const int MAX_LNA_STATE_NR;
   /// @brief Default sample rate.
   static const int DEF_SAMPLE_RATE_NR;
 
@@ -194,6 +202,9 @@ public:
   /// @brief Call methods to gracefully stop capture.
   /// @return Void.
   void stop();
+
+  /// SDK call acceptance only; the API offers no independent tuner readback.
+  std::string startup_receipt_json() const;
 
 
 };

@@ -34,8 +34,10 @@ int main(int argc, char** argv) {
       assert(instance);
       source = blah2::ReceiverSource(instance,
         blah2::ReceiverSourceDeleter{std::move(library.handle), api->destroy});
-    } else source = blah2::load_receiver(mode == "unknown" ? "../../Usrp" : "Usrp", config);
+    } else source = blah2::load_receiver(mode == "unknown" ? "../../Usrp" :
+      mode == "rspduo-legacy" ? "RspDuo" : "Usrp", config);
     assert(source);
+    assert(blah2::receiver_startup_receipt(source).empty()); // Pre-receipt module.
     IqData first(32), second(32);
     source->start();
     source->process(&first, &second);

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 struct hackrf_device { unsigned channel; };
 namespace {
@@ -16,31 +17,61 @@ struct Applied {
   hackrf_sample_block_cb_fn callback = nullptr;
   void* context = nullptr;
 };
-std::array<Applied, 2> applied;
-hackrf_device devices[2]{{0}, {1}};
+std::array<Applied, 3> applied;
+hackrf_device devices[3]{{0}, {1}, {2}};
+std::array<unsigned, 3> openCounts{};
 hackrf_device_list_t deviceList{};
+std::vector<std::string> listedSerials;
+std::vector<char*> serialPointers;
 std::string failAt;
-unsigned opened = 0, closed = 0, initialized = 0, exited = 0;
+unsigned opened = 0, closed = 0, initialized = 0, exited = 0, listed = 0, freed = 0;
 int result(const std::string& operation) { return operation == failAt ? HACKRF_ERROR_OTHER : HACKRF_SUCCESS; }
 int channelResult(const char* operation, hackrf_device* device) { return result(std::string(operation) + std::to_string(device->channel)); }
-void reset() {
+void reset(std::vector<std::string> found = {"000000000000000000000000000000a1", "000000000000000000000000000000b2"}) {
   applied = {}; failAt.clear();
-  opened = closed = initialized = exited = 0;
-  deviceList = {}; deviceList.devicecount = 2;
+  openCounts = {};
+  opened = closed = initialized = exited = listed = freed = 0;
+  listedSerials = std::move(found);
+  serialPointers.clear();
+  for (auto& value : listedSerials) serialPointers.push_back(value.empty() ? nullptr : value.data());
+  deviceList = {}; deviceList.devicecount = static_cast<int>(listedSerials.size());
+  deviceList.serial_numbers = serialPointers.data();
 }
 }
 int hackrf_init() { const int r = result("init"); if (!r) ++initialized; return r; }
 int hackrf_exit() { ++exited; return HACKRF_SUCCESS; }
-hackrf_device_list_t* hackrf_device_list() { return failAt == "list" ? nullptr : &deviceList; }
-void hackrf_device_list_free(hackrf_device_list_t*) {}
-int hackrf_open_by_serial(const char* serial, hackrf_device** output) {
-  const unsigned channel = std::strcmp(serial, "first") == 0 ? 0 : 1;
-  assert(std::strcmp(serial, channel == 0 ? "first" : "second") == 0);
+hackrf_device_list_t* hackrf_device_list() {
+  if (failAt == "list") return nullptr;
+  ++listed; return &deviceList;
+}
+void hackrf_device_list_free(hackrf_device_list_t* list) {
+  assert(list == &deviceList); ++freed;
+}
+int hackrf_device_list_open(hackrf_device_list_t* list, int index, hackrf_device** output) {
+  assert(list == &deviceList && index >= 0 && index < list->devicecount);
+  const unsigned channel = static_cast<unsigned>(index);
+  assert(channel < 3);
+  if (openCounts[channel]) return HACKRF_ERROR_BUSY;
   const auto r = channelResult("open", &devices[channel]);
-  if (!r) { *output = &devices[channel]; ++opened; }
+  if (!r) { *output = &devices[channel]; ++opened; ++openCounts[channel]; }
   return r;
 }
-int hackrf_close(hackrf_device*) { ++closed; return HACKRF_SUCCESS; }
+int hackrf_open_by_serial(const char* wanted, hackrf_device** output) {
+  if (!wanted) return HACKRF_ERROR_NOT_FOUND;
+  const std::string suffix(wanted);
+  for (int index = 0; index < deviceList.devicecount; ++index) {
+    if (!deviceList.serial_numbers[index]) continue;
+    const std::string found(deviceList.serial_numbers[index]);
+    if (found.size() >= suffix.size() &&
+        found.compare(found.size() - suffix.size(), suffix.size(), suffix) == 0)
+      return hackrf_device_list_open(&deviceList, index, output);
+  }
+  return HACKRF_ERROR_NOT_FOUND;
+}
+int hackrf_close(hackrf_device* device) {
+  assert(device && openCounts[device->channel] == 1);
+  --openCounts[device->channel]; ++closed; return HACKRF_SUCCESS;
+}
 int hackrf_stop_rx(hackrf_device*) { return HACKRF_SUCCESS; }
 int hackrf_set_freq(hackrf_device* device, uint64_t value) { applied[device->channel].frequency = value; return channelResult("frequency", device); }
 int hackrf_set_sample_rate(hackrf_device* device, double value) { applied[device->channel].rate = value; return channelResult("rate", device); }
@@ -59,7 +90,7 @@ int main() {
   for (uint32_t rate : {2000000u, 6000000u, 20000000u}) {
     reset();
     HackRf receiver("HackRF", 527000000, rate, "/unused", &record,
-      {"first", "second"}, {16, 32}, {20, 40}, {false, true});
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
     receiver.start();
     IqData first(16), second(16);
     receiver.process(&first, &second);
@@ -84,21 +115,66 @@ int main() {
     assert(first.get_length() == 2 && second.get_length() == 2);
     assert(first.get_data()[1] == std::complex<double>(3, 4));
     receiver.stop(); receiver.stop();
-    assert(opened == closed && initialized == exited);
+    assert(opened == closed && initialized == exited && listed == freed);
   }
   unsigned failureCases = 0;
   for (const auto& stage : {"init", "list", "open1", "frequency1", "rate1", "amp1", "lna1", "vga1", "sync1", "clock1", "open0", "frequency0", "rate0", "amp0", "lna0", "vga0", "stream1", "stream0"}) {
     reset(); failAt = stage;
     HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
-      {"first", "second"}, {16, 32}, {20, 40}, {false, true});
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
     bool failed = false;
     try { receiver.start(); receiver.process(nullptr, nullptr); }
     catch (const std::exception&) { failed = true; }
-    assert(failed && opened == closed && initialized == exited);
+    assert(failed && opened == closed && initialized == exited && listed == freed);
     receiver.stop(); receiver.stop();
-    assert(opened == closed && initialized == exited);
+    assert(opened == closed && initialized == exited && listed == freed);
     ++failureCases;
   }
+  std::cout << "Unique short suffix settings and 18 SDK failure stages passed.\n" << std::flush;
+  struct SerialScenario {
+    std::vector<std::string> found, wanted;
+    const char* reason;
+  };
+  const std::vector<SerialScenario> refused = {
+    SerialScenario{{"00000000000000000000000000000001", "00000000000000000000000000000002"},
+      {"01", "001"}, "same device"},
+    SerialScenario{{"00000000000000000000000000000001", "00000000000000000000000000000101",
+       "00000000000000000000000000000002"}, {"01", "02"}, "matches multiple"},
+    SerialScenario{{"000000000000000000000000000000a1", "000000000000000000000000000000a1",
+       "000000000000000000000000000000b2"}, {"a1", "b2"}, "matches multiple"},
+    SerialScenario{{"0000000000000000000000000000ABCD", "00000000000000000000000000000002"},
+      {"abcd", "02"}, "matches no connected"},
+    SerialScenario{{"00000000000000000000000000000001", "00000000000000000000000000000002"},
+      {"ff", "02"}, "matches no connected"}
+  };
+  for (const auto& scenario : refused) {
+    reset(scenario.found);
+    HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
+      scenario.wanted, {16, 32}, {20, 40}, {false, true});
+    bool rejected = false;
+    try { receiver.start(); }
+    catch (const std::exception& error) {
+      rejected = true;
+      if (std::string(error.what()).find(scenario.reason) == std::string::npos)
+        std::cerr << "Expected identity refusal '" << scenario.reason
+          << "', got '" << error.what() << "'.\n";
+      assert(std::string(error.what()).find(scenario.reason) != std::string::npos);
+    }
+    assert(rejected && opened == 0 && closed == 0 && initialized == exited && listed == freed);
+    receiver.stop();
+  }
+  reset({"000000000000000000000000000000a1", "000000000000000000000000000000b2", ""});
+  HackRf withUnknownEntry("HackRF", 527000000, 6000000, "/unused", &record,
+    {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+  withUnknownEntry.start();
+  withUnknownEntry.stop();
+  assert(opened == closed && initialized == exited && listed == freed);
+  reset({"000000000000000000000000000000A1", "000000000000000000000000000000b2"});
+  HackRf caseSensitiveSuffixes("HackRF", 527000000, 6000000, "/unused", &record,
+    {"A1", "b2"}, {16, 32}, {20, 40}, {false, true});
+  caseSensitiveSuffixes.start();
+  caseSensitiveSuffixes.stop();
+  assert(opened == closed && initialized == exited && listed == freed);
   std::cout << "HackRF mocked SDK: all settings and paired callbacks at 2/6/20 MS/s, "
-    << failureCases << " setter/start failures and idempotent cleanup passed; no hardware opened.\n";
+    << failureCases << " setter/start failures, serial identity refusals and idempotent cleanup passed; no hardware opened.\n";
 }

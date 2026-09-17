@@ -6,8 +6,12 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, CONFIG_SAVE_TIMEOUT_MS} =
   require('../../html/js/config_ui.js');
+const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
+
+assert.ok(CONFIG_SAVE_TIMEOUT_MS >= RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs + 15000,
+  'Browser save must allow the entire receiver transaction plus response overhead');
 
 const base = yaml.load(fs.readFileSync(
   path.join(__dirname, '..', '..', 'config', 'config-kraken.yml'), 'utf8'));

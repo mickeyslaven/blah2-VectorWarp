@@ -73,8 +73,10 @@ jobs may upload the same checked package inputs for the separate signing flow.
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
    `Build release packages` runs all ten native package smoke checks on PRs
    using the same three compiled adapters and RSPduo local source kit as a
-   stable package, without proprietary SDK inputs. Passing these checks proves
-   package/source-kit wiring, not live RSPduo capture. PR jobs do not upload
+   stable package, without proprietary SDK inputs. Each target also runs the
+   [installed service and browser checks](PACKAGE_TESTING.md): Save & Restart,
+   fresh synthetic replay frames, failure/recovery and service permissions.
+   These test installed wiring, not physical receiver operation. PR jobs do not upload
    assets and never receive signing secrets. Trusted main/tag builds use the
    same package contract, then the separate protected `release-signing` flow
    signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a
@@ -87,7 +89,11 @@ jobs may upload the same checked package inputs for the separate signing flow.
    only when the protected environments and key/fingerprint validate.
 4. On clean hosts, install from the APT and DNF repositories, verify the signing
    key fingerprint, confirm ordinary package-manager updates, and verify that no
-   processor/radio starts automatically.
+   processor/radio starts automatically on a fresh install. On upgrade, verify
+   that previously running VectorWarp services restart and a stopped processor
+   stays stopped; test the version-0.1.7-or-newer `vectorwarp` launcher's
+   web-only default and full VectorWarp service start, stop and restart as well. The
+   commands must not stop separately managed receiver/vendor services.
 5. Verify the deployed page, installer, key and every package download return
    successfully over HTTPS. The generated homepage uses the verified manifest
    for its OS/architecture table and links to immutable GitHub release assets;
@@ -101,9 +107,10 @@ jobs may upload the same checked package inputs for the separate signing flow.
    platforms were tested; a successful package build is not a hardware test.
    Put the short Fedora path first: download and inspect the installer, run it
    with `--repo-only`, then `sudo dnf install vectorwarp` and
-   `sudo systemctl enable --now vectorwarp-api.service`. The repository-only
+   `vectorwarp`. The repository-only
    option verifies the pinned key and adds repository configuration without
-   installing packages or starting services. Give APT users the same option
+   installing packages or starting services. Package installation starts the web
+   interface; use `vectorwarp` to open it. Give APT users the same option
    followed by `sudo apt update && sudo apt install vectorwarp`, or use the
    automatic installer with `--start-web`. Updates use normal DNF/APT commands.
 

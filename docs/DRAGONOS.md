@@ -11,6 +11,16 @@ processing. The installer selects the matching Ubuntu repository from
 - Noble / Ubuntu 24.04
 - Resolute / Ubuntu 26.04
 
+With a version 0.1.7-or-newer package, run `vectorwarp` to open the web page
+or print its address over SSH; that default action starts only the web API.
+Configure the receiver there, then use `vectorwarp start` to bring up the
+VectorWarp web API, helper and checked radar processor. `vectorwarp stop` safely
+stops its processor, web API and helper; `vectorwarp restart` stops and starts
+them in order. None of these commands stops separately installed Kraken Suite
+or SDRplay services. `vectorwarp status` and
+`vectorwarp logs` help inspect a failed start. Older packages do not include
+this launcher; follow the versioned installation page for their controls.
+
 DragonOS has independent edition labels, including FocalX, Noble, and Resolute.
 Those labels alone are not trusted for package selection. The installer checks
 the Ubuntu codename (`UBUNTU_CODENAME` or `VERSION_CODENAME`) and, only when no

@@ -2,6 +2,8 @@
 
 #include <iostream>
 #include <complex>
+#include <array>
+#include <memory>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -59,17 +61,40 @@ void HackRf::start()
   status = hackrf_init();
   check_status(status, "Failed to initialise HackRF");
   apiStarted = true;
-  hackrf_device_list_t *list;
-  list = hackrf_device_list();
-  const bool haveTwo = list && list->devicecount >= 2;
-  if (list) hackrf_device_list_free(list);
-  if (!haveTwo)
-  {
-    check_status(-1, "Failed to find 2 HackRF devices.");
+  std::unique_ptr<hackrf_device_list_t, decltype(&hackrf_device_list_free)>
+    list(hackrf_device_list(), hackrf_device_list_free);
+  if (!list || list->devicecount < 2 || !list->serial_numbers)
+    throw std::runtime_error("[HackRF] Failed to find 2 HackRF devices with readable serials.");
+
+  // libhackrf_open_by_serial accepts a suffix and chooses the first match.
+  // Resolve each configured suffix uniquely against one enumeration snapshot,
+  // then open its exact list index so USB enumeration order cannot swap roles.
+  std::array<int, 2> selected{{-1, -1}};
+  for (unsigned role = 0; role < 2; ++role) {
+    unsigned matches = 0;
+    for (int index = 0; index < list->devicecount; ++index) {
+      if (!list->serial_numbers[index]) continue;
+      const std::string found(list->serial_numbers[index]);
+      if (found.size() >= serial[role].size() &&
+          found.compare(found.size() - serial[role].size(),
+            serial[role].size(), serial[role]) == 0) {
+        selected[role] = index;
+        ++matches;
+      }
+    }
+    const char* name = role == 0 ? "reference" : "surveillance";
+    if (matches == 0)
+      throw std::runtime_error(std::string("[HackRF] Configured ") + name +
+        " serial matches no connected HackRF.");
+    if (matches != 1)
+      throw std::runtime_error(std::string("[HackRF] Configured ") + name +
+        " serial matches multiple HackRF devices; use a longer serial.");
   }
+  if (selected[0] == selected[1])
+    throw std::runtime_error("[HackRF] Reference and surveillance serials select the same device.");
 
   // surveillance config
-  status = hackrf_open_by_serial(serial[1].c_str(), &dev[1]);
+  status = hackrf_device_list_open(list.get(), selected[1], &dev[1]);
   check_status(status, "Failed to open device.");
   status = hackrf_set_freq(dev[1], fc);
   check_status(status, "Failed to set frequency.");
@@ -88,7 +113,7 @@ void HackRf::start()
 
 
   // reference config
-  status = hackrf_open_by_serial(serial[0].c_str(), &dev[0]);
+  status = hackrf_device_list_open(list.get(), selected[0], &dev[0]);
   check_status(status, "Failed to open device.");
   status = hackrf_set_freq(dev[0], fc);
   check_status(status, "Failed to set frequency.");

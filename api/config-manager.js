@@ -319,6 +319,11 @@ function validateConfig(config, baseline = null) {
       });
       if (device.serial[0]?.toLowerCase?.() === device.serial[1]?.toLowerCase?.())
         errors.push('capture.device.serial must identify two different HackRF receivers');
+      else if (device.serial.length === 2 && device.serial.every(value =>
+          typeof value === 'string' && /^[a-f0-9]{1,32}$/i.test(value)) &&
+          (device.serial[0].endsWith(device.serial[1]) ||
+           device.serial[1].endsWith(device.serial[0])))
+        errors.push('capture.device.serial values overlap as HackRF serial suffixes; use distinct full serials');
     }
     if (Array.isArray(device.gain_lna))
       device.gain_lna.forEach((value, index) => {
@@ -356,8 +361,10 @@ function validateConfig(config, baseline = null) {
     else device.gainReduction.forEach((value, index) =>
       number(value, `capture.device.gainReduction[${index}]`,
         {integer: true, min: 20, max: 59}));
+    const lnaBand = FIELD_RULES['capture.device.lnaState'].frequencyBands
+      .find(band => capture.fc < band.belowHz);
     number(device.lnaState, 'capture.device.lnaState',
-      {integer: true, min: 1, max: 9});
+      {integer: true, min: 0, max: lnaBand?.max ?? 8});
     boolean(device.dabNotch, 'capture.device.dabNotch');
     boolean(device.rfNotch, 'capture.device.rfNotch');
   }

@@ -23,7 +23,7 @@ add_library(receiverFixtureRuntime SHARED ${PROJECT_ROOT}/test/capture/ReceiverM
 set_target_properties(receiverFixtureRuntime PROPERTIES OUTPUT_NAME receiver-fixture-runtime
   VERSION 3.15 SOVERSION 3
   LIBRARY_OUTPUT_DIRECTORY "${receiver_fixture_dir}")
-foreach(fixture valid badAbi badCohort hackrf createError missingRuntime)
+foreach(fixture valid badAbi badCohort hackrf rspduoLegacy createError missingRuntime)
   add_library(receiverFixture_${fixture} MODULE ${PROJECT_ROOT}/test/capture/ReceiverModuleFake.cpp)
   target_compile_features(receiverFixture_${fixture} PRIVATE cxx_std_17)
   target_include_directories(receiverFixture_${fixture} PRIVATE "${receiver_fixture_dir}/include")
@@ -36,6 +36,7 @@ endforeach()
 target_compile_definitions(receiverFixture_badAbi PRIVATE FIXTURE_BAD_ABI=1)
 target_compile_definitions(receiverFixture_badCohort PRIVATE FIXTURE_BAD_COHORT=1)
 target_compile_definitions(receiverFixture_hackrf PRIVATE FIXTURE_RECEIVER="HackRF")
+target_compile_definitions(receiverFixture_rspduoLegacy PRIVATE FIXTURE_RECEIVER="RspDuo")
 target_compile_definitions(receiverFixture_createError PRIVATE FIXTURE_CREATE_ERROR=1)
 target_compile_definitions(receiverFixture_missingRuntime PRIVATE FIXTURE_MISSING_RUNTIME=1)
 target_link_libraries(receiverFixture_missingRuntime PRIVATE receiverFixtureRuntime)

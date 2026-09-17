@@ -4,6 +4,14 @@ set -e
 if command -v systemd-sysusers >/dev/null 2>&1; then
   systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf
 fi
+# Distro libhackrf0 owns HackRF One nodes as root:plugdev with mode 0660.
+# Keep that vendor group so existing non-service consumers retain access.
+if getent group plugdev >/dev/null 2>&1 &&
+    getent passwd vectorwarp >/dev/null 2>&1; then
+  usermod --append --groups plugdev vectorwarp
+else
+  printf '%s\n' 'HackRF access needs local review: expected plugdev group and vectorwarp account.' >&2
+fi
 if getent group vectorwarp-config >/dev/null 2>&1 &&
     getent passwd vectorwarp-api >/dev/null 2>&1; then
   chown root:vectorwarp-config /etc/vectorwarp
@@ -12,17 +20,33 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+if command -v udevadm >/dev/null 2>&1; then
+  udevadm control --reload ||
+    printf '%s\n' 'HackRF udev rule reload needs local review; reconnect after reloading rules.' >&2
+fi
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sudoers-migrate ||
   printf '%s\n' 'VectorWarp sudoers needs administrator review; customized content was preserved.' >&2
 # Only existing render/video groups owning trusted DRM nodes; no driver or service changes.
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-gpu-setup --configure-service-access ||
   printf '%s\n' 'GPU access needs local review: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access' >&2
-if [ -d /run/systemd/system ]; then
-  systemctl daemon-reload >/dev/null || true
-  # A running old broker may own an authorized transaction. Defer its and the
-  # API's code refresh to an administrator; start only when both are inactive.
-  /opt/vectorwarp/libexec/vectorwarp-activate-web ||
-    printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+  if [ -n "${2:-}" ]; then
+    systemctl daemon-reload >/dev/null || {
+      printf '%s\n' 'VectorWarp upgrade files were unpacked, but systemd reload failed. Services remain stopped; inspect systemd and rerun package configuration.' >&2
+      exit 1
+    }
+    if [ -e /run/vectorwarp-package-upgrade.state ] || [ -L /run/vectorwarp-package-upgrade.state ]; then
+      /opt/vectorwarp/libexec/vectorwarp-activate-upgrade
+    else
+      # A prior activation attempt consumed its one-use state and failed.
+      # Reconfiguration must not replay that stale intent or auto-start radar.
+      printf '%s\n' 'VectorWarp package configured without automatic service activation: no pending upgrade state. Inspect VectorWarp unit status and start only services you intend.' >&2
+    fi
+  else
+    systemctl daemon-reload >/dev/null || true
+    /opt/vectorwarp/libexec/vectorwarp-activate-web ||
+      printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+  fi
 fi
 
 # First configure only: this optional fixed helper can start an already
@@ -36,5 +60,6 @@ if [ "$1" = configure ] && [ -z "${2:-}" ] && [ -d /run/systemd/system ] &&
 fi
 
 # The narrow SDRplay helper above is limited to an already-installed vendor
-# service on first configure. Package installation never starts radar processing.
+# service on first configure. First installation never starts radar processing;
+# upgrades restore processing only if it was active beforehand.
 exit 0
