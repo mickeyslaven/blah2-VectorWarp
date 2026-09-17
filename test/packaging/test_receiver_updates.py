@@ -25,6 +25,13 @@ class ReceiverUpdateTests(unittest.TestCase):
     def setUp(self):
         self.catalog, self.raw = WATCHER.load_catalog(
             ROOT / "config" / "receiver-software.json")
+        # Keep the historical 4.10 -> 4.11 transition fixture stable when the
+        # live catalog acknowledges a reviewed release.
+        next(item for item in self.catalog['software'] if item['id'] == 'uhd')['lastSeen'] = {
+            'identity': 'v4.10.0.0', 'version': '4.10.0.0',
+            'sourceCommit': '2af4ddb96219a99d2300804830e0971f79557b23',
+        }
+        self.raw = json.dumps(self.catalog).encode()
         self.payloads = {
             "kraken-suite-v2": {
                 "sha": "15c1a7ee3f05d909c0c5835addd126849a7d8deb",
@@ -83,6 +90,19 @@ class ReceiverUpdateTests(unittest.TestCase):
             self.assertFalse(entry["compatibility"]["hardwareValidated"])
             self.assertEqual(entry["compatibility"]["state"],
                              "not-run-no-new-version")
+
+    def test_acknowledged_uhd_release_is_not_rescheduled_or_hardware_qualified(self):
+        catalog, raw = WATCHER.load_catalog(ROOT / 'config' / 'receiver-software.json')
+        known = next(item for item in catalog['software'] if item['id'] == 'uhd')['lastSeen']
+        self.payloads['uhd'].update(tag_name=known['identity'], html_url=(
+            'https://github.com/EttusResearch/uhd/releases/tag/' + known['identity']))
+        self.commits['uhd'] = known['sourceCommit']
+        report = WATCHER.check_catalog(catalog, raw, self.fetcher)
+        uhd = next(item for item in report['entries'] if item['id'] == 'uhd')
+        self.assertEqual(uhd['compatibility']['state'], 'not-run-no-new-version')
+        self.assertFalse(uhd['compatibility']['hardwareValidated'])
+        self.assertIsNone(uhd['compatibility']['compatible'])
+        self.assertEqual(report['openSourceBuildMatrix'], {'include': []})
 
     def test_updates_schedule_only_approved_open_source_candidate_builds(self):
         self.payloads["kraken-suite-v2"] = {

@@ -32,9 +32,9 @@
         "repository": "EttusResearch/uhd"
       },
       "lastSeen": {
-        "identity": "v4.10.0.0",
-        "version": "4.10.0.0",
-        "sourceCommit": "2af4ddb96219a99d2300804830e0971f79557b23"
+        "identity": "v4.11.0.0",
+        "version": "4.11.0.0",
+        "sourceCommit": "0d7ed3b1a4e301032b0c6b04799d7631c5098528"
       },
       "compatibility": {
         "candidateCheck": "source-build",
