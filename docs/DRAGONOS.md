@@ -11,16 +11,21 @@ processing. The installer selects the matching Ubuntu repository from
 - Noble / Ubuntu 24.04
 - Resolute / Ubuntu 26.04
 
-DragonOS has independent edition labels. Its project download page lists Focal
-X, Noble, and Resolute R1 editions; those labels alone are not trusted for
-package selection. The installer checks the Ubuntu codename (`UBUNTU_CODENAME`
-or `VERSION_CODENAME`) and, only when no codename is present, an inherited
-Ubuntu `VERSION_ID`. Conflicting or unsupported metadata stops without changing
-the machine.
+DragonOS has independent edition labels, including FocalX, Noble, and Resolute.
+Those labels alone are not trusted for package selection. The installer checks
+the Ubuntu codename (`UBUNTU_CODENAME` or `VERSION_CODENAME`) and, only when no
+codename is present, an inherited Ubuntu `VERSION_ID`. Conflicting or unsupported
+metadata stops without changing the machine.
 
-The selector is tested with metadata fixtures only. No DragonOS ISO was
-available for this work, so there is no claim of boot, driver, SDR, package
-installation, or radio-operation validation on DragonOS. Packages contain
+For example, DragonOS FocalX R37.1 x86-64 reports Ubuntu 22.04 (Jammy): it
+needs the Jammy amd64 package, not an Ubuntu 26.04 package. Let
+`sudo apt install ./matching.deb` resolve dependencies, replacing `matching.deb`
+with the downloaded filename. Do not mix libraries from different Ubuntu releases.
+
+OS selection has metadata-fixture tests, and matching Jammy dependencies resolve
+in a clean Ubuntu 22.04 APT simulation. A DragonOS user also reported a successful
+APT installation; this is not a full DragonOS ISO or hardware acceptance test.
+Packages contain
 compiled Kraken, USRP and dual-HackRF adapters plus a local
 RSPduo source kit; SDRplay's API and Kraken Suite remain separate installations.
 Current source builds include the receivers selected by `--backend`; see

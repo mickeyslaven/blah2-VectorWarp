@@ -137,10 +137,11 @@ function fetchHttp(url, options = {}) {
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.doesNotMatch(apiUnit + processorUnit, /User=root/);
-    assert.match(apiUnit, /BLAH2_CONFIG_RESTART_COMMAND=.*systemctl.*--no-block.*vectorwarp-restart\.service/);
+    assert.match(apiUnit, /BLAH2_CONFIG_RESTART_COMMAND=.*vectorwarp-receiver-helper.*request-restart/);
+    assert.doesNotMatch(apiUnit, /\/usr\/bin\/sudo/);
     assert.match(restartUnit, /Type=oneshot/);
     assert.match(restartUnit, /ExecStart=@PREFIX@\/libexec\/vectorwarp-restart/);
-    assert.match(sudoers, /systemctl --no-block start vectorwarp-restart\.service/);
+    assert.doesNotMatch(sudoers, /vectorwarp-restart\.service/);
     assert.match(helper, /systemctl stop vectorwarp-processor\.service/);
     assert.match(helper, /systemctl restart vectorwarp-api\.service/);
     assert.match(helper, /vectorwarp-wait-api\.js/);

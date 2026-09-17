@@ -256,7 +256,7 @@ if [[ $FORMAT == deb ]]; then
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
   if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP and dual HackRF adapters plus a local RSPduo source kit. RSPduo requires the separately installed SDRplay API and an explicit local build.'; fi
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, passwd, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then

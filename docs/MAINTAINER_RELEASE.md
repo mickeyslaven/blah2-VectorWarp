@@ -92,9 +92,10 @@ jobs may upload the same checked package inputs for the separate signing flow.
    successfully over HTTPS. The generated homepage uses the verified manifest
    for its OS/architecture table and links to immutable GitHub release assets;
    it includes signed APT/DNF setup and direct-download verification steps.
-6. Only after deployment and clean-host installation pass, update README's
-   **Install on Linux** and **OS support** sections with the actual release
-   version, per-OS download links and signed installer link. Update INSTALL,
+6. Keep README's **Install on Linux** and **OS support** sections linked to the
+   generated installation page, whose per-OS downloads come from the verified
+   release manifest. Do not pin another release's filenames in README or INSTALL;
+   the documentation checks reject those stale links. Update INSTALL,
    packaging/README, DragonOS and Pi setup pages together, removing their
    **pending first release** wording. Keep source instructions and record which
    platforms were tested; a successful package build is not a hardware test.

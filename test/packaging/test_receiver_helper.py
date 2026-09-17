@@ -1,5 +1,6 @@
 """Offline broker failure injection: never call systemctl, packages or hardware."""
 import importlib.util
+import ctypes
 import hashlib
 import json
 import os
@@ -41,6 +42,13 @@ class FakeInspector:
         if self.verify:
             self.ready = True
         return {'exitCode': self.exit_code, 'timedOut': self.timeout}
+
+    def run(self, argv, timeout=5):
+        self.calls.append((argv, timeout))
+        if self.entered:
+            self.entered.set()
+            self.release.wait(5)
+        return {'exitCode': self.exit_code, 'timedOut': self.timeout, 'output': ''}
 
 
 class BrokerTest(unittest.TestCase):
@@ -84,6 +92,54 @@ class BrokerTest(unittest.TestCase):
         self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'discover'}, 9999))
         self.refused('INVALID_REQUEST', lambda: self.broker.handle({'verb': 'discover', 'command': 'id'}, 1001))
         self.refused('ACTION_NOT_REVIEWED', lambda: self.broker.handle({'verb': 'plan', 'actionId': '/bin/sh', 'configRevision': self.revision}, 1001))
+
+    def test_gpu_access_only_reads_fixed_helper_metadata(self):
+        self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'gpu-access'}, 9999))
+        for extra in ({'path': '/dev/anything'}, {'command': '--configure-service-access'}, {'user': 'root'}):
+            self.refused('INVALID_REQUEST', lambda: self.broker.handle({'verb': 'gpu-access', **extra}, 1001))
+        access = {'state': 'group-access-needed', 'nodes': []}
+        with mock.patch.object(helper, 'trusted_path', return_value=pathlib.Path('/fixture/vectorwarp-gpu-setup')), \
+             mock.patch.object(self.inspector, 'run', return_value={'exitCode': 0, 'timedOut': False, 'output': json.dumps(access)}) as run:
+            self.assertEqual(self.broker.handle({'verb': 'gpu-access'}, 1001), {'ok': True, 'serviceAccess': access})
+            run.assert_called_once_with(['/usr/bin/python3', '-I', '/fixture/vectorwarp-gpu-setup', '--access-status', '--json'], timeout=1)
+        for result in ({'exitCode': 1, 'timedOut': False}, {'exitCode': 0, 'timedOut': True},
+                       {'exitCode': 0, 'timedOut': False, 'output': '[]'}):
+            with mock.patch.object(helper, 'trusted_path'), mock.patch.object(self.inspector, 'run', return_value=result):
+                self.refused('GPU_ACCESS_UNAVAILABLE', lambda: self.broker.handle({'verb': 'gpu-access'}, 1001))
+
+    def test_restart_is_a_fixed_api_only_request(self):
+        self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'restart'}, 9999))
+        self.refused('UNAUTHORIZED_PEER', lambda: self.broker.handle({'verb': 'restart'}, 0))
+        for extra in ({'unit': 'other.service'}, {'command': '/bin/sh'}, {'configRevision': self.revision}):
+            self.refused('INVALID_REQUEST', lambda: self.broker.handle({'verb': 'restart', **extra}, 1001))
+        accepted = self.broker.handle({'verb': 'restart'}, 1001)
+        self.assertEqual(accepted['status'], 'accepted')
+        self.assertEqual(self.inspector.calls, [(['/usr/bin/systemctl', '--no-block', 'start',
+                                                  'vectorwarp-restart.service'], 5)])
+        self.assertEqual(self.broker.handle({'verb': 'restart'}, 1001)['status'], 'accepted',
+                         'A repeated fixed start remains idempotent at systemd; it cannot select another unit.')
+
+    def test_restart_failure_timeout_and_busy_are_not_accepted(self):
+        for field in ('exit_code', 'timeout'):
+            self.setUp()
+            setattr(self.inspector, field, 1)
+            self.refused('RESTART_REQUEST_FAILED', lambda: self.broker.handle({'verb': 'restart'}, 1001))
+            self.assertFalse(self.broker.operation.locked())
+        self.setUp()
+        self.broker.operation.acquire()
+        self.refused('MANAGEMENT_BUSY', lambda: self.broker.handle({'verb': 'restart'}, 1001))
+        self.broker.operation.release()
+
+    def test_restart_cli_accepts_only_fixed_verb_without_root(self):
+        with mock.patch.object(helper.sys, 'argv', ['vectorwarp-receiver-helper', 'request-restart']), \
+             mock.patch.object(helper.os, 'geteuid', return_value=1001), \
+             mock.patch.object(helper, 'exchange', return_value={'ok': True, 'status': 'accepted', 'message': 'queued'}) as exchange:
+            helper.main()
+            exchange.assert_called_once_with({'verb': 'restart'})
+        with mock.patch.object(helper.sys, 'argv', ['vectorwarp-receiver-helper', 'request-restart', 'other.service']), \
+             mock.patch.object(helper, 'exchange') as exchange:
+            self.refused('INVALID_REQUEST', helper.main)
+            exchange.assert_not_called()
 
     def test_api_cannot_authorize_and_root_grant_is_one_use(self):
         plan = self.plan()
@@ -268,6 +324,75 @@ class LocalBoundaryTest(unittest.TestCase):
         with first, second:
             _, uid, _ = struct.unpack('3i', first.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
             self.assertEqual(uid, os.getuid())
+
+    def test_restart_wire_rejects_malformed_oversized_and_stalled_requests(self):
+        broker = helper.Broker({'actions': []}, os.getuid(), FakeInspector())
+        for raw, code in ((b'{bad json\n', 'INVALID_REQUEST'),
+                          (b'{"verb":"restart","unit":"other.service"}\n', 'INVALID_REQUEST'),
+                          (b'x' * (helper.MAX_BYTES + 1), 'INVALID_REQUEST')):
+            with self.subTest(code=code, length=len(raw)):
+                server, client = socket.socketpair()
+                with server, client:
+                    client.sendall(raw)
+                    helper.serve_client(server, broker)
+                    result = json.loads(client.recv(4096))
+                    self.assertEqual(result['code'], code)
+        server, client = socket.socketpair()
+        with server, client:
+            client.sendall(b'{"verb":')
+            helper.serve_client(server, broker, timeout=0.05)
+            self.assertEqual(json.loads(client.recv(4096))['code'], 'REQUEST_TIMEOUT')
+            self.assertEqual(broker.inspector.calls, [])
+
+    def test_unprivileged_no_new_privileges_peer_can_only_request_fixed_restart(self):
+        if not hasattr(socket, 'SO_PEERCRED') or not hasattr(os, 'fork'):
+            self.skipTest('Linux peer credentials and fork required')
+        api_uid = 65534 if os.getuid() == 0 else os.getuid()
+        inspector = FakeInspector()
+        broker = helper.Broker({'actions': []}, api_uid, inspector)
+        with tempfile.TemporaryDirectory() as directory:
+            os.chmod(directory, 0o755)
+            address = str(pathlib.Path(directory) / 'broker.sock')
+            listener = socket.socket(socket.AF_UNIX)
+            with listener:
+                listener.bind(address)
+                os.chmod(address, 0o666)
+                listener.listen(1)
+                listener.settimeout(2)
+                read_fd, write_fd = os.pipe()
+                pid = os.fork()
+                if pid == 0:
+                    try:
+                        listener.close()
+                        os.close(read_fd)
+                        assert ctypes.CDLL(None).prctl(38, 1, 0, 0, 0) == 0
+                        if os.getuid() == 0:
+                            os.setgroups([])
+                            os.setgid(api_uid)
+                            os.setuid(api_uid)
+                        with socket.socket(socket.AF_UNIX) as client:
+                            client.settimeout(2)
+                            client.connect(address)
+                            client.sendall(b'{"verb":"restart"}\n')
+                            response = client.recv(4096)
+                        with open('/proc/self/status') as status:
+                            assert 'NoNewPrivs:\t1' in status.read()
+                        os.write(write_fd, response)
+                        os._exit(0)
+                    except Exception as error:
+                        os.write(write_fd, str(error).encode())
+                        os._exit(1)
+                os.close(write_fd)
+                try:
+                    connection, _ = listener.accept()
+                    helper.serve_client(connection, broker)
+                    result = os.read(read_fd, 4096)
+                    _, status = os.waitpid(pid, 0)
+                    self.assertEqual(status, 0, result.decode(errors='replace'))
+                    self.assertEqual(json.loads(result)['status'], 'accepted')
+                    self.assertEqual(len(inspector.calls), 1)
+                finally:
+                    os.close(read_fd)
 
 
 if __name__ == '__main__':

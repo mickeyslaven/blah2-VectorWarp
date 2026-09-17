@@ -42,24 +42,44 @@ sudo systemctl enable --now vectorwarp-api.service
 sudo systemctl status vectorwarp-api.service --no-pager
 ```
 
-To update,
-use `sudo apt update && sudo apt install --only-upgrade vectorwarp` on APT or
-`sudo dnf upgrade vectorwarp` on Fedora. An update enables and starts only the
-web API, including on an older installation where it was not running; it never
-starts radar processing. Processing begins after receiver configuration is
-saved and applied.
+To update, use `sudo apt update && sudo apt install --only-upgrade vectorwarp`
+on APT or `sudo dnf upgrade vectorwarp` on Fedora. A package update does not
+restart a running API or receiver helper. After all receiver-management actions
+finish and pending authorizations expire, an administrator may activate the
+new code with:
+
+```bash
+sudo systemctl restart vectorwarp-receiver.service && sudo systemctl restart vectorwarp-api.service
+```
+
+Do not run that command mid-transaction. It does not restart
+`vectorwarp-processor.service` or radar processing.
+
+### Manual package installation
+
+Use the current [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+to select one package matching the operating system version and architecture.
+Install a downloaded local package with the distribution package manager so its
+dependencies resolve; do not use `dpkg` alone or mix libraries from another
+release. Replace `matching.deb` or `matching.rpm` with the downloaded filename:
+
+```bash
+# Ubuntu, Debian, or DragonOS using its matching Ubuntu base
+sudo apt install ./matching.deb
+
+# Fedora
+sudo dnf install ./matching.rpm
+```
 
 ## Supported systems
 
-| System | Version or base | Architecture | Direct package |
+| System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |
-| Ubuntu | 22.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu22.04_arm64.deb) |
-| Ubuntu | 24.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu24.04_arm64.deb) |
-| Ubuntu | 26.04 | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_ubuntu26.04_arm64.deb) |
-| Debian | 13 (Trixie) | x86-64 or ARM64 | [amd64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_amd64.deb), [arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
-| Fedora | 44 | x86-64 or ARM64 | [x86_64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.x86_64.rpm), [aarch64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp-0.1.1-1.fc44.aarch64.rpm) |
-| [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | Matching Ubuntu package selected from OS metadata |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 arm64](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.1/vectorwarp_0.1.1-1_debian13_arm64.deb) |
+| Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 

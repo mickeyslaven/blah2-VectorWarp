@@ -82,10 +82,26 @@ VectorWarp does not change kernel drivers or boot settings automatically.
 
 The native processor account needs access to the selected GPU device. AMD/Intel
 normally use `/dev/dri` and the host's Mesa Vulkan driver; NVIDIA uses its host
-driver and Vulkan libraries. Add `vectorwarp` only to the required `render` or
-`video` group after reviewing the host device ownership. The installer does not
-change device permissions or drivers. A missing module, driver or usable GPU
-leaves automatic selection on CPU.
+driver and Vulkan libraries. Package installation and real native installation
+append `vectorwarp` to an existing `render` or `video` group only when that group
+owns a root-owned DRM render device with group read/write access. The API account
+does not receive GPU access. Installation does not change device permissions,
+drivers, or running services; an already-running processor needs an explicit
+restart to acquire its new groups.
+
+If a GPU is added later, or Settings reports missing service access, run:
+
+```sh
+sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access
+```
+
+The command checks the actual device ownership, asks for confirmation, and
+preserves existing groups. It works on desktop GPUs as well as Raspberry Pi.
+Unexpected ownership or restrictive permissions require local review; it does
+not change ACLs or SELinux policy. Then use **Apply & Restart** in Settings.
+Group access alone does not establish a working driver or numerical
+qualification. A missing module, driver or usable GPU leaves automatic selection
+on CPU.
 
 Hardware test results do not guarantee every driver version or GPU model. Keep
 automatic selection enabled on older machines unless measuring a particular GPU.

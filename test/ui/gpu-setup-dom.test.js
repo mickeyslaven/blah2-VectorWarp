@@ -27,6 +27,18 @@ window.eval(fs.readFileSync(path.resolve(__dirname, '../../html/js/config_ui.js'
     gpuSetup: {...state.gpuSetup, state: 'qualified', message: 'Current instance qualified', serviceAccess: {state: 'available'}}};
   await window.refreshConfigDiagnostics();
   assert.match(target.textContent, /Clutter: GPU/); assert(!target.textContent.includes('--install-driver'));
+  state = {...state, gpuSetup: {pi: false, state: 'service-access-needed', message: 'Processor account needs GPU access',
+    serviceAccess: {state: 'group-access-needed'}}};
+  await window.refreshConfigDiagnostics();
+  assert.match(target.textContent, /Processor account needs GPU access/);
+  assert.match(target.textContent, /--enable-service-access/);
+  assert(!target.textContent.includes('--install-driver'), 'Desktop GPUs must not get Pi driver commands');
+  state = {...state, gpuSetup: {pi: false, state: 'driver-unverified', message: 'Activate the updated receiver helper',
+    serviceAccess: {state: 'unavailable'}}};
+  await window.refreshConfigDiagnostics();
+  assert.match(target.textContent, /Activate the updated receiver helper/);
+  assert(!target.textContent.includes('--install-driver'));
+  assert(!target.textContent.includes('--enable-service-access'), 'Unknown access must not be reported as a missing group');
   state = {...state, radar: 'stale', gpuSetup: {pi: false}};
   await window.refreshConfigDiagnostics();
   assert.match(target.textContent, /waiting for radar/); assert(!target.textContent.includes('GPU: V3D'));

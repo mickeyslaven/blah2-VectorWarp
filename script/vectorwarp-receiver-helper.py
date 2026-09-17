@@ -1,9 +1,10 @@
 #!/usr/bin/python3 -I
-"""Small local receiver broker. Its root-owned policy is the only action catalog.
+"""Small local receiver broker. Its root-owned policy is the receiver action catalog.
 
-The HTTP server cannot grant itself privileges. An administrator authorizes one
-exact, short-lived plan over the same socket using SO_PEERCRED. No web password,
-shell command, path, unit or package argument crosses this socket.
+The HTTP server cannot grant itself privileges. Receiver software changes need
+an exact, locally authorized short-lived plan. A separate fixed restart request
+uses SO_PEERCRED to bind it to the API account. No web password, shell command,
+path, unit or package argument crosses this socket.
 """
 import argparse
 import base64
@@ -309,8 +310,34 @@ class Broker:
         verb = request.get('verb')
         allowed = {'discover': {'verb'}, 'plan': {'verb', 'actionId', 'configRevision'},
                    'authorize': {'verb', 'planId'}, 'describe': {'verb', 'planId'},
-                   'execute': {'verb', 'planId', 'configRevision'}}
+                   'execute': {'verb', 'planId', 'configRevision'},
+                   'restart': {'verb'}, 'gpu-access': {'verb'}}
         require(verb in allowed and set(request) == allowed[verb], 'INVALID_REQUEST', 'Unknown receiver request fields.')
+        if verb == 'gpu-access':
+            # Metadata-only host view for the API's PrivateDevices sandbox.
+            # No driver is loaded and no caller-supplied path/action is accepted.
+            helper = trusted_path(pathlib.Path(__file__).resolve().with_name('vectorwarp-gpu-setup'))
+            result = self.inspector.run(['/usr/bin/python3', '-I', str(helper), '--access-status', '--json'], timeout=1)
+            require(result['exitCode'] == 0 and not result['timedOut'], 'GPU_ACCESS_UNAVAILABLE', 'GPU service-access check failed.')
+            access = json.loads(result['output'])
+            require(isinstance(access, dict) and isinstance(access.get('nodes'), list) and len(access['nodes']) <= 16,
+                    'GPU_ACCESS_UNAVAILABLE', 'Invalid GPU service-access response.')
+            return {'ok': True, 'serviceAccess': access}
+        if verb == 'restart':
+            # The HTTP path enforces save, origin and receiver checks. The broker
+            # binds this fixed unit start to the unprivileged API OS account;
+            # no command, path or unit comes from the socket request.
+            require(uid == self.api_uid, 'UNAUTHORIZED_PEER', 'Only the VectorWarp API account may request a restart.')
+            require(self.operation.acquire(blocking=False), 'MANAGEMENT_BUSY', 'Another receiver operation is running.')
+            try:
+                result = self.inspector.run(['/usr/bin/systemctl', '--no-block', 'start',
+                                             'vectorwarp-restart.service'], timeout=5)
+                require(result['exitCode'] == 0 and not result['timedOut'], 'RESTART_REQUEST_FAILED',
+                        'The service manager did not accept the VectorWarp restart request. Check the receiver helper log.')
+                return {'ok': True, 'status': 'accepted',
+                        'message': 'Restart request accepted by the service manager; wait for fresh radar status.'}
+            finally:
+                self.operation.release()
         if verb == 'discover':
             entries = []
             for action in self.policy['actions']:
@@ -388,6 +415,32 @@ def exchange(request):
         return json.loads(raw)
 
 
+def serve_client(connection, broker, timeout=5):
+    try:
+        connection.settimeout(timeout)
+        _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+        try:
+            raw = connection.makefile('rb').readline(MAX_BYTES + 1)
+            require(len(raw) <= MAX_BYTES and raw.endswith(b'\n'), 'INVALID_REQUEST', 'Request is oversized or incomplete.')
+            result = broker.handle(json.loads(raw), uid)
+        except Refused as error:
+            result = {'ok': False, 'code': error.code, 'message': str(error)}
+        except (ValueError, UnicodeDecodeError):
+            result = {'ok': False, 'code': 'INVALID_REQUEST', 'message': 'Request is not valid JSON.'}
+        except TimeoutError:
+            result = {'ok': False, 'code': 'REQUEST_TIMEOUT', 'message': 'The local request did not finish before its deadline.'}
+        except Exception:
+            result = {'ok': False, 'code': 'MANAGEMENT_FAILED', 'message': 'Receiver management failed. Inspect the local service log.'}
+        connection.sendall(json.dumps(result).encode() + b'\n')
+        # Never log tokens, serials or command output.
+        print(json.dumps({'event': 'receiver-management', 'uid': uid, 'status': result.get('status'),
+                          'code': result.get('code'), 'actionId': result.get('actionId')}), flush=True)
+    except OSError:
+        pass
+    finally:
+        connection.close()
+
+
 def serve():
     require(os.geteuid() == 0, 'ROOT_REQUIRED', 'The receiver broker must run under its installed root service.')
     policy = load_policy()
@@ -404,24 +457,8 @@ def serve():
     workers = threading.BoundedSemaphore(8)
     def client(connection):
         try:
-            connection.settimeout(5)
-            _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
-            raw = connection.makefile('rb').readline(MAX_BYTES + 1)
-            require(len(raw) <= MAX_BYTES and raw.endswith(b'\n'), 'INVALID_REQUEST', 'Request is oversized or incomplete.')
-            try:
-                result = broker.handle(json.loads(raw), uid)
-            except Refused as error:
-                result = {'ok': False, 'code': error.code, 'message': str(error)}
-            except Exception:
-                result = {'ok': False, 'code': 'MANAGEMENT_FAILED', 'message': 'Receiver management failed. Inspect the local service log.'}
-            connection.sendall(json.dumps(result).encode() + b'\n')
-            # Never log tokens, serials or command output.
-            print(json.dumps({'event': 'receiver-management', 'uid': uid, 'status': result.get('status'),
-                              'code': result.get('code'), 'actionId': result.get('actionId')}), flush=True)
-        except (OSError, ValueError, Refused):
-            pass
+            serve_client(connection, broker)
         finally:
-            connection.close()
             workers.release()
     while True:
         connection, _ = listener.accept()
@@ -492,12 +529,20 @@ def save_enrollment(policy, action, path=POLICY):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('operation', choices=('serve', 'authorize', 'enroll-service', 'enroll-packages'))
+    parser.add_argument('operation', choices=('serve', 'request-restart', 'authorize', 'enroll-service', 'enroll-packages'))
     parser.add_argument('plan', nargs='?')
     parser.add_argument('unit', nargs='?')
     args = parser.parse_args()
     if args.operation == 'serve':
         return serve()
+    if args.operation == 'request-restart':
+        require(args.plan is None and args.unit is None, 'INVALID_REQUEST', 'Restart accepts no arguments.')
+        result = exchange({'verb': 'restart'})
+        require(result.get('ok') is True and result.get('status') == 'accepted',
+                result.get('code', 'RESTART_REQUEST_FAILED'),
+                result.get('message', 'The restart request was not accepted.'))
+        print(result['message'])
+        return
     require(os.geteuid() == 0 and sys.stdin.isatty(), 'LOCAL_AUTHORIZATION_REQUIRED',
             'Use a local administrator terminal to authorize a receiver plan.')
     if args.operation == 'enroll-packages':

@@ -65,7 +65,7 @@ fs.writeFileSync(filename, yaml.dump(config));
 const child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
   env: {...process.env, BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([
     process.execPath, '-e',
-    `const fs=require('fs');fs.writeFileSync(${JSON.stringify(restartMarker)}, 'ok');if(fs.readFileSync(${JSON.stringify(filename)},'utf8').includes('RESTART_FAIL'))process.exit(23)`
+    `const fs=require('fs');fs.writeFileSync(${JSON.stringify(restartMarker)}, 'ok');if(fs.readFileSync(${JSON.stringify(filename)},'utf8').includes('RESTART_FAIL')){console.error('The fixed restart request was refused by the mock broker.');process.exit(23)}`
   ]), BLAH2_RECEIVER_TYPES: 'Kraken'},
   stdio: ['ignore', 'ignore', 'pipe']
 });
@@ -462,6 +462,7 @@ function closeSocket(socket) {
     }
     assert.equal(status.restart.state, 'failed');
     assert.match(status.restart.message, /exit 23/);
+    assert.match(status.restart.message, /fixed restart request was refused/);
     assert.equal((await request('GET', '/api/config')).status, 200,
       'Failed restart must not make saved settings inaccessible');
     console.log('Configuration API integration tests passed.');

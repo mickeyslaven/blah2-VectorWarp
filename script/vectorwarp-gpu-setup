@@ -1,5 +1,5 @@
 #!/usr/bin/python3 -I
-"""Read-only Pi GPU diagnosis; explicitly interactive native driver installation.
+"""GPU service-access diagnosis and Pi-only interactive driver installation.
 
 No driver payload, privileged web action, service start, arbitrary package name,
 repository addition, or global Mesa version requirement is provided here.
@@ -13,6 +13,7 @@ import pathlib
 import pwd
 import re
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -156,12 +157,32 @@ def render_access():
             group = grp.getgrgid(info.st_gid).gr_name
             permitted = (account.pw_uid == info.st_uid and info.st_mode & 0o600 == 0o600) or \
                 (info.st_gid in groups and info.st_mode & 0o060 == 0o060) or info.st_mode & 0o006 == 0o006
-            nodes.append({'path': str(filename), 'group': group, 'accessibleByService': bool(permitted)})
+            nodes.append({'path': str(filename), 'group': group, 'accessibleByService': bool(permitted),
+                          'groupAllowsAccess': info.st_mode & 0o060 == 0o060})
         except (OSError, KeyError):
             continue
-    return {'state': 'available' if any(node['accessibleByService'] for node in nodes) else
-            'group-access-needed' if nodes else 'render-node-missing', 'nodes': nodes,
+    return {'state': 'group-access-needed' if any(not node['accessibleByService'] for node in nodes) else
+            'available' if nodes else 'render-node-missing', 'nodes': nodes,
             'check': 'unix-owner-group-mode; ACL, SELinux and actual device opening are not tested'}
+
+
+def service_render_access():
+    # PrivateDevices intentionally hides host DRM nodes from the API. Ask the
+    # existing peer-checked broker for metadata, never grant the API GPU access.
+    if pwd.getpwuid(os.geteuid()).pw_name != 'vectorwarp-api':
+        return render_access()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2)
+            client.connect('/run/vectorwarp-receiver/management.sock')
+            client.sendall(b'{"verb":"gpu-access"}\n')
+            raw = client.makefile('rb').readline(16385)
+            require(len(raw) <= 16384 and raw.endswith(b'\n'), 'Invalid GPU access receipt.')
+            result = json.loads(raw)
+            require(result.get('ok') is True and isinstance(result.get('serviceAccess'), dict), 'GPU access check unavailable.')
+            return result['serviceAccess']
+    except (OSError, ValueError, Refused, AttributeError):
+        return {'state': 'unavailable', 'nodes': [], 'check': 'Host GPU access check unavailable; activate the updated receiver helper.'}
 
 
 def classify(host, package, driver, access):
@@ -172,6 +193,18 @@ def classify(host, package, driver, access):
               'accessCommand': ACCESS_COMMAND, 'fixUrl': FIX_URL,
               'message': 'Pi-specific driver setup is not required on this host.'}
     if not host['pi']:
+        if access['state'] == 'unavailable':
+            result['state'] = 'driver-unverified'
+            result['message'] = ('GPU service-access check unavailable. Activate the updated receiver helper '
+                'after pending receiver actions finish; see the installation guide. No driver qualification was inferred.')
+        elif access['state'] == 'group-access-needed':
+            result['state'] = 'service-access-needed'
+            result['message'] = ('The vectorwarp processor account lacks Unix group-mode access to a GPU render node. '
+                'Run the local access command, then explicitly restart processing. ACL and SELinux access are not tested.')
+        elif access['state'] == 'available':
+            result['state'] = 'access-configured'
+            result['message'] = ('GPU render-node group access is configured for new processor instances. '
+                'Driver availability and GPU qualification are reported when processing starts.')
         return result
     devices = [item for item in driver.get('devices', []) if isinstance(item, dict) and item.get('driverId') == 19]
     # VK_DRIVER_ID_MESA_V3DV = 19. Driver identity, not CPU architecture or an
@@ -196,8 +229,10 @@ def classify(host, package, driver, access):
 def status():
     host = host_info()
     if not host['pi']:
-        return classify(host, None, {'available': False, 'devices': []}, {'state': 'not-checked', 'nodes': []})
-    return classify(host, installed_version(host), enumerate_driver(), render_access())
+        # The API account deliberately cannot access the GPU. Check the processor
+        # account's groups; do not mistake API-side enumeration for its driver state.
+        return classify(host, None, {'available': False, 'devices': [], 'check': 'not-run'}, service_render_access())
+    return classify(host, installed_version(host), enumerate_driver(), service_render_access())
 
 
 def adapter(name):
@@ -277,12 +312,13 @@ def dnf_plan(host):
             'install', candidate.get_full_nevra()]
 
 
-def interactive_guard():
+def interactive_guard(pi_only=True):
     require(os.geteuid() == 0 and sys.stdin.isatty() and sys.stdout.isatty(),
             'This action requires an administrator in a local interactive terminal; no unattended/web action is supported.')
     host = host_info()
-    require(host['pi'], 'Pi-specific setup refuses package or account changes on non-Pi hardware.')
-    require(host['architecture'] == 'aarch64', 'Only the packaged 64-bit Pi platform is supported.')
+    if pi_only:
+        require(host['pi'], 'Pi-specific driver installation refuses changes on non-Pi hardware.')
+        require(host['architecture'] == 'aarch64', 'Only the packaged 64-bit Pi platform is supported.')
     return host
 
 
@@ -299,18 +335,27 @@ def install_driver():
                                  'TERM': 'dumb', 'DEBIAN_FRONTEND': 'readline'})
 
 
-def enable_access():
-    interactive_guard()
+def enable_access(automatic=False):
+    # Package installation may give only the processor account access to existing
+    # kernel DRM render nodes. No package manager, web privilege, driver change,
+    # node chmod, new group, or service restart is involved.
+    if automatic:
+        require(os.geteuid() == 0, 'Service access setup requires root.')
+    else:
+        interactive_guard(pi_only=False)
     access = render_access()
     needed = [node for node in access['nodes'] if not node['accessibleByService']]
-    require(needed, 'No inaccessible render node was found. No account was changed.')
+    if not needed:
+        print('No GPU group change needed (' + access['state'] + ').')
+        return
     groups = {node['group'] for node in needed}
-    require(len(groups) == 1 and next(iter(groups)) in ('render', 'video'),
-            'Render nodes have an unexpected/mixed owner group; review access with your administrator.')
-    group = next(iter(groups))
+    require(groups <= {'render', 'video'} and all(node['groupAllowsAccess'] for node in needed),
+            'Render nodes have unexpected ownership or group permissions; review access with your administrator.')
+    group = ','.join(sorted(groups))
     print('Allow the existing vectorwarp processor account to use ' + ', '.join(node['path'] for node in needed) +
           ' by appending its existing ' + group + ' group. No other groups or node permissions change; no service restarts.')
-    require(input('Type ENABLE GPU ACCESS to confirm: ') == 'ENABLE GPU ACCESS', 'Cancelled; no account was changed.')
+    if not automatic:
+        require(input('Type ENABLE GPU ACCESS to confirm: ') == 'ENABLE GPU ACCESS', 'Cancelled; no account was changed.')
     # Recheck exact nodes after consent; preserve every existing supplementary group.
     require(render_access() == access, 'Render-node/account state changed during review; retry.')
     subprocess.run(['/usr/sbin/usermod', '--append', '--groups', group, 'vectorwarp'], check=True,
@@ -323,21 +368,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument('--status', action='store_true')
+    actions.add_argument('--access-status', action='store_true', help='Read-only render-node metadata; no driver loading')
     actions.add_argument('--install-driver', action='store_true')
     actions.add_argument('--enable-service-access', action='store_true')
+    actions.add_argument('--configure-service-access', action='store_true', help='Root-only package setup; existing DRM groups only')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args()
     try:
-        require(not args.json or not (args.install_driver or args.enable_service_access),
-                'JSON mode is read-only; privileged actions require local interactive review.')
+        require(not args.json or not (args.install_driver or args.enable_service_access or args.configure_service_access),
+                'JSON mode is read-only.')
         if args.install_driver:
             install_driver()
         elif args.enable_service_access:
             enable_access()
+        elif args.configure_service_access:
+            enable_access(automatic=True)
+        elif args.access_status:
+            print(json.dumps(render_access(), separators=(',', ':')))
         else:
             result = status()
             print(json.dumps(result, separators=(',', ':')) if args.json else
-                  result['message'] + ('\nDriver: ' + COMMAND + '\nAccess: ' + ACCESS_COMMAND if result['pi'] else ''))
+                  result['message'] + ('\nDriver: ' + COMMAND if result['pi'] else '') +
+                  ('\nAccess: ' + ACCESS_COMMAND if result['serviceAccess']['state'] == 'group-access-needed' else ''))
         return 0
     except Exception as error:
         print('GPU setup: ' + str(error), file=sys.stderr)

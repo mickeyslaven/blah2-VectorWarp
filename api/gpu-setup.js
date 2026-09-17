@@ -5,7 +5,8 @@ const path = require('path');
 const {execFile} = require('child_process');
 const INSTALL_COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver';
 const ACCESS_COMMAND = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access';
-const STATES = new Set(['not-applicable', 'unqualified', 'driver-unavailable', 'driver-unverified', 'compiler-risk']);
+const STATES = new Set(['not-applicable', 'unqualified', 'driver-unavailable', 'driver-unverified', 'compiler-risk',
+  'service-access-needed', 'access-configured']);
 
 function isPi(read = fs.readFileSync) {
   for (const filename of ['/sys/firmware/devicetree/base/model', '/proc/device-tree/model']) {
@@ -31,10 +32,10 @@ function fromRuntime(setup, {acceleration, clutterAcceleration, fresh} = {}) {
 
 function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile, now = Date.now} = {}) {
   let cached = null;
-  const unavailable = message => ({version: 1, pi, state: pi ? 'driver-unverified' : 'not-applicable',
+  const unavailable = message => ({version: 1, pi, state: 'driver-unverified',
     qualification: 'not-run', message, command: INSTALL_COMMAND, accessCommand: ACCESS_COMMAND});
   return async runtime => {
-    if (!pi || preview) return unavailable(preview ? 'GPU setup is not probed by the UI preview.' : 'Pi-specific GPU setup is not applicable.');
+    if (preview) return unavailable('GPU setup is not probed by the UI preview.');
     if (!cached || now() - cached.at >= 60000) {
       const candidates = [path.resolve(__dirname, '../../../libexec/vectorwarp-gpu-setup'),
         path.resolve(__dirname, '../libexec/vectorwarp-gpu-setup'),
@@ -47,7 +48,7 @@ function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile,
             try {
               if (error) throw error;
               const value = JSON.parse(output);
-              if (value?.version !== 1 || value.pi !== true || !STATES.has(value.state) ||
+              if (value?.version !== 1 || value.pi !== pi || !STATES.has(value.state) ||
                   value.qualification !== 'not-run' || typeof value.message !== 'string' || value.message.length > 2048)
                 throw new Error('Invalid GPU setup response');
               resolve({...value, command: INSTALL_COMMAND, accessCommand: ACCESS_COMMAND});

@@ -278,6 +278,7 @@ else
 fi
 run mkdir -p "$ARTIFACT_TMP/libexec"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libexec/vectorwarp-restart"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/libexec/vectorwarp-activate-web"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"

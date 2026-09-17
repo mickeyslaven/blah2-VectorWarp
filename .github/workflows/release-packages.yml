@@ -121,6 +121,8 @@ jobs:
         run: |
           node test/ui/packaging.test.js
           python3 test/packaging/test_install_docs.py -v
+          python3 test/packaging/test_gpu_setup.py -v
+          python3 test/packaging/test_receiver_build.py -v
           python3 test/packaging/test_smoke_receiver_status.py -v
           python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v
