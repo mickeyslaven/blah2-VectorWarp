@@ -98,7 +98,11 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
       if (url === '/api/upstream/status') return {ok: true, json: async () => upstream};
       return request(url, options);
     };
-    window.fetchStatusResource = (url, options) => window.fetch(url, options);
+    // Preserve configFetch's third timeout argument. In particular, a save has
+    // a bounded 90-second transaction window; dropping it made this isolated
+    // HTTP fixture retain its unrelated 500-ms default under CI contention.
+    window.fetchStatusResource = (url, options, timeoutMs) => window.fetch(url,
+      {...options, ...(timeoutMs === undefined ? {} : {timeout: timeoutMs})});
     for (const file of ['html/js/kraken_geometry.js', 'html/js/config_ui.js']) window.eval(fs.readFileSync(path.join(root, file), 'utf8'));
     const doc = window.document;
     const query = key => doc.querySelector(`[data-path="${key}"] input, [data-path="${key}"] select`);
@@ -114,7 +118,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
       assert.equal(await window.validateActiveConfiguration(), true, doc.getElementById('config-message').textContent);
       await window.saveConfiguration();
       assert.ok(!doc.getElementById('config-message').textContent.includes('Unable'), doc.getElementById('config-message').textContent);
-      assert.equal(doc.getElementById('config-state').textContent, 'Matches saved file');
+      assert.equal(doc.getElementById('config-state').textContent, 'Matches saved file',
+        doc.getElementById('config-message').textContent);
       const response = await request('/api/config');
       assert.deepEqual(await response.json(), current());
     };
