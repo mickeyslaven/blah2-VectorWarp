@@ -23,7 +23,11 @@ package = Path(sys.argv[1])
 assert package in (Path('/tmp/package.deb'), Path('/tmp/package.rpm')) and package.is_file()
 config = Path('/etc/vectorwarp/config.yml')
 before = hashlib.sha256(config.read_bytes()).hexdigest()
-run('systemctl', 'start', 'vectorwarp-api.service')
+# Do not repair a broken install hook by starting the API in the test. A fresh
+# package must make its web interface available without an extra service command.
+assert run('systemctl', 'is-enabled', 'vectorwarp-api.service') == 'enabled'
+assert run('systemctl', 'is-active', 'vectorwarp-api.service') == 'active'
+assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
 pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service')
 assert int(pid) > 0
 sudoers = Path('/etc/sudoers.d/vectorwarp')
@@ -41,4 +45,4 @@ assert hashlib.sha256(config.read_bytes()).hexdigest() == before, 'Reinstall cha
 assert run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service') == pid, \
     'Package unexpectedly interrupted a running API'
 assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
-print('PASS: real package reinstall retires the legacy grant, preserves config/customization and leaves processing stopped')
+print('PASS: fresh install starts only the API; reinstall retires the legacy grant, preserves config/customization and leaves processing stopped')

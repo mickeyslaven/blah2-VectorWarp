@@ -6,7 +6,7 @@ carried into that environment.
 
 The checks start the installed systemd units and verify:
 
-- The API opens with its service account, writable configuration and security restrictions.
+- Fresh installation enables and starts the API without the test starting it; radar processing stays stopped. The API opens with its service account, writable configuration and security restrictions.
 - Reinstalling the package removes the known legacy sudo grant while preserving custom policy, saved settings and a running API; it does not start radar processing.
 - Chromium opens all six settings tabs, saves a frame-interval change and reads it back after reload.
 - Missing SDRplay software produces setup guidance and the official download link, without downloading the SDK.
