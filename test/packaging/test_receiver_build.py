@@ -366,6 +366,21 @@ endif()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("explicitly marked test-only", result.stderr)
 
+    def test_native_next_steps_match_service_integration(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        cases = (
+            ((), 'vectorwarp help lists all commands'),
+            (('--prefix', '/opt/vectorwarp-custom'), 'custom prefix: vectorwarp stop/restart refuse'),
+            (('--no-systemd',), 'systemd integration was not installed'),
+        )
+        for index, (options, guidance) in enumerate(cases):
+            with self.subTest(options=options):
+                result = self.install(artifact, self.temp / f'next-steps-{index}', *options)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(guidance, result.stdout)
+                self.assertNotIn('systemctl enable --now vectorwarp-api.service vectorwarp-processor.service',
+                                 result.stdout)
+
     def test_usb_rule_stage_requires_explicit_target_and_preserves_debian_group(self):
         artifact = self.make_artifact('hackrf', 'HackRF,Kraken')
         missing = subprocess.run([

@@ -1,25 +1,56 @@
 # DragonOS package-selection notes
 
-There is no separate DragonOS build. Use the [package and APT setup page](https://mickeyslaven.github.io/blah2-VectorWarp/#install):
-download and inspect the repository installer, then run it with `--start-web`.
-This adds the matching Ubuntu repository, installs
-VectorWarp, and starts only its browser interface; it does not start radar
-processing. The installer selects the matching Ubuntu repository from
+There is no separate DragonOS build. The installer selects the matching Ubuntu repository from
 `/etc/os-release`:
 
 - Jammy / Ubuntu 22.04
 - Noble / Ubuntu 24.04
 - Resolute / Ubuntu 26.04
 
-With a version 0.1.7-or-newer package, run `vectorwarp` to open the web page
-or print its address over SSH; that default action starts only the web API.
-Configure the receiver there, then use `vectorwarp start` to bring up the
-VectorWarp web API, helper and checked radar processor. `vectorwarp stop` safely
-stops its processor, web API and helper; `vectorwarp restart` stops and starts
-them in order. None of these commands stops separately installed Kraken Suite
-or SDRplay services. `vectorwarp status` and
-`vectorwarp logs` help inspect a failed start. Older packages do not include
-this launcher; follow the versioned installation page for their controls.
+## 1. Install VectorWarp
+
+Download over HTTPS and inspect the script before granting privilege. This block
+configures the matching repository, installs VectorWarp, and opens its web
+interface without starting radar:
+
+When the script opens in `less`, press **q** after reviewing it to continue.
+
+```bash
+curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
+  less vectorwarp-install.sh && \
+  sudo bash vectorwarp-install.sh --repo-only && \
+  sudo apt update && sudo apt install vectorwarp && \
+  vectorwarp
+```
+
+If needed first, install `curl` and `gnupg` from DragonOS's matching Ubuntu
+repository. `--repo-only` adds repository configuration only. The optional
+`--start-web` installer route enables and starts only the web API directly.
+On upgrades, package hooks may restore previously running radar.
+
+## 2. Configure and start radar
+
+In **Settings**, configure the receiver, then choose **Save & Restart**. This
+saves the first configuration and starts radar; no separate start command is
+needed.
+
+## 3. Use controls and help
+
+With a version 0.1.7-or-newer package, `vectorwarp` opens the web page or
+prints its address over SSH without starting radar. `vectorwarp start` starts
+the full VectorWarp stack; `vectorwarp stop` stops it including the web page;
+and `vectorwarp restart` restarts it in order. `vectorwarp status`,
+`vectorwarp logs`, `vectorwarp version`, and `vectorwarp help` inspect it.
+These commands do not stop separately installed Kraken Suite or SDRplay services. Older
+packages do not contain this launcher.
+
+## 4. Update
+
+Keep the configured repository; do not rerun the installer:
+
+```bash
+sudo apt update && sudo apt install vectorwarp
+```
 
 DragonOS has independent edition labels, including FocalX, Noble, and Resolute.
 Those labels alone are not trusted for package selection. The installer checks

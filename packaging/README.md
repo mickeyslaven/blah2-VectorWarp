@@ -50,12 +50,12 @@ script/package-native.sh \
   --output-dir dist
 ```
 
-Installation creates dedicated users and directories and starts the web API,
+A fresh installation creates dedicated users and directories and starts the web API,
 but never starts radar processing. Starting with version 0.1.7, the installed
 `/usr/bin/vectorwarp` launcher opens the web page without starting radar, or
 provides fixed VectorWarp service start, safe stop and ordered restart actions
-plus status/logs. Stop includes VectorWarp's web API and helper, but never
-separately managed receiver/vendor services. Upgrades to 0.1.7 or newer quiesce
+plus status, logs, version and help. Stop includes VectorWarp's web API and
+helper, but never separately managed receiver/vendor services. Upgrades to 0.1.7 or newer quiesce
 only VectorWarp's own services before unpack and reactivate only those
 previously running; stopped processing remains stopped. They do not rebuild a
 stale locally compiled RSPduo adapter or restart vendor services.

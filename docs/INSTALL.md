@@ -9,53 +9,69 @@ included below; [building from source](#build-from-source) is a separate route.
 
 ## Install a package
 
-Download the repository installer over HTTPS and inspect it before running it:
-it requires `curl` and GnuPG (`gnupg` on Ubuntu/Debian, `gnupg2` on Fedora).
-Install either missing tool from the normal distribution repository first.
+### 1. Install VectorWarp
+
+Choose one block for your OS. It downloads the repository installer over HTTPS,
+stops if a step fails, lets you inspect it before privilege is requested, then
+configures the signed repository, installs VectorWarp, and opens the web
+interface. Install any missing `curl` and GnuPG (`gnupg` on Ubuntu/Debian,
+`gnupg2` on Fedora) from the normal distribution repository first.
+When the script opens in `less`, press **q** after reviewing it to continue.
 
 ```bash
-curl --fail --location --proto '=https' --tlsv1.2 \
-  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh
-less vectorwarp-install.sh
+# Ubuntu or Debian
+curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
+  less vectorwarp-install.sh && \
+  sudo bash vectorwarp-install.sh --repo-only && \
+  sudo apt update && sudo apt install vectorwarp && \
+  vectorwarp
 ```
-
-On Ubuntu or Debian, add the matching signed APT repository, install the
-package, and start only the browser interface in one command:
 
 ```bash
-sudo bash vectorwarp-install.sh --start-web
+# Fedora
+curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
+  less vectorwarp-install.sh && \
+  sudo bash vectorwarp-install.sh --repo-only && \
+  sudo dnf install vectorwarp && \
+  vectorwarp
 ```
 
-On Fedora:
+`--repo-only` verifies the pinned key and adds repository configuration without
+installing a package or starting services. `--start-web` is the optional
+one-step installer route; it enables the web API at boot and starts only that
+service directly. On upgrades, package hooks may restore previously running radar.
 
-```bash
-sudo bash vectorwarp-install.sh --start-web
-```
+### 2. Configure and start radar
 
-`--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. The following launcher and automatic-upgrade
-behavior is included in version 0.1.7 and newer. Run `vectorwarp` to open the
-configured web address (or print it over SSH), then configure a receiver in
-Settings. `vectorwarp --help` lists its fixed actions:
+In **Settings**, select and configure the receiver, then choose **Save &
+Restart**. This saves the configuration and starts radar, including on the first run.
+**Save for later** saves without starting it; use `vectorwarp start` later to start the
+full stack with saved settings.
 
-```bash
-vectorwarp          # Open the web page; start only the web API if needed
-vectorwarp start
-vectorwarp stop
-vectorwarp restart
-vectorwarp status
-vectorwarp logs
-vectorwarp help
-```
+### 3. Use controls and help
 
-`open` (the default) starts only the web API. `start` brings up VectorWarp's
-receiver helper and web API, waits for the API to become ready, then starts
-the radar processor through the checked **Save & Restart** path if it is not
-already running. If radar is active but the web page is down, `start` repairs
+The following launcher behavior is included in version 0.1.7 and newer.
+`vectorwarp` opens the configured web address (or prints it over SSH) without
+starting radar. `vectorwarp --help` lists its fixed actions:
+
+| Command | What it does |
+| --- | --- |
+| `vectorwarp` / `vectorwarp open` | Open the web interface without starting radar. |
+| `vectorwarp start` | Start the full stack with saved settings. |
+| `vectorwarp stop` | Stop the full stack, including the web interface. |
+| `vectorwarp restart` | Stop and start the full stack with saved settings. |
+| `vectorwarp status` | Show service status. |
+| `vectorwarp logs` | Show recent logs. |
+| `vectorwarp version` | Show the installed version. |
+| `vectorwarp help` | Show all commands and examples. |
+
+`open` (the default) starts only the web API. `start` brings up the full
+VectorWarp stack: receiver helper, web API, and checked radar processor using
+saved settings. If radar is active but the web page is down, `start` repairs
 the web and helper without interrupting radar; use `restart` to apply changed
 settings. `stop` safely drains privileged receiver work before stopping the
 VectorWarp processor, web API, helper and socket; `restart` stops and starts
-those services in order. A
+the full stack in order. `version` reports the installed package version. A
 pending package upgrade, receiver build or restart can make a command refuse
 until it is safe to retry. Neither these commands nor package upgrades stop
 shared Kraken Suite, SDRplay API or other vendor services. Checked receiver
@@ -63,10 +79,22 @@ startup can still start an approved installed receiver service when the
 selected profile requires it.
 Check `status` or `logs` after a request. A service-changing command may ask
 for your administrator password. If your user cannot read the system journal,
-use `sudo vectorwarp logs`. For an installed version
-older than 0.1.7, follow the versioned [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
-and use the web address and administrator `systemctl` guidance it provides;
-that package does not contain the launcher.
+use `sudo vectorwarp logs`. Packages older than 0.1.7 do not contain the
+launcher; update them with the package-manager commands below before using it.
+
+### 4. Update
+
+Keep the configured repository; do not rerun the installer. Choose one block:
+
+```bash
+# Ubuntu or Debian
+sudo apt update && sudo apt install vectorwarp
+```
+
+```bash
+# Fedora
+sudo dnf upgrade --refresh vectorwarp
+```
 
 If an earlier installation completed but the page does not load, start and
 inspect only the web API:
@@ -76,9 +104,7 @@ sudo systemctl enable --now vectorwarp-api.service
 sudo systemctl status vectorwarp-api.service --no-pager
 ```
 
-To update, use `sudo apt update && sudo apt install --only-upgrade vectorwarp`
-on APT or `sudo dnf upgrade vectorwarp` on Fedora. On an upgrade to version
-0.1.7 or newer, the package pauses its own services before replacing files,
+On an upgrade to version 0.1.7 or newer, the package pauses its own services before replacing files,
 waits for privileged receiver work to finish,
 and restarts only VectorWarp services that were running beforehand. A stopped
 processor stays stopped. Pending receiver-management approvals expire; review
@@ -119,7 +145,9 @@ release. Replace `matching.deb` or `matching.rpm` with the downloaded filename:
 ```bash
 # Ubuntu, Debian, or DragonOS using its matching Ubuntu base
 sudo apt install ./matching.deb
+```
 
+```bash
 # Fedora
 sudo dnf install ./matching.rpm
 ```
@@ -154,7 +182,7 @@ Install [Node.js](https://nodejs.org/en/download) 22 or later with npm, then
 the build dependencies below. On Ubuntu or Debian:
 
 ```bash
-sudo apt update
+sudo apt update && \
 sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
   libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
 ```
@@ -222,12 +250,12 @@ Set `VW_BACKEND` below to your choice. Keep the same value for both build
 commands; omitting `--backend` defaults to `all` without downloading an SDRplay SDK.
 
 ```bash
-git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
-cd blah2-VectorWarp
-VW_BACKEND=all
-script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto
-script/build-native.sh --backend "$VW_BACKEND" --gpu auto
-sudo script/install-native.sh --preflight
+git clone https://github.com/mickeyslaven/blah2-VectorWarp.git && \
+cd blah2-VectorWarp && \
+VW_BACKEND=all && \
+script/build-native.sh --preflight --backend "$VW_BACKEND" --gpu auto && \
+script/build-native.sh --backend "$VW_BACKEND" --gpu auto && \
+sudo script/install-native.sh --preflight && \
 sudo script/install-native.sh
 ```
 

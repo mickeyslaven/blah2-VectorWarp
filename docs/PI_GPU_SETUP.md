@@ -1,5 +1,7 @@
 # Raspberry Pi GPU setup
 
+## 1. Install VectorWarp
+
 Install the matching package from the [download and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
 or use the [source-build guide](INSTALL.md#build-from-source). Include GPU build
 dependencies only when building from source.
@@ -13,7 +15,7 @@ compiler-risk hints but does not reject an older driver by version alone.
 Startup numerical checks decide whether the selected device and processing
 settings can use GPU acceleration.
 
-## Check, install, qualify
+## 2. Check, install, and qualify
 
 Run on the Pi, after installing VectorWarp:
 
@@ -63,9 +65,12 @@ The access check inspects Unix owner/group/mode metadata; it does not prove
 ACL or SELinux access. Actual driver opening and processing qualification are
 still required.
 
-Finally, choose Automatic or GPU and explicitly start processing with the
-desired settings (**Save & Restart** in Settings, or `vectorwarp start` with
-version 0.1.7 or newer after saving them). Settings displays the
+## 3. Apply the setting
+
+Choose Automatic or GPU and apply the desired saved settings with
+**Save & Restart** in Settings (or `vectorwarp restart` on version 0.1.7 or
+newer when processing is already running; use `vectorwarp start` only when it
+is stopped). Settings displays the
 **delay–Doppler** and **clutter** stages separately.
 An enumerated GPU or installed package is only *unqualified*. Fresh telemetry
 can report either stage, or both, as startup-qualified. The display clears this

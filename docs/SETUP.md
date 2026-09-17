@@ -1,12 +1,17 @@
 # Receiver setup
 
-Install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
-then open **Settings** in its web interface. In version 0.1.7 or newer, run
-`vectorwarp` to open that page without starting radar; `vectorwarp start`
-then brings up the web API, receiver helper and checked radar processor.
-`vectorwarp stop` safely stops VectorWarp's processor, web API and helper,
-but not shared Kraken Suite or SDRplay services. `vectorwarp status` and
-`vectorwarp logs` show service state and recent web/radar logs. Use the
+1. Install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
+   then run `vectorwarp` to open **Settings** without starting radar.
+2. Select and configure the receiver, then choose **Save & Restart** to save
+   settings and start radar, including the first time. **Save for later** does
+   not start it.
+3. Later, `vectorwarp start` brings up the full stack using saved settings;
+   `vectorwarp stop` stops it, including the web interface; and
+   `vectorwarp restart` restarts it in order. These commands do not stop shared Kraken
+   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`,
+   `vectorwarp version`, and `vectorwarp help` inspect it.
+
+Use the
 [source-build guide](INSTALL.md#build-from-source) for development or unsupported
 systems. No Docker runtime is needed.
 

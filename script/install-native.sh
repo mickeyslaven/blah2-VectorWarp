@@ -416,4 +416,11 @@ if $SETUP_PI_GPU; then
 elif $WITH_SYSTEMD; then
   say "Pi GPU setup (read-only): $PREFIX/libexec/vectorwarp-gpu-setup --status"
 fi
-say "after review, an administrator may run: systemctl enable --now vectorwarp-api.service vectorwarp-processor.service"
+if $WITH_SYSTEMD; then
+  say 'on the installed host, run vectorwarp to open Settings; vectorwarp help lists all commands'
+  if [[ $PREFIX != /opt/vectorwarp ]]; then
+    say 'custom prefix: vectorwarp stop/restart refuse; see docs/INSTALL.md for manual service control'
+  fi
+else
+  say 'systemd integration was not installed; no service commands were configured'
+fi

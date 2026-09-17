@@ -4,8 +4,8 @@ This is the wording and capability reference for the README, installation guide
 and release notes. Comparison baseline: upstream
 [`30hours/blah2` at `c821bee`](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de),
 not a moving branch. Machine-readable pins are in [UPSTREAM_BASELINE.json](UPSTREAM_BASELINE.json).
-Last acceptance review: 2026-09-13. [v0.1.0](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.0)
-is published; current packages and APT/DNF instructions are on the
+Last acceptance review: 2026-09-13. Published-release evidence is retained
+below; current packages and APT/DNF instructions are on the
 [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 
 ## Changes and current evidence
@@ -21,7 +21,7 @@ is published; current packages and APT/DNF instructions are on the
 | Recording/replay | Receiver-specific recording; incomplete replay coverage | Portable `.blah2iq` for 2–8 channels, legacy readers, common paced replay, EOF/loop/error reporting, acknowledged recording controls | Current full-processor suite: 18 cases across four profiles, including Kraken 2–8 channels, invalid inputs and 6 MS/s USRP/HackRF clutter processing. Earlier release/AddressSanitizer evidence covered 13 cases; the historical Fedora package added three invalid-startup checks. Physical recording evidence remains five-channel Kraken. |
 | Tracking/math | Original tracking/spectrum/detection implementations | Bounded histories, corrected association/kinematics, spectrum axes/levels, boundary and nonfinite-value repairs | Focused C++ tests; not proof of real-aircraft tracker accuracy or reliable bearing. |
 | Deployment | Container-oriented setup | Native build/install and isolated service accounts; no container runtime required to run VectorWarp | Staged install, configuration preservation and Node 24 deployment tests. Fedora 44 x86-64 native/live checks; Fedora 44 ARM64 RPM installed on Raspberry Pi 4 with 16/16 replay/startup cases and services disabled. The earlier seven-case Strix live campaign completed, peaked at 77.1°C, and restored the paused receiver without changing its configuration or CPU limits. |
-| Package distribution | No VectorWarp packages | Ten published v0.1.0 DEB/RPM targets across Ubuntu, Debian and Fedora, with signed APT/DNF repositories | All ten release build/install-smoke jobs pass; public packages, checksums and repository signatures were verified. Clean Debian 13 x86-64 APT and Fedora 44 x86-64 DNF install/reinstall checks passed. Fedora-on-Pi package evidence is recorded separately; Raspberry Pi OS and DragonOS physical validation remain pending. |
+| Package distribution | No VectorWarp packages | Published DEB/RPM targets across Ubuntu, Debian and Fedora, with signed APT/DNF repositories | At the 2026-09-13 review, all ten release build/install-smoke jobs passed; public packages, checksums and repository signatures were verified. Clean Debian 13 x86-64 APT and Fedora 44 x86-64 DNF install/reinstall checks passed. Fedora-on-Pi package evidence is recorded separately; Raspberry Pi OS and DragonOS physical validation remain pending. |
 
 The [v0.1.0 release build](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34739621865)
 and [signed repository deployment](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/34740455837)

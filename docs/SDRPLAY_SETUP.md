@@ -1,13 +1,17 @@
 # SDRplay RSPduo setup
 
-Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install) first,
-then add SDRplay's API as described below.
+1. Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+2. Install SDRplay's API and build the local adapter as described below.
+3. Configure RSPduo in Settings, then choose **Save & Restart** to start radar.
 
 The unified VectorWarp package includes our RSPduo adapter source kit, not
 SDRplay's proprietary API or installer. You install the API, then VectorWarp
 compiles the adapter locally from **Settings → Build SDRplay support**.
 Source builders can use `--backend all` for the same workflow, or
 `--backend rspduo` to compile the adapter before installation.
+
+## 1. Install SDRplay's API
+
 Obtain the compatible **SDRplay Hardware API 3.15** from
 [SDRplay's official hardware API page](https://sdrplay.com/hardware-api/),
 accept its terms yourself, and follow its installation instructions.
@@ -22,6 +26,8 @@ architecture. Missing or mismatched files produce a Settings error. The processo
 also checks the version reported by the vendor API at startup; these checks do
 not establish compatibility with a service running in a different OS environment.
 
+## 2. Build the VectorWarp adapter
+
 In VectorWarp, select RSPduo in **Settings**, then choose **Build SDRplay support**
 when offered. The build checks the installed source kit, compiler and API;
 progress or a specific error appears in Settings. Rebuild when the package or
@@ -34,6 +40,8 @@ SDK changed, the old adapter may be marked stale and RSPduo processing will
 refuse startup. Check **Build SDRplay support** in Settings, rebuild when
 prompted, then use **Save & Restart**. An active processor service alone is
 not proof of fresh RSPduo capture.
+
+## 3. Configure and start RSPduo
 
 Set the receiver options, then choose **Save & Restart** to apply them.
 **SDRplay startup** shows whether the SDK accepted the settings, the selected
@@ -50,7 +58,9 @@ saving. These limits match the published RSPduo table in section 5 of the
 [SDRplay API 3.09 specification](https://www.sdrplay.com/docs/SDRplay_API_Specification_v3.09.pdf).
 The current adapter has separately been tested with API 3.15 on a physical RSPduo.
 
-Then open **Check receiver software**:
+## 4. Check the SDRplay service
+
+Open **Check receiver software**:
 
 - **Installed and running:** VectorWarp reuses the API without restarting it.
 - **Installed but stopped:** select RSPduo and choose **Save & Restart**.

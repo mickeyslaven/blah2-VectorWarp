@@ -1,5 +1,6 @@
 """Check install-guide commands without installing packages or starting services."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import unittest
@@ -10,6 +11,17 @@ GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.m
           "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
           "packaging/README.md", "docs/MAINTAINER_RELEASE.md", "docs/UPSTREAM_COMPARISON.md",
           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
+
+
+def project_documents():
+    """Include new documentation pages without walking dependency/build trees."""
+    excluded = {".git", "node_modules", "lib", "build", "dist", "__pycache__"}
+    for directory, folders, files in os.walk(ROOT):
+        folders[:] = [name for name in folders if name not in excluded]
+        for name in files:
+            path = Path(directory) / name
+            if not path.is_symlink() and path.suffix in {".md", ".rst", ".adoc", ".html"}:
+                yield path
 
 
 def heading_ids(text):
@@ -27,6 +39,41 @@ def heading_ids(text):
 
 
 class InstallDocumentationTests(unittest.TestCase):
+    def test_all_documentation_uses_simple_package_update_commands(self):
+        for document in project_documents():
+            with self.subTest(document=str(document.relative_to(ROOT))):
+                text = " ".join(document.read_text().split())
+                self.assertNotRegex(text, r"\bapt(?:-get)?\s+(?:install\s+)?--only-upgrade\b")
+                self.assertNotRegex(text, r"\bdnf\s+upgrade\s+vectorwarp\b")
+
+    def test_launcher_command_reference_matches_real_help(self):
+        result = subprocess.run(["/usr/bin/python3", str(ROOT / "script/vectorwarp"), "--help"],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        install = " ".join((ROOT / "docs/INSTALL.md").read_text().split())
+        for command in ("open", "start", "stop", "restart", "status", "logs", "version", "help"):
+            with self.subTest(command=command):
+                self.assertRegex(result.stdout, rf"(?m)^  {command}\s+")
+                self.assertIn(f"vectorwarp {command}", install)
+        self.assertIn("including the web interface", result.stdout)
+        self.assertIn("web API", install)
+        self.assertIn("including on the first run", install)
+        self.assertIn("**Save for later** saves without starting it", install)
+
+    def test_installer_help_uses_checked_launcher_not_direct_processor_start(self):
+        result = subprocess.run(["bash", str(ROOT / "script/install-release.sh"), "--help"],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("vectorwarp start", result.stdout)
+        self.assertIn("vectorwarp help", result.stdout)
+        self.assertIn("previously running services", result.stdout)
+        self.assertNotIn("before starting vectorwarp-processor.service", result.stdout)
+        native = (ROOT / "script/install-native.sh").read_text()
+        self.assertIn("vectorwarp help lists all commands", native)
+        self.assertNotIn("systemctl enable --now vectorwarp-api.service vectorwarp-processor.service", native)
+        release = (ROOT / "script/install-release.sh").read_text()
+        self.assertNotIn("still needs the coordinated refresh", release)
+
     def test_active_install_routes_point_to_the_shared_package_page(self):
         package_guides = ("README.md", "docs/INSTALL.md", "docs/SETUP.md",
                           "docs/SDRPLAY_SETUP.md", "docs/PI_GPU_SETUP.md",
