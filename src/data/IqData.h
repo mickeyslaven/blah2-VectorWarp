@@ -98,6 +98,10 @@ public:
   /// @warning Caller must hold this object's lock.
   void append_unlocked(const std::vector<std::complex<float>>& samples);
 
+  /// @brief Append an existing receive block without a temporary vector.
+  /// @warning Caller holds the lock; like the vector overload, retains newest n.
+  void append_unlocked(const std::complex<float>* samples, std::size_t count);
+
   /// @brief Pop the front of the queue.
   /// @return Sample from the front of the queue.
   std::complex<double> pop_front();

@@ -13,6 +13,50 @@ template<class F> void rejects(F action) {
 }
 int main() {
   try {
+    // Every split, including the ownership-transfer path with a short tail.
+    for (unsigned length = 0; length <= 80; ++length) {
+      for (unsigned count = 0; count <= length; ++count) {
+        IqData split(80);
+        for (unsigned i = 0; i < length; ++i) split.push_back({double(i), -double(i)});
+        const auto* front = length ? &split.view_data().front() : nullptr;
+        const auto drained = split.drain_front(count);
+        require(drained.size() == count && split.get_length() == length - count,
+          "Drain sizes changed");
+        if (count && count >= length - count && count != length / 2)
+          require(&drained.front() == front, "Large-prefix drain copied the CPI");
+        for (unsigned i = 0; i < count; ++i)
+          require(drained[i] == std::complex<double>(i, -double(i)), "Drain reordered prefix");
+        for (unsigned i = count; i < length; ++i)
+          require(split.view_data()[i - count] == std::complex<double>(i, -double(i)),
+            "Drain reordered retained tail");
+      }
+    }
+    // Pointer/count bulk append must be identical to existing per-sample FIFO.
+    for (unsigned capacity = 1; capacity <= 25; ++capacity) {
+      for (unsigned initial = 0; initial <= capacity; ++initial) {
+        for (unsigned count = 0; count <= 30; ++count) {
+          IqData old(capacity), bulk(capacity);
+          for (unsigned i = 0; i < initial; ++i) {
+            old.push_back({double(i), double(i)}); bulk.push_back({double(i), double(i)});
+          }
+          std::vector<std::complex<float>> block(count);
+          for (unsigned i = 0; i < count; ++i) {
+            block[i] = {i + .25f, -float(i) - .5f}; old.push_back(std::complex<double>(block[i]));
+          }
+          bulk.append_unlocked(block.data(), block.size());
+          require(old.view_data() == bulk.view_data(), "Bulk append differs from per-sample FIFO");
+        }
+      }
+    }
+    IqData zero(0);
+    zero.append_unlocked(nullptr, 0);
+    const std::complex<float> single{1, 2};
+    zero.append_unlocked(&single, 1);
+    require(zero.get_length() == 0, "Zero-capacity queue grew");
+    bool nullRejected = false;
+    try { zero.append_unlocked(nullptr, 1); }
+    catch (const std::invalid_argument&) { nullRejected = true; }
+    require(nullRejected, "Null positive-length append accepted");
     IqData data(5);
     data.discard_front(0);
     require(data.drain_front(0).empty(), "Empty drain returned samples");

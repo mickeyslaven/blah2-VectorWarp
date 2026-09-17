@@ -36,6 +36,21 @@ target_include_directories(testUsrpReadback PRIVATE ${PROJECT_ROOT}/src)
 target_compile_options(testUsrpReadback PRIVATE -UNDEBUG)
 add_test(NAME usrpAppliedReadback COMMAND testUsrpReadback)
 
+# Compile the actual receive loop against a local SDK double, never a radio.
+add_executable(testUsrpIngress ${PROJECT_ROOT}/test/capture/UsrpIngressFixture.cpp
+  ${PROJECT_ROOT}/src/capture/usrp/Usrp.cpp
+  ${PROJECT_ROOT}/src/capture/Source.cpp
+  ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/data/IqData.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
+target_compile_features(testUsrpIngress PRIVATE cxx_std_17)
+target_compile_options(testUsrpIngress PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(testUsrpIngress BEFORE PRIVATE
+  ${PROJECT_ROOT}/test/capture/fake-uhd ${PROJECT_ROOT}/src)
+target_link_libraries(testUsrpIngress PRIVATE Threads::Threads blah2RapidJson)
+add_test(NAME usrpReceiveIngress COMMAND testUsrpIngress)
+set_tests_properties(usrpReceiveIngress PROPERTIES TIMEOUT 20)
+
 if(BLAH2_ENABLE_HACKRF)
   add_executable(testHackRfSettings ${PROJECT_ROOT}/test/capture/HackRfSettingsFixture.cpp
     ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp)

@@ -65,6 +65,16 @@ std::deque<std::complex<double>> IqData::drain_front(uint32_t count)
     return samples;
   }
   auto end = data->begin() + count;
+  if (count > data->size() - count)
+  {
+    // Capture commonly has a CPI plus a few new USB samples. Copy the short
+    // retained tail, not the entire CPI, while the receive thread waits for us.
+    // Allocate before mutation so allocation failure leaves the queue intact.
+    std::deque<std::complex<double>> tail(end, data->end());
+    data->erase(end, data->end());
+    tail.swap(*data);
+    return tail; // Owns the original prefix; its sample storage was not copied.
+  }
   std::deque<std::complex<double>> samples(data->begin(), end);
   data->erase(data->begin(), end);
   return samples;
@@ -113,18 +123,25 @@ void IqData::push_back(std::complex<double> sample)
 void IqData::append_unlocked(
   const std::vector<std::complex<float>>& samples)
 {
-  if (samples.size() >= n)
+  append_unlocked(samples.data(), samples.size());
+}
+
+void IqData::append_unlocked(const std::complex<float>* samples, std::size_t count)
+{
+  if (!count) return;
+  if (!samples) throw std::invalid_argument("Null IQ sample block");
+  if (count >= n)
   {
     data->clear();
-    data->insert(data->end(), samples.end() - n, samples.end());
+    data->insert(data->end(), samples + (count - n), samples + count);
     return;
   }
-  const std::size_t required = data->size() + samples.size();
+  const std::size_t required = data->size() + count;
   if (required > n)
   {
     data->erase(data->begin(), data->begin() + (required - n));
   }
-  data->insert(data->end(), samples.begin(), samples.end());
+  data->insert(data->end(), samples, samples + count);
 }
 
 std::complex<double> IqData::pop_front()
