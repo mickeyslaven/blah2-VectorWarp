@@ -11,39 +11,32 @@ included below; [building from source](#build-from-source) is a separate route.
 
 ### 1. Install VectorWarp
 
-Choose one block for your OS. It downloads the repository installer over HTTPS,
-stops if a step fails, lets you inspect it before privilege is requested, then
-configures the signed repository, installs VectorWarp, and opens the web
-interface. Install any missing `curl` and GnuPG (`gnupg` on Ubuntu/Debian,
-`gnupg2` on Fedora) from the normal distribution repository first.
-When the script opens in `less`, press **q** after reviewing it to continue.
+Copy the command for your OS. It installs the prerequisites, adds our signed
+repository, installs VectorWarp, and opens the web interface. Enter your
+administrator password if prompted. The command stops if a step fails.
 
 ```bash
 # Ubuntu or Debian
-curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
-  less vectorwarp-install.sh && \
-  sudo bash vectorwarp-install.sh --repo-only && \
-  sudo apt update && sudo apt install vectorwarp && \
-  vectorwarp
+sudo apt update && sudo apt install -y curl gnupg && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo apt update && sudo apt install -y vectorwarp && vectorwarp
 ```
 
 ```bash
 # Fedora
-curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
-  less vectorwarp-install.sh && \
-  sudo bash vectorwarp-install.sh --repo-only && \
-  sudo dnf install vectorwarp && \
-  vectorwarp
+sudo dnf install -y curl gnupg2 && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo dnf install -y vectorwarp && vectorwarp
 ```
 
-`--repo-only` verifies the pinned key and adds repository configuration without
-installing a package or starting services. `--start-web` is the optional
-one-step installer route; it enables the web API at boot and starts only that
-service directly. On upgrades, package hooks may restore previously running radar.
+The [installer source](../script/install-release.sh) is available to read separately.
+The commands download over HTTPS and verify the repository's pinned signing key.
+They open only the web interface; configure the receiver before starting radar.
+
+For scripted installations, the installer also accepts `--start-web` instead
+of `--repo-only` and the following package-manager commands. It installs the
+package, enables the web API at boot and starts only that service directly.
+On upgrades, package hooks may restore previously running radar.
 
 ### 2. Configure and start radar
 
-In **Settings**, select and configure the receiver, then choose **Save &
+Open **Settings**, select and configure the receiver, then choose **Save &
 Restart**. This saves the configuration and starts radar, including on the first run.
 **Save for later** saves without starting it; use `vectorwarp start` later to start the
 full stack with saved settings.

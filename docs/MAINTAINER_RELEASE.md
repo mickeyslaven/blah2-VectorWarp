@@ -105,14 +105,13 @@ jobs may upload the same checked package inputs for the separate signing flow.
    packaging/README, DragonOS and Pi setup pages together, removing their
    **pending first release** wording. Keep source instructions and record which
    platforms were tested; a successful package build is not a hardware test.
-   Put the short Fedora path first: download and inspect the installer, run it
-   with `--repo-only`, then `sudo dnf install vectorwarp` and `vectorwarp`.
-   The repository-only
-   option verifies the pinned key and adds repository configuration without
-   installing packages or starting services. A fresh package installation
-   activates only the web interface; `vectorwarp` opens it. Give APT users the same option
-   followed by `sudo apt update` and `sudo apt install vectorwarp`, or use the
-   automatic installer with `--start-web`. For later updates, leave repository
+   Give each OS one complete copy/paste command: install curl and GnuPG from
+   the distribution, download the HTTPS installer, run `--repo-only`, install
+   VectorWarp with APT or DNF, then run `vectorwarp` to open the web interface.
+   Join steps with `&&` so errors stop the installation. Do not insert a pager
+   or require script review; link the source separately for anyone who wants it.
+   The repository-only option verifies the pinned key. A fresh installation
+   starts only the web interface, not radar. For later updates, leave repository
    configuration in place: use `sudo dnf upgrade --refresh vectorwarp` on Fedora,
    or `sudo apt update` then `sudo apt install vectorwarp` on APT.
 

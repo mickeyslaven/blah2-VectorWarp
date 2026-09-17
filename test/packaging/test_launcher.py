@@ -46,6 +46,30 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(launcher.main([]), 0)
             open_web.assert_called_once_with()
 
+    def test_explicit_open_uses_the_same_web_only_path(self):
+        with patch.object(launcher, 'open_web') as open_web:
+            self.assertEqual(launcher.main(['open']), 0)
+            open_web.assert_called_once_with()
+
+    def test_help_aliases_are_unprivileged_and_never_change_services(self):
+        for command in ('help', '-h', '--help'):
+            with self.subTest(command=command), patch.object(launcher, 'run') as run:
+                self.assertEqual(launcher.main([command]), 0)
+                self.assertIn('Usage: vectorwarp', self.output.getvalue())
+                run.assert_not_called()
+
+    def test_version_aliases_read_metadata_without_service_actions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix = Path(temporary)
+            (prefix / 'PACKAGE-METADATA').write_text('version=1.2.3\ncommit=abc\n')
+            for command in ('version', '--version'):
+                with self.subTest(command=command), \
+                     patch.object(launcher, 'PREFIX', prefix), \
+                     patch.object(launcher, 'run') as run:
+                    self.assertEqual(launcher.main([command]), 0)
+                    self.assertIn('version=1.2.3', self.output.getvalue())
+                    run.assert_not_called()
+
     def test_start_uses_checked_service_not_root_dsp(self):
         with patch.object(launcher.os, 'geteuid', return_value=0), \
              patch.object(launcher, 'run', side_effect=self.unit_reply) as run, \
@@ -209,6 +233,14 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher.subprocess, 'run', return_value=Mock(returncode=3)) as run:
             self.assertEqual(launcher.main(['status']), 3)
             self.assertNotIn('sudo', str(run.call_args))
+
+    def test_logs_is_unprivileged_and_never_routes_through_service_actions(self):
+        with patch.object(launcher.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+             patch.object(launcher, 'run') as service_run:
+            self.assertEqual(launcher.main(['logs']), 0)
+            self.assertEqual(run.call_args.args[0][:4],
+                             ['/usr/bin/journalctl', '--no-pager', '-n', '100'])
+            service_run.assert_not_called()
 
     def test_failure_is_not_reported_as_success(self):
         with patch.object(launcher.os, 'geteuid', return_value=0), \

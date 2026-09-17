@@ -26,6 +26,30 @@ def property_of(unit, name):
     return run('systemctl', 'show', '-p', name, '--value', unit)
 
 
+STACK = ('vectorwarp-api.service', 'vectorwarp-processor.service',
+         'vectorwarp-restart.service', 'vectorwarp-receiver.service',
+         'vectorwarp-receiver.socket')
+
+
+def stack_state():
+    """A PID/state snapshot catches accidental service changes by readers."""
+    return {unit: (property_of(unit, 'ActiveState'), property_of(unit, 'MainPID'))
+            for unit in STACK}
+
+
+def assert_web_only():
+    # API pulls in its receiver-management socket, but no receiver helper or
+    # radar processor may run until an explicit start. This is the package's
+    # intended default/open shape, not merely an API reachability check.
+    assert property_of('vectorwarp-api.service', 'ActiveState') == 'active'
+    assert int(property_of('vectorwarp-api.service', 'MainPID')) > 0
+    assert property_of('vectorwarp-receiver.socket', 'ActiveState') == 'active'
+    for unit in ('vectorwarp-processor.service', 'vectorwarp-restart.service',
+                 'vectorwarp-receiver.service'):
+        assert property_of(unit, 'ActiveState') in ('inactive', 'failed'), unit
+        assert property_of(unit, 'MainPID') == '0', unit
+
+
 def assert_restarted(unit, previous_pid):
     assert property_of(unit, 'ActiveState') == 'active', (unit, 'did not restart')
     new_pid = property_of(unit, 'MainPID')
@@ -33,9 +57,7 @@ def assert_restarted(unit, previous_pid):
 
 
 def assert_stopped_stack():
-    for unit in ('vectorwarp-api.service', 'vectorwarp-processor.service',
-                 'vectorwarp-restart.service', 'vectorwarp-receiver.service',
-                 'vectorwarp-receiver.socket'):
+    for unit in STACK:
         state = property_of(unit, 'ActiveState')
         pid = property_of(unit, 'MainPID')
         assert state in ('inactive', 'failed'), (unit, state)
@@ -94,6 +116,43 @@ def activate_idle_broker():
     return property_of('vectorwarp-receiver.service', 'MainPID')
 
 
+def assert_readers_do_not_mutate_services():
+    before = stack_state()
+    # status has a non-zero result while deliberately stopped units exist;
+    # that result is part of systemctl's read-only semantics, not a failure.
+    status = subprocess.run(['vectorwarp', 'status'], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=180)
+    assert status.returncode in (0, 3), (status.returncode, status.stdout)
+    logs = subprocess.run(['vectorwarp', 'logs'], text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          timeout=180)
+    assert logs.returncode == 0, (logs.returncode, logs.stdout)
+    assert stack_state() == before, 'status or logs changed installed service state'
+
+
+def assert_bad_commands_fail_closed():
+    before = stack_state()
+    for args in (('not-a-command',), ('start', 'unexpected-argument')):
+        result = subprocess.run(['vectorwarp', *args], text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=180)
+        assert result.returncode == 64, (args, result.returncode, result.stdout)
+        assert 'Usage: vectorwarp' in result.stdout, (args, result.stdout)
+    assert stack_state() == before, 'Rejected launcher input changed installed service state'
+
+
+def grant_test_administrator():
+    """Prove the installed sudo re-entry path without broad container grants."""
+    account = 'vectorwarp-package-test'
+    grant = Path('/etc/sudoers.d') / account
+    run('useradd', '--create-home', '--shell', '/bin/sh', account)
+    grant.write_text(account + ' ALL=(root) NOPASSWD: /usr/bin/vectorwarp\n')
+    grant.chmod(0o440)
+    run('visudo', '-cf', str(grant))
+    return account
+
+
 assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
 package = Path(sys.argv[1])
 assert package in (Path('/tmp/package.deb'), Path('/tmp/package.rpm')) and package.is_file()
@@ -104,6 +163,11 @@ assert Path('/usr/bin/vectorwarp').is_file(), 'Every DEB/RPM must install the la
 assert 'Usage: vectorwarp' in run('vectorwarp', '--help')
 assert 'vectorwarp stop' in run('vectorwarp', 'help')
 assert 'version=' in run('vectorwarp', 'version')
+# Help and version are deliberately usable by a non-administrator. Exercise
+# the package-installed executable under its real service account, rather than
+# proving only the source launcher permits those commands.
+assert 'Usage: vectorwarp' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '-h')
+assert 'version=' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '--version')
 
 if sys.argv[2:] == ['--running-replay']:
     ready_replay(0)
@@ -119,16 +183,27 @@ if sys.argv[2:] == ['--running-replay']:
     assert_restarted('vectorwarp-receiver.service', broker_before)
     assert hashlib.sha256(config.read_bytes()).hexdigest() == before
     ready_replay(started)
+    assert_readers_do_not_mutate_services()
     print('PASS: reinstall restarts running API/broker/processor and produces fresh replay frames')
     run('vectorwarp', 'stop')
     assert_stopped_stack()
+    assert_readers_do_not_mutate_services()
     started = int(time.time() * 1000)
     run('vectorwarp', 'start')
     assert_management_stack()
     ready_replay(started)
+    api_before = property_of('vectorwarp-api.service', 'MainPID')
+    processor_before = property_of('vectorwarp-processor.service', 'MainPID')
+    broker_before = property_of('vectorwarp-receiver.service', 'MainPID')
+    assert_readers_do_not_mutate_services()
     started = int(time.time() * 1000)
     run('vectorwarp', 'restart')
     assert_management_stack()
+    # A continuing replay can make a no-op restart look healthy; require the
+    # real services to have been replaced as well as observing a new frame.
+    assert_restarted('vectorwarp-api.service', api_before)
+    assert_restarted('vectorwarp-processor.service', processor_before)
+    assert_restarted('vectorwarp-receiver.service', broker_before)
     ready_replay(started)
     assert hashlib.sha256(config.read_bytes()).hexdigest() == before
     print('PASS: installed launcher full-stack stop/start/restart uses restricted processor and real replay')
@@ -136,12 +211,18 @@ if sys.argv[2:] == ['--running-replay']:
 # Do not repair a broken install hook by starting the API in the test. A fresh
 # package must make its web interface available without an extra service command.
 assert run('systemctl', 'is-enabled', 'vectorwarp-api.service') == 'enabled'
-assert run('systemctl', 'is-active', 'vectorwarp-api.service') == 'active'
-assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
+assert_web_only()
 pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service')
 assert int(pid) > 0
+# Default and explicit open must both be real installed launcher paths. Neither
+# may start the receiver helper or processing; explicit open must reuse API.
 assert 'http://127.0.0.1:3000/' in run('vectorwarp')
 assert property_of('vectorwarp-api.service', 'MainPID') == pid, 'Opening must reuse the running API'
+assert_web_only()
+assert 'http://127.0.0.1:3000/' in run('vectorwarp', 'open')
+assert property_of('vectorwarp-api.service', 'MainPID') == pid, 'Explicit open restarted the API'
+assert_web_only()
+assert_readers_do_not_mutate_services()
 sudoers = Path('/etc/sudoers.d/vectorwarp')
 assert sudoers.is_file() and not sudoers.is_symlink()
 preserved = '# Administrator note: preserve this customization.\nroot ALL=(ALL) ALL\n'
@@ -155,6 +236,21 @@ assert sudoers.read_text() == preserved, 'Retire the known grant, preserving the
 assert hashlib.sha256(config.read_bytes()).hexdigest() == before, 'Reinstall changed user configuration'
 assert_restarted('vectorwarp-api.service', pid)
 assert_restarted('vectorwarp-receiver.service', broker_pid)
-assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
+assert property_of('vectorwarp-processor.service', 'ActiveState') == 'inactive'
+# Exercise default and explicit open from a truly stopped stack. The explicit
+# open runs through the installed non-root sudo re-entry path with a grant only
+# for /usr/bin/vectorwarp, in this disposable container only.
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+assert_readers_do_not_mutate_services()
+assert_bad_commands_fail_closed()
 assert 'http://127.0.0.1:3000/' in run('vectorwarp')
-print('PASS: fresh install starts only API; reinstall refreshes API/broker, preserves config/customization and leaves processing stopped')
+assert_web_only()
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+administrator = grant_test_administrator()
+assert 'http://127.0.0.1:3000/' in run('runuser', '-u', administrator, '--', 'vectorwarp', 'open')
+assert_web_only()
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+print('PASS: fresh install starts only API; reinstall preserves configuration; installed default/open, readers and rejected input are safe from stopped stacks')
