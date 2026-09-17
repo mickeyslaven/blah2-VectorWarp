@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const {spawn} = require('child_process');
 const {sameReceiverOrigin} = require('./receiver-routes');
+const {createReceiverHelperClient} = require('./receiver-helper-client');
 const INTENT = 'sdrplay-local-build-v1';
 const STATUS = '/run/vectorwarp-sdrplay-build/status.json';
 const HASH = /^[a-f0-9]{64}$/;
@@ -60,15 +61,13 @@ function helperStatus(helper, spawnFn = spawn) {
   });
 }
 
-function startBuild(spawnFn = spawn) {
-  return new Promise((resolve, reject) => {
-    let child;
-    try { child = spawnFn('/usr/bin/sudo', ['-n', '/usr/bin/systemctl', 'start', '--no-block', 'vectorwarp-sdrplay-build.service'], {stdio: 'ignore', cwd: '/', env: {PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C'}}); }
-    catch (_) { reject(new Error('launch')); return; }
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timeout')); }, 5000);
-    child.once('error', () => { clearTimeout(timer); reject(new Error('launch')); });
-    child.once('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error('rejected')); });
-  });
+async function startBuild(request = createReceiverHelperClient()) {
+  const result = await request({verb: 'sdrplay-build'});
+  if (!result || result.ok !== true || result.status !== 'accepted') {
+    const error = new Error(result?.message || 'The local adapter build service did not accept the request.');
+    error.code = result?.code || 'BUILD_REQUEST_FAILED';
+    throw error;
+  }
 }
 
 function installSdrplayBuildRoutes(app, {allowedOrigins, helper = '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay', enabled = process.env.BLAH2_SDRPLAY_LOCAL_BUILD === 'true', preview = process.env.BLAH2_PREVIEW === 'true', status = helperStatus, start = startBuild, statusFile = STATUS} = {}) {
@@ -102,7 +101,8 @@ function installSdrplayBuildRoutes(app, {allowedOrigins, helper = '/opt/vectorwa
     if (inFlight && ['queued', 'running'].includes(inFlight.state) && (!inFlight.kit_id || inFlight.kit_id === snapshot.kit_id)) return res.status(409).json({ok: false, errors: ['A local RSPduo adapter build is already in progress.']});
     starting = true;
     try { await start(); }
-    catch (_) { return res.status(503).json({ok: false, errors: ['The local adapter build service did not accept the request.']}); }
+    catch (error) { return res.status(503).json({ok: false,
+      errors: [`The local adapter build service did not accept the request. ${error.message}`]}); }
     finally { starting = false; }
     cached = null;
     res.status(202).json({ok: true, state: 'queued', message: 'Local RSPduo adapter build requested. Radar processing was not started.'});

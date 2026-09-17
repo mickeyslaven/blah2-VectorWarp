@@ -12,6 +12,8 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sudoers-migrate ||
+  printf '%s\n' 'VectorWarp sudoers needs administrator review; customized content was preserved.' >&2
 # Only existing render/video groups owning trusted DRM nodes; no driver or service changes.
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-gpu-setup --configure-service-access ||
   printf '%s\n' 'GPU access needs local review: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access' >&2

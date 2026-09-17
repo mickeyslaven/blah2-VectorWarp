@@ -132,6 +132,7 @@ function request(apiPort, method, pathname, body, revision, headers = {}) {
         ...(revision ? {'If-Match': `"${revision}"`} : {}),
         ...(payload ? {'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(payload)} : {}),
+        ...(method === 'PUT' ? {'X-VectorWarp-Intent': 'config-write-v1'} : {}),
         ...headers
       }}, response => {
       let text = '';

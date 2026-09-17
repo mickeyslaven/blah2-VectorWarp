@@ -44,7 +44,10 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn('release-signing', str(package.get('runs-on')))
         self.assertNotIn('actions/cache', text)
         uploads = [step for step in package['steps'] if step.get('uses', '').startswith('actions/upload-artifact@')]
-        self.assertEqual([step['with']['path'] for step in uploads], ['dist/'])
+        self.assertEqual([step['with']['path'] for step in uploads], ['service-evidence/', 'dist/'])
+        evidence = uploads[0]
+        self.assertEqual(evidence['if'], 'always()')
+        self.assertTrue(evidence['with']['name'].startswith('installed-service-'))
         packager = (ROOT / 'script/package-native.sh').read_text()
         self.assertIn('release artifact must not contain the SDRplay vendor SDK or runtime', packager)
 
@@ -61,7 +64,9 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn('VECTORWARP_SDRPLAY', text)
         uploads = [step for step in package['steps']
                    if step.get('uses', '').startswith('actions/upload-artifact@')]
-        self.assertEqual(uploads[0]['if'], "github.event_name != 'pull_request'")
+        release_uploads = [step for step in uploads if step['with']['path'] == 'dist/']
+        self.assertEqual(len(release_uploads), 1)
+        self.assertEqual(release_uploads[0]['if'], "github.event_name != 'pull_request'")
 
     def test_notice_files_follow_the_existing_html_payload(self):
         for name in ('plotly-LICENSE.txt', 'plotly.min.js.LICENSE.txt', 'ieee754-LICENSE.txt'):

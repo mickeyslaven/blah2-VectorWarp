@@ -2,12 +2,10 @@
 const assert = require('assert/strict');
 const express = require('express');
 const http = require('http');
-const EventEmitter = require('events');
 const {installSdrplayBuildRoutes, INTENT, progress, startBuild} = require('./sdrplay-build');
 const origin = 'http://127.0.0.1:3000';
 const kit = 'a'.repeat(64), cohort = 'b'.repeat(64);
 
-function child(code = 0) { const value = new EventEmitter(); value.kill = () => {}; process.nextTick(() => value.emit('close', code)); return value; }
 async function route(options, run) {
   const app = express(); app.use(express.json({strict: false})); installSdrplayBuildRoutes(app, {allowedOrigins: new Set([origin]), ...options});
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
@@ -48,11 +46,11 @@ async function route(options, run) {
     assert.equal(result.body.progress,null);
     assert.equal((await call('POST',{Origin:origin,'Content-Type':'application/json','X-VectorWarp-Intent':INTENT},'{}')).status,409);
   });
-  await route({enabled: true, status: async () => ({ok: true, state: 'missing', kit_id: kit, cohort}), start: async () => { throw new Error('sudo rejected'); }}, async call => {
+  await route({enabled: true, status: async () => ({ok: true, state: 'missing', kit_id: kit, cohort}), start: async () => { throw new Error('broker refused'); }}, async call => {
     const result = await call('POST', {Origin: origin, 'Content-Type': 'application/json', 'X-VectorWarp-Intent': INTENT}, '{}');
     assert.equal(result.status, 503); assert.match(result.body.errors[0], /did not accept/);
   });
-  await assert.rejects(startBuild(() => child(1)), /rejected/);
+  await assert.rejects(startBuild(async () => ({ok: false, code: 'BUILD_REQUEST_FAILED', message: 'broker refused'})), /broker refused/);
   let concurrentStarts = 0;
   await route({enabled:true, status:async () => {
     await new Promise(resolve => setTimeout(resolve, 20));
@@ -63,10 +61,9 @@ async function route(options, run) {
     assert.deepEqual(results.map(value=>value.status).sort(),[202,409]);
     assert.equal(concurrentStarts,1);
   });
-  const commands = [];
-  await startBuild((file, args, options) => { commands.push({file, args, options}); return child(0); });
-  assert.deepEqual(commands[0].args, ['-n', '/usr/bin/systemctl', 'start', '--no-block', 'vectorwarp-sdrplay-build.service']);
-  assert.equal(commands[0].file, '/usr/bin/sudo'); assert.equal(commands[0].options.cwd, '/');
+  const requests = [];
+  await startBuild(async request => { requests.push(request); return {ok: true, status: 'accepted'}; });
+  assert.deepEqual(requests, [{verb: 'sdrplay-build'}]);
   const rootDirectory = {isDirectory: () => true, uid: 0, mode: 0o755};
   const regular = {isFile: () => false, uid: 0, mode: 0o644, size: 0};
   let openFlags;

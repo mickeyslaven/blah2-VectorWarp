@@ -311,7 +311,8 @@ class Broker:
         allowed = {'discover': {'verb'}, 'plan': {'verb', 'actionId', 'configRevision'},
                    'authorize': {'verb', 'planId'}, 'describe': {'verb', 'planId'},
                    'execute': {'verb', 'planId', 'configRevision'},
-                   'restart': {'verb'}, 'gpu-access': {'verb'}}
+                   'restart': {'verb'}, 'gpu-access': {'verb'},
+                   'sdrplay-build': {'verb'}}
         require(verb in allowed and set(request) == allowed[verb], 'INVALID_REQUEST', 'Unknown receiver request fields.')
         if verb == 'gpu-access':
             # Metadata-only host view for the API's PrivateDevices sandbox.
@@ -336,6 +337,24 @@ class Broker:
                         'The service manager did not accept the VectorWarp restart request. Check the receiver helper log.')
                 return {'ok': True, 'status': 'accepted',
                         'message': 'Restart request accepted by the service manager; wait for fresh radar status.'}
+            finally:
+                self.operation.release()
+        if verb == 'sdrplay-build':
+            require(uid == self.api_uid, 'UNAUTHORIZED_PEER', 'Only the VectorWarp API account may request a local adapter build.')
+            manifest = self.policy['artifactManifest']
+            trusted_path(manifest)
+            enrollment = [line.partition('=')[2] for line in bounded_read(manifest).decode().splitlines()
+                          if line.startswith('local_build_receivers=')]
+            require(enrollment == ['RspDuo'], 'LOCAL_BUILD_UNAVAILABLE',
+                    'This installed release has no enrolled local RSPduo source kit.')
+            require(self.operation.acquire(blocking=False), 'MANAGEMENT_BUSY', 'Another receiver operation is running.')
+            try:
+                result = self.inspector.run(['/usr/bin/systemctl', 'start', '--no-block',
+                                             'vectorwarp-sdrplay-build.service'], timeout=5)
+                require(result['exitCode'] == 0 and not result['timedOut'], 'BUILD_REQUEST_FAILED',
+                        'The service manager did not accept the local adapter build request. Check the receiver helper log.')
+                return {'ok': True, 'status': 'accepted',
+                        'message': 'Local RSPduo adapter build request accepted by the service manager.'}
             finally:
                 self.operation.release()
         if verb == 'discover':

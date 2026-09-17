@@ -50,6 +50,10 @@ async function main() {
   assert.equal(sameReceiverOrigin(request('null')), false);
   assert.equal(sameReceiverOrigin(request(undefined)), false);
   assert.equal(sameReceiverOrigin(request('http://rebound.invalid:3000', 'rebound.invalid:3000')), false);
+  const separateUi = new Set(['http://127.0.0.1:3000', 'http://127.0.0.1:49153']);
+  assert.equal(sameReceiverOrigin(request('http://127.0.0.1:49153'), separateUi), true,
+    'An administrator-enrolled UI origin may call the API on another port.');
+  assert.equal(sameReceiverOrigin(request('http://127.0.0.1:49152'), separateUi), false);
   assert.equal(sameReceiverOrigin(request('http://192.0.2.44:3000', '192.0.2.44:3000'), fallback), false,
     'A discovered-but-unavailable LAN address must not be trusted during fallback');
   const explicitRequest = request('https://receiver.example', 'receiver.example');

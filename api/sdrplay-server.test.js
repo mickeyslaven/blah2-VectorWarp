@@ -50,18 +50,22 @@ async function save(headers, suffix = '?restart=true') {
       await delay(50);
     }
     assert.ok(ready, `API did not become ready: ${errors}`); revision = ready.configRevision;
-    for (const headers of [{}, {'X-VectorWarp-Receiver-Sync': 'synchronize-v1'},
-      {Origin: origin}, {Origin: origin, 'X-VectorWarp-Receiver-Sync': 'wrong'},
-      {Origin: `http://127.0.0.1:${port + 1}`, 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}]) {
+    for (const [headers, expected] of [[{}, 403], [{'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}, 403],
+      [{Origin: origin}, 403], [{Origin: origin, 'X-VectorWarp-Receiver-Sync': 'wrong',
+        'X-VectorWarp-Intent': 'config-write-v1'}, 428],
+      [{Origin: `http://127.0.0.1:${port + 1}`, 'X-VectorWarp-Receiver-Sync': 'synchronize-v1',
+        'X-VectorWarp-Intent': 'config-write-v1'}, 403]]) {
       const response = await save(headers);
-      assert.equal(response.status, 428, JSON.stringify(await response.json()));
+      assert.equal(response.status, expected, JSON.stringify(await response.json()));
       assert.deepEqual(fs.readFileSync(filename), original);
       assert.equal(fs.existsSync(marker), false);
     }
-    const pending = await save({Origin: origin, 'X-VectorWarp-Receiver-Sync': 'save-pending-v1'}, '?mode=pending&restart=false');
+    const pending = await save({Origin: origin, 'X-VectorWarp-Receiver-Sync': 'save-pending-v1',
+      'X-VectorWarp-Intent': 'config-write-v1'}, '?mode=pending&restart=false');
     assert.equal(pending.status, 200, JSON.stringify(await pending.clone().json())); const saved = await pending.json(); revision = saved.revision;
     assert.equal(saved.restarting, false); assert.equal(fs.existsSync(marker), false);
-    const apply = await save({Origin: origin, 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'});
+    const apply = await save({Origin: origin, 'X-VectorWarp-Receiver-Sync': 'synchronize-v1',
+      'X-VectorWarp-Intent': 'config-write-v1'});
     assert.equal(apply.status, 200, JSON.stringify(await apply.clone().json()));
     assert.equal((await apply.json()).restarting, true);
     for (let i = 0; i < 100 && !fs.existsSync(marker); i++) await delay(50);

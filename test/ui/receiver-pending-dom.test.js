@@ -59,7 +59,8 @@ async function stop() { if (child) { const stopped = once(child, 'exit'); child.
 async function put(mode, value, revision = readConfig(filename).revision, extraHeaders = {}, restart = 'false') {
   return request(`/api/config?${mode ? `mode=${mode}&` : ''}restart=${restart}`, {
     method: 'PUT', headers: {'Content-Type': 'application/json', 'If-Match': `"${revision}"`,
-      'X-VectorWarp-Receiver-Sync': mode === 'pending' ? 'save-pending-v1' : 'synchronize-v1', ...extraHeaders},
+      'X-VectorWarp-Receiver-Sync': mode === 'pending' ? 'save-pending-v1' : 'synchronize-v1',
+      'X-VectorWarp-Intent': 'config-write-v1', ...extraHeaders},
     body: JSON.stringify(value)});
 }
 async function browser() {

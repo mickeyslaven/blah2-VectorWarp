@@ -54,7 +54,8 @@ let base;
 let dom;
 const request = (url, options = {}) => new Promise((resolve, reject) => {
   const req = http.request(`${base}${url}`, {method: options.method || 'GET',
-    headers: options.headers, timeout: options.timeout || 500}, response => {
+    headers: {...(['PUT', 'POST'].includes(options.method) ? {Origin: base} : {}), ...options.headers},
+    timeout: options.timeout || 500}, response => {
     let body = '';
     response.setEncoding('utf8'); response.on('data', value => { body += value; });
     response.on('end', () => resolve({ok: response.statusCode >= 200 && response.statusCode < 300,
@@ -203,13 +204,15 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     const raw = await request('/api/config'); const revision = raw.headers.get('etag');
     const invalid = JSON.parse(JSON.stringify(original)); invalid.capture.device.array_geometry.units = 'mm';
     for (const [url, method] of [['/api/config/validate', 'POST'], ['/api/config?restart=false', 'PUT']]) {
-      const response = await request(url, {method, headers: {'Content-Type': 'application/json', 'If-Match': revision}, body: JSON.stringify(invalid)});
+      const response = await request(url, {method, headers: {'Content-Type': 'application/json', 'If-Match': revision,
+        'X-VectorWarp-Intent': 'config-write-v1'}, body: JSON.stringify(invalid)});
       assert.equal(response.status, 422);
     }
     assert.deepEqual(current(), original, 'Invalid API record must not write');
     const custom = JSON.parse(JSON.stringify(original));
     custom.capture.device.array_geometry.operator_notes = {fixture: 'Preserve this unknown field'};
-    const accepted = await request('/api/config?restart=false', {method: 'PUT', headers: {'Content-Type': 'application/json', 'If-Match': revision}, body: JSON.stringify(custom)});
+    const accepted = await request('/api/config?restart=false', {method: 'PUT', headers: {'Content-Type': 'application/json', 'If-Match': revision,
+      'X-VectorWarp-Intent': 'config-write-v1'}, body: JSON.stringify(custom)});
     assert.equal(accepted.status, 200);
     await window.renderConfiguration();
     change(g('elements.0.position.2'), .12);

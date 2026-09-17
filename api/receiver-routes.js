@@ -34,12 +34,12 @@ function sameReceiverOrigin(req, allowed = new Set(['http://127.0.0.1:3000'])) {
     const target = `${req.protocol || 'http'}://${req.get('Host')}`;
     if (!allowed.has(target)) return false;
     const origin = req.get('Origin');
-    if (origin) return origin === target && new URL(origin).origin === origin;
+    if (origin) return allowed.has(origin) && new URL(origin).origin === origin;
     // Ordinary HTTP LAN addresses do not receive Fetch Metadata in browsers.
     // A trusted exact Referer suffices for these read-only requests; reject a
     // conflicting Fetch Metadata header if supplied. Every mutation needs Origin.
     return req.method === 'GET' && (!req.get('Sec-Fetch-Site') || req.get('Sec-Fetch-Site') === 'same-origin') &&
-      new URL(req.get('Referer')).origin === target;
+      allowed.has(new URL(req.get('Referer')).origin);
   } catch (_) { return false; }
 }
 
@@ -57,9 +57,14 @@ function installReceiverRoutes(app, options) {
   const grants = new Map();
   let cached, running = false;
   function guard(req, res, mutation = false) {
+    const trusted = sameReceiverOrigin(req, allowed);
     res.removeHeader('Access-Control-Allow-Origin');
+    if (trusted && req.get('Origin')) {
+      res.set('Access-Control-Allow-Origin', req.get('Origin'));
+      res.vary?.('Origin');
+    }
     res.set('Cache-Control', 'no-store');
-    if (!sameReceiverOrigin(req, allowed) || (mutation &&
+    if (!trusted || (mutation &&
         (req.get('X-VectorWarp-Intent') !== INTENT ||
          !/^application\/json(?:\s*;|$)/i.test(req.get('Content-Type') || '')))) {
       res.status(403).json({ok: false, code: 'RECEIVER_ORIGIN_REQUIRED',

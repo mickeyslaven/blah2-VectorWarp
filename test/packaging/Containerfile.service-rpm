@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+RUN dnf --assumeyes --setopt=install_weak_deps=False install systemd dbus-daemon ca-certificates curl python3 procps-ng util-linux && dnf clean all
+RUN systemctl enable dbus-daemon.service
+ENV container=podman
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

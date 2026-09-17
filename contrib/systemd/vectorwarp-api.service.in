@@ -21,6 +21,7 @@ ExecStart=/usr/bin/node @PREFIX@/current/api/server.js @SYSCONFDIR@/config.yml
 Restart=on-failure
 RestartSec=3s
 UMask=0007
+NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict

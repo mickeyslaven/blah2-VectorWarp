@@ -91,6 +91,9 @@ const PORT = process.env.BLAH2_SETUP_PORT ? setupPort : Number.isInteger(config.
   config.network.ports.api > 0 && config.network.ports.api <= 65535 ?
   config.network.ports.api : setupPort;
 const HOST = net.isIP(config.network?.ip || '') ? config.network.ip : '0.0.0.0';
+const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
+const CONFIG_INTENT = 'config-write-v1';
+const RECORDING_INTENT = 'recording-toggle-v1';
 var map = '';
 var detection = '';
 var track = '';
@@ -151,15 +154,7 @@ const {readSdrplayStartup} = require('./sdrplay-startup');
 const {installSdrplayBuildRoutes, helperStatus} = require('./sdrplay-build');
 app.use(express.json({limit: '256kb', strict: true}));
 function configWriteOriginAllowed(req) {
-  const origin = req.get('Origin');
-  if (!origin) return true;
-  try {
-    const originHost = new URL(origin).hostname;
-    const requestHost = new URL(`http://${req.get('Host')}`).hostname;
-    return originHost === requestHost;
-  } catch (_) {
-    return false;
-  }
+  return sameReceiverOrigin(req, receiverOrigins);
 }
 function processorStatusOriginAllowed(req) {
   const origin = req.get('Origin');
@@ -170,12 +165,12 @@ function processorStatusOriginAllowed(req) {
 // header on all requests
 app.use(function(req, res, next) {
   const origin = req.get('Origin');
-  if (!origin || req.method === 'GET' || configWriteOriginAllowed(req)) {
-    res.header("Access-Control-Allow-Origin", origin || "*");
-    if (origin) res.header('Vary', 'Origin');
+  if (origin && configWriteOriginAllowed(req)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.header('Access-Control-Allow-Headers', `Content-Type, If-Match, ${RECEIVER_SYNC_HEADER}`);
+  res.header('Access-Control-Allow-Headers', `Content-Type, If-Match, ${RECEIVER_SYNC_HEADER}, X-VectorWarp-Intent`);
   res.header('Access-Control-Expose-Headers', 'ETag');
   res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   res.header('Expires', '-1');
@@ -183,7 +178,7 @@ app.use(function(req, res, next) {
   next();
 });
 app.options('*', (req, res) => {
-  if (req.path === '/api/config' && !configWriteOriginAllowed(req))
+  if (['/api/config', '/api/config/validate', '/capture/toggle'].includes(req.path) && !configWriteOriginAllowed(req))
     return res.status(403).json({ok: false,
       errors: ['Configuration changes must come from this VectorWarp host.']});
   res.sendStatus(204);
@@ -376,7 +371,6 @@ app.get('/api/upstream/status', async (req, res) => {
   const status = await upstreamCache.promise;
   res.status(status.available === false ? 503 : 200).json(status);
 });
-const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
 const receiverManagement = installReceiverRoutes(app, {
   readDocument: () => readConfig(configFile),
   port: PORT,
@@ -404,9 +398,9 @@ app.post('/api/config/validate', async (req, res) => {
   res.status(validation.valid ? 200 : 422).json(validation);
 });
 app.put('/api/config', async (req, res) => {
-  if (!configWriteOriginAllowed(req))
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== CONFIG_INTENT)
     return res.status(403).json({ok: false,
-      errors: ['Configuration changes must come from this VectorWarp host.']});
+      errors: ['Configuration changes require a trusted VectorWarp origin and write intent.']});
   if (!configFileWritable())
     return res.status(503).json({ok: false,
       errors: ['The active configuration file is read-only.']});
@@ -674,8 +668,9 @@ app.get('/capture/status', (req, res) => {
   });
 });
 // toggle state of capture
-app.get('/capture/toggle', (req, res) => {
-  if (!configWriteOriginAllowed(req)) return res.status(403).json({error: 'Use this VectorWarp host to control recording.'});
+app.post('/capture/toggle', (req, res) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== RECORDING_INTENT)
+    return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input === 'replay' || config.capture.replay?.state === true)
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});

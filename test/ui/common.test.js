@@ -17,7 +17,7 @@ function page(origin, apiOrigin = origin) {
       localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)}},
     fetch: async (url, options = {}) => {
       const target = new URL(url, origin);
-      calls.push({url: target.href, method: options.method || 'GET'});
+      calls.push({url: target.href, method: options.method || 'GET', headers: options.headers || {}});
       if (target.origin !== apiOrigin) return {ok: true, status: 200, text: async () => '<html>Static web server</html>'};
       if (options.method === 'PUT' && state.failWrite) throw new Error('Response lost');
       const status = {serverId: 'test-api', ...state};
@@ -51,6 +51,10 @@ function page(origin, apiOrigin = origin) {
   explicit.context.window.location.search = '?apiPort=3456';
   await explicit.context.fetchStatusResource('/api/config');
   assert.equal(explicit.calls[0].url, 'http://radar.local:3456/api/system/status');
+  await explicit.context.toggleRecording();
+  const toggle = explicit.calls.find(call => call.url === 'http://radar.local:3456/capture/toggle');
+  assert.equal(toggle.method, 'POST');
+  assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
 
   const test = page('http://radar.local:9876');
   for (const [radar, expected] of [['receiving', 'ONLINE'], ['stale', 'STALE'], ['no-data', 'OFFLINE']]) {

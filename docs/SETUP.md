@@ -132,6 +132,14 @@ matching format; legacy USRP also needs the original block length.
 The browser/API defaults to port 3000 with no password. Use a trusted LAN/VPN
 or an authenticated gateway; see [browser access](INSTALL.md#4-open-the-interface-and-configure-your-receiver).
 
+Serve Settings from the API's own address. If hosting the UI separately, the
+administrator must list its exact origin (scheme, hostname and port) in the
+API service's `BLAH2_RECEIVER_ORIGINS` comma-separated setting. Custom config
+clients must send that `Origin` and `X-VectorWarp-Intent: config-write-v1`, in
+addition to the revision and receiver-sync headers. Recording control uses
+`POST /capture/toggle` with `X-VectorWarp-Intent: recording-toggle-v1`;
+GET requests do not change recording state.
+
 ## Evidence and limits
 
 [Upstream comparison](UPSTREAM_COMPARISON.md) distinguishes implemented features,

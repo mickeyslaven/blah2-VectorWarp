@@ -274,8 +274,20 @@ if $WITH_SYSTEMD; then
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.sysusers" "$sysusers_dir/vectorwarp.conf"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.tmpfiles" "$tmpfiles_dir/vectorwarp.conf"
   if command -v visudo >/dev/null 2>&1 && ! $DRY_RUN; then visudo -cf "$temporary/vectorwarp"; fi
-  run install -m 0440 "$temporary/vectorwarp" "$sudoers_dir/vectorwarp"
   run install -d -m 0755 "$target_prefix/libexec"
+  if [[ -f $ARTIFACT/libexec/vectorwarp-sudoers-migrate ]]; then
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-sudoers-migrate" "$target_prefix/libexec/vectorwarp-sudoers-migrate"
+  fi
+  if [[ -e $sudoers_dir/vectorwarp || -L $sudoers_dir/vectorwarp ]]; then
+    if [[ -z $DESTDIR && $EUID -eq 0 && $DRY_RUN == false && -x $target_prefix/libexec/vectorwarp-sudoers-migrate ]]; then
+      /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-sudoers-migrate" ||
+        say 'existing VectorWarp sudoers needs administrator review; preserved without replacement'
+    else
+      say 'existing VectorWarp sudoers preserved; review obsolete API grants locally'
+    fi
+  else
+    run install -m 0440 "$temporary/vectorwarp" "$sudoers_dir/vectorwarp"
+  fi
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
