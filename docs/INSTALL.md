@@ -33,9 +33,19 @@ sudo bash vectorwarp-install.sh --start-web
 ```
 
 `--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. Open `http://localhost:3000/` and configure a
-receiver in Settings. If an earlier installation completed but the page does
-not load, start and inspect only the web API:
+not enable radar processing. Run `vectorwarp` to open the configured web
+address (or print it over SSH), then configure a receiver in Settings.
+`vectorwarp --help` lists the fixed start, stop, restart, status and log actions.
+For the usual command-line controls:
+
+```bash
+vectorwarp start
+vectorwarp stop
+vectorwarp status
+```
+
+If an earlier installation completed but the page does not load, start and
+inspect only the web API:
 
 ```bash
 sudo systemctl enable --now vectorwarp-api.service
@@ -43,17 +53,30 @@ sudo systemctl status vectorwarp-api.service --no-pager
 ```
 
 To update, use `sudo apt update && sudo apt install --only-upgrade vectorwarp`
-on APT or `sudo dnf upgrade vectorwarp` on Fedora. A package update does not
-restart a running API or receiver helper. After all receiver-management actions
-finish and pending authorizations expire, an administrator may activate the
-new code with:
+on APT or `sudo dnf upgrade vectorwarp` on Fedora. The package pauses its own
+services before replacing files, waits for privileged receiver work to finish,
+and restarts only VectorWarp services that were running beforehand. A stopped
+processor stays stopped. Pending receiver-management approvals expire; review
+them again after the upgrade. An active local SDRplay build or Save & Restart
+blocks the upgrade until it finishes. No Kraken Suite, SDRplay API or other
+vendor service is stopped or upgraded by these hooks.
 
-```bash
-sudo systemctl restart vectorwarp-receiver.service && sudo systemctl restart vectorwarp-api.service
-```
-
-Do not run that command mid-transaction. It does not restart
-`vectorwarp-processor.service` or radar processing.
+If preflight reports that the broker cannot be safely drained (for example on
+an unsupported cgroup layout or an overridden broker unit), no new package
+files are unpacked; follow the printed status guidance and retry after the
+receiver action finishes. If activation fails after unpack, processing remains
+stopped and the package reports a failure. Inspect the four VectorWarp unit
+statuses named in that error before starting only the services you intend.
+If systemd itself cannot reload, the package retains its upgrade marker and
+the launcher refuses service actions; repair systemd first, then rerun
+`sudo systemctl daemon-reload`. On APT systems, then run
+`sudo dpkg --configure vectorwarp`; its post-install hook will consume the
+marker and restore the prior active services. On Fedora, run
+`sudo /opt/vectorwarp/libexec/vectorwarp-activate-upgrade` once instead.
+If activation itself failed, its marker was consumed; inspect the printed
+previously-active state and service errors. An APT reconfiguration will mark
+the package configured without replaying that failed start. Start only the
+services you choose after fixing the error.
 
 ### Manual package installation
 

@@ -89,7 +89,9 @@ jobs may upload the same checked package inputs for the separate signing flow.
    only when the protected environments and key/fingerprint validate.
 4. On clean hosts, install from the APT and DNF repositories, verify the signing
    key fingerprint, confirm ordinary package-manager updates, and verify that no
-   processor/radio starts automatically.
+   processor/radio starts automatically on a fresh install. On upgrade, verify
+   that previously running VectorWarp services restart and a stopped processor
+   stays stopped; test the installed `vectorwarp` launcher as well.
 5. Verify the deployed page, installer, key and every package download return
    successfully over HTTPS. The generated homepage uses the verified manifest
    for its OS/architecture table and links to immutable GitHub release assets;
@@ -103,9 +105,10 @@ jobs may upload the same checked package inputs for the separate signing flow.
    platforms were tested; a successful package build is not a hardware test.
    Put the short Fedora path first: download and inspect the installer, run it
    with `--repo-only`, then `sudo dnf install vectorwarp` and
-   `sudo systemctl enable --now vectorwarp-api.service`. The repository-only
+   `vectorwarp`. The repository-only
    option verifies the pinned key and adds repository configuration without
-   installing packages or starting services. Give APT users the same option
+   installing packages or starting services. Package installation starts the web
+   interface; use `vectorwarp` to open it. Give APT users the same option
    followed by `sudo apt update && sudo apt install vectorwarp`, or use the
    automatic installer with `--start-web`. Updates use normal DNF/APT commands.
 

@@ -7,7 +7,7 @@ carried into that environment.
 The checks start the installed systemd units and verify:
 
 - Fresh installation enables and starts the API without the test starting it; radar processing stays stopped. The API opens with its service account, writable configuration and security restrictions.
-- Reinstalling the package removes the known legacy sudo grant while preserving custom policy, saved settings and a running API; it does not start radar processing.
+- Reinstalling the package removes the known legacy sudo grant while preserving custom policy and saved settings. Running API/broker processes must be replaced; an intentionally stopped processor must remain stopped.
 - Chromium opens all six settings tabs, saves settings and reads them back after reload.
 - Chromium applies a generated IQ replay through **Save & Restart**. The real API, credential broker and systemd restart the installed non-root processor; the check requires a new API instance, the saved revision and fresh radar frames.
 - A missing replay file produces a visible error without reusing old frames. Correcting the path and restarting must produce new frames again.
@@ -16,6 +16,7 @@ The checks start the installed systemd units and verify:
 - A restart request crosses the real unprivileged-to-root broker boundary; missing receiver software produces an error instead of an endless restart screen.
 - The installed processor handles synthetic recording/replay inputs for the supported receiver profiles, including Kraken channel counts from two through eight.
 - Real service accounts try to open a synthetic file with the distro's HackRF device permissions. The processor must have access; the web API and unrelated users must not. Debian/Ubuntu retain the vendor `plugdev` group; Fedora uses a narrowly matched HackRF rule.
+- Reinstalling during synthetic replay must replace the API, broker and processor and produce fresh frames afterward. The installed `vectorwarp` launcher opens the page and stops, starts and restarts the same restricted processor through systemd.
 
 These checks run on all ten OS/architecture package targets, for PRs as well as
 releases, against the newly built package—not a source overlay. The jobs retain

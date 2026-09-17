@@ -101,6 +101,8 @@ NODE_PATH="$browser_modules" node "$source_root/test/browser/installed-settings.
   "http://$address:3000" "$evidence" >"$evidence/browser.log" 2>&1
 podman exec "$container" python3 /tmp/installed_service_test.py --verify-replay \
   >"$evidence/services-replay.log" 2>&1
+podman exec "$container" python3 /tmp/installed_reinstall_test.py "/tmp/package.$format" --running-replay \
+  >"$evidence/upgrade-running-replay.log" 2>&1
 # Keep the independently tested direct 18-case replay harness from competing
 # with the installed looping service for the runner's bounded CPU allowance.
 podman exec "$container" systemctl stop vectorwarp-processor.service

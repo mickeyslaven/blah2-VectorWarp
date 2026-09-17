@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Stop only on removal/purge. During an upgrade, leave the administrator's
-# current service state unchanged and never cause the radar to start.
+# Stop here only on removal/purge. Upgrade quiesce and state restoration are
+# handled by the incoming package's preinst and postinst.
 if [ "${1:-}" = remove ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
     vectorwarp-restart.service vectorwarp-sdrplay-build.service \

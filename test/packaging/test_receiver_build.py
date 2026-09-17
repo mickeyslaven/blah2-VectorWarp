@@ -291,9 +291,10 @@ endif()
                      "vectorwarp.tmpfiles", "vectorwarp.sudoers.in",
                      "72-vectorwarp-hackrf.rules"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
+        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
                      "vectorwarp-sudoers-migrate.py"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
+        (artifact / 'libexec/vectorwarp').chmod(0o755)
         (artifact / "libexec/vectorwarp-sudoers-migrate.py").rename(
             artifact / "libexec/vectorwarp-sudoers-migrate")
         (artifact / "libexec/vectorwarp-sudoers-migrate").chmod(0o755)
@@ -451,6 +452,9 @@ endif()
         self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-activate-web').is_file())
+        launcher = (stage / 'usr/bin/vectorwarp').read_text()
+        self.assertIn('PREFIX = Path(\'/opt/vectorwarp\')', launcher)
+        self.assertIn("CONFIG = Path('/etc/vectorwarp')", launcher)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
         service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()

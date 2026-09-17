@@ -116,17 +116,35 @@ fs.mkdirSync(output, {recursive: true});
     await page.locator('#config-message.success').filter({hasText: 'received replay frames'}).waitFor({timeout: 145000});
     const afterResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(afterResponse.status(), 200);
-    const after = await afterResponse.json();
-    assert.notEqual(after.serverId, before.serverId, 'The installed API must actually restart');
-    assert.equal(after.loadedRevision, accepted.revision);
-    assert.equal(after.configRevision, accepted.revision);
-    assert.equal(after.restart.state, 'command-complete');
-    assert.equal(after.processorFresh, true);
-    assert.equal(after.processor?.input, 'replay');
-    assert.equal(after.processor?.state, 'playing');
-    assert.equal(after.processor?.file, replayFile);
-    assert.equal(after.radar, 'receiving');
-    assert.ok(after.lastFrameAt > appliedAt, 'A new frame must follow the browser Apply');
+    let after = await afterResponse.json();
+    const checkReplay = status => {
+      assert.notEqual(status.serverId, before.serverId, 'The installed API must actually restart');
+      assert.equal(status.loadedRevision, accepted.revision);
+      assert.equal(status.configRevision, accepted.revision);
+      assert.equal(status.restart.state, 'command-complete');
+      assert.equal(status.processorFresh, true);
+      assert.equal(status.processor?.input, 'replay');
+      // Replay.cpp publishes draining at each EOF before a looping rewind;
+      // permit it only while waiting for the final playing snapshot.
+      assert.ok(['playing', 'draining'].includes(status.processor?.state), status.processor?.state);
+      assert.equal(status.processor?.file, replayFile);
+      assert.equal(status.radar, 'receiving');
+      assert.ok(status.lastFrameAt > appliedAt, 'A new frame must follow the browser Apply');
+    };
+    checkReplay(after);
+    const firstFrameAt = after.lastFrameAt;
+    const progressDeadline = Date.now() + 30000;
+    while (!(after.lastFrameAt > firstFrameAt && after.processor?.state === 'playing') &&
+           Date.now() < progressDeadline) {
+      await page.waitForTimeout(200);
+      const progressResponse = await page.request.get(`${base}/api/system/status`);
+      assert.equal(progressResponse.status(), 200);
+      after = await progressResponse.json();
+      checkReplay(after);
+    }
+    assert.ok(after.lastFrameAt > firstFrameAt,
+      'Looping replay must produce a second distinct fresh frame within 30 seconds');
+    assert.equal(after.processor?.state, 'playing', 'Looping replay must resume playing after draining');
     await page.screenshot({path: path.join(output, 'installed-settings.png'), fullPage: true});
     assert.deepEqual(errors, [], 'No browser JavaScript errors');
     fs.writeFileSync(path.join(output, 'browser.json'), JSON.stringify({passed: true,

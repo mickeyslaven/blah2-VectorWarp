@@ -73,6 +73,7 @@ jobs:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
           npm test --prefix api
           npm run test:receiver-management --prefix api
           npm run test:dom --prefix api
@@ -90,6 +91,7 @@ jobs:
           python3 test/packaging/test_install_docs.py -v
           python3 test/packaging/test_gpu_setup.py -v
           python3 test/packaging/test_receiver_build.py -v
+          sudo python3 test/packaging/test_package_upgrade.py -v
       - name: Syntax-check every workflow shell block and release script
         run: |
           bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh script/test-installed-package.sh

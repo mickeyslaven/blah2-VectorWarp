@@ -124,17 +124,17 @@ sudo bash vectorwarp-install.sh --start-web
 ```
 
 `--start-web` enables the web API at boot and starts only that service; it does
-not enable radar processing. Open `http://localhost:3000/`, then choose your
-receiver in Settings. If an earlier install completed but the page does not
-open, run `sudo systemctl enable --now vectorwarp-api.service` and then
-`sudo systemctl status vectorwarp-api.service --no-pager`. Updates do not
-restart a running API or receiver helper. After receiver-management actions
-finish and pending authorizations expire, activate updated code manually with
-`sudo systemctl restart vectorwarp-receiver.service && sudo systemctl restart
-vectorwarp-api.service`. Do not run that command mid-transaction; it does not
-restart `vectorwarp-processor.service` or radar processing. Update with
+not enable radar processing. Run `vectorwarp` to open the web interface, then
+choose your receiver in Settings. Use `vectorwarp start`, `vectorwarp stop`,
+or `vectorwarp status` from a terminal; service changes may ask for your
+administrator password. Headless systems print the web address instead.
+
+Update with
 `sudo apt update && sudo apt install --only-upgrade vectorwarp` or
-`sudo dnf upgrade vectorwarp`.
+`sudo dnf upgrade vectorwarp`. Successful upgrades restart the VectorWarp
+services that were running; intentionally stopped radar stays stopped.
+Finish receiver setup/build actions before updating. If the upgrade cannot
+stop a helper safely, it reports the problem before unpacking new files.
 
 - **KrakenSDR Suite V2:** 2–8-channel network input, synthesized or dedicated reference, and combined surveillance maps.
 - **USRP (including B210) and dual HackRF:** receiver settings are passed to UHD or libhackrf when processing starts.

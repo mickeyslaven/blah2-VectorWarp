@@ -49,9 +49,12 @@ script/package-native.sh \
   --output-dir dist
 ```
 
-Installation creates dedicated users and directories but never enables or
-starts the API or processor. `/etc/vectorwarp/config.yml` is preserved across
-upgrades. A first install with the local RSPduo kit may start an already-installed standard
+Installation creates dedicated users and directories and starts the web API,
+but never starts radar processing. The installed `/usr/bin/vectorwarp` launcher
+opens the web page or provides fixed service actions. Upgrades quiesce only
+VectorWarp's own services before unpack and reactivate only those previously
+running; stopped processing remains stopped. `/etc/vectorwarp/config.yml` is
+preserved. A first install with the local RSPduo kit may start an already-installed standard
 SDRplay API service; it never downloads the API or accepts its license. See
 [SDRplay setup](../docs/SDRPLAY_SETUP.md).
 Repository publication requires a maintainer-controlled OpenPGP key

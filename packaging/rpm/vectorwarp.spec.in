@@ -11,6 +11,7 @@ Requires:       systemd
 Requires:       sudo
 Requires:       python3
 Requires:       shadow-utils
+Requires:       util-linux
 Requires:       gcc-c++
 Requires:       binutils
 %if 0%{?fedora} == 44
@@ -42,6 +43,9 @@ local build. Receiver software is checked in Settings.
 mkdir -p %{buildroot}
 tar -C %{buildroot} -xf %{SOURCE0}
 
+%pre
+@UPGRADE_PRE_SCRIPT@
+
 %post
 if command -v systemd-sysusers >/dev/null 2>&1; then
   systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf
@@ -64,11 +68,17 @@ fi
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-gpu-setup --configure-service-access ||
   printf '%s\n' 'GPU access needs local review: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access' >&2
 if [ -d /run/systemd/system ]; then
-  systemctl daemon-reload >/dev/null || true
-  # A running old broker may own an authorized transaction. Defer its and the
-  # API's code refresh to an administrator; start only when both are inactive.
-  /opt/vectorwarp/libexec/vectorwarp-activate-web ||
-    printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+  if [ "$1" -gt 1 ]; then
+    systemctl daemon-reload >/dev/null || {
+      printf '%s\n' 'VectorWarp upgrade files were unpacked, but systemd reload failed. Services remain stopped; inspect systemd and retry configuration.' >&2
+      exit 1
+    }
+    /opt/vectorwarp/libexec/vectorwarp-activate-upgrade || exit 1
+  else
+    systemctl daemon-reload >/dev/null || true
+    /opt/vectorwarp/libexec/vectorwarp-activate-web ||
+      printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+  fi
 fi
 # Initial install only: the optional fixed helper may start a preinstalled
 # vendor SDRplay service after its own manifest/policy checks. It never
@@ -79,7 +89,8 @@ if [ "$1" -eq 1 ] && [ -d /run/systemd/system ] &&
   /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sdrplay-service install ||
     printf '%s\n' 'SDRplay was not prepared; install its Hardware API yourself from https://sdrplay.com/hardware-api/ and recheck in Settings.' >&2
 fi
-# Package installation never starts radar processing.
+# First installation never starts radar processing. Upgrades restore only a
+# processor that was active before the package transaction.
 
 %postun
 if [ -d /run/systemd/system ]; then
@@ -98,6 +109,7 @@ fi
 
 %files
 /opt/vectorwarp
+/usr/bin/vectorwarp
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
 /usr/lib/systemd/system/vectorwarp-restart.service

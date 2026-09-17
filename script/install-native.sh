@@ -182,6 +182,9 @@ if $WITH_SYSTEMD; then
   [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
      -x $ARTIFACT/libexec/vectorwarp-activate-web ]] ||
     die 'restart helpers are missing'
+  [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
+  [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
+    die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
     [[ -f $ARTIFACT/libexec/vectorwarp-receiver-apt.py ]] || die 'receiver package adapter is missing'
     [[ -f $ARTIFACT/libexec/vectorwarp-receiver-dnf.py ]] || die 'receiver DNF adapter is missing'
@@ -278,6 +281,9 @@ if $WITH_SYSTEMD; then
     temporary=$(mktemp -d)
     trap 'rm -rf "$temporary"' EXIT
   fi
+  render "$ARTIFACT/libexec/vectorwarp" "$temporary/vectorwarp-launcher"
+  run install -d -m 0755 "$DESTDIR/usr/bin"
+  run install -m 0755 "$temporary/vectorwarp-launcher" "$DESTDIR/usr/bin/vectorwarp"
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
   render "$ARTIFACT/systemd/vectorwarp-restart.service.in" "$temporary/vectorwarp-restart.service"

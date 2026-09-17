@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+state=/run/vectorwarp-package-upgrade.state
+[ -d /run/systemd/system ] || exit 0
+lock=/run/vectorwarp-package-upgrade.lock
+[ ! -L "$lock" ] || { printf '%s\n' 'Unsafe VectorWarp package-upgrade lock.' >&2; exit 1; }
+[ ! -e "$lock" ] || [ -f "$lock" ] || {
+  printf '%s\n' 'VectorWarp package-upgrade lock is not a regular file.' >&2
+  exit 1
+}
+umask 077
+exec 9>>"$lock"
+[ "$(stat -c %u:%a "$lock")" = 0:600 ] && flock -n 9 || {
+  printf '%s\n' 'Another VectorWarp service action is running; package activation was not attempted.' >&2
+  exit 1
+}
+[ -e "$state" ] || {
+  printf '%s\n' 'VectorWarp upgrade state is missing; services remain stopped. Start only the services you intended with systemctl.' >&2
+  exit 1
+}
+[ ! -L "$state" ] && [ -f "$state" ] &&
+  [ "$(stat -c %u:%a "$state")" = 0:600 ] || {
+  printf '%s\n' 'VectorWarp upgrade state is untrusted; services remain stopped.' >&2
+  exit 1
+}
+was_api= was_processor= was_socket= was_broker= count=0
+while IFS='=' read -r key value; do
+  case "$value" in 0|1) ;; *) exit 1 ;; esac
+  case "$key" in
+    api) [ -z "$was_api" ] || exit 1; was_api=$value ;;
+    processor) [ -z "$was_processor" ] || exit 1; was_processor=$value ;;
+    socket) [ -z "$was_socket" ] || exit 1; was_socket=$value ;;
+    broker) [ -z "$was_broker" ] || exit 1; was_broker=$value ;;
+    *) exit 1 ;;
+  esac
+  count=$((count + 1))
+done <"$state"
+[ "$count" -eq 4 ] && [ -n "$was_api" ] && [ -n "$was_processor" ] &&
+  [ -n "$was_socket" ] && [ -n "$was_broker" ] || {
+  printf '%s\n' 'VectorWarp upgrade state is incomplete; services remain stopped.' >&2
+  exit 1
+}
+
+# Consume before activation. A failed or retried package scriptlet must not
+# later start a service the administrator has deliberately left stopped.
+rm -f -- "$state"
+failed() {
+  printf 'VectorWarp upgrade installed files, but service activation failed. Previously active: socket=%s broker=%s API=%s processor=%s. Inspect: systemctl status vectorwarp-receiver.socket vectorwarp-receiver.service vectorwarp-api.service vectorwarp-processor.service --no-pager. Start only the previously running services after correction.\n' \
+    "$was_socket" "$was_broker" "$was_api" "$was_processor" >&2
+  exit 1
+}
+[ "$was_socket" = 0 ] || systemctl start vectorwarp-receiver.socket || failed
+[ "$was_broker" = 0 ] || systemctl start vectorwarp-receiver.service || failed
+[ "$was_api" = 0 ] || systemctl start vectorwarp-api.service || failed
+[ "$was_api" = 0 ] || /opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/libexec/vectorwarp-wait-api.js \
+  /etc/vectorwarp/config.yml /opt/vectorwarp/current/api/node_modules || failed
+[ "$was_processor" = 0 ] || systemctl start vectorwarp-processor.service || failed
+exit 0

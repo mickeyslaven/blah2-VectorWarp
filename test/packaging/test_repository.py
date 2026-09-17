@@ -92,9 +92,10 @@ class HomepageTests(unittest.TestCase):
         for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
                      'sudo apt install --only-upgrade vectorwarp', 'sudo dnf upgrade',
                      'sudo apt install ./matching.deb', 'sudo dnf install ./matching.rpm',
-                     'sudo systemctl enable --now vectorwarp-api.service',
-                     'sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service',
-                     'Do not run it mid-transaction', 'vectorwarp-processor.service',
+                     '<code>vectorwarp</code>', '<code>vectorwarp start</code>',
+                     '<code>vectorwarp stop</code>', '<code>vectorwarp status</code>',
+                     'Successful upgrades restart previously running VectorWarp services',
+                     'intentionally stopped radar stopped',
                      'FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,\nnot Ubuntu 26.04',
                      'enables the browser interface at boot', 'starts only that service',
                      '<code>gnupg2</code>', '<code>gnupg</code>',
@@ -107,6 +108,25 @@ class HomepageTests(unittest.TestCase):
             result = subprocess.run(['bash', '-n'], input=unescape(code), text=True,
                                     capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_install_guidance_tracks_verified_release_version(self):
+        manifest = self.release_manifest()
+        manifest['version'] = '0.1.6'
+        old_page = repository.repository_homepage(manifest)
+        self.assertIn('Install VectorWarp 0.1.6', old_page)
+        self.assertIn('A package update does not restart a running API or receiver helper', old_page)
+        self.assertIn('sudo systemctl enable --now vectorwarp-api.service', old_page)
+        self.assertIn('sudo systemctl restart vectorwarp-receiver.service', old_page)
+        self.assertNotIn('<code>vectorwarp start</code>', old_page)
+        self.assertNotIn('Successful upgrades restart previously running VectorWarp services', old_page)
+
+        manifest['version'] = '0.1.7'
+        new_page = repository.repository_homepage(manifest)
+        self.assertIn('Install VectorWarp 0.1.7', new_page)
+        self.assertIn('<code>vectorwarp start</code>', new_page)
+        self.assertIn('Successful upgrades restart previously running VectorWarp services', new_page)
+        self.assertNotIn('A package update does not restart a running API', new_page)
+        self.assertNotIn('sudo systemctl restart vectorwarp-receiver.service', new_page)
 
     def test_timing_claims_keep_their_scope(self):
         page = repository.repository_homepage()
@@ -265,7 +285,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
         for command in ('sudo bash vectorwarp-install.sh --start-web',
-                        'sudo systemctl enable --now vectorwarp-api.service'):
+                        'vectorwarp start', 'vectorwarp stop', 'vectorwarp status'):
             self.assertIn(command, guide)
             self.assertIn(command, page)
 
@@ -288,7 +308,7 @@ class HomepageTests(unittest.TestCase):
         self.assertNotIn('/v1.2.3/', page)
         self.assertNotIn('/v0.1.0/', page)
         for command in ('sudo bash vectorwarp-install.sh --start-web',
-                        'sudo systemctl enable --now vectorwarp-api.service'):
+                        'vectorwarp start', 'vectorwarp stop', 'vectorwarp status'):
             self.assertIn(command, page)
 
     def _release_selection_script(self):

@@ -29,12 +29,24 @@ fi
 # Only existing render/video groups owning trusted DRM nodes; no driver or service changes.
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-gpu-setup --configure-service-access ||
   printf '%s\n' 'GPU access needs local review: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access' >&2
-if [ -d /run/systemd/system ]; then
-  systemctl daemon-reload >/dev/null || true
-  # A running old broker may own an authorized transaction. Defer its and the
-  # API's code refresh to an administrator; start only when both are inactive.
-  /opt/vectorwarp/libexec/vectorwarp-activate-web ||
-    printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+if [ "$1" = configure ] && [ -d /run/systemd/system ]; then
+  if [ -n "${2:-}" ]; then
+    systemctl daemon-reload >/dev/null || {
+      printf '%s\n' 'VectorWarp upgrade files were unpacked, but systemd reload failed. Services remain stopped; inspect systemd and rerun package configuration.' >&2
+      exit 1
+    }
+    if [ -e /run/vectorwarp-package-upgrade.state ] || [ -L /run/vectorwarp-package-upgrade.state ]; then
+      /opt/vectorwarp/libexec/vectorwarp-activate-upgrade
+    else
+      # A prior activation attempt consumed its one-use state and failed.
+      # Reconfiguration must not replay that stale intent or auto-start radar.
+      printf '%s\n' 'VectorWarp package configured without automatic service activation: no pending upgrade state. Inspect VectorWarp unit status and start only services you intend.' >&2
+    fi
+  else
+    systemctl daemon-reload >/dev/null || true
+    /opt/vectorwarp/libexec/vectorwarp-activate-web ||
+      printf '%s\n' 'VectorWarp installed, but web activation failed; inspect: systemctl status vectorwarp-api.service --no-pager' >&2
+  fi
 fi
 
 # First configure only: this optional fixed helper can start an already
@@ -48,5 +60,6 @@ if [ "$1" = configure ] && [ -z "${2:-}" ] && [ -d /run/systemd/system ] &&
 fi
 
 # The narrow SDRplay helper above is limited to an already-installed vendor
-# service on first configure. Package installation never starts radar processing.
+# service on first configure. First installation never starts radar processing;
+# upgrades restore processing only if it was active beforehand.
 exit 0
