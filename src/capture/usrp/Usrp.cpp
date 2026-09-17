@@ -1,6 +1,7 @@
 #include "Usrp.h"
 #include "UsrpSettings.h"
 #include "UsrpStream.h"
+#include "UsrpIngress.h"
 
 #include <string.h>
 #include <iostream>
@@ -36,6 +37,8 @@ void Usrp::stop()
 
 void Usrp::process(IqData *buffer1, IqData *buffer2)
 {
+    if (!buffer1 || !buffer2 || buffer1 == buffer2)
+      throw std::invalid_argument("[USRP] Two distinct IQ queues are required.");
     // create a USRP object
     uhd::usrp::multi_usrp::sptr usrp = 
       uhd::usrp::multi_usrp::make(address);
@@ -72,30 +75,28 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
         catch (...) {} // Do not replace the original receive/processing error.
       }
     } stopStream{rxStreamer};
+    UsrpIngressTiming ingressTiming;
 
     while(!stopRequested)
     {
       // receive samples
+      ingressTiming.before_receive();
       size_t nReceived = rxStreamer->recv(buff_ptrs, samps_per_buff, metadata);
+      ingressTiming.received();
       if (stopRequested) break;
       // Do not silently splice discontinuous IQ into a coherent CPI. This is
       // fail-closed error handling, not a claimed fix for unqualified B210
       // hardware/USB endurance failures reported by the upstream project.
-      try { verify_usrp_receive(metadata, nReceived, samps_per_buff); }
+      try {
+        verify_usrp_receive(metadata, nReceived, samps_per_buff);
+        append_usrp_block(*buffer1, *buffer2, buff_ptrs[0], buff_ptrs[1],
+          nReceived, ingressTiming);
+      }
       catch (const std::exception& error) {
-        recording_discontinuity(error.what());
-        throw;
+        const std::string message = std::string(error.what()) + ingressTiming.summary();
+        recording_discontinuity(message);
+        throw std::runtime_error(message);
       }
-
-      buffer1->lock();
-      buffer2->lock();
-      for (size_t i = 0; i < nReceived; i++)
-      {
-        buffer1->push_back({(double)buff_ptrs[0][i].real(), (double)buff_ptrs[0][i].imag()});
-        buffer2->push_back({(double)buff_ptrs[1][i].real(), (double)buff_ptrs[1][i].imag()});
-      }
-      buffer1->unlock();
-      buffer2->unlock();
 
       // save IQ data to file
       if (is_recording() && nReceived) {
