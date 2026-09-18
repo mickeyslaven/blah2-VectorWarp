@@ -6,6 +6,37 @@ workflow is merged and its first Apple Silicon build and installation checks
 pass. Until then, use the local source installation below. This distinction
 keeps an empty tap from being mistaken for a published package.
 
+## Public installation (after publication)
+
+With Homebrew and Xcode Command Line Tools installed, add the public tap once:
+
+```sh
+brew tap mickeyslaven/vectorwarp
+brew install vectorwarp
+vectorwarp
+```
+
+The full formula name is `mickeyslaven/vectorwarp/vectorwarp`
+(`owner/tap/package`). After adding the tap, the short package names work.
+Homebrew builds the application and its Kraken companion from source; no
+prebuilt bottles or `.pkg`/`.dmg` installers are currently published.
+
+## Public-tap updates (after publication)
+
+Once the public formulas have been published, update both components with:
+
+```sh
+brew update
+brew upgrade vectorwarp vectorwarp-heimdall
+vectorwarp restart
+```
+
+If VectorWarp runs as a per-user Homebrew service, use `brew services restart
+vectorwarp` instead of `vectorwarp restart`. Both paths retain the user's
+configuration and recordings. The public tap is empty until the first
+main-merge publishing run succeeds; these commands do not apply to the local
+development tap below.
+
 ## Local source installation
 
 The current local installation does not require a published formula or bottle.
@@ -42,9 +73,25 @@ retains its CPU fallback when Vulkan is unavailable at runtime.
 
 `vectorwarp` opens the web interface without starting radar. In Settings, choose
 and configure a receiver or replay file, then select **Save & Restart**.
-Use `vectorwarp status` and `vectorwarp logs` to inspect the running instance;
-`vectorwarp stop` stops its processor, local Kraken controller and web interface.
-The tests above check software integration without opening a physical receiver.
+For a manually started instance, use the same command names on macOS:
+
+```sh
+vectorwarp                 # open Settings
+vectorwarp start
+vectorwarp stop
+vectorwarp restart
+vectorwarp status
+vectorwarp logs
+vectorwarp help
+brew list --versions vectorwarp
+```
+
+`vectorwarp stop` stops its processor, local Kraken controller and web
+interface. macOS does not currently provide `vectorwarp version`; use the
+Homebrew command shown above. The tests check software integration without
+opening a physical receiver.
+Use Homebrew and `brew services` for Mac package and login-service management;
+Linux `apt`, `dnf` and `systemctl` commands do not apply on macOS.
 
 ## Optional per-user service
 
@@ -56,8 +103,17 @@ active Kraken controller, and restarts the stack after a crash. `brew services s
 vectorwarp/local/vectorwarp` sends SIGTERM and removes only this user service.
 These service commands use your saved processing configuration; they are not
 required to open Settings for the first time.
+When supervision is enabled, use `brew services stop vectorwarp` to keep the
+instance stopped, or `brew services restart vectorwarp` to restart it. A plain
+`vectorwarp stop` stops the child processes but leaves the supervisor running,
+so it starts them again. `vectorwarp status` and `vectorwarp logs` still inspect
+the managed instance.
 
 ## Update the local source installation
+
+The local `vectorwarp/local` tap embeds a snapshot archive. It does not receive
+public-tap updates: regenerate the snapshot after each source change, then
+reinstall or upgrade both local formulas as shown below.
 
 The application's companion executable and HTML links follow Homebrew's stable
 `opt` path. Independent companion upgrades therefore take effect on the next

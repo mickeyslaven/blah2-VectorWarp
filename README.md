@@ -115,6 +115,8 @@ qualification. This local source installation requires the port checkout: no
 installable public Mac formula or bottle is published yet. The
 [public tap automation](docs/HOMEBREW_PUBLISHING.md) will publish tested formulas
 after merges to `main`; public v0.1.7 release assets remain Linux-only.
+After the public tap is published, its update and restart commands are in the
+[Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates-after-publication).
 
 ## Install on Linux
 
@@ -152,9 +154,11 @@ details.
 `vectorwarp` (or `vectorwarp open`) opens only the web interface.
 `vectorwarp start` starts the full VectorWarp stack; `vectorwarp stop` stops it,
 including the web page; and `vectorwarp restart` restarts it in order.
-Use `vectorwarp status`, `vectorwarp logs` and `vectorwarp version` to check it,
-or `vectorwarp help` for all commands. These commands and upgrades never stop shared Kraken Suite or SDRplay
-services.
+Use `vectorwarp status`, `vectorwarp logs` and `vectorwarp help` to inspect it.
+Check the installed version with `vectorwarp version` on Linux or
+`brew list --versions vectorwarp` on macOS. For a service-managed Mac instance,
+use the [Homebrew service controls](docs/MACOS_HOMEBREW.md#optional-per-user-service).
+These commands and upgrades never stop shared Kraken Suite or SDRplay services.
 
 ### 4. Update
 

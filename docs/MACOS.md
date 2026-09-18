@@ -101,6 +101,11 @@ The launcher alone does not register a login service. Homebrew’s explicit
 `brew services stop vectorwarp` stops and unregisters it. Start processing explicitly after
 choosing a valid receiver or replay file in Settings.
 
+For installed Homebrew command names, updates, and service restarts, see the
+[macOS Homebrew guide](MACOS_HOMEBREW.md#public-tap-updates-after-publication).
+The local development tap must be regenerated from its source snapshot; it does
+not receive public-tap upgrades.
+
 The default state directory is `~/Library/Application Support/VectorWarp`.
 The initial config binds to `127.0.0.1`. State, configuration, recordings and
 logs belong in this user's writable application-support directory.
