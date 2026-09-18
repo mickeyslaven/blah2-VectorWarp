@@ -75,7 +75,7 @@ container=$(podman run -d --name "$name" --systemd=always --cgroupns=private \
 if [[ $apparmor_profile != unconfined ]]; then
   container_label=$(podman exec "$container" cat /proc/self/attr/apparmor/current)
   printf '%s\n' "$container_label" >"$evidence/apparmor-label.txt"
-  [[ $container_label == "$apparmor_profile ("*")" ]] || die 'disposable container did not enter its own AppArmor profile'
+  [[ $container_label == "$apparmor_profile (enforce)" ]] || die 'disposable container did not enter its own enforced AppArmor profile'
 fi
 # Wait for boot mounts/tmpfiles before copying fixtures into /tmp. A container
 # can be running while systemd has not mounted its final temporary filesystem.

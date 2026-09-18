@@ -144,7 +144,8 @@ def probe(evidence):
         expected_profile = os.environ.get('VECTORWARP_TEST_APPARMOR_PROFILE')
         if expected_profile:
             actual_profile = exec_in(name, 'cat', '/proc/self/attr/apparmor/current').stdout.strip()
-            if actual_profile.split(' ', 1)[0] != expected_profile:
+            (evidence / 'apparmor-label.txt').write_text(actual_profile + '\n', encoding='utf-8')
+            if actual_profile != expected_profile + ' (enforce)':
                 raise RuntimeError('Fedora test container did not enter its CI AppArmor profile')
         # The installed-package container boots systemd before package install.
         for _ in range(60):

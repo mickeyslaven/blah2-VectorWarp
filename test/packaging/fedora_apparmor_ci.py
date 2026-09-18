@@ -27,10 +27,16 @@ def apparmor_enabled():
 
 
 def profile_source(name):
-    # This broad policy applies ONLY to the existing unconfined, disposable
-    # outer CI test container. The ix rule prevents host executable-profile
-    # autoattachment, including /usr/sbin/unix_chkpwd.
-    return f'abi <abi/4.0>,\nprofile {name} flags=(default_allow) {{\n  /** ix,\n}}\n'
+    # AppArmor 4.0's default_allow is implemented as unconfined; that mode
+    # still attaches a matching host executable profile on exec. Use a normal
+    # enforce-mode profile with broad permissions equivalent to the already
+    # unconfined disposable OUTER CI test OS, and explicitly inherit on exec.
+    # This cannot add kernel capabilities beyond Podman's existing bounding set.
+    return (f'abi <abi/4.0>,\nprofile {name} '
+            'flags=(attach_disconnected,mediate_deleted) {\n'
+            '  file,\n  network,\n  capability,\n  mount,\n  umount,\n'
+            '  pivot_root,\n  ptrace,\n  signal,\n  unix,\n  dbus,\n'
+            '  userns,\n  mqueue,\n  io_uring,\n  /** ix,\n}\n')
 
 
 def run_child(command, environment):

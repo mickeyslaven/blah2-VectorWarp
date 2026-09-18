@@ -51,7 +51,10 @@ class FedoraAppArmorCiTests(unittest.TestCase):
                 mock.patch.object(MODULE, 'run_child', side_effect=child):
             self.assertEqual(MODULE.run_with_profile(['true']), 0)
         self.assertEqual(operations, ['-Q', '-a', 'child', 'ps', '-R'])
-        self.assertTrue(all('flags=(default_allow)' in item and '/** ix,' in item
+        self.assertTrue(all('flags=(attach_disconnected,mediate_deleted)' in item
+                            and '  capability,\n' in item and '/** ix,' in item
+                            for item in source))
+        self.assertTrue(all('default_allow' not in item and 'flags=(unconfined)' not in item
                             for item in source))
         self.assertTrue(all('unix-chkpwd' not in args for args in source))
 

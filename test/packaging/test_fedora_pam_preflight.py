@@ -46,25 +46,27 @@ class FedoraPamPreflightTests(unittest.TestCase):
                 PREFLIGHT.run_args('probe', 'localhost/probe')
 
     def test_wrong_actual_container_label_fails_before_account_setup(self):
-        calls = []
         name = 'vectorwarp-fedora-ci-' + 'b' * 32
+        for label in ('wrong-profile (enforce)', name + ' (unconfined)', name + ' (complain)'):
+            calls = []
 
-        def fake_command(args, *, output=None, check=True):
-            calls.append(args)
-            label = 'wrong-profile (enforce)\n' if '/proc/self/attr/apparmor/current' in args else ''
-            return subprocess.CompletedProcess(args, 0, label)
+            def fake_command(args, *, output=None, check=True):
+                calls.append(args)
+                value = label + '\n' if '/proc/self/attr/apparmor/current' in args else ''
+                return subprocess.CompletedProcess(args, 0, value)
 
-        with tempfile.TemporaryDirectory() as directory, \
-                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
-                mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
-                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0), \
-                mock.patch.dict(PREFLIGHT.os.environ,
-                                {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
-            with self.assertRaisesRegex(RuntimeError, 'did not enter'):
-                PREFLIGHT.probe(Path(directory))
-        self.assertFalse(any('useradd' in args for args in calls))
-        self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
-        self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                    mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
+                    mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0), \
+                    mock.patch.dict(PREFLIGHT.os.environ,
+                                    {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
+                with self.assertRaisesRegex(RuntimeError, 'did not enter'):
+                    PREFLIGHT.probe(Path(directory))
+                self.assertEqual((Path(directory) / 'apparmor-label.txt').read_text(), label + '\n')
+            self.assertFalse(any('useradd' in args for args in calls))
+            self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
+            self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
 
     def test_kernel_evidence_is_helper_only_and_bounded(self):
         raw = 'unrelated secret kernel record\n' + '\n'.join(
