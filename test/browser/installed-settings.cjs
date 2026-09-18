@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {chromium} = require('playwright');
+const {receiverSaveMessage} = require('../../html/js/config_ui');
 const base = process.argv[2];
 const output = path.resolve(process.argv[3] || 'service-evidence');
 const replayFile = '/var/lib/vectorwarp/package-test-replay.blah2iq';
@@ -113,7 +114,10 @@ fs.mkdirSync(output, {recursive: true});
     assert.equal(accepted.restarting, true);
     assert.equal(accepted.receiverSync?.acceptance?.mode, 'replay');
     assert.equal(accepted.receiverSync?.acceptance?.physicalReceiverVerified, false);
-    await page.locator('#config-message.success').filter({hasText: 'received replay frames'}).waitFor({timeout: 145000});
+    // Use the reviewed copy from this source revision, then independently
+    // verify the installed services restarted and produced new replay frames.
+    await page.locator('#config-message.success').filter({hasText: receiverSaveMessage(accepted, true)})
+      .waitFor({timeout: 145000});
     const afterResponse = await page.request.get(`${base}/api/system/status`);
     assert.equal(afterResponse.status(), 200);
     let after = await afterResponse.json();
