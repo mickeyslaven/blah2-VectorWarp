@@ -341,7 +341,8 @@ class InstalledHarnessPacingTests(unittest.TestCase):
         helpers = ast.Module(body=[item for item in tree.body
             if isinstance(item, ast.FunctionDef) and item.name in
             ('start_limit_seconds', 'separate_lifecycle_cases',
-             'diagnose_test_administrator')], type_ignores=[])
+             'diagnose_test_administrator', 'probe_normal_user_identity',
+             'diagnose_runuser_identity')], type_ignores=[])
         self.state = {'re': re, 'time': Mock(), 'property_of': Mock(),
                       'STACK': ('api', 'processor', 'broker', 'socket', 'restart')}
         exec(compile(helpers, '<installed-fixture-helpers>', 'exec'), self.state)
@@ -396,6 +397,87 @@ class InstalledHarnessPacingTests(unittest.TestCase):
         for call in process.run.call_args_list:
             self.assertFalse(call.kwargs['check'])
             self.assertEqual(call.kwargs['timeout'], 15)
+
+    def prepare_normal_user_probe(self):
+        account = Mock(pw_uid=1000, pw_gid=2000)
+        fake_pwd = Mock()
+        fake_pwd.getpwnam.return_value = account
+        fake_os = Mock()
+        fake_os.getgrouplist.return_value = [2000, 3000]
+        fake_os.getgroups.return_value = [3000, 2000]
+        fake_os.getresuid.return_value = (1000, 1000, 1000)
+        fake_os.getresgid.return_value = (2000, 2000, 2000)
+        fake_os.execv.side_effect = RuntimeError('exec replaced the probe')
+        fake_path = Mock()
+        status = Mock()
+        status.read_text.return_value = ('CapPrm:\t0\nCapEff:\t0\nCapBnd:\t802405fb\n'
+                                         'CapAmb:\t0\nNoNewPrivs:\t0\n')
+        fake_path.return_value = status
+        self.state.update(pwd=fake_pwd, os=fake_os, Path=fake_path)
+        return fake_os, status
+
+    def test_normal_user_probe_execs_installed_open_after_identity_checks(self):
+        fake_os, _ = self.prepare_normal_user_probe()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             self.assertRaisesRegex(RuntimeError, 'exec replaced the probe'):
+            self.state['probe_normal_user_identity']('fixture', launch=True)
+        fake_os.execv.assert_called_once_with('/usr/bin/vectorwarp', ['vectorwarp', 'open'])
+        self.assertIn('uids=(1000, 1000, 1000)', output.getvalue())
+        self.assertIn('cap_eff=0', output.getvalue())
+        self.assertIn('no_new_privs=0', output.getvalue())
+
+    def test_normal_user_probe_rejects_wrong_ids_groups_caps_and_nnp(self):
+        cases = (
+            ('root_uid', 'getresuid', (0, 0, 0)),
+            ('saved_uid', 'getresuid', (1000, 1000, 0)),
+            ('saved_gid', 'getresgid', (2000, 2000, 0)),
+            ('wrong_groups', 'getgroups', [2000]),
+            ('permitted_cap', 'CapPrm', '1'),
+            ('effective_cap', 'CapEff', '1'),
+            ('ambient_cap', 'CapAmb', '1'),
+            ('nnp', 'NoNewPrivs', '1'),
+        )
+        for name, field, value in cases:
+            with self.subTest(name=name):
+                fake_os, status = self.prepare_normal_user_probe()
+                if field in ('getresuid', 'getresgid', 'getgroups'):
+                    getattr(fake_os, field).return_value = value
+                else:
+                    status.read_text.return_value = status.read_text.return_value.replace(
+                        field + ':\t0', field + ':\t' + value)
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(AssertionError):
+                    self.state['probe_normal_user_identity']('fixture', launch=True)
+                fake_os.execv.assert_not_called()
+
+    def test_runuser_comparison_is_identity_only(self):
+        process = Mock(PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+                       TimeoutExpired=subprocess.TimeoutExpired)
+        process.run.return_value = Mock(returncode=0, stdout='NORMAL_USER_IDENTITY\n')
+        self.state['subprocess'] = process
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.state['diagnose_runuser_identity']('fixture')
+        command = process.run.call_args.args[0]
+        self.assertEqual(command[-1], '--probe-identity')
+        self.assertNotIn('vectorwarp', command)
+        self.assertNotIn('sudo', command)
+
+    def test_identity_probe_entrypoints_require_container(self):
+        tree = ast.parse((ROOT / 'test/packaging/installed_reinstall_test.py').read_text())
+        dispatch = next(item for item in tree.body if isinstance(item, ast.If)
+                        and '--probe-identity' in ast.unparse(item.test))
+        for option in ('--probe-identity', '--probe-open'):
+            with self.subTest(option=option):
+                fake_path = Mock()
+                fake_path.return_value.exists.return_value = False
+                probe = Mock()
+                state = {'sys': Mock(argv=['fixture', option]), 'Path': fake_path,
+                         'probe_normal_user_identity': probe}
+                with self.assertRaisesRegex(AssertionError, 'disposable container'):
+                    exec(compile(ast.Module(body=[dispatch], type_ignores=[]),
+                                 '<probe-entrypoint>', 'exec'), state)
+                probe.assert_not_called()
+                fake_path.assert_called_once_with('/run/.containerenv')
 
 
 if __name__ == '__main__':

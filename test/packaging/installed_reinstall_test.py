@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import subprocess
 import socket
@@ -230,6 +231,55 @@ def diagnose_test_administrator(account, stage):
             print(f'{label}: error={type(error).__name__}', flush=True)
 
 
+def probe_normal_user_identity(account, launch=False):
+    """Check the real test user's credentials before replacing this process."""
+    entry = pwd.getpwnam(account)
+    expected_groups = set(os.getgrouplist(account, entry.pw_gid))
+    actual_groups = set(os.getgroups())
+    real_uids = os.getresuid()
+    real_gids = os.getresgid()
+    status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines()
+                  if ':' in line)
+    capabilities = {key: int(status[key].strip(), 16)
+                    for key in ('CapPrm', 'CapEff', 'CapBnd', 'CapAmb')}
+    no_new_privs = int(status['NoNewPrivs'].strip())
+    print(f'NORMAL_USER_IDENTITY account={account} uids={real_uids} gids={real_gids} '
+          f'groups={sorted(actual_groups)} expected_groups={sorted(expected_groups)} '
+          f'cap_prm={capabilities["CapPrm"]:x} cap_eff={capabilities["CapEff"]:x} '
+          f'cap_bnd={capabilities["CapBnd"]:x} cap_amb={capabilities["CapAmb"]:x} '
+          f'no_new_privs={no_new_privs}', flush=True)
+    if not launch:
+        return
+    assert entry.pw_uid > 0 and entry.pw_gid > 0, 'Fixture must use a non-root account'
+    assert real_uids == (entry.pw_uid,) * 3, 'Normal-user real/effective/saved UIDs differ'
+    assert real_gids == (entry.pw_gid,) * 3, 'Normal-user real/effective/saved GIDs differ'
+    assert actual_groups == expected_groups, 'Normal-user supplementary groups differ'
+    assert capabilities['CapPrm'] == capabilities['CapEff'] == capabilities['CapAmb'] == 0, \
+        'Normal-user process retained a privileged capability'
+    assert no_new_privs == 0, 'NoNewPrivs would prevent normal sudo authentication'
+    os.execv('/usr/bin/vectorwarp', ['vectorwarp', 'open'])
+    raise AssertionError('Installed launcher exec unexpectedly returned')
+
+
+def diagnose_runuser_identity(account):
+    """Compare the old fixture's identity only; never launch or retry with it."""
+    command = ('runuser', '-u', account, '--', '/usr/bin/python3', '-I',
+               '/tmp/installed_reinstall_test.py', '--probe-identity')
+    try:
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=15, check=False)
+        print(f'RUNUSER_IDENTITY_DIAGNOSTIC exit={result.returncode}\n{result.stdout.strip()}',
+              flush=True)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f'RUNUSER_IDENTITY_DIAGNOSTIC error={type(error).__name__}', flush=True)
+
+
+if sys.argv[1:] in (['--probe-identity'], ['--probe-open']):
+    assert Path('/run/.containerenv').exists(), 'Identity probes require a disposable container'
+    probe_normal_user_identity('vectorwarp-package-test', sys.argv[1] == '--probe-open')
+    sys.exit(0)
+
+
 assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
 package = Path(sys.argv[1])
 assert package in (Path('/tmp/package.deb'), Path('/tmp/package.rpm')) and package.is_file()
@@ -329,8 +379,18 @@ assert_web_only()
 run('vectorwarp', 'stop')
 assert_stopped_stack()
 administrator = grant_test_administrator()
+identity = pwd.getpwnam(administrator)
+assert identity.pw_uid > 0 and identity.pw_gid > 0
+diagnose_runuser_identity(administrator)
 try:
-    assert 'http://127.0.0.1:3000/' in run('runuser', '-u', administrator, '--', 'vectorwarp', 'open')
+    opened = run(
+        'setpriv', '--reuid', str(identity.pw_uid), '--regid', str(identity.pw_gid),
+        '--init-groups', '--reset-env', '/usr/bin/python3', '-I',
+        '/tmp/installed_reinstall_test.py', '--probe-open')
+    probe = [line for line in opened.splitlines() if line.startswith('NORMAL_USER_IDENTITY ')]
+    assert len(probe) == 1, 'The normal-user identity probe did not run exactly once'
+    print('SETPRIV_OPEN_' + probe[0], flush=True)
+    assert 'http://127.0.0.1:3000/' in opened
 except (AssertionError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
     diagnose_test_administrator(administrator, 'failed-open')
     raise
