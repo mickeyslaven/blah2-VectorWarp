@@ -2,13 +2,31 @@
 // runtime library. These SDK functions are local failure-injection stubs.
 #include "capture/rspduo/RspDuo.h"
 #include <cassert>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <locale>
 #include <stdexcept>
+#include <thread>
 #include <rapidjson/document.h>
 extern std::atomic<bool> run_fg;
 extern "C" const char* blah2_rspduo_startup_receipt_json_v1(const Source*) noexcept;
+
+// Access only the synchronization points needed to force an overlapping pair.
+// Redefining `private` also rewrites libstdc++ internals on GCC and is invalid.
+struct RspDuoTestAccess {
+  static IqData& reference(RspDuo& receiver) { return *receiver.outputBuffer1; }
+  static bool pairClaimed(RspDuo& receiver) {
+    std::lock_guard<std::mutex> lock(receiver.callbackMutex);
+    return receiver.callbackSlot == -1 && receiver.callbackSlotBusy[0];
+  }
+  static bool processing(RspDuo& receiver) {
+    if (!receiver.callbackBProcessingMutex.try_lock()) return true;
+    receiver.callbackBProcessingMutex.unlock();
+    return false;
+  }
+};
 
 namespace {
 std::string failAt;
@@ -17,7 +35,7 @@ sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
 bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
-enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB };
+enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
 CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
 std::string mockSerial = "mock-only";
@@ -74,13 +92,22 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
   if (result("init") == sdrplay_api_Success) ++initialized;
   if (removeOnInit) { sdrplay_api_EventParamsT event{}; callbacks->EventCbFn(sdrplay_api_DeviceRemoved, sdrplay_api_Tuner_Both, &event, context); }
   short ax[] = {1, 3, 5}, aq[] = {2, 4, 6}, bx[] = {7, 9, 11}, bq[] = {8, 10, 12};
-  auto callA = [&](uint32_t first, unsigned count = 2, unsigned reset = 0) {
-    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+  short ax2[] = {21, 23, 25}, aq2[] = {22, 24, 26}, bx2[] = {27, 29, 31}, bq2[] = {28, 30, 32};
+  auto callA = [&](uint32_t first, unsigned count = 2, unsigned reset = 0, bool fsChanged = false) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first; params.fsChanged = fsChanged;
     callbacks->StreamACbFn(ax, aq, &params, count, reset, context);
   };
-  auto callB = [&](uint32_t first, unsigned count = 2, unsigned reset = 0) {
-    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+  auto callB = [&](uint32_t first, unsigned count = 2, unsigned reset = 0, bool fsChanged = false) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first; params.fsChanged = fsChanged;
     callbacks->StreamBCbFn(bx, bq, &params, count, reset, context);
+  };
+  auto callA2 = [&](uint32_t first) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+    callbacks->StreamACbFn(ax2, aq2, &params, 2, 0, context);
+  };
+  auto callB2 = [&](uint32_t first) {
+    sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
+    callbacks->StreamBCbFn(bx2, bq2, &params, 2, 0, context);
   };
   switch (callbackScenario) {
     case CallbackScenario::Matched: callA(100); callB(100); run_fg = false; break;
@@ -92,9 +119,34 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
     case CallbackScenario::Reset: callbacks->StreamACbFn(nullptr, nullptr, nullptr, 0, 1, context); callA(100); callB(100); run_fg = false; break;
     case CallbackScenario::MalformedA: callbacks->StreamACbFn(nullptr, aq, nullptr, 0, 0, context); break;
     case CallbackScenario::OversizedB: callB(100, 262145); break;
+    case CallbackScenario::ScaledCounterInvalidRaw: callA(UINT32_MAX); break;
+    case CallbackScenario::ScaledFsChangedA: callA(100, 2, 0, true); break;
+    case CallbackScenario::ScaledFsChangedB: callA(100); callB(100, 2, 0, true); break;
     case CallbackScenario::ResetAfterPair: callA(100); callB(100); callA(102, 2, 1); callA(102); callB(102); break;
     case CallbackScenario::GapAfterPair: callA(100); callB(100); callA(102); callA(104); callB(104); break;
     case CallbackScenario::Removed: { sdrplay_api_EventParamsT event{}; callbacks->EventCbFn(sdrplay_api_DeviceRemoved, sdrplay_api_Tuner_Both, &event, context); break; }
+    case CallbackScenario::ConcurrentPairHandoff: {
+      auto* receiver = static_cast<RspDuo*>(context);
+      callA(100);
+      RspDuoTestAccess::reference(*receiver).lock();
+      std::thread first([&] { callB(100); });
+      auto captured = [&] {
+        return RspDuoTestAccess::pairClaimed(*receiver);
+      };
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      while (!captured() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      assert(captured());
+      // B1 has claimed its pair slot and is blocked on outputBuffer1.  This
+      // directly proves that it owns the B processing lock before B2 starts;
+      // output order below then cannot depend on mutex waiter fairness.
+      assert(RspDuoTestAccess::processing(*receiver));
+      callA2(102);
+      std::thread second([&] { callB2(102); });
+      RspDuoTestAccess::reference(*receiver).unlock();
+      first.join(); second.join(); run_fg = false;
+      break;
+    }
     case CallbackScenario::None: break;
   }
   return result("init");
@@ -136,6 +188,7 @@ int main() {
         assert(tuner->rspDuoTunerParams.rfDabNotchEnable == (agc != 0));
       }
       assert(tunerA.tunerParams.gain.gRdB == 25 && tunerB.tunerParams.gain.gRdB == 47);
+      assert(deviceParameters.mode == sdrplay_api_ISOCH);
       receiver.process(nullptr, nullptr); // Fake SDK stops the test loop after both accepted Updates.
       const auto accepted = receipt(receiver);
       rapidjson::Document exported;
@@ -167,6 +220,32 @@ int main() {
   assert(std::string(escapedReceipt["selected"]["serial"].GetString()) == mockSerial);
   assert(escapedReceipt["sdk"]["version"].IsNumber());
   escaped.stop();
+  reset(); stopAfterGain = true;
+  setenv("VECTORWARP_RSPDUO_USB_MODE", "bulk", 1);
+  RspDuo bulk("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  bulk.start();
+  assert(deviceParameters.mode == sdrplay_api_BULK);
+  bulk.process(nullptr, nullptr); bulk.stop();
+  unsetenv("VECTORWARP_RSPDUO_USB_MODE");
+  setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "2", 1);
+  try {
+    RspDuo invalidScale("RspDuo", 204640000, 2000000, "/unused", &record,
+      -30, 50, 30, 31, 3, true, false);
+    assert(false);
+  } catch (const std::invalid_argument&) {}
+  unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
+  reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
+  setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "3", 1);
+  RspDuo scaled("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  scaled.start(); scaled.process(nullptr, nullptr); scaled.stop();
+  reset(); deviceParameters.fsFreq.fsHz = 6000000;
+  RspDuo invalidScaledRate("RspDuo", 204640000, 1000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  try { invalidScaledRate.start(); assert(false); } catch (const std::runtime_error&) {}
+  invalidScaledRate.stop();
+  unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
   for (const std::string serial : {"", "not-present"}) {
     reset(); multipleDevices = true;
     RspDuo receiver("RspDuo", 527000000, 2000000, "/unused", &record,
@@ -254,22 +333,35 @@ int main() {
   for (const auto scenario : {CallbackScenario::Matched, CallbackScenario::Wraparound,
     CallbackScenario::BFirst, CallbackScenario::Reset, CallbackScenario::DuplicateA,
     CallbackScenario::LengthMismatch, CallbackScenario::EpochMismatch, CallbackScenario::ResetAfterPair,
-    CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB}) {
+    CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB,
+    CallbackScenario::ConcurrentPairHandoff, CallbackScenario::ScaledCounterInvalidRaw,
+    CallbackScenario::ScaledFsChangedA, CallbackScenario::ScaledFsChangedB}) {
     reset(); callbackScenario = scenario;
+    if (scenario == CallbackScenario::ScaledCounterInvalidRaw ||
+        scenario == CallbackScenario::ScaledFsChangedA || scenario == CallbackScenario::ScaledFsChangedB) {
+      deviceParameters.fsFreq.fsHz = 6000000;
+      setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "3", 1);
+    }
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
     receiver.start(); IqData reference(16), surveillance(16);
     bool failed = false; std::string message;
     try { receiver.process(&reference, &surveillance); }
     catch (const std::exception& error) { failed = true; message = error.what(); }
     const bool matched = scenario == CallbackScenario::Matched || scenario == CallbackScenario::Wraparound ||
-      scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset;
+      scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset ||
+      scenario == CallbackScenario::ConcurrentPairHandoff;
     assert(failed != matched);
     if (matched) {
       const auto a = reference.get_data(), b = surveillance.get_data();
-      const unsigned expected = scenario == CallbackScenario::Wraparound ? 4 : 2;
+      const unsigned expected = (scenario == CallbackScenario::Wraparound ||
+        scenario == CallbackScenario::ConcurrentPairHandoff) ? 4 : 2;
       assert(a.size() == expected && b.size() == expected);
       assert(a.front() == std::complex<double>(1, 2));
       assert(b.front() == std::complex<double>(7, 8));
+      if (scenario == CallbackScenario::ConcurrentPairHandoff) {
+        assert(a[2] == std::complex<double>(21, 22));
+        assert(b[2] == std::complex<double>(27, 28));
+      }
     } else if (scenario == CallbackScenario::Removed) {
       assert(message.find("Receiver disconnected") != std::string::npos);
       assert(reference.get_length() == 0 && surveillance.get_length() == 0);
@@ -281,6 +373,9 @@ int main() {
       assert(reference.get_length() == expected && surveillance.get_length() == expected);
     }
     receiver.stop();
+    if (scenario == CallbackScenario::ScaledCounterInvalidRaw ||
+        scenario == CallbackScenario::ScaledFsChangedA || scenario == CallbackScenario::ScaledFsChangedB)
+      unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
   }
   std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

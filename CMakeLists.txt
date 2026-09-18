@@ -4,6 +4,8 @@ if(COMMAND cmake_policy)
 endif(COMMAND cmake_policy)
 
 project(blah2)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(CMakePrintHelpers)
 include(CTest)
 
@@ -173,7 +175,7 @@ add_executable(testClutterFft
   test/unit/process/clutter/TestClutterFft.cpp
   src/process/clutter/WienerHopf.cpp src/data/IqData.cpp)
 target_compile_features(testClutterFft PRIVATE cxx_std_17)
-target_link_libraries(testClutterFft PRIVATE blah2RapidJson armadillo fftw3 Threads::Threads)
+target_link_libraries(testClutterFft PRIVATE blah2RapidJson armadillo fftw3 fftw3_threads Threads::Threads)
 add_test(NAME clutterFftPadding COMMAND testClutterFft)
 set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
 

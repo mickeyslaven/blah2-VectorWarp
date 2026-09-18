@@ -45,6 +45,8 @@ int main() {
           }
           bulk.append_unlocked(block.data(), block.size());
           require(old.view_data() == bulk.view_data(), "Bulk append differs from per-sample FIFO");
+          require(old.get_dropped_samples() == bulk.get_dropped_samples(),
+            "Bulk append overflow accounting differs from per-sample FIFO");
         }
       }
     }
@@ -53,6 +55,8 @@ int main() {
     const std::complex<float> single{1, 2};
     zero.append_unlocked(&single, 1);
     require(zero.get_length() == 0, "Zero-capacity queue grew");
+    zero.push_back({3, 4});
+    require(zero.get_dropped_samples() == 2, "Zero-capacity retirement was not counted");
     bool nullRejected = false;
     try { zero.append_unlocked(nullptr, 1); }
     catch (const std::invalid_argument&) { nullRejected = true; }
@@ -62,6 +66,7 @@ int main() {
     require(data.drain_front(0).empty(), "Empty drain returned samples");
     rejects([&] { data.discard_front(1); });
     for (int i = 0; i < 7; ++i) data.push_back({double(i), -double(i)});
+    require(data.get_dropped_samples() == 2, "Per-sample FIFO overflow count changed");
     const auto* original = &data.view_data().front();
     auto whole = data.drain_front(5);
     require(whole.size() == 5 && &whole.front() == original,
@@ -82,6 +87,7 @@ int main() {
       "Bulk discard changed retained tail");
     data.discard_front(2);
     require(data.get_length() == 0, "Full discard retained samples");
+    require(data.get_dropped_samples() == 2, "Intentional drain/discard counted as overflow");
     for (unsigned repeat = 0; repeat < 256; ++repeat) {
       data.append_unlocked({{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}, {11, 12}});
       require(data.get_length() == 5 && data.view_data().front().real() == 3,

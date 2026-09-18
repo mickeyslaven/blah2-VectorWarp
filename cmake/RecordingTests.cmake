@@ -36,6 +36,13 @@ target_include_directories(testUsrpReadback PRIVATE ${PROJECT_ROOT}/src)
 target_compile_options(testUsrpReadback PRIVATE -UNDEBUG)
 add_test(NAME usrpAppliedReadback COMMAND testUsrpReadback)
 
+# Keep transport parsing and scaled-counter rollover coverage SDK-free.
+add_executable(testRspDuoHelpers ${PROJECT_ROOT}/test/capture/RspDuoHelpersFixture.cpp)
+target_compile_features(testRspDuoHelpers PRIVATE cxx_std_17)
+target_include_directories(testRspDuoHelpers PRIVATE ${PROJECT_ROOT}/src)
+target_compile_options(testRspDuoHelpers PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_test(NAME rspduoCallbackHelpers COMMAND testRspDuoHelpers)
+
 # Compile the actual receive loop against a local SDK double, never a radio.
 add_executable(testUsrpIngress ${PROJECT_ROOT}/test/capture/UsrpIngressFixture.cpp
   ${PROJECT_ROOT}/src/capture/usrp/Usrp.cpp

@@ -6,8 +6,24 @@
 #include <numeric>
 #include <math.h>
 #include <chrono>
+#include <algorithm>
+#include <mutex>
 #include <stdexcept>
 #include <limits>
+
+namespace {
+std::mutex& fftw_planner_mutex() { static std::mutex mutex; return mutex; }
+bool fftw_threads_ready() {
+  static std::once_flag once;
+  static bool ready = false;
+  std::call_once(once, [] { ready = fftw_init_threads() != 0; });
+  return ready;
+}
+struct RestoreFftwThreads {
+  const int saved = fftw_planner_nthreads();
+  ~RestoreFftwThreads() { fftw_plan_with_nthreads(saved); }
+};
+}
 
 // constructor
 Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax, 
@@ -53,7 +69,13 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
       static_cast<int64_t>(delayMax) >= correlationSamples)
     throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
   nCorr = correlationSamples;
-  nfft = 2 * nCorr - 1;
+  // Only the requested signed-lag window must be free of circular aliasing.
+  // This is the minimum zero-padded transform length for those lags and is
+  // also the geometry reported to the GPU path.
+  const uint32_t maxLag = static_cast<uint32_t>(std::max(
+    std::abs(static_cast<int64_t>(delayMin)),
+    std::abs(static_cast<int64_t>(delayMax))));
+  nfft = nCorr + maxLag;
   if (_roundHamming) nfft = next_hamming(nfft);
   if (nfft > std::numeric_limits<uint16_t>::max())
     throw std::invalid_argument("Correlation FFT exceeds the processor limit; widen the Doppler span");
@@ -79,27 +101,50 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   }
 
   // compute FFTW plans in constructor
-  dataXi.resize(nfft);
-  dataYi.resize(nfft);
+  // The two forward inputs are contiguous so one plan_many execution replaces
+  // the former separate reference and surveillance launches.
+  dataXi.resize(static_cast<std::size_t>(nfft) * 2);
   dataZi.resize(nfft);
   // This transform runs across time batches, not range samples. Wide Doppler
   // windows can have more bins than the range FFT and must not overrun storage.
   dataDoppler.resize(nDopplerBins);
-  fftXi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataXi.data()),
-                           reinterpret_cast<fftw_complex *>(dataXi.data()), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftYi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataYi.data()),
-                           reinterpret_cast<fftw_complex *>(dataYi.data()), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftZi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataZi.data()),
-                           reinterpret_cast<fftw_complex *>(dataZi.data()), FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftDoppler = fftw_plan_dft_1d(nDopplerBins, reinterpret_cast<fftw_complex *>(dataDoppler.data()),
-                                reinterpret_cast<fftw_complex *>(dataDoppler.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+  std::lock_guard<std::mutex> plannerLock(fftw_planner_mutex());
+  if (!fftw_threads_ready())
+    throw std::runtime_error("FFTW thread initialization failed");
+  RestoreFftwThreads restoreThreads;
+  try {
+    int rangeLength = static_cast<int>(nfft);
+    if (nfft <= 4096)
+      fftw_plan_with_nthreads(std::min(std::max(restoreThreads.saved, 1), 2));
+    fftXi = fftw_plan_many_dft(1, &rangeLength, 2,
+      reinterpret_cast<fftw_complex *>(dataXi.data()), nullptr, 1, rangeLength,
+      reinterpret_cast<fftw_complex *>(dataXi.data()), nullptr, 1, rangeLength,
+      FFTW_FORWARD, FFTW_ESTIMATE);
+    fftZi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataZi.data()),
+                             reinterpret_cast<fftw_complex *>(dataZi.data()), FFTW_BACKWARD, FFTW_ESTIMATE);
+    fftw_plan_with_nthreads(restoreThreads.saved);
+    if (!fftXi || !fftZi)
+      throw std::runtime_error("Could not create ambiguity range FFT plan");
+
+    if (nDopplerBins <= 1024) fftw_plan_with_nthreads(1);
+    fftDoppler = fftw_plan_dft_1d(nDopplerBins, reinterpret_cast<fftw_complex *>(dataDoppler.data()),
+                                  reinterpret_cast<fftw_complex *>(dataDoppler.data()), FFTW_FORWARD, FFTW_ESTIMATE);
+    fftw_plan_with_nthreads(restoreThreads.saved);
+    if (!fftDoppler)
+      throw std::runtime_error("Could not create ambiguity Doppler FFT plan");
+  } catch (...) {
+    if (fftXi) { fftw_destroy_plan(fftXi); fftXi = nullptr; }
+    if (fftZi) { fftw_destroy_plan(fftZi); fftZi = nullptr; }
+    if (fftDoppler) { fftw_destroy_plan(fftDoppler); fftDoppler = nullptr; }
+    throw;
+  }
 
 }
 
 Ambiguity::~Ambiguity()
 {
+  std::lock_guard<std::mutex> plannerLock(fftw_planner_mutex());
   fftw_destroy_plan(fftXi);
-  fftw_destroy_plan(fftYi);
   fftw_destroy_plan(fftZi);
   fftw_destroy_plan(fftDoppler);
 }
@@ -128,22 +173,21 @@ Map<std::complex<double>> *Ambiguity::process(
         dataXi[j] *= std::exp(imaginary * 2.0 * M_PI * dopplerMiddle *
           (static_cast<double>(referenceIndex) / fs));
       referenceIndex++;
-      dataYi[j] = y->pop_front();
+      dataXi[nfft + j] = y->pop_front();
     }
 
     for (uint16_t j = nCorr; j < nfft; j++)
     {
       dataXi[j] = {0, 0};
-      dataYi[j] = {0, 0};
+      dataXi[nfft + j] = {0, 0};
     }
 
     fftw_execute(fftXi);
-    fftw_execute(fftYi);
 
     // compute correlation
     for (uint32_t j = 0; j < nfft; j++)
     {
-      dataZi[j] = (dataYi[j] * std::conj(dataXi[j])) / (double)nfft;
+      dataZi[j] = (dataXi[nfft + j] * std::conj(dataXi[j])) / (double)nfft;
     }
 
     fftw_execute(fftZi);

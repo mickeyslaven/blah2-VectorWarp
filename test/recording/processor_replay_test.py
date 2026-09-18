@@ -334,6 +334,19 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             if forced or process.returncode != 0:
                 raise AssertionError(f"{receiver}/{channels} did not stop cleanly (returncode={process.returncode}): {output[-16000:]}")
             states = status.snapshot()
+            if not states or states[-1].get("captureStopped") is not True:
+                raise AssertionError(f"{receiver}/{channels} did not publish final stopped-capture status")
+            final = states[-1]
+            for field in ("captureBacklogSamples", "captureDroppedSamples"):
+                values = final.get(field)
+                if (not isinstance(values, list) or len(values) != channels
+                        or any(type(value) is not int or value < 0 for value in values)):
+                    raise AssertionError(f"{receiver}/{channels} has invalid final {field}: {values}")
+            if any(final["captureDroppedSamples"]):
+                raise AssertionError(f"{receiver}/{channels} lost samples during lossless replay")
+            final_state = "complete" if kind == "complete" else "stopped" if loop else "error"
+            if final.get("state") != final_state or (final_state == "error" and not final.get("error")):
+                raise AssertionError(f"{receiver}/{channels} final capture state/error was not preserved: {final}")
             if "Setting up device" in output:
                 raise AssertionError(f"{receiver}/{channels} attempted hardware setup: {output}")
             if kind in ("complete", "loop"):

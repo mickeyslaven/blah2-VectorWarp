@@ -11,7 +11,8 @@ SOURCES = {
     'src/capture/Source.h', 'src/capture/Recording.h',
     'src/capture/kraken/HeimdallFrame.h', 'src/data/IqData.h',
     'src/capture/rspduo/RspDuo.cpp', 'src/capture/rspduo/RspDuo.h',
-    'src/capture/rspduo/SampleSequence.h', 'LICENSE', 'generated/ReceiverCohort.h',
+    'src/capture/rspduo/SampleSequence.h', 'src/capture/rspduo/SdkSampleClock.h',
+    'src/capture/rspduo/UsbMode.h', 'LICENSE', 'generated/ReceiverCohort.h',
 }
 
 

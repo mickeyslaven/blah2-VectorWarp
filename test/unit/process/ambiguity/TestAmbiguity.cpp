@@ -14,6 +14,9 @@
 #include <random>
 #include <iostream>
 #include <filesystem>
+#include <algorithm>
+#include <complex>
+#include <deque>
 
 /// @brief Use random_device as RNG.
 std::random_device g_rd;
@@ -89,7 +92,7 @@ TEST_CASE("Constructor", "[constructor]")
     CHECK(ambiguity.get_n_corr() == 3322);
     CHECK(ambiguity.get_n_delay_bins() == delayMax + std::abs(delayMin) + 1);
     CHECK(ambiguity.get_n_doppler_bins() == 301);
-    CHECK(ambiguity.get_nfft() == 6643);
+    CHECK(ambiguity.get_nfft() == 3622);
 }
 
 /// @brief Test constructor with rounded Hamming number FFT length.
@@ -112,7 +115,19 @@ TEST_CASE("Constructor_Round", "[constructor]")
     CHECK(ambiguity.get_n_corr() == 3322);
     CHECK(ambiguity.get_n_delay_bins() == delayMax + std::abs(delayMin) + 1);
     CHECK(ambiguity.get_n_doppler_bins() == 301);
-    CHECK(ambiguity.get_nfft() == 6750);
+    CHECK(ambiguity.get_nfft() == 3645);
+}
+
+TEST_CASE("Ambiguity preserves the caller FFTW planning budget", "[constructor][fftw]")
+{
+    REQUIRE(fftw_init_threads() != 0);
+    const int saved = fftw_planner_nthreads();
+    fftw_plan_with_nthreads(3);
+    {
+      Ambiguity ambiguity(-7, 7, 0, 0, 1000, 1000);
+    }
+    CHECK(fftw_planner_nthreads() == 3);
+    fftw_plan_with_nthreads(saved);
 }
 
 TEST_CASE("Doppler buffer can exceed range FFT", "[process][regression]")
@@ -164,6 +179,39 @@ TEST_CASE("Impulse correlation preserves signed boundary lags", "[process][regre
         Catch::Matchers::WithinAbs(0, 1e-12));
     REQUIRE_THROWS_AS(Ambiguity(-8, 7, 0, 0, 100, 8, rounded), std::invalid_argument);
     REQUIRE_THROWS_AS(Ambiguity(-7, 8, 0, 0, 100, 8, rounded), std::invalid_argument);
+}
+
+TEST_CASE("Lag-bounded FFT matches a direct signed-lag correlation oracle", "[process][regression]")
+{
+  const int middle = GENERATE(-25, 0, 17);
+  struct Geometry { int32_t first, last; };
+  for (const auto geometry : {Geometry{-7, -2}, Geometry{-3, 4}, Geometry{2, 7}})
+  {
+    constexpr uint32_t samples = 8;
+    Ambiguity ambiguity(geometry.first, geometry.last, middle, middle, 100, samples, false);
+    REQUIRE(ambiguity.get_nfft() == samples +
+      static_cast<uint32_t>(std::max(std::abs(geometry.first), std::abs(geometry.last))));
+    std::deque<std::complex<double>> reference;
+    IqData surveillance(samples);
+    for (uint32_t i = 0; i < samples; ++i) {
+      reference.push_back({double(i + 1), double(int((i * 3) % 5) - 2)});
+      surveillance.push_back({double(int((i * 2) % 7) - 3), double(i + 2)});
+    }
+    const auto signal = surveillance.view_data();
+    const auto* result = ambiguity.process(reference, &surveillance);
+    for (uint16_t index = 0; index < result->delay.size(); ++index) {
+      const int32_t lag = result->delay[index];
+      std::complex<double> expected{};
+      for (int32_t sample = 0; sample < static_cast<int32_t>(samples); ++sample) {
+        const int32_t referenceSample = sample - lag;
+        if (referenceSample >= 0 && referenceSample < static_cast<int32_t>(samples))
+          expected += signal[sample] * std::conj(reference[referenceSample] *
+            std::polar(1.0, 2 * std::acos(-1.0) * middle * referenceSample / 100));
+      }
+      CHECK_THAT(std::abs(result->data[0][index] - expected),
+        Catch::Matchers::WithinAbs(0, 1e-10));
+    }
+  }
 }
 
 /// @brief Test simple ambiguity processing.

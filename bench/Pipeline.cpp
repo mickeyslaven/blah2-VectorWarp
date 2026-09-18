@@ -1,6 +1,6 @@
 // Finite replay instrumentation, compiled against unchanged upstream or fork DSP.
 // Network/UI transport and hardware acquisition are deliberately not benchmarked.
-#include "MchqReader.h"
+#include "BenchmarkReader.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/meta/HammingNumber.h"
 #include "process/clutter/WienerHopf.h"
@@ -146,7 +146,14 @@ Geometry inspectGeometry(const rapidjson::Document& cfg, bool array) {
       value.delayMax >= static_cast<int64_t>(value.nCorr))
     throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
   value.roundHamming=boolean(cfg,"round_hamming");
+#ifdef BLAH2_BENCH_FAST
+  const uint32_t maxLag=static_cast<uint32_t>(std::max(
+    std::abs(static_cast<int64_t>(value.delayMin)),
+    std::abs(static_cast<int64_t>(value.delayMax))));
+  value.nfft=value.nCorr+maxLag;
+#else
   value.nfft=2*value.nCorr-1;
+#endif
   if (value.roundHamming) value.nfft=next_hamming(value.nfft);
   if (!value.nfft || value.delayBins > value.nfft)
     throw std::invalid_argument("Delay geometry exceeds the range FFT");
@@ -285,7 +292,11 @@ int main(int argc, char** argv) try {
   Interpolate interpolate(true, true);
   Tracker tracker(number("tracker_m"), number("tracker_n"), number("tracker_delete"),
     ambiguity[0]->get_cpi(), number("tracker_max_acceleration"), 299792458.0/fs, 299792458.0/fc);
-  MchqReader reader(argv[1], channels, fc);
+  if (cfg.HasMember("recording_format") && !cfg["recording_format"].IsString())
+    throw std::invalid_argument("recording_format must be a string");
+  const std::string recordingFormat = cfg.HasMember("recording_format") ?
+    cfg["recording_format"].GetString() : "mchq";
+  BenchmarkReader reader(argv[1], channels, fc, recordingFormat);
   std::ofstream frames(prefix+".frames.csv"), outputs(prefix+".outputs.jsonl");
   if (!frames || !outputs) throw std::runtime_error("Cannot open benchmark outputs");
   std::fstream golden;
@@ -482,7 +493,7 @@ int main(int argc, char** argv) try {
     frames << ',' << pipeline << ',' << pipeline << ',' << validationMs << ',' << active << ',' << state << ','
       << detections->get_nDetections() << ',' << tracks->get_n() << ',' << rms << ',' << peak
       << ',' << fusionRms << ',' << fusionPeak << '\n';
-    outputs << "{\"frame\":" << frame << ",\"detections\":" << detectionJson << ",\"tracks\":" << trackJson << "}\n";
+    outputs << "{\"frame\":" << frame << ",\"detections\":" << detectionJson << ",\"tracks\":" << trackJson << ",\"iq\":" << iqJson << "}\n";
     if (!frames || !outputs || (goldenMode == "write" && !golden)) throw std::runtime_error("Benchmark output write failed");
     if (active == "vulkan") ++gpuFrames;
     else if (active == "cpu") ++cpuFrames;

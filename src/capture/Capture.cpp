@@ -124,6 +124,49 @@ void Capture::process(const std::vector<IqData *>& buffers,
   // Keep status available at EOF or after an input error. The browser can show
   // what happened and restart with corrected settings instead of losing the API.
   control.join();
+
+  // The receiver and its callbacks have stopped, and the receive-loop error
+  // handler has completed. Publish the cumulative overflow counts once more
+  // so drops or callback faults after the final CPI cannot disappear at exit.
+  // The processing thread may still drain queues: lock in channel order, as
+  // BufferLocks and the receiver do, and release before status/HTTP operations.
+  try {
+    std::vector<uint64_t> backlog, dropped;
+    backlog.reserve(buffers.size());
+    dropped.reserve(buffers.size());
+    {
+      std::vector<std::unique_lock<IqData>> locks;
+      locks.reserve(buffers.size());
+      for (auto* buffer : buffers) locks.emplace_back(*buffer);
+      for (auto* buffer : buffers) {
+        backlog.push_back(buffer->get_length());
+        dropped.push_back(buffer->get_dropped_samples());
+      }
+    }
+    rapidjson::Document finalStatus;
+    finalStatus.Parse(status_json().c_str());
+    if (finalStatus.HasParseError() || !finalStatus.IsObject())
+      throw std::runtime_error("Could not serialize final capture status");
+    auto& allocator = finalStatus.GetAllocator();
+    rapidjson::Value backlogJson(rapidjson::kArrayType), droppedJson(rapidjson::kArrayType);
+    for (uint64_t value : backlog) backlogJson.PushBack(value, allocator);
+    for (uint64_t value : dropped) droppedJson.PushBack(value, allocator);
+    finalStatus.AddMember("captureStopped", true, allocator);
+    finalStatus.AddMember("captureBacklogSamples", backlogJson, allocator);
+    finalStatus.AddMember("captureDroppedSamples", droppedJson, allocator);
+    rapidjson::StringBuffer body;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(body);
+    finalStatus.Accept(writer);
+    httplib::Client finalClient("http://" + ip_capture + ":" + std::to_string(port_capture));
+    finalClient.set_connection_timeout(0, 250000);
+    finalClient.set_read_timeout(0, 500000);
+    finalClient.set_write_timeout(0, 500000);
+    finalClient.Post("/api/processor/status", body.GetString(), "application/json");
+  } catch (const std::exception& error) {
+    // A missing telemetry peer must not replace the receiver's actual error
+    // or prevent shutdown. Qualification requires receipt of this final post.
+    std::cerr << "Final capture status: " << error.what() << '\n';
+  }
 }
 
 void Capture::processing_error(const std::string& error) {

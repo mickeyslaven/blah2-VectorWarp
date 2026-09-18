@@ -25,6 +25,9 @@ private:
   /// @brief Pointer to IQ data.
   std::deque<std::complex<double>> *data;
 
+  /// @brief Samples retired because this bounded queue overflowed.
+  uint64_t droppedSamples = 0;
+
   /// @brief Minimum value.
   double min;
 
@@ -59,6 +62,9 @@ public:
   /// @brief Getter for current data length.
   /// @return Number of samples currently in data.
   uint32_t get_length();
+
+  /// @brief Cumulative overflow retirement count; caller owns queue locking.
+  uint64_t get_dropped_samples() const;
 
   /// @brief Locker for mutex.
   /// @return Void.

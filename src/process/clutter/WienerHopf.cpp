@@ -1,170 +1,209 @@
 #include "WienerHopf.h"
+#include "BulkRotation.h"
+#include "CorrelationWorker.h"
 #include "process/meta/FftLength.h"
-#include <complex>
+#include <armadillo>
+#include <fftw3.h>
+#include <algorithm>
+#include <array>
 #include <iostream>
-#include <vector>
+#include <limits>
+#include <mutex>
+#include <stdexcept>
 
-// constructor
-WienerHopf::WienerHopf(int32_t _delayMin, int32_t _delayMax, uint32_t _nSamples)
-{
-  // input
-  delayMin = _delayMin;
-  delayMax = _delayMax;
-  const int64_t taps = int64_t(delayMax) - delayMin;
-  if (!_nSamples || taps <= 0 || uint64_t(taps) > _nSamples)
-    throw std::invalid_argument("Clutter filter needs a non-empty half-open delay range no longer than the CPI");
-  nBins = static_cast<uint32_t>(taps);
-  nSamples = _nSamples;
-  // Pad only the linear convolution; keep taps and circular correlations unchanged.
-  nFilter = blah2::nextFastFftLength(uint64_t(nSamples) + nBins + 1);
-
-  // initialise data
-  A = arma::cx_mat(nBins, nBins);
-  a = arma::cx_vec(nBins);
-  b = arma::cx_vec(nBins);
-  w = arma::cx_vec(nBins);
-
-  // compute FFTW plans in constructor
-  dataX = new std::complex<double>[nSamples];
-  dataY = new std::complex<double>[nSamples];
-  dataOutX = new std::complex<double>[nSamples];
-  dataOutY = new std::complex<double>[nSamples];
-  dataA = new std::complex<double>[nSamples];
-  dataB = new std::complex<double>[nSamples];
-  filtX = new std::complex<double>[nFilter];
-  filtW = new std::complex<double>[nFilter];
-  filt = new std::complex<double>[nFilter];
-  fftX = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataX),
-                          reinterpret_cast<fftw_complex *>(dataOutX), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftY = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataY),
-                          reinterpret_cast<fftw_complex *>(dataOutY), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftA = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataA),
-                          reinterpret_cast<fftw_complex *>(dataA), FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftB = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataB),
-                          reinterpret_cast<fftw_complex *>(dataB), FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftFiltX = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filtX),
-                              reinterpret_cast<fftw_complex *>(filtX), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftFiltW = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filtW),
-                              reinterpret_cast<fftw_complex *>(filtW), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftFilt = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filt),
-                             reinterpret_cast<fftw_complex *>(filt), FFTW_BACKWARD, FFTW_ESTIMATE);
+namespace {
+using Complex = std::complex<double>;
+struct BufferFree { void operator()(Complex* p) const { fftw_free(p); } };
+using Buffer = std::unique_ptr<Complex, BufferFree>;
+struct PlanFree { void operator()(fftw_plan_s* p) const { if (p) fftw_destroy_plan(p); } };
+using Plan = std::unique_ptr<fftw_plan_s, PlanFree>;
+Buffer allocate(uint64_t count) {
+  if (!count || count > std::numeric_limits<size_t>::max() / sizeof(Complex))
+    throw std::invalid_argument("Clutter workspace exceeds addressable storage");
+  Buffer result(static_cast<Complex*>(fftw_malloc(count * sizeof(Complex))));
+  if (!result) throw std::bad_alloc();
+  return result;
+}
+fftw_complex* fftData(const Buffer& p) { return reinterpret_cast<fftw_complex*>(p.get()); }
+Plan checked(fftw_plan p) {
+  if (!p) throw std::runtime_error("Could not create clutter FFT plan");
+  return Plan(p);
+}
+uint32_t blockLength(uint64_t minimum, uint32_t floor) {
+  uint32_t value = floor;
+  while (value < minimum) {
+    if (value > uint32_t(INT32_MAX) / 2) throw std::invalid_argument("Clutter block is too large");
+    value *= 2;
+  }
+  return value;
+}
+std::mutex& plannerMutex() { static std::mutex mutex; return mutex; }
+struct RestoreThreads {
+  const int previous = fftw_planner_nthreads();
+  ~RestoreThreads() { fftw_plan_with_nthreads(previous); }
+};
 }
 
-WienerHopf::~WienerHopf()
-{
-  fftw_destroy_plan(fftX);
-  fftw_destroy_plan(fftY);
-  fftw_destroy_plan(fftA);
-  fftw_destroy_plan(fftB);
-  fftw_destroy_plan(fftFiltX);
-  fftw_destroy_plan(fftFiltW);
-  fftw_destroy_plan(fftFilt);
-}
+// Blocked correlation and FIR follow the CPU algorithms contributed in
+// offworldlabs/blah2-arm PR67. Keep dense FP64 Cholesky and VectorWarp's thread
+// budget; this does not import its V3D backend or experimental fast solver.
+struct WienerHopf::Impl {
+  int32_t delayMin;
+  uint32_t samples, taps, correlationLength, filterLength, lanes;
+  bool blockedCorrelation, blockedFilter;
+  arma::cx_mat matrix;
+  arma::cx_vec a, b, weights;
+  Buffer x, y, outX, outY, fullA, fullB, correlation, correlationA, correlationB;
+  Buffer filterX, filterW, filterOut;
+  // Declared after buffers so plan destruction precedes storage release.
+  std::array<Plan, 4> fullPlans;
+  std::array<Plan, 3> correlationPlans, filterPlans;
 
-bool WienerHopf::process(IqData *x, IqData *y)
-{
-  uint32_t i, j;
-  const auto& xData = x->view_data();
-  const auto& yData = y->view_data();
-
-  // change deque to std::complex
-  for (i = 0; i < nSamples; i++)
-  {
-    const int64_t shifted = (int64_t(i) - delayMin) % int64_t(nSamples);
-    dataX[i] = xData[shifted < 0 ? shifted + nSamples : shifted];
-    dataY[i] = yData[i];
-  }
-
-  // pre-compute FFT of signals
-  fftw_execute(fftX);
-  fftw_execute(fftY);
-
-  // auto-correlation matrix A
-  for (i = 0; i < nSamples; i++)
-  {
-    dataA[i] = (dataOutX[i] * std::conj(dataOutX[i]));
-  }
-  fftw_execute(fftA);
-  for (i = 0; i < nBins; i++)
-  {
-    a[i] = std::conj(dataA[i]) / (double)nSamples;
-  }
-  A = arma::toeplitz(a);
-
-  // conjugate upper diagonal as arma does not
-  for (i = 0; i < nBins; i++)
-  {
-    for (j = 0; j < nBins; j++)
-    {
-      if (i > j)
-      {
-        A(i, j) = std::conj(A(i, j));
+  Impl(int32_t first, int32_t last, uint32_t count) : delayMin(first), samples(count) {
+    const int64_t width = int64_t(last) - first;
+    if (!count || count > uint32_t(INT32_MAX) || width <= 0 || uint64_t(width) > count)
+      throw std::invalid_argument("Clutter filter needs a non-empty half-open delay range no longer than the CPI");
+    taps = uint32_t(width);
+    correlationLength = blockLength(uint64_t(taps) * 2, 4096);
+    const uint32_t filterBlock = blockLength(uint64_t(taps) * 2, 1024);
+    blockedCorrelation = uint64_t(count) >= uint64_t(correlationLength) * 4;
+    blockedFilter = uint64_t(count) >= uint64_t(filterBlock) * 4;
+    filterLength = blockedFilter ? filterBlock : blah2::nextFastFftLength(uint64_t(count) + taps + 1);
+    lanes = blockedFilter ? 4 : 1;
+    matrix.set_size(taps, taps); a.set_size(taps); b.set_size(taps); weights.set_size(taps);
+    x = allocate(count); y = allocate(count);
+    filterX = allocate(uint64_t(filterLength) * lanes);
+    filterW = allocate(filterLength);
+    filterOut = allocate(uint64_t(filterLength) * lanes);
+    if (blockedCorrelation) {
+      correlation = allocate(uint64_t(correlationLength) * 3);
+      correlationA = allocate(correlationLength); correlationB = allocate(correlationLength);
+    } else {
+      outX = allocate(count); outY = allocate(count);
+      fullA = allocate(count); fullB = allocate(count);
+    }
+    std::lock_guard<std::mutex> lock(plannerMutex());
+    static std::once_flag initialized;
+    static bool ready = false;
+    std::call_once(initialized, [] { ready = fftw_init_threads() != 0; });
+    if (!ready) throw std::runtime_error("FFTW thread initialization failed");
+    RestoreThreads restore;
+    try {
+      if (blockedCorrelation) {
+        fftw_plan_with_nthreads(1);
+        int length = int(correlationLength);
+        correlationPlans[0] = checked(fftw_plan_many_dft(1, &length, 3,
+          fftData(correlation), nullptr, 1, length, fftData(correlation), nullptr, 1, length,
+          FFTW_FORWARD, FFTW_ESTIMATE));
+        correlationPlans[1] = checked(fftw_plan_dft_1d(length, fftData(correlationA), fftData(correlationA), FFTW_BACKWARD, FFTW_ESTIMATE));
+        correlationPlans[2] = checked(fftw_plan_dft_1d(length, fftData(correlationB), fftData(correlationB), FFTW_BACKWARD, FFTW_ESTIMATE));
+      } else {
+        fullPlans[0] = checked(fftw_plan_dft_1d(count, fftData(x), fftData(outX), FFTW_FORWARD, FFTW_ESTIMATE));
+        fullPlans[1] = checked(fftw_plan_dft_1d(count, fftData(y), fftData(outY), FFTW_FORWARD, FFTW_ESTIMATE));
+        fullPlans[2] = checked(fftw_plan_dft_1d(count, fftData(fullA), fftData(fullA), FFTW_BACKWARD, FFTW_ESTIMATE));
+        fullPlans[3] = checked(fftw_plan_dft_1d(count, fftData(fullB), fftData(fullB), FFTW_BACKWARD, FFTW_ESTIMATE));
       }
+      fftw_plan_with_nthreads(blockedFilter ? 1 : restore.previous);
+      int length = int(filterLength);
+      filterPlans[0] = checked(fftw_plan_many_dft(1, &length, lanes,
+        fftData(filterX), nullptr, 1, length, fftData(filterX), nullptr, 1, length, FFTW_FORWARD, FFTW_ESTIMATE));
+      filterPlans[1] = checked(fftw_plan_dft_1d(length, fftData(filterW), fftData(filterW), FFTW_FORWARD, FFTW_ESTIMATE));
+      filterPlans[2] = checked(fftw_plan_many_dft(1, &length, lanes,
+        fftData(filterOut), nullptr, 1, length, fftData(filterOut), nullptr, 1, length, FFTW_BACKWARD, FFTW_ESTIMATE));
+    } catch (...) {
+      // Exceptional member cleanup must also serialize FFTW plan destruction.
+      for (auto& p : fullPlans) p.reset();
+      for (auto& p : correlationPlans) p.reset();
+      for (auto& p : filterPlans) p.reset();
+      throw;
     }
   }
-
-  // cross-correlation vector b
-  for (i = 0; i < nSamples; i++)
-  {
-    dataB[i] = (dataOutY[i] * std::conj(dataOutX[i]));
+  ~Impl() {
+    std::lock_guard<std::mutex> lock(plannerMutex());
+    for (auto& p : fullPlans) p.reset();
+    for (auto& p : correlationPlans) p.reset();
+    for (auto& p : filterPlans) p.reset();
   }
-  fftw_execute(fftB);
-  for (i = 0; i < nBins; i++)
-  {
-    b[i] = dataB[i] / (double)nSamples;
+  bool process(IqData* reference, IqData* surveillance) {
+    if (!reference || !surveillance || reference->get_length() != samples || surveillance->get_length() != samples)
+      throw std::invalid_argument("Clutter input length differs from CPI");
+    vectorwarp_clutter::copy_rotation(reference->view_data(), samples, delayMin, x.get());
+    std::copy_n(surveillance->view_data().begin(), samples, y.get());
+    if (blockedCorrelation) {
+      std::fill_n(correlationA.get(), correlationLength, Complex{});
+      std::fill_n(correlationB.get(), correlationLength, Complex{});
+      const uint32_t hop = correlationLength - taps + 1;
+      for (uint64_t begin = 0; begin < samples; begin += hop) {
+        vectorwarp_clutter::correlation_block(x.get(), y.get(), samples, taps,
+          correlationLength, begin, correlationPlans[0].get(), correlation.get());
+        vectorwarp_clutter::accumulate_correlation(correlation.get(), correlationLength, correlationA.get(), correlationB.get());
+      }
+      fftw_execute(correlationPlans[1].get()); fftw_execute(correlationPlans[2].get());
+      for (uint32_t i = 0; i < taps; ++i) {
+        a[i] = std::conj(correlationA.get()[i]) / double(correlationLength);
+        b[i] = correlationB.get()[i] / double(correlationLength);
+      }
+    } else {
+      fftw_execute(fullPlans[0].get()); fftw_execute(fullPlans[1].get());
+      for (uint32_t i = 0; i < samples; ++i) {
+        fullA.get()[i] = outX.get()[i] * std::conj(outX.get()[i]);
+        fullB.get()[i] = outY.get()[i] * std::conj(outX.get()[i]);
+      }
+      fftw_execute(fullPlans[2].get()); fftw_execute(fullPlans[3].get());
+      for (uint32_t i = 0; i < taps; ++i) {
+        a[i] = std::conj(fullA.get()[i]) / double(samples);
+        b[i] = fullB.get()[i] / double(samples);
+      }
+    }
+    // Zero-lag autocorrelation is sum(norm(x)), hence exactly real. The
+    // blocked FFT reduction can leave a small imaginary rounding residue at
+    // raw ADC amplitudes; it must not become an imaginary matrix diagonal.
+    a[0] = Complex(a[0].real(), 0);
+    matrix = arma::toeplitz(a);
+    for (uint32_t row = 0; row < taps; ++row)
+      for (uint32_t col = 0; col < row; ++col) matrix(row,col) = std::conj(matrix(row,col));
+    if (!arma::chol(matrix, matrix)) {
+      std::cerr << "Chol decomposition failed, skip clutter filter\n"; return false;
+    }
+    if (!arma::solve(weights, arma::trimatu(matrix), arma::solve(arma::trimatl(arma::trans(matrix)), b))) {
+      std::cerr << "Solve failed, skip clutter filter\n"; return false;
+    }
+    std::copy_n(weights.memptr(), taps, filterW.get());
+    std::fill(filterW.get() + taps, filterW.get() + filterLength, Complex{});
+    fftw_execute(filterPlans[1].get());
+    const uint32_t hop = blockedFilter ? filterLength - taps + 1 : samples;
+    for (uint64_t base = 0; base < samples; base += uint64_t(lanes) * hop) {
+      for (uint32_t lane = 0; lane < lanes; ++lane) {
+        Complex* slot = filterX.get() + uint64_t(lane) * filterLength;
+        const int64_t first = int64_t(base) + int64_t(lane) * hop - (blockedFilter ? taps - 1 : 0);
+        const int64_t lower = std::max<int64_t>(0, first);
+        const int64_t upper = std::min<int64_t>(samples, first + filterLength);
+        if (lower >= upper) { std::fill_n(slot, filterLength, Complex{}); continue; }
+        const size_t left = lower - first, count = upper - lower;
+        std::fill_n(slot, left, Complex{});
+        std::copy(x.get() + lower, x.get() + upper, slot + left);
+        std::fill(slot + left + count, slot + filterLength, Complex{});
+      }
+      fftw_execute(filterPlans[0].get());
+      for (uint32_t lane = 0; lane < lanes; ++lane)
+        for (uint32_t i = 0; i < filterLength; ++i) {
+          const uint64_t at = uint64_t(lane) * filterLength + i;
+          filterOut.get()[at] = filterX.get()[at] * filterW.get()[i];
+        }
+      fftw_execute(filterPlans[2].get());
+      for (uint32_t lane = 0; lane < lanes; ++lane) {
+        const uint64_t begin = base + uint64_t(lane) * hop;
+        if (begin >= samples) break;
+        const uint32_t count = std::min<uint64_t>(hop, samples - begin);
+        const Complex* valid = filterOut.get() + uint64_t(lane) * filterLength + (blockedFilter ? taps - 1 : 0);
+        for (uint32_t i = 0; i < count; ++i) y.get()[begin+i] -= valid[i] / double(filterLength);
+      }
+    }
+    surveillance->replace(std::deque<Complex>(y.get(), y.get() + samples));
+    return true;
   }
-
-  // compute weights
-  success = arma::chol(A, A);
-  if (!success)
-  {
-    std::cerr << "Chol decomposition failed, skip clutter filter" << std::endl;
-    return false;
-  }
-  success = arma::solve(w, arma::trimatu(A), arma::solve(arma::trimatl(arma::trans(A)), b));
-  if (!success)
-  {
-    std::cerr << "Solve failed, skip clutter filter" << std::endl;
-    return false;
-  }
-
-  // assign and pad x
-  for (i = 0; i < nSamples; i++)
-  {
-    filtX[i] = dataX[i];
-  }
-  for (i = nSamples; i < nFilter; i++)
-  {
-    filtX[i] = {0, 0};
-  }
-
-  // assign and pad w
-  for (i = 0; i < nBins; i++)
-  {
-    filtW[i] = w[i];
-  }
-  for (i = nBins; i < nFilter; i++)
-  {
-    filtW[i] = {0, 0};
-  }
-
-  // compute fft
-  fftw_execute(fftFiltX);
-  fftw_execute(fftFiltW);
-
-  // compute convolution/filter
-  for (i = 0; i < nFilter; i++)
-  {
-    filt[i] = (filtW[i] * filtX[i]);
-  }
-  fftw_execute(fftFilt);
-
-  // update surveillance signal
-  y->clear();
-  for (i = 0; i < nSamples; i++)
-  {
-    y->push_back(dataY[i] - (filt[i] / (double)nFilter));
-  }
-
-  return true;
-}
+};
+WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples) : impl_(std::make_unique<Impl>(first,last,samples)) {}
+WienerHopf::~WienerHopf() = default;
+uint32_t WienerHopf::filter_fft_length() const { return impl_->filterLength; }
+bool WienerHopf::process(IqData* x, IqData* y) { return impl_->process(x,y); }

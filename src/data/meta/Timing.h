@@ -35,6 +35,8 @@ private:
   blah2::AccelerationStatus clutterAcceleration;
   bool clutterGpuExecuted = false;
   bool clutterCpuExecuted = false;
+  std::vector<uint64_t> captureBacklogSamples;
+  std::vector<uint64_t> captureDroppedSamples;
 
 public:
   /// @brief Constructor.
@@ -58,6 +60,11 @@ public:
     clutterAcceleration = value;
     clutterGpuExecuted = gpuExecuted;
     clutterCpuExecuted = cpuExecuted;
+  }
+  void set_capture_queues(std::vector<uint64_t> backlog,
+    std::vector<uint64_t> dropped) {
+    captureBacklogSamples = std::move(backlog);
+    captureDroppedSamples = std::move(dropped);
   }
 
   /// @brief Append the map to a save file.

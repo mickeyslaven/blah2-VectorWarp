@@ -32,6 +32,8 @@ uint32_t IqData::get_length()
   return data->size();
 }
 
+uint64_t IqData::get_dropped_samples() const { return droppedSamples; }
+
 void IqData::lock()
 {
   mutex_lock.lock();
@@ -109,6 +111,7 @@ void IqData::replace(std::deque<std::complex<double>>&& samples)
 
 void IqData::push_back(std::complex<double> sample)
 {
+  if (!n) { ++droppedSamples; return; }
   if (data->size() < n)
   {
     data->push_back(sample);
@@ -116,6 +119,7 @@ void IqData::push_back(std::complex<double> sample)
   else
   {
     data->pop_front();
+    ++droppedSamples;
     data->push_back(sample);
   }
 }
@@ -130,8 +134,10 @@ void IqData::append_unlocked(const std::complex<float>* samples, std::size_t cou
 {
   if (!count) return;
   if (!samples) throw std::invalid_argument("Null IQ sample block");
+  if (!n) { droppedSamples += count; return; }
   if (count >= n)
   {
+    droppedSamples += data->size() + count - n;
     data->clear();
     data->insert(data->end(), samples + (count - n), samples + count);
     return;
@@ -139,7 +145,9 @@ void IqData::append_unlocked(const std::complex<float>* samples, std::size_t cou
   const std::size_t required = data->size() + count;
   if (required > n)
   {
-    data->erase(data->begin(), data->begin() + (required - n));
+    const std::size_t retired = required - n;
+    data->erase(data->begin(), data->begin() + retired);
+    droppedSamples += retired;
   }
   data->insert(data->end(), samples, samples + count);
 }

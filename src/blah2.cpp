@@ -489,6 +489,13 @@ try
           ready = ready && buffer->get_length() >= nSamples;
         if (ready)
         {
+          std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
+          captureBacklogSamples.reserve(captureBuffers.size());
+          captureDroppedSamples.reserve(captureBuffers.size());
+          for (auto* buffer : captureBuffers) {
+            captureBacklogSamples.push_back(buffer->get_length());
+            captureDroppedSamples.push_back(buffer->get_dropped_samples());
+          }
           // Keep ReplayPlayer's EOF/loop drain from observing an empty queue
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
@@ -659,6 +666,8 @@ try
 
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
+          timing->set_capture_queues(std::move(captureBacklogSamples),
+            std::move(captureDroppedSamples));
           timing->set_acceleration(acceleration.status());
           if (isClutter)
             timing->set_clutter_acceleration(acceleration.clutterStatus(),

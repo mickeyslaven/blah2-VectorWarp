@@ -1,5 +1,7 @@
 #include "process/clutter/WienerHopf.h"
 #include "process/meta/FftLength.h"
+#include <armadillo>
+#include <fftw3.h>
 #include <iostream>
 #include <random>
 #include <stdexcept>
@@ -16,11 +18,17 @@ static bool fast(uint32_t value) {
   return value == 1 || value == 11 || value == 13;
 }
 
-static void run(unsigned samples, int first, int last) {
+static void run(unsigned samples, int first, int last, double scale = 1) {
   const unsigned taps = last - first;
   IqData reference(samples), surveillance(samples);
+  const int threadsBefore = fftw_planner_nthreads();
   WienerHopf filter(first, last, samples);
-  require(filter.filter_fft_length() == blah2::nextFastFftLength(samples + taps + 1),
+  require(fftw_planner_nthreads() == threadsBefore, "Clutter changed the global FFT thread budget");
+  uint32_t block = 1024;
+  while (block < uint64_t(taps) * 2) block *= 2;
+  const uint32_t expectedLength = samples >= uint64_t(block) * 4 ? block :
+    blah2::nextFastFftLength(samples + taps + 1);
+  require(filter.filter_fft_length() == expectedLength,
     "Filter did not use the selected padded length");
   std::mt19937 rng(9211);
   std::normal_distribution<double> random;
@@ -29,12 +37,12 @@ static void run(unsigned samples, int first, int last) {
     surveillance.clear();
     arma::cx_vec x(samples), y(samples);
     for (unsigned i = 0; i < samples; ++i)
-      reference.push_back({random(rng), random(rng)});
+      reference.push_back({scale * random(rng), scale * random(rng)});
     const auto originalReference = reference.view_data();
     for (unsigned i = 0; i < samples; ++i) {
       const int64_t shifted = (int64_t(i) - first) % samples;
       x[i] = originalReference[shifted < 0 ? shifted + samples : shifted];
-      y[i] = x[i] * Complex(.7, .2) + Complex(.2 * random(rng), .2 * random(rng));
+      y[i] = x[i] * Complex(.7, .2) + scale * Complex(.2 * random(rng), .2 * random(rng));
       surveillance.push_back(y[i]);
     }
 
@@ -57,7 +65,7 @@ static void run(unsigned samples, int first, int last) {
       Complex expected = y[i];
       for (unsigned tap = 0; tap < taps && tap <= i; ++tap)
         expected -= weights[tap] * x[i - tap];
-      require(std::abs(expected - surveillance.view_data()[i]) < 1e-9,
+      require(std::abs(expected - surveillance.view_data()[i]) < scale * 1e-9,
         "Padded clutter differs from direct convolution");
     }
     require(reference.view_data() == originalReference, "Reference mutated");
@@ -68,6 +76,8 @@ static void run(unsigned samples, int first, int last) {
 
 int main() {
   try {
+    require(fftw_init_threads() != 0, "FFTW thread initialization failed");
+    fftw_plan_with_nthreads(2);
     // Independently scan a bounded range to check both admissibility and
     // minimality, including lengths containing repeated factors of 11/13.
     for (uint32_t minimum = 1; minimum <= 4096; ++minimum) {
@@ -92,6 +102,10 @@ int main() {
     run(128, -2, -1);
     run(31, -2, 2); // Already-fast convolution length (36).
     run(32, 0, 32); // Tap count equal to CPI sample count.
+    run(5000, 3, 34); // Bounded overlap-save FIR, including a partial tail.
+    run(16384, 3, 34); // Exact blocked-correlation threshold.
+    run(20000, -3, 28); // Bounded circular correlation and FIR partial blocks.
+    run(20000, -10, 400, 8192); // Realistic ADC units and the Pi's tap count.
     for (const auto& bounds : {std::pair<int, int>{0, 0}, {5, 2}, {0, 65},
                               {INT32_MIN, INT32_MAX}}) {
       bool rejected = false;
@@ -107,6 +121,13 @@ int main() {
     for (unsigned i = 0; i < 64; ++i) { x.push_back({0, 0}); y.push_back({1, 0}); }
     const auto original = y.view_data();
     WienerHopf filter(0, 8, 64);
+    bool nullRejected = false;
+    try { filter.process(nullptr, &y); } catch (const std::invalid_argument&) { nullRejected = true; }
+    require(nullRejected, "Null clutter input accepted");
+    IqData shortInput(1); shortInput.push_back({1, 0});
+    bool shortRejected = false;
+    try { filter.process(&shortInput, &y); } catch (const std::invalid_argument&) { shortRejected = true; }
+    require(shortRejected && y.view_data() == original, "Short clutter input accepted or output changed");
     require(!filter.process(&x, &y) && y.view_data() == original,
       "Singular clutter input was accepted or changed");
   } catch (const std::exception& error) {

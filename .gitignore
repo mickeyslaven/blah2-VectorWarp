@@ -24,3 +24,5 @@ bench/*.jsonl
 bench/*.maps
 bench/*receipt*.json
 bench/*session*.json
+
+node_modules/

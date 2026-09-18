@@ -100,15 +100,13 @@ private:
   double cpi;
 
   /// @brief FFTW plans for ambiguity processing.
-  fftw_plan fftXi;
-  fftw_plan fftYi;
-  fftw_plan fftZi;
-  fftw_plan fftDoppler;
+  fftw_plan fftXi = nullptr;
+  fftw_plan fftZi = nullptr;
+  fftw_plan fftDoppler = nullptr;
 
   /// @brief FFTW storage for ambiguity processing.
   /// @{
   std::vector<Complex> dataXi;
-  std::vector<Complex> dataYi;
   std::vector<Complex> dataZi;
   std::vector<Complex> dataDoppler;
   /// @}

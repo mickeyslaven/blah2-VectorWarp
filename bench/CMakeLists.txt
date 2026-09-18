@@ -49,7 +49,18 @@ add_executable(testMchqReader TestReader.cpp ${PROJECT_ROOT}/src/capture/kraken/
 target_include_directories(testMchqReader PRIVATE ${PROJECT_ROOT}/src)
 target_compile_features(testMchqReader PRIVATE cxx_std_17)
 add_test(NAME recordedIqReader COMMAND testMchqReader)
+add_executable(testRawReader TestRawReader.cpp ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
+target_include_directories(testRawReader PRIVATE ${PROJECT_ROOT}/src)
+target_compile_features(testRawReader PRIVATE cxx_std_17)
+add_test(NAME recordedRawIqReader COMMAND testRawReader)
+add_test(NAME recordedOutputComparison COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_compare_outputs.py)
 add_test(NAME recordedBenchmarkContract COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test_contract.py
   $<TARGET_FILE:bench-upstream> $<TARGET_FILE:bench-fast>
   ${CMAKE_CURRENT_SOURCE_DIR}/profile-example.json)
+
+# This launches only a local fake processor and loopback peers; never an SDR.
+add_test(NAME liveRspduoHarnessOffline COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_live_rspduo_check.py)
+set_tests_properties(liveRspduoHarnessOffline PROPERTIES TIMEOUT 60)

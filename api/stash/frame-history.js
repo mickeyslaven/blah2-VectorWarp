@@ -62,7 +62,8 @@ function iqdata() {
 function timing() {
   return history(20, () => true, (frames, frame) => {
     const keys = [...new Set(frames.flatMap(Object.keys))].filter(key =>
-      !['uptime', 'nCpi', 'frameTimestamp', 'acceleration'].includes(key));
+      !['uptime', 'nCpi', 'frameTimestamp', 'acceleration'].includes(key) &&
+      frames.some(item => typeof item[key] === 'number' && Number.isFinite(item[key])));
     const result = {frameTimestamp: frame.timestamp};
     for (const key of keys) result[key] = frames.map(item => item[key] ?? null);
     return result;

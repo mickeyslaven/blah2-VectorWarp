@@ -1,9 +1,13 @@
 # Pi ARM port review — 2026-09-18
 
-Initial source review is complete. No DSP, capture, API, installed service, or
-OS change has been made in this stage. The separate implementation branch is
-`codex/pi-arm-improvements`, based on VectorWarp main
+This is the historical source review that preceded implementation. The port,
+Pi benchmarks, regression checks, and live-test limits are documented in
+[PI ARM port results — 2026-09-18](PI_ARM_PORT_RESULTS_20260918.md).
+
+Work is isolated on `codex/pi-arm-improvements`, based on VectorWarp main
 `a1fe4cdd647030823e6ae20813717ac0081e09cd`. The active macOS checkout is separate.
+The observations below describe the initial review stage, before DSP, capture,
+or API changes were made.
 
 ## Sources and limits
 
