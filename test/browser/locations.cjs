@@ -67,8 +67,9 @@ const server = http.createServer((request, response) => {
     for (const width of [1200, 1050, 1400]) await page.setViewportSize({width, height: 900});
     await page.waitForFunction(() => {
       const graph = document.getElementById('data');
+      // Autosizing leaves layout.width unset; _fullLayout holds rendered dimensions.
       return graph?._fullLayout?.mapbox?._subplot?.map?.isStyleLoaded() &&
-        graph.layout.width === Math.floor(graph.getBoundingClientRect().width);
+        graph._fullLayout.width === Math.floor(graph.getBoundingClientRect().width);
     });
     stage = 'live refresh and final assertions';
     await page.waitForTimeout(1200); // More than one live refresh after the resize.
