@@ -101,7 +101,7 @@ setTimeout(() => {
   if (view === 'locations' && (!lastPlot?.layout?.mapbox || !lastPlot.layout.uirevision))
     errors.push('location map viewport is not persistent');
   if (view === 'locations' && mode === 'rich' &&
-      !lastPlot?.traces?.some(trace => trace.name === 'ADS-B evaluation truth' &&
+      !lastPlot?.traces?.some(trace => trace.name === 'ADS-B' &&
         Number(trace.marker?.size) >= 24))
     errors.push('ADS-B plane symbols were not rendered');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))

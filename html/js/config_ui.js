@@ -5,14 +5,14 @@ const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],
   'network': ['Connectivity', 'Service addresses and ports'],
-  'truth': ['ADS-B planes', 'Optional aircraft overlays'],
+  'truth': ['ADS-B', 'Aircraft overlay'],
   'location': ['Sites', 'Receiver and illuminator positions'],
-  'save': ['Recording', 'Data products written to disk'],
+  'save': ['Recording', 'Files and recording folder'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
-  'capture.fc': ['Center frequency', 'Tuned frequency, split into MHz, kHz and Hz to prevent digit mistakes.'],
+  'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
   'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
-  'capture.device.type': ['Receiver type', 'Receiver backends built into this VectorWarp version.'],
-  'capture.device.array_geometry': ['Antenna layout', 'Optional operator record; physical agreement unverified.'],
+  'capture.device.type': ['Receiver type', 'Choose your SDR.'],
+  'capture.device.array_geometry': ['Antenna layout', 'Record your layout; this does not configure the receiver.'],
   'capture.device.channel_count': ['Input channels', 'Coherent Kraken channels sent by HeIMDALL. Allowed: 2–8.'],
   'capture.device.reference_channel': ['Reference channel', 'Input carrying the direct transmitter signal in dedicated mode.'],
   'capture.device.surveillance_channels': ['Radar inputs', 'Inputs searched for reflected signals. Select at least one.'],
@@ -20,7 +20,7 @@ const CONFIG_META = {
   'capture.device.heimdall.host': ['HeIMDALL host', 'Computer running HeIMDALL.'],
   'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
   'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
-  'capture.device.heimdall.gain': ['Suite gain', 'Keep, automatic, or manual Suite gain. Manual changes require fresh status readback.'],
+  'capture.device.heimdall.gain': ['Receiver gain', 'Keep, automatic, or manual dB. Manual gain is checked against Suite V2 status.'],
   'capture.device.address': ['USRP address', 'UHD device address or hostname'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
@@ -41,15 +41,15 @@ const CONFIG_META = {
   'capture.replay.file': ['Replay file', 'Full path to the recording used when replay is enabled.'],
   'capture.replay.format': ['Recording format', 'Auto detects portable recordings; select a legacy format only when needed.'],
   'capture.replay.legacy_block_samples': ['Legacy USRP block samples', 'Required only for old USRP blocks; use the original receiver block size.'],
-  'process.performance': ['Performance', 'CPU concurrency controls'],
+  'process.performance': ['Performance', 'CPU and GPU settings'],
   'process.performance.surveillance_workers': ['Surveillance workers', 'Auto chooses how many radar inputs to process in parallel.'],
   'process.performance.fft_threads': ['FFT threads per worker', 'Auto shares available CPU capacity with the parallel workers. Applies after restart.'],
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
   'process.data': ['Frame timing', ''],
-  'process.data.cpi': ['Frame interval', 'Seconds per radar frame and display update. Applies after restart.'],
+  'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
   'process.data.buffer': ['Buffered intervals', 'Number of processing intervals held in memory. Minimum 1; start with 2.'],
   'process.data.overlap': ['Frame overlap', 'Not used by this processor. Frames do not overlap.'],
-  'process.ambiguity': ['Search area', 'Range and motion limits calculated in each frame.'],
+  'process.ambiguity': ['Delay & Doppler', 'Limits of the radar map'],
   'process.ambiguity.delayMin': ['Minimum delay bin', 'First extra-path sample shown in the radar map.'],
   'process.ambiguity.delayMax': ['Maximum delay bin', 'Last extra-path sample shown in the radar map.'],
   'process.ambiguity.dopplerMin': ['Minimum Doppler', 'Lower Doppler limit in Hz'],
@@ -66,7 +66,7 @@ const CONFIG_META = {
   'process.reference_synthesis.power_iterations': ['Solver iterations', 'More iterations improve the reference estimate but use more CPU.'],
   'process.reference_synthesis.covariance_smoothing': ['Reference smoothing', 'Weight given to the previous estimate, from 0 to 1.'],
   'process.reference_synthesis.diagonal_loading': ['Reference stability', 'Small value that keeps the reference solver stable.'],
-  'process.detection': ['Detection', 'Turns strong radar-map returns into target candidates.'],
+  'process.detection': ['Detection', 'Find targets in the radar map'],
   'process.detection.enable': ['Detect targets', 'Create detections from the radar map.'],
   'process.detection.pfa': ['False-alarm probability', 'Lower values reduce false detections but may miss weak targets.'],
   'process.detection.nGuard': ['Guard cells per side', 'Nearby cells excluded from the noise estimate.'],
@@ -76,7 +76,7 @@ const CONFIG_META = {
   'process.detection.nCentroid': ['Position window', 'Cells used to refine each detection position.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
   'process.tracker.enable': ['Track targets', 'Run the multi-frame tracker'],
-  'process.tracker.initiate': ['Track confirmation', 'Evidence required to start a track'],
+  'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
   'process.tracker.initiate.maxAcc': ['Maximum Doppler acceleration', 'Largest Doppler change allowed when starting a track, in Hz/s.'],
@@ -92,8 +92,8 @@ const CONFIG_META = {
   'network.ports.timing': ['Timing port', 'Processing-performance stream'],
   'network.ports.iqdata': ['IQ metadata port', 'Radio-sample metadata stream'],
   'network.ports.config': ['Configuration port', 'Reserved for configuration control; it must remain unique.'],
-  'truth.adsb': ['ADS-B planes', 'Aircraft overlay and comparison feed'],
-  'truth.adsb.enabled': ['Show ADS-B planes', 'Show configured aircraft overlays'],
+  'truth.adsb': ['ADS-B', 'Aircraft overlay and radar comparison'],
+  'truth.adsb.enabled': ['Show ADS-B', 'Display aircraft from the ADS-B feed'],
   'truth.adsb.tar1090': ['ADS-B source', 'Local decoder or server base address; data/aircraft.json is added automatically.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
@@ -110,8 +110,8 @@ const CONFIG_META = {
   'location.tx.longitude': ['Longitude', 'Decimal degrees east'],
   'location.rx.altitude': ['Altitude', 'Meters above mean sea level'],
   'location.tx.altitude': ['Altitude', 'Meters above mean sea level'],
-  'location.rx.name': ['Site name', 'Human-readable receiver name'],
-  'location.tx.name': ['Site name', 'Human-readable illuminator name'],
+  'location.rx.name': ['Site name', 'Receiver location name'],
+  'location.tx.name': ['Site name', 'Transmitter location name'],
   'save.iq': ['Legacy IQ flag', 'Spacebar recording controls raw IQ; this legacy value is preserved.'],
   'save.map': ['Record radar maps', 'Write processed radar maps to disk'],
   'save.detection': ['Record detections', 'Write detected targets to disk'],
@@ -373,9 +373,9 @@ function words(value) {
     .replace(/_/g, ' ').replace(/^./, letter => letter.toUpperCase());
 }
 
-function metadata(path) {
+function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
   const key = path.join('.');
-  if (key === 'capture.device.serial' && activeConfig?.capture?.device?.type === 'RspDuo')
+  if (key === 'capture.device.serial' && receiverType === 'RspDuo')
     return ['RSPduo serial', 'Optional exact selection; blank only with one matching receiver.'];
   if (CONFIG_META[key]) return CONFIG_META[key];
   const raw = path[path.length - 1];
@@ -972,7 +972,7 @@ function updateDirtyState() {
   }
   const state = document.getElementById('config-state');
   if (state) state.textContent = pendingLiveConfig !== null ?
-    'Saved config changed' : dirty ? 'Unsaved changes' : receiverApplyPending ? 'Application pending / unverified' : 'Matches saved file';
+    'Saved settings changed' : dirty ? 'Unsaved changes' : receiverApplyPending ? 'Apply settings to confirm' : 'Matches saved file';
   window.onbeforeunload = dirty ? () => true : null;
 }
 
@@ -1074,10 +1074,19 @@ function displayFieldErrors(errors) {
   });
 }
 
-function showMessage(message, kind = '') {
+function showMessage(message, kind = '', detail = '') {
   const target = document.getElementById('config-message');
   target.className = `config-message ${kind}`;
   target.textContent = message;
+  if (detail) {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Details';
+    const text = document.createElement('p');
+    text.textContent = detail;
+    details.append(summary, text);
+    target.appendChild(details);
+  }
 }
 
 function formatHertz(value, unit = 'MHz') {
@@ -1097,7 +1106,7 @@ async function refreshUpstreamStatus() {
     const header = document.createElement('div');
     header.className = 'upstream-header';
     const title = document.createElement('strong');
-    title.textContent = 'Saved receiver status';
+    title.textContent = 'Receiver status';
     const badge = document.createElement('span');
     const healthy = status.supported && status.available && status.matched;
     badge.className = `upstream-badge ${healthy ? 'good' :
@@ -1122,7 +1131,7 @@ async function refreshUpstreamStatus() {
     const grid = document.createElement('div');
     grid.className = 'upstream-grid';
     const note = document.createElement('p');
-    note.textContent = 'Compared with the saved config file, not unsaved edits. This does not verify incoming IQ or tracking quality.';
+    note.textContent = 'Receiver-reported settings compared with the saved file, not unsaved edits.';
     target.appendChild(note);
     const rows = [
       ['Frequency', formatHertz(status.expected.centerFrequency),
@@ -1162,7 +1171,7 @@ async function refreshUpstreamStatus() {
       target.appendChild(list);
     }
   } catch (_) {
-    target.innerHTML = '<div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge bad">Unavailable</span></div><p>The VectorWarp API could not check the receiver service.</p>';
+    target.innerHTML = '<div class="upstream-header"><strong>Receiver status</strong><span class="upstream-badge bad">Unavailable</span></div><p>Could not check receiver software.</p>';
   } finally { upstreamPending = false; }
 }
 
@@ -1188,7 +1197,7 @@ async function readRadarState() {
   const response = await configFetch(
     liveApiUrl('/api/system/status'), {cache: 'no-store'});
   if (!response.ok)
-    throw new Error('Radar status endpoint is unavailable.');
+    throw new Error('Cannot read radar status.');
   return response.json();
 }
 
@@ -1203,7 +1212,7 @@ async function monitorRadarRestart(previousState) {
     try {
       state = await readRadarState();
     } catch (_) {
-      setRestartProgress(50, 'Waiting for the VectorWarp API to return…');
+      setRestartProgress(50, 'Reconnecting to VectorWarp…');
     }
     if (state?.restart?.state === 'failed') throw new Error(state.restart.message);
     if (state?.errors?.length) throw new Error(state.errors.join(' '));
@@ -1212,7 +1221,7 @@ async function monitorRadarRestart(previousState) {
     const radarReconnected = state && state.restart?.state === 'command-complete' &&
       state.timestampConnections > state.restart.timestampConnections;
     if ((apiRestarted || radarReconnected) && state.radar === 'receiving' && state.lastFrameAt > started) {
-      setRestartProgress(100, 'Restart completed; new radar frames received.', 'complete');
+      setRestartProgress(100, 'Radar restarted; new frames received.', 'complete');
       return;
     }
     if (apiRestarted && state.radar !== 'receiving' &&
@@ -1229,7 +1238,7 @@ async function monitorRadarRestart(previousState) {
     if (state) setRestartProgress(50, state.restart?.message || 'Waiting for a new radar connection…');
     await wait(600);
   }
-  throw new Error('Settings were saved, but restart and fresh radar data could not be confirmed within 130 seconds. Check VectorWarp service status before retrying.');
+  throw new Error('Settings saved, but restart was not confirmed within 130 seconds. Run vectorwarp status before retrying.');
 }
 
 function upstreamRestartError(status) {
@@ -1246,24 +1255,33 @@ function receiverSaveMessage(result, restarted) {
   const sync = result?.receiverSync;
   if (sync?.receiverType === 'Kraken' &&
       ['synchronized', 'already-matched'].includes(sync.status)) {
-    const confirmed = sync.status === 'synchronized' ?
-      'Suite V2 acknowledged the change and a later status report matched it.' :
-      'Suite V2 status already matched the requested receiver settings.';
+    const confirmed = 'Settings saved. Suite V2 settings confirmed.';
     const lifecycle = restarted ?
-      ' VectorWarp restarted and received new radar frames.' :
-      ' Restart VectorWarp processing and its API to apply the remaining settings.';
-    return `${confirmed}${lifecycle} Hardware serial order and calibration are not independently verified.`;
+      ' Radar restarted; new frames received.' :
+      ' Run vectorwarp restart to apply the remaining settings.';
+    return `${confirmed}${lifecycle}`;
   }
   if (restarted && sync?.acceptance?.mode === 'replay')
-    return 'Settings saved. VectorWarp restarted and received replay frames; no receiver hardware was opened.';
-  if (restarted && sync?.receiverType === 'Kraken')
-    return 'Settings saved. VectorWarp restarted and received new radar frames. No Suite V2 receiver command was required; hardware is not independently verified.';
-  if (restarted && sync?.receiverType === 'Usrp')
-    return 'Settings saved. VectorWarp restarted and received new radar frames. UHD startup checks reported tuning, rate, gain, antenna and channel mapping before streaming; the status response does not include an applied-values receipt or physical RF verification.';
+    return 'Settings saved. Replay restarted; new frames received.';
   if (restarted)
-    return 'Settings saved. VectorWarp restarted and received new radar frames. Direct-receiver hardware settings are not independently read back.';
+    return 'Settings saved. Radar restarted; new frames received.';
   return result?.message ||
-    'Configuration saved. Restart VectorWarp processing and its API to apply it.';
+    'Settings saved. Run vectorwarp restart to apply them.';
+}
+
+function receiverSaveDetails(result) {
+  const sync = result?.receiverSync;
+  if (sync?.acceptance?.mode === 'replay') return 'No receiver hardware was opened.';
+  if (sync?.receiverType === 'Kraken') {
+    const check = sync.status === 'synchronized' ?
+      'Suite V2 accepted the command and reported matching settings.' :
+      sync.status === 'already-matched' ? 'Suite V2 already reported matching settings.' :
+      'No Suite V2 command was needed.';
+    return `${check} Antenna wiring, serial order and calibration are not independently checked.`;
+  }
+  if (sync?.receiverType === 'Usrp')
+    return 'UHD checks frequency, sample rate, gain, antennas and channel mapping before streaming. This response does not contain tuner readings or an RF test.';
+  return 'Receiver settings are sent at startup. Receiving frames is not an independent check of tuner settings or RF performance.';
 }
 
 function receiverMayHaveChanged(receipt) {
@@ -1274,7 +1292,7 @@ function receiverMayHaveChanged(receipt) {
 function receiverFailureMessage(result) {
   const message = (result?.errors || [result?.message]).filter(Boolean).join(' ') || 'Unable to save configuration.';
   if (receiverMayHaveChanged(result?.receiverSync))
-    return `${message} Receiver settings may already have changed. VectorWarp settings were not saved; reload and reconcile before retrying.`;
+    return `${message} Receiver settings may already have changed. VectorWarp settings were not saved. Reload and check receiver status before retrying.`;
   return message;
 }
 
@@ -1381,14 +1399,14 @@ function renderReceiverStartup(status, target = document.getElementById('receive
   const processor = status?.processorFresh && status.processor?.receiver === 'RspDuo' &&
     status.processor?.input === 'live' ? status.processor : null;
   const receipt = processor?.receiverStartup;
-  if (!processor) message.textContent = 'No fresh live RSPduo status. Saved settings apply when processing starts.';
+  if (!processor) message.textContent = 'No current RSPduo status. Saved settings apply at startup.';
   else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
-  else if (!receipt) message.textContent = 'This adapter does not report startup settings. Rebuild SDRplay support to add this check.';
+  else if (!receipt) message.textContent = 'Startup settings unavailable. Rebuild SDRplay support to see them.';
   else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through SDRplay…';
-  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. The last startup settings were accepted by SDRplay.';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. SDRplay accepted the last startup settings.';
   else message.textContent = status.radar === 'receiving' ?
-    'Startup settings accepted by SDRplay; live radar frames received.' :
-    'Startup settings accepted by SDRplay; waiting for radar frames.';
+    'SDRplay accepted settings; receiving radar frames.' :
+    'SDRplay accepted settings; waiting for radar frames.';
   target.replaceChildren(heading, message);
   if (!receipt) return;
   const requested = receipt.requested;
@@ -1399,16 +1417,16 @@ function renderReceiverStartup(status, target = document.getElementById('receive
       .every(key => JSON.stringify(requested[key]) === JSON.stringify(device[key]));
   if (!matches) {
     const mismatch = document.createElement('p');
-    mismatch.textContent = 'The running receiver settings differ from this form. Save & Restart to apply your changes.';
+    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
     target.appendChild(mismatch);
   }
   const details = document.createElement('details');
   details.open = detailsOpen;
   const summary = document.createElement('summary');
-  summary.textContent = 'Startup settings and SDK checks';
+  summary.textContent = 'Startup details';
   const table = document.createElement('table');
   const caption = document.createElement('caption');
-  caption.textContent = 'Requested values, not independent tuner readback';
+  caption.textContent = 'Values sent to SDRplay, not measured tuner values';
   table.appendChild(caption);
   const rows = [
     ['Selected receiver', receipt.selected?.serial || 'Not selected'],
@@ -1432,7 +1450,7 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     row.append(label, cell); table.appendChild(row);
   }
   const note = document.createElement('p');
-  note.textContent = 'SDK acceptance does not measure RF performance, filtering or phase coherence.';
+  note.textContent = 'These checks do not measure RF performance, filtering or phase coherence.';
   details.append(summary, table, note);
   target.appendChild(details);
 }
@@ -1444,7 +1462,7 @@ function renderReceiverSetup() {
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
   const description = document.createElement('p');
-  description.textContent = 'Check compiled receiver adapters, runtime software, connected identities and the saved endpoint. This never changes the selected receiver or radio settings; choose a receiver above when more than one is available.';
+  description.textContent = 'Find receivers and check their software without changing settings.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
   check.textContent = 'Check receiver software';
@@ -1475,7 +1493,7 @@ function renderReceiverSetup() {
   const sdrplayLink = () => {
     const link = document.createElement('a');
     link.href = 'https://sdrplay.com/hardware-api/';
-    link.textContent = 'SDRplay hardware API and supported systems';
+    link.textContent = 'Download SDRplay API';
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     output.appendChild(link);
   };
@@ -1489,26 +1507,27 @@ function renderReceiverSetup() {
     }, 5000);
   };
   const settingApplication = (receiver, item) => {
+    const label = metadata(item.configField.split('.'), receiver.type)[0];
     if (item.direction === 'browser-to-upstream-after-ack-and-readback')
-      return `${item.configField}: sent to Suite V2 control; require its acknowledgement and a fresh status readback.`;
+      return `${label}: sent to Suite V2, then checked against its reply and updated status.`;
     if (item.direction === 'upstream-authoritative-mismatch-block')
-      return `${item.configField}: not sent to Suite V2; its reported startup/sample rate is authoritative and a mismatch blocks Apply.`;
+      return `${label}: must match Suite V2 before applying. VectorWarp does not change it in Suite V2.`;
     if (item.direction === 'config-only')
-      return `${item.configField}: saved by VectorWarp only; it is not sent to Suite V2.`;
+      return `${label}: used by VectorWarp only; not sent to Suite V2.`;
     if (receiver.type === 'Usrp')
-      return `${item.configField}: saved, then passed as a UHD startup parameter after Save & Restart; per-channel UHD getters gate startup before IQ streaming, not an instant browser setter.`;
+      return `${label}: applied through UHD after Save & Restart. Both channels are checked before streaming.`;
     if (receiver.type === 'RspDuo')
-      return `${item.configField}: saved, then applied through SDRplay API v3 at processor startup; SDK failures reach processor status, with no independent post-init readback.`;
+      return `${label}: applied through SDRplay API v3 at startup. SDK errors are reported; tuner values are not read back.`;
     if (receiver.type === 'HackRF')
-      return `${item.configField}: saved, then applied to the selected HackRF pair at processor startup; return codes are checked, with no post-set readback.`;
-    return `${item.configField}: saved for the configured receiver.`;
+      return `${label}: applied to both HackRFs at startup. Driver errors are checked; tuner values are not read back.`;
+    return `${label}: saved for this receiver.`;
   };
   async function reviewAction(receiverType, actionId) {
     if (serializeConfig(activeConfig) !== originalConfig)
-      throw new Error('This action uses the saved configuration. Save or discard your draft changes before reviewing receiver software.');
+      throw new Error('Save or discard your edits first. Receiver actions use saved settings.');
     const plan = await post('/api/receivers/plan', {receiverType, actionId});
     if (plan.status === 'not-required') { paragraph(plan.message); return; }
-    paragraph('Authorize this exact action once in an administrator terminal on the VectorWarp computer, then return here. No Settings password is stored.');
+    paragraph('Run this command on the VectorWarp computer to authorize this action, then return here.');
     const command = document.createElement('pre'); command.textContent = plan.authorizationCommand;
     output.appendChild(command);
     paragraph(`Review: ${plan.review}. The plan expires in ${plan.lifetimeSeconds} seconds.`);
@@ -1516,13 +1535,13 @@ function renderReceiverSetup() {
       paragraph(`Install ${item.name} ${item.version} (${item.architecture}; ${item.origin} ${item.archive}; ${item.site}).`);
     button('Run authorized action', async element => {
       if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
-        throw new Error('Settings changed. Check receiver software and review a fresh plan.');
-      element.textContent = 'Running receiver action…';
+        throw new Error('Settings changed. Check receiver software and review the action again.');
+      element.textContent = 'Running…';
       let result;
       try { result = await post('/api/receivers/execute', {nonce: plan.nonce, configRevision: plan.configRevision}, 210000); }
       catch (error) {
         element.remove();
-        throw new Error(`${error.message} Recheck software and review a new plan before retrying.`);
+        throw new Error(`${error.message} Check receiver software again before retrying.`);
       }
       element.remove();
       paragraph(result.message);
@@ -1537,26 +1556,26 @@ function renderReceiverSetup() {
     try {
       const result = await post('/api/receivers/discover', {});
       output.replaceChildren();
-      if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before planning an action.');
-      if (!result.buildCapabilitiesKnown) paragraph('This installation has no verified live-backend manifest. Detection cannot establish live capture support.');
+      if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before continuing.');
+      if (!result.buildCapabilitiesKnown) paragraph('This build does not list its supported receivers. Live capture support is unknown.');
       for (const receiver of result.receivers || []) {
-        const compiled = receiver.capabilities.liveCompiled ? 'adapter compiled' : 'adapter not compiled';
-        const runtime = receiver.capabilities.runtimeLoadable === true ? 'runtime loadable' :
-          receiver.capabilities.runtimeLoadable === false ? 'runtime unavailable' : 'runtime not checked';
-        const detection = receiver.detection.configuredIdentityMatched === false ? 'configured identity not found' : receiver.detection.state;
-        const service = receiver.managedService.required ? `; upstream service ${receiver.managedService.state}` : '';
-        paragraph(`${receiver.label}: ${compiled}; ${runtime}; receiver ${detection}; dependency ${receiver.dependencies.state}${service}.`);
-        if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: the saved upstream endpoint is available and will be reused. Its reported settings still require a fresh check when saving.`);
+        const compiled = receiver.capabilities.liveCompiled ? 'adapter built' : 'adapter not built';
+        const runtime = receiver.capabilities.runtimeLoadable === true ? 'software loads' :
+          receiver.capabilities.runtimeLoadable === false ? 'software cannot load' : 'software not checked';
+        const detection = receiver.detection.configuredIdentityMatched === false ? 'selected device not found' : receiver.detection.state;
+        const service = receiver.managedService.required ? `; service ${receiver.managedService.state}` : '';
+        paragraph(`${receiver.label}: ${compiled}; ${runtime}; device ${detection}; dependencies ${receiver.dependencies.state}${service}.`);
+        if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: saved connection is available and will be reused. Settings are checked when saving.`);
         if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
-          paragraph('SDRplay API is already running and will be reused without restart.');
+          paragraph('SDRplay API is running; no service restart needed.');
         if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
           paragraph(receiver.dependencies.state === 'missing' ?
             'SDRplay API was not found. Download it from SDRplay and accept its license locally.' :
-            'Could not verify SDRplay API. If it is not installed, use the download link below.');
+            'Could not check SDRplay API. Use the link below if you need to install it.');
           sdrplayLink();
         }
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
-          paragraph('SDRplay API is installed but stopped. Save & Restart starts a standard local service automatically. Custom services need administrator review.');
+          paragraph('SDRplay API is stopped. Save & Restart starts the standard local service. Custom services need administrator setup.');
         else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
           paragraph('SDRplay API service status could not be checked.');
         if (receiver.type === 'RspDuo') {
@@ -1566,19 +1585,19 @@ function renderReceiverSetup() {
             const relevantProgress = build.progress && (!build.progress.kit_id ||
               build.progress.kit_id === build.kit_id) ? build.progress : null;
             if (build.buildable && ['missing', 'stale'].includes(build.state)) {
-              paragraph(`Local adapter build status: ${relevantProgress?.state || build.state}. ${relevantProgress?.reason || build.reason || 'This does not start radar.'}`);
+              paragraph(`SDRplay adapter: ${relevantProgress?.state || build.state}. ${relevantProgress?.reason || build.reason || 'Building does not start radar.'}`);
               sdrplayLink();
               button('Build SDRplay support', async element => {
-                element.textContent = 'Requesting local build…';
+                element.textContent = 'Starting build…';
                 const result = await post('/api/sdrplay-build', {}, 10000, 'sdrplay-local-build-v1');
-                paragraph(result.message || 'Local adapter build requested. Recheck receiver software for progress.');
+                paragraph(result.message || 'Build requested. Checking progress…');
                 buildPolls = 0;
                 refreshBuildStatus();
               });
-            } else if (build.buildable && build.state === 'current') paragraph('Locally built SDRplay adapter is current. Receiver discovery and service status remain separate checks.');
-            else if (build.buildable) { paragraph(build.reason || 'Local SDRplay adapter status is unavailable; no build was requested.'); sdrplayLink(); }
+            } else if (build.buildable && build.state === 'current') paragraph('SDRplay adapter is up to date. See device and service status above.');
+            else if (build.buildable) { paragraph(build.reason || 'Cannot check the SDRplay adapter. No build started.'); sdrplayLink(); }
             if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
-          } catch (_) { paragraph('Local SDRplay adapter build status is unavailable; no build was requested.'); }
+          } catch (_) { paragraph('Cannot check the SDRplay adapter. No build started.'); }
         }
         if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
           for (const step of receiver.setupGuide) {
@@ -1596,16 +1615,16 @@ function renderReceiverSetup() {
             }
           }
         });
-        if (receiver.settings?.length) button(`Show setting application matrix: ${receiver.label}`, () => {
-          paragraph(`${receiver.label}: software application and verification boundary; this is not physical receiver proof.`);
+        if (receiver.settings?.length) button(`How settings apply: ${receiver.label}`, () => {
+          paragraph(`${receiver.label}: software checks do not test antenna wiring, calibration or RF performance.`);
           for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
         });
         if (receiver.capabilities.liveCompiled ||
             (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Choose ${receiver.label} for settings`, () => {
           switchDevice(receiver.type);
           paragraph(receiver.capabilities.liveCompiled ?
-            `${receiver.label} is now the unsaved selection. Discovery did not change it automatically.` :
-            `${receiver.label} is now the unsaved selection. Build its local adapter before live capture; discovery did not change it automatically.`);
+            `${receiver.label} selected. Save to apply.` :
+            `${receiver.label} selected but not saved. Build its adapter before live capture.`);
         });
         for (const action of result.management?.actions?.filter(item =>
           receiver.capabilities.liveCompiled && item.receiverType === receiver.type) || []) {
@@ -1616,9 +1635,9 @@ function renderReceiverSetup() {
         }
       }
       if (!result.managementAvailable) paragraph(result.management?.message || 'Local receiver management is unavailable.');
-      else if (!result.management.actions?.length) paragraph('No privileged install or service action has been reviewed for this installed build. Existing compatible software and remote endpoints can still be used.');
+      else if (!result.management.actions?.length) paragraph('Automatic software setup is unavailable in this build. Installed software and remote receivers can still be used.');
       if (result.processor?.state === 'error') paragraph(`Processor input error: ${result.processor.error}`);
-      else paragraph('Software detection does not verify live IQ, channel wiring or calibration. Save and restart, then check fresh processor and receiver status.');
+      else paragraph('Use Save & Restart to test reception. Software checks do not test antenna wiring or calibration.');
       for (const error of result.errors || []) paragraph(error.message);
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
     finally { check.disabled = false; }
@@ -1651,7 +1670,7 @@ async function saveConfiguration(mode) {
       return;
     }
     restartInProgress = true;
-    setRestartProgress(30, saveLater ? 'Saving only; no receiver commands or restart…' : 'Checking receiver settings before saving…');
+    setRestartProgress(30, saveLater ? 'Saving without applying…' : 'Checking receiver settings…');
     document.querySelectorAll('#config-fields input, #config-fields select').forEach(input => { input.disabled = true; });
     writeAttempted = true;
     const response = await configFetch(liveApiUrl(saveLater ? '/api/config?mode=pending&restart=false' :
@@ -1685,9 +1704,9 @@ async function saveConfiguration(mode) {
     if (result.receiverSync?.status === 'synchronized' ||
         result.receiverSync?.status === 'already-matched')
       setRestartProgress(45,
-        'Suite V2 acknowledged and reported the requested receiver settings…');
+        'Suite V2 settings confirmed…');
     if (saveLater) {
-      setRestartProgress(100, 'Saved only; application pending.', 'complete');
+      setRestartProgress(100, 'Saved for later; not applied.', 'complete');
       showMessage(result.message, 'warning');
     } else if (result.restarting) {
       rememberApiPort(activeConfig);
@@ -1699,21 +1718,21 @@ async function saveConfiguration(mode) {
         window.history.replaceState(null, '', url);
       }
       await monitorRadarRestart(previousState);
-      showMessage(receiverSaveMessage(result, true), 'success');
+      showMessage(receiverSaveMessage(result, true), 'success', receiverSaveDetails(result));
     } else {
       setRestartProgress(100, 'Saved; manual restart required.', 'complete');
-      showMessage(receiverSaveMessage(result, false), 'warning');
+      showMessage(receiverSaveMessage(result, false), 'warning', receiverSaveDetails(result));
     }
   } catch (error) {
     const unknownOutcome = writeAttempted && !responseReceived;
     if (writeAttempted && !saveLater) receiverApplyPending = true;
     if (unknownOutcome && !saveLater) invalidateGeometryAfterReceiverChange();
     showMessage(unknownOutcome ? saveLater ?
-      `${error.message || 'Connection lost.'} File save outcome unknown. No receiver commands or restart were requested; reload the saved file before retrying.` :
-      `${error.message || 'Connection lost.'} Save outcome unknown; the server may still apply receiver settings. Reload and reconcile before retrying.` :
+      `${error.message || 'Connection lost.'} Save not confirmed. No receiver changes or restart requested. Reload saved settings before retrying.` :
+      `${error.message || 'Connection lost.'} Save not confirmed; receiver settings may still change. Reload and check receiver status before retrying.` :
       error.message || 'Unable to save configuration.', 'error');
     setRestartProgress(100, saved ? 'Saved; restart needs attention.' : unknownOutcome || fileOutcomeUnknown ?
-      'Save outcome unknown.' : 'Not saved.', 'failed');
+      'Save not confirmed.' : 'Not saved.', 'failed');
     restartRetry = saved && !saveLater && capabilities.restartAvailable;
   } finally {
     saveInProgress = false;
@@ -1742,7 +1761,7 @@ async function syncConfigurationFromServer() {
       pendingLiveConfig = liveConfig;
       pendingRevision = revision;
       updateDirtyState();
-      showMessage('The saved file changed while you have unsaved edits. Reload the saved config before saving.', 'warning');
+      showMessage('Settings changed elsewhere. Reload saved settings before saving your edits.', 'warning');
       return;
     }
     activeConfig = liveConfig;
@@ -1750,7 +1769,7 @@ async function syncConfigurationFromServer() {
     originalConfig = serialized;
     pendingLiveConfig = null;
     renderEditor();
-    showMessage('Settings refreshed from the saved file. This does not confirm the processor has restarted.', 'success');
+    showMessage('Loaded saved settings. Running settings may differ.', 'success');
     scheduleValidation();
     refreshUpstreamStatus();
   } catch (_) {
@@ -1785,7 +1804,7 @@ async function renderConfiguration() {
       later.type = 'button';
       later.className = 'button-secondary';
       later.textContent = 'Save for later';
-      later.title = 'Save the configuration only. Do not apply receiver settings or restart services.';
+      later.title = 'Save without changing the receiver or restarting.';
       later.disabled = true;
       later.addEventListener('click', () => saveConfiguration('pending'));
       document.getElementById('config-save').before(later);
@@ -1824,7 +1843,7 @@ async function renderConfiguration() {
       scheduleValidation();
     });
     if (!capabilities.editable)
-      showMessage('Editing is unavailable. The config file and its parent directory must be writable by the API. Check the config volume mount and permissions.', 'warning');
+      showMessage('Settings are read-only. VectorWarp needs write access to the config file and its folder.', 'warning');
     else
       showMessage('');
     renderEditor();
@@ -1849,7 +1868,7 @@ async function renderConfiguration() {
   } catch (error) {
     target.replaceChildren();
     const message = document.createElement('p');
-    message.textContent = `Settings unavailable. ${error.message} Check that the VectorWarp API is running and the API port is reachable.`;
+    message.textContent = `Settings unavailable. ${error.message} Check that VectorWarp is running and its API port is reachable.`;
     const retry = document.createElement('button');
     retry.textContent = 'Try again';
     retry.addEventListener('click', renderConfiguration);
@@ -1875,11 +1894,11 @@ async function refreshConfigDiagnostics() {
         if (status.gpuSetup.pi && !['qualified', 'partially-qualified'].includes(status.gpuSetup.state)) {
           const command = document.createElement('code');
           command.textContent = 'sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver';
-          setup.append(document.createTextNode(' Local administrator command: '), command);
+          setup.append(document.createTextNode(' Run on the VectorWarp computer: '), command);
         }
         if (status.gpuSetup.serviceAccess?.state === 'group-access-needed') {
           const access = document.createElement('div');
-          access.textContent = 'Render-node access: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access';
+          access.textContent = 'Allow GPU access: sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --enable-service-access';
           setup.append(access);
         }
       }
@@ -1887,17 +1906,17 @@ async function refreshConfigDiagnostics() {
     target.textContent = status.errors?.length ? status.errors.join(' ') :
       status.restart?.state === 'failed' ? status.restart.message :
       status.configRevision !== status.loadedRevision ?
-        'The saved file differs from the API startup config. Restart the API and processor to apply all settings.' :
+        'Saved settings differ from running settings. Run vectorwarp restart to apply them.' :
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
   } catch (_) {
     renderReceiverStartup(null);
-    target.textContent = 'Cannot read service status. Settings may be offline; check the API connection.';
+    target.textContent = 'Cannot read service status. Check the connection to VectorWarp.';
   }
 }
 
 function accelerationSummary(value, radar) {
-  if (radar !== 'receiving') return 'Processing hardware: waiting for radar';
-  if (!value) return 'Processing hardware: not reported by this processor';
+  if (radar !== 'receiving') return 'Waiting for radar';
+  if (!value) return 'Not reported';
   if (value.state === 'checking') return `Checking GPU: ${value.device || 'detected device'}`;
   if (value.active === 'vulkan') return `GPU: ${value.device}`;
   return `CPU${value.reason ? ` — ${value.reason}` : ''}`;
@@ -1906,4 +1925,4 @@ function accelerationSummary(value, radar) {
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
-    accelerationSummary, CONFIG_SAVE_TIMEOUT_MS};
+    receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS};

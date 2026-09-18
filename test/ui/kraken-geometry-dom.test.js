@@ -127,7 +127,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.ok(doc.querySelector('#settings-panel-capture .kraken-geometry'));
     assert.equal(doc.querySelectorAll('[role=tab]').length, 6);
     assert.equal(current().capture.device.array_geometry, undefined);
-    click('Record antenna layout');
+    click('Add antenna layout');
     assert.equal(g('elements.0.daq_channel').value, '', 'No DAQ wiring guess');
     assert.equal(g('elements.0.position.0').value, '', 'No position guess');
     assert.equal(g('mapping_confirmed').checked, false);
@@ -152,7 +152,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.deepEqual(geometry.bearing_channels, [3, 0, 4, 1]);
     assert.equal(geometry.shape, 'cross');
     assert.equal(await window.validateActiveConfiguration(), true);
-    assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Record complete'));
+    assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Layout complete'));
     for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed']) change(g(name), true);
     await save();
     assert.equal(current().capture.device.array_geometry.mapping_confirmed, true);
@@ -201,8 +201,8 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     ]) {
       upstream = status; await window.refreshUpstreamStatus();
       const section = doc.querySelector('.kraken-geometry');
-      assert.ok(section.textContent.includes('physical agreement unverified'));
-      assert.ok(section.textContent.includes('Bearing unavailable'));
+      assert.ok(section.textContent.includes('measurements are unverified'));
+      assert.ok(section.textContent.includes('Bearing is unavailable'));
       assert.equal(section.querySelector('.good, .verified'), null);
     }
     const original = current();
@@ -253,7 +253,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
         const candidate = current(); candidate.capture.device.type = type; candidate.capture.device.array_geometry = malformed;
         const retained = JSON.stringify(candidate.capture.device.array_geometry);
         const repair = window.KrakenGeometry.render(doc, candidate, () => { removals++; }, true);
-        const remove = [...repair.querySelectorAll('button')].find(button => button.textContent === 'Remove layout record');
+        const remove = [...repair.querySelectorAll('button')].find(button => button.textContent === 'Remove layout');
         assert.ok(remove);
         window.confirm = () => false; remove.click();
         assert.equal(JSON.stringify(candidate.capture.device.array_geometry), retained, 'Cancel preserves the full record');
@@ -266,12 +266,12 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     await window.renderConfiguration();
     window.switchDevice('RspDuo');
     const beforeRemoval = current().capture.device.array_geometry;
-    window.confirm = () => true; click('Remove layout record');
+    window.confirm = () => true; click('Remove layout');
     assert.deepEqual(current().capture.device.array_geometry, beforeRemoval);
     doc.getElementById('config-reset').click();
     assert.ok(g('elements.0.position.0'));
     assert.deepEqual(current().capture.device.array_geometry, beforeRemoval);
-    click('Remove layout record'); await save();
+    click('Remove layout'); await save();
     assert.equal(current().capture.device.array_geometry, undefined);
     const imported = current(); imported.capture.device.array_geometry = beforeRemoval;
     imported.capture.device.array_geometry.shape = 'unsupported_imported_shape';
@@ -289,7 +289,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     window.switchDevice('RspDuo'); change(query('capture.replay.state'), true);
     assert.equal(await window.validateActiveConfiguration(), false);
     assert.ok(doc.querySelector('.kraken-geometry').textContent.includes('Saved Kraken layout (inactive)'));
-    window.confirm = () => true; click('Remove layout record'); await save();
+    window.confirm = () => true; click('Remove layout'); await save();
     assert.equal(current().capture.device.type, 'RspDuo');
     assert.equal(current().capture.device.array_geometry, undefined);
     console.log('Kraken Receiver editor + real disposable API + YAML save/reload + status isolation passed.');

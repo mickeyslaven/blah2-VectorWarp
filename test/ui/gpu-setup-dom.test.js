@@ -41,7 +41,7 @@ window.eval(fs.readFileSync(path.resolve(__dirname, '../../html/js/config_ui.js'
   assert(!target.textContent.includes('--enable-service-access'), 'Unknown access must not be reported as a missing group');
   state = {...state, radar: 'stale', gpuSetup: {pi: false}};
   await window.refreshConfigDiagnostics();
-  assert.match(target.textContent, /waiting for radar/); assert(!target.textContent.includes('GPU: V3D'));
+  assert.match(target.textContent, /Waiting for radar/); assert(!target.textContent.includes('GPU: V3D'));
   dom.window.close();
   console.log('Pi GPU setup DOM: independent stages, safe instructions, no privilege, stale state PASS');
 })().catch(error => { dom.window.close(); console.error(error); process.exitCode = 1; });

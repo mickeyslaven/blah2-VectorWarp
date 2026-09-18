@@ -87,7 +87,7 @@ function requiresReceiverSynchronization(previous, candidate) {
 function normalizeStatus(frame) {
   if (!plainObject(frame) || !plainObject(frame.settings))
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
-      'Suite V2 did not provide its expected status object.', 502);
+      'Suite V2 did not provide a status object.', 502);
   const centerFrequency = frame.settings.center_freq;
   const sampleRate = frame.settings.sample_rate;
   const channelCount = frame.num_channels;
@@ -99,7 +99,7 @@ function normalizeStatus(frame) {
       typeof frame.reconfiguring !== 'boolean' ||
       !['coherent', 'wideband'].includes(frame.operating_mode))
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
-      'Suite V2 status is missing required tuning, channel, mode, or reconfiguration fields.', 502);
+      'Suite V2 status is missing tuning, channel, mode, or reconfiguration fields.', 502);
   return {
     centerFrequency, sampleRate, channelCount, maximumChannels,
     gain: Number.isFinite(gain) ? gain : null,
@@ -117,28 +117,28 @@ function publicStatus(status) {
 function validateInitialStatus(status, wanted) {
   if (status.operatingMode !== 'coherent')
     throw receiverError('KRAKEN_MODE_MISMATCH',
-      `Suite V2 reports ${status.operatingMode} mode; VectorWarp live processing requires coherent mode.`, 409);
+      `Suite V2 is in ${status.operatingMode} mode. Live processing requires coherent mode.`, 409);
   if (status.reconfiguring || status.recovering)
     throw receiverError('KRAKEN_BUSY',
-      'Suite V2 is reconfiguring or recovering. Wait for it to become idle, then save again.', 409);
+      'Suite V2 is reconfiguring or recovering. Wait until it is idle, then save again.', 409);
   if (status.sampleRate !== wanted.sampleRate)
     throw receiverError('KRAKEN_SAMPLE_RATE_MISMATCH',
-      `Suite V2 reports ${status.sampleRate} samples/s, but VectorWarp requests ${wanted.sampleRate}. ` +
-      'Sample rate is a Suite startup/build setting and cannot be changed by VectorWarp.', 409);
+      `Suite V2 reports ${status.sampleRate} samples/s; VectorWarp requests ${wanted.sampleRate}. ` +
+      'Sample rate is set when Suite starts and cannot be changed here.', 409);
   if (wanted.gain !== undefined && status.gain === null)
     throw receiverError('KRAKEN_GAIN_NOT_REPORTED',
-      'Suite V2 did not report gain, so an explicit gain cannot be acknowledged and read back.', 409);
+      'Suite V2 did not report gain, so the requested gain cannot be confirmed.', 409);
   // The inspected control contract guarantees this standard tuner range. A
   // wideband/downconverter build can expose more RF, but does not advertise a
   // machine-readable range; do not infer one from an optional status object.
   if (wanted.frequency < 24000000 || wanted.frequency > 1766000000)
     throw receiverError('KRAKEN_FREQUENCY_NOT_AUTOMATABLE',
-      'Automatic Kraken retuning is limited to the verified 24–1766 MHz control range.', 422);
+      'Kraken retuning is limited to the verified 24–1766 MHz control range.', 422);
   if (wanted.channelCount < 2 || wanted.channelCount > 8 ||
       wanted.channelCount > status.maximumChannels)
     throw receiverError('KRAKEN_CHANNEL_COUNT_UNAVAILABLE',
-      `Suite V2 reports ${status.maximumChannels} configured channel identities; ` +
-      `${wanted.channelCount} cannot be selected without changing Suite startup configuration.`, 409);
+      `Suite V2 has ${status.maximumChannels} configured channels; ` +
+      `${wanted.channelCount} requires changing Suite startup configuration.`, 409);
 }
 
 function operationList(status, wanted) {
@@ -258,13 +258,13 @@ function createKrakenControlClient(options = {}) {
         reject(error);
       };
       transactionTimer = setTimeout(() => fail(receiverError('KRAKEN_TRANSACTION_TIMEOUT',
-        'Suite V2 synchronization exceeded the bounded transaction deadline.', 504,
+        'Suite V2 synchronization timed out.', 504,
         failureReceipt())), transactionTimeoutMs);
       const finish = () => {
         if (settled) return;
         if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
           return fail(receiverError('KRAKEN_STATUS_DRIFT',
-            'Suite V2 no longer reports the complete requested settings; the config was not saved.', 409));
+            'Suite V2 no longer reports the requested settings. The config was not saved.', 409));
         settled = true;
         close();
         receipt.status = receipt.operations.length ? 'synchronized' : 'already-matched';
@@ -287,7 +287,7 @@ function createKrakenControlClient(options = {}) {
         currentSent = true;
         acknowledgedAfterStatus = statusSequence;
         arm(readbackTimeoutMs,
-          `Suite V2 did not acknowledge and report ${current.field}=${current.value} before the deadline.`);
+          `Suite V2 did not confirm ${current.field}=${current.value} before the deadline.`);
         socket.write(`${JSON.stringify(current.command)}\n`);
       };
       const next = () => {
@@ -300,7 +300,7 @@ function createKrakenControlClient(options = {}) {
         if (!suiteIdle(lastStatus)) {
           waitingForIdle = true;
           arm(readbackTimeoutMs,
-            `Suite V2 did not become idle before sending ${current.field}=${current.value}.`);
+            `Suite V2 did not become idle before ${current.field}=${current.value}.`);
           return;
         }
         sendCurrent();
@@ -330,7 +330,7 @@ function createKrakenControlClient(options = {}) {
           operations = operationList(observed, wanted);
           if (readOnly && operations.length)
             return fail(receiverError('KRAKEN_STARTUP_MISMATCH',
-              'Suite settings differ from saved receiver settings. Apply them in Settings before starting live processing.', 409));
+              'Suite settings differ from saved receiver settings. Apply them before starting live processing.', 409));
           return next();
         }
         if (waitingForIdle) {
@@ -345,7 +345,7 @@ function createKrakenControlClient(options = {}) {
       };
       const handleResponse = frame => {
         if (!current || !currentSent) return fail(receiverError('KRAKEN_UNEXPECTED_RESPONSE',
-          'Suite V2 returned a command response before a command was sent.', 502));
+          'Suite V2 responded before a command was sent.', 502));
         if (frame.status !== 'success') {
           currentRejected = true;
           return fail(receiverError('KRAKEN_COMMAND_REJECTED',
@@ -361,7 +361,7 @@ function createKrakenControlClient(options = {}) {
           Number(Math.fround(current.value).toFixed(6)) : current.value;
         if (acknowledgedValue !== current.value && acknowledgedValue !== wireValue)
           return fail(receiverError('KRAKEN_ACKNOWLEDGEMENT_MISMATCH',
-            `Suite V2 acknowledged ${current.field} with an unexpected value.`, 502,
+            `Suite V2 confirmed an unexpected ${current.field} value.`, 502,
             failureReceipt()));
         currentAcknowledged = true;
         // A status received before this exact ACK is never its readback.
@@ -375,29 +375,29 @@ function createKrakenControlClient(options = {}) {
         let frame;
         try { frame = JSON.parse(line); }
         catch (_) { return fail(receiverError('KRAKEN_PROTOCOL_MISMATCH',
-          'Suite V2 returned malformed JSON on its control connection.', 502)); }
+          'Suite V2 returned malformed control data.', 502)); }
         try {
           if (plainObject(frame.settings)) return handleStatus(frame);
           if (typeof frame.status === 'string') return handleResponse(frame);
           fail(receiverError('KRAKEN_PROTOCOL_MISMATCH',
-            'Suite V2 returned an unrecognized control frame.', 502));
+            'Suite V2 returned an unrecognized control response.', 502));
         } catch (error) {
           fail(error?.code ? error : receiverError('KRAKEN_PROTOCOL_MISMATCH',
-            'Suite V2 returned an invalid control frame.', 502));
+            'Suite V2 returned an invalid control response.', 502));
         }
       };
 
       try { socket = connector({host: endpoint.host, port: endpoint.controlPort}); }
       catch (error) {
         fail(receiverError('KRAKEN_CONNECTION_FAILED',
-          `Could not open the configured Suite V2 control endpoint: ${cleanMessage(error.message, 'connection failed')}`,
+          `Could not connect to Suite V2: ${cleanMessage(error.message, 'connection failed')}`,
           502));
         return;
       }
       socket.setEncoding('utf8');
       if (typeof socket.setNoDelay === 'function') socket.setNoDelay(true);
       arm(statusTimeoutMs,
-        'No compatible Suite V2 status broadcast arrived before the deadline.',
+        'Suite V2 did not send a compatible status update before the deadline.',
         'KRAKEN_STATUS_TIMEOUT');
       socket.on('data', chunk => {
         bufferedBytes += Buffer.byteLength(chunk);
@@ -417,7 +417,7 @@ function createKrakenControlClient(options = {}) {
         502)));
       socket.on('close', () => {
         if (!settled) fail(receiverError('KRAKEN_CONNECTION_CLOSED',
-          'Suite V2 closed the control connection before acknowledgement and readback completed.', 502));
+          'Suite V2 closed the control connection before confirming the change.', 502));
       });
     });
   }
@@ -429,7 +429,7 @@ function receiverAcceptanceBoundary(config) {
   const receiverType = config?.capture?.device?.type || 'Unknown';
   const replay = config?.capture?.replay?.state === true;
   if (replay) return {receiverType, mode: 'replay', configurationAuthority: 'VectorWarp',
-    writePath: 'none', acknowledgement: 'recording parser/processor telemetry',
+    writePath: 'none', acknowledgement: 'recording parser and radar status',
     hardwareReadback: false, physicalReceiverVerified: false};
   if (receiverType === 'Kraken') return {receiverType, mode: 'live',
     configurationAuthority: {
@@ -443,7 +443,7 @@ function receiverAcceptanceBoundary(config) {
   if (receiverType === 'RspDuo') return {receiverType, mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through SDRplay API v3',
-    acknowledgement: 'SDK return codes are checked and failures reach structured processor telemetry',
+    acknowledgement: 'SDK return codes are checked; failures appear in radar status',
     positiveAppliedAcknowledgement: false,
     readbackBoundary: 'Both tuner parameter records are set explicitly; post-init independent tuner-value readback is unavailable.',
     hardwareReadback: false, physicalReceiverVerified: false};
@@ -452,7 +452,7 @@ function receiverAcceptanceBoundary(config) {
     writePath: 'processor startup through UHD multi_usrp',
     acknowledgement: 'UHD exceptions can report failure; no positive applied-settings acknowledgement is emitted',
     positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'UHD startup getters gate frequency, rate, gain, antenna and subdevice mapping before streaming; processor status does not carry an applied-values receipt.',
+    readbackBoundary: 'UHD startup getters check frequency, rate, gain, antenna, and subdevice mapping before streaming; radar status does not confirm applied values.',
     hardwareReadback: false, physicalReceiverVerified: false};
   if (receiverType === 'HackRF') return {receiverType, mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',

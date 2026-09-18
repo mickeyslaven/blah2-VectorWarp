@@ -179,7 +179,7 @@
       ${card(detections.length, 'Detections in latest CPI')}
       ${card(tracks.length, 'Persistent tracks')}
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
-      ${card(load === null ? '—' : `${number(load, 0)}%`, 'Processing budget', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
+      ${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', load > 100 ? 'bad' : load > 80 ? 'warning' : 'good')}
     </div><div class="overview-grid">
       <section class="info-card"><h2>Radar</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver)}</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter)}</dd></div><div><dt>Radio</dt><dd>${escapeHtml(config?.capture?.device?.type || 'Receiver')} · ${escapeHtml(frequencyLabel(config))}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(channelCount(config) ?? 'Unknown')} channels</dd></div></dl></section>
       <section class="info-card"><h2>Current activity</h2>${strongest ? `<dl><div><dt>Bistatic range</dt><dd>${number(strongest.delay, 2)} km</dd></div><div><dt>Doppler</dt><dd>${number(strongest.doppler, 1)} Hz</dd></div><div><dt>Signal-to-noise ratio</dt><dd>${number(strongest.snr, 1)} dB</dd></div><div><dt>Frame</dt><dd>${escapeHtml(timeLabel(detection?.timestamp))}</dd></div></dl>` : empty('No detections in the latest CPI', 'The radar is running; no return currently passes the configured detector.')}</section>
@@ -222,7 +222,7 @@
     const overall = tones.includes('bad') ? 'Attention needed' : tones.includes('warning') ? 'Monitor' : 'Healthy';
     const overallTone = tones.includes('bad') ? 'bad' : tones.includes('warning') ? 'warning' : 'good';
     const stages = Object.entries(timing || {}).filter(([key, value]) => finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    root.innerHTML = `<div class="insight-stats">${card(overall, 'Overall state', overallTone)}${card(load === null ? '—' : `${number(load, 0)}%`, 'Processing budget', loadTone)}${card(`${channelCount(config) ?? '—'}`, 'Configured channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Processor uptime')}</div><div class="health-grid"><section class="health-list">${healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Expected update every ${number(hop, 0)} ms`, freshnessTone)}${healthRow('Processing load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms work per ${number(hop, 1)} ms update`, loadTone)}${healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Buffered capture data waiting for processing', backlogTone)}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Produces the current detection stream', config?.process?.detection?.enable === false ? 'neutral' : 'good')}${healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} total track hypotheses` : 'Optional processing is off', trackerTone)}${healthRow('ADS-B evaluation', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Live truth is hidden during replay.' : adsb.enabled ? 'Independent evaluation truth; never a radar inference input' : 'Optional evaluation feed is off', adsbTone)}</section><section class="info-card"><h2>Processing stages</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`;
+    root.innerHTML = `<div class="insight-stats">${card(overall, 'Overall state', overallTone)}${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', loadTone)}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone)}${healthRow('Load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone)}${healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone)}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}${healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone)}${healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone)}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`;
     setState(`Updated ${timeLabel(timing?.timestamp)}`, overallTone);
   }
 
@@ -440,11 +440,11 @@
       hovertemplate: '%{text}<br>%{lat:.5f}, %{lon:.5f}<extra></extra>'
     });
     if (aircraft.length) traces.push({
-      type: 'scattermapbox', mode: 'markers', name: 'ADS-B evaluation truth',
+      type: 'scattermapbox', mode: 'markers', name: 'ADS-B',
       lat: aircraft.map(item => item.lat), lon: aircraft.map(item => item.lon),
       marker: {size: 24, color: 'rgba(77,212,176,.32)'},
       customdata: aircraft.map(item => [String(item.flight || item.hex || 'Aircraft').trim(), item.alt_geom ?? item.alt_baro ?? null, item.seen_pos]),
-      hovertemplate: '<b>%{customdata[0]}</b><br>ADS-B evaluation truth<br>Altitude %{customdata[1]} ft<br>Position age %{customdata[2]:.1f} s<extra></extra>'
+      hovertemplate: '<b>%{customdata[0]}</b><br>ADS-B<br>Altitude %{customdata[1]} ft<br>Position age %{customdata[2]:.1f} s<extra></extra>'
     });
 
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
@@ -461,8 +461,8 @@
         zoom: Math.max(4, Math.min(12, 13 - Math.log2(spanKm)))
       };
     }
-    document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Current radar tracks')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B aircraft shown')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current radar tracks. Green markers show ADS-B planes.</div>`;
+    document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Radar tracks')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B')}`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show radar tracks. Green markers show ADS-B.</div>`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
@@ -489,22 +489,22 @@
       Object.entries(feed).map(([id, item]) => ({id, ...item})) : [];
     const radar = detectionRows(detection);
     const truth = config?.truth?.adsb || {};
-    document.getElementById('view-summary').innerHTML = `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B evaluation feed', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft in current feed')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Configured source range' : `${number(truth.display_range_km, 0)} km`, 'Evaluation radius')}`;
+    document.getElementById('view-summary').innerHTML = `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Source range' : `${number(truth.display_range_km, 0)} km`, 'Range')}`;
     const detail = document.getElementById('view-detail');
     if (!enabled) {
-      detail.innerHTML = empty('ADS-B evaluation is disabled', 'Enable the ADS-B evaluation feed in Settings to use this page.', '<a class="button-link" href="/display/configuration">Open Settings</a>');
-      await emptyPlot('ADS-B evaluation is disabled.');
+      detail.innerHTML = empty('ADS-B is disabled', 'Enable ADS-B in Settings to use this page.', '<a class="button-link" href="/display/configuration">Open Settings</a>');
+      await emptyPlot('ADS-B is disabled.');
       setState('Disabled', 'warning');
       return;
     }
     if (replayTruthDisabled) {
-      detail.innerHTML = empty('ADS-B truth is not replayed', 'Live aircraft and delay–Doppler truth are hidden during replay.');
-      await emptyPlot('Live ADS-B truth is hidden during replay.');
+      detail.innerHTML = empty('ADS-B is not replayed', 'Live ADS-B overlays are hidden during replay.');
+      await emptyPlot('Live ADS-B is hidden during replay.');
       setState('Not replayed', 'warning');
       return;
     }
     if (feedError) {
-      detail.innerHTML = empty('ADS-B evaluation feed is unavailable', 'Radar processing remains independent and continues normally.');
+      detail.innerHTML = empty('ADS-B is unavailable', 'Radar continues without it.');
       await emptyPlot('ADS-B feed unavailable; radar detections are not affected.');
       setState('ADS-B offline', 'bad');
       return;
@@ -513,13 +513,13 @@
       const age = sourceAgeSeconds(item.timestamp);
       return `<tr><td>${escapeHtml(item.flight || item.callsign || item.hex || item.id)}</td><td>${number(item.delay, 2)}</td><td>${number(item.doppler, 1)}</td><td>${age === null ? '—' : `${number(age, 1)} s`}</td></tr>`;
     });
-    detail.innerHTML = aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('Feed online; no aircraft in the current result', 'The configured source returned a valid empty set.');
+    detail.innerHTML = aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.');
     const traces = [
       {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: 'Radar detections', marker: {size: 10, color: colors[0]}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
-      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B evaluation truth', text: aircraft.map(item => item.flight || item.callsign || ''), textposition: 'top center', marker: {size: 10, color: colors[1], symbol: 'circle-open', line: {width: 2}}, hovertemplate: '%{text}<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<extra></extra>'}
+      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(item => item.flight || item.callsign || ''), textposition: 'top center', marker: {size: 10, color: colors[1], symbol: 'circle-open', line: {width: 2}}, hovertemplate: '%{text}<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<extra></extra>'}
     ];
     await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'Bistatic range (km)', gridcolor: '#47362e'}, yaxis: {title: 'Bistatic Doppler (Hz)', gridcolor: '#47362e'}}, plotConfig);
-    setState(`Evaluation feed online · ${timeLabel(detection?.timestamp)}`, 'good');
+    setState(`ADS-B online · ${timeLabel(detection?.timestamp)}`, 'good');
   }
 
   async function renderTracks() {
@@ -536,7 +536,7 @@
       return;
     }
     const rows = tracks.map(track => `<tr><td>${escapeHtml(track.id)}</td><td><span class="state-pill ${escapeHtml(String(track.state || '').toLowerCase())}">${escapeHtml(humanize(track.state))}</span></td><td>${number(trackRangeKm(track.delay, config), 2)}</td><td>${number(track.doppler, 1)}</td><td>${integer(track.n)}</td></tr>`);
-    detail.innerHTML = tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Tracks are being initiated' : 'No persistent tracks', tracker?.nTentative ? `${tracker.nTentative} tentative hypothesis${tracker.nTentative === 1 ? '' : 'es'} have not yet met the configured promotion rule.` : 'No detection sequence currently meets the configured tracking rules.');
+    detail.innerHTML = tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.');
     const traces = [];
     tracks.forEach((track, index) => {
       const ranges = array(track.associated_delay).map(value => trackRangeKm(value, config));

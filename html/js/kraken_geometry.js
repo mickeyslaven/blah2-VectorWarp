@@ -102,7 +102,7 @@
     content.className = 'config-fields';
     section.appendChild(content);
     const note = text => { const p = document.createElement('p'); p.textContent = text; content.appendChild(p); return p; };
-    note('Operator record only; physical agreement unverified. Bearing unavailable; nothing is sent to Suite.');
+    note('Saved layout only; measurements are unverified. Bearing is unavailable. Not sent to Suite.');
     const geometry = device.array_geometry;
     const button = (text, action) => {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = text;
@@ -110,24 +110,24 @@
     };
     if (geometry === undefined) {
       note('Unknown geometry does not prevent passive radar.');
-      content.appendChild(button('Record antenna layout', () => { device.array_geometry = emptyRecord(device.channel_count); changed(true); }));
+      content.appendChild(button('Add antenna layout', () => { device.array_geometry = emptyRecord(device.channel_count); changed(true); }));
       return section;
     }
     section.open = true;
-    content.appendChild(button('Remove layout record', () => {
+    content.appendChild(button('Remove layout', () => {
       if (document.defaultView?.confirm('Remove this layout and its measurements from the draft? Discard changes can restore them until you save.')) {
         delete device.array_geometry;
         changed(true);
       }
     }));
     if (device.type !== 'Kraken') {
-      note('Retained for Kraken. Select Kraken to edit, or remove this record from the draft.');
+      note('Kept for Kraken. Select Kraken to edit, or remove it from the draft.');
       return section;
     }
     const assessment = document.createElement('p'); assessment.id = 'geometry-assessment';
     assessment.setAttribute('aria-live', 'polite'); content.appendChild(assessment);
     if (!object(geometry) || !Array.isArray(geometry.elements) || geometry.elements.length > 8) {
-      note('Unsupported saved layout. Its values are retained; remove the record to start again.');
+      note('Unsupported saved layout. Its values are kept; remove it to start again.');
       return section;
     }
     const update = (action, rebuild = false, attestation = false) => {
@@ -202,7 +202,7 @@
         const old = Array.isArray(geometry.bearing_channels) ? geometry.bearing_channels : [];
         geometry.bearing_channels = bearing.checked ? [...old.filter(value => value !== channel), channel] : old.filter(value => value !== channel);
       }));
-      field(row, `${key}.bearing`, 'Record for bearing subset', '', bearing);
+      field(row, `${key}.bearing`, 'Bearing subset', '', bearing);
       if (!surveillance || (dedicated && ref)) { bearing.disabled = true; bearing.dataset.originalDisabled = 'true'; }
       if (bearing.checked && bearing.disabled) { const warning = document.createElement('p'); warning.textContent = 'Saved bearing selection conflicts with the current role; review the subset.'; row.appendChild(warning); }
       row.appendChild(button(`Remove element ${index + 1}`, () => update(() => {
@@ -219,7 +219,7 @@
     const angle = input(geometry.x_axis_bearing_deg_true, value => { geometry.x_axis_bearing_deg_true = value; }, 'number'); angle.min = 0; angle.max = 359.999999999;
     field(content, 'x_axis_bearing_deg_true', '+x bearing from true north (degrees)', 'Clockwise: 0 north, 90 east. Leave unknown orientation blank.', angle);
     field(content, 'ula_half_plane', 'Linear-array half-plane', 'Both retains front/back ambiguity.', select([['both', 'Both (ambiguous)'], ['positive_y', 'Local +y only'], ['negative_y', 'Local −y only']], geometry.ula_half_plane ?? 'both', value => { geometry.ula_half_plane = value; }));
-    note('Save layout changes before recording these survey statements. A changed layout clears earlier statements.');
+    note('Save layout changes before confirming these survey details. Changing the layout clears earlier confirmations.');
     for (const [key, title] of [['mapping_confirmed', 'I checked the cable map'], ['geometry_confirmed', 'I measured the element positions'], ['orientation_confirmed', 'I surveyed true-north orientation']]) {
       const control = document.createElement('input'); control.type = 'checkbox'; control.checked = geometry[key] === true; control.dataset.attestation = key;
       control.addEventListener('change', () => update(() => { geometry[key] = control.checked; }, false, true));
@@ -231,8 +231,8 @@
     const target = document.getElementById('geometry-assessment');
     if (!target || !assessment) return;
     const errors = assessment.issues?.filter(issue => issue.severity === 'error') || [];
-    target.textContent = assessment.valid ? 'Record complete; physical agreement unverified.' :
-      `Record needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Additional measurements or mappings need review.' : ''}`;
+    target.textContent = assessment.valid ? 'Layout complete; measurements are unverified.' :
+      `Layout needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Review additional measurements or mappings.' : ''}`;
   }
   return {recordErrors, emptyRecord, invalidate, context, reconcile, render, showAssessment};
 });
