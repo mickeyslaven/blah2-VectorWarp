@@ -94,10 +94,10 @@ Apple M2 development host passed internal-noise calibration, five-channel
 Homebrew app and companion were installed and tested through revision 17; see
 [MACOS_TEST_MATRIX.md](MACOS_TEST_MATRIX.md) for the tested duration and limits.
 External antenna/RF coherence and physical interruption recovery remain unqualified.
-The macOS CI workflow is configured
-to run the source build and simulated native checks on both architectures,
-plus the installed Homebrew pipeline on ARM. Local runs only qualify the
-architecture actually used.
+The [macOS CI run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739948)
+passed the source build and simulated native checks on Apple Silicon and Intel,
+plus the installed Homebrew pipeline on ARM. CI does not establish physical
+Intel receiver behavior; local runs only qualify the architecture actually used.
 
 ## Source provenance
 

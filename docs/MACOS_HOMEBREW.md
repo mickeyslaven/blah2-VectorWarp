@@ -86,8 +86,13 @@ brew upgrade --build-from-source vectorwarp/local/vectorwarp-heimdall vectorwarp
 On the Apple M2 development host, the app and companion were installed and
 tested through local revision 17, including formula tests, synthetic replay,
 lifecycle recovery, and the local Kraken pipeline. That is evidence for this
-source snapshot and architecture only; it does not publish a Homebrew release
-or qualify Intel Macs.
+source snapshot and architecture only; it does not publish a Homebrew release.
+The [Apple Silicon CI job](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739948)
+also installed and tested both formulas, checked installed replay and the
+synthetic Kraken pipeline, and removed the packages afterward.
+The `macos-15-intel` source CI job covers CPU, open adapters, synthetic Kraken,
+replay, API, browser and lifecycle checks, but no Intel Homebrew installation,
+physical receiver or GPU result.
 
 ## Remove
 

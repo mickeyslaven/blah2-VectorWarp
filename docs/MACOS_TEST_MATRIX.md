@@ -7,6 +7,24 @@ KrakenSDR. No remote Kraken was used.
 The working branch includes merged PR #26 (`a1fe4cd`); its updated browser
 labels pass the full API and DOM regressions with the macOS changes.
 
+## GitHub CI verification
+
+The PR checks passed for head `520c2e9` on 2026-09-18:
+
+| Platform | Executed checks | Remaining limits |
+| --- | --- | --- |
+| macOS Apple Silicon (`macos-15`) | CPU/open-SDK build and native tests, synthetic replay/configuration, native Kraken simulation, API/DOM, Chromium map, and 360-second lifecycle/recovery test; both Homebrew formulas installed and tested, installed replay/Kraken pipeline checked, packages removed | CI uses synthetic input; physical M2 and GPU results below are separate local evidence |
+| macOS Intel (`macos-15-intel`) | CPU/open-SDK build and native tests, synthetic replay/configuration, native Kraken simulation, API/DOM, Chromium map, and 360-second lifecycle/recovery test | Physical receivers, GPU performance and installed Homebrew packages remain unverified on Intel |
+| Linux x86_64 and ARM64 | CPU/API/replay checks and all ten Ubuntu 22.04/24.04/26.04, Debian 13 and Fedora 44 package jobs, including fresh installed services and Chromium checks | Synthetic receiver input does not qualify physical hardware or Linux GPU performance |
+
+Results: [macOS matrix](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739948),
+[Linux CPU checks](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739840),
+[Linux package matrix](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739837).
+The [Homebrew publication policy checks](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739938)
+also passed. The main-only Homebrew build/publisher and release publication
+correctly skipped on the PR; no public formula publication is established by
+these results.
+
 ## Native processing and receivers
 
 | Area | Executed check | What it establishes |
@@ -81,9 +99,9 @@ delay–Doppler map. The actual ADS-B feed is read without changing its source
 service. A browser test exposed two shared map bugs: resizing during Mapbox
 initialization and text symbols unsupported by the raster map style. Revision
 15 defers that resize and draws escaped site labels in the existing HTML overlay.
-The real-Chromium synthetic map regression now runs in the proposed macOS
-matrix and the Linux package workflow; these workflow edits have not run on
-GitHub because this branch has not been pushed.
+The real-Chromium synthetic map regression passed in both macOS architecture
+jobs and all ten Linux package jobs linked above. Its resize assertion checks
+Plotly's computed width, since automatic sizing can leave the input width unset.
 
 The first normal-profile automatic-mode attempt suffered a capture-buffer
 overflow during calibration, then exhausted its recovery deadline and correctly
@@ -132,7 +150,7 @@ or qualify Intel Macs, every Apple GPU or every Vulkan driver.
 | Receiver installation | Allowlisted macOS receiver-management API tests and actual Homebrew UHD/HackRF actions | Brew integration on this Mac; no privileged Linux helper or proprietary SDK installation |
 | RSPduo browser build | Builder and real API process tests | Fixed no-argument build, trusted origin/intent, concurrent configuration exclusion, receipt invalidation and live capabilities after building; synthetic compiler tests are distinct from actual SDK compilation |
 | Launcher | `vectorwarp-macos.test.sh`, lifecycle server tests and actual API/native replay | Web-only launch, idempotent start, stop/restart, Save & Restart, configuration revision, process identity, locking and foreign-server rejection |
-| Homebrew | Actual local source-snapshot install, CPU-to-GPU revision upgrade, `brew test`, synthetic replay under `brew services run`, stop and uninstall | Temporary local tap without a Git commit; per-user launchd service. Public tap publication, login after reboot and another Mac are not tested |
+| Homebrew | Actual local source-snapshot install, CPU-to-GPU revision upgrade, `brew test`, synthetic replay under `brew services run`, stop and uninstall | Temporary local tap without a Git commit; per-user launchd service. Public tap publication, login after reboot and another physical Mac are not tested; the separate ARM CI install is recorded above |
 | Latest Homebrew Kraken packages | Revision 17 app and companion installed; both formula tests pass, native patch receipt matches the source, and stable `opt` links select the upgraded companion | All six application/receiver/GPU binaries and 79 installed API/UI/launcher source files are byte-identical to revision 16. The companion adds the physically checked diagnostic logging. Upgrade validation caught and corrected links pinned to an older companion Cellar version; earlier physical limitations remain documented |
 | Browser | Actual Chrome 153 and Safari 26.6 Save & Restart with native replay, plus API/DOM/deployment regression suites | Firefox launched but its UI automation timed out, so Firefox interaction remains unverified. Test browsers were closed |
 
@@ -180,14 +198,14 @@ An earlier task-owned Ubuntu 24.04 ARM64 VM passed a CPU build, 24/24 native
 tests, 18/18 replay cases, 11/11 configuration runtime cases and API/DOM
 regressions. Its packaging suite reported 310 tests with five skips, with the
 commit-producing fixture excluded. That VM was removed after preserving logs.
-Those ARM64 checks preceded the final shared optimizations; the final source
-has not been rerun on Linux ARM64. The ten Linux OS/architecture package results
-belong to the merged baseline and have not all been rerun here.
+Those local ARM64 checks preceded the final shared optimizations. The subsequent
+GitHub runs above cover the updated source on Linux ARM64 and all ten Linux
+OS/architecture package combinations, including installed-service checks.
 
 Physical capture with USRP/HackRF/RSPduo, external antenna/RF coherence,
 Kraken recovery from physical drift or USB interruption, long-duration RF/USB
-throughput, real Mac sleep/wake, login after reboot, long thermal endurance, Intel macOS and
-the newly added GitHub workflow remain unverified. Process SIGSTOP/SIGCONT checks
+throughput, real Mac sleep/wake, login after reboot, long thermal endurance, and
+Intel physical receivers/GPU/installed Homebrew remain unverified. Process SIGSTOP/SIGCONT checks
 are process-pause simulation, not a Mac sleep/wake test. These limits prevent a
 claim of 100% hardware/platform coverage even when local software checks pass.
 The physical Kraken result establishes its internal calibration procedure and

@@ -3,9 +3,10 @@
 Apple Silicon (`arm64`) execution evidence comes from an Apple M2 on macOS
 26.6.1. It covers CPU/replay and browser/service lifecycle, a locally installed
 Homebrew app plus Kraken companion through revision 17, and bounded physical
-local-USB Kraken capture. Intel (`x86_64`) is only a proposed CI/build target:
-its matrix has not run, so no Intel runtime, GPU, receiver, or performance
-support is established. The detailed results are in
+local-USB Kraken capture. Intel (`x86_64`) source CI has passed CPU, open
+receiver-adapter, synthetic Kraken, replay, API, browser and lifecycle checks.
+That does not establish Intel physical receiver, GPU, installed-Homebrew or
+performance support. The detailed results are in
 [MACOS_TEST_MATRIX.md](MACOS_TEST_MATRIX.md). A detected device, installed SDK,
 or enumerated GPU is only an *available candidate* until VectorWarp's startup
 and numerical qualification gates accept it.
@@ -75,7 +76,7 @@ and [MoltenVK macOS setup guidance](https://github.com/KhronosGroup/MoltenVK/blo
 2. GPU setup reports `not installed`, `enumerated/unqualified`, or `qualified`
    separately. Enumeration requires the portability path above; qualification
    requires VectorWarp's existing replay/accuracy and timing gates.
-3. The proposed Apple Silicon/Intel CI matrix must execute before it can be used
-   as CI evidence. Each optional dependency still needs architecture-specific
+3. The Apple Silicon/Intel CI matrix has executed and supplies source-level
+   evidence. Each optional dependency still needs architecture-specific
    execution, and each receiver needs a physical-device capture test before its
    hardware status can be called qualified.

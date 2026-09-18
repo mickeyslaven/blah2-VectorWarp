@@ -7,9 +7,14 @@ services remain separate; public v0.1.7 is a Linux release. Apple Silicon
 (`arm64`) was exercised locally on an Apple M2 running macOS 26.6.1. That work
 covered CPU and replay processing, browser configuration and service lifecycle,
 the local Homebrew app and Kraken companion through revision 17, a calibrated
-local USB Kraken, and MoltenVK ambiguity/clutter processing. Intel (`x86_64`)
-is an experimental build target in the proposed CI matrix; it has not run and
-has no equivalent runtime, GPU, or hardware qualification.
+local USB Kraken, and MoltenVK ambiguity/clutter processing. The
+[macOS CI run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739948)
+also passed all source checks and an installed Homebrew app/Heimdall lifecycle
+and synthetic-pipeline check on `macos-15`. Intel (`x86_64`)
+is an experimental source-level CI target. Its `macos-15-intel` job passed CPU,
+open receiver-adapter, synthetic Kraken, replay, API, browser and lifecycle
+checks. Physical Intel receivers, GPU processing and installed Homebrew remain
+unverified.
 Homebrew is the macOS packaging path: see [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md)
 for a local source snapshot, service lifecycle, upgrades and removal. CPU processing
 is always available. Optional Vulkan/MoltenVK processing is described in
@@ -145,10 +150,14 @@ python3 test/macos/receiver_sdk_test.py --binary build/macos/artifact/bin/blah2
 `--test` runs native CTest before staging, including macOS GPU worker
 isolation fixtures that do not open a GPU. Linux privileged receiver-helper
 tests require Linux; the Linux CI/package matrix retains that coverage. The
-proposed macOS workflow targets Apple Silicon and Intel runner labels from
-[GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-It is unrun on GitHub, so it is a build/test plan rather than Intel execution
-evidence.
+macOS workflow has passed its Apple Silicon and Intel runner jobs, providing
+source-level CPU, open adapter, synthetic Kraken, replay, API, browser and
+lifecycle evidence on both architectures. It does not qualify Intel hardware,
+GPU processing, or an installed Homebrew package.
+
+The matching [Linux release-package run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35400739837)
+passed all ten OS/architecture jobs, including their installed-service and
+Chromium smoke checks. Those results do not replace hardware qualification.
 
 The launcher uses Python’s kernel file locking and macOS process identity APIs.
 It records exact arguments and process birth time to avoid stopping an unrelated

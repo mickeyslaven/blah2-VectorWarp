@@ -26,7 +26,7 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.
 - **Processing fixes:** corrected detection SNR, track association, spectrum scaling, and invalid-data handling, with regression tests.
-- **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel Mac support remains experimental.
+- **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel source-level CI support remains experimental.
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
@@ -109,8 +109,9 @@ Configure a receiver or replay file, then choose **Save & Restart** to start
 processing. See the [Homebrew guide](docs/MACOS_HOMEBREW.md) for prerequisites,
 services, updates and removal, and the [Mac guide](docs/MACOS.md) for receivers.
 
-Apple Silicon is tested on the development M2; Intel is experimental and
-unverified. This local source installation requires the port checkout: no
+Apple Silicon is tested on the development M2. Intel is experimental, with
+source-level CI coverage but no physical receiver, GPU, or installed-Homebrew
+qualification. This local source installation requires the port checkout: no
 installable public Mac formula or bottle is published yet. The
 [public tap automation](docs/HOMEBREW_PUBLISHING.md) will publish tested formulas
 after merges to `main`; public v0.1.7 release assets remain Linux-only.
@@ -201,15 +202,17 @@ available for development or unsupported systems.
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
 | Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Homebrew source installation](docs/MACOS_HOMEBREW.md) |
-| macOS | Experimental, unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
+| macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
 
 macOS development is documented in [the local build guide](docs/MACOS.md).
 Apple Silicon (`arm64`) has been exercised locally on an Apple M2 running macOS
 26.6.1, including CPU/replay, browser configuration and lifecycle, local
 Homebrew app/companion revision 17, and a calibrated local USB Kraken run.
 Vulkan through MoltenVK is qualified on that M2 for ambiguity and clutter, with
-CPU fallback retained. Intel (`x86_64`) is an experimental build/CI target whose
-matrix has not run, so it has no equivalent runtime, GPU, or hardware claim.
+CPU fallback retained. Intel (`x86_64`) is an experimental source-level CI
+target: its `macos-15-intel` job passed CPU, open receiver-adapter, synthetic
+Kraken, replay, API, browser, and lifecycle checks. It has no physical receiver,
+GPU, or installed-Homebrew claim.
 The public Homebrew tap is prepared; its first formula publication awaits the
 [main-merge workflow](docs/HOMEBREW_PUBLISHING.md). Public v0.1.7 release assets
 remain Linux packages. See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
