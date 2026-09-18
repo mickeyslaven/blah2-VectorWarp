@@ -36,6 +36,11 @@ build is not a physical RSPduo test. See the
 [maintainer setup](../docs/MAINTAINER_RELEASE.md) and
 [SDRplay user setup](../docs/SDRPLAY_SETUP.md).
 
+Every DEB/RPM build also exercises the installed `vectorwarp` commands in a
+disposable systemd environment: default/open, start, stop, restart, status,
+logs, version and help. Start/restart must produce fresh replay frames; stop
+must stop the web interface too. These tests use simulated IQ, not attached radios.
+
 `package-native.sh` uses an already extracted, checksum-verified official Node
 runtime from `node-runtime.env`; it never downloads one. It packages required
 licence notices. Example, after building an artifact:

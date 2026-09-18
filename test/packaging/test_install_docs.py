@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import re
 import subprocess
+import tempfile
 import unittest
 from urllib.parse import unquote
 
@@ -11,6 +12,31 @@ GUIDES = ("README.md", "docs/INSTALL.md", "docs/SETUP.md", "docs/SDRPLAY_SETUP.m
           "docs/PI_GPU_SETUP.md", "docs/DRAGONOS.md", "docs/GPU_ACCELERATION.md",
           "packaging/README.md", "docs/MAINTAINER_RELEASE.md", "docs/UPSTREAM_COMPARISON.md",
           "src/capture/rspduo/README.md", "src/capture/hackrf/README.md")
+
+APT_INSTALL = (
+    "sudo apt update && sudo apt install -y curl gnupg && "
+    "curl --fail --location --proto '=https' --tlsv1.2 "
+    "https://mickeyslaven.github.io/blah2-VectorWarp/install.sh "
+    "--output vectorwarp-install.sh && "
+    "sudo bash vectorwarp-install.sh --repo-only && "
+    "sudo apt update && sudo apt install -y vectorwarp && vectorwarp"
+)
+DNF_INSTALL = (
+    "sudo dnf install -y curl gnupg2 && "
+    "curl --fail --location --proto '=https' --tlsv1.2 "
+    "https://mickeyslaven.github.io/blah2-VectorWarp/install.sh "
+    "--output vectorwarp-install.sh && "
+    "sudo bash vectorwarp-install.sh --repo-only && "
+    "sudo dnf install -y vectorwarp && vectorwarp"
+)
+
+
+def shell_blocks(text):
+    """Return normalized shell fenced blocks without executing documentation."""
+    blocks = re.findall(r"```(?:bash|sh)\n(.*?)```", text, re.S)
+    return [" ".join(re.sub(r"\\\s*\n", " ", "\n".join(
+        line for line in block.splitlines() if not line.lstrip().startswith("#")
+    )).split()) for block in blocks]
 
 
 def project_documents():
@@ -39,12 +65,105 @@ def heading_ids(text):
 
 
 class InstallDocumentationTests(unittest.TestCase):
+    def run_stubbed_install(self, command, fail_download=False):
+        """Run a guide command only through disposable command stubs."""
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            stubs = temporary_path / "bin"
+            stubs.mkdir()
+            log = temporary_path / "commands.log"
+            stub = stubs / "command-stub"
+            stub.write_text("""#!/bin/sh
+name=${0##*/}
+printf '%s %s\\n' "$name" "$*" >> "$COMMAND_LOG"
+if [ "$name" = sudo ]; then
+    exec "$@"
+fi
+if [ "$name" = curl ]; then
+    if [ "${FAIL_CURL:-0}" = 1 ]; then
+        exit 17
+    fi
+    previous=
+    for argument in "$@"; do
+        if [ "$previous" = --output ]; then
+            printf '%s\\n' '#!/bin/sh' 'exit 0' > "$argument"
+            chmod 700 "$argument"
+            break
+        fi
+        previous=$argument
+    done
+fi
+exit 0
+""")
+            stub.chmod(0o755)
+            for name in ("sudo", "curl", "apt", "dnf", "vectorwarp"):
+                (stubs / name).symlink_to("command-stub")
+            environment = os.environ | {
+                "PATH": f"{stubs}:{os.defpath}",
+                "COMMAND_LOG": str(log),
+                "FAIL_CURL": "1" if fail_download else "0",
+            }
+            result = subprocess.run(["bash", "-c", command], cwd=temporary,
+                                    env=environment, capture_output=True, text=True,
+                                    timeout=10)
+            entries = log.read_text().splitlines() if log.exists() else []
+            return result, entries
+
+    def test_primary_install_snippets_are_one_safe_complete_command(self):
+        expected = {
+            "README.md": (APT_INSTALL, DNF_INSTALL),
+            "docs/INSTALL.md": (APT_INSTALL, DNF_INSTALL),
+            "docs/DRAGONOS.md": (APT_INSTALL,),
+        }
+        for relative, commands in expected.items():
+            blocks = shell_blocks((ROOT / relative).read_text())
+            for command in commands:
+                with self.subTest(guide=relative, command=command):
+                    self.assertIn(command, blocks)
+                    self.assertNotRegex(command, r"\b(?:less|more|pager)\b")
+                    self.assertIn("curl --fail --location --proto '=https' --tlsv1.2", command)
+                    self.assertIn("--repo-only", command)
+                    self.assertTrue(command.endswith("vectorwarp"))
+
+    def test_primary_install_commands_run_in_order_with_stubs(self):
+        cases = (
+            (APT_INSTALL, [
+                "sudo apt update", "apt update", "sudo apt install -y curl gnupg",
+                "apt install -y curl gnupg",
+                "curl --fail --location --proto =https --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh",
+                "sudo bash vectorwarp-install.sh --repo-only", "sudo apt update", "apt update",
+                "sudo apt install -y vectorwarp", "apt install -y vectorwarp", "vectorwarp ",
+            ]),
+            (DNF_INSTALL, [
+                "sudo dnf install -y curl gnupg2", "dnf install -y curl gnupg2",
+                "curl --fail --location --proto =https --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh",
+                "sudo bash vectorwarp-install.sh --repo-only", "sudo dnf install -y vectorwarp",
+                "dnf install -y vectorwarp", "vectorwarp ",
+            ]),
+        )
+        for command, expected in cases:
+            with self.subTest(command=command):
+                result, entries = self.run_stubbed_install(command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(entries, expected)
+
+    def test_primary_install_commands_fail_before_install_when_download_fails(self):
+        for command in (APT_INSTALL, DNF_INSTALL):
+            with self.subTest(command=command):
+                result, entries = self.run_stubbed_install(command, fail_download=True)
+                self.assertEqual(result.returncode, 17, result.stderr)
+                self.assertEqual(sum(entry.startswith("curl ") for entry in entries), 1)
+                self.assertFalse(any("vectorwarp-install.sh --repo-only" in entry for entry in entries))
+                self.assertFalse(any("install -y vectorwarp" in entry for entry in entries))
+                self.assertFalse(any(entry.startswith("vectorwarp ") for entry in entries))
+
     def test_all_documentation_uses_simple_package_update_commands(self):
         for document in project_documents():
             with self.subTest(document=str(document.relative_to(ROOT))):
                 text = " ".join(document.read_text().split())
                 self.assertNotRegex(text, r"\bapt(?:-get)?\s+(?:install\s+)?--only-upgrade\b")
                 self.assertNotRegex(text, r"\bdnf\s+upgrade\s+vectorwarp\b")
+                self.assertNotRegex(text, r"\b(?:less|more|pager)\s+vectorwarp-install\.sh\b")
 
     def test_launcher_command_reference_matches_real_help(self):
         result = subprocess.run(["/usr/bin/python3", str(ROOT / "script/vectorwarp"), "--help"],

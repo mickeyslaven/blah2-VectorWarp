@@ -100,39 +100,25 @@ Start with [downloads and APT/DNF setup](https://mickeyslaven.github.io/blah2-Ve
 
 There is one package per OS and architecture, with Kraken, USRP and HackRF
 adapters plus locally buildable RSPduo support. Packages cover the listed
-64-bit Ubuntu, Debian and Fedora releases. Choose
-one block for your OS. Each downloads over HTTPS, lets you inspect the script
-before privilege is requested, configures the signed repository, installs the
-package, and opens the web interface. If needed first, install `curl` and
-`gnupg` (Ubuntu/Debian) or `gnupg2` (Fedora) from your distribution.
-When the script opens in `less`, press **q** after reviewing it to continue.
+64-bit Ubuntu, Debian and Fedora releases. Copy the command for your OS. It
+installs the prerequisites, adds our signed repository, installs VectorWarp,
+and opens the web interface. Enter your administrator password if prompted.
 
 ```bash
 # Ubuntu or Debian
-curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
-  less vectorwarp-install.sh && \
-  sudo bash vectorwarp-install.sh --repo-only && \
-  sudo apt update && sudo apt install vectorwarp && \
-  vectorwarp
+sudo apt update && sudo apt install -y curl gnupg && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo apt update && sudo apt install -y vectorwarp && vectorwarp
 ```
 
 ```bash
 # Fedora
-curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && \
-  less vectorwarp-install.sh && \
-  sudo bash vectorwarp-install.sh --repo-only && \
-  sudo dnf install vectorwarp && \
-  vectorwarp
+sudo dnf install -y curl gnupg2 && curl --fail --location --proto '=https' --tlsv1.2 https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh && sudo bash vectorwarp-install.sh --repo-only && sudo dnf install -y vectorwarp && vectorwarp
 ```
 
-`--repo-only` verifies the pinned key and adds repository configuration without
-installing a package or starting services. `--start-web` remains an optional
-one-step installer route; it enables and starts only the web API directly.
-On upgrades, package hooks may restore previously running radar.
+The [installer source](script/install-release.sh) is available to read separately.
 
 ### 2. Configure and start radar
 
-In **Settings**, select and configure the receiver, then choose **Save &
+Open **Settings**, select and configure the receiver, then choose **Save &
 Restart**. This saves the first configuration and starts radar; no separate
 `vectorwarp start` is needed. See [receiver setup](docs/SETUP.md) for receiver
 details.

@@ -89,9 +89,9 @@ class HomepageTests(unittest.TestCase):
 
     def test_install_and_verification_commands_are_explicit_and_valid_shell(self):
         page = repository.repository_homepage(self.release_manifest())
-        for text in ('less vectorwarp-install.sh', 'sudo bash vectorwarp-install.sh --start-web',
+        for text in ('sudo apt install -y curl gnupg', 'sudo dnf install -y curl gnupg2',
                      'sudo bash vectorwarp-install.sh --repo-only',
-                     'sudo apt update &amp;&amp;\nsudo apt install vectorwarp', 'sudo dnf install vectorwarp',
+                     'sudo apt install -y vectorwarp', 'sudo dnf install -y vectorwarp',
                      'sudo dnf upgrade --refresh vectorwarp',
                      'sudo apt install ./matching.deb', 'sudo dnf install ./matching.rpm',
                      '<code>vectorwarp</code>', '<code>vectorwarp start</code>',
@@ -99,20 +99,31 @@ class HomepageTests(unittest.TestCase):
                      'Successful upgrades restart previously running VectorWarp services',
                      'intentionally stopped radar stopped',
                      'FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,\nnot Ubuntu 26.04',
-                     'enables the browser interface at boot', 'starts only that service',
-                     '<code>gnupg2</code>', '<code>gnupg</code>',
+                     'installs the prerequisites', 'installer source',
                      'On a fresh install, radar processing stays stopped',
                      'SHA256SUMS.asc', 'vectorwarp-archive-key.asc', 'A' * 40,
                      'checksum alone does not authenticate', 'gpgv --keyring',
                      'sha256sum --check --strict --ignore-missing'):
             self.assertIn(text, page)
         self.assertNotIn('--only-upgrade', page)
+        self.assertNotIn('less vectorwarp-install.sh', page)
+        install_commands = []
         for code in re.findall(r'<pre><code>(.*?)</code></pre>', page, re.DOTALL):
+            if 'curl --fail' in code:
+                command = unescape(code)
+                self.assertNotIn('\n', command)
+                self.assertTrue(command.endswith('&& vectorwarp'))
+                install_commands.append(command)
             if 'sudo apt' in code:
                 self.assertNotIn('sudo dnf', code, 'Do not mix OS commands in one copyable block')
             result = subprocess.run(['bash', '-n'], input=unescape(code), text=True,
                                     capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(install_commands), 2)
+        for guide in ('README.md', 'docs/INSTALL.md'):
+            text = (ROOT / guide).read_text()
+            for command in install_commands:
+                self.assertIn(command, text, f'{guide} must match the published installation command')
         for heading in ('1. Install for your OS', '2. Configure and start radar',
                         '3. Start, stop and check services', '4. Update'):
             self.assertIn(f'<h3>{heading}</h3>', page)
@@ -321,7 +332,7 @@ class HomepageTests(unittest.TestCase):
                          {f"{base}/{entry['filename']}" for entry in manifest['packages']})
         self.assertNotIn('/v1.2.3/', page)
         self.assertNotIn('/v0.1.0/', page)
-        for command in ('sudo bash vectorwarp-install.sh --start-web',
+        for command in ('sudo bash vectorwarp-install.sh --repo-only',
                         'vectorwarp start', 'vectorwarp stop', 'vectorwarp status'):
             self.assertIn(command, page)
 

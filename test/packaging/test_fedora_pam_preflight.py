@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Unit checks for the diagnostic-only Fedora PAM CI preflight."""
+
+import importlib.util
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest import mock
+
+
+SPEC = importlib.util.spec_from_file_location(
+    'fedora_pam_preflight', Path(__file__).with_name('fedora_pam_preflight.py'))
+PREFLIGHT = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(PREFLIGHT)
+
+
+class FedoraPamPreflightTests(unittest.TestCase):
+    def test_uses_pinned_image_and_installed_test_runtime_bounds(self):
+        build = PREFLIGHT.build_args('localhost/probe')
+        run = PREFLIGHT.run_args('probe', 'localhost/probe')
+        self.assertIn('BASE_IMAGE=' + PREFLIGHT.IMAGE, build)
+        self.assertIn('Containerfile.service-rpm', ' '.join(build))
+        for option in ('--memory=2g', '--memory-swap=2g'):
+            self.assertIn(option, build)
+            self.assertIn(option, run)
+        for option in ('--systemd=always', '--cgroupns=private',
+                       '--cap-add=SYS_ADMIN', '--security-opt=label=disable',
+                       '--security-opt=apparmor=unconfined', '--pids-limit=512'):
+            self.assertIn(option, run)
+        self.assertNotIn('--privileged', run)
+        self.assertNotIn('--volume', run)
+        self.assertNotIn('--device', run)
+
+    def test_named_profile_replaces_unconfined_and_invalid_name_rejected(self):
+        name = 'vectorwarp-fedora-ci-' + 'a' * 32
+        with mock.patch.dict(PREFLIGHT.os.environ,
+                             {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
+            run = PREFLIGHT.run_args('probe', 'localhost/probe')
+        self.assertIn('--security-opt=apparmor=' + name, run)
+        self.assertIn('--label=vectorwarp-ci-apparmor=' + name, run)
+        self.assertNotIn('--security-opt=apparmor=unconfined', run)
+        with mock.patch.dict(PREFLIGHT.os.environ,
+                             {'VECTORWARP_TEST_APPARMOR_PROFILE': 'other-profile'}):
+            with self.assertRaisesRegex(RuntimeError, 'Invalid CI-only'):
+                PREFLIGHT.run_args('probe', 'localhost/probe')
+
+    def test_wrong_actual_container_label_fails_before_account_setup(self):
+        name = 'vectorwarp-fedora-ci-' + 'b' * 32
+        for label in ('wrong-profile (enforce)', name + ' (unconfined)', name + ' (complain)'):
+            calls = []
+
+            def fake_command(args, *, output=None, check=True):
+                calls.append(args)
+                value = label + '\n' if '/proc/self/attr/apparmor/current' in args else ''
+                return subprocess.CompletedProcess(args, 0, value)
+
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory, \
+                    mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                    mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
+                    mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0), \
+                    mock.patch.dict(PREFLIGHT.os.environ,
+                                    {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
+                with self.assertRaisesRegex(RuntimeError, 'did not enter'):
+                    PREFLIGHT.probe(Path(directory))
+                self.assertEqual((Path(directory) / 'apparmor-label.txt').read_text(), label + '\n')
+            self.assertFalse(any('useradd' in args for args in calls))
+            self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
+            self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
+
+    def test_kernel_evidence_is_helper_only_and_bounded(self):
+        raw = 'unrelated secret kernel record\n' + '\n'.join(
+            f'apparmor="DENIED" profile="unix-chkpwd" capname="dac_override" #{i}'
+            for i in range(120))
+        lines = PREFLIGHT.helper_kernel_lines(raw)
+        self.assertEqual(len(lines), 100)
+        self.assertNotIn('unrelated secret', '\n'.join(lines))
+        self.assertTrue(all('unix-chkpwd' in line for line in lines))
+
+    def test_failed_pam_is_not_retried_or_healed_and_container_is_removed(self):
+        calls = []
+
+        def fake_command(args, *, output=None, check=True):
+            calls.append((args, check))
+            if 'is-system-running' in args:
+                value = 'running\n'
+            elif args[-2:] == ['-u', 'vectorwarp-package-test']:
+                value = '1000\n'
+            elif args[-2:] == ['-g', 'vectorwarp-package-test']:
+                value = '1000\n'
+            else:
+                value = ''
+            status = 1 if '/usr/bin/sudo' in args else 0
+            return subprocess.CompletedProcess(args, status, value)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                mock.patch.object(PREFLIGHT, 'host_diagnostics') as diagnostics, \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0):
+            with self.assertRaisesRegex(RuntimeError, 'sudo/PAM failed'):
+                PREFLIGHT.probe(Path(directory))
+            diagnostics.assert_called_once()
+        sudo = [args for args, _ in calls if '/usr/bin/sudo' in args]
+        self.assertEqual(len(sudo), 1)
+        self.assertEqual(sudo[0][-4:], ['/usr/bin/sudo', '-n', '--', '/usr/bin/true'])
+        self.assertTrue(any(args[:2] == ['podman', 'stop'] for args, _ in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'rm'] for args, _ in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'rmi'] for args, _ in calls))
+        all_arguments = '\n'.join(' '.join(args) for args, _ in calls)
+        self.assertIn('NOPASSWD: /usr/bin/true', all_arguments)
+        self.assertNotIn('apparmor_parser', all_arguments)
+        self.assertNotIn('chpasswd', all_arguments)
+
+    def test_diagnostic_failure_does_not_hide_pam_failure_or_skip_cleanup(self):
+        calls = []
+
+        def fake_command(args, *, output=None, check=True):
+            calls.append(args)
+            if 'is-system-running' in args:
+                value = 'running\n'
+            elif args[-2:] in (['-u', 'vectorwarp-package-test'],
+                               ['-g', 'vectorwarp-package-test']):
+                value = '1000\n'
+            else:
+                value = ''
+            return subprocess.CompletedProcess(args, int('/usr/bin/sudo' in args), value)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                mock.patch.object(PREFLIGHT, 'host_diagnostics',
+                                  side_effect=OSError('journal unavailable')), \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0):
+            with self.assertRaisesRegex(RuntimeError, 'sudo/PAM failed'):
+                PREFLIGHT.probe(Path(directory))
+        self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'rmi'] for args in calls))
+
+    def test_cleanup_failure_is_reported_after_successful_probe(self):
+        def fake_command(args, *, output=None, check=True):
+            if 'is-system-running' in args:
+                value = 'running\n'
+            elif args[-2:] in (['-u', 'vectorwarp-package-test'],
+                               ['-g', 'vectorwarp-package-test']):
+                value = '1000\n'
+            else:
+                value = ''
+            return subprocess.CompletedProcess(args, int(args[:2] == ['podman', 'rm']), value)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0):
+            with self.assertRaisesRegex(RuntimeError, 'cleanup failed: rm exited 1'):
+                PREFLIGHT.probe(Path(directory))
+
+    def test_root_required_before_any_container_change(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=1000), \
+                mock.patch.object(PREFLIGHT, 'command') as command:
+            with self.assertRaisesRegex(RuntimeError, 'Run with sudo'):
+                PREFLIGHT.probe(Path(directory))
+            command.assert_not_called()
+
+
+if __name__ == '__main__':
+    unittest.main()

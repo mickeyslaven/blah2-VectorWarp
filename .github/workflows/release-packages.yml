@@ -66,6 +66,32 @@ jobs:
           [[ $tag =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || {
             echo 'Version must be an immutable stable vMAJOR.MINOR.PATCH tag.' >&2; exit 1; }
           printf 'tag=%s\nversion=%s\ntagged_release=%s\n' "$tag" "${tag#v}" "$tagged_release" >> "$GITHUB_OUTPUT"
+  fedora-pam:
+    name: Fedora container authentication (${{ matrix.runner }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - name: Check out the exact release revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Install disposable test runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends podman
+      - name: Check Fedora sudo and record host authentication denials
+        run: sudo python3 test/packaging/fedora_apparmor_ci.py -- python3 test/packaging/fedora_pam_preflight.py --evidence fedora-pam-evidence
+      - name: Preserve authentication preflight evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fedora-pam-${{ matrix.runner }}-${{ github.sha }}
+          path: fedora-pam-evidence/
+          if-no-files-found: warn
+          retention-days: 14
   verify:
     # Retain the required-check identity; this job does not use a vendor SDK.
     name: Verify CPU unit, API, and replay tests
@@ -128,6 +154,8 @@ jobs:
         run: |
           node test/ui/packaging.test.js
           python3 test/packaging/test_install_docs.py -v
+          python3 test/packaging/test_fedora_pam_preflight.py -v
+          python3 test/packaging/test_fedora_apparmor_ci.py -v
           python3 test/packaging/test_gpu_setup.py -v
           python3 test/packaging/test_receiver_build.py -v
           sudo python3 test/packaging/test_package_upgrade.py -v
@@ -168,7 +196,10 @@ jobs:
     name: ${{ matrix.distro }} ${{ matrix.arch }} package
     # PRs and trusted builds both exercise the local-kit all-receiver artifact.
     # Only trusted builds can upload inputs for release signing.
-    needs: [validate, verify]
+    needs: [validate, verify, fedora-pam]
+    # Required package checks must fail, not become mergeable skipped checks,
+    # when the disposable test OS cannot authenticate an ordinary user.
+    if: always()
     environment: ${{ github.event_name == 'pull_request' && 'pr-packaging' || 'release-signing' }}
     strategy:
       fail-fast: false
@@ -189,6 +220,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
+      - name: Require successful build and test-environment prerequisites
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          PAM_RESULT: ${{ needs.fedora-pam.result }}
+        run: test "$VALIDATE_RESULT" = success && test "$VERIFY_RESULT" = success && test "$PAM_RESULT" = success
       - name: Check out the exact release revision
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - name: Build native Debian package
@@ -362,9 +399,13 @@ jobs:
             *) image=$PINNED_IMAGE ;;
           esac
           package=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
+          test_command=(bash script/test-installed-package.sh --package "$package" --image "$image"
+            --evidence service-evidence --browser-modules test/browser/node_modules)
+          if [[ $DISTRO == fedora44 ]]; then
+            test_command=(python3 test/packaging/fedora_apparmor_ci.py -- "${test_command[@]}")
+          fi
           sudo env "PATH=$PATH" "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" \
-            bash script/test-installed-package.sh --package "$package" --image "$image" \
-            --evidence service-evidence --browser-modules test/browser/node_modules
+            "${test_command[@]}"
       - name: Preserve installed-service logs and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

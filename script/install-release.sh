@@ -254,7 +254,7 @@ validate_public_key "$downloaded_key" "$EXPECTED_FINGERPRINT"
 say "verified signing key $EXPECTED_FINGERPRINT"
 
 if $PREFLIGHT_ONLY; then say 'preflight passed; no repository or package was changed'; exit 0; fi
-if [[ $EUID -ne 0 && $DRY_RUN == false ]]; then die 'installation requires root; inspect this script, then run it with sudo'; fi
+if [[ $EUID -ne 0 && $DRY_RUN == false ]]; then die 'installation requires root; run it with sudo'; fi
 
 if [[ $manager == apt ]]; then
   keyring="$TEMP_DIR/vectorwarp.gpg"

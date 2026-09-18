@@ -76,16 +76,18 @@ def release_installation(manifest):
     # The site can be rebuilt from main before the next release exists. Describe
     # only behavior shipped by the verified packages in this manifest.
     has_launcher = tuple(map(int, version.split("."))) >= (0, 1, 7)
+    download = ("curl --fail --location --proto '=https' --tlsv1.2 "
+                "https://mickeyslaven.github.io/blah2-VectorWarp/install.sh "
+                "--output vectorwarp-install.sh")
+    fedora_install = ("sudo dnf install -y curl gnupg2 && " + download +
+                      " && sudo bash vectorwarp-install.sh ")
+    apt_install = ("sudo apt update && sudo apt install -y curl gnupg && " + download +
+                   " && sudo bash vectorwarp-install.sh ")
     if has_launcher:
-        fedora_install = '''sudo bash vectorwarp-install.sh --repo-only &amp;&amp;
-sudo dnf install vectorwarp &amp;&amp;
-vectorwarp'''
-        apt_install = '''sudo bash vectorwarp-install.sh --repo-only &amp;&amp;
-sudo apt update &amp;&amp;
-sudo apt install vectorwarp &amp;&amp;
-vectorwarp'''
-        startup_guidance = '''Run <code>vectorwarp</code> to open the web interface, then configure your
-receiver in Settings. Choose <strong>Save &amp; Restart</strong> to save settings
+        fedora_install += '--repo-only && sudo dnf install -y vectorwarp && vectorwarp'
+        apt_install += '--repo-only && sudo apt update && sudo apt install -y vectorwarp && vectorwarp'
+        startup_guidance = '''Run <code>vectorwarp</code> to open the web interface, then open Settings
+and configure your receiver. Choose <strong>Save &amp; Restart</strong> to save settings
 and start radar, including the first time. No separate start command is needed.
 <strong>Save for later</strong> saves without starting radar. On a headless
 system, the command prints the web address.'''
@@ -100,7 +102,8 @@ and <code>vectorwarp version</code> show service state, logs and the installed v
 intentionally stopped radar stopped. Finish receiver setup/build actions before
 updating; a helper that cannot be safely stopped blocks unpacking with an error.'''
     else:
-        fedora_install = apt_install = 'sudo bash vectorwarp-install.sh --start-web'
+        fedora_install += '--start-web'
+        apt_install += '--start-web'
         startup_guidance = '''Open <code>http://localhost:3000</code>, configure your receiver in Settings,
 and choose <strong>Save &amp; Restart</strong> to start radar.'''
         control_guidance = '''If an earlier installation completed but the page does not load, run
@@ -114,28 +117,15 @@ to activate updated code. Do not run it mid-transaction; it does not restart
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>1. Install for your OS</h3>
-<p>Copy the block for your OS. It downloads the repository installer for you to
-read, then adds the signed repository, installs VectorWarp and opens only the web interface.
-When the script opens in <code>less</code>, press <strong>q</strong> after reviewing it to continue.</p>
+<p>Copy the command for your OS. It installs the prerequisites, adds our signed
+repository, installs VectorWarp and opens the web interface. Enter your
+administrator password if prompted.</p>
 <h4>Fedora 44</h4>
-<p>If curl or GnuPG is missing, install <code>curl</code> and
-<code>gnupg2</code> from Fedora first.</p>
-<pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
-  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh &amp;&amp;
-less vectorwarp-install.sh &amp;&amp;
-{fedora_install}</code></pre>
+<pre><code>{escape(fedora_install)}</code></pre>
 <h4>Ubuntu, Debian and compatible DragonOS / Raspberry Pi OS</h4>
-<p>If curl or GnuPG is missing, install <code>curl</code> and
-<code>gnupg</code> from your distribution first.</p>
-<pre><code>curl --fail --location --proto '=https' --tlsv1.2 \\
-  https://mickeyslaven.github.io/blah2-VectorWarp/install.sh --output vectorwarp-install.sh &amp;&amp;
-less vectorwarp-install.sh &amp;&amp;
-{apt_install}</code></pre>
-<p>For a one-step install after reviewing the script, use
-<code>sudo bash vectorwarp-install.sh --start-web</code> instead of the
-repository-only and package-manager commands above. <code>--start-web</code>
-enables the browser interface at boot and starts only that service.
-</p>
+<pre><code>{escape(apt_install)}</code></pre>
+<p>The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>
+is available to read separately.</p>
 <h3>2. Configure and start radar</h3>
 <p>{startup_guidance}</p>
 <p>Open <code>http://localhost:3000</code> on the installed machine, or

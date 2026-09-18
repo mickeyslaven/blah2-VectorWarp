@@ -1,10 +1,13 @@
 """No host services: exact launcher command/privilege routing regressions."""
 import contextlib
+import ast
 import importlib.machinery
 import importlib.util
 import io
 import os
 import json
+import re
+import stat
 from pathlib import Path
 import subprocess
 import tempfile
@@ -45,6 +48,30 @@ class LauncherTests(unittest.TestCase):
         with patch.object(launcher, 'open_web') as open_web:
             self.assertEqual(launcher.main([]), 0)
             open_web.assert_called_once_with()
+
+    def test_explicit_open_uses_the_same_web_only_path(self):
+        with patch.object(launcher, 'open_web') as open_web:
+            self.assertEqual(launcher.main(['open']), 0)
+            open_web.assert_called_once_with()
+
+    def test_help_aliases_are_unprivileged_and_never_change_services(self):
+        for command in ('help', '-h', '--help'):
+            with self.subTest(command=command), patch.object(launcher, 'run') as run:
+                self.assertEqual(launcher.main([command]), 0)
+                self.assertIn('Usage: vectorwarp', self.output.getvalue())
+                run.assert_not_called()
+
+    def test_version_aliases_read_metadata_without_service_actions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            prefix = Path(temporary)
+            (prefix / 'PACKAGE-METADATA').write_text('version=1.2.3\ncommit=abc\n')
+            for command in ('version', '--version'):
+                with self.subTest(command=command), \
+                     patch.object(launcher, 'PREFIX', prefix), \
+                     patch.object(launcher, 'run') as run:
+                    self.assertEqual(launcher.main([command]), 0)
+                    self.assertIn('version=1.2.3', self.output.getvalue())
+                    run.assert_not_called()
 
     def test_start_uses_checked_service_not_root_dsp(self):
         with patch.object(launcher.os, 'geteuid', return_value=0), \
@@ -210,6 +237,14 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(launcher.main(['status']), 3)
             self.assertNotIn('sudo', str(run.call_args))
 
+    def test_logs_is_unprivileged_and_never_routes_through_service_actions(self):
+        with patch.object(launcher.subprocess, 'run', return_value=Mock(returncode=0)) as run, \
+             patch.object(launcher, 'run') as service_run:
+            self.assertEqual(launcher.main(['logs']), 0)
+            self.assertEqual(run.call_args.args[0][:4],
+                             ['/usr/bin/journalctl', '--no-pager', '-n', '100'])
+            service_run.assert_not_called()
+
     def test_failure_is_not_reported_as_success(self):
         with patch.object(launcher.os, 'geteuid', return_value=0), \
              patch.object(launcher, 'run', side_effect=subprocess.CalledProcessError(1, ['systemctl'])):
@@ -296,6 +331,153 @@ class LauncherTests(unittest.TestCase):
                 with self.assertRaises(OSError):
                     with launcher.upgrade_guard():
                         self.fail('Symlink was followed')
+
+
+class InstalledHarnessPacingTests(unittest.TestCase):
+    """Load only pure fixture helpers, never execute installed-service tests."""
+
+    def setUp(self):
+        tree = ast.parse((ROOT / 'test/packaging/installed_reinstall_test.py').read_text())
+        helpers = ast.Module(body=[item for item in tree.body
+            if isinstance(item, ast.FunctionDef) and item.name in
+            ('start_limit_seconds', 'separate_lifecycle_cases',
+             'diagnose_test_administrator', 'probe_normal_user_identity',
+             'diagnose_runuser_identity')], type_ignores=[])
+        self.state = {'re': re, 'time': Mock(), 'property_of': Mock(),
+                      'STACK': ('api', 'processor', 'broker', 'socket', 'restart')}
+        exec(compile(helpers, '<installed-fixture-helpers>', 'exec'), self.state)
+
+    def test_start_limit_duration_parsing_is_bounded(self):
+        parse = self.state['start_limit_seconds']
+        for value, expected in (('0', 0), ('0s', 0), ('10s', 10),
+                                ('250ms', .25), ('1s 500ms', 1.5), ('100us', .0001)):
+            with self.subTest(value=value):
+                self.assertAlmostEqual(parse(value), expected)
+        for value in ('', 'infinity', '-1s', '31s', '1min', '10s garbage'):
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                parse(value)
+
+    def test_pacing_waits_longest_unit_window_without_service_mutations(self):
+        query = self.state['property_of']
+        query.side_effect = ['10s', '2s', '20s', '5s', '0']
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.state['separate_lifecycle_cases']()
+        self.assertEqual(query.call_args_list,
+                         [unittest.mock.call(unit, 'StartLimitIntervalUSec')
+                          for unit in self.state['STACK']])
+        self.state['time'].sleep.assert_called_once_with(20.25)
+
+    def test_disabled_start_limit_does_not_sleep(self):
+        self.state['property_of'].return_value = '0'
+        self.state['separate_lifecycle_cases']()
+        self.state['time'].sleep.assert_not_called()
+
+    def test_account_diagnostics_never_print_password_fields(self):
+        process = Mock(PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+                       DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired)
+        process.run.side_effect = [
+            Mock(returncode=0, stdout='fixture:PASSWD_SECRET:1000:1000::/home/fixture:/bin/sh\n'),
+            Mock(returncode=0, stdout='SHADOW_SECRET'),
+            Mock(returncode=0, stdout='(root) NOPASSWD: /usr/bin/vectorwarp\n'),
+            Mock(returncode=0, stdout='parsed OK\n'),
+        ]
+        shadow = Mock()
+        shadow.lstat.return_value = Mock(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640)
+        self.state.update(Path=Mock(return_value=shadow), stat=stat, subprocess=process)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.state['diagnose_test_administrator']('fixture', 'privacy-test')
+        self.assertNotIn('SECRET', output.getvalue())
+        self.assertIn('account=fixture uid=1000 gid=1000', output.getvalue())
+        self.assertIn('getent shadow: exit=0', output.getvalue())
+        shadow_call = process.run.call_args_list[1]
+        self.assertEqual(shadow_call.args, (('getent', 'shadow', 'fixture'),))
+        self.assertEqual(shadow_call.kwargs['stdout'], subprocess.DEVNULL)
+        self.assertEqual(shadow_call.kwargs['stderr'], subprocess.DEVNULL)
+        for call in process.run.call_args_list:
+            self.assertFalse(call.kwargs['check'])
+            self.assertEqual(call.kwargs['timeout'], 15)
+
+    def prepare_normal_user_probe(self):
+        account = Mock(pw_uid=1000, pw_gid=2000)
+        fake_pwd = Mock()
+        fake_pwd.getpwnam.return_value = account
+        fake_os = Mock()
+        fake_os.getgrouplist.return_value = [2000, 3000]
+        fake_os.getgroups.return_value = [3000, 2000]
+        fake_os.getresuid.return_value = (1000, 1000, 1000)
+        fake_os.getresgid.return_value = (2000, 2000, 2000)
+        fake_os.execv.side_effect = RuntimeError('exec replaced the probe')
+        fake_path = Mock()
+        status = Mock()
+        status.read_text.return_value = ('CapPrm:\t0\nCapEff:\t0\nCapBnd:\t802405fb\n'
+                                         'CapAmb:\t0\nNoNewPrivs:\t0\n')
+        fake_path.return_value = status
+        self.state.update(pwd=fake_pwd, os=fake_os, Path=fake_path)
+        return fake_os, status
+
+    def test_normal_user_probe_execs_installed_open_after_identity_checks(self):
+        fake_os, _ = self.prepare_normal_user_probe()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), \
+             self.assertRaisesRegex(RuntimeError, 'exec replaced the probe'):
+            self.state['probe_normal_user_identity']('fixture', launch=True)
+        fake_os.execv.assert_called_once_with('/usr/bin/vectorwarp', ['vectorwarp', 'open'])
+        self.assertIn('uids=(1000, 1000, 1000)', output.getvalue())
+        self.assertIn('cap_eff=0', output.getvalue())
+        self.assertIn('no_new_privs=0', output.getvalue())
+
+    def test_normal_user_probe_rejects_wrong_ids_groups_caps_and_nnp(self):
+        cases = (
+            ('root_uid', 'getresuid', (0, 0, 0)),
+            ('saved_uid', 'getresuid', (1000, 1000, 0)),
+            ('saved_gid', 'getresgid', (2000, 2000, 0)),
+            ('wrong_groups', 'getgroups', [2000]),
+            ('permitted_cap', 'CapPrm', '1'),
+            ('effective_cap', 'CapEff', '1'),
+            ('ambient_cap', 'CapAmb', '1'),
+            ('nnp', 'NoNewPrivs', '1'),
+        )
+        for name, field, value in cases:
+            with self.subTest(name=name):
+                fake_os, status = self.prepare_normal_user_probe()
+                if field in ('getresuid', 'getresgid', 'getgroups'):
+                    getattr(fake_os, field).return_value = value
+                else:
+                    status.read_text.return_value = status.read_text.return_value.replace(
+                        field + ':\t0', field + ':\t' + value)
+                with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(AssertionError):
+                    self.state['probe_normal_user_identity']('fixture', launch=True)
+                fake_os.execv.assert_not_called()
+
+    def test_runuser_comparison_is_identity_only(self):
+        process = Mock(PIPE=subprocess.PIPE, STDOUT=subprocess.STDOUT,
+                       TimeoutExpired=subprocess.TimeoutExpired)
+        process.run.return_value = Mock(returncode=0, stdout='NORMAL_USER_IDENTITY\n')
+        self.state['subprocess'] = process
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.state['diagnose_runuser_identity']('fixture')
+        command = process.run.call_args.args[0]
+        self.assertEqual(command[-1], '--probe-identity')
+        self.assertNotIn('vectorwarp', command)
+        self.assertNotIn('sudo', command)
+
+    def test_identity_probe_entrypoints_require_container(self):
+        tree = ast.parse((ROOT / 'test/packaging/installed_reinstall_test.py').read_text())
+        dispatch = next(item for item in tree.body if isinstance(item, ast.If)
+                        and '--probe-identity' in ast.unparse(item.test))
+        for option in ('--probe-identity', '--probe-open'):
+            with self.subTest(option=option):
+                fake_path = Mock()
+                fake_path.return_value.exists.return_value = False
+                probe = Mock()
+                state = {'sys': Mock(argv=['fixture', option]), 'Path': fake_path,
+                         'probe_normal_user_identity': probe}
+                with self.assertRaisesRegex(AssertionError, 'disposable container'):
+                    exec(compile(ast.Module(body=[dispatch], type_ignores=[]),
+                                 '<probe-entrypoint>', 'exec'), state)
+                probe.assert_not_called()
+                fake_path.assert_called_once_with('/run/.containerenv')
 
 
 if __name__ == '__main__':

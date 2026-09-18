@@ -8,22 +8,84 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
+import re
 import subprocess
 import socket
+import stat
 import sys
 import time
 import urllib.request
 
 
 def run(*args):
-    result = subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE,
+    result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=180,
                             env=os.environ | {'DEBIAN_FRONTEND': 'noninteractive'})
+    if result.returncode:
+        # The disposable CI evidence must include sudo/PAM failures; check=True
+        # otherwise discards this captured combined output in the traceback.
+        print(f'FAILED command {args!r} (exit {result.returncode}):\n{result.stdout}', flush=True)
+        raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout)
     return result.stdout.strip()
 
 
 def property_of(unit, name):
     return run('systemctl', 'show', '-p', name, '--value', unit)
+
+
+def start_limit_seconds(value):
+    """Parse systemctl's duration output; reject unbounded fixture delays."""
+    if value == '0':
+        return 0.0
+    factors = {'us': 1e-6, 'ms': .001, 's': 1, 'min': 60, 'h': 3600}
+    pattern = r'(\d+(?:\.\d+)?)(us|ms|min|s|h)'
+    parts = re.findall(pattern, value)
+    if not parts or re.sub(pattern, '', value).strip():
+        raise AssertionError(('Unsupported service start-limit duration', value))
+    seconds = sum(float(number) * factors[unit] for number, unit in parts)
+    if not 0 <= seconds <= 30:
+        raise AssertionError(('Service start-limit duration exceeds fixture budget', value))
+    return seconds
+
+
+def separate_lifecycle_cases():
+    """Let prior cases age out without resetting or disabling crash protection."""
+    seconds = max(start_limit_seconds(property_of(unit, 'StartLimitIntervalUSec'))
+                  for unit in STACK)
+    if seconds:
+        print(f'Waiting {seconds + .25:g}s between independent lifecycle cases '
+              '(installed systemd start limits remain enabled).', flush=True)
+        time.sleep(seconds + .25)
+
+
+STACK = ('vectorwarp-api.service', 'vectorwarp-processor.service',
+         'vectorwarp-restart.service', 'vectorwarp-receiver.service',
+         'vectorwarp-receiver.socket')
+
+
+def stack_state():
+    """A PID/state snapshot catches accidental service changes by readers."""
+    return {unit: (property_of(unit, 'ActiveState'), property_of(unit, 'MainPID'))
+            for unit in STACK}
+
+
+def assert_web_only():
+    # API pulls in its receiver-management socket. A request for read-only
+    # discovery or GPU-access status may socket-activate the root broker; it has no capture
+    # path without a reviewed, authorized action. Radar remains strictly off
+    # until an explicit start: processor and restart must not be running.
+    assert property_of('vectorwarp-api.service', 'ActiveState') == 'active'
+    assert int(property_of('vectorwarp-api.service', 'MainPID')) > 0
+    assert property_of('vectorwarp-receiver.socket', 'ActiveState') == 'active'
+    for unit in ('vectorwarp-processor.service', 'vectorwarp-restart.service'):
+        assert property_of(unit, 'ActiveState') in ('inactive', 'failed'), unit
+        assert property_of(unit, 'MainPID') == '0', unit
+    broker_state = property_of('vectorwarp-receiver.service', 'ActiveState')
+    broker_pid = property_of('vectorwarp-receiver.service', 'MainPID')
+    assert broker_state in ('inactive', 'failed', 'active'), broker_state
+    assert (int(broker_pid) > 0 if broker_state == 'active' else broker_pid == '0'), \
+        (broker_state, broker_pid)
 
 
 def assert_restarted(unit, previous_pid):
@@ -33,9 +95,7 @@ def assert_restarted(unit, previous_pid):
 
 
 def assert_stopped_stack():
-    for unit in ('vectorwarp-api.service', 'vectorwarp-processor.service',
-                 'vectorwarp-restart.service', 'vectorwarp-receiver.service',
-                 'vectorwarp-receiver.socket'):
+    for unit in STACK:
         state = property_of(unit, 'ActiveState')
         pid = property_of(unit, 'MainPID')
         assert state in ('inactive', 'failed'), (unit, state)
@@ -94,6 +154,132 @@ def activate_idle_broker():
     return property_of('vectorwarp-receiver.service', 'MainPID')
 
 
+def assert_readers_do_not_mutate_services():
+    before = stack_state()
+    # status has a non-zero result while deliberately stopped units exist;
+    # that result is part of systemctl's read-only semantics, not a failure.
+    status = subprocess.run(['vectorwarp', 'status'], text=True,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=180)
+    assert status.returncode in (0, 3), (status.returncode, status.stdout)
+    logs = subprocess.run(['vectorwarp', 'logs'], text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          timeout=180)
+    assert logs.returncode == 0, (logs.returncode, logs.stdout)
+    assert stack_state() == before, 'status or logs changed installed service state'
+
+
+def assert_bad_commands_fail_closed():
+    before = stack_state()
+    for args in (('not-a-command',), ('start', 'unexpected-argument')):
+        result = subprocess.run(['vectorwarp', *args], text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=180)
+        assert result.returncode == 64, (args, result.returncode, result.stdout)
+        assert 'Usage: vectorwarp' in result.stdout, (args, result.stdout)
+    assert stack_state() == before, 'Rejected launcher input changed installed service state'
+
+
+def grant_test_administrator():
+    """Prove the installed sudo re-entry path without broad container grants."""
+    account = 'vectorwarp-package-test'
+    grant = Path('/etc/sudoers.d') / account
+    run('useradd', '--create-home', '--shell', '/bin/sh', account)
+    grant.write_text(account + ' ALL=(root) NOPASSWD: /usr/bin/vectorwarp\n')
+    grant.chmod(0o440)
+    run('visudo', '-cf', str(grant))
+    diagnose_test_administrator(account, 'after-account-creation')
+    return account
+
+
+def diagnose_test_administrator(account, stage):
+    """Record account/PAM evidence without exposing a shadow password field."""
+    print(f'ADMIN_ACCOUNT_DIAGNOSTICS {stage}', flush=True)
+    shadow = Path('/etc/shadow')
+    try:
+        info = shadow.lstat()
+        print(f'/etc/shadow: uid={info.st_uid} gid={info.st_gid} '
+              f'mode={stat.S_IMODE(info.st_mode):04o} regular={stat.S_ISREG(info.st_mode)}',
+              flush=True)
+    except OSError as error:
+        print(f'/etc/shadow: stat_error={type(error).__name__}', flush=True)
+    checks = (
+        ('getent passwd', ('getent', 'passwd', account), True),
+        ('getent shadow', ('getent', 'shadow', account), False),
+        ('sudo -l -U', ('sudo', '-n', '-l', '-U', account), True),
+        ('visudo -c', ('visudo', '-c'), True),
+    )
+    for label, command, show_output in checks:
+        try:
+            result = subprocess.run(command, text=True,
+                                    stdout=subprocess.PIPE if show_output else subprocess.DEVNULL,
+                                    stderr=subprocess.STDOUT if show_output else subprocess.DEVNULL,
+                                    timeout=15, check=False)
+            print(f'{label}: exit={result.returncode}', flush=True)
+            if label == 'getent passwd':
+                # Non-shadow systems can place a password hash in field 2.
+                # Only account identity is relevant to this diagnostic.
+                for line in result.stdout.splitlines():
+                    fields = line.split(':')
+                    if len(fields) == 7:
+                        print(f'account={fields[0]} uid={fields[2]} gid={fields[3]}', flush=True)
+                    else:
+                        print('Unexpected passwd record omitted', flush=True)
+            elif show_output:
+                print(result.stdout.strip(), flush=True)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            print(f'{label}: error={type(error).__name__}', flush=True)
+
+
+def probe_normal_user_identity(account, launch=False):
+    """Check the real test user's credentials before replacing this process."""
+    entry = pwd.getpwnam(account)
+    expected_groups = set(os.getgrouplist(account, entry.pw_gid))
+    actual_groups = set(os.getgroups())
+    real_uids = os.getresuid()
+    real_gids = os.getresgid()
+    status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines()
+                  if ':' in line)
+    capabilities = {key: int(status[key].strip(), 16)
+                    for key in ('CapPrm', 'CapEff', 'CapBnd', 'CapAmb')}
+    no_new_privs = int(status['NoNewPrivs'].strip())
+    print(f'NORMAL_USER_IDENTITY account={account} uids={real_uids} gids={real_gids} '
+          f'groups={sorted(actual_groups)} expected_groups={sorted(expected_groups)} '
+          f'cap_prm={capabilities["CapPrm"]:x} cap_eff={capabilities["CapEff"]:x} '
+          f'cap_bnd={capabilities["CapBnd"]:x} cap_amb={capabilities["CapAmb"]:x} '
+          f'no_new_privs={no_new_privs}', flush=True)
+    if not launch:
+        return
+    assert entry.pw_uid > 0 and entry.pw_gid > 0, 'Fixture must use a non-root account'
+    assert real_uids == (entry.pw_uid,) * 3, 'Normal-user real/effective/saved UIDs differ'
+    assert real_gids == (entry.pw_gid,) * 3, 'Normal-user real/effective/saved GIDs differ'
+    assert actual_groups == expected_groups, 'Normal-user supplementary groups differ'
+    assert capabilities['CapPrm'] == capabilities['CapEff'] == capabilities['CapAmb'] == 0, \
+        'Normal-user process retained a privileged capability'
+    assert no_new_privs == 0, 'NoNewPrivs would prevent normal sudo authentication'
+    os.execv('/usr/bin/vectorwarp', ['vectorwarp', 'open'])
+    raise AssertionError('Installed launcher exec unexpectedly returned')
+
+
+def diagnose_runuser_identity(account):
+    """Compare the old fixture's identity only; never launch or retry with it."""
+    command = ('runuser', '-u', account, '--', '/usr/bin/python3', '-I',
+               '/tmp/installed_reinstall_test.py', '--probe-identity')
+    try:
+        result = subprocess.run(command, text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, timeout=15, check=False)
+        print(f'RUNUSER_IDENTITY_DIAGNOSTIC exit={result.returncode}\n{result.stdout.strip()}',
+              flush=True)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        print(f'RUNUSER_IDENTITY_DIAGNOSTIC error={type(error).__name__}', flush=True)
+
+
+if sys.argv[1:] in (['--probe-identity'], ['--probe-open']):
+    assert Path('/run/.containerenv').exists(), 'Identity probes require a disposable container'
+    probe_normal_user_identity('vectorwarp-package-test', sys.argv[1] == '--probe-open')
+    sys.exit(0)
+
+
 assert os.geteuid() == 0 and Path('/run/.containerenv').exists()
 package = Path(sys.argv[1])
 assert package in (Path('/tmp/package.deb'), Path('/tmp/package.rpm')) and package.is_file()
@@ -104,9 +290,15 @@ assert Path('/usr/bin/vectorwarp').is_file(), 'Every DEB/RPM must install the la
 assert 'Usage: vectorwarp' in run('vectorwarp', '--help')
 assert 'vectorwarp stop' in run('vectorwarp', 'help')
 assert 'version=' in run('vectorwarp', 'version')
+# Help and version are deliberately usable by a non-administrator. Exercise
+# the package-installed executable under its real service account, rather than
+# proving only the source launcher permits those commands.
+assert 'Usage: vectorwarp' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '-h')
+assert 'version=' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '--version')
 
 if sys.argv[2:] == ['--running-replay']:
     ready_replay(0)
+    separate_lifecycle_cases()
     assert 'http://127.0.0.1:3000/' in run('vectorwarp')
     api_before = property_of('vectorwarp-api.service', 'MainPID')
     processor_before = property_of('vectorwarp-processor.service', 'MainPID')
@@ -119,16 +311,27 @@ if sys.argv[2:] == ['--running-replay']:
     assert_restarted('vectorwarp-receiver.service', broker_before)
     assert hashlib.sha256(config.read_bytes()).hexdigest() == before
     ready_replay(started)
+    assert_readers_do_not_mutate_services()
     print('PASS: reinstall restarts running API/broker/processor and produces fresh replay frames')
     run('vectorwarp', 'stop')
     assert_stopped_stack()
+    assert_readers_do_not_mutate_services()
     started = int(time.time() * 1000)
     run('vectorwarp', 'start')
     assert_management_stack()
     ready_replay(started)
+    api_before = property_of('vectorwarp-api.service', 'MainPID')
+    processor_before = property_of('vectorwarp-processor.service', 'MainPID')
+    broker_before = property_of('vectorwarp-receiver.service', 'MainPID')
+    assert_readers_do_not_mutate_services()
     started = int(time.time() * 1000)
     run('vectorwarp', 'restart')
     assert_management_stack()
+    # A continuing replay can make a no-op restart look healthy; require the
+    # real services to have been replaced as well as observing a new frame.
+    assert_restarted('vectorwarp-api.service', api_before)
+    assert_restarted('vectorwarp-processor.service', processor_before)
+    assert_restarted('vectorwarp-receiver.service', broker_before)
     ready_replay(started)
     assert hashlib.sha256(config.read_bytes()).hexdigest() == before
     print('PASS: installed launcher full-stack stop/start/restart uses restricted processor and real replay')
@@ -136,12 +339,20 @@ if sys.argv[2:] == ['--running-replay']:
 # Do not repair a broken install hook by starting the API in the test. A fresh
 # package must make its web interface available without an extra service command.
 assert run('systemctl', 'is-enabled', 'vectorwarp-api.service') == 'enabled'
-assert run('systemctl', 'is-active', 'vectorwarp-api.service') == 'active'
-assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
+assert_web_only()
 pid = run('systemctl', 'show', '-p', 'MainPID', '--value', 'vectorwarp-api.service')
 assert int(pid) > 0
+separate_lifecycle_cases()
+# Default and explicit open must both be real installed launcher paths. Their
+# management socket may activate a read-only broker, but never processing;
+# explicit open must reuse API.
 assert 'http://127.0.0.1:3000/' in run('vectorwarp')
 assert property_of('vectorwarp-api.service', 'MainPID') == pid, 'Opening must reuse the running API'
+assert_web_only()
+assert 'http://127.0.0.1:3000/' in run('vectorwarp', 'open')
+assert property_of('vectorwarp-api.service', 'MainPID') == pid, 'Explicit open restarted the API'
+assert_web_only()
+assert_readers_do_not_mutate_services()
 sudoers = Path('/etc/sudoers.d/vectorwarp')
 assert sudoers.is_file() and not sudoers.is_symlink()
 preserved = '# Administrator note: preserve this customization.\nroot ALL=(ALL) ALL\n'
@@ -155,6 +366,36 @@ assert sudoers.read_text() == preserved, 'Retire the known grant, preserving the
 assert hashlib.sha256(config.read_bytes()).hexdigest() == before, 'Reinstall changed user configuration'
 assert_restarted('vectorwarp-api.service', pid)
 assert_restarted('vectorwarp-receiver.service', broker_pid)
-assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
+assert property_of('vectorwarp-processor.service', 'ActiveState') == 'inactive'
+# Exercise default and explicit open from a truly stopped stack. The explicit
+# open runs through the installed non-root sudo re-entry path with a grant only
+# for /usr/bin/vectorwarp, in this disposable container only.
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+assert_readers_do_not_mutate_services()
+assert_bad_commands_fail_closed()
 assert 'http://127.0.0.1:3000/' in run('vectorwarp')
-print('PASS: fresh install starts only API; reinstall refreshes API/broker, preserves config/customization and leaves processing stopped')
+assert_web_only()
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+administrator = grant_test_administrator()
+identity = pwd.getpwnam(administrator)
+assert identity.pw_uid > 0 and identity.pw_gid > 0
+diagnose_runuser_identity(administrator)
+try:
+    opened = run(
+        'setpriv', '--reuid', str(identity.pw_uid), '--regid', str(identity.pw_gid),
+        '--init-groups', '--reset-env', '/usr/bin/python3', '-I',
+        '/tmp/installed_reinstall_test.py', '--probe-open')
+    probe = [line for line in opened.splitlines() if line.startswith('NORMAL_USER_IDENTITY ')]
+    assert len(probe) == 1, 'The normal-user identity probe did not run exactly once'
+    print('SETPRIV_OPEN_' + probe[0], flush=True)
+    assert 'http://127.0.0.1:3000/' in opened
+except (AssertionError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    diagnose_test_administrator(administrator, 'failed-open')
+    raise
+assert_web_only()
+run('vectorwarp', 'stop')
+assert_stopped_stack()
+separate_lifecycle_cases()
+print('PASS: fresh install starts only API; reinstall preserves configuration; installed default/open, readers and rejected input are safe from stopped stacks')
