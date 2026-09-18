@@ -20,7 +20,9 @@ class RapidJsonSystemIncludeTest(unittest.TestCase):
             actual = work / 'Cellar/rapidjson/1.1.0/include/rapidjson'
             actual.mkdir(parents=True)
             (actual / 'allocators.h').write_text('// find_path fixture\n')
-            (actual / 'document.h').write_text('''#pragma once
+            # Use a unique header so a real RapidJSON installation earlier in
+            # the runner's search path cannot replace this diagnostic fixture.
+            (actual / 'vectorwarp_warning_fixture.h').write_text('''#pragma once
 namespace rapidjson {
 [[deprecated("vendor header diagnostic")]] inline int legacy() { return 0; }
 inline int value() { return legacy(); }
@@ -38,7 +40,7 @@ target_link_libraries(probe PRIVATE blah2RapidJson)
 target_compile_options(probe PRIVATE -Wall -Werror -Wdeprecated-declarations)
 ''')
             main = work / 'main.cpp'
-            main.write_text('#include <rapidjson/document.h>\nint main() { return rapidjson::value(); }\n')
+            main.write_text('#include <rapidjson/vectorwarp_warning_fixture.h>\nint main() { return rapidjson::value(); }\n')
             # Make CMake discover an implicit, non-system compiler search path,
             # stressing the same omitted SYSTEM flag as Intel /usr/local/include.
             # The injected -I has stricter search priority than that builtin.
@@ -61,7 +63,7 @@ target_compile_options(probe PRIVATE -Wall -Werror -Wdeprecated-declarations)
             built = subprocess.run(['cmake', '--build', str(work / 'build'), '--verbose'],
                                    env=environment, text=True, capture_output=True)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
-            main.write_text('''#include <rapidjson/document.h>
+            main.write_text('''#include <rapidjson/vectorwarp_warning_fixture.h>
 [[deprecated("project diagnostic must fail")]] int old_project_api() { return 0; }
 int main() { return old_project_api() + rapidjson::value(); }
 ''')
