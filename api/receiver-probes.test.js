@@ -41,7 +41,7 @@ async function main() {
   const serviceCalls = [];
   const config = {capture: {device: {type: 'Kraken', heimdall: {host: '127.0.0.1', port: 8091}}}};
   let upstreamCalls = 0;
-  const probes = createReceiverProbes(config, {
+  const probes = createReceiverProbes(config, {platform: 'linux',
     readdir: async () => ['1-1', '1-1:1.0', '../../etc', '.', '..'],
     readFile: async file => {
       touched.push(file);
@@ -76,9 +76,9 @@ async function main() {
   assert.equal(upstreamCalls, 2);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(probes.usbInventory({}, {signal: controller.signal}), /cancelled/);
-  const oversized = createReceiverProbes(config, {readdir: async () => Array(513).fill('1-1')});
+  const oversized = createReceiverProbes(config, {platform: 'linux', readdir: async () => Array(513).fill('1-1')});
   await assert.rejects(oversized.usbInventory({}), /limit/);
-  const unavailableServices = createReceiverProbes(config, {
+  const unavailableServices = createReceiverProbes(config, {platform: 'linux',
     exists: async () => true, run: async () => { throw new Error('not available'); }
   });
   await assert.rejects(unavailableServices.serviceStatus({serviceId: 'sdrplay-api'}), /read-only receiver service check failed/);

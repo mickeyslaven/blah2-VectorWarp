@@ -16,7 +16,12 @@
 #include <spawn.h>
 #include <stdexcept>
 #include <sys/mman.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <sys/event.h>
+#else
 #include <sys/prctl.h>
+#endif
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -65,6 +70,13 @@ struct Layout {
     if (total > (512ULL << 20))
       throw std::runtime_error("GPU shared-memory budget exceeded; using CPU");
     reference = r; surveillance = s; output = o; bytes = total;
+#ifdef __APPLE__
+    // Darwin reports POSIX shared-memory lengths rounded to a VM page. Use the
+    // same explicit size in both processes so the exact fstat check stays useful.
+    const long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) throw std::runtime_error("Cannot size GPU shared memory; using CPU");
+    bytes = ((bytes + size_t(page) - 1) / size_t(page)) * size_t(page);
+#endif
   }
 };
 void sendMessage(int fd, const Message& message) {
@@ -75,6 +87,10 @@ void sendMessage(int fd, const Message& message) {
 }
 Message receiveMessage(int fd, unsigned timeoutMs, const char* phase) {
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeoutMs);
+  Message message;
+#ifdef __APPLE__
+  size_t received = 0;
+#endif
   for (;;) {
     const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
     if (left <= 0) throw std::runtime_error(std::string("GPU worker ") + phase +
@@ -84,11 +100,21 @@ Message receiveMessage(int fd, unsigned timeoutMs, const char* phase) {
     if (result < 0 && errno == EINTR) continue;
     if (result < 0) throw std::runtime_error("GPU worker communication failed; using CPU");
     if (!result) continue;
-    Message message;
+#ifdef __APPLE__
+    const auto count = recv(fd, reinterpret_cast<char*>(&message) + received,
+      sizeof(message) - received, MSG_DONTWAIT);
+#else
     const auto count = recv(fd, &message, sizeof(message), MSG_TRUNC | MSG_DONTWAIT);
+#endif
     if (count < 0 && (errno == EINTR || errno == EAGAIN)) continue;
     if (count <= 0) throw std::runtime_error("GPU worker stopped unexpectedly; using CPU");
+#ifdef __APPLE__
+    received += count;
+    if (received != sizeof(message)) continue;
+    if (message.version != protocol)
+#else
     if (count != sizeof(message) || message.version != protocol)
+#endif
       throw std::runtime_error("GPU worker returned an invalid response; using CPU");
     message.id[sizeof(message.id)-1] = '\0';
     message.name[sizeof(message.name)-1] = '\0';
@@ -140,18 +166,55 @@ public:
     int childSocket = -1, childMemory = -1;
     posix_spawn_file_actions_t actions;
     bool actionsReady = false;
+#ifdef __APPLE__
+    posix_spawnattr_t attributes;
+    bool attributesReady = false;
+    // Capture this before allocating IPC: closed standard descriptors may be
+    // reused by socketpair/shm_open and must not then be inherited as logging.
+    const bool standardOpen[] = {fcntl(0, F_GETFD) >= 0,
+      fcntl(1, F_GETFD) >= 0, fcntl(2, F_GETFD) >= 0};
+#endif
     try {
       if (device.size() >= sizeof(Message::id) || !options_.startupMs || !options_.frameMs)
         throw std::invalid_argument("Invalid GPU worker options");
       int sockets[2];
+#ifdef __APPLE__
+      // Darwin UNIX sockets do not support SOCK_SEQPACKET. The receiver above
+      // assembles exactly one fixed-size protocol record under a single deadline.
+      if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets))
+#else
       if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets))
+#endif
         throw std::runtime_error("Cannot create GPU worker connection; using CPU");
       socket_ = sockets[0];
+#ifdef __APPLE__
+      if (fcntl(sockets[0], F_SETFD, FD_CLOEXEC) || fcntl(sockets[1], F_SETFD, FD_CLOEXEC)) {
+        close(sockets[1]);
+        throw std::runtime_error("Cannot isolate GPU connection; using CPU");
+      }
+#endif
       childSocket = fcntl(sockets[1], F_DUPFD_CLOEXEC, 10);
       close(sockets[1]);
+#ifdef __APPLE__
+      // A private POSIX shared-memory object is unlinked before it can escape
+      // this constructor. Only the two explicit descriptors name the mapping.
+      for (unsigned attempt = 0; attempt < 16 && memory_ < 0; ++attempt) {
+        char name[32];
+        std::snprintf(name, sizeof(name), "/vw-gpu-%08x%08x", arc4random(), arc4random());
+        memory_ = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (memory_ >= 0 && shm_unlink(name)) {
+          close(memory_); memory_ = -1;
+          throw std::runtime_error("Cannot unlink GPU shared memory; using CPU");
+        }
+        if (memory_ < 0 && errno != EEXIST) break;
+      }
+      if (childSocket < 0 || memory_ < 0 || fcntl(memory_, F_SETFD, FD_CLOEXEC) ||
+          ftruncate(memory_, layout_.bytes))
+#else
       memory_ = memfd_create("blah2-gpu-frame", MFD_CLOEXEC | MFD_ALLOW_SEALING);
       if (childSocket < 0 || memory_ < 0 || ftruncate(memory_, layout_.bytes) ||
           fcntl(memory_, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) < 0)
+#endif
         throw std::runtime_error("Cannot allocate GPU shared memory; using CPU");
       void* mapping = mmap(nullptr, layout_.bytes, PROT_READ | PROT_WRITE, MAP_SHARED, memory_, 0);
       if (mapping == MAP_FAILED) throw std::runtime_error("Cannot map GPU shared memory; using CPU");
@@ -165,7 +228,18 @@ public:
         throw std::runtime_error("Cannot prepare GPU worker descriptors; using CPU");
       // Close inherited descriptors after installing our two endpoints. This also
       // prevents a GPU worker from accidentally keeping capture/listening sockets alive.
-#if defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
+#if defined(__APPLE__)
+      // Kernel-enforced allowlisting also closes descriptors opened by another
+      // thread during spawn, unlike a user-space /dev/fd snapshot.
+      if (posix_spawnattr_init(&attributes))
+        throw std::runtime_error("Cannot isolate GPU worker; using CPU");
+      attributesReady = true;
+      if (posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT))
+        throw std::runtime_error("Cannot isolate GPU worker descriptors; using CPU");
+      for (int fd = 0; fd < 3; ++fd)
+        if (standardOpen[fd] && posix_spawn_file_actions_addinherit_np(&actions, fd))
+          throw std::runtime_error("Cannot inherit GPU worker logging; using CPU");
+#elif defined(__GLIBC__) && defined(__GLIBC_MINOR__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
       if (posix_spawn_file_actions_addclosefrom_np(&actions, 5))
         throw std::runtime_error("Cannot isolate GPU worker descriptors; using CPU");
 #else
@@ -179,11 +253,20 @@ public:
 #endif
       std::string executable = options_.executable.empty() ? gpuSiblingPath("blah2-gpu-worker") : options_.executable;
       char* argv[] = {executable.data(), options_.argument.empty() ? nullptr : options_.argument.data(), nullptr};
-      const int error = posix_spawn(&process_, executable.c_str(), &actions, nullptr, argv, environ);
+      const int error = posix_spawn(&process_, executable.c_str(), &actions,
+#ifdef __APPLE__
+        &attributes,
+#else
+        nullptr,
+#endif
+        argv, environ);
       if (error) { process_ = -1; throw std::runtime_error("GPU worker is unavailable; using CPU"); }
       close(childSocket); childSocket = -1;
       close(childMemory); childMemory = -1;
       posix_spawn_file_actions_destroy(&actions); actionsReady = false;
+#ifdef __APPLE__
+      posix_spawnattr_destroy(&attributes); attributesReady = false;
+#endif
       Message init; init.operation = initialize; init.geometry = geometry;
       std::snprintf(init.id, sizeof(init.id), "%s", device.c_str());
       sendMessage(socket_, init);
@@ -194,6 +277,9 @@ public:
       device_ = {response.id, response.name, response.memoryBytes};
       clutterSupported_ = response.capabilities & clutterCapability;
     } catch (...) {
+#ifdef __APPLE__
+      if (attributesReady) posix_spawnattr_destroy(&attributes);
+#endif
       if (actionsReady) posix_spawn_file_actions_destroy(&actions);
       if (childSocket >= 0) close(childSocket);
       if (childMemory >= 0) close(childMemory);
@@ -266,10 +352,19 @@ public:
 }
 std::string gpuSiblingPath(const char* filename) {
   char executable[PATH_MAX];
+#ifdef __APPLE__
+  uint32_t length = sizeof(executable);
+  if (_NSGetExecutablePath(executable, &length))
+    throw std::runtime_error("Cannot locate GPU worker files");
+  char resolved[PATH_MAX];
+  if (!realpath(executable, resolved)) throw std::runtime_error("Cannot locate GPU worker files");
+  std::string path(resolved);
+#else
   const auto length = readlink("/proc/self/exe", executable, sizeof(executable)-1);
   if (length < 0 || length == sizeof(executable)-1) throw std::runtime_error("Cannot locate GPU worker files");
   executable[length] = '\0';
   std::string path(executable);
+#endif
   return path.substr(0, path.find_last_of('/')) + "/" + filename;
 }
 std::unique_ptr<GpuBackend> createGpuProcess(const GpuGeometry& geometry,
@@ -278,8 +373,32 @@ std::unique_ptr<GpuBackend> createGpuProcess(const GpuGeometry& geometry,
 }
 int runGpuWorker(const GpuFactory& factory) {
   const pid_t parent = getppid();
+#ifdef __APPLE__
+  // EOF cannot stop a driver stuck inside an initialization/frame call. Watch
+  // the parent's exact process lifetime independently and exit even then.
+  if (parent == 1) return 1;
+  const int watcher = kqueue();
+  if (watcher < 0) return 1;
+  struct kevent change;
+  EV_SET(&change, parent, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+  if (fcntl(watcher, F_SETFD, FD_CLOEXEC) ||
+      kevent(watcher, &change, 1, nullptr, 0, nullptr) < 0 || getppid() != parent) {
+    close(watcher); return 1;
+  }
+  try {
+    std::thread([watcher] {
+      struct kevent event;
+      int result;
+      do { result = kevent(watcher, nullptr, 0, &event, 1, nullptr); }
+      while (result < 0 && errno == EINTR);
+      // Failure of the lifetime guard is fail-closed as well.
+      _exit(1);
+    }).detach();
+  } catch (...) { close(watcher); return 1; }
+#else
   if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) return 1;
   prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+#endif
   const rlimit noCore{0, 0}; setrlimit(RLIMIT_CORE, &noCore);
   void* mapping = MAP_FAILED;
   size_t bytes = 0;
@@ -293,6 +412,12 @@ int runGpuWorker(const GpuFactory& factory) {
     bytes = layout.bytes;
     mapping = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, 4, 0);
     if (mapping == MAP_FAILED) throw std::runtime_error("Cannot map GPU worker input");
+#ifdef __APPLE__
+    // Darwin has no Linux memfd seals. Drop the only child descriptor before
+    // loading a driver, so it cannot accidentally resize the shared object.
+    // The unlinked object remains alive through the mappings and parent fd.
+    close(4);
+#endif
     const auto* shared = static_cast<const Complex*>(mapping);
     auto backend = factory(init.geometry, init.id);
     if (!backend) throw std::runtime_error("GPU module did not create a processor");

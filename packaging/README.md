@@ -1,5 +1,11 @@
 # Native release packaging
 
+For macOS, use the [local Homebrew packaging guide](../docs/MACOS_HOMEBREW.md).
+The Mac app and Kraken companion formulas live in `Formula/`;
+[automatic public tap updates](../docs/HOMEBREW_PUBLISHING.md) are prepared for
+merges to `main`, with first publication still pending. No bottles are supplied.
+The DEB/RPM instructions below apply to Linux.
+
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 This document covers building and maintaining the packages.
 

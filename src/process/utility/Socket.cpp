@@ -3,7 +3,7 @@
 #include <iostream>
 
 Socket::Socket(const std::string& ip, uint16_t port)
-    : endpoint(asio::ip::address::from_string(ip), port), socket(io_context) {
+    : endpoint(asio::ip::make_address(ip), port), socket(io_context) {
     try {
         socket.connect(endpoint);
     } catch (const std::exception& e) {

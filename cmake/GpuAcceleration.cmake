@@ -1,4 +1,9 @@
-set(BLAH2_GPU "AUTO" CACHE STRING "Build GPU module: AUTO, ON or OFF")
+if(APPLE)
+  set(BLAH2_GPU_DEFAULT "OFF")
+else()
+  set(BLAH2_GPU_DEFAULT "AUTO")
+endif()
+set(BLAH2_GPU "${BLAH2_GPU_DEFAULT}" CACHE STRING "Build GPU module: AUTO, ON or OFF")
 set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
 set(VKFFT_ROOT "" CACHE PATH "VkFFT 1.3.4 source directory")
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
@@ -37,8 +42,17 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE ${GLSLANG_C_INCLUDE})
     target_link_libraries(blah2GpuVulkan PRIVATE Vulkan::Vulkan glslang::glslang
       glslang::SPIRV glslang::glslang-default-resource-limits)
+    if(APPLE)
+      # FP64 chirp tables are setup constants; all frame FFTs remain on the GPU.
+      target_link_libraries(blah2GpuVulkan PRIVATE ${BLAH2_FFTW3_LIBRARY})
+    endif()
     # Vulkan's zero-initialized structs intentionally initialize sType first.
     target_compile_options(blah2GpuVulkan PRIVATE -Wno-missing-field-initializers)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      # This versioned C++ plugin ABI uses unmangled names for dlsym; these
+      # exports are never called from C. Keep the stable names under -Werror.
+      target_compile_options(blah2GpuVulkan PRIVATE -Wno-return-type-c-linkage)
+    endif()
     set_target_properties(blah2GpuVulkan PROPERTIES PREFIX "" OUTPUT_NAME "blah2-gpu-vulkan"
       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     if(TARGET blah2)

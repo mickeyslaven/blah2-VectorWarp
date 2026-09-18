@@ -86,8 +86,17 @@ public:
   /// @warning Caller owns this block and has validated the complete estimate.
   void subtract_clutter(const std::complex<float>* estimate, uint32_t count);
 
+  /// @brief Subtract a FP64 clutter estimate divided by its FFT length in place.
+  /// @warning Caller owns this block and has validated the complete estimate.
+  void subtract_clutter(const std::complex<double>* estimate, uint32_t count,
+                        uint32_t divisor);
+
   /// @brief Replace all samples with an existing block.
   void replace(std::deque<std::complex<double>>&& samples);
+
+  /// @brief Set the writable block length, bounded by the FIFO capacity.
+  /// @warning Caller must have exclusive access while writing returned samples.
+  std::deque<std::complex<double>>& resize_for_write(uint32_t count);
 
   /// @brief Push a sample to the queue.
   /// @param sample A single sample.

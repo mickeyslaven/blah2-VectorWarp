@@ -1,0 +1,152 @@
+name: Build and publish Homebrew tap
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  policy:
+    name: Check Homebrew packaging and publication policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Test offline formula generation and publication guards
+        run: |
+          python3 test/macos/homebrew_release_test.py
+          python3 test/macos/homebrew_publish_test.py
+
+  formula:
+    name: Build and test exact merged source on Apple Silicon
+    needs: policy
+    if: >-
+      github.repository == 'mickeyslaven/blah2-VectorWarp' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_AUTOREMOVE: 1
+      HOMEBREW_MAKE_JOBS: 3
+      HOMEBREW_VERSION: 0.1.7
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Generate formulas from the immutable source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = arm64
+          revision=$(git rev-list --count HEAD)
+          url="https://github.com/mickeyslaven/blah2-VectorWarp/archive/${GITHUB_SHA}.tar.gz"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 \
+            --connect-timeout 15 --max-time 180 "$url" --output "$RUNNER_TEMP/source.tar.gz"
+          python3 script/package-homebrew-release.py --source-archive "$RUNNER_TEMP/source.tar.gz" \
+            --source-url "$url" --version "$HOMEBREW_VERSION" --revision "$revision" \
+            --output-tap-dir "$RUNNER_TEMP/reviewed-tap"
+      - name: Install generated public formulas in an isolated runner tap
+        shell: bash
+        run: |
+          set -euo pipefail
+          tap="$(brew --repository)/Library/Taps/mickeyslaven/homebrew-vectorwarp"
+          test ! -e "$tap"
+          mkdir -p "$tap"
+          cp -R "$RUNNER_TEMP/reviewed-tap/." "$tap/"
+          git -C "$tap" init -q
+          brew trust mickeyslaven/vectorwarp
+          brew install --build-from-source mickeyslaven/vectorwarp/vectorwarp
+          brew test mickeyslaven/vectorwarp/vectorwarp-heimdall
+          brew test mickeyslaven/vectorwarp/vectorwarp
+      - name: Verify installed replay and lifecycle without radio hardware
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_root="$(brew --prefix mickeyslaven/vectorwarp/vectorwarp)/libexec"
+          export PATH="$(brew --prefix node@24)/bin:$PATH"
+          export NODE_PATH="$app_root/api/node_modules"
+          python3 test/recording/processor_replay_test.py --binary "$app_root/bin/blah2"
+          python3 test/macos/processor_lifecycle_test.py --binary "$app_root/bin/blah2" --app-root "$app_root"
+      - name: Upload only formulas that passed the installed checks
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reviewed-homebrew-tap
+          path: ${{ runner.temp }}/reviewed-tap/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove runner-owned formulas
+        if: always()
+        shell: bash
+        run: |
+          brew uninstall --force mickeyslaven/vectorwarp/vectorwarp || true
+          brew uninstall --force mickeyslaven/vectorwarp/vectorwarp-heimdall || true
+          brew untap mickeyslaven/vectorwarp || true
+
+  publish:
+    name: Update public tap after successful Apple Silicon checks
+    needs: [policy, formula]
+    if: >-
+      github.repository == 'mickeyslaven/blah2-VectorWarp' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    environment: homebrew-publish
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-homebrew-tap
+          path: ${{ runner.temp }}/reviewed-tap
+      - name: Independently regenerate and verify the tested formulas
+        env:
+          HOMEBREW_VERSION: 0.1.7
+        run: |
+          set -euo pipefail
+          revision=$(git rev-list --count HEAD)
+          url="https://github.com/mickeyslaven/blah2-VectorWarp/archive/${GITHUB_SHA}.tar.gz"
+          curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 \
+            --connect-timeout 15 --max-time 180 "$url" --output "$RUNNER_TEMP/source.tar.gz"
+          python3 script/package-homebrew-release.py --source-archive "$RUNNER_TEMP/source.tar.gz" \
+            --source-url "$url" --version "$HOMEBREW_VERSION" --revision "$revision" \
+            --output-tap-dir "$RUNNER_TEMP/expected-tap"
+          diff -r "$RUNNER_TEMP/expected-tap" "$RUNNER_TEMP/reviewed-tap"
+      - name: Publish with the tap-only credential
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$HOMEBREW_TAP_DEPLOY_KEY" || { echo 'Configure HOMEBREW_TAP_DEPLOY_KEY in homebrew-publish.' >&2; exit 1; }
+          umask 077
+          key_dir=$(mktemp -d "$RUNNER_TEMP/homebrew-ssh-XXXXXXXX")
+          trap 'rm -rf "$key_dir"' EXIT
+          printf '%s\n' "$HOMEBREW_TAP_DEPLOY_KEY" > "$key_dir/key"
+          unset HOMEBREW_TAP_DEPLOY_KEY
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 15 --max-time 30 https://api.github.com/meta \
+            --output "$key_dir/meta.json"
+          jq -er '.ssh_keys[] | select(startswith("ssh-ed25519 ")) | "github.com " + .' \
+            "$key_dir/meta.json" > "$key_dir/known_hosts"
+          test -s "$key_dir/known_hosts"
+          export GIT_SSH_COMMAND="ssh -F /dev/null -i '$key_dir/key' -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile='$key_dir/known_hosts'"
+          python3 script/publish-homebrew-tap.py --source-repo "$GITHUB_WORKSPACE" \
+            --tap-files "$RUNNER_TEMP/reviewed-tap" --work-dir "$RUNNER_TEMP/tap-publish" \
+            --expected-commit "$GITHUB_SHA"

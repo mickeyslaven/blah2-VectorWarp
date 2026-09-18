@@ -1,0 +1,96 @@
+class Vectorwarp < Formula
+  desc "Local passive-radar settings and processor application"
+  homepage "https://github.com/mickeyslaven/blah2-VectorWarp"
+  url "@SOURCE_URL@"
+  sha256 "@SOURCE_SHA256@"
+  version "0.1.7-macos-dev"
+  revision @FORMULA_REVISION@
+  license "MIT"
+
+  depends_on :macos
+  depends_on "cmake" => :build
+  depends_on "ninja" => :build
+  depends_on "node@24"
+  depends_on "python@3.12"
+  depends_on "armadillo"
+  depends_on "asio"
+  depends_on "cpp-httplib"
+  depends_on "fftw"
+  depends_on "rapidyaml"
+  depends_on "rapidjson"
+  depends_on "pkgconf" => :build
+  depends_on "uhd"
+  depends_on "hackrf"
+  depends_on "vectorwarp/local/vectorwarp-heimdall"
+  depends_on "vulkan-headers" => :build
+  depends_on "vulkan-loader"
+  depends_on "molten-vk"
+  depends_on "glslang"
+
+  resource "vkfft" do
+    url "https://github.com/DTolm/VkFFT/archive/refs/tags/v1.3.4.tar.gz"
+    sha256 "b61055393adb3adc79009fe12401cbfbbdfba584e665e9c35fcbf4b32fb31f30"
+  end
+
+  def install
+    resource("vkfft").stage buildpath/"vkfft"
+    system "env", "PATH=#{Formula['node@24'].opt_bin}:#{ENV.fetch('PATH')}",
+           "VECTORWARP_MACOS_BREW_PREFIX=#{HOMEBREW_PREFIX}",
+           "VKFFT_ROOT=#{buildpath/"vkfft"}", "script/build-macos.sh", "--backend", "all", "--gpu", "on",
+           "--jobs", ENV.make_jobs.to_s,
+           "--output-dir", "#{libexec}"
+    bin.install_symlink libexec/"script/vectorwarp-macos" => "vectorwarp"
+    # Keep the Kraken-specific driver private to its companion formula.
+    kraken = Formula["vectorwarp/local/vectorwarp-heimdall"].opt_libexec
+    # install_symlink resolves the opt directory to its current Cellar version.
+    # Preserve opt in the target so an independent companion upgrade takes effect.
+    (libexec/"bin/heimdall").make_relative_symlink kraken/"bin/heimdall"
+    (libexec/"share/heimdall").make_relative_symlink kraken/"share/heimdall"
+    doc.install buildpath/"vkfft/LICENSE" => "VkFFT-LICENSE"
+  end
+
+  def post_install
+    # Homebrew relocates/signs Mach-O files after install. Bind the source kit
+    # to those final bytes; existing local adapters must rebuild if they differ.
+    kit = libexec/"receiver-source/rspduo/kit.json"
+    manifest = JSON.parse(kit.read)
+    manifest["core_sha256"] = Digest::SHA256.file(libexec/"bin/libblah2-capture-core.dylib").hexdigest
+    kit.atomic_write "#{JSON.pretty_generate(manifest)}\n"
+  end
+
+  service do
+    run [opt_bin/"vectorwarp", "supervise"]
+    keep_alive true
+    working_dir HOMEBREW_PREFIX
+    environment_variables PATH: "#{Formula['python@3.12'].opt_libexec/'bin'}:#{std_service_path_env}",
+                          VECTORWARP_MACOS_NODE: Formula["node@24"].opt_bin/"node",
+                          VECTORWARP_MACOS_STATE: "#{Dir.home}/Library/Application Support/VectorWarp"
+    log_path var/"log/vectorwarp.log"
+    error_log_path var/"log/vectorwarp.log"
+  end
+
+  test do
+    assert_match "VectorWarp", shell_output("#{bin}/vectorwarp help")
+    status = JSON.parse(shell_output("#{libexec}/bin/blah2 --receiver-status"))
+    assert_equal false, status.fetch("hardwareProbed")
+    %w[Usrp HackRF].each do |name|
+      receiver = status.fetch("receivers").find { |item| item.fetch("receiver") == name }
+      assert_equal true, receiver.fetch("compiled")
+      assert_equal true, receiver.fetch("moduleLoadable")
+    end
+    assert_predicate libexec/"bin/blah2-gpu-worker", :executable?
+    assert_predicate libexec/"bin/blah2-gpu-vulkan.so", :file?
+    assert_predicate libexec/"receiver-source/rspduo/kit.json", :file?
+    assert_predicate libexec/"bin/heimdall", :executable?
+    kraken = Formula["vectorwarp/local/vectorwarp-heimdall"].opt_libexec
+    %w[bin/heimdall share/heimdall].each do |relative|
+      link = libexec/relative
+      assert_predicate link, :symlink?
+      assert_equal kraken/relative, (link.dirname/link.readlink).cleanpath
+    end
+    assert_predicate libexec/"script/vectorwarp-kraken-macos.py", :file?
+    manifest = JSON.parse((libexec/"receiver-source/rspduo/kit.json").read)
+    assert_equal Digest::SHA256.file(libexec/"bin/libblah2-capture-core.dylib").hexdigest,
+                 manifest.fetch("core_sha256")
+  end
+end

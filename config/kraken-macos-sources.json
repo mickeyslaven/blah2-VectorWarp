@@ -1,0 +1,22 @@
+{
+  "suite": {
+    "revision": "a541354bc4fa02261cb521d98937842591e8ce27",
+    "url": "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/a541354bc4fa02261cb521d98937842591e8ce27",
+    "sha256": "acaa914e816fcb0eee4984806d53e70d10e37dab23dae1cb15a505ff8476b46a"
+  },
+  "rtlsdr": {
+    "revision": "08fb08165ecfcdd954c7a20cb1bbfbc159294f0e",
+    "url": "https://codeload.github.com/krakenrf/librtlsdr/tar.gz/08fb08165ecfcdd954c7a20cb1bbfbc159294f0e",
+    "sha256": "6163c70a895b0fd8e310f54650353a58441d2b24b7a650c8086055af910d1079"
+  },
+  "uwebsockets": {
+    "revision": "3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5",
+    "url": "https://codeload.github.com/uNetworking/uWebSockets/tar.gz/3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5",
+    "sha256": "8b51c1457bfd873e44f72f6660d9aef6672eeb1c62739522a242e6904fff8356"
+  },
+  "usockets": {
+    "revision": "86097c490263ab662d62e8e7b541390bdec7d149",
+    "url": "https://codeload.github.com/uNetworking/uSockets/tar.gz/86097c490263ab662d62e8e7b541390bdec7d149",
+    "sha256": "0d341b94157720d9081d47348a8cba87ae350b6607c2f7d2ccf102353cbda553"
+  }
+}

@@ -7,18 +7,31 @@
 #include <stdexcept>
 #include <sys/wait.h>
 #include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
+#include <thread>
 
 void check(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 int main() {
   try {
     const blah2::GpuGeometry geometry{128, 21, 26, 1, -5, 64, 4, -2};
+    const int source = open("/dev/null", O_RDONLY);
+    check(source >= 0, "Cannot open inherited descriptor fixture");
+    const int inherited = fcntl(source, F_DUPFD, 100);
+    close(source);
+    check(inherited >= 100, "Cannot prepare inherited descriptor fixture");
+    setenv("BLAH2_TEST_INHERITED_FD", std::to_string(inherited).c_str(), 1);
     std::vector<std::complex<float>> reference(128 * 21, {1.5f, -2}), surveillance(reference), output;
-    for (const std::string mode : {"ok", "raw", "reject-clutter", "hang-clutter", "hang-init", "crash-init", "error-init",
+    for (const std::string mode : {"ok", "fd-closed", "raw", "reject-clutter", "hang-clutter", "hang-init", "crash-init", "error-init",
         "hang-frame", "crash-frame", "error-frame", "bad-packet", "absent"}) {
       const auto start = std::chrono::steady_clock::now();
       blah2::GpuProcessOptions options;
       options.executable = blah2::gpuSiblingPath(mode == "absent" ? "missing-test-worker" : "testGpuWorkerDouble");
-      options.argument = mode; options.startupMs = 300; options.frameMs = 150;
+      // Keep the injected startup deadline exact while allowing a cold Mach-O
+      // executable to start under CI load. Production's startup limit is 30 s.
+      options.argument = mode; options.startupMs = mode == "hang-init" ? 300 : 2000;
+      options.frameMs = 150;
       bool failed = false;
       try {
         auto worker = blah2::createGpuProcess(geometry, "auto", options);
@@ -80,13 +93,26 @@ int main() {
             "Clutter timeout lost its phase/deadline");
         std::cout << "Recovered " << mode << ": " << error.what() << '\n';
       }
-      check(failed == (mode != "ok" && mode != "raw" && mode != "reject-clutter"),
+      check(failed == (mode != "ok" && mode != "fd-closed" && mode != "raw" && mode != "reject-clutter"),
         "Worker failure expectation differs");
       check(std::chrono::steady_clock::now() - start < std::chrono::seconds(3), "GPU worker recovery was not bounded");
       int status;
-      check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD, "GPU worker was not reaped");
+      // Darwin briefly exposes an internal child after posix_spawn returns
+      // ENOENT without a PID. The kernel reaps it asynchronously. Only this test
+      // owns all children; production must never waitpid(-1) and steal a child.
+      const auto reapDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+      pid_t pending;
+      do {
+        pending = waitpid(-1, &status, WNOHANG);
+        check(pending <= 0, "GPU worker required test-side reaping");
+        if (pending == -1 && errno == ECHILD) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      } while (std::chrono::steady_clock::now() < reapDeadline);
+      check(pending == -1 && errno == ECHILD, "GPU worker was not reaped");
       std::cout << "PASS isolation=" << mode << '\n';
     }
+    close(inherited);
+    unsetenv("BLAH2_TEST_INHERITED_FD");
     {
       using namespace blah2::gpu_memory;
       Properties properties{{

@@ -29,26 +29,26 @@ const runtime = {acceleration: ready, clutterAcceleration: ready, fresh: true};
     assert(!options.shell && !options.env.LD_PRELOAD && !options.env.VK_DRIVER_FILES);
     callback(null, JSON.stringify(older));
   };
-  const get = createGpuSetupStatus({pi: true, execute, now: () => at});
+  const get = createGpuSetupStatus({platform: 'linux', pi: true, execute, now: () => at});
   await Promise.all([get(runtime), get(runtime)]); assert.equal(calls, 1);
   assert.equal((await get({...runtime, fresh: false})).state, 'compiler-risk', 'Cached enumeration never caches live acceptance');
   at = 60001; await get(runtime); assert.equal(calls, 2);
-  const desktop = createGpuSetupStatus({pi: false, execute: (_p, _a, _o, callback) => {
+  const desktop = createGpuSetupStatus({platform: 'linux', pi: false, execute: (_p, _a, _o, callback) => {
     calls++;
     callback(null, JSON.stringify({...older, pi: false, state: 'service-access-needed',
       serviceAccess: {state: 'group-access-needed'}}));
   }});
   assert.equal((await desktop({fresh: false})).state, 'service-access-needed'); assert.equal(calls, 3);
-  const brokerMissing = createGpuSetupStatus({pi: false, execute: (_p, _a, _o, callback) => {
+  const brokerMissing = createGpuSetupStatus({platform: 'linux', pi: false, execute: (_p, _a, _o, callback) => {
     callback(null, JSON.stringify({...older, pi: false, state: 'driver-unverified',
       serviceAccess: {state: 'unavailable'}, message: 'Activate the updated receiver helper'}));
   }});
   assert.equal((await brokerMissing(runtime)).serviceAccess.state, 'unavailable');
-  const preview = createGpuSetupStatus({pi: true, preview: true, execute});
+  const preview = createGpuSetupStatus({platform: 'linux', pi: true, preview: true, execute});
   assert.equal((await preview(runtime)).qualification, 'not-run'); assert.equal(calls, 3);
   let completeDelayedSetup;
   let delayedFresh = true;
-  const delayed = createGpuSetupStatus({pi: true, execute: (_p, _a, _o, callback) => {
+  const delayed = createGpuSetupStatus({platform: 'linux', pi: true, execute: (_p, _a, _o, callback) => {
     completeDelayedSetup = () => callback(null, JSON.stringify(older));
   }});
   const pending = delayed(() => ({...runtime, fresh: delayedFresh}));
@@ -58,10 +58,18 @@ const runtime = {acceleration: ready, clutterAcceleration: ready, fresh: true};
     'Freshness is read after the helper returns, never before its bounded wait');
   for (const output of ['garbage', JSON.stringify({...older, state: 'qualified'}),
     JSON.stringify({...older, qualification: 'passed'}), JSON.stringify({...older, message: 'x'.repeat(2049)})]) {
-    const invalid = createGpuSetupStatus({pi: true, execute: (_p, _a, _o, cb) => cb(null, output)});
+    const invalid = createGpuSetupStatus({platform: 'linux', pi: true, execute: (_p, _a, _o, cb) => cb(null, output)});
     assert.equal((await invalid({fresh: false})).state, 'driver-unverified');
   }
-  const failure = createGpuSetupStatus({pi: true, execute: (_p, _a, _o, cb) => cb(new Error('timeout'))});
+  const failure = createGpuSetupStatus({platform: 'linux', pi: true, execute: (_p, _a, _o, cb) => cb(new Error('timeout'))});
   assert.equal((await failure({fresh: false})).qualification, 'not-run');
+  const mac = createGpuSetupStatus({platform: 'darwin', execute: () => { throw new Error('No Linux helper on macOS'); }});
+  assert.equal((await mac({...runtime, fresh: false})).qualification, 'not-run');
+  assert.equal((await mac({...runtime, clutterAcceleration: fallback})).state, 'partially-qualified');
+  assert.equal((await mac({...runtime, acceleration: fallback, clutterAcceleration: fallback})).state, 'unqualified');
+  assert.equal((await mac(() => runtime)).state, 'qualified');
+  assert.equal((await mac(runtime)).command, undefined);
+  const macPreview = createGpuSetupStatus({platform: 'darwin', preview: true});
+  assert.equal((await macPreview(runtime)).qualification, 'not-run');
   console.log('GPU setup API: detection, caching, bounded failure, stale telemetry, backport and per-stage qualification PASS');
 })().catch(error => { console.error(error); process.exitCode = 1; });

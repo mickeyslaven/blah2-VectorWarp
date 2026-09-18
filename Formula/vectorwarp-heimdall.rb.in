@@ -1,0 +1,55 @@
+# Local source-build companion. Do not distribute bottles until the upstream
+# Suite's repository-wide redistribution terms have been clarified. This is
+# separate from VectorWarp's MIT license and the proprietary SDRplay SDK.
+class VectorwarpHeimdall < Formula
+  desc "Native local KrakenSDR controller for VectorWarp development"
+  homepage "https://github.com/krakenrf/krakensdr_suite"
+  url "@SOURCE_URL@"
+  sha256 "@SOURCE_SHA256@"
+  version "2026.09.18-macos-dev"
+  revision @FORMULA_REVISION@
+
+  depends_on :macos
+  depends_on "cmake" => :build
+  depends_on "ninja" => :build
+  depends_on "pkgconf" => :build
+  depends_on "python@3.12" => :build
+  depends_on "eigen" => :build
+  depends_on "fftw"
+  depends_on "libusb"
+
+  resource "suite" do
+    url "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/a541354bc4fa02261cb521d98937842591e8ce27"
+    sha256 "acaa914e816fcb0eee4984806d53e70d10e37dab23dae1cb15a505ff8476b46a"
+  end
+  resource "rtlsdr" do
+    url "https://codeload.github.com/krakenrf/librtlsdr/tar.gz/08fb08165ecfcdd954c7a20cb1bbfbc159294f0e"
+    sha256 "6163c70a895b0fd8e310f54650353a58441d2b24b7a650c8086055af910d1079"
+  end
+  resource "uwebsockets" do
+    url "https://codeload.github.com/uNetworking/uWebSockets/tar.gz/3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5"
+    sha256 "8b51c1457bfd873e44f72f6660d9aef6672eeb1c62739522a242e6904fff8356"
+  end
+  resource "usockets" do
+    url "https://codeload.github.com/uNetworking/uSockets/tar.gz/86097c490263ab662d62e8e7b541390bdec7d149"
+    sha256 "0d341b94157720d9081d47348a8cba87ae350b6607c2f7d2ccf102353cbda553"
+  end
+
+  def install
+    resources.each { |item| item.stage buildpath/"resources"/item.name }
+    system "env", "VECTORWARP_MACOS_BREW_PREFIX=#{HOMEBREW_PREFIX}",
+           Formula["python@3.12"].opt_bin/"python3.12", "script/build-kraken-macos.py",
+           "--sources-dir", buildpath/"resources", "--output-dir", libexec,
+           "--test", "--jobs", ENV.make_jobs.to_s
+    bin.install_symlink libexec/"bin/heimdall" => "vectorwarp-heimdall"
+  end
+
+  test do
+    # --help exits before USB enumeration. RF and coherent capture are separate
+    # physical acceptance checks, never implied by a successful package test.
+    assert_match "num-elements", shell_output("#{bin}/vectorwarp-heimdall --help")
+    assert_predicate libexec/"lib/kraken/librtlsdr.0.dylib", :file?
+    receipt = JSON.parse((libexec/"share/heimdall/build.json").read)
+    assert_equal false, receipt.fetch("hardwareTested")
+  end
+end

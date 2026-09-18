@@ -23,6 +23,9 @@ extern "C" const glslang_resource_t* glslang_default_resource(void);
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#ifdef __APPLE__
+#include <fftw3.h>
+#endif
 
 // VkFFT is header-only. Route its own device allocations through the same
 // budget as our buffers, including transient upload and prime-length scratch.
@@ -125,17 +128,32 @@ struct Instance {
     app.pApplicationName = "blah2"; app.apiVersion = VK_API_VERSION_1_0;
     VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     info.pApplicationInfo = &app;
-    const char* extension = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
-    if (diagnostic) {
-      uint32_t count = 0;
-      check(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr), "extension discovery");
-      std::vector<VkExtensionProperties> extensions(count);
-      check(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()), "extension discovery");
-      diagnosticProperties = std::any_of(extensions.begin(), extensions.end(), [&](const auto& value) {
-        return std::strcmp(value.extensionName, extension) == 0;
+    uint32_t count = 0;
+    check(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr), "extension discovery");
+    std::vector<VkExtensionProperties> extensions(count);
+    check(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensions.data()), "extension discovery");
+    const auto supports = [&](const char* name) {
+      return std::any_of(extensions.begin(), extensions.end(), [&](const auto& value) {
+        return std::strcmp(value.extensionName, name) == 0;
       });
-      if (diagnosticProperties) { info.enabledExtensionCount = 1; info.ppEnabledExtensionNames = &extension; }
+    };
+    std::vector<const char*> enabled;
+    const char* properties = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+    if (supports(properties)) {
+      enabled.push_back(properties);
+      diagnosticProperties = diagnostic;
     }
+#ifdef VK_KHR_portability_enumeration
+    // Portability drivers (including MoltenVK) are hidden by the loader unless
+    // both the extension and enumeration flag are requested. Detect at runtime
+    // so this also remains correct on native Vulkan implementations.
+    if (supports(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+      enabled.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+      info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif
+    info.enabledExtensionCount = static_cast<uint32_t>(enabled.size());
+    info.ppEnabledExtensionNames = enabled.data();
     startupTrace("vkCreateInstance begin");
     check(vkCreateInstance(&info, nullptr, &handle), "driver initialization");
     startupTrace("vkCreateInstance complete");
@@ -204,6 +222,7 @@ struct Context {
   VkCommandPool pool = VK_NULL_HANDLE;
   VkFence fence = VK_NULL_HANDLE;
   bool compiler = false;
+  bool portability = false;
   Context(std::shared_ptr<Instance> owner, Candidate selected)
     : instance(std::move(owner)), candidate(std::move(selected)) {
     try {
@@ -213,6 +232,22 @@ struct Context {
       queueInfo.queueCount = 1; queueInfo.pQueuePriorities = &priority;
       VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
       info.queueCreateInfoCount = 1; info.pQueueCreateInfos = &queueInfo;
+      uint32_t extensionCount = 0;
+      check(vkEnumerateDeviceExtensionProperties(candidate.physical, nullptr,
+        &extensionCount, nullptr), "device extension discovery");
+      std::vector<VkExtensionProperties> extensions(extensionCount);
+      check(vkEnumerateDeviceExtensionProperties(candidate.physical, nullptr,
+        &extensionCount, extensions.data()), "device extension discovery");
+      // The extension name is stable even in SDKs that gate the beta feature
+      // structs. We use no optional subset features and need no beta headers.
+      const char* portabilityExtension = "VK_KHR_portability_subset";
+      if (std::any_of(extensions.begin(), extensions.end(), [&](const auto& value) {
+        return std::strcmp(value.extensionName, portabilityExtension) == 0;
+      })) {
+        portability = true;
+        info.enabledExtensionCount = 1;
+        info.ppEnabledExtensionNames = &portabilityExtension;
+      }
       startupTrace(candidate.info.name.c_str());
       startupTrace("vkCreateDevice begin");
       check(vkCreateDevice(candidate.physical, &info, nullptr, &device), "device initialization");
@@ -330,10 +365,10 @@ struct Buffer {
   }
   ~Buffer() { release(); }
 };
-struct Plan {
+struct NativePlan {
   VkFFTApplication app{};
   Buffer& buffer_;
-  Plan(Context& context, Buffer& buffer, uint32_t length, uint32_t batches,
+  NativePlan(Context& context, Buffer& buffer, uint32_t length, uint32_t batches,
       bool twiddleLut = false) : buffer_(buffer) {
     VkFFTConfiguration config{};
     config.FFTdim = 1; config.size[0] = length; config.numberBatches = batches;
@@ -353,7 +388,7 @@ struct Plan {
     startupTrace(("VkFFT plan complete result=" + std::to_string(result)).c_str());
     if (result != VKFFT_SUCCESS) { deleteVkFFT(&app); checkFft(result); }
   }
-  ~Plan() { deleteVkFFT(&app); }
+  ~NativePlan() { deleteVkFFT(&app); }
   void append(VkCommandBuffer command, int direction) {
     VkFFTLaunchParams params{}; params.commandBuffer = &command;
     params.buffer = &buffer_.handle;
@@ -490,6 +525,139 @@ void barrier(VkCommandBuffer command) {
   vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
     VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &memory, 0, nullptr, 0, nullptr);
 }
+#ifdef __APPLE__
+constexpr const char* chirpPrepareSource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Input { vec2 inputData[]; };
+layout(binding=1) writeonly buffer Work { vec2 workData[]; };
+layout(binding=2) readonly buffer Chirp { vec2 chirp[]; };
+layout(push_constant) uniform Parameters { uint count; uint n; uint padded; uint batches; int direction; } p;
+void main() {
+  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
+  if(i>=p.count) return;
+  uint j=i%p.padded;
+  if(j>=p.n) { workData[i]=vec2(0); return; }
+  vec2 a=inputData[(i/p.padded)*p.n+j], b=chirp[j];
+  if(p.direction>0) b.y=-b.y;
+  workData[i]=vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);
+})glsl";
+constexpr const char* chirpProductSource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) buffer Work { vec2 workData[]; };
+layout(binding=1) readonly buffer Spectrum { vec2 spectrum[]; };
+layout(push_constant) uniform Parameters { uint count; uint n; uint padded; uint batches; int direction; } p;
+void main() {
+  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
+  if(i>=p.count) return;
+  vec2 a=workData[i], b=spectrum[(p.direction>0?p.padded:0)+i%p.padded];
+  workData[i]=vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);
+})glsl";
+constexpr const char* chirpFinishSource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Work { vec2 workData[]; };
+layout(binding=1) writeonly buffer Output { vec2 outputData[]; };
+layout(binding=2) readonly buffer Chirp { vec2 chirp[]; };
+layout(push_constant) uniform Parameters { uint count; uint n; uint padded; uint batches; int direction; } p;
+void main() {
+  uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
+  if(i>=p.count) return;
+  uint j=i%p.n;
+  vec2 a=workData[(i/p.n)*p.padded+j], b=chirp[j];
+  if(p.direction>0) b.y=-b.y;
+  outputData[i]=vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x)/float(p.padded);
+})glsl";
+
+// Native VkFFT prime plans were intermittently incorrect through MoltenVK.
+// Express Bluestein explicitly using smooth-length GPU FFTs. Only constant
+// chirp spectra are generated in FP64 on the CPU at setup; no IQ reaches FFTW.
+struct PortablePrimePlan {
+  uint32_t length_, batches_, padded_;
+  std::unique_ptr<Buffer> work_, chirp_, spectrum_;
+  std::unique_ptr<NativePlan> fft_;
+  std::unique_ptr<Kernel> prepare_, product_, finish_;
+  PortablePrimePlan(Context& context, Buffer& buffer, uint32_t length, uint32_t batches)
+    : length_(length), batches_(batches), padded_(gpu_memory::nextSmooth(2ULL*length-1)) {
+    const uint64_t elements=uint64_t(padded_)*batches;
+    if (!padded_ || elements>UINT32_MAX/2 ||
+        elements*sizeof(std::complex<float>)>context.candidate.properties.limits.maxStorageBufferRange)
+      throw std::runtime_error("GPU prime FFT capacity is too small; using CPU");
+    work_=std::make_unique<Buffer>(context,elements*8,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    const auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    const auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    chirp_=std::make_unique<Buffer>(context,uint64_t(length)*8,host,preferred);
+    spectrum_=std::make_unique<Buffer>(context,uint64_t(padded_)*16,host,preferred);
+    std::vector<std::complex<double>> chirps(length), input(padded_), output(padded_);
+    auto* chirp=static_cast<std::complex<float>*>(chirp_->mapped);
+    auto* spectrum=static_cast<std::complex<float>*>(spectrum_->mapped);
+    const double pi=std::acos(-1.);
+    for (uint32_t i=0;i<length;++i) {
+      // Reduce the integer phase before conversion to avoid large-angle error.
+      const uint64_t phase=uint64_t(i)*i%(2ULL*length);
+      chirps[i]=std::polar(1.,-pi*double(phase)/length);
+      chirp[i]=static_cast<std::complex<float>>(chirps[i]);
+    }
+    const auto plan=fftw_plan_dft_1d(padded_,reinterpret_cast<fftw_complex*>(input.data()),
+      reinterpret_cast<fftw_complex*>(output.data()),FFTW_FORWARD,FFTW_ESTIMATE);
+    if (!plan) throw std::runtime_error("Cannot prepare GPU prime FFT constants; using CPU");
+    for (unsigned inverse=0;inverse<2;++inverse) {
+      std::fill(input.begin(),input.end(),std::complex<double>{}); input[0]=1.;
+      for (uint32_t i=1;i<length;++i)
+        input[i]=input[padded_-i]=inverse?chirps[i]:std::conj(chirps[i]);
+      fftw_execute(plan);
+      for (uint32_t i=0;i<padded_;++i)
+        spectrum[inverse*padded_+i]=static_cast<std::complex<float>>(output[i]);
+    }
+    fftw_destroy_plan(plan);
+    chirp_->flush(0,chirp_->bytes); spectrum_->flush(0,spectrum_->bytes);
+    fft_=std::make_unique<NativePlan>(context,*work_,padded_,batches,true);
+    prepare_=std::make_unique<Kernel>(context,chirpPrepareSource,
+      std::vector<Buffer*>{&buffer,work_.get(),chirp_.get()});
+    product_=std::make_unique<Kernel>(context,chirpProductSource,
+      std::vector<Buffer*>{work_.get(),spectrum_.get()});
+    finish_=std::make_unique<Kernel>(context,chirpFinishSource,
+      std::vector<Buffer*>{work_.get(),&buffer,chirp_.get()});
+    startupTrace(("portable prime FFT length="+std::to_string(length)+
+      " convolution="+std::to_string(padded_)).c_str());
+  }
+  void append(VkCommandBuffer command,int direction) {
+    VkMemoryBarrier hostWrite{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    hostWrite.srcAccessMask=VK_ACCESS_HOST_WRITE_BIT;
+    hostWrite.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,0,1,&hostWrite,0,nullptr,0,nullptr);
+    Push push{padded_*batches_,length_,padded_,batches_,direction};
+    prepare_->append(command,push); barrier(command);
+    fft_->append(command,-1); barrier(command);
+    product_->append(command,push); barrier(command);
+    fft_->append(command,1); barrier(command);
+    push.count=length_*batches_;
+    finish_->append(command,push); barrier(command);
+  }
+};
+#endif
+struct Plan {
+  std::unique_ptr<NativePlan> native_;
+#ifdef __APPLE__
+  std::unique_ptr<PortablePrimePlan> portable_;
+#endif
+  Plan(Context& context,Buffer& buffer,uint32_t length,uint32_t batches,bool twiddleLut=false) {
+#ifdef __APPLE__
+    uint32_t rest=length;
+    for (uint32_t radix:{2u,3u,5u,7u,11u,13u}) while(rest%radix==0) rest/=radix;
+    if (context.portability && rest!=1) {
+      portable_=std::make_unique<PortablePrimePlan>(context,buffer,length,batches);
+      return;
+    }
+#endif
+    native_=std::make_unique<NativePlan>(context,buffer,length,batches,twiddleLut);
+  }
+  void append(VkCommandBuffer command,int direction) {
+#ifdef __APPLE__
+    if (portable_) { portable_->append(command,direction); return; }
+#endif
+    native_->append(command,direction);
+  }
+};
 constexpr const char* clutterProductsSource = R"glsl(#version 450
 layout(local_size_x=128) in;
 layout(binding=0) readonly buffer Reference { vec2 ref[]; };

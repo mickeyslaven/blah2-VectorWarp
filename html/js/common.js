@@ -182,21 +182,50 @@ function addFullscreenControl() {
   panel.classList.add('has-fullscreen');
   panel.appendChild(button);
   let resizePending = false;
+  let resizeInFlight = false;
+  let resizeRequested = false;
+  let waitingForMap = false;
   const resizePlot = () => {
     if (resizePending) return;
+    if (resizeInFlight) { resizeRequested = true; return; }
     resizePending = true;
     window.requestAnimationFrame(() => {
       resizePending = false;
       if (!window.Plotly || !visual._fullLayout) return;
+      // ResizeObserver can fire while Plotly is still creating its Mapbox
+      // style. A concurrent relayout then tries to add sources before load.
+      const mapbox = visual._fullLayout.mapbox;
+      const map = mapbox?._subplot?.map;
+      if (mapbox && (!map || !map.isStyleLoaded())) {
+        if (!waitingForMap && visual.once) {
+          waitingForMap = true;
+          visual.once('plotly_afterplot', () => {
+            waitingForMap = false;
+            resizePlot();
+          });
+        }
+        return;
+      }
       const bounds = visual.getBoundingClientRect();
       if (bounds.width < 1 || bounds.height < 1) return;
+      const width = Math.floor(bounds.width), height = Math.floor(bounds.height);
+      if (visual.layout?.width === width && visual.layout?.height === height) return;
       try {
-        window.Plotly.relayout(visual, {
-          width: Math.floor(bounds.width),
-          height: Math.floor(bounds.height),
+        resizeInFlight = true;
+        Promise.resolve(window.Plotly.relayout(visual, {
+          width,
+          height,
           autosize: true
+        })).catch(error => {
+          window.blah2PlotResizeError = error?.message || String(error);
+        }).finally(() => {
+          resizeInFlight = false;
+          if (resizeRequested) { resizeRequested = false; resizePlot(); }
         });
-      } catch (_) { /* Plot may still be initializing. */ }
+      } catch (error) {
+        resizeInFlight = false;
+        window.blah2PlotResizeError = error?.message || String(error);
+      }
     });
   };
   if (window.ResizeObserver) {

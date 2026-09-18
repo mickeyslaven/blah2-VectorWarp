@@ -89,6 +89,10 @@ for (const name of ['config.yml', 'config-kraken.yml',
 
 assert.equal(upstreamRestartError({available: false}), null);
 assert.equal(upstreamRestartError({available: true, issues: []}), null);
+assert.match(upstreamRestartError({available: true, issues: [{label: 'Calibration',
+  severity: 'error', actual: 'FAILED'}]}), /calibration failed.*restart to retry/);
+assert.equal(upstreamRestartError({available: true, issues: [{label: 'Calibration',
+  severity: 'warning', actual: 'PENDING'}]}), null);
 for (const [field, actual, expected, unit] of [['capture.fc', 527000000, 528000000, 'MHz'],
   ['capture.fs', 2400000, 2000000, 'MS/s'], ['capture.device.channel_count', 5, 6, '5']]) {
   const message = upstreamRestartError({available: true, issues: [{field, actual, expected, severity: 'error'}]});

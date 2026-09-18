@@ -1,0 +1,84 @@
+name: macOS CPU and receiver adapters
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-runtime:
+    name: CPU, open receiver adapters and local lifecycle (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      NODE_PATH: ${{ github.workspace }}/api/node_modules
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Set up Node 24
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Install open-source build dependencies
+        run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb
+      - name: Build CPU processing and open receiver adapters
+        run: script/build-macos.sh --backend all --test --jobs 3
+      - name: Run synthetic processor replay
+        run: |
+          python3 test/recording/processor_replay_test.py --binary build/macos/artifact/bin/blah2
+          python3 test/macos/config_runtime_test.py --binary build/macos/artifact/bin/blah2
+          python3 test/macos/receiver_sdk_test.py --binary build/macos/artifact/bin/blah2
+      - name: Build local Kraken controller and simulate its native USB pipeline
+        run: |
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          python3 script/build-kraken-macos.py --jobs 3 --test --output-dir build/macos/artifact
+          python3 test/macos/kraken_adapter_test.py
+          python3 test/macos/kraken/native_simulation_test.py --heimdall build/macos/artifact/bin/heimdall --include build/macos/artifact/share/heimdall/include --output build/kraken-ci-simulation
+          python3 test/macos/kraken_pipeline_test.py --binary build/macos/artifact/bin/blah2 --heimdall build/macos/artifact/bin/heimdall --include build/macos/artifact/share/heimdall/include --output build/kraken-ci-pipeline
+      - name: Run API and browser regressions
+        run: |
+          npm test --prefix api
+          npm run test:dom --prefix api
+          node api/macos-platform.test.js
+          node api/macos-lifecycle-server.test.js
+          node api/receiver-management.test.js
+          node test/ui/deployment.test.js
+      - name: Check the real browser locations map with synthetic data
+        run: |
+          npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
+          cd test/browser
+          npx playwright install chromium
+          node locations.cjs
+      - name: Run local lifecycle and actual API/CPU replay integration
+        run: |
+          script/vectorwarp-macos.test.sh
+          python3 test/macos/processor_lifecycle_test.py --binary build/macos/artifact/bin/blah2 --endurance-seconds 360
+      - name: Verify the installed Homebrew package
+        if: matrix.runner == 'macos-15'
+        env:
+          HOMEBREW_MAKE_JOBS: 3
+          HOMEBREW_NO_AUTOREMOVE: 1
+        run: |
+          script/package-homebrew-local.sh build/homebrew-ci --install-tap
+          brew trust vectorwarp/local
+          brew install --build-from-source vectorwarp/local/vectorwarp
+          brew test vectorwarp/local/vectorwarp
+          brew test vectorwarp/local/vectorwarp-heimdall
+          app_root="$(brew --prefix vectorwarp/local/vectorwarp)/libexec"
+          python3 test/macos/processor_lifecycle_test.py --binary "$app_root/bin/blah2" --app-root "$app_root"
+          python3 test/macos/kraken_pipeline_test.py --binary "$app_root/bin/blah2" --heimdall "$app_root/bin/heimdall" --include "$app_root/share/heimdall/include" --app-root "$app_root" --output build/kraken-ci-installed-pipeline
+          brew uninstall vectorwarp/local/vectorwarp
+          brew uninstall vectorwarp/local/vectorwarp-heimdall
+          brew untap vectorwarp/local

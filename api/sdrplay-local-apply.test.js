@@ -58,7 +58,9 @@ async function waitForServer() {
     fs.writeFileSync(stateFile, 'missing');
     fs.writeFileSync(helper, `#!/usr/bin/python3\nimport json,pathlib,sys\nstate=pathlib.Path(${JSON.stringify(stateFile)}).read_text().strip()\nif state == 'error': sys.exit(1)\nvalue={'missing':{'ok':False,'state':'missing'},'stale-sdk':{'ok':False,'state':'stale','reason':'SDK changed'},'stale-core':{'ok':False,'state':'stale','reason':'Core changed'},'current':{'ok':True,'state':'current','kit_id':'a'*64,'cohort':'b'*64}}[state]\nprint(json.dumps(value))\n`);
     fs.chmodSync(helper, 0o755);
-    child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {env: {...process.env,
+    const platformFixture = path.join(directory, 'linux-platform.js');
+    fs.writeFileSync(platformFixture, 'Object.defineProperty(process, "platform", {value: "linux"});\n');
+    child = spawn(process.execPath, ['--require', platformFixture, path.join(__dirname, 'server.js'), filename], {env: {...process.env,
       BLAH2_RECEIVER_TYPES: 'Usrp,HackRF,Kraken', BLAH2_SDRPLAY_LOCAL_BUILD: 'true',
       BLAH2_LOCAL_BUILD_RECEIVER_TYPES: 'RspDuo', BLAH2_SDRPLAY_BUILD_HELPER: helper,
       BLAH2_CONFIG_RESTART_COMMAND: JSON.stringify([process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'requested')`])

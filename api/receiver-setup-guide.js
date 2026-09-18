@@ -1,7 +1,8 @@
 'use strict';
 
 // Fixed guidance only: no browser value becomes a shell argument or installer.
-function receiverSetupGuide(receiver, helperExecutable) {
+function receiverSetupGuide(receiver, helperExecutable, {platform = process.platform} = {}) {
+  if (platform === 'darwin') return macosReceiverSetupGuide(receiver);
   const steps = [];
   if (!receiver.capabilities.liveCompiled) {
     steps.push({
@@ -40,6 +41,25 @@ function receiverSetupGuide(receiver, helperExecutable) {
       link: 'https://github.com/EttusResearch/uhd/blob/master/host/docs/install.dox', label: 'Official UHD installation guide'});
   }
   steps.push({text: 'Save for later keeps a draft. Apply confirms supported settings and requests a processor restart. Then check processor status; software discovery does not verify RF, wiring, or calibration.'});
+  return steps;
+}
+function macosReceiverSetupGuide(receiver) {
+  const steps = [];
+  if (receiver.type === 'RspDuo') {
+    steps.push({text: 'Obtain the macOS SDRplay API and headers directly from SDRplay and install them yourself. VectorWarp never downloads, bundles, or accepts the license for this SDK. Manage its API service using the vendor instructions.',
+      link: 'https://sdrplay.com/hardware-api/', label: 'SDRplay hardware API'});
+  } else if (receiver.type === 'Kraken') {
+    steps.push({text: 'Run KrakenSDR Suite V2 on its supported Linux receiver host, then enter that host and its IQ/control ports here. VectorWarp on macOS uses the network stream and does not manage the remote service.'});
+  } else if (receiver.type === 'HackRF') {
+    steps.push({text: 'Install libhackrf using the official macOS instructions, then build VectorWarp with its HackRF adapter. Dual HackRF operation requires two devices and separate hardware verification.',
+      link: 'https://hackrf.readthedocs.io/en/latest/installing_hackrf_software.html', label: 'Official HackRF installation guide'});
+  } else if (receiver.type === 'Usrp') {
+    steps.push({text: 'Install UHD 4.1 or newer and the appropriate device images using Ettus Research’s macOS instructions, then build the USRP adapter. Library detection does not verify a B210 or USB streaming.',
+      link: 'https://files.ettus.com/manual/page_install.html', label: 'Official UHD installation guide'});
+  }
+  if (!receiver.capabilities.liveCompiled) steps.push({text: 'This build supports replay for this profile but does not contain its live adapter. Rebuild with the locally installed SDK to enable live capture.',
+    link: 'https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS.md', label: 'macOS source build guide'});
+  steps.push({text: 'Save & Restart applies the saved processor configuration. Receiver services remain independently managed. Check fresh processor status; software discovery and replay do not verify physical hardware.'});
   return steps;
 }
 module.exports = {receiverSetupGuide};

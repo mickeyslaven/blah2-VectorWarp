@@ -1,0 +1,2332 @@
+diff --git a/heimdall_v2/CMakeLists.txt b/heimdall_v2/CMakeLists.txt
+index 81744c9..1f39d76 100644
+--- a/heimdall_v2/CMakeLists.txt
++++ b/heimdall_v2/CMakeLists.txt
+@@ -10,11 +10,12 @@ find_package(PkgConfig REQUIRED)
+ find_package(Threads REQUIRED)
+ 
+ # Find Eigen3
+-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
++find_package(Eigen3 REQUIRED NO_MODULE)
+ 
+ # Find other dependencies using pkg-config
+ pkg_check_modules(RTLSDR REQUIRED librtlsdr)
+ pkg_check_modules(FFTW3F REQUIRED fftw3f)
++pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
+ 
+ # Check for uWebSockets
+ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets")
+@@ -123,18 +124,25 @@ target_link_libraries(heimdall
+     ${RTLSDR_LIBRARIES}
+     ${FFTW3F_LIBRARIES}
+     ${USOCKETS_OBJS}
++    PkgConfig::LIBUSB
+     Threads::Threads
+     Eigen3::Eigen
+     m
+     z
+-    ssl
+-    crypto
+ )
+ 
++if(APPLE)
++    target_compile_definitions(heimdall PRIVATE HEIMDALL_DARWIN_LOCAL_ONLY=1)
++    set_target_properties(heimdall PROPERTIES BUILD_RPATH "@loader_path/../lib/kraken" INSTALL_RPATH "@loader_path/../lib/kraken")
++else()
++    target_link_libraries(heimdall PRIVATE ssl crypto)
++endif()
++
+ # Link directories
+ target_link_directories(heimdall PRIVATE
+     ${RTLSDR_LIBRARY_DIRS}
+     ${FFTW3F_LIBRARY_DIRS}
++    ${LIBUSB_LIBRARY_DIRS}
+ )
+ 
+ # Installation
+diff --git a/heimdall_v2/src/core/config.hpp b/heimdall_v2/src/core/config.hpp
+index 075f43a..b70c6ef 100644
+--- a/heimdall_v2/src/core/config.hpp
++++ b/heimdall_v2/src/core/config.hpp
+@@ -11,9 +11,15 @@ extern "C" {
+ // Constants from config.h
+ constexpr float SCALE = 1.0f / 127.5f;
+ constexpr uint32_t TCP_MAGIC = 0x4D434851;  // 'MCHQ'
+-constexpr int TCP_DATA_PORT = 8091;
+-constexpr int TCP_CONTROL_PORT = 8092;
+-constexpr int RTL_TCP_PORT = 1234;  // Standard rtl_tcp port
++// Defaults are retained for upstream callers. main.cpp replaces these only after
++// validating numeric HEIMDALL_* environment values and before opening any USB device.
++extern int tcp_data_port;
++extern int tcp_control_port;
++extern int rtl_tcp_port;
++extern int web_port;
++extern std::string heimdall_bind_host;
++extern std::string heimdall_instance_token;
++extern std::string heimdall_html_path;
+ 
+ // Serial number configuration - channel N is the device with serial
+ // expected_serials[N]. Defaults to "1000".."1007" (the KrakenSDR factory
+diff --git a/heimdall_v2/src/core/status_dashboard.cpp b/heimdall_v2/src/core/status_dashboard.cpp
+index 4ed93f9..3c84f16 100644
+--- a/heimdall_v2/src/core/status_dashboard.cpp
++++ b/heimdall_v2/src/core/status_dashboard.cpp
+@@ -211,7 +211,7 @@ string web_url() {
+     static const string url = [] {
+         char h[256] = {0};
+         string host = (gethostname(h, sizeof(h) - 1) == 0 && h[0]) ? string(h) : string("localhost");
+-        return "http://" + host + ":" + to_string(WEB_PORT);
++        return "http://" + host + ":" + to_string(web_port);
+     }();
+     return url;
+ }
+@@ -559,10 +559,10 @@ void render() {
+         int rtl_ch = rtl_tcp_server ? rtl_tcp_server->get_source_channel() : 0;
+         ostringstream o;
+         o << label("NETWORK")
+-          << col::DIM << "data:" << TCP_DATA_PORT << " " << col::RST << dc << col::DIM << " cli"
+-          << "   ctrl:" << TCP_CONTROL_PORT << " " << col::RST << cc << col::DIM << " cli"
+-          << "   rtl:" << RTL_TCP_PORT << " " << col::RST << dot(rtl) << col::DIM << " ch" << rtl_ch
+-          << "   web:" << WEB_PORT << col::RST;
++          << col::DIM << "data:" << tcp_data_port << " " << col::RST << dc << col::DIM << " cli"
++          << "   ctrl:" << tcp_control_port << " " << col::RST << cc << col::DIM << " cli"
++          << "   rtl:" << rtl_tcp_port << " " << col::RST << dot(rtl) << col::DIM << " ch" << rtl_ch
++          << "   web:" << web_port << col::RST;
+         add(o.str());
+     }
+ 
+diff --git a/heimdall_v2/src/core/types.hpp b/heimdall_v2/src/core/types.hpp
+index 6944ad6..486523e 100644
+--- a/heimdall_v2/src/core/types.hpp
++++ b/heimdall_v2/src/core/types.hpp
+@@ -14,9 +14,13 @@
+ #include <utility>
+ 
+ // Type aliases
+-using SampleBuffer = std::vector<uint8_t>;
++struct SampleBuffer : std::vector<uint8_t> {
++    using std::vector<uint8_t>::vector;
++    uint64_t acquisition_epoch = 0;
++};
+ using Complex = std::complex<float>;
+ using ComplexBuffer = std::vector<Complex>;
++struct ComplexSampleSet : std::vector<ComplexBuffer> { uint64_t acquisition_epoch = 0; };
+ 
+ // Enums
+ enum class LagCompensatorState {
+@@ -283,6 +287,7 @@ struct CorrelationResult {
+     mutable std::mutex data_mutex;  // mutable allows locking in const functions
+     bool data_ready = false, compensation_active = false, phase_compensation_active = false, phase_compensation_complete = false;
+     uint64_t data_sequence = 0;
++    uint64_t acquisition_epoch = 0;
+     PhaseCompensatorState phase_state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
+ 
+     CorrelationResult() = default;  // Use default constructor
+@@ -393,6 +398,17 @@ extern std::atomic<int> active_num_elements;  // Set via -n flag at startup (2 t
+ extern std::atomic<bool> coherence_lost;
+ extern std::atomic<bool> recovery_in_progress;
+ extern std::atomic<uint32_t> coherence_event_count;
++// Monotonic deadline: packets are marked uncalibrated until old USB/queue data is drained after a noise transition.
++extern std::atomic<int64_t> output_holdoff_until_ns;
++extern std::atomic<uint64_t> acquisition_epoch;
++extern std::atomic<bool> capture_transition_active;
++// Lock order: command lifetime -> calibration -> settings/state/data -> publication.
++// Recursive because phase completion itself changes the hardware noise source.
++extern std::recursive_mutex calibration_mutex;
++extern std::atomic<bool> hardware_settings_failed;
++extern std::atomic<bool> calibration_failed;
++extern std::mutex publication_mutex;
++extern std::mutex device_command_mutex;
+ extern WidebandConfig wideband_config;
+ extern DiscreteScannerConfig discrete_scanner;
+ 
+diff --git a/heimdall_v2/src/core/utils.cpp b/heimdall_v2/src/core/utils.cpp
+index 4441e5b..7a25705 100644
+--- a/heimdall_v2/src/core/utils.cpp
++++ b/heimdall_v2/src/core/utils.cpp
+@@ -18,16 +18,24 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
+     bool ok = true;
+ 
+     // Thread name for `top -H`/htop/perf (Linux caps it at 15 chars + NUL).
+-    if (name) pthread_setname_np(self, name);
++    if (name) {
++#if defined(__APPLE__)
++        pthread_setname_np(name);
++#else
++        pthread_setname_np(self, name);
++#endif
++    }
+ 
+     // Optional CPU pinning. Off by default (cpu < 0): real isolation needs
+     // isolcpus on the kernel cmdline, which we can't assume on an arbitrary Pi.
++#if defined(__linux__)
+     if (cpu >= 0) {
+         cpu_set_t set;
+         CPU_ZERO(&set);
+         CPU_SET(cpu, &set);
+         if (pthread_setaffinity_np(self, sizeof(set), &set) != 0) ok = false;
+     }
++#endif
+ 
+     // SCHED_RR (round-robin), NOT SCHED_FIFO. We run up to NUM_DEVICES (5) USB
+     // reader threads at the SAME priority on a 4-core Pi. Under SCHED_FIFO equal
+diff --git a/heimdall_v2/src/dsp/compensation.cpp b/heimdall_v2/src/dsp/compensation.cpp
+index 20917cf..f2f0ca8 100644
+--- a/heimdall_v2/src/dsp/compensation.cpp
++++ b/heimdall_v2/src/dsp/compensation.cpp
+@@ -160,6 +160,7 @@ static bool design_per_bin_equalizers() {
+ 
+ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
+                                    const std::map<int, float>& measured_amplitudes) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     if (!phase_compensation) return;
+ 
+     // Skip phase compensation in wideband scan mode
+@@ -267,6 +268,7 @@ void apply_phase_compensation_once(const std::map<int, float>& measured_phases,
+ 
+ bool check_phase_convergence(const std::map<int, float>& current_phases,
+                              const std::map<int, float>& current_amplitudes) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     if (!phase_compensation || phase_compensation->convergence_check_active.exchange(true)) return false;
+ 
+     // Skip phase compensation in wideband scan mode
+@@ -347,9 +349,16 @@ bool check_phase_convergence(const std::map<int, float>& current_phases,
+                 // Reduce buffer clearing to allow continuous refinement
+                 clear_l2_buffer();
+             } else {
+-                // Max attempts reached: finish (or measure per-bin equalizer first).
+-                std::cout << "Phase: max convergence attempts reached" << std::endl;
+-                proceed_after_scalar_convergence_locked();
++                // Exhausted attempts are a failed calibration, never convergence.
++                std::cerr << "Phase: calibration failed after maximum convergence attempts" << std::endl;
++                calibration_failed.store(true, std::memory_order_release);
++                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
++                recovery_in_progress.store(false, std::memory_order_release);
++                set_bias_tee_all_devices(false, devices);
++                std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
++                fft_control.fft_enabled = false;
++                fft_control.auto_disabled = true;
++                fft_control.user_override = false;
+             }
+         }
+     }
+@@ -365,6 +374,7 @@ std::optional<PhaseCompensatorState> get_phase_compensation_state() {
+ }
+ 
+ void reset_lag_compensation_all_channels() {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     std::cout << "Resetting lag compensation for all channels..." << std::endl;
+ 
+     for (const auto& device : devices) {
+@@ -401,6 +411,7 @@ const char* kerberos_calibration_state() {
+ // machine can converge (or latch a bogus calibration) until a manual
+ // recalibration re-enables everything through recover_coherence(true).
+ void kerberos_enter_uncalibrated(const char* reason) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     set_bias_tee_all_devices(false, devices);
+ 
+     reset_lag_compensation_all_channels();  // lag -> MEASURING + L1/L2 flush
+@@ -448,6 +459,8 @@ void kerberos_enter_uncalibrated(const char* reason) {
+ // full-packet slip (phase compensation cannot represent it, and a locked lag
+ // state will not re-measure on its own). Runs only on the watchdog thread.
+ void recover_coherence(bool manual) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    calibration_failed.store(false, std::memory_order_release);
+     recovery_in_progress.store(true, std::memory_order_release);
+     const uint32_t n = coherence_event_count.load(std::memory_order_relaxed);
+     std::cerr << "Coherence recovery #" << n << ": full flush + recalibration starting..." << std::endl;
+@@ -551,82 +564,60 @@ void recover_coherence(bool manual) {
+ }
+ 
+ // Watchdog thread: drives coherence recovery off the coherence_lost flag.
+-// Debounced so it runs only one recovery at a time, but an event that fires
+-// DURING a recovery is NOT lost - it is peeked (not consumed) and acted on once
+-// the current recovery finishes. A recovery that never converges is force-aborted
+-// after a cap, with the noise source switched back off so a wedged recal can't
+-// leave it energized on the good channels.
++// A fresh loss invalidates the current attempt and starts a debounced retry.
++// Retries share one overall deadline; failure turns the noise source off and
++// requires an explicit retry instead of waiting forever for blocked FFT data.
+ void coherence_watchdog() {
+     std::cout << "Coherence watchdog started" << std::endl;
+-    std::chrono::steady_clock::time_point recovery_started{};
++    std::chrono::steady_clock::time_point recovery_started{}, last_attempt{};
++    bool timed_out = false;
+ 
+     while (global_running) {
+-        // Hold off entirely while an element-count reconfiguration owns the
+-        // devices: the pipeline is stopped, so a "stalled device" event latched
+-        // during the teardown is expected noise, and recover_coherence() must
+-        // not touch handles being closed/reopened. Events stay latched and are
+-        // consumed once the reconfiguration finishes (it clears the stale ones
+-        // it caused itself and arms a fresh recalibration).
+-        if (reconfig_in_progress.load(std::memory_order_acquire)) {
+-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+-            continue;
+-        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(100));
++        if (!global_running) break;
++        std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++        if (reconfig_in_progress.load(std::memory_order_acquire) ||
++            hardware_settings_failed.load(std::memory_order_acquire)) continue;
+ 
+         const auto now = std::chrono::steady_clock::now();
+         bool recovering = recovery_in_progress.load(std::memory_order_acquire);
+-
+-        // Safety: a recalibration that never reaches CONVERGED (e.g. a dongle
+-        // stays unplugged, or there is no signal) must not wedge the watchdog.
+-        // Abort after a cap AND turn the noise source off so a stuck recovery
+-        // does not keep the calibration noise injected into the good channels.
+-        if (recovering &&
+-            std::chrono::duration_cast<std::chrono::seconds>(now - recovery_started).count() > 120) {
++        if (recovering && now - recovery_started > std::chrono::seconds(120)) {
++            // This deadline belongs to the entire recovery, including retries.
++            // A permanently missing receiver must not keep the noise source on.
+             std::cerr << "Coherence watchdog: recovery exceeded 120s, aborting (noise source off)" << std::endl;
+-            if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
+-                set_bias_tee_all_devices(false, devices);
+-                // Also stop the calibration pipeline. recover_coherence turned the
+-                // noise source on AND FFT on; turning only the noise source off
+-                // while the lag/phase machines keep running would let them latch a
+-                // calibration captured WITHOUT the noise source - nulling the real
+-                // DOA and reporting CONVERGED. With FFT disabled, correlation feeds
+-                // zeroed phases so the phase machine cannot converge; it stays in a
+-                // non-CONVERGED (uncalibrated, identity-compensation) state until a
+-                // new coherence event re-runs recovery.
+-                std::lock_guard<std::mutex> fl(fft_control.control_mutex);
++            set_bias_tee_all_devices(false, devices);
++            if (phase_compensation) {
++                std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
++                phase_compensation->state = PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION;
++            }
++            {
++                std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
+                 fft_control.fft_enabled = false;
+                 fft_control.auto_disabled = true;
+                 fft_control.user_override = false;
+             }
++            calibration_failed.store(true, std::memory_order_release);
++            coherence_lost.store(true, std::memory_order_release);
+             recovery_in_progress.store(false, std::memory_order_release);
+-            recovering = false;  // allow a fresh recovery below
++            recovering = false;
++            timed_out = true;
+         }
+ 
+-        // Consume the triggers only when we can act (not already recovering);
+-        // while a recovery is in progress, PEEK so a new desync OR a forced recal
+-        // fired mid-recovery stays latched and is acted on as soon as this
+-        // recovery completes. The 120s abort above runs first, so a force-abort in
+-        // the same tick lets us consume+act immediately rather than waiting another
+-        // tick. force_recalibration carries the periodic-check / web-UI "force
+-        // recalibration" requests through the same single-threaded recovery path.
+-        bool coh, forced;
+-        if (recovering) {
+-            coh    = coherence_lost.load(std::memory_order_acquire);
+-            forced = force_recalibration.load(std::memory_order_acquire);
+-        } else {
+-            coh    = coherence_lost.exchange(false, std::memory_order_acq_rel);
+-            forced = force_recalibration.exchange(false, std::memory_order_acq_rel);
+-        }
+-
+-        if ((coh || forced) && !recovering) {
+-            if (forced && !coh)
+-                std::cout << "Coherence watchdog: forced recalibration requested" << std::endl;
+-            recovery_started = now;
+-            // forced == user-requested (FORCE_RECAL): in --kerberos mode that
+-            // is the only trigger allowed to run the noise-source calibration.
++        const bool forced = force_recalibration.exchange(false, std::memory_order_acq_rel);
++        if (timed_out && !forced) continue;
++        if (forced) timed_out = false;
++        const bool lost = coherence_lost.load(std::memory_order_acquire);
++        // A new loss invalidates FFT input immediately. Waiting for the old
++        // recovery to converge would then deadlock. Restart after a bounded
++        // debounce, retaining the original deadline across automatic retries.
++        const bool retry = recovering && lost && now - last_attempt >= std::chrono::seconds(1);
++        if (forced || (lost && !recovering) || retry) {
++            if (!recovering || forced) recovery_started = now;
++            if (retry) std::cerr << "Coherence watchdog: new loss during recovery; restarting calibration" << std::endl;
++            coherence_lost.exchange(false, std::memory_order_acq_rel);
++            last_attempt = now;
+             recover_coherence(forced);
+         }
+-
+-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+     }
+     std::cout << "Coherence watchdog exiting" << std::endl;
+ }
+@@ -643,6 +634,16 @@ void coherence_watchdog() {
+ // existing post-calibration monitor already computes.
+ static void run_calibration_check(CorrelationResult& correlation_result) {
+     using namespace std::chrono;
++    const auto started = steady_clock::now();
++    auto event = [&](const char* outcome, int snapshots, float lag = 0.0f, float phase = 0.0f) {
++        const auto mono_ms = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
++        const auto wall_ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
++        const auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - started).count();
++        std::cerr << "Periodic calibration " << outcome << " wall_ms=" << wall_ms << " mono_ms=" << mono_ms
++                  << " elapsed_ms=" << elapsed_ms << " snapshots=" << snapshots
++                  << " epoch=" << acquisition_epoch.load(std::memory_order_acquire)
++                  << " worst_lag=" << lag << " worst_phase=" << phase << std::endl;
++    };
+ 
+     // Snapshot what the user already had on.
+     const bool noise_was_on = bias_tee_enabled.load();
+@@ -693,7 +694,9 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+         if (!st || *st != PhaseCompensatorState::CONVERGED) break;  // state changed under us
+         {
+             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+-            if (correlation_result.data_sequence > last_seq) {
++            if (correlation_result.data_ready && correlation_result.data_sequence > last_seq &&
++                correlation_result.acquisition_epoch == acquisition_epoch.load(std::memory_order_acquire) &&
++                acquisition_transition_barrier_ready()) {
+                 last_seq = correlation_result.data_sequence;
+                 for (int ch = 0; ch < NUM_DEVICES; ++ch) {
+                     if (ch == REF_CHANNEL) continue;
+@@ -738,15 +741,16 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+         if (!noise_was_on) set_bias_tee_all_devices(false, devices);
+     }
+ 
++    const bool check_preempted = preempted();
+     if (snapshots < kMinSnapshots) {
+-        std::cout << "Periodic calibration check: skipped (only " << snapshots
+-                  << " snapshots; system busy)" << std::endl;
++        event(check_preempted ? "preempted" : "skipped", snapshots);
+         return;
+     }
+ 
+     if (bad) {
+         if (bad_lag)   periodic_recal_lag_fail_count.fetch_add(1, std::memory_order_relaxed);
+         if (bad_phase) periodic_recal_phase_fail_count.fetch_add(1, std::memory_order_relaxed);
++        event("drifted", snapshots, worst_lag, worst_phase);
+         std::cerr << "Periodic calibration check: DRIFTED ("
+                   << (bad_lag ? "lag " : "") << (bad_phase ? "phase " : "")
+                   << "out of tolerance; worst |lag|=" << worst_lag
+@@ -756,8 +760,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+                   << "]" << std::endl;
+         force_recalibration.store(true, std::memory_order_release);
+     } else {
+-        std::cout << "Periodic calibration check: OK (worst |lag|=" << worst_lag
+-                  << " samp, |phase|=" << worst_phase << " deg)" << std::endl;
++        event(check_preempted ? "preempted" : "ok", snapshots, worst_lag, worst_phase);
+     }
+ }
+ 
+@@ -798,7 +801,10 @@ void periodic_calibration_monitor(CorrelationResult& correlation_result) {
+ 
+         const int period_min = std::max(1, periodic_recal_minutes.load(std::memory_order_relaxed));
+         if (steady_clock::now() - last_check >= minutes(period_min)) {
+-            std::cout << "Periodic calibration check: starting (every " << period_min << " min)" << std::endl;
++            const auto mono_ms = duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
++            const auto wall_ms = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
++            std::cerr << "Periodic calibration starting wall_ms=" << wall_ms << " mono_ms=" << mono_ms << " period_min=" << period_min
++                      << " epoch=" << acquisition_epoch.load(std::memory_order_acquire) << std::endl;
+             run_calibration_check(correlation_result);
+             last_check = steady_clock::now();
+         }
+@@ -1044,18 +1050,67 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+         std::map<int, float> current_phases;
+         std::map<int, float> current_amplitudes;
+         uint64_t current_sequence = 0;
++        uint64_t result_epoch = 0;
++        std::map<int, LagCompensatorState> current_channel_states;
++        std::unique_lock<std::recursive_mutex> calibration_lock(calibration_mutex);
++
++        // Cooldown is clock-driven, not measurement-driven: FFT is normally
++        // disabled after convergence, so waiting for a fresh correlation here
++        // would prevent the retune from ever re-enabling calibration.
++        if (channel == (REF_CHANNEL == 0 ? 1 : 0) && phase_compensation) {
++            bool ready = false;
++            {
++                std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
++                if (phase_compensation->state == PhaseCompensatorState::WAITING_FOR_STABILITY &&
++                    !hardware_settings_failed.load(std::memory_order_acquire)) {
++                    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
++                        std::chrono::steady_clock::now() - phase_compensation->last_frequency_change).count();
++                    if (elapsed >= phase_compensation->stability_delay_override_ms.load()) {
++                        phase_compensation->cooldown_active = false;
++                        ready = true;
++                    }
++                }
++            }
++            // This transition invalidates the old epoch before the snapshot below.
++            if (ready) handle_settings_change();
++
++            // Per-bin fallback is also clock/control-driven. A disabled FFT
++            // cannot supply the fresh measurement that the design path requires.
++            bool fft_on;
++            {
++                std::lock_guard<std::mutex> fft_lock(fft_control.control_mutex);
++                fft_on = fft_control.fft_enabled;
++            }
++            std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
++            if (phase_compensation->state == PhaseCompensatorState::MEASURING_PER_BIN) {
++                const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
++                    std::chrono::steady_clock::now() - phase_compensation->per_bin_start).count();
++                if (!per_bin_cal.enabled.load(std::memory_order_relaxed) || !fft_on || elapsed > 15)
++                    complete_phase_calibration_locked();
++            }
++        }
+ 
+         {
+             std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+             current_sequence = correlation_result.data_sequence;
+-            if (current_sequence > last_processed_sequence) {
++            result_epoch = correlation_result.acquisition_epoch;
++            if (correlation_result.data_ready && current_sequence > last_processed_sequence &&
++                result_epoch == acquisition_epoch.load(std::memory_order_acquire) &&
++                acquisition_transition_barrier_ready()) {
+                 current_lag = correlation_result.lags[channel];
+                 current_phases = correlation_result.phases;
+                 current_amplitudes = correlation_result.amplitudes;
++                current_channel_states = correlation_result.channel_states;
+                 last_processed_sequence = current_sequence;
+             }
+         }
+         
++        // A manual noise-off must never calibrate against antenna signals.
++        // Timer-only states above still progress without consuming a measurement.
++        if (current_lag && !bias_tee_enabled.load(std::memory_order_acquire) &&
++            get_phase_compensation_state() != PhaseCompensatorState::CONVERGED)
++            current_lag.reset();
++
+         if (current_lag) {
+             // Skip ALL compensation processing if calibration is complete AND FFT is disabled
+             if (auto current_state = get_phase_compensation_state();
+@@ -1070,6 +1125,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+                 
+                 if (!fft_enabled) {
+                     // Calibration complete and FFT disabled - stop all compensation processing
++                    calibration_lock.unlock();
+                     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                     continue;
+                 }
+@@ -1081,39 +1137,11 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+             if (channel == (REF_CHANNEL == 0 ? 1 : 0)) {
+                 if (auto current_state = get_phase_compensation_state()) {
+                     switch (*current_state) {
+-                        case PhaseCompensatorState::WAITING_FOR_STABILITY: {
+-                            // Frequency stability cooldown - wait 3 seconds before starting calibration
+-                            if (phase_compensation) {
+-                                bool should_start_calibration = false;
+-                                {
+-                                    std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+-                                    // Re-check state after acquiring mutex (TOCTOU protection)
+-                                    // Another thread may have updated frequency, resetting the timer
+-                                    if (phase_compensation->state != PhaseCompensatorState::WAITING_FOR_STABILITY) {
+-                                        break;  // State changed, don't proceed
+-                                    }
+-
+-                                    auto now = std::chrono::steady_clock::now();
+-                                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+-                                        now - phase_compensation->last_frequency_change).count();
+-
+-                                    int delay_ms = phase_compensation->stability_delay_override_ms.load();
+-                                    if (elapsed >= delay_ms) {
+-                                        std::cout << "Frequency stable for " << delay_ms << "ms, starting calibration..." << std::endl;
+-                                        phase_compensation->cooldown_active = false;
+-                                        should_start_calibration = true;
+-                                    }
+-                                }  // Release mutex before calling handle_settings_change()
+-
+-                                if (should_start_calibration) {
+-                                    handle_settings_change();  // This resets to MEASURING_INITIAL_PHASE
+-                                }
+-                            }
+-                            break;
+-                        }
++                        case PhaseCompensatorState::WAITING_FOR_STABILITY:
++                            break;  // clock-driven gate runs before the measurement snapshot
+                         case PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION: {
+-                            bool all_lag_converged = std::all_of(correlation_result.channel_states.begin(),
+-                                correlation_result.channel_states.end(),
++                            bool all_lag_converged = std::all_of(current_channel_states.begin(),
++                                current_channel_states.end(),
+                                 [](const auto& pair) { return pair.second == LagCompensatorState::CONVERGED; });
+ 
+                             if (all_lag_converged && phase_compensation) {
+@@ -1205,6 +1233,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+                 tick_ms = 20;
+             }
+         }
++        calibration_lock.unlock();
+         std::this_thread::sleep_for(std::chrono::milliseconds(tick_ms));
+     }
+ }
+\ No newline at end of file
+diff --git a/heimdall_v2/src/dsp/correlation.cpp b/heimdall_v2/src/dsp/correlation.cpp
+index 7f1ec59..ecdba67 100644
+--- a/heimdall_v2/src/dsp/correlation.cpp
++++ b/heimdall_v2/src/dsp/correlation.cpp
+@@ -1,5 +1,7 @@
+ #include "correlation.hpp"
++#include "compensation.hpp"
+ #include "../sdr/sdr_pipeline.hpp"
++#include "../sdr/pipeline_control.hpp"
+ #include "../sdr/sdr_device.hpp"
+ #include "../dsp/fft_plan.hpp"
+ #include "../core/config.hpp"
+@@ -15,7 +17,7 @@
+ #include <Eigen/Eigenvalues>
+ 
+ // External buffer pool for L2 buffers (defined in sdr_pipeline.cpp)
+-extern BufferPool<std::vector<ComplexBuffer>> l2_buffer_pool;
++extern BufferPool<ComplexSampleSet> l2_buffer_pool;
+ 
+ #if ENABLE_COHERENCE_MONITOR
+ // ---- #5 streaming coherence monitor (default OFF; see config.h) --------------
+@@ -33,7 +35,10 @@ extern BufferPool<std::vector<ComplexBuffer>> l2_buffer_pool;
+ // de-correlates every channel at once (coherent_count == 0 -> no action);
+ // documented, acceptable for a default-off backstop. Runs only on the single
+ // correlation_processor thread.
+-static void maybe_run_coherence_monitor(const std::vector<ComplexBuffer>& complex_set) {
++static void maybe_run_coherence_monitor(const ComplexSampleSet& complex_set) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    if (complex_set.acquisition_epoch != acquisition_epoch.load(std::memory_order_acquire) ||
++        !acquisition_transition_barrier_ready()) return;
+     // Only meaningful once channels are locked & coherent, coherent mode, and
+     // never while a recovery is already recalibrating.
+     if (operating_mode.load() != OperatingMode::COHERENT) return;
+@@ -327,7 +332,7 @@ void calculate_phase_amplitude_calibration_eigen(
+ }
+ 
+ void process_correlations(CorrelationResult& correlation_result, FFTProcessingControl& fft_control) {
+-    std::vector<ComplexBuffer> complex_set;
++    ComplexSampleSet complex_set;
+ 
+     // Try to dequeue from L2 buffer (non-blocking)
+     if (!l2_buffer.try_dequeue(complex_set)) {
+@@ -342,7 +347,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+     // producer anyway; processing only the newest set removes the latency
+     // without losing anything.
+     {
+-        std::vector<ComplexBuffer> newer;
++        ComplexSampleSet newer;
+         while (l2_buffer.try_dequeue(newer)) {
+             l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+             l2_buffer_pool.release(std::move(complex_set));
+@@ -350,15 +355,21 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+         }
+     }
+ 
++    // Never update lag/phase state from a set crossing an acquisition transition.
++    if (complex_set.acquisition_epoch != acquisition_epoch.load(std::memory_order_acquire) || capture_transition_active.load(std::memory_order_acquire)) {
++        l2_buffer_pool.release(std::move(complex_set)); return;
++    }
++
+     // Get number of active channels from actual data size
+     const int num_channels = static_cast<int>(complex_set.size());
+     if (num_channels < 2) {
++        l2_buffer_pool.release(std::move(complex_set));
+         return;  // Need at least 2 channels
+     }
+ 
+     // RAII helper to return buffer to pool on function exit
+     struct BufferGuard {
+-        std::vector<ComplexBuffer>& buf;
++        ComplexSampleSet& buf;
+         ~BufferGuard() { l2_buffer_pool.release(std::move(buf)); }
+     } buffer_guard{complex_set};
+ 
+@@ -374,6 +385,12 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+         channel_plans.push_back(fft_pool.acquire());
+     }
+ 
++    struct PlanGuard {
++        FftPlan* ref;
++        std::vector<FftPlan*>& channels;
++        ~PlanGuard() { fft_pool.release(ref); for (auto* plan : channels) fft_pool.release(plan); }
++    } plan_guard{ref_plan, channel_plans};
++
+     // Process reference channel
+     ref_plan->forward(complex_set[REF_CHANNEL], NUM_SAMPLES);
+     auto* ref_fft = ref_plan->get_output();
+@@ -389,6 +406,15 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+         }
+     }
+ 
++    // FFT work may cross a hardware transition. Serialize every subsequent
++    // accumulator/state write with transitions and discard stale work here.
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    if (complex_set.acquisition_epoch != acquisition_epoch.load(std::memory_order_acquire) ||
++        !acquisition_transition_barrier_ready()) return;
++
++    std::vector<std::vector<float>> correlation_data(num_channels - 1, std::vector<float>(CORRELATION_SIZE));
++    std::vector<float> scale_factors(num_channels - 1);
++
+     // Optional per-bin phase calibration: while in the MEASURING_PER_BIN window
+     // (noise source + FFT still on), accumulate the per-bin cross-spectrum
+     // X_i(f)*conj(X_ref(f)) and the reference power |X_ref(f)|^2. This is the
+@@ -401,7 +427,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+             std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+             measuring = (phase_compensation->state == PhaseCompensatorState::MEASURING_PER_BIN);
+         }
+-        if (measuring
++        if (measuring && bias_tee_enabled.load(std::memory_order_acquire)
+             && per_bin_cal.num_channels == num_channels
+             && per_bin_cal.num_bins == CORRELATION_SIZE
+             && per_bin_cal.snapshots.load(std::memory_order_acquire) < PerBinCalibration::REQUIRED_SNAPSHOTS) {
+@@ -530,11 +556,11 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+         current_lags[ch] = lag;
+         
+         // Store correlation data at the correct index
+-        correlation_result.scale_factors[corr_idx] = refined_peak.refined_magnitude;
++        scale_factors[corr_idx] = refined_peak.refined_magnitude;
+         float scale = refined_peak.refined_magnitude > 0 ? 1.0f / refined_peak.refined_magnitude : 1.0f;
+         
+         std::transform(correlation_time, correlation_time + CORRELATION_SIZE,
+-                 correlation_result.correlation_data[corr_idx].begin(),
++                 correlation_data[corr_idx].begin(),
+                  [scale](const auto& val) { return std::abs(val) * scale; });
+         
+         corr_idx++;
+@@ -627,6 +653,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+                 }
+             } else {
+                 // Use previous phases/amplitudes or defaults
++                std::lock_guard<std::mutex> data_lock(correlation_result.data_mutex);
+                 for (int ch = 0; ch < num_channels; ch++) {
+                     current_phases[ch] = correlation_result.phases.count(ch) ? correlation_result.phases[ch] : 0.0f;
+                     current_amplitudes[ch] = correlation_result.amplitudes.count(ch) ? correlation_result.amplitudes[ch] : 1.0f;
+@@ -641,47 +668,39 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+         }
+     }
+     
+-    // Release FFT plans back to pool
+-    fft_pool.release(ref_plan);
+-    for (auto* plan : channel_plans) {
+-        fft_pool.release(plan);
+-    }
+-    
+-    // Update correlation results
++    std::map<int, LagCompensatorState> channel_states;
++    std::map<int, int> channel_zero_counts;
++    bool any_lag_active = false;
++    for (int ch = 0; ch < num_channels; ++ch) {
++        if (ch == REF_CHANNEL || !devices[ch]) continue;
++        std::lock_guard<std::mutex> comp_lock(devices[ch]->compensation_mutex);
++        const auto state = devices[ch]->compensation.state;
++        channel_states[ch] = state;
++        channel_zero_counts[ch] = devices[ch]->compensation.zero_lag_count;
++        any_lag_active |= state != LagCompensatorState::CONVERGED;
++    }
++    const auto phase_state = get_phase_compensation_state().value_or(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
++    // Callback loss can invalidate FFT work while calibration is guarded.
++    // Commit the snapshot atomically with the final epoch check.
+     {
+-        std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+-        correlation_result.lags = current_lags;
+-        correlation_result.phases = current_phases;
+-        correlation_result.amplitudes = current_amplitudes;
+-        correlation_result.data_ready = true;
+-        correlation_result.data_sequence++;
+-        
+-        // Update channel states
+-        bool any_lag_active = false;
+-        for (int ch = 0; ch < num_channels; ch++) {
+-            if (ch == REF_CHANNEL) continue;
+-            
+-            if (devices[ch]) {
+-                std::lock_guard<std::mutex> comp_lock(devices[ch]->compensation_mutex);
+-                auto state = devices[ch]->compensation.state;
+-                correlation_result.channel_states[ch] = state;
+-                correlation_result.channel_zero_counts[ch] = devices[ch]->compensation.zero_lag_count;
+-                if (state != LagCompensatorState::CONVERGED) {
+-                    any_lag_active = true;
+-                }
+-            }
+-        }
+-        
++        std::lock_guard<std::mutex> data_lock(correlation_result.data_mutex);
++        std::lock_guard<std::mutex> publication_lock(publication_mutex);
++        if (complex_set.acquisition_epoch != acquisition_epoch.load(std::memory_order_acquire) ||
++            !acquisition_transition_barrier_ready()) return;
++        correlation_result.acquisition_epoch = complex_set.acquisition_epoch;
++        correlation_result.correlation_data = std::move(correlation_data);
++        correlation_result.scale_factors = std::move(scale_factors);
++        correlation_result.lags = std::move(current_lags);
++        correlation_result.phases = std::move(current_phases);
++        correlation_result.amplitudes = std::move(current_amplitudes);
++        correlation_result.channel_states = std::move(channel_states);
++        correlation_result.channel_zero_counts = std::move(channel_zero_counts);
+         correlation_result.compensation_active = any_lag_active;
+-        
+-        if (phase_compensation) {
+-            std::lock_guard<std::mutex> lock(phase_compensation->state_mutex);
+-            auto phase_state = phase_compensation->state;
+-            correlation_result.phase_state = phase_state;
+-            correlation_result.phase_compensation_active = (phase_state != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION && 
+-                                                           phase_state != PhaseCompensatorState::CONVERGED);
+-            correlation_result.phase_compensation_complete = (phase_state == PhaseCompensatorState::CONVERGED);
+-        }
++        correlation_result.phase_state = phase_state;
++        correlation_result.phase_compensation_active = phase_state != PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION && phase_state != PhaseCompensatorState::CONVERGED;
++        correlation_result.phase_compensation_complete = phase_state == PhaseCompensatorState::CONVERGED;
++        correlation_result.data_ready = true;
++        ++correlation_result.data_sequence;
+     }
+ 
+ #if ENABLE_COHERENCE_MONITOR
+@@ -695,6 +714,7 @@ void process_correlations(CorrelationResult& correlation_result, FFTProcessingCo
+ 
+ std::string build_correlation_message(const CorrelationResult& correlation_result,
+                                     const FFTProcessingControl& fft_control) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+ 
+     // Get active element count (set at startup via -n flag)
+@@ -840,7 +860,7 @@ void correlation_processor(CorrelationResult& correlation_result, FFTProcessingC
+             process_correlations(correlation_result, fft_control);
+         } else {
+             // FFT disabled - drain buffer but don't process.
+-            std::vector<ComplexBuffer> set;
++            ComplexSampleSet set;
+             if (l2_buffer.try_dequeue(set)) {
+                 l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+ #if ENABLE_COHERENCE_MONITOR
+@@ -856,6 +876,7 @@ void correlation_processor(CorrelationResult& correlation_result, FFTProcessingC
+             {
+                 std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
+                 correlation_result.data_ready = false;
++                correlation_result.acquisition_epoch = 0;
+                 correlation_result.data_sequence++;
+                 
+                 // Clear phase data when FFT is disabled
+diff --git a/heimdall_v2/src/main.cpp b/heimdall_v2/src/main.cpp
+index bdc9930..ef8391f 100644
+--- a/heimdall_v2/src/main.cpp
++++ b/heimdall_v2/src/main.cpp
+@@ -27,6 +27,97 @@
+ #include <cstdlib>
+ #include <cstdio>
+ #include <unistd.h>
++#include <arpa/inet.h>
++#include <filesystem>
++#include <limits>
++#include <cerrno>
++#include <cctype>
++
++// Runtime ports remain upstream-compatible unless the managed launcher supplies
++// validated HEIMDALL_* values. They are initialized before any device enumeration.
++int tcp_data_port = 8091;
++int tcp_control_port = 8092;
++int rtl_tcp_port = 1234;
++int web_port = 8080;
++#if defined(__APPLE__)
++std::string heimdall_bind_host = "127.0.0.1";
++#else
++std::string heimdall_bind_host = "0.0.0.0";
++#endif
++std::string heimdall_instance_token;
++std::string heimdall_html_path;
++
++// Defined below; declarations allow startup validation to set them before USB discovery.
++extern std::atomic<uint64_t> current_frequency;
++extern std::atomic<int> current_gain;
++extern std::atomic<pid_t> expected_parent_pid;
++
++namespace {
++bool parse_env_port(const char* name, int& target) {
++    const char* value = std::getenv(name);
++    if (!value) return true;
++    char* end = nullptr; errno = 0;
++    const long parsed = std::strtol(value, &end, 10);
++    if (errno || end == value || *end != '\0' || parsed < 1 || parsed > 65535) {
++        std::cerr << "Invalid " << name << ": expected port 1-65535" << std::endl;
++        return false;
++    }
++    target = static_cast<int>(parsed); return true;
++}
++bool configure_managed_environment() {
++    const char* host = std::getenv("HEIMDALL_BIND_HOST");
++    if (host) {
++        in_addr address{};
++        if (inet_pton(AF_INET, host, &address) != 1) {
++            std::cerr << "Invalid HEIMDALL_BIND_HOST: expected numeric IPv4 address" << std::endl;
++            return false;
++        }
++#if defined(__APPLE__)
++        if (std::string(host) != "127.0.0.1") {
++            std::cerr << "HEIMDALL_BIND_HOST must be 127.0.0.1 for the managed macOS service" << std::endl;
++            return false;
++        }
++#endif
++        heimdall_bind_host = host;
++    }
++    if (!parse_env_port("HEIMDALL_DATA_PORT", tcp_data_port) ||
++        !parse_env_port("HEIMDALL_CONTROL_PORT", tcp_control_port) ||
++        !parse_env_port("HEIMDALL_WEB_PORT", web_port) ||
++        !parse_env_port("HEIMDALL_RTL_PORT", rtl_tcp_port)) return false;
++    if (const char* token = std::getenv("HEIMDALL_INSTANCE_TOKEN")) {
++        const std::string value(token);
++        if (value.empty() || value.size() > 128 || !std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isxdigit(c); })) {
++            std::cerr << "Invalid HEIMDALL_INSTANCE_TOKEN: expected 1-128 hexadecimal characters" << std::endl;
++            return false;
++        }
++        heimdall_instance_token = value;
++    }
++    if (const char* parent = std::getenv("HEIMDALL_PARENT_PID")) {
++        char* end = nullptr; errno = 0; const long pid = std::strtol(parent, &end, 10);
++        if (errno || end == parent || *end != '\0' || pid <= 1 || pid > std::numeric_limits<pid_t>::max()) {
++            std::cerr << "Invalid HEIMDALL_PARENT_PID" << std::endl; return false;
++        }
++        expected_parent_pid.store(static_cast<pid_t>(pid), std::memory_order_release);
++    }
++    if (const char* html = std::getenv("HEIMDALL_HTML_PATH")) {
++        std::error_code ec;
++        const std::filesystem::path p(html);
++        if (!p.is_absolute() || !std::filesystem::is_regular_file(p, ec)) {
++            std::cerr << "Invalid HEIMDALL_HTML_PATH: expected an absolute readable file" << std::endl;
++            return false;
++        }
++        heimdall_html_path = p.string();
++    }
++    auto parse_uint = [](const char* name, std::atomic<uint64_t>& target) -> bool {
++        const char* v = std::getenv(name); if (!v) return true; char* e = nullptr; errno = 0;
++        unsigned long long n = std::strtoull(v, &e, 10);
++        if (errno || e == v || *e != '\0' || n == 0 || n > std::numeric_limits<uint32_t>::max()) { std::cerr << "Invalid " << name << std::endl; return false; }
++        target.store(n); return true;
++    };
++    auto parse_gain = []() -> bool { const char* v = std::getenv("HEIMDALL_GAIN_TENTHS"); if (!v) return true; char* e = nullptr; errno = 0; long n = std::strtol(v, &e, 10); if (errno || e == v || *e != '\0' || n < -1 || n > 500) { std::cerr << "Invalid HEIMDALL_GAIN_TENTHS" << std::endl; return false; } current_gain.store((int)n); return true; };
++    return parse_uint("HEIMDALL_CENTER_FREQ_HZ", current_frequency) && parse_gain();
++}
++} // namespace
+ 
+ // Global state variables (definitions for extern declarations in types.hpp)
+ std::atomic<uint64_t> current_frequency{CENTER_FREQ};
+@@ -64,6 +155,15 @@ std::atomic<bool> kerberos_cal_stale{false};
+ std::atomic<bool> coherence_lost{false};
+ std::atomic<bool> recovery_in_progress{false};
+ std::atomic<uint32_t> coherence_event_count{0};
++std::atomic<int64_t> output_holdoff_until_ns{0};
++std::atomic<uint64_t> acquisition_epoch{1};
++std::atomic<bool> capture_transition_active{false};
++std::recursive_mutex calibration_mutex;
++std::atomic<bool> hardware_settings_failed{false};
++std::atomic<bool> calibration_failed{false};
++std::mutex publication_mutex;
++std::mutex device_command_mutex;
++std::atomic<pid_t> expected_parent_pid{0};
+ std::atomic<bool> force_recalibration{false};
+ std::atomic<bool> periodic_recal_enabled{PERIODIC_RECAL_DEFAULT_ENABLED != 0};
+ std::atomic<int> periodic_recal_minutes{PERIODIC_RECAL_DEFAULT_MINUTES};
+@@ -86,16 +186,8 @@ std::unique_ptr<TcpControlServer> tcp_control_server;
+ std::unique_ptr<RtlTcpServer> rtl_tcp_server;
+ 
+ // Signal handler
+-void signal_handler(int sig) {
+-    std::cout << "\nReceived signal " << sig << ", shutting down..." << std::endl;
+-    global_running = false;
+-
+-    if (broadcast_timer) us_timer_close(static_cast<struct us_timer_t*>(broadcast_timer));
+-    if (loop) us_wakeup_loop(static_cast<struct us_loop_t*>(loop));
+-
+-    // ConcurrentQueue will automatically unblock waiting threads when they timeout
+-    // No need to manually notify condition variables
+-}
++volatile sig_atomic_t shutdown_signal = 0;
++void signal_handler(int sig) { shutdown_signal = sig; }
+ 
+ // TCP Status broadcaster
+ void tcp_status_broadcaster() {
+@@ -153,6 +245,7 @@ void discrete_scanner_thread() {
+                   << (next_frequency / 1e6) << " MHz (settling " << settling_time << "ms)" << std::endl;
+ 
+         {
++            std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+             std::lock_guard<std::mutex> lock(settings_mutex);
+             current_frequency = next_frequency;
+ 
+@@ -203,6 +296,7 @@ void discrete_scanner_thread() {
+ }
+ 
+ int main(int argc, char* argv[]) {
++    if (!configure_managed_environment()) return 2;
+     // Parse command line arguments
+     int num_elements_cli = 0;  // 0 = not given on the command line
+ 
+@@ -334,7 +428,7 @@ int main(int argc, char* argv[]) {
+          << "MODULAR: Split into core, sdr, dsp, net, and web modules\n"
+          << "Active Elements: " << num_elements << " (of " << max_elements << " configured), Reference: " << REF_CHANNEL
+          << ", Samples: " << NUM_SAMPLES << "\n"
+-         << "Frequency: " << std::fixed << std::setprecision(1) << CENTER_FREQ/1e6
++         << "Frequency: " << std::fixed << std::setprecision(1) << current_frequency.load()/1e6
+          << " MHz, Sample Rate: " << SAMPLE_RATE/1e6 << " MSPS\n"
+          << (downconverter.enabled.load()
+                  ? std::string("Mode: KrakenSDR WIDEBAND variant (tuners at ") +
+@@ -347,10 +441,10 @@ int main(int argc, char* argv[]) {
+                             ? "CKOVAL antenna switches - automatic calibration)\n"
+                             : "MANUAL calibration only - disconnect antennas, then Recalibrate)\n")
+                  : std::string())
+-         << "Web Server: http://localhost:" << WEB_PORT << " (uWebSockets)\n"
+-         << "RTL-TCP Port: " << RTL_TCP_PORT << " (Selectable channel via web UI)\n"
+-         << "TCP Data Port: " << TCP_DATA_PORT << " (Multi-channel IQ streaming)\n"
+-         << "TCP Control Port: " << TCP_CONTROL_PORT << " (JSON commands)\n"
++         << "Web Server: http://localhost:" << web_port << " (uWebSockets)\n"
++         << "RTL-TCP Port: " << rtl_tcp_port << " (Selectable channel via web UI)\n"
++         << "TCP Data Port: " << tcp_data_port << " (Multi-channel IQ streaming)\n"
++         << "TCP Control Port: " << tcp_control_port << " (JSON commands)\n"
+          << "=========================================================================================================\n" << std::endl;
+     
+     signal(SIGINT, signal_handler);
+@@ -413,7 +507,7 @@ int main(int argc, char* argv[]) {
+     // Start RTL-TCP server with default channel 0
+     rtl_tcp_server = std::make_unique<RtlTcpServer>(0);
+     if (!rtl_tcp_server->start()) {
+-        std::cerr << "Failed to start RTL-TCP server on port " << RTL_TCP_PORT << std::endl;
++        std::cerr << "Failed to start RTL-TCP server on port " << rtl_tcp_port << std::endl;
+         return 1;
+     }
+     
+@@ -422,12 +516,12 @@ int main(int argc, char* argv[]) {
+     tcp_control_server = std::make_unique<TcpControlServer>();
+     
+     if (!tcp_data_server->start()) {
+-        std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << std::endl;
++        std::cerr << "Failed to start TCP data server on port " << tcp_data_port << std::endl;
+         return 1;
+     }
+     
+     if (!tcp_control_server->start()) {
+-        std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << std::endl;
++        std::cerr << "Failed to start TCP control server on port " << tcp_control_port << std::endl;
+         return 1;
+     }
+     
+@@ -457,56 +551,47 @@ int main(int argc, char* argv[]) {
+     start_pipeline_threads();
+ 
+     std::cout << "System running - press Ctrl+C to stop" << std::endl;
+-    std::cout << "RTL-TCP clients can connect to localhost:" << RTL_TCP_PORT << " (Channel selectable via web interface)" << std::endl;
++    std::cout << "RTL-TCP clients can connect to localhost:" << rtl_tcp_port << " (Channel selectable via web interface)" << std::endl;
+     std::cout << "Compatible with SDR#, SDR++, GQRX, CubicSDR, etc." << std::endl;
+-    std::cout << "FFT Viewer can connect to localhost:" << TCP_DATA_PORT << " (data) and localhost:" << TCP_CONTROL_PORT << " (control)" << std::endl;
++    std::cout << "FFT Viewer can connect to localhost:" << tcp_data_port << " (data) and localhost:" << tcp_control_port << " (control)" << std::endl;
+     std::cout << "Use the web interface to select which RTL-SDR channel to stream via RTL-TCP" << std::endl;
+ 
+     // Everything is up (devices open, servers running, calibration starting):
+     // switch the dashboard from the loading screen to the full status view.
+     StatusDashboard::mark_ready();
+ 
+-    while (global_running) {
+-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
++    while (global_running && !shutdown_signal) {
++        const pid_t parent = expected_parent_pid.load(std::memory_order_acquire);
++        if (parent && getppid() != parent) { std::cerr << "Managed parent exited; shutting down" << std::endl; break; }
++        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+     }
+ 
+-    // Restore the terminal (stop + join the dashboard thread) before the
+-    // shutdown logs so they print normally on the restored screen.
++    global_running = false;
+     dash.stop();
+-
+-    std::cout << "\nShutting down..." << std::endl;
+-    global_running = false;  // signal every worker loop to stop
+-
+-    // Bulletproof shutdown: DO NOT join the worker threads. The uWebSockets
+-    // event loop never returns from run(), and other workers (and the TCP
+-    // server stop() calls) can block on their queues/condition variables, so
+-    // ANY join here risks hanging shutdown (which it did). Instead we release
+-    // just the RTL-SDR hardware and _Exit; the OS reclaims the threads, the
+-    // listening sockets (TCP ports) and all remaining handles on exit.
+-    //
+-    // Hardware release: cancel the async reads first (stops USB streaming and
+-    // returns each reader thread out of rtlsdr_read_async), let any in-flight
+-    // libusb completion callback drain, then close the dongles so they are
+-    // clean for the next run. The workers only touch device QUEUES, never the
+-    // librtlsdr handle, so closing here can't race them.
+-    for (auto& device : devices) {
+-        if (device) {
+-            device->running = false;
+-            if (device->dev) rtlsdr_cancel_async(device->dev);
+-        }
+-    }
+-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+-    for (auto& device : devices) {
+-        if (device && device->dev) rtlsdr_close(device->dev);
+-    }
+-
+-    // --kerberos_sw: leave the antenna switches pointing at the antennas (not
+-    // the noise source) and release the GPIO lines for the next run.
++    std::cerr << "Heimdall shutting down" << std::endl;
++    // Stop request/control threads before USB handles. Their loops observe global_running.
++    // Exclude a web command that passed its shutdown check before global_running
++    // changed, then keep the lock while device handles are dismantled.
++    // Stop control loops before taking the command lifetime lock: a handler may
++    // already be waiting for it, and stop() joins that loop.
++    if (tcp_data_server) tcp_data_server->stop();
++    if (tcp_control_server) tcp_control_server->stop();
++    if (rtl_tcp_server) rtl_tcp_server->stop();
++    std::unique_lock<std::mutex> device_lifetime_lock(device_command_mutex);
++    stop_pipeline_threads(); // cancels async reads and joins every device-touching worker
++    if (correlation_processor_thread.joinable()) correlation_processor_thread.join();
++    if (tcp_status_thread.joinable()) tcp_status_thread.join();
++    if (scanner_thread.joinable()) scanner_thread.join();
++    if (coherence_watchdog_thread.joinable()) coherence_watchdog_thread.join();
++    if (periodic_recal_thread.joinable()) periodic_recal_thread.join();
++    set_bias_tee_all_devices(false, devices);
++    close_active_devices(devices);
+     kerberos_gpio_cleanup();
+-
+-    // _Exit skips static/global destructors that the still-live worker threads
+-    // could otherwise race against during teardown.
+-    std::cout << "Heimdall shutdown complete." << std::endl;
+-    std::cout.flush();
++    // uWS has no safe cross-thread destruction API in this upstream version; its
++    // loop is process-owned. Wake it only after all hardware workers are joined.
++    if (loop) us_wakeup_loop(static_cast<struct us_loop_t*>(loop));
++    if (web_thread.joinable()) web_thread.detach();
++    std::cerr << "Heimdall shutdown complete" << std::endl;
++    std::cerr.flush();
+     _Exit(0);
+ }
+\ No newline at end of file
+diff --git a/heimdall_v2/src/net/rtl_tcp_server.cpp b/heimdall_v2/src/net/rtl_tcp_server.cpp
+index 626532d..a115ed8 100644
+--- a/heimdall_v2/src/net/rtl_tcp_server.cpp
++++ b/heimdall_v2/src/net/rtl_tcp_server.cpp
+@@ -45,8 +45,8 @@ bool RtlTcpServer::start() {
+     
+     sockaddr_in addr{};
+     addr.sin_family = AF_INET;
+-    addr.sin_addr.s_addr = INADDR_ANY;
+-    addr.sin_port = htons(RTL_TCP_PORT);
++    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) { close(server_socket); return false; }
++    addr.sin_port = htons(rtl_tcp_port);
+     
+     if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 1) < 0) {
+         close(server_socket);
+@@ -55,7 +55,7 @@ bool RtlTcpServer::start() {
+     
+     server_thread = std::thread(&RtlTcpServer::server_loop, this);
+     
+-    std::cout << "RTL-TCP Server listening on port " << RTL_TCP_PORT 
++    std::cout << "RTL-TCP Server listening on port " << rtl_tcp_port
+          << " (streaming channel " << source_channel.load() << ")" << std::endl;
+     return true;
+ }
+diff --git a/heimdall_v2/src/net/tcp_common.cpp b/heimdall_v2/src/net/tcp_common.cpp
+index 74017fa..b829bd7 100644
+--- a/heimdall_v2/src/net/tcp_common.cpp
++++ b/heimdall_v2/src/net/tcp_common.cpp
+@@ -1,6 +1,13 @@
+ #include "tcp_common.hpp"
++#include <poll.h>
++#include <chrono>
+ 
+-TcpClient::TcpClient(int s) : socket(s), active(true) {}
++TcpClient::TcpClient(int s) : socket(s), active(true) {
++#if defined(__APPLE__)
++    int one = 1;
++    (void)setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
++#endif
++}
+ 
+ TcpClient::~TcpClient() { 
+     if (socket >= 0) close(socket); 
+@@ -13,4 +20,41 @@ bool set_socket_nonblocking(int socket) {
+ bool set_socket_reuse(int socket) {
+     int opt = 1;
+     return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) >= 0;
+-}
+\ No newline at end of file
++}
++
++PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size, std::chrono::milliseconds deadline) {
++    const auto started = std::chrono::steady_clock::now();
++    const auto until = started + deadline;
++    size_t offset = 0;
++    auto failed = [&](PacketWriteFailure failure, int error_number) {
++        return PacketWriteResult{false, offset, failure, error_number,
++            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()};
++    };
++    while (offset < size) {
++        if (std::chrono::steady_clock::now() >= until) return failed(PacketWriteFailure::deadline, 0);
++        const ssize_t sent = send(socket, data + offset, size - offset, MSG_NOSIGNAL);
++        if (sent > 0) { offset += static_cast<size_t>(sent); continue; }
++        if (sent == 0) return failed(PacketWriteFailure::peer_closed, 0);
++        if (errno == EINTR) continue;
++        if (errno == EAGAIN || errno == EWOULDBLOCK) {
++            const auto now = std::chrono::steady_clock::now();
++            if (now >= until) return failed(PacketWriteFailure::deadline, 0);
++            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(until - now).count();
++            pollfd fd{socket, POLLOUT, 0};
++            const int rc = poll(&fd, 1, static_cast<int>(std::max<long long>(1, remaining)));
++            const int poll_errno = rc < 0 ? errno : 0;
++            if (rc > 0 && (fd.revents & POLLOUT)) continue;
++            if (rc < 0 && poll_errno == EINTR) continue;
++            if (rc == 0) return failed(PacketWriteFailure::deadline, 0);
++            if (rc < 0) return failed(PacketWriteFailure::socket_error, poll_errno);
++            if (fd.revents & POLLHUP) return failed(PacketWriteFailure::peer_closed, 0);
++            // POLLERR/POLLNVAL and unusual revents are local/socket errors;
++            // never reuse errno from the earlier EAGAIN send.
++            if (fd.revents & POLLNVAL) return failed(PacketWriteFailure::socket_error, EBADF);
++            return failed(PacketWriteFailure::socket_error, 0);
++        }
++        return failed((errno == EPIPE || errno == ECONNRESET) ? PacketWriteFailure::peer_closed : PacketWriteFailure::socket_error, errno);
++    }
++    return PacketWriteResult{true, offset, PacketWriteFailure::none, 0,
++        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()};
++}
+diff --git a/heimdall_v2/src/net/tcp_common.hpp b/heimdall_v2/src/net/tcp_common.hpp
+index 9654253..70705e9 100644
+--- a/heimdall_v2/src/net/tcp_common.hpp
++++ b/heimdall_v2/src/net/tcp_common.hpp
+@@ -11,6 +11,8 @@
+ #include <vector>
+ #include <cstdint>
+ #include <string>
++#include <cstddef>
++#include <chrono>
+ 
+ // Simple TCP Client structure
+ struct TcpClient {
+@@ -27,4 +29,8 @@ struct TcpClient {
+ 
+ // Socket helper functions
+ bool set_socket_nonblocking(int socket);
+-bool set_socket_reuse(int socket);
+\ No newline at end of file
++bool set_socket_reuse(int socket);
++enum class PacketWriteFailure { none, deadline, peer_closed, socket_error };
++struct PacketWriteResult { bool complete; size_t bytes_written; PacketWriteFailure failure; int error_number; long long elapsed_ms; };
++// Writes one complete frame within deadline; never exposes partial frame as success.
++PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size, std::chrono::milliseconds deadline);
+\ No newline at end of file
+diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
+index b6225bb..1749a77 100644
+--- a/heimdall_v2/src/net/tcp_control_server.cpp
++++ b/heimdall_v2/src/net/tcp_control_server.cpp
+@@ -5,6 +5,7 @@
+ #include "../sdr/downconverter.hpp"
+ #include "../dsp/compensation.hpp"
+ #include "../core/config.hpp"
++#include "../sdr/pipeline_control.hpp"
+ #include <iostream>
+ #include <sstream>
+ #include <algorithm>
+@@ -73,8 +74,8 @@ bool TcpControlServer::start() {
+     
+     sockaddr_in addr{};
+     addr.sin_family = AF_INET;
+-    addr.sin_addr.s_addr = INADDR_ANY;
+-    addr.sin_port = htons(TCP_CONTROL_PORT);
++    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) { close(server_socket); return false; }
++    addr.sin_port = htons(tcp_control_port);
+     
+     if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 5) < 0) {
+         close(server_socket);
+@@ -82,7 +83,7 @@ bool TcpControlServer::start() {
+     }
+     
+     server_thread = std::thread(&TcpControlServer::control_loop, this);
+-    std::cout << "TCP Control Server listening on port " << TCP_CONTROL_PORT << std::endl;
++    std::cout << "TCP Control Server listening on port " << tcp_control_port << std::endl;
+     return true;
+ }
+ 
+@@ -98,14 +99,9 @@ void TcpControlServer::stop() {
+ }
+ 
+ void TcpControlServer::broadcast_status() {
+-    std::lock_guard<std::mutex> lock(clients_mutex);
+-    
+-    // Remove inactive clients
+-    clients.erase(std::remove_if(clients.begin(), clients.end(),
+-        [](const auto& client) { return !client->active; }), clients.end());
+-    
+-    if (clients.empty()) return;
+-    
++    // Commands enter through clients_mutex -> calibration_mutex. Build the
++    // coherent snapshot first and RELEASE calibration before taking clients.
++    std::unique_lock<std::recursive_mutex> calibration_lock(calibration_mutex);
+     // Build status JSON including RTL-TCP channel info and wideband mode
+     std::stringstream status_json;
+     status_json << "{"
+@@ -121,6 +117,20 @@ void TcpControlServer::broadcast_status() {
+                << "\"operating_mode\":\"" << (operating_mode.load() == OperatingMode::WIDEBAND_SCAN ? "wideband" : "coherent") << "\","
+                << "\"wideband_enabled\":" << (wideband_config.enabled.load() ? "true" : "false");
+ 
++    if (!heimdall_instance_token.empty())
++        status_json << ",\"instance_token\":\"" << heimdall_instance_token << "\"";
++    if (!kerberos_mode.load()) {
++        const auto state = get_phase_compensation_state();
++        const uint32_t phase_value = state ? static_cast<uint32_t>(*state) : 0;
++        const bool valid = state && *state == PhaseCompensatorState::CONVERGED &&
++            !bias_tee_enabled.load() && !coherence_lost.load() &&
++            !recovery_in_progress.load() && !reconfig_in_progress.load() && acquisition_transition_barrier_ready() &&
++            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() >= output_holdoff_until_ns.load(std::memory_order_acquire);
++        status_json << ",\"phase_state\":" << (valid ? phase_value : static_cast<uint32_t>(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION))
++                    << ",\"noise_source\":" << (bias_tee_enabled.load() ? "true" : "false")
++                    << ",\"calibration_state\":\"" << ((hardware_settings_failed.load() || calibration_failed.load()) ? "FAILED" : (valid ? "CONVERGED" : "PENDING")) << "\"";
++    }
++
+     // KerberosSDR support mode: manual-calibration workflow state for client UIs.
+     if (kerberos_mode.load()) {
+         status_json << ",\"kerberos_mode\":true"
+@@ -190,6 +200,10 @@ void TcpControlServer::broadcast_status() {
+     status_json << "}\n";
+     
+     std::string status_str = status_json.str();
++    calibration_lock.unlock();
++    std::lock_guard<std::mutex> lock(clients_mutex);
++    clients.erase(std::remove_if(clients.begin(), clients.end(),
++        [](const auto& client) { return !client->active; }), clients.end());
+     
+     // Send to all connected clients. Queued, never blocking: this runs on the
+     // status broadcaster thread while holding clients_mutex, so a blocking
+@@ -349,6 +363,10 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
+ }
+ 
+ std::string TcpControlServer::process_command(const std::string& json_str) {
++    std::lock_guard<std::mutex> command_lock(device_command_mutex);
++    if (!global_running.load(std::memory_order_acquire))
++        return "{\"status\":\"error\",\"message\":\"shutting down\"}";
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     // While an element-count reconfiguration owns the devices, refuse every
+     // command except get_status: most handlers touch device handles that are
+     // being closed/reopened on another thread.
+@@ -382,6 +400,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+             return "{\"status\":\"success\",\"num_elements\":" + std::to_string(n) + ",\"message\":\"already active\"}";
+         }
+         std::thread([n]() {
++            if (!global_running.load(std::memory_order_acquire)) return;
+             std::string err;
+             if (!reconfigure_num_elements(n, err)) {
+                 std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
+diff --git a/heimdall_v2/src/net/tcp_data_server.cpp b/heimdall_v2/src/net/tcp_data_server.cpp
+index cd2a32c..b1d53b2 100644
+--- a/heimdall_v2/src/net/tcp_data_server.cpp
++++ b/heimdall_v2/src/net/tcp_data_server.cpp
+@@ -2,9 +2,13 @@
+ #include "../core/config.hpp"
+ #include "../core/utils.hpp"
+ #include "../dsp/compensation.hpp"
++#include "../sdr/pipeline_control.hpp"
+ #include <iostream>
+ #include <algorithm>
+ #include <chrono>
++#include <cstdint>
++
++constexpr auto TCP_PACKET_WRITE_DEADLINE = std::chrono::milliseconds(25);
+ 
+ extern std::atomic<bool> bias_tee_enabled;
+ 
+@@ -25,8 +29,8 @@ bool TcpDataServer::start() {
+     
+     sockaddr_in addr{};
+     addr.sin_family = AF_INET;
+-    addr.sin_addr.s_addr = INADDR_ANY;
+-    addr.sin_port = htons(TCP_DATA_PORT);
++    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) { close(server_socket); return false; }
++    addr.sin_port = htons(tcp_data_port);
+     
+     if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
+         close(server_socket);
+@@ -39,7 +43,7 @@ bool TcpDataServer::start() {
+     }
+     
+     server_thread = std::thread(&TcpDataServer::accept_loop, this);
+-    std::cout << "TCP Data Server listening on port " << TCP_DATA_PORT << std::endl;
++    std::cout << "TCP Data Server listening on port " << tcp_data_port << std::endl;
+     return true;
+ }
+ 
+@@ -54,7 +58,7 @@ void TcpDataServer::stop() {
+     }
+ }
+ 
+-void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data) {
++void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data, uint32_t phase_state_value, uint32_t noise_source_active) {
+     if (channel_data.empty()) return;
+     
+     std::lock_guard<std::mutex> lock(clients_mutex);
+@@ -146,22 +150,7 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+     append_big_endian(packet, num_channels);
+     append_big_endian(packet, num_samples);
+ 
+-    // Add phase compensation state and noise source status
+-    // This allows client to know when calibration is in progress.
+-    // High bits piggyback the KerberosSDR support state without changing the
+-    // wire layout (consumers must mask the low byte for the state enum):
+-    //   bit 8 (0x100) = kerberos MANUAL-calibration mode active
+-    //   bit 9 (0x200) = calibration STALE (settings changed since calibrating)
+-    // --kerberos_sw is intentionally NOT flagged: calibration is automatic
+-    // there, so the client should behave exactly as with a KrakenSDR.
+-    auto phase_state = get_phase_compensation_state();
+-    uint32_t phase_state_value = phase_state ? static_cast<uint32_t>(*phase_state) : 0;
+-    if (kerberos_manual_cal_only()) {
+-        phase_state_value |= 0x100u;
+-        if (kerberos_cal_stale.load(std::memory_order_relaxed)) phase_state_value |= 0x200u;
+-    }
+-    uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
+-
++    // Phase/noise are a conversion-time snapshot tied to this acquisition epoch.
+     append_big_endian(packet, phase_state_value);
+     append_big_endian(packet, noise_source_active);
+ 
+@@ -231,16 +220,28 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+              << " got " << packet.size() << std::endl;
+     }
+     
+-    // Send to all connected clients
++    // Send to all connected clients. A failed partial frame is followed by an
++    // immediate close/removal, never a later continuation of a different frame.
+     for (auto& client : clients) {
+         if (client->active) {
+-            ssize_t sent = send(client->socket, packet.data(), packet.size(), MSG_NOSIGNAL);
+-            if (sent < 0 || static_cast<size_t>(sent) != packet.size()) {
+-                std::cerr << "Failed to send complete packet to client" << std::endl;
++            const auto result = send_packet_with_deadline(client->socket, packet.data(), packet.size(), TCP_PACKET_WRITE_DEADLINE);
++            if (!result.complete) {
++                const char* reason = result.failure == PacketWriteFailure::deadline ? "deadline" :
++                    (result.failure == PacketWriteFailure::peer_closed ? "peer_closed" : "socket_error");
++                const auto mono_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++                    std::chrono::steady_clock::now().time_since_epoch()).count();
++                const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
++                    std::chrono::system_clock::now().time_since_epoch()).count();
++                std::cerr << "TCP Data failure wall_ms=" << wall_ms << " mono_ms=" << mono_ms << " fd=" << client->socket
++                          << " reason=" << reason << " packet_bytes=" << packet.size()
++                          << " written_bytes=" << result.bytes_written << " elapsed_ms=" << result.elapsed_ms
++                          << " errno=" << result.error_number << "; disconnecting" << std::endl;
+                 client->active = false;
+             }
+         }
+     }
++    clients.erase(std::remove_if(clients.begin(), clients.end(),
++        [](const auto& client) { return !client->active; }), clients.end());
+ }
+ 
+ void TcpDataServer::accept_loop() {
+@@ -258,9 +259,11 @@ void TcpDataServer::accept_loop() {
+             int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
+             
+             if (client_socket >= 0) {
+-                // Set non-blocking mode
+-                set_socket_nonblocking(client_socket);
+-                
++                // A blocking data client could stall the conversion worker.
++                if (!set_socket_nonblocking(client_socket)) {
++                    close(client_socket);
++                    continue;
++                }
+                 std::lock_guard<std::mutex> lock(clients_mutex);
+                 clients.push_back(std::make_unique<TcpClient>(client_socket));
+                 std::cout << "TCP Data: FFT Viewer connected from " << inet_ntoa(client_addr.sin_addr) 
+diff --git a/heimdall_v2/src/net/tcp_data_server.hpp b/heimdall_v2/src/net/tcp_data_server.hpp
+index 3ff0664..7330451 100644
+--- a/heimdall_v2/src/net/tcp_data_server.hpp
++++ b/heimdall_v2/src/net/tcp_data_server.hpp
+@@ -24,7 +24,7 @@ public:
+     
+     bool start();
+     void stop();
+-    void broadcast_data(const std::vector<ComplexBuffer>& channel_data);
++    void broadcast_data(const std::vector<ComplexBuffer>& channel_data, uint32_t phase_state_value, uint32_t noise_source_active);
+ 
+     // Live connected-client count for the status dashboard.
+     size_t client_count() { std::lock_guard<std::mutex> lk(clients_mutex); return clients.size(); }
+diff --git a/heimdall_v2/src/sdr/downconverter.cpp b/heimdall_v2/src/sdr/downconverter.cpp
+index 4ae75d8..87b5445 100644
+--- a/heimdall_v2/src/sdr/downconverter.cpp
++++ b/heimdall_v2/src/sdr/downconverter.cpp
+@@ -1,3 +1,4 @@
++#if defined(__linux__)
+ #include "downconverter.hpp"
+ #include "../../config.h"
+ 
+@@ -252,3 +253,20 @@ void downconverter_close() {
+         mrf_fd = -1;
+     }
+ }
++
++#else
++#include "downconverter.hpp"
++#include <iostream>
++Downconverter downconverter;
++const char* mixer_side_name(MixerSide side) { switch(side) { case MixerSide::HIGH: return "high"; case MixerSide::LOW: return "low"; case MixerSide::BELOW: return "below"; } return "high"; }
++bool downconverter_init(uint64_t) { std::cerr << "Downconverter HID control unsupported on this platform" << std::endl; return false; }
++void downconverter_close() {}
++void downconverter_rf_range(MixerSide, uint64_t& min_hz, uint64_t& max_hz) { min_hz = max_hz = 0; }
++bool downconverter_rf_valid(uint64_t, MixerSide) { return false; }
++void downconverter_rf_union_range(uint64_t& min_hz, uint64_t& max_hz) { min_hz = max_hz = 0; }
++MixerSide downconverter_auto_side(uint64_t) { return MixerSide::HIGH; }
++int wb_ring_for_rf(uint64_t) { return 0; }
++bool downconverter_apply_rf(uint64_t) { return false; }
++bool downconverter_set_side(MixerSide, uint64_t) { return false; }
++bool downconverter_set_current(int) { return false; }
++#endif
+diff --git a/heimdall_v2/src/sdr/kerberos_gpio.cpp b/heimdall_v2/src/sdr/kerberos_gpio.cpp
+index 59b088f..89e4b3f 100644
+--- a/heimdall_v2/src/sdr/kerberos_gpio.cpp
++++ b/heimdall_v2/src/sdr/kerberos_gpio.cpp
+@@ -1,3 +1,4 @@
++#if defined(__linux__)
+ #include "kerberos_gpio.hpp"
+ #include "../core/config.hpp"
+ 
+@@ -160,3 +161,12 @@ void kerberos_gpio_cleanup() {
+     close(line_fd);
+     line_fd = -1;
+ }
++
++#else
++#include "kerberos_gpio.hpp"
++#include <iostream>
++bool kerberos_gpio_init() { std::cerr << "Kerberos switches unsupported on this platform" << std::endl; return false; }
++bool kerberos_gpio_active() { return false; }
++void kerberos_gpio_set_noise_path(bool) {}
++void kerberos_gpio_cleanup() {}
++#endif
+diff --git a/heimdall_v2/src/sdr/pipeline_control.cpp b/heimdall_v2/src/sdr/pipeline_control.cpp
+index db6a647..d0a09b2 100644
+--- a/heimdall_v2/src/sdr/pipeline_control.cpp
++++ b/heimdall_v2/src/sdr/pipeline_control.cpp
+@@ -31,6 +31,37 @@ std::thread conversion_thread;
+ std::vector<std::thread> compensation_threads;
+ }  // namespace
+ 
++
++void begin_acquisition_transition() {
++    // Serialize epoch invalidation with conversion publication: no packet can
++    // pass an old-epoch check after this transition becomes visible.
++    { std::lock_guard<std::mutex> lock(publication_mutex);
++      capture_transition_active.store(true, std::memory_order_release);
++      acquisition_epoch.fetch_add(1, std::memory_order_acq_rel);
++      discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release); }
++
++    // Only whole aligned sets are safe to discard here. Per-device L1 drains
++    // would remove unequal packet counts while USB callbacks continue.
++    clear_l2_buffer();
++}
++void complete_acquisition_transition() {
++    // Hardware writes have completed while capture was blocked. Quarantine the
++    // full submitted USB ring plus one edge completion on every channel.
++    for (auto& device : devices)
++        if (device && device->dev)
++            device->pending_transition_callbacks.store(RTL_USB_BUF_COUNT + 1, std::memory_order_release);
++    clear_l2_buffer();
++    capture_transition_active.store(false, std::memory_order_release);
++}
++
++bool acquisition_transition_barrier_ready() {
++    if (capture_transition_active.load(std::memory_order_acquire) || hardware_settings_failed.load(std::memory_order_acquire) || coherence_lost.load(std::memory_order_acquire)) return false;
++    const int count = std::min(active_num_elements.load(), static_cast<int>(devices.size()));
++    for (int i = 0; i < count; ++i)
++        if (devices[i] && devices[i]->pending_transition_callbacks.load(std::memory_order_acquire) != 0) return false;
++    return true;
++}
++
+ void start_pipeline_threads() {
+     pipeline_running.store(true, std::memory_order_release);
+     const int num_elements = std::min(active_num_elements.load(),
+@@ -53,6 +84,7 @@ void start_pipeline_threads() {
+             std::cout << "Starting async read for channel " << device_index
+                  << " (Serial: " << dev_ptr->serial_number
+                  << ", Physical device: " << dev_ptr->device_id << ")" << std::endl;
++            dev_ptr->stream_epoch.store(acquisition_epoch.load(std::memory_order_acquire), std::memory_order_release);
+             rtlsdr_read_async(dev_ptr->dev, rtlsdr_callback, dev_ptr, RTL_USB_BUF_COUNT, NUM_SAMPLES * 2);
+         });
+     }
+@@ -102,6 +134,9 @@ void stop_pipeline_threads() {
+ }
+ 
+ bool reconfigure_num_elements(int new_n, std::string& err) {
++    std::lock_guard<std::mutex> lifetime_lock(device_command_mutex);
++    if (!global_running.load(std::memory_order_acquire)) { err = "shutting down"; return false; }
++    std::unique_lock<std::recursive_mutex> calibration_lock(calibration_mutex);
+     const int max_n = static_cast<int>(expected_serials.size());
+     if (new_n < 2 || new_n > max_n) {
+         err = "num_elements must be between 2 and " + std::to_string(max_n);
+@@ -129,6 +164,10 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+     std::cerr << "Reconfiguring from " << old_n << " to " << new_n
+               << " elements: stopping pipeline, reopening devices, full recalibration follows" << std::endl;
+ 
++    begin_acquisition_transition();
++    calibration_lock.unlock();
++    stop_pipeline_threads();
++    calibration_lock.lock();
+     bool ok;
+     {
+         // Hold settings_mutex across the close/reopen so a concurrent retune
+@@ -136,7 +175,6 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+         // additionally refuse work while reconfig_in_progress is set.
+         std::lock_guard<std::mutex> lock(settings_mutex);
+ 
+-        stop_pipeline_threads();
+         close_active_devices(devices);
+ 
+         active_num_elements.store(new_n);
+@@ -181,6 +219,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+             initialize_correlation_result(correlation_result);
+         }
+ 
++        complete_acquisition_transition();
+         start_pipeline_threads();
+     }
+ 
+diff --git a/heimdall_v2/src/sdr/pipeline_control.hpp b/heimdall_v2/src/sdr/pipeline_control.hpp
+index f1bd65a..deae2d4 100644
+--- a/heimdall_v2/src/sdr/pipeline_control.hpp
++++ b/heimdall_v2/src/sdr/pipeline_control.hpp
+@@ -32,6 +32,10 @@ void start_pipeline_threads();
+ // Stop and join every thread started by start_pipeline_threads(), then flush
+ // L1 / L2-raw / L2 so no stale sets survive into the next configuration.
+ void stop_pipeline_threads();
++// Creates a fresh callback acquisition epoch around a hardware transition.
++void begin_acquisition_transition();
++void complete_acquisition_transition();
++bool acquisition_transition_barrier_ready();
+ 
+ // Runtime element-count change: stop the pipeline, close every device handle,
+ // reopen the first `new_n`, restart the pipeline and arm a full
+diff --git a/heimdall_v2/src/sdr/sdr_device.cpp b/heimdall_v2/src/sdr/sdr_device.cpp
+index afff3d5..be609d4 100644
+--- a/heimdall_v2/src/sdr/sdr_device.cpp
++++ b/heimdall_v2/src/sdr/sdr_device.cpp
+@@ -13,6 +13,12 @@ SDRDevice::SDRDevice(int id, int idx, const std::string& serial)
+ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
+     auto* sdr = static_cast<SDRDevice*>(ctx);
+     if (!sdr->running || !global_running) return;
++    // librtlsdr reports actual_length: a short completion loses channel alignment.
++    // Never pad it into an apparently valid frame or let it consume a queue slot.
++    if (!buf || len != NUM_SAMPLES * 2) {
++        signal_coherence_lost("short RTL USB completion");
++        return;
++    }
+ 
+     // L1 full => the sample drain fell behind on THIS device. The old behaviour
+     // dropped the oldest buffer for this one device, shifting it a full packet
+@@ -37,7 +43,21 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
+ 
+     // Reuses the pooled buffer's capacity (fixed len = NUM_SAMPLES*2), so no
+     // allocation after the pool warms up.
++    const bool transition_before = capture_transition_active.load(std::memory_order_acquire);
++    const uint64_t epoch_before = acquisition_epoch.load(std::memory_order_acquire);
+     buffer.assign(buf, buf + len);
+-    sdr->l1_buffer.enqueue(std::move(buffer));
++    // Preserve callback order but tag transition/racing buffers invalid. Drain drops
++    // entire mixed sets, never one channel's block.
++    unsigned remaining = sdr->pending_transition_callbacks.load(std::memory_order_acquire);
++    if (!transition_before && !capture_transition_active.load(std::memory_order_acquire) && remaining != 0)
++        remaining = sdr->pending_transition_callbacks.fetch_sub(1, std::memory_order_acq_rel);
++    buffer.acquisition_epoch = (transition_before || capture_transition_active.load(std::memory_order_acquire) ||
++        epoch_before != acquisition_epoch.load(std::memory_order_acquire) || remaining != 0) ? 0 : epoch_before;
++    // Publish the count before the queue can wake its consumer.
+     sdr->l1_buffer_size.fetch_add(1, std::memory_order_relaxed);
++    if (!sdr->l1_buffer.enqueue(std::move(buffer))) {
++        sdr->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
++        sdr->sample_pool.release(std::move(buffer));
++        signal_coherence_lost("L1 queue allocation failed");
++    }
+ }
+diff --git a/heimdall_v2/src/sdr/sdr_device.hpp b/heimdall_v2/src/sdr/sdr_device.hpp
+index 205bc36..7a1bdc9 100644
+--- a/heimdall_v2/src/sdr/sdr_device.hpp
++++ b/heimdall_v2/src/sdr/sdr_device.hpp
+@@ -16,6 +16,9 @@ struct SDRDevice {
+     static constexpr size_t MAX_BUFFER_SIZE = BUFFER_SIZE;
+     std::thread async_thread;
+     std::atomic<bool> running{true}, init_success{false};
++    std::atomic<uint64_t> stream_epoch{0};
++    // Completed USB callbacks to quarantine after a hardware noise transition.
++    std::atomic<unsigned> pending_transition_callbacks{0};
+     std::atomic<size_t> l1_buffer_size{0}; // Track size atomically
+     ChannelCompensation compensation;
+     mutable std::mutex compensation_mutex;
+diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
+index 6cd9ca9..e6c295c 100644
+--- a/heimdall_v2/src/sdr/sdr_init.cpp
++++ b/heimdall_v2/src/sdr/sdr_init.cpp
+@@ -1,6 +1,7 @@
+ #include "sdr_init.hpp"
+ #include "downconverter.hpp"
+ #include "kerberos_gpio.hpp"
++#include "pipeline_control.hpp"
+ #include "../core/config.hpp"
+ #include "../dsp/compensation.hpp"
+ #include "../core/logging.hpp"
+@@ -13,8 +14,10 @@
+ #include <array>
+ #include <iomanip>
+ #include <optional>
++#include <stdexcept>
+ 
+ // Forward declarations for functions defined elsewhere
++extern void clear_l1_buffer();
+ extern void clear_l2_buffer();
+ extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
+ 
+@@ -122,36 +125,74 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
+     // Verify serial number matches what we expect
+     std::string actual_serial = get_device_serial(sdr->device_id);
+     if (actual_serial != sdr->serial_number) {
+-        std::cerr << "WARNING: Serial mismatch for device " << sdr->device_id 
+-             << " - expected " << sdr->serial_number << ", got " << actual_serial << std::endl;
+-    }
+-    
+-    rtlsdr_set_dithering(sdr->dev, 0);
+-    rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE);
++        std::cerr << "Serial mismatch for device " << sdr->device_id
++                  << " - expected " << sdr->serial_number << ", got " << actual_serial << std::endl;
++        rtlsdr_set_bias_tee(sdr->dev, 0); rtlsdr_close(sdr->dev); sdr->dev = nullptr; return false;
++    }
++    auto required = [sdr](int rc, const char* operation) {
++        if (rc == 0) return true;
++        std::cerr << "RTL-SDR " << operation << " failed on channel " << sdr->index << std::endl;
++        rtlsdr_set_bias_tee(sdr->dev, 0); rtlsdr_close(sdr->dev); sdr->dev = nullptr; return false;
++    };
++    if (!required(rtlsdr_set_dithering(sdr->dev, 0), "set dithering") ||
++        !required(rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE), "set sample rate")) return false;
+     // Wideband variant: every tuner is parked at the IF for good - the RF is
+     // reached by programming the downconverter LO (current_frequency stays the
+     // user-facing RF). Normal variant: tuners follow the RF directly.
+     // Uses the RUNTIME frequency/gain (not the compile-time defaults): at
+     // startup they are equal, and a runtime element-count reconfiguration
+     // reopens devices at whatever the user had tuned.
+-    rtlsdr_set_center_freq(sdr->dev, downconverter.enabled.load()
++    if (!required(rtlsdr_set_center_freq(sdr->dev, downconverter.enabled.load()
+                                          ? static_cast<uint32_t>(WB_VARIANT_IF_HZ)
+-                                         : static_cast<uint32_t>(current_frequency.load()));
++                                         : static_cast<uint32_t>(current_frequency.load())), "set center frequency")) return false;
+     const int gain_now = current_gain.load();
+-    rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1);
++    int applied_gain = gain_now;
++    if (gain_now >= 0) {
++        const int count = rtlsdr_get_tuner_gains(sdr->dev, nullptr);
++        std::vector<int> gains(count > 0 ? static_cast<size_t>(count) : 0);
++        if (count <= 0 || rtlsdr_get_tuner_gains(sdr->dev, gains.data()) != count) {
++            std::cerr << "RTL-SDR gain table unavailable" << std::endl; rtlsdr_close(sdr->dev); sdr->dev = nullptr; return false;
++        }
++        const auto it = std::lower_bound(gains.begin(), gains.end(), gain_now);
++        applied_gain = it == gains.end() ? gains.back() : *it;
++    }
++    if (!required(rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1), "set gain mode")) return false;
++    if (gain_now >= 0 && !required(rtlsdr_set_tuner_gain(sdr->dev, applied_gain), "set tuner gain")) return false;
++    // Fork semantics: set_freq_correction returns -2 for an already-zero
++    // correction. Avoid that documented no-op and verify the readback instead.
++    if (rtlsdr_get_freq_correction(sdr->dev) != 0 &&
++        !required(rtlsdr_set_freq_correction(sdr->dev, 0), "set frequency correction")) return false;
++    if (rtlsdr_get_freq_correction(sdr->dev) != 0) {
++        std::cerr << "RTL-SDR frequency correction readback mismatch" << std::endl;
++        rtlsdr_set_bias_tee(sdr->dev, 0); rtlsdr_close(sdr->dev); sdr->dev = nullptr; return false;
++    }
++    const uint32_t expected_frequency = downconverter.enabled.load()
++        ? static_cast<uint32_t>(WB_VARIANT_IF_HZ) : static_cast<uint32_t>(current_frequency.load());
++    bool gain_readback_ok = true;
+     if (gain_now >= 0) {
+-        rtlsdr_set_tuner_gain(sdr->dev, gain_now);
++        const int count = rtlsdr_get_tuner_gains(sdr->dev, nullptr);
++        std::vector<int> gains(count > 0 ? static_cast<size_t>(count) : 0);
++        if (count <= 0 || rtlsdr_get_tuner_gains(sdr->dev, gains.data()) != count) gain_readback_ok = false;
++        else {
++            // librtlsdr quantizes requests to its supported r82xx gain table (round-up).
++            gain_readback_ok = rtlsdr_get_tuner_gain(sdr->dev) == applied_gain;
++            if (!gain_readback_ok) std::cerr << "RTL-SDR gain readback differs from supported quantized gain on channel " << sdr->index << std::endl;
++        }
++    }
++    if (rtlsdr_get_center_freq(sdr->dev) != expected_frequency ||
++        rtlsdr_get_sample_rate(sdr->dev) != SAMPLE_RATE || !gain_readback_ok) {
++        std::cerr << "RTL-SDR setup readback mismatch on channel " << sdr->index << std::endl;
++        rtlsdr_set_bias_tee(sdr->dev, 0); rtlsdr_close(sdr->dev); sdr->dev = nullptr; return false;
+     }
+-    rtlsdr_set_freq_correction(sdr->dev, 0);
+     
+ #if ENABLE_BIAS_TEE
+     // --kerberos: the noise source couples straight into the antenna path, so
+     // it must stay off until an explicit manual calibration.
+-    if (!kerberos_manual_cal_only()) rtlsdr_set_bias_tee(sdr->dev, 1);
++    if (!kerberos_manual_cal_only() && !required(rtlsdr_set_bias_tee(sdr->dev, 1), "enable bias tee")) return false;
+ #endif
+ 
+ #if USB_RESET_ON_INIT
+-    rtlsdr_reset_buffer(sdr->dev);
++    if (!required(rtlsdr_reset_buffer(sdr->dev), "reset buffer")) return false;
+ #endif
+     
+     sdr->init_success = true;
+@@ -217,11 +258,11 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+ 
+     // Initialize devices in parallel
+     std::vector<std::thread> init_threads;
+-    std::vector<bool> init_results(num_to_open, false);
++    std::vector<unsigned char> init_results(num_to_open, 0);
+ 
+     for (int i = 0; i < num_to_open; i++) {
+         init_threads.emplace_back([i, &init_results, &devices]() {
+-            init_results[i] = init_rtlsdr_device(devices[i].get());
++            init_results[i] = init_rtlsdr_device(devices[i].get()) ? 1 : 0;
+         });
+     }
+ 
+@@ -266,6 +307,9 @@ void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+     // freed here; a concurrent rtlsdr_read_async on it would be use-after-free).
+     for (auto& device : devices) {
+         if (device && device->dev) {
++            // The fork intentionally leaves GPIO/bias state unchanged on close.
++            // Always attempt noise-source power-off before releasing a partial or full open.
++            (void)rtlsdr_set_bias_tee(device->dev, 0);
+             rtlsdr_close(device->dev);
+             device->dev = nullptr;
+             device->init_success = false;
+@@ -325,15 +369,26 @@ void wideband_set_noise_path(bool noise_on, const std::vector<std::unique_ptr<SD
+ }
+ 
+ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+ #if ENABLE_BIAS_TEE
++    begin_acquisition_transition();
+     std::cout << "Bias Tee: " << (enable ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
++    bool all_success = true;
+     for (const auto& device : devices) {
+         if (device && device->dev) {
+-            bool success = (rtlsdr_set_bias_tee(device->dev, enable ? 1 : 0) == 0);
++            const bool success = (rtlsdr_set_bias_tee(device->dev, enable ? 1 : 0) == 0);
++            all_success = all_success && success;
+             std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
+                  << (success ? (enable ? "ON" : "OFF") : "FAILED") << std::endl;
+         }
+     }
++    if (!all_success) {
++        std::cerr << "Bias Tee transition failed; retaining prior state and invalidating coherence" << std::endl;
++        hardware_settings_failed.store(true, std::memory_order_release);
++        coherence_lost.store(true, std::memory_order_release);
++        complete_acquisition_transition();
++        return;
++    }
+     // Wideband variant: GPIO0 only powers the noise source; the RF switches
+     // must also be thrown or the tuners keep looking at the antennas.
+     wideband_set_noise_path(enable, devices);
+@@ -342,7 +397,17 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+     // noise in via a directional coupler, not an RF switch. No-op unless the
+     // switch GPIOs were claimed at startup.
+     kerberos_gpio_set_noise_path(enable);
++    if (!enable) {
++        // Flush samples queued while calibration noise was enabled, then keep
++        // their replacement packets explicitly uncalibrated for longer than
++        // the RTL USB ring. This is conservative but never publishes old
++        // noise-source IQ as a valid coherent frame.
++        const auto until = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            std::chrono::steady_clock::now().time_since_epoch() + std::chrono::milliseconds(350)).count();
++        output_holdoff_until_ns.store(until, std::memory_order_release);
++    }
+     bias_tee_enabled = enable;
++    complete_acquisition_transition();
+     // Anchor the phase-cal settle gate to the moment the noise source comes ON. Only on
+     // ENABLE: a retune turns it on just before measuring, so the gate then waits out the
+     // in-flight pre-noise USB samples. Startup turns the bias tee on per-device in
+@@ -361,6 +426,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+ }
+ 
+ void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
+     // only has GPIO0-7, so never sweep the compile-time ceiling here.
+     const int nch = static_cast<int>(devices.size());
+@@ -429,12 +495,14 @@ bool wideband_retune_rf(uint64_t rf_hz, const std::vector<std::unique_ptr<SDRDev
+ }
+ 
+ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     std::lock_guard<std::mutex> lock(settings_mutex);
++    if (calibration_failed.load(std::memory_order_acquire) && coherence_lost.load(std::memory_order_acquire))
++        throw std::runtime_error("coherence recovery failed; use FORCE_RECAL or restart");
+ 
+     bool changed = false;
+     uint64_t prev_frequency = current_frequency.load();
+-    if (frequency > 0 && (frequency > prev_frequency ? frequency - prev_frequency
+-                                                     : prev_frequency - frequency) > 1000) changed = true;
++    if (frequency > 0 && frequency != prev_frequency) changed = true;
+     if (gain != -999 && gain != current_gain.load()) changed = true;
+ 
+     std::cout << "SDR: Updating settings - ";
+@@ -444,6 +512,23 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     if (changed) std::cout << " (CHANGED - will do phase-only recalibration)";
+     std::cout << std::endl;
+ 
++    // Invalidate publication before any PLL/gain write. The transition barrier
++    // keeps delayed callbacks ordered but unusable until fresh acquisition.
++    if (!changed) return false;
++    if (hardware_settings_failed.load(std::memory_order_acquire))
++        throw std::runtime_error("hardware settings failed; restart required");
++    begin_acquisition_transition();
++    // Invalidate phase before writes, not in a later command-handler step.
++    if (phase_compensation && !recovery_in_progress.load(std::memory_order_acquire)) {
++        std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
++        phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
++        phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
++        phase_compensation->cooldown_active = true;
++        phase_compensation->compensation_applied = false;
++        phase_compensation->stable_nonzero_count = 0;
++        per_bin_cal.ready.store(false, std::memory_order_release);
++    }
++
+     // Wideband variant: a frequency change is an LO reprogram; the tuners stay
+     // parked at the IF (no per-device retune, no PLL resettle). Gain changes
+     // still go to the tuners via the parallel loop below.
+@@ -451,13 +536,13 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     bool lo_ok = true;
+     if (wb_variant && frequency > 0) {
+         lo_ok = wideband_retune_rf(frequency, devices);
+-        if (!lo_ok) changed = false;  // nothing retuned - don't trigger a recal
++        // Any failure leaves the hardware state unknown until restart.
+     }
+ 
+     // Update all devices in parallel - each RTL-SDR has independent PLL settling time
+     // Parallel execution reduces total time from N*latency to max(latency)
+     std::vector<std::thread> update_threads;
+-    std::vector<bool> results(devices.size(), true);
++    std::vector<unsigned char> results(devices.size(), 1);
+ 
+     for (size_t i = 0; i < devices.size(); i++) {
+         if (devices[i] && devices[i]->dev) {
+@@ -472,11 +557,31 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+                 if (gain == -1) {
+                     if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 0) < 0) success = false;
+                 } else if (gain >= 0) {
+-                    if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 1) < 0 ||
+-                        rtlsdr_set_tuner_gain(devices[i]->dev, gain) < 0) success = false;
++                    const int count = rtlsdr_get_tuner_gains(devices[i]->dev, nullptr);
++                    std::vector<int> gains(count > 0 ? static_cast<size_t>(count) : 0);
++                    if (count <= 0 || rtlsdr_get_tuner_gains(devices[i]->dev, gains.data()) != count) {
++                        success = false;
++                    } else {
++                        // Match the driver's supported r82xx table exactly. It rounds
++                        // a request upward, except values above the table clamp at max.
++                        const auto it = std::lower_bound(gains.begin(), gains.end(), gain);
++                        const int applied_gain = it == gains.end() ? gains.back() : *it;
++                        if (rtlsdr_set_tuner_gain_mode(devices[i]->dev, 1) < 0 ||
++                            rtlsdr_set_tuner_gain(devices[i]->dev, applied_gain) < 0 ||
++                            rtlsdr_get_tuner_gain(devices[i]->dev) != applied_gain) {
++                            success = false;
++                        } else {
++                            std::cout << "RTL-SDR ch" << i << " requested gain " << gain
++                                      << " applied " << applied_gain << " tenths dB" << std::endl;
++                        }
++                    }
+                 }
+ 
+-                results[i] = success;
++                // Read back every live setting; a partial update is never presented
++                // as a successful retune/calibration state.
++                if ((!wb_variant && frequency > 0 && rtlsdr_get_center_freq(devices[i]->dev) != static_cast<uint32_t>(frequency)) ||
++                    rtlsdr_get_sample_rate(devices[i]->dev) != SAMPLE_RATE) success = false;
++                results[i] = success ? 1 : 0;
+             });
+         }
+     }
+@@ -491,7 +596,14 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     if (all_success) {
+         if (frequency > 0) current_frequency = frequency;
+         if (gain >= -1) current_gain = gain;
++    } else {
++        // Calibration cannot repair a partial tuning/gain write. Latch failure
++        // before releasing the transition; no later watchdog may claim validity.
++        hardware_settings_failed.store(true, std::memory_order_release);
++        coherence_lost.store(true, std::memory_order_release);
+     }
++    complete_acquisition_transition();
++    if (!all_success) throw std::runtime_error("partial hardware settings update; restart required");
+ 
+     // Re-interpolate the S2P forward correction at the new center frequency so
+     // the differential insertion phase tracks retunes (web UI, control port,
+@@ -506,6 +618,11 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+ }
+ 
+ void handle_settings_change() {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    // A watchdog timeout requires the supported full-recovery retry, not a
++    // phase-only settings recalibration that could hide FAILED as PENDING.
++    if (calibration_failed.load(std::memory_order_acquire) && coherence_lost.load(std::memory_order_acquire)) return;
++    calibration_failed.store(false, std::memory_order_release);
+     // --kerberos: a settings change may not trigger the noise-source phase
+     // recal (antennas are connected). Keep the current compensation applied -
+     // approximately valid for small changes - and mark it STALE so both UIs
+@@ -585,6 +702,7 @@ void handle_settings_change() {
+ 
+ // Wideband mode functions
+ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     // The tuner-spread scan needs to retune individual tuners, but the
+     // Wideband (downconverter) variant requires every tuner parked at the IF -
+     // the two are mutually exclusive.
+@@ -719,6 +837,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
+ }
+ 
+ bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     if (tuner_index < 0 || tuner_index >= static_cast<int>(devices.size())) {
+         std::cerr << "Wideband: Invalid tuner index " << tuner_index << std::endl;
+         return false;
+@@ -755,6 +874,7 @@ bool set_tuner_frequency(int tuner_index, uint32_t frequency, const std::vector<
+ }
+ 
+ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
+         std::cerr << "Wideband: Not in wideband scan mode" << std::endl;
+         return;
+diff --git a/heimdall_v2/src/sdr/sdr_pipeline.cpp b/heimdall_v2/src/sdr/sdr_pipeline.cpp
+index ee090a2..eb23c25 100644
+--- a/heimdall_v2/src/sdr/sdr_pipeline.cpp
++++ b/heimdall_v2/src/sdr/sdr_pipeline.cpp
+@@ -5,19 +5,20 @@
+ #include "../core/config.hpp"
+ #include "../core/buffer_pool.hpp"
+ #include "../net/tcp_data_server.hpp"  // Need full definition to call methods
+-#include "../net/rtl_tcp_server.hpp"   // Need full definition to call methods
++#include "../net/rtl_tcp_server.hpp"
++#include "../dsp/compensation.hpp"   // Need full definition to call methods
+ #include <execution>
+ #include <numeric>
+ #include <iostream>
+ #include <algorithm>
+ 
+ // Global L2 buffer
+-moodycamel::BlockingConcurrentQueue<std::vector<ComplexBuffer>> l2_buffer;
++moodycamel::BlockingConcurrentQueue<ComplexSampleSet> l2_buffer;
+ std::atomic<size_t> l2_buffer_size{0};
+ 
+ // OPTIMIZED: Buffer pool to eliminate L2 copy overhead
+ // Pool size = 4 allows: 1 being filled, 1 in queue, 1 being processed, 1 spare
+-BufferPool<std::vector<ComplexBuffer>> l2_buffer_pool(4);
++BufferPool<ComplexSampleSet> l2_buffer_pool(4);
+ 
+ // ---- L2-raw staging (#4: decouple the time-critical L1 drain from heavy DSP) -
+ // The sample drain (sample_processor) now does ONLY the cheap aligned L1->raw
+@@ -46,7 +47,8 @@ std::atomic<size_t> l2_raw_cap{L2_RAW_CAL_MAX};
+ static void recycle_raw_set(std::vector<SampleBuffer>& set) {
+     const size_t n = std::min(set.size(), devices.size());
+     for (size_t i = 0; i < n; i++) {
+-        if (devices[i]) devices[i]->sample_pool.release(std::move(set[i]));
++        // A shutdown may interrupt collection before every channel dequeued.
++        if (devices[i] && !set[i].empty()) devices[i]->sample_pool.release(std::move(set[i]));
+     }
+     l2_raw_buffer_pool.release(std::move(set));
+ }
+@@ -258,11 +260,11 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+                 }
+             }
+ 
++            device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
+                 recycle_raw_set(raw_set);
+                 return;
+             }
+-            device->l1_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+ 
+             if (first_run) {
+                 std::cout << "Sample processor: Position " << i
+@@ -297,14 +299,27 @@ void sample_processor(const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+         // set, so the next set stays aligned) - unlike the old per-device L1
+         // drop, which shifted one channel by a packet and silently desynced.
+         if (l2_raw_buffer_size.load(std::memory_order_relaxed) >= l2_raw_cap.load(std::memory_order_relaxed)) {
++            // Exclude conversion BEFORE removing the set: otherwise a following
++            // set could overtake the epoch invalidation and hide this gap.
++            std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+             std::vector<SampleBuffer> discard;
+             if (l2_raw_buffer.try_dequeue(discard)) {
+                 l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                 recycle_raw_set(discard);
++                // A receiver cannot distinguish this dropped acquisition epoch
++                // from continuous IQ. Reuse the wire-visible discontinuity counter
++                // so downstream CPI assembly resets before accepting later data.
++                std::lock_guard<std::mutex> publication_lock(publication_mutex);
++                acquisition_epoch.fetch_add(1, std::memory_order_acq_rel);
++                discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release);
+             }
+         }
+-        l2_raw_buffer.enqueue(std::move(raw_set));
+         l2_raw_buffer_size.fetch_add(1, std::memory_order_relaxed);
++        if (!l2_raw_buffer.enqueue(std::move(raw_set))) {
++            l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
++            recycle_raw_set(raw_set);
++            signal_coherence_lost("raw staging queue allocation failed");
++        }
+     }
+ }
+ 
+@@ -327,6 +342,7 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
+     set_thread_realtime("convert", 0);
+ 
+     std::vector<int> dev_idx;
++    uint64_t filter_epoch = 0;
+ 
+     while (global_running && pipeline_running.load(std::memory_order_acquire)) {
+         std::vector<SampleBuffer> raw_set;
+@@ -334,11 +350,19 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
+             if (!global_running || !pipeline_running.load(std::memory_order_acquire)) return;
+             continue;  // timeout: nothing to convert yet
+         }
++        l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+         if (!global_running || !pipeline_running.load(std::memory_order_acquire)) {
+             recycle_raw_set(raw_set);
+             return;
+         }
+-        l2_raw_buffer_size.fetch_sub(1, std::memory_order_relaxed);
++        // A whole conversion observes one calibration vector/phase state.
++        std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++        const uint64_t raw_epoch = raw_set.empty() ? 0 : raw_set.front().acquisition_epoch;
++        const bool epoch_valid = raw_epoch == acquisition_epoch.load(std::memory_order_acquire) &&
++            !capture_transition_active.load(std::memory_order_acquire) &&
++            acquisition_transition_barrier_ready() &&
++            std::all_of(raw_set.begin(), raw_set.end(), [raw_epoch](const SampleBuffer& b) { return b.acquisition_epoch == raw_epoch; });
++        if (!epoch_valid) { recycle_raw_set(raw_set); continue; }
+ 
+         // -------- Convert (parallel across channels) --------
+         // Channel count comes from the SET, not a captured constant: the drain
+@@ -346,30 +370,74 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
+         const int num_elements = static_cast<int>(std::min(raw_set.size(), devices.size()));
+         dev_idx.resize(num_elements);
+         std::iota(dev_idx.begin(), dev_idx.end(), 0);
++        const bool warm_filters = raw_epoch != filter_epoch;
++        if (warm_filters) {
++            // Queue quarantine does not clear FIR history. Never mix a few old
++            // calibration-noise/old-frequency samples into the next valid block.
++            for (int i : dev_idx) {
++                devices[i]->frac_tail.fill(Complex(0.0f, 0.0f));
++                devices[i]->eq_tail.fill(Complex(0.0f, 0.0f));
++            }
++        }
+ 
+         auto complex_samples = l2_buffer_pool.acquire();
+         complex_samples.resize(num_elements);
+-        std::for_each(std::execution::par, dev_idx.begin(), dev_idx.end(), [&](int i) {
++        // Apple's libc++ does not provide the parallel execution backend used by
++        // std::execution::par here. Keep writes deterministic and disjoint.
++        for (int i : dev_idx) {
+             auto& sb = raw_set[i];
+-            // sb.size() is bytes of interleaved IQ; divide by 2 for complex count
+             complex_samples[i] = samples_to_complex_with_compensation(
+                 sb.data(), static_cast<int>(sb.size()) / 2, devices[i]->index);
+-        });
++        }
++
++        filter_epoch = raw_epoch;
++        if (warm_filters) {
++            // One aligned block completely warms both short FIRs with fresh IQ.
++            // Discard it for every channel before either network or calibration.
++            l2_buffer_pool.release(std::move(complex_samples));
++            recycle_raw_set(raw_set);
++            continue;
++        }
+ 
+         // -------- Broadcast / handoff (every set, in order) --------
+-        if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples);
+-        if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
++        // Snapshot phase/noise before publication_mutex (state_mutex -> publication_mutex
++        // order), then epoch-check under the publication mutex.
++        auto phase_state = get_phase_compensation_state();
++        uint32_t phase_state_value = phase_state ? static_cast<uint32_t>(*phase_state) : 0;
++        const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++        if (coherence_lost.load(std::memory_order_acquire) || recovery_in_progress.load(std::memory_order_acquire) ||
++            reconfig_in_progress.load(std::memory_order_acquire) || now_ns < output_holdoff_until_ns.load(std::memory_order_acquire))
++            phase_state_value = static_cast<uint32_t>(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION);
++        const uint32_t noise_source_active = bias_tee_enabled.load(std::memory_order_acquire) ? 1 : 0;
++        // The mutex closes the check-to-publication race with transition epoch invalidation.
++        { std::lock_guard<std::mutex> lock(publication_mutex);
++          if (raw_epoch != acquisition_epoch.load(std::memory_order_acquire) || capture_transition_active.load(std::memory_order_acquire) || !acquisition_transition_barrier_ready()) {
++              l2_buffer_pool.release(std::move(complex_samples)); recycle_raw_set(raw_set); continue;
++          }
++          if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples, phase_state_value, noise_source_active);
++          if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
++        }
+ 
++        // A transition after network publication must not feed stale DSP state.
++        { std::lock_guard<std::mutex> lock(publication_mutex);
++          if (raw_epoch != acquisition_epoch.load(std::memory_order_acquire) || capture_transition_active.load(std::memory_order_acquire) || !acquisition_transition_barrier_ready()) {
++              l2_buffer_pool.release(std::move(complex_samples)); recycle_raw_set(raw_set); continue;
++          }
+         // -------- Push to L2 (drop oldest if full - coherence-safe) --------
+         if (l2_buffer_size.load(std::memory_order_relaxed) >= BUFFER_SIZE) {
+-            std::vector<ComplexBuffer> discard;
++            ComplexSampleSet discard;
+             if (l2_buffer.try_dequeue(discard)) {
+                 l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+                 l2_buffer_pool.release(std::move(discard));
+             }
+         }
+-        l2_buffer.enqueue(std::move(complex_samples));
++        complex_samples.acquisition_epoch = raw_epoch;
+         l2_buffer_size.fetch_add(1, std::memory_order_relaxed);
++        if (!l2_buffer.enqueue(std::move(complex_samples))) {
++            l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
++            l2_buffer_pool.release(std::move(complex_samples));
++        }
++        }
+ 
+         // -------- Recycle the raw set (inner buffers -> per-device pools) --------
+         recycle_raw_set(raw_set);
+@@ -381,8 +449,11 @@ void signal_coherence_lost(const char* reason) {
+     // watchdog clears the flag when it begins recovery, so a desync that recurs
+     // after recovery re-arms cleanly. Logging is throttled to the first setter so
+     // a storm of callback overflows doesn't flood the console.
++    std::lock_guard<std::mutex> publication_lock(publication_mutex);
+     bool expected = false;
+     if (coherence_lost.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
++        acquisition_epoch.fetch_add(1, std::memory_order_acq_rel);
++        discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release);
+         uint32_t n = coherence_event_count.fetch_add(1, std::memory_order_relaxed) + 1;
+         std::cerr << "!! COHERENCE LOST (event #" << n << "): " << reason
+                   << " - flushing and recalibrating" << std::endl;
+@@ -410,6 +481,10 @@ void clear_l2_raw_buffer() {
+ }
+ 
+ void clear_l1_buffer() {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    { std::lock_guard<std::mutex> publication_lock(publication_mutex);
++      acquisition_epoch.fetch_add(1, std::memory_order_acq_rel);
++      discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release); }
+     std::cout << "Clearing L1 buffers for all devices..." << std::endl;
+     clear_l2_raw_buffer();  // L2-raw holds data drained from L1; flush it too
+     for (const auto& device : devices) {
+@@ -458,9 +533,15 @@ void clear_l1_buffer(int channel) {
+ }
+ 
+ void clear_l2_buffer() {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    // A raw flush is a real stream discontinuity and may also accompany a DSP
++    // correction update. Reject conversion/FFT work already taken from the queues.
++    { std::lock_guard<std::mutex> publication_lock(publication_mutex);
++      acquisition_epoch.fetch_add(1, std::memory_order_acq_rel);
++      discrete_scanner.frequency_change_counter.fetch_add(1, std::memory_order_release); }
+     std::cout << "Clearing entire L2 buffer..." << std::endl;
+     clear_l2_raw_buffer();  // flush the upstream staging too, so it can't refill L2
+-    std::vector<ComplexBuffer> discard;
++    ComplexSampleSet discard;
+     while (l2_buffer.try_dequeue(discard)) {
+         l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+         l2_buffer_pool.release(std::move(discard));  // Return to pool
+@@ -474,17 +555,5 @@ void clear_l2_buffer(int channel) {
+         return;
+     }
+ 
+-    std::cout << "Removing L2 buffer entries containing channel " << channel << " data" << std::endl;
+-
+-    // For L2 buffer, we need to remove entire sample sets that contain the problematic channel
+-    // because correlation processing expects all channels to have synchronized data
+-    clear_l2_raw_buffer();  // flush the upstream staging too, so it can't refill L2
+-    std::vector<ComplexBuffer> discard;
+-    while (l2_buffer.try_dequeue(discard)) {
+-        l2_buffer_size.fetch_sub(1, std::memory_order_relaxed);
+-        l2_buffer_pool.release(std::move(discard));  // Return to pool
+-    }
+-    // No store(0): see clear_l2_raw_buffer (avoids the size_t underflow race).
+-
+-    std::cout << "L2 buffer completely cleared to maintain channel synchronization" << std::endl;
++    clear_l2_buffer();
+ }
+\ No newline at end of file
+diff --git a/heimdall_v2/src/sdr/sdr_pipeline.hpp b/heimdall_v2/src/sdr/sdr_pipeline.hpp
+index 56339ec..ca215dd 100644
+--- a/heimdall_v2/src/sdr/sdr_pipeline.hpp
++++ b/heimdall_v2/src/sdr/sdr_pipeline.hpp
+@@ -13,11 +13,11 @@ class TcpDataServer;
+ class RtlTcpServer;
+ 
+ // Global L2 buffer
+-extern moodycamel::BlockingConcurrentQueue<std::vector<ComplexBuffer>> l2_buffer;
++extern moodycamel::BlockingConcurrentQueue<ComplexSampleSet> l2_buffer;
+ extern std::atomic<size_t> l2_buffer_size;
+ 
+ // Global L2 buffer pool (for zero-copy operations)
+-extern BufferPool<std::vector<ComplexBuffer>> l2_buffer_pool;
++extern BufferPool<ComplexSampleSet> l2_buffer_pool;
+ 
+ // L2-raw staging queue (#4): aligned raw sample sets handed from the drain to
+ // the conversion worker. Inner SampleBuffers are owned by per-device sample_pools.
+diff --git a/heimdall_v2/src/web/html_loader.cpp b/heimdall_v2/src/web/html_loader.cpp
+index 472f85e..704d1df 100644
+--- a/heimdall_v2/src/web/html_loader.cpp
++++ b/heimdall_v2/src/web/html_loader.cpp
+@@ -10,9 +10,9 @@ static std::string index_html_content;
+ 
+ bool load_html_file(std::string& content) {
+     try {
+-        if (!std::filesystem::exists("index.html")) return false;
+-        
+-        std::ifstream file("index.html");
++        const std::filesystem::path html_path = heimdall_html_path.empty() ? "index.html" : heimdall_html_path;
++        if (!std::filesystem::is_regular_file(html_path)) return false;
++        std::ifstream file(html_path);
+         content.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+         
+         // JSON array of the runtime serial list (--serials aware) for the UI's
+diff --git a/heimdall_v2/src/web/web_server.cpp b/heimdall_v2/src/web/web_server.cpp
+index 0ac24d1..869d6f4 100644
+--- a/heimdall_v2/src/web/web_server.cpp
++++ b/heimdall_v2/src/web/web_server.cpp
+@@ -190,7 +190,19 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+         .compression = uWS::DISABLED,
+         .maxPayloadLength = 16 * 1024,
+         .idleTimeout = 120,
+-        
++        .upgrade = [](auto* res, auto* req, auto* context) {
++#if defined(HEIMDALL_DARWIN_LOCAL_ONLY)
++            const std::string_view origin = req->getHeader("origin");
++            const std::string loopback = "http://127.0.0.1:" + std::to_string(web_port);
++            const std::string localhost = "http://localhost:" + std::to_string(web_port);
++            if (origin != loopback && origin != localhost) {
++                res->writeStatus("403 Forbidden")->end("WebSocket origin denied");
++                return;
++            }
++#endif
++            res->template upgrade<PerSocketData>({}, req->getHeader("sec-websocket-key"),
++                req->getHeader("sec-websocket-protocol"), req->getHeader("sec-websocket-extensions"), context);
++        },
+         .open = [](auto* ws) {
+             ws->subscribe("broadcast");
+             std::cout << "WebSocket client connected" << std::endl;
+@@ -200,6 +212,12 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+         },
+         
+         .message = [&](auto* /*ws*/, std::string_view message, uWS::OpCode) {
++            // Shutdown gates every device-mutating web handler before it can race close.
++            if (!global_running.load(std::memory_order_acquire)) return;
++            std::lock_guard<std::mutex> device_command_lock(device_command_mutex);
++            std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++            if (!global_running.load(std::memory_order_acquire)) return;
++            try {
+             // While an element-count reconfiguration owns the devices, every
+             // command is refused: most handlers below touch device handles that
+             // are being closed/reopened on another thread.
+@@ -372,6 +390,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+                 try {
+                     const int n = std::stoi(std::string(n_str));
+                     std::thread([n]() {
++                        if (!global_running.load(std::memory_order_acquire)) return;
+                         std::string err;
+                         if (!reconfigure_num_elements(n, err)) {
+                             std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
+@@ -449,6 +468,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+                 auto it = handlers.find(message);
+                 if (it != handlers.end()) it->second();
+             }
++            } catch (const std::exception& e) {
++                std::cerr << "Web command failed: " << e.what() << std::endl;
++            }
+         },
+         
+         .close = [](auto* /*ws*/, int, std::string_view) {
+@@ -457,9 +479,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+     // Exclusive port: uWS defaults to SO_REUSEPORT, which lets a second
+     // heimdall instance bind the same port silently - the kernel then splits
+     // incoming connections randomly between the processes. Fail loudly instead.
+-    }).listen(WEB_PORT, LIBUS_LISTEN_EXCLUSIVE_PORT, [&](auto* listen_socket) {
++    }).listen(heimdall_bind_host.c_str(), web_port, LIBUS_LISTEN_EXCLUSIVE_PORT, [&](auto* listen_socket) {
+         if (listen_socket) {
+-            std::cout << "Web server listening on http://localhost:" << WEB_PORT << " (uWebSockets)" << std::endl;
++            std::cout << "Web server listening on http://localhost:" << web_port << " (uWebSockets)" << std::endl;
+             
+             auto* uws_loop = uWS::Loop::get();
+             loop = uws_loop;
+@@ -485,7 +507,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+                 }
+             }, 50, 50);
+         } else {
+-            std::cerr << "FATAL: cannot listen on web port " << WEB_PORT
++            std::cerr << "FATAL: cannot listen on web port " << web_port
+                       << " - is another heimdall instance already running?" << std::endl;
+             global_running = false;  // trigger the normal clean shutdown in main()
+         }

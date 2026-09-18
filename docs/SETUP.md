@@ -1,5 +1,11 @@
 # Receiver setup
 
+For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
+[Mac receiver guide](MACOS.md#runtime-scope). Local USB Kraken uses the
+[Homebrew Heimdall companion](MACOS_KRAKEN.md), and receiver setup uses per-user
+Mac actions. The systemd services and privileged enrollment instructions below
+apply to Linux.
+
 1. Install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
    then run `vectorwarp` to open **Settings** without starting radar.
 2. Select and configure the receiver, then choose **Save & Restart** to save

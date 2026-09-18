@@ -121,5 +121,53 @@ function page(origin, apiOrigin = origin) {
   test.state.stallBody = true;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {}, 20), /timed out/);
   assert.equal(test.context.recordingDuration(3723000), '01:02:03');
+  // ResizeObserver fires during Mapbox initialization, before the first plot
+  // finishes. Relayout at that point throws asynchronously inside Mapbox.
+  const mapTest = page('http://radar.local:9876');
+  const raf = [], afterPlot = [];
+  let styleLoaded = false, observedResize, relayoutCalls = 0, width = 800;
+  let finishResize;
+  const panel = {classList: {add() {}}, appendChild() {}};
+  const visual = {closest: () => panel, layout: {},
+    _fullLayout: {mapbox: {_subplot: {map: {isStyleLoaded: () => styleLoaded}}}},
+    getBoundingClientRect: () => ({width, height: 600}),
+    once: (event, callback) => { assert.equal(event, 'plotly_afterplot'); afterPlot.push(callback); }};
+  Object.assign(mapTest.context.document, {
+    getElementById: id => id === 'data' ? visual : null,
+    querySelector: () => null,
+    createElement: () => ({addEventListener() {}}), addEventListener() {}
+  });
+  Object.assign(mapTest.context.window, {
+    addEventListener() {}, requestAnimationFrame: callback => raf.push(callback),
+    ResizeObserver: class { constructor(callback) { observedResize = callback; } observe() { observedResize(); } },
+    Plotly: {relayout: async (_element, dimensions) => {
+      assert.equal(styleLoaded, true, 'Cannot resize before Mapbox has a style');
+      relayoutCalls++; Object.assign(visual.layout, dimensions);
+    }}
+  });
+  mapTest.context.addFullscreenControl();
+  raf.shift()();
+  assert.equal(relayoutCalls, 0);
+  observedResize(); raf.shift()();
+  assert.equal(afterPlot.length, 1, 'Only one resize should wait for the initial plot');
+  styleLoaded = true; afterPlot.shift()(); raf.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(relayoutCalls, 1, 'Deferred resize must run after map initialization');
+  observedResize(); raf.shift()();
+  assert.equal(relayoutCalls, 1, 'Unchanged dimensions must not cause a relayout loop');
+  mapTest.context.window.Plotly.relayout = (_element, dimensions) => {
+    relayoutCalls++;
+    Object.assign(visual.layout, dimensions);
+    return new Promise(resolve => { finishResize = resolve; });
+  };
+  width = 900; observedResize(); raf.shift()();
+  width = 1000; observedResize();
+  assert.equal(raf.length, 0, 'Relayouts must not overlap');
+  finishResize(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(raf.length, 1, 'A resize during relayout must be measured afterward');
+  raf.shift()();
+  assert.equal(visual.layout.width, 1000);
+  finishResize(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(mapTest.context.window.blah2PlotResizeError, undefined);
   console.log('API discovery, proxy/hostname/IPv6 routing, body timeout and service freshness tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

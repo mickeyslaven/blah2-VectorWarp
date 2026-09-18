@@ -1,7 +1,9 @@
 #pragma once
 #include <dlfcn.h>
 #include <fcntl.h>
+#ifdef __linux__
 #include <link.h>
+#endif
 #include <memory>
 #include <string>
 #include <sys/stat.h>
@@ -17,6 +19,7 @@ struct ReceiverLibrary {
 // another same-SONAME runtime is visible in the dynamic loader's search path.
 inline ReceiverLibrary open_pinned_receiver_library(const std::string& modulePath,
     std::shared_ptr<int> runtimeFd, const char* runtimeSoname) {
+#ifdef __linux__
   struct stat expected{};
   if (!runtimeFd || fstat(*runtimeFd, &expected) || !S_ISREG(expected.st_mode))
     return {{}, "The verified receiver runtime is no longer available"};
@@ -46,6 +49,12 @@ inline ReceiverLibrary open_pinned_receiver_library(const std::string& modulePat
   return {std::shared_ptr<void>(module, [runtime = std::move(runtime)](void* value) mutable {
     dlclose(value); runtime.reset();
   }), {}};
+#else
+  (void)modulePath;
+  (void)runtimeFd;
+  (void)runtimeSoname;
+  return {{}, "Pinned local receiver runtimes are supported only on Linux"};
+#endif
 }
 
 // The production caller supplies a fixed vendor path only for RSPduo. Keeping
@@ -54,6 +63,7 @@ inline ReceiverLibrary open_pinned_receiver_library(const std::string& modulePat
 inline ReceiverLibrary open_receiver_library(const std::string& modulePath,
     const char* localRuntime = nullptr, const char* runtimeSoname = nullptr,
     uid_t trustedOwner = 0) {
+#ifdef __linux__
   constexpr int flags = RTLD_NOW | RTLD_LOCAL;
   auto loaderError = [] {
     const char* detail = dlerror();
@@ -93,5 +103,17 @@ inline ReceiverLibrary open_receiver_library(const std::string& modulePath,
     dlclose(value);
     runtime.reset();
   }), {}};
+#else
+  (void)localRuntime;
+  (void)runtimeSoname;
+  (void)trustedOwner;
+  constexpr int flags = RTLD_NOW | RTLD_LOCAL;
+  void* module = dlopen(modulePath.c_str(), flags);
+  if (!module) {
+    const char* detail = dlerror();
+    return {{}, detail ? detail : "unknown loader error"};
+  }
+  return {std::shared_ptr<void>(module, [](void* value) { dlclose(value); }), {}};
+#endif
 }
 }

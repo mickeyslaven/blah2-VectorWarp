@@ -211,8 +211,12 @@ code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer
 <section class="hero">
 <h1>More channels. Wider Doppler. Faster radar.</h1>
 <p><strong>THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!</strong></p>
-<p>Native Linux passive radar with multicore processing, optional GPU acceleration,
+<p>Native passive radar for Linux and macOS with multicore processing, optional GPU acceleration,
 and browser controls for live displays, settings, recording and replay.</p>
+<p class="scope">macOS uses a local Homebrew source installation: Apple Silicon is tested on M2;
+Intel Mac support remains experimental. Public formulas await their first successful
+Homebrew publishing run; no Mac bottles are supplied.
+The release downloads below are Linux packages.</p>
 <div class="actions"><a class="button" href="#install">Get started</a>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Explore the project</a></div>
 </section>

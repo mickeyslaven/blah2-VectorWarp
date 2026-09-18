@@ -1,7 +1,40 @@
 # Install VectorWarp
 
-These instructions install VectorWarp on 64-bit Linux with systemd:
-x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
+Choose the installation path for your operating system:
+
+- **macOS:** [Homebrew from the local port checkout](#macos-with-homebrew).
+  Apple Silicon is tested on M2; Intel remains experimental and unverified.
+- **Linux:** [Published DEB/RPM packages](#install-a-package) for 64-bit Linux
+  with systemd: x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
+
+## macOS with Homebrew
+
+With Homebrew and Xcode Command Line Tools installed, run from the root of a
+checkout containing the macOS port:
+
+```sh
+script/package-homebrew-local.sh build/homebrew-local --install-tap
+brew trust vectorwarp/local
+brew install --build-from-source vectorwarp/local/vectorwarp
+vectorwarp
+```
+
+The formula builds VectorWarp, its local USB Kraken companion, the UHD/HackRF
+adapters and optional Vulkan/MoltenVK processing with CPU fallback. It does not
+include or download the proprietary SDRplay SDK. `vectorwarp` opens Settings
+without starting radar; configure your receiver or replay file, then choose
+**Save & Restart**.
+
+Follow the [Homebrew guide](MACOS_HOMEBREW.md) for installation checks, per-user
+services, updates and removal. The [Mac guide](MACOS.md) covers receiver setup,
+configuration paths and direct source builds. The package is locally tested
+through revision 17 on Apple M2. Public Mac formulas and bottles are not
+available yet; the commands require this port checkout. The
+[public tap workflow](HOMEBREW_PUBLISHING.md) is prepared to publish formulas
+after merges to `main` pass its installation checks. Public v0.1.7 release assets
+remain Linux-only.
+
+## Linux installation
 
 Use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
 for current downloads and APT/DNF setup. The same package-manager steps are
@@ -167,7 +200,9 @@ clean-host installation claim. A 32-bit operating system is not supported.
 
 ## Build from source
 
-Use this route for development or a system outside the package targets.
+These source-build commands target Linux. For macOS, use the
+[Mac source-build guide](MACOS.md#build-and-run) or Homebrew above.
+Use this route for development or a system outside the Linux package targets.
 
 ### 1. Install build dependencies
 

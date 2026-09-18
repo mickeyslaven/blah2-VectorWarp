@@ -168,7 +168,9 @@ jobs:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
           set -euo pipefail
-          [[ $PAGE_URL == https://mickeyslaven.github.io/blah2-VectorWarp/ ]]
+          if [[ "${PAGE_URL:-}" != "https://mickeyslaven.github.io/blah2-VectorWarp/" ]]; then
+            echo 'Unexpected deployment URL.' >&2; exit 1
+          fi
           # Allow bounded CDN propagation, but never call a stale page success.
           for file in index.html install.sh repository-manifest.json keys/vectorwarp.asc; do
             matched=false

@@ -33,6 +33,16 @@ ArrayReferenceSynthesizer::ArrayReferenceSynthesizer(Config config)
 std::unique_ptr<IqData> ArrayReferenceSynthesizer::process(
   const std::vector<IqData *>& channels)
 {
+  if (channels.empty() || !channels.front())
+    throw std::invalid_argument("Array-reference channel is null");
+  auto output = std::make_unique<IqData>(channels.front()->get_length());
+  process_into(channels, *output);
+  return output;
+}
+
+void ArrayReferenceSynthesizer::process_into(
+  const std::vector<IqData *>& channels, IqData& output)
+{
   if (channels.size() < 2)
     throw std::invalid_argument("Array reference requires multiple channels");
   if (!channels.front())
@@ -41,6 +51,16 @@ std::unique_ptr<IqData> ArrayReferenceSynthesizer::process(
   for (const auto *channel : channels)
     if (!channel || channel->view_data().size() != samples)
       throw std::invalid_argument("Array-reference channels are not aligned");
+  if (samples > output.get_n())
+    throw std::invalid_argument("Array-reference output capacity is too small");
+  std::vector<const std::deque<std::complex<double>>*> input;
+  input.reserve(channels.size());
+  for (const auto *channel : channels)
+  {
+    if (channel == &output)
+      throw std::invalid_argument("Array-reference output aliases an input");
+    input.push_back(&channel->view_data());
+  }
 
   const std::size_t count = channels.size();
   const bool analyze = metrics.weights.size() != count ||
@@ -56,8 +76,8 @@ std::unique_ptr<IqData> ArrayReferenceSynthesizer::process(
     {
       for (std::size_t left = 0; left < count; left++)
         for (std::size_t right = 0; right < count; right++)
-          covariance[left][right] += channels[left]->view_data()[sample] *
-            std::conj(channels[right]->view_data()[sample]);
+          covariance[left][right] += (*input[left])[sample] *
+            std::conj((*input[right])[sample]);
       observations++;
     }
     double trace = 0;
@@ -114,22 +134,20 @@ std::unique_ptr<IqData> ArrayReferenceSynthesizer::process(
     metrics.updates++;
   }
 
-  auto output = std::make_unique<IqData>(samples);
-  std::deque<std::complex<double>> combined(samples);
+  auto& combined = output.resize_for_write(static_cast<uint32_t>(samples));
   double inputPower = 0;
   double outputPower = 0;
   for (std::size_t sample = 0; sample < samples; sample++)
   {
+    combined[sample] = {};
     for (std::size_t channel = 0; channel < count; channel++)
     {
       combined[sample] += std::conj(metrics.weights[channel]) *
-        channels[channel]->view_data()[sample];
-      inputPower += std::norm(channels[channel]->view_data()[sample]) / count;
+        (*input[channel])[sample];
+      inputPower += std::norm((*input[channel])[sample]) / count;
     }
     outputPower += std::norm(combined[sample]);
   }
   const double scale = std::sqrt(inputPower / std::max(outputPower, 1e-30));
   for (auto& value : combined) value *= scale;
-  output->replace(std::move(combined));
-  return output;
 }
