@@ -26,6 +26,12 @@ evidence=$(realpath "$evidence")
 case "$package" in *.deb) format=deb;; *.rpm) format=rpm;; *) die 'unknown package format';; esac
 command -v podman >/dev/null || die 'Podman is required only on the test runner'
 command -v node >/dev/null || die 'Node is required only on the browser test runner'
+apparmor_profile=${VECTORWARP_TEST_APPARMOR_PROFILE:-unconfined}
+[[ $apparmor_profile == unconfined || $apparmor_profile =~ ^vectorwarp-fedora-ci-[0-9a-f]{12,32}$ ]] || die 'invalid disposable AppArmor profile name'
+apparmor_labels=()
+if [[ $apparmor_profile != unconfined ]]; then
+  apparmor_labels=(--label="vectorwarp-ci-apparmor=$apparmor_profile")
+fi
 test_cpus=${VECTORWARP_TEST_CPUS:-2}
 [[ $test_cpus =~ ^[0-9]*\.?[0-9]+$ ]] || die 'invalid test CPU limit'
 quota=$(awk -v cpus="$test_cpus" 'BEGIN { printf "%.0f", cpus * 100000 }')
@@ -42,10 +48,10 @@ cleanup() {
     podman logs "$container" >"$evidence/container-boot.log" 2>&1 || true
     podman exec "$container" journalctl --no-pager -u vectorwarp-api -u vectorwarp-receiver -u vectorwarp-restart -u vectorwarp-processor >"$evidence/journal.log" 2>&1 || true
     podman inspect "$container" >"$evidence/container.json" || true
-    podman stop --time 10 "$container" >/dev/null 2>&1 || true
-    podman rm "$container" >/dev/null 2>&1 || true
+    podman stop --time 10 "$container" >/dev/null 2>&1 || status=1
+    podman rm "$container" >/dev/null 2>&1 || status=1
   fi
-  podman rmi "$test_image" >/dev/null 2>&1 || true
+  podman rmi "$test_image" >/dev/null 2>&1 || status=1
   exit "$status"
 }
 trap cleanup EXIT
@@ -61,10 +67,16 @@ podman build --jobs=1 --memory=2g --memory-swap=2g --cpu-period=100000 --cpu-quo
 # not VectorWarp's installed units: their own sandbox remains enabled and tested.
 # No --privileged, host namespace, host filesystem mount, or device passthrough.
 container=$(podman run -d --name "$name" --systemd=always --cgroupns=private \
-  --cap-add=SYS_ADMIN --security-opt=label=disable --security-opt=apparmor=unconfined \
+  --cap-add=SYS_ADMIN --security-opt=label=disable --security-opt="apparmor=$apparmor_profile" \
+  "${apparmor_labels[@]}" \
   --ulimit core=-1:-1 \
   --cpus="$test_cpus" "${cpu_set[@]}" --memory=2g --memory-swap=2g \
   --pids-limit=512 "$test_image")
+if [[ $apparmor_profile != unconfined ]]; then
+  container_label=$(podman exec "$container" cat /proc/self/attr/apparmor/current)
+  printf '%s\n' "$container_label" >"$evidence/apparmor-label.txt"
+  [[ $container_label == "$apparmor_profile ("*")" ]] || die 'disposable container did not enter its own AppArmor profile'
+fi
 # Wait for boot mounts/tmpfiles before copying fixtures into /tmp. A container
 # can be running while systemd has not mounted its final temporary filesystem.
 # Newer systemd needs an unlimited core hard limit at PID 1 startup; hosted

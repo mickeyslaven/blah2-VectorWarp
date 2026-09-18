@@ -34,7 +34,12 @@ recorded separately. The test containers and browser dependencies are CI tools,
 not dependencies of VectorWarp installations.
 
 The disposable test OS needs mount-namespace privileges for systemd. Its outer
-container AppArmor/SELinux profile is disabled; it receives no host filesystem
+container SELinux label is disabled. Fedora containers on AppArmor hosts use a
+temporary, named test profile so Ubuntu's host authentication-helper policy
+does not attach to Fedora's helper. It retains the existing permissive outer
+test-container scope; it is not shipped with VectorWarp. Other test containers
+use the unconfined outer profile. No host helper policy, PAM configuration or
+password-file permissions are changed. The tests receive no host filesystem
 mounts, host namespaces or physical devices. VectorWarp's installed service
 accounts and systemd sandbox remain enabled and are checked by the tests. This
 is not a test of every host AppArmor/SELinux policy.

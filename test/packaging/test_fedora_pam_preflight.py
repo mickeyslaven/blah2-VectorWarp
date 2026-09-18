@@ -32,6 +32,40 @@ class FedoraPamPreflightTests(unittest.TestCase):
         self.assertNotIn('--volume', run)
         self.assertNotIn('--device', run)
 
+    def test_named_profile_replaces_unconfined_and_invalid_name_rejected(self):
+        name = 'vectorwarp-fedora-ci-' + 'a' * 32
+        with mock.patch.dict(PREFLIGHT.os.environ,
+                             {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
+            run = PREFLIGHT.run_args('probe', 'localhost/probe')
+        self.assertIn('--security-opt=apparmor=' + name, run)
+        self.assertIn('--label=vectorwarp-ci-apparmor=' + name, run)
+        self.assertNotIn('--security-opt=apparmor=unconfined', run)
+        with mock.patch.dict(PREFLIGHT.os.environ,
+                             {'VECTORWARP_TEST_APPARMOR_PROFILE': 'other-profile'}):
+            with self.assertRaisesRegex(RuntimeError, 'Invalid CI-only'):
+                PREFLIGHT.run_args('probe', 'localhost/probe')
+
+    def test_wrong_actual_container_label_fails_before_account_setup(self):
+        calls = []
+        name = 'vectorwarp-fedora-ci-' + 'b' * 32
+
+        def fake_command(args, *, output=None, check=True):
+            calls.append(args)
+            label = 'wrong-profile (enforce)\n' if '/proc/self/attr/apparmor/current' in args else ''
+            return subprocess.CompletedProcess(args, 0, label)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0), \
+                mock.patch.dict(PREFLIGHT.os.environ,
+                                {'VECTORWARP_TEST_APPARMOR_PROFILE': name}):
+            with self.assertRaisesRegex(RuntimeError, 'did not enter'):
+                PREFLIGHT.probe(Path(directory))
+        self.assertFalse(any('useradd' in args for args in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
+        self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
+
     def test_kernel_evidence_is_helper_only_and_bounded(self):
         raw = 'unrelated secret kernel record\n' + '\n'.join(
             f'apparmor="DENIED" profile="unix-chkpwd" capname="dac_override" #{i}'
@@ -99,6 +133,24 @@ class FedoraPamPreflightTests(unittest.TestCase):
         self.assertTrue(any(args[:2] == ['podman', 'stop'] for args in calls))
         self.assertTrue(any(args[:2] == ['podman', 'rm'] for args in calls))
         self.assertTrue(any(args[:2] == ['podman', 'rmi'] for args in calls))
+
+    def test_cleanup_failure_is_reported_after_successful_probe(self):
+        def fake_command(args, *, output=None, check=True):
+            if 'is-system-running' in args:
+                value = 'running\n'
+            elif args[-2:] in (['-u', 'vectorwarp-package-test'],
+                               ['-g', 'vectorwarp-package-test']):
+                value = '1000\n'
+            else:
+                value = ''
+            return subprocess.CompletedProcess(args, int(args[:2] == ['podman', 'rm']), value)
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(PREFLIGHT, 'command', side_effect=fake_command), \
+                mock.patch.object(PREFLIGHT, 'host_diagnostics'), \
+                mock.patch.object(PREFLIGHT.os, 'geteuid', return_value=0):
+            with self.assertRaisesRegex(RuntimeError, 'cleanup failed: rm exited 1'):
+                PREFLIGHT.probe(Path(directory))
 
     def test_root_required_before_any_container_change(self):
         with tempfile.TemporaryDirectory() as directory, \

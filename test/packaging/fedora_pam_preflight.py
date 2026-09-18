@@ -20,6 +20,7 @@ IMAGE = ('registry.fedoraproject.org/fedora@sha256:'
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = re.compile(r'unix[-_]chkpwd', re.IGNORECASE)
 POLICY_LINE = re.compile(r'\b(capability|include|profile|unix[-_]chkpwd)\b', re.IGNORECASE)
+CI_PROFILE = re.compile(r'vectorwarp-fedora-ci-[0-9a-f]{32}\Z')
 
 
 def command(args, *, output=None, check=True):
@@ -48,9 +49,14 @@ def build_args(image_name):
 
 
 def run_args(container_name, image_name):
-    return ['podman', 'run', '-d', '--name', container_name,
+    profile = os.environ.get('VECTORWARP_TEST_APPARMOR_PROFILE')
+    if profile and not CI_PROFILE.fullmatch(profile):
+        raise RuntimeError('Invalid CI-only AppArmor profile name')
+    apparmor_option = f'apparmor={profile}' if profile else 'apparmor=unconfined'
+    profile_label = [f'--label=vectorwarp-ci-apparmor={profile}'] if profile else []
+    return ['podman', 'run', '-d', '--name', container_name, *profile_label,
             '--systemd=always', '--cgroupns=private', '--cap-add=SYS_ADMIN',
-            '--security-opt=label=disable', '--security-opt=apparmor=unconfined',
+            '--security-opt=label=disable', f'--security-opt={apparmor_option}',
             '--ulimit', 'core=-1:-1', '--cpus=.5', '--memory=2g',
             '--memory-swap=2g', '--pids-limit=512', image_name]
 
@@ -135,6 +141,11 @@ def probe(evidence):
         image_created = True
         command(run_args(name, image_name), output=evidence / 'container-id.txt')
         container_created = True
+        expected_profile = os.environ.get('VECTORWARP_TEST_APPARMOR_PROFILE')
+        if expected_profile:
+            actual_profile = exec_in(name, 'cat', '/proc/self/attr/apparmor/current').stdout.strip()
+            if actual_profile.split(' ', 1)[0] != expected_profile:
+                raise RuntimeError('Fedora test container did not enter its CI AppArmor profile')
         # The installed-package container boots systemd before package install.
         for _ in range(60):
             state = exec_in(name, 'timeout', '5', 'systemctl', 'is-system-running', check=False)
@@ -171,6 +182,7 @@ def probe(evidence):
             raise RuntimeError(f'Normal-user Fedora sudo/PAM failed (exit {result.returncode}); '
                                f'see {evidence / "sudo-pam.log"}')
     finally:
+        already_failing = sys.exc_info()[0] is not None
         try:
             host_diagnostics(evidence, started)
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -181,11 +193,20 @@ def probe(evidence):
                             ['podman', 'rm', name]))
         if image_created:
             cleanup.append(['podman', 'rmi', image_name])
+        cleanup_errors = []
         for args in cleanup:
             try:
-                command(args, check=False)
+                result = command(args, check=False)
+                if result.returncode:
+                    cleanup_errors.append(f'{args[1]} exited {result.returncode}')
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-                print(f'Cleanup unavailable for {args[1]}: {exc}', file=sys.stderr)
+                cleanup_errors.append(f'{args[1]} unavailable: {exc}')
+        if cleanup_errors:
+            message = 'Fedora PAM preflight cleanup failed: ' + '; '.join(cleanup_errors)
+            if already_failing:
+                print(message, file=sys.stderr)
+            else:
+                raise RuntimeError(message)
 
 
 def main():

@@ -26,12 +26,19 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(probe['strategy']['matrix']['runner'],
                          ['ubuntu-24.04', 'ubuntu-24.04-arm'])
         self.assertIn('fedora-pam', workflow['jobs']['package']['needs'])
+        package = workflow['jobs']['package']
+        self.assertEqual(package['if'], 'always()')
+        gate = package['steps'][0]
+        self.assertIn('needs.fedora-pam.result', gate['env']['PAM_RESULT'])
+        self.assertIn('test "$PAM_RESULT" = success', gate['run'])
+        self.assertNotIn('continue-on-error', gate)
         steps = [step for step in probe['steps']
                  if 'fedora_pam_preflight.py' in step.get('run', '')]
         self.assertEqual(len(steps), 1)
         self.assertNotIn('continue-on-error', steps[0])
         self.assertNotIn('continue-on-error', probe)
         self.assertNotIn('if', steps[0])
+        self.assertIn('fedora_apparmor_ci.py -- python3', steps[0]['run'])
         uploads = [step for step in probe['steps']
                    if step.get('uses', '').startswith('actions/upload-artifact@')]
         self.assertEqual(len(uploads), 1)
@@ -58,6 +65,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('-u vectorwarp-processor', wrapper)
         # Local source-overlay diagnostics must never become a CI bypass.
         self.assertNotIn('--overlay', wrapper)
+        self.assertIn('test/packaging/fedora_apparmor_ci.py --', steps[0]['run'])
+        self.assertIn('if [[ $DISTRO == fedora44 ]]', steps[0]['run'])
+        self.assertIn('--security-opt="apparmor=$apparmor_profile"', wrapper)
+        self.assertIn('--label="vectorwarp-ci-apparmor=$apparmor_profile"', wrapper)
+        self.assertIn('cat /proc/self/attr/apparmor/current', wrapper)
+        self.assertIn('"$container" >/dev/null 2>&1 || status=1', wrapper)
 
     def test_download_action_matches_the_verified_release_pin(self):
         pins = re.findall(r"uses: actions/download-artifact@(\S+)", WORKFLOW.read_text())
