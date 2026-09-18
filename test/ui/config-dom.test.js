@@ -68,6 +68,17 @@ function change(input, value, event = 'input') {
     assert.equal(optionalSerial.checkValidity(), true);
     assert.equal(query('capture.device.serial').querySelector('label').textContent, 'RSPduo serial');
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 6);
+    assert.equal(window.document.querySelector('[role=tab][data-tab=truth] strong').textContent, 'ADS-B');
+    assert.equal(query('truth.adsb.enabled').querySelector('label').textContent, 'Show ADS-B');
+    window.showMessage('Settings saved. Radar restarted; new frames received.', 'success', '<img src=x> RF not measured.');
+    const savedMessage = window.document.getElementById('config-message');
+    assert.equal(savedMessage.firstChild.textContent, 'Settings saved. Radar restarted; new frames received.');
+    assert.equal(savedMessage.querySelector('summary').textContent, 'Details');
+    assert.equal(savedMessage.querySelector('details').open, false, 'Diagnostics start collapsed');
+    assert.match(savedMessage.querySelector('details p').textContent, /RF not measured/);
+    assert.equal(savedMessage.querySelector('img'), null, 'Diagnostic details cannot inject HTML');
+    window.showMessage('Connection lost.', 'error');
+    assert.equal(savedMessage.querySelector('details'), null, 'An error clears old success details');
     assert.equal(window.document.getElementById('config-warnings'), null);
     const siteAdvice = window.document.querySelector('.config-advice');
     assert.ok(siteAdvice);

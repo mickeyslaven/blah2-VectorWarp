@@ -64,15 +64,15 @@ function renderRecordingState() {
     const elapsed = recordingState.startedAt ?
       recordingDuration(Date.now() - recordingState.startedAt) : 'Recording';
     status.innerHTML = `<span class="recording-dot"></span><strong>REC</strong><time>${elapsed}</time>`;
-    copy.textContent = recordingState.file ? `Writing ${recordingState.file}` : 'Recording acknowledged by the processor.';
+    copy.textContent = recordingState.file ? `Writing ${recordingState.file}` : 'Recording confirmed.';
     button.textContent = 'Stop recording';
   } else if (recordingState.requested) {
     status.innerHTML = '<span class="recording-dot"></span>Starting recording';
-    copy.textContent = recordingState.reason || 'Waiting for processor acknowledgement.';
+    copy.textContent = recordingState.reason || 'Waiting for recording to start.';
     button.textContent = 'Cancel recording';
   } else {
     status.innerHTML = '<span class="recording-dot"></span>Not recording';
-    copy.textContent = 'Press Space once to record raw IQ. Press again to stop.';
+    copy.textContent = 'Press Space to record raw IQ. Press again to stop.';
     button.textContent = 'Start recording';
   }
 }
@@ -136,7 +136,7 @@ function addRecordingControl() {
   control.className = 'recording-control';
   control.setAttribute('role', 'status');
   control.setAttribute('aria-live', 'polite');
-  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space once to start. Press again to stop.</div><button class="recording-toggle" type="button">Start recording</button>';
+  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop.</div><button class="recording-toggle" type="button">Start recording</button>';
   control.querySelector('.recording-toggle')
     .addEventListener('click', toggleRecording);
   panel.classList.add('recording-panel');
@@ -484,7 +484,7 @@ async function renderRuntimeSummary() {
       'display-site-meta': `${receiver} · ${transmitter}`,
       'display-locations-meta': `Live delay ellipses · ${receiver} and ${transmitter}`,
       'display-evaluation-meta': adsb.enabled === true ?
-        `Enabled${Number.isFinite(Number(adsb.display_range_km)) ? ` · ${adsb.display_range_km} km radius` : ''} · evaluation only` : 'Disabled in settings',
+        `Enabled${Number.isFinite(Number(adsb.display_range_km)) ? ` · ${adsb.display_range_km} km range` : ''} · comparison only` : 'Disabled in settings',
       'display-live-meta': `${hardware} · ${frequency} · ${channels} channels`,
       'display-maxhold-meta': `${ambiguity.delayMin ?? '—'}–${ambiguity.delayMax ?? '—'} delay bins · ${ambiguity.dopplerMin ?? '—'}–${ambiguity.dopplerMax ?? '—'} Hz`,
       'display-spectrum-meta': spectrum,

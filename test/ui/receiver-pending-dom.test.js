@@ -119,7 +119,7 @@ async function browser() {
     assert.equal(window.document.getElementById('config-save').disabled, false, 'Unchanged pending settings must still offer Apply');
     window = await browser();
     assert.equal(query('capture.device.heimdall.host').value, '127.0.0.2');
-    assert.match(window.document.getElementById('config-state').textContent, /pending/);
+    assert.equal(window.document.getElementById('config-state').textContent, 'Apply settings to confirm');
     const beforeApply = fs.readFileSync(filename, 'utf8');
     await window.saveConfiguration();
     assert.match(window.document.getElementById('config-message').textContent, /connection failed/i);

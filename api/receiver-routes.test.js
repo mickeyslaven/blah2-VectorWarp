@@ -35,7 +35,8 @@ async function main() {
   const receiver = {type: 'HackRF', capabilities: {liveCompiled: false}};
   let guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
   assert.equal(guide.length, 1);
-  assert.match(guide[0].text, /build containing/);
+  assert.match(guide[0].text, /build with support for this receiver/);
+  assert.match(guide[0].text, /driver alone will not add support/);
   assert.equal(guide[0].command, undefined, 'An SDK install cannot enable an excluded backend');
   receiver.capabilities.liveCompiled = true; receiver.dependencies = {state: 'missing'};
   guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');

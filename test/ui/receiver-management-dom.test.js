@@ -34,7 +34,8 @@ window.fetch = async (url, options = {}) => {
           {configField: 'capture.fc', direction: 'browser-to-upstream-after-ack-and-readback'},
           {configField: 'capture.fs', direction: 'upstream-authoritative-mismatch-block'},
           {configField: 'capture.device.reference_channel', direction: 'config-only'}] :
-          [{configField: 'capture.fc', direction: 'direct-tuning'}]})),
+          [{configField: 'capture.fc', direction: 'direct-tuning'},
+            ...(['RspDuo', 'HackRF'].includes(type) ? [{configField: 'capture.device.serial', direction: 'direct-tuning'}] : [])]})),
       management: {actions: [{id: 'reviewed-hackrf', receiverType: 'HackRF', kind: 'install-packages', available: true}]}, errors: []};
   } else if (url === '/api/receivers/plan') body = {nonce: 'b'.repeat(64), configRevision: revision,
     status: 'awaiting-local-authorization', lifetimeSeconds: 300, review: '<img src=x onerror=alert(1)>',
@@ -65,15 +66,20 @@ async function click(label) { const button = findButton(label); assert.ok(button
     assert.ok([...window.document.querySelectorAll('#receiver-setup a')].some(link =>
       link.href === 'https://sdrplay.com/hardware-api/'), 'Unverified SDK state exposes the official vendor link.');
     assert.ok(text.includes('will be reused'));
-    assert.ok(text.includes('runtime unavailable'));
+    assert.ok(text.includes('software cannot load'));
     for (const type of ['Kraken', 'RspDuo', 'Usrp', 'HackRF'])
-      await click(`Show setting application matrix: ${type}`);
+      await click(`How settings apply: ${type}`);
     const matrix = window.document.querySelector('#receiver-setup').textContent;
-    assert.match(matrix, /Suite V2 control; require its acknowledgement/);
+    assert.match(matrix, /sent to Suite V2, then checked against its reply and updated status/);
     assert.match(matrix, /not sent to Suite V2/);
-    assert.match(matrix, /SDRplay API v3 at processor startup/);
-    assert.match(matrix, /UHD startup parameter after Save & Restart/);
-    assert.match(matrix, /selected HackRF pair at processor startup/);
+    assert.match(matrix, /SDRplay API v3 at startup/);
+    assert.match(matrix, /UHD after Save & Restart/);
+    assert.match(matrix, /both HackRFs at startup/);
+    assert.match(matrix, /tuner values are not read back/);
+    assert.match(matrix, /RSPduo serial: applied through SDRplay/);
+    assert.match(matrix, /HackRF serial numbers: applied to both HackRFs/);
+    assert.doesNotMatch(matrix, /RSPduo serial: applied to both HackRFs/);
+    assert.doesNotMatch(matrix, /capture\.fc/, 'Setting help uses the same label as the form');
     await click('Review missing dependency install');
     assert.ok(window.document.querySelector('#receiver-setup pre').textContent.startsWith('sudo '));
     assert.match(window.document.querySelector('#receiver-setup').textContent, /hackrf.*1\.2\.3.*Fedora/s,

@@ -394,69 +394,69 @@ function planReceiverSetup(request, discovery) {
     receiver.capabilities.localBuildable === true;
   if (!receiver.capabilities.liveCompiled && !localBuildAvailable) {
     add('backend', 'provide-live-backend', request.receiverType, 'blocked',
-      'unsupported', 'This installed VectorWarp binary does not contain the selected live backend.');
+      'unsupported', 'This VectorWarp build does not support the selected receiver.');
     errors.push(errorRecord('BACKEND_NOT_COMPILED', request.receiverType,
       'Install a reviewed build containing this receiver backend.'));
   } else if (!receiver.capabilities.liveCompiled) {
     add('backend', 'build-local-backend', request.receiverType, 'blocked',
-      'explicit-local-build', 'The local RSPduo source kit is available, but its adapter is not compiled. Use Build SDRplay support, then check receiver software again.');
+      'explicit-local-build', 'The local RSPduo source kit is available, but support is not built. Build SDRplay support, then check receiver software again.');
     errors.push(errorRecord('LOCAL_BUILD_REQUIRED', request.receiverType,
       'The RSPduo adapter must be built locally before it can be used for live capture.'));
   } else if (receiver.capabilities.runtimeLoadable === false) {
     add('backend', 'provide-live-backend', request.receiverType, 'blocked',
-      'runtime-unavailable', 'The selected adapter is compiled, but its runtime module or SDK is unavailable.');
+      'runtime-unavailable', 'Receiver support is built, but its required runtime software is unavailable.');
     errors.push(errorRecord('RUNTIME_MODULE_UNAVAILABLE', request.receiverType,
-      receiver.capabilities.runtimeError || 'The selected adapter could not load its runtime module.'));
+      receiver.capabilities.runtimeError || 'Receiver support could not load its runtime software.'));
   } else add('backend', 'provide-live-backend', request.receiverType,
-    'not-required', 'none', 'The selected live backend is compiled and its runtime module is loadable.');
+    'not-required', 'none', 'Receiver support and required runtime software are ready.');
 
   if (receiver.dependencies.state === 'installed')
     add('dependency', 'install-dependency', DEFINITIONS[request.receiverType].dependency,
-      'not-required', 'none', 'The required receiver dependency was observed.');
+      'not-required', 'none', 'The required receiver software is installed.');
   else if (request.receiverType === 'Kraken' && locality === 'remote') {
     add('dependency', 'verify-dependency', DEFINITIONS.Kraken.dependency,
       'blocked', 'unsupported',
-      'The Suite dependency is on the remote receiver host and cannot be installed or verified locally.');
+      'Suite software is on the remote receiver host. It cannot be installed or checked locally.');
     errors.push(errorRecord('REMOTE_RIGHTS_REQUIRED', 'Kraken',
-      'VectorWarp does not assume software-management rights on a remote Suite host.'));
+      'VectorWarp does not manage software on the remote Suite host.'));
   }
   else {
     const proprietary = request.receiverType === 'RspDuo';
     add('dependency', 'install-dependency', DEFINITIONS[request.receiverType].dependency,
       'blocked', 'unsupported', proprietary ?
-        'SDRplay API installation requires the operator to obtain and accept the vendor license.' :
-        'No reviewed privileged installer supports this dependency yet.');
+        'You must obtain and accept the SDRplay license before installing its API.' :
+        'No approved administrator setup is available for this software.');
     errors.push(errorRecord(proprietary ? 'LICENSE_ACCEPTANCE_REQUIRED' :
       'INSTALL_ADAPTER_UNAVAILABLE', request.receiverType,
-    proprietary ? 'VectorWarp cannot accept the SDRplay license for the operator.' :
-      'Dependency installation is not implemented.'));
+    proprietary ? 'VectorWarp cannot accept the SDRplay license for you.' :
+      'Install this required software outside VectorWarp.'));
   }
 
   add('configure', 'configure-receiver', request.receiverType, 'required',
     'unprivileged-existing-config-api',
-    'Review receiver, tuning, channel and site settings before saving.');
+    'Review receiver, tuning, channel, and site settings before saving.');
 
   if (request.receiverType === 'Kraken') {
     if (locality === 'remote') {
       if (receiver.upstream.availability === 'available')
         add('upstream-service', 'ensure-upstream-running', 'kraken-suite-v2',
-          'not-required', 'none', 'The configured remote Suite endpoint is already available.');
+          'not-required', 'none', 'The remote Suite endpoint is available.');
       else {
         add('upstream-service', 'ensure-upstream-running', 'kraken-suite-v2',
-          'blocked', 'unsupported', 'Remote service control requires separately granted rights on that host.');
+          'blocked', 'unsupported', 'You need separate permission to control services on that host.');
         if (!errors.some(error => error.code === 'REMOTE_RIGHTS_REQUIRED'))
           errors.push(errorRecord('REMOTE_RIGHTS_REQUIRED', 'Kraken',
-            'VectorWarp does not assume control rights on a remote Suite host.'));
+            'VectorWarp does not manage services on the remote Suite host.'));
       }
     } else if (receiver.managedService.state === 'running') {
       add('upstream-service', 'ensure-upstream-running', 'kraken-suite-v2',
-        'not-required', 'none', 'The configured local Suite service is running.');
+        'not-required', 'none', 'The local Suite service is running.');
     } else {
       add('upstream-service', 'ensure-upstream-running', 'kraken-suite-v2',
         'blocked', 'unsupported',
-        'The external Suite service is not owned by VectorWarp and cannot be controlled by its helper.');
+        'VectorWarp does not manage the Suite service and cannot control it.');
       errors.push(errorRecord('EXTERNAL_SERVICE_NOT_MANAGED', 'Kraken',
-        'Review the local Suite installation and service ownership.'));
+        'Review the local Suite installation and service owner.'));
     }
   } else if (request.receiverType === 'RspDuo') {
     if (receiver.managedService.state === 'running')
@@ -465,16 +465,16 @@ function planReceiverSetup(request, discovery) {
     else {
       add('upstream-service', 'ensure-upstream-running', 'sdrplay-api',
         'blocked', 'unsupported',
-        'The vendor API service is external and is not controlled by VectorWarp.');
+        'VectorWarp does not manage the vendor API service.');
       if (!errors.some(error => error.code === 'LICENSE_ACCEPTANCE_REQUIRED'))
         errors.push(errorRecord('EXTERNAL_SERVICE_NOT_MANAGED', 'RspDuo',
-          'Review the vendor API installation and service state.'));
+          'Review the vendor API installation and service status.'));
     }
   } else add('upstream-service', 'ensure-upstream-running', request.receiverType,
-    'not-required', 'none', 'This receiver has no separate upstream service.');
+    'not-required', 'none', 'This receiver has no separate service.');
 
   add('verify', 'verify-readiness', request.receiverType, 'required',
-    'read-only', 'Re-run discovery and require processor telemetry before claiming live readiness.');
+    'read-only', 'Run discovery again and check radar status before live use.');
   return {schemaVersion: 1, receiverType: request.receiverType, locality,
     executable: false, actions, errors,
     progressStates: ['pending', 'running', 'complete', 'failed', 'blocked']};

@@ -6,7 +6,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, CONFIG_SAVE_TIMEOUT_MS} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS} =
   require('../../html/js/config_ui.js');
 const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
 
@@ -17,9 +17,14 @@ const base = yaml.load(fs.readFileSync(
   path.join(__dirname, '..', '..', 'config', 'config-kraken.yml'), 'utf8'));
 const clone = value => JSON.parse(JSON.stringify(value));
 assert.equal(accelerationSummary({active: 'vulkan', device: 'RTX 4050'}, 'receiving'), 'GPU: RTX 4050');
-assert.equal(accelerationSummary({active: 'vulkan', device: 'RTX 4050'}, 'stale'), 'Processing hardware: waiting for radar');
+assert.equal(accelerationSummary({active: 'vulkan', device: 'RTX 4050'}, 'stale'), 'Waiting for radar');
 assert.equal(accelerationSummary({active: 'cpu', reason: 'Driver missing'}, 'receiving'), 'CPU — Driver missing');
-assert.ok(accelerationSummary(null, 'receiving').includes('not reported'));
+assert.equal(accelerationSummary(null, 'receiving'), 'Not reported');
+assert.equal(metadata(['truth'])[0], 'ADS-B');
+assert.equal(metadata(['truth', 'adsb'])[0], 'ADS-B');
+assert.equal(metadata(['truth', 'adsb', 'enabled'])[0], 'Show ADS-B');
+assert.equal(metadata(['capture', 'device', 'serial'], 'RspDuo')[0], 'RSPduo serial');
+assert.equal(metadata(['capture', 'device', 'serial'], 'HackRF')[0], 'HackRF serial numbers');
 const captureSource = fs.readFileSync(path.join(
   __dirname, '..', '..', 'src', 'capture', 'Capture.cpp'), 'utf8');
 const validTypes = captureSource.match(
@@ -90,6 +95,20 @@ for (const [field, actual, expected, unit] of [['capture.fc', 527000000, 5280000
   assert.ok(message.includes(unit) && message.includes('Receiver settings') && !message.includes(field));
 }
 const synchronizedMessage = receiverSaveMessage({receiverSync: {receiverType: 'Kraken', status: 'synchronized'}}, false);
-assert.match(synchronizedMessage, /acknowledged.*later status/i);
-assert.match(synchronizedMessage, /serial order.*calibration.*not independently verified/i);
+assert.match(synchronizedMessage, /Suite V2 settings confirmed/);
+assert.match(synchronizedMessage, /vectorwarp restart/);
+assert.doesNotMatch(synchronizedMessage, /Radar restarted/);
+const synchronizedDetails = receiverSaveDetails({receiverSync: {receiverType: 'Kraken', status: 'synchronized'}});
+assert.match(synchronizedDetails, /accepted the command.*reported matching settings/);
+assert.match(synchronizedDetails, /serial order.*calibration.*not independently checked/);
+for (const receiverType of ['Kraken', 'Usrp', 'RspDuo', 'HackRF']) {
+  const result = {receiverSync: {receiverType, status: 'not-required'}};
+  const message = receiverSaveMessage(result, true);
+  assert.equal(message, 'Settings saved. Radar restarted; new frames received.');
+  assert.ok(message.length < 100);
+  assert.ok(receiverSaveDetails(result).length > 0, 'Technical limits remain available in Details');
+}
+const replay = {receiverSync: {receiverType: 'Usrp', acceptance: {mode: 'replay'}}};
+assert.equal(receiverSaveMessage(replay, true), 'Settings saved. Replay restarted; new frames received.');
+assert.equal(receiverSaveDetails(replay), 'No receiver hardware was opened.');
 console.log('Settings device-switch, descriptions and actionable restart-mismatch tests passed.');

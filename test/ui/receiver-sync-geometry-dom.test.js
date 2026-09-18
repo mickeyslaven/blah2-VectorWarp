@@ -63,8 +63,9 @@ function change(input, value) { input.value = String(value); input.dispatchEvent
     assert.equal(mapping().checked, false, 'Discard must not restore an assertion invalidated by a known receiver transaction');
     assert.deepEqual(saved.capture.device.array_geometry.elements, originalMeasurements);
     mode = 'transport'; change(query('process.data.cpi'), .3); await window.saveConfiguration();
-    assert.ok(message().includes('Save outcome unknown'));
-    assert.equal(window.document.getElementById('config-restart-label').textContent, 'Save outcome unknown.');
+    assert.ok(message().includes('Save not confirmed'));
+    assert.ok(message().includes('receiver settings may still change'));
+    assert.equal(window.document.getElementById('config-restart-label').textContent, 'Save not confirmed.');
     assert.equal(mapping().checked, false);
     mode = 'success'; await window.saveConfiguration();
     assert.equal(saved.capture.device.array_geometry.mapping_confirmed, false);

@@ -132,7 +132,7 @@ async function rejected(promise, code, pattern) {
     const candidate = config(impreciseStatus.port);
     candidate.capture.device.heimdall.gain = 49.6;
     await rejected(createKrakenControlClient({statusTimeoutMs: 200, readbackTimeoutMs: 60})
-      .synchronize(candidate), 'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+      .synchronize(candidate), 'KRAKEN_READBACK_TIMEOUT', /did not confirm/);
   } finally { await impreciseStatus.close(); }
   const state = {frequency: 100000000, sampleRate: 2400000,
     channels: 5, maximum: 8, reconfiguring: false};
@@ -212,7 +212,7 @@ async function rejected(promise, code, pattern) {
     const error = await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 100}).synchronize(config(wrongAck.port,
       {capture: {fc: 101000000}})), 'KRAKEN_ACKNOWLEDGEMENT_MISMATCH',
-    /unexpected value/);
+    /confirmed an unexpected/);
     assert.equal(error.receiverSync.status, 'indeterminate');
     assert.equal(error.receiverSync.operations[0].commandOutcome, 'unknown');
   } finally { await wrongAck.close(); }
@@ -224,7 +224,7 @@ async function rejected(promise, code, pattern) {
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100, readbackTimeoutMs: 100}).synchronize(
       config(wrongGainAck.port, {device: {heimdall: {host: '127.0.0.1', port: wrongGainAck.port + 1,
-        control_port: wrongGainAck.port, gain: 10}}})), 'KRAKEN_ACKNOWLEDGEMENT_MISMATCH', /unexpected value/);
+        control_port: wrongGainAck.port, gain: 10}}})), 'KRAKEN_ACKNOWLEDGEMENT_MISMATCH', /confirmed an unexpected/);
   } finally { await wrongGainAck.close(); }
 
   const noReadbackState = {frequency: 100000000, sampleRate: 2400000,
@@ -235,7 +235,7 @@ async function rejected(promise, code, pattern) {
   try {
     const error = await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 60}).synchronize(config(noReadback.port, {
-      capture: {fc: 102000000}})), 'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+      capture: {fc: 102000000}})), 'KRAKEN_READBACK_TIMEOUT', /did not confirm/);
     assert.equal(error.receiverSync.status, 'partial');
     assert.equal(error.receiverSync.operations[0].acknowledged, true);
     assert.equal(error.receiverSync.operations[0].readbackMatched, false);
@@ -248,7 +248,7 @@ async function rejected(promise, code, pattern) {
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100, readbackTimeoutMs: 60}).synchronize(
       config(gainNoReadback.port, {device: {heimdall: {host: '127.0.0.1', port: gainNoReadback.port + 1,
-        control_port: gainNoReadback.port, gain: 0}}})), 'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+        control_port: gainNoReadback.port, gain: 0}}})), 'KRAKEN_READBACK_TIMEOUT', /did not confirm/);
   } finally { await gainNoReadback.close(); }
 
   const staleAcrossState = {frequency: 100000000, sampleRate: 2400000,
@@ -272,7 +272,7 @@ async function rejected(promise, code, pattern) {
     const error = await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 60}).synchronize(config(staleAcrossOperations.port, {
       capture: {fc: 102000000}, device: {channel_count: 3}})),
-    'KRAKEN_READBACK_TIMEOUT', /did not acknowledge and report/);
+    'KRAKEN_READBACK_TIMEOUT', /did not confirm/);
     assert.deepEqual(error.receiverSync.operations.map(item =>
       [item.operation, item.readbackMatched]), [
       ['set_frequency', false]
@@ -287,7 +287,7 @@ async function rejected(promise, code, pattern) {
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 100}).synchronize(config(sampleMismatch.port)),
-    'KRAKEN_SAMPLE_RATE_MISMATCH', /startup\/build setting/);
+    'KRAKEN_SAMPLE_RATE_MISMATCH', /set when Suite starts/);
     assert.deepEqual(sampleMismatch.commands, []);
   } finally { await sampleMismatch.close(); }
 
@@ -325,7 +325,7 @@ async function rejected(promise, code, pattern) {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 100}).synchronize(config(tooMany.port,
       {device: {channel_count: 8}})), 'KRAKEN_CHANNEL_COUNT_UNAVAILABLE',
-    /5 configured channel identities/);
+    /5 configured channels/);
     assert.deepEqual(tooMany.commands, []);
   } finally { await tooMany.close(); }
 
@@ -360,7 +360,7 @@ async function rejected(promise, code, pattern) {
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 100}).synchronize(config(malformed.port)),
-    'KRAKEN_PROTOCOL_MISMATCH', /malformed JSON/);
+    'KRAKEN_PROTOCOL_MISMATCH', /malformed control data/);
   } finally { await malformed.close(); }
 
   const invalidStatus = await oneShotSuite(socket => socket.end(
@@ -368,7 +368,7 @@ async function rejected(promise, code, pattern) {
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100,
       readbackTimeoutMs: 100}).synchronize(config(invalidStatus.port)),
-    'KRAKEN_PROTOCOL_MISMATCH', /missing required/);
+    'KRAKEN_PROTOCOL_MISMATCH', /missing tuning/);
   } finally { await invalidStatus.close(); }
 
   const closed = await oneShotSuite(socket => socket.end());
@@ -394,7 +394,7 @@ async function rejected(promise, code, pattern) {
     writePath: 'processor startup through UHD multi_usrp',
     acknowledgement: 'UHD exceptions can report failure; no positive applied-settings acknowledgement is emitted',
     positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'UHD startup getters gate frequency, rate, gain, antenna and subdevice mapping before streaming; processor status does not carry an applied-values receipt.',
+    readbackBoundary: 'UHD startup getters check frequency, rate, gain, antenna, and subdevice mapping before streaming; radar status does not confirm applied values.',
     hardwareReadback: false, physicalReceiverVerified: false
   });
   const synchronizer = createReceiverSynchronizer({kraken: {

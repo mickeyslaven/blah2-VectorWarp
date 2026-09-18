@@ -25,9 +25,9 @@ function fromRuntime(setup, {acceleration, clutterAcceleration, fresh} = {}) {
   if (!stages.ambiguity && !stages.clutter) return {...setup, runtimeStages: stages};
   return {...setup, state: stages.ambiguity && stages.clutter ? 'qualified' : 'partially-qualified',
     qualification: 'current-telemetry-generation', runtimeStages: stages,
-    message: 'The current connected telemetry generation reports startup-qualified GPU ' +
+    message: 'Current GPU checks passed: ' +
       (stages.ambiguity && stages.clutter ? 'ambiguity and clutter' : stages.ambiguity ? 'ambiguity only' : 'clutter only') +
-      '. This is not an endurance guarantee or a real-time deadline claim; other geometries qualify independently.'};
+      '.'};
 }
 
 function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile, now = Date.now} = {}) {
@@ -35,13 +35,13 @@ function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile,
   const unavailable = message => ({version: 1, pi, state: 'driver-unverified',
     qualification: 'not-run', message, command: INSTALL_COMMAND, accessCommand: ACCESS_COMMAND});
   return async runtime => {
-    if (preview) return unavailable('GPU setup is not probed by the UI preview.');
+    if (preview) return unavailable('GPU setup is unavailable in preview.');
     if (!cached || now() - cached.at >= 60000) {
       const candidates = [path.resolve(__dirname, '../../../libexec/vectorwarp-gpu-setup'),
         path.resolve(__dirname, '../libexec/vectorwarp-gpu-setup'),
         path.resolve(__dirname, '../script/vectorwarp-gpu-setup')];
       const helper = candidates.find(filename => fs.existsSync(filename));
-      cached = {at: now(), promise: !helper ? Promise.resolve(unavailable('Packaged GPU setup helper is missing; update VectorWarp.')) :
+      cached = {at: now(), promise: !helper ? Promise.resolve(unavailable('GPU setup helper is missing. Update VectorWarp.')) :
         new Promise(resolve => execute('/usr/bin/python3', ['-I', helper, '--status', '--json'],
           {timeout: 8000, maxBuffer: 65536, env: {PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LC_ALL: 'C'}},
           (error, output) => {
@@ -52,7 +52,7 @@ function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile,
                   value.qualification !== 'not-run' || typeof value.message !== 'string' || value.message.length > 2048)
                 throw new Error('Invalid GPU setup response');
               resolve({...value, command: INSTALL_COMMAND, accessCommand: ACCESS_COMMAND});
-            } catch (_) { resolve(unavailable('Bounded driver diagnosis is unavailable. Run the local GPU setup check; no GPU qualification was inferred.')); }
+            } catch (_) { resolve(unavailable('GPU driver check is unavailable. Run the local GPU setup check.')); }
           }))};
     }
     const setup = await cached.promise;

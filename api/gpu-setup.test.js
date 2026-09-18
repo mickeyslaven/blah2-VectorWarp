@@ -18,7 +18,7 @@ const runtime = {acceleration: ready, clutterAcceleration: ready, fresh: true};
   assert.equal(fromRuntime(older, {...runtime, acceleration: fallback}).state, 'partially-qualified');
   assert.equal(fromRuntime(older, runtime).state, 'qualified', 'A working backport overrides a source-version hint');
   assert.equal(fromRuntime(older, runtime).qualification, 'current-telemetry-generation');
-  assert.match(fromRuntime(older, runtime).message, /not an endurance guarantee or a real-time deadline claim/);
+  assert.match(fromRuntime(older, runtime).message, /^Current GPU checks passed: ambiguity and clutter\.$/);
   let calls = 0, at = 0;
   const execute = (program, args, options, callback) => {
     calls++;
