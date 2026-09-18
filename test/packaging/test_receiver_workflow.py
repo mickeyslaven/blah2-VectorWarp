@@ -19,6 +19,24 @@ DOWNLOAD_PIN = "d3f86a106a0bac45b974a628896c90dbdf5c8093"  # upstream v4.3.0
 
 
 class WorkflowContractTests(unittest.TestCase):
+    def test_fedora_authentication_preflight_gates_package_matrix(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
+        probe = workflow['jobs']['fedora-pam']
+        self.assertEqual(probe['needs'], 'validate')
+        self.assertEqual(probe['strategy']['matrix']['runner'],
+                         ['ubuntu-24.04', 'ubuntu-24.04-arm'])
+        self.assertIn('fedora-pam', workflow['jobs']['package']['needs'])
+        steps = [step for step in probe['steps']
+                 if 'fedora_pam_preflight.py' in step.get('run', '')]
+        self.assertEqual(len(steps), 1)
+        self.assertNotIn('continue-on-error', steps[0])
+        self.assertNotIn('continue-on-error', probe)
+        self.assertNotIn('if', steps[0])
+        uploads = [step for step in probe['steps']
+                   if step.get('uses', '').startswith('actions/upload-artifact@')]
+        self.assertEqual(len(uploads), 1)
+        self.assertEqual(uploads[0]['if'], 'always()')
+
     def test_every_package_target_requires_installed_browser_and_processor_checks(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/release-packages.yml').read_text())
         job = workflow['jobs']['package']
