@@ -10,9 +10,11 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 
 ## Choose an installation path
 
-1. **Raspberry Pi 4B:** the Bookworm Lite image candidate is still unpublished
-   and has not completed clean-card boot testing. Follow the planned
-   [Pi 4 Imager flow](docs/PI4_GUIDE.md); Pi 5 is future work.
+1. **Raspberry Pi 4B:** use the Bookworm Lite **preview** through its
+   [Raspberry Pi Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
+   or [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).
+   Fresh-card boot and Wi-Fi qualification are still pending; see the
+   [Pi 4 guide](docs/PI4_GUIDE.md). Pi 5 is future work.
 2. **Linux PC or non-image ARM64 system:** install a matching signed DEB or RPM
    from the [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 3. **macOS:** install with [Homebrew](docs/MACOS_HOMEBREW.md), or use a signed
@@ -219,11 +221,11 @@ available for development or unsupported systems.
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, 26.04 | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 12 (Bookworm) | ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 12 (Bookworm) | ARM64 | [Preview DEB 0.1.10](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb) |
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
-| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Debian 12 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
 | macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Public Homebrew tap](docs/MACOS_HOMEBREW.md) |
 | macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
 
@@ -241,12 +243,14 @@ The public Homebrew tap is managed by the
 the [installation matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
 
-For a Raspberry Pi 4B, start with the [Pi 4 guide](docs/PI4_GUIDE.md): it
-organizes the forthcoming Imager flash flow, Linux package route, and advanced
-source build. The 8 GB Bookworm Lite profile is the tested baseline; use a 32 GB
-microSD card initially. The candidate image is not published or boot-tested yet.
-Pi 5 is future work. RSPduo users install SDRplay's vendor API themselves, then
-choose **Build SDRplay support** in Settings.
+For a Raspberry Pi 4B, start with the [Pi 4 preview guide](docs/PI4_GUIDE.md)
+and its [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+The 8 GB Bookworm Lite profile is the tested baseline; use a 32 GB microSD card
+initially. The preview has not completed fresh-card boot or Wi-Fi qualification;
+see [validation limits](docs/PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is future
+work. RSPduo users install SDRplay's vendor API themselves, then choose
+**Build SDRplay support** in Settings. Stable Linux and macOS packages remain
+version 0.1.9; this Pi image is the separate 0.1.10 preview and adds no APT repo.
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 

@@ -2,15 +2,20 @@
 
 The supported Pi profile is a **Raspberry Pi 4B with 8 GB RAM** running
 **Raspberry Pi OS Lite 64-bit Bookworm**. Use a 32 GB microSD card initially.
-The Bookworm package and image candidate are being built, but the image is not
-published, flashed, or boot-tested yet. Pi 5 is future work.
+The Bookworm Lite preview is available through its
+[Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
+and [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).
+Its internal software checks passed, but fresh-card boot and Wi-Fi qualification
+are pending. See [validation limits](PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is
+future work.
 
-## Flash and first boot when the image is released
+## Flash and first boot the preview
 
-1. Install Raspberry Pi Imager, download and open the release's versioned
-   `.rpi-imager-manifest`, and choose the Pi 4 Bookworm Lite image. The manifest
-   is required for Imager customization; selecting only a bare image does not
-   provide the headless Wi-Fi, login, and SSH flow.
+1. Install Raspberry Pi Imager, download and open the versioned
+   [`vectorwarp-pi4-0.1.10.rpi-imager-manifest`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest),
+   and choose the Pi 4 Bookworm Lite image. The manifest is required for Imager
+   customization; selecting only the bare `.img.xz` does not provide the
+   headless Wi-Fi, login, and SSH flow.
 2. In Imager customization, set hostname, locale/time zone, a username with a
    password or SSH key, and enable SSH. For Wi-Fi, also set the network name,
    password, and country. Ethernet can omit Wi-Fi. The image contains no factory
@@ -18,7 +23,8 @@ published, flashed, or boot-tested yet. Pi 5 is future work.
 3. Write the card, boot the Pi, and connect over SSH or open
    `http://<hostname>.local:3000/` from a device on the same network. Use the
    DHCP address if mDNS is unavailable. For an RSPduo, obtain, install, and
-   accept [SDRplay's vendor API](SDRPLAY_SETUP.md) yourself, then choose
+   accept [SDRplay Hardware API 3.15 for Linux ARM64](SDRPLAY_SETUP.md) yourself,
+   then choose
    **Build SDRplay support** in Settings and wait for the local build.
    VectorWarp does not distribute SDRplay software.
 4. Choose the receiver in Settings and review the neutral 100 MHz frequency and
@@ -32,9 +38,9 @@ with radar stopped. Its counter-ratio-three performance drop-in is valid only
 for that dual-tuner 2 MS/s mode; remove or replace it before selecting another
 RSPduo mode. Other receiver profiles ignore those RSPduo-specific flags.
 
-The candidate has not completed this flow on a clean card. Do not treat these
-steps as a released image installation until its artifact and manifest are
-published.
+This preview has not completed the flow on a clean card. Review
+[validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing; it does
+not yet establish fresh-card boot, Wi-Fi, SSH, receiver, or radar reliability.
 
 ## Updating a preview image
 
@@ -64,8 +70,8 @@ a stable Bookworm VectorWarp repository is available.
 1. In Raspberry Pi Imager, select **Raspberry Pi OS Lite (64-bit) Bookworm**.
    Before writing the card, set the hostname, locale/time zone, Wi-Fi name,
    password and country, a username with password or SSH key, and enable SSH.
-   Write the card, boot the Pi, then connect by SSH. The planned VectorWarp
-   image is not a download and does not replace this step.
+   Write the card, boot the Pi, then connect by SSH. The downloadable preview
+   image is the preferred Pi 4 route; this source path is an advanced alternative.
 2. Install the Linux build prerequisites in the
    [source-install guide](INSTALL.md#1-install-build-dependencies), including
    Node.js 22 or later at `/usr/bin/node`. For the Vulkan candidate, also install

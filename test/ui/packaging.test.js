@@ -275,8 +275,8 @@ const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
 assert.match(piRow.package,
-  /\[Debian 12 ARM64 DEB\]\(https:\/\/mickeyslaven\.github\.io\/blah2-VectorWarp\/#install\)$/,
-  'Raspberry Pi OS must identify Debian 12 ARM64 and link to the current package page');
+  /\[Pi 4 preview image\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+-pi4-preview\)$/,
+  'Raspberry Pi OS must link to the available Pi image preview');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
 })), readmeRows);

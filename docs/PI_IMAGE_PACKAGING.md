@@ -2,9 +2,10 @@
 
 This guide is for maintainers building and qualifying the VectorWarp Raspberry Pi 4 image. Users should follow the shorter [Pi 4 guide](PI4_GUIDE.md).
 
-> **Status:** the candidate image is still assembling. It is not published,
-> flash-verified, or boot-tested. Do not create download links or describe it
-> as an installable product yet.
+> **Status:** the Pi 4 Bookworm preview is available in
+> [release `v0.1.10-pi4-preview`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).
+> Internal software checks passed; fresh-card boot and Wi-Fi qualification are
+> still pending. Do not represent those hardware checks as complete.
 
 The target is a **Raspberry Pi 4B with 8 GB RAM** running Raspberry Pi OS Lite
 64-bit Bookworm. Use a 32 GB or larger microSD card for qualification. Pi 5 is
@@ -174,7 +175,7 @@ the following are recorded against the exact image hash and source revision:
    Imager versions, package/base/provenance hashes, and any driver or OS update
    used for the candidate.
 
-After promotion evidence is complete, upload the image, provenance, manifest,
-and checksums to the intended release tag. Then create the checked-in release
-receipt and let the package repository page derive its links. Until then, the
-candidate remains unpublished.
+The preview image is
+[`vectorwarp-pi4-0.1.10-arm64.img.xz`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz)
+with its [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+Do not mark clean-card validation complete until the criteria above are recorded.

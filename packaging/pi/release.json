@@ -1,0 +1,18 @@
+{
+  "version": "0.1.10",
+  "status": "preview",
+  "tag": "v0.1.10-pi4-preview",
+  "source_revision": "dfb16720510eaf68d5ffecc9e32a290997503897",
+  "image": {
+    "filename": "vectorwarp-pi4-0.1.10-arm64.img.xz",
+    "bytes": 674833836,
+    "sha256": "52f675b821c9c6bb34276748df0efca7a90df4aca9e4e5204d87cbe32a42ed39",
+    "raw_sha256": "a8f31bd9428665b63a2f94c774b59591f6198e503cefa9f3cd17100bae93daf4",
+    "raw_bytes": 8589934592
+  },
+  "imager": {
+    "filename": "vectorwarp-pi4-0.1.10.rpi-imager-manifest",
+    "bytes": 1136,
+    "sha256": "ccac38b9b5134f3192cd32e324edced2228b5afb54191fcbffae1b269f401dad"
+  }
+}

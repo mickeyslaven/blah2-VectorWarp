@@ -28,6 +28,21 @@ SPEC.loader.exec_module(repository)
 
 
 class HomepageTests(unittest.TestCase):
+    def assert_download_links_are_current(self, text):
+        # Desktop downloads follow the canonical matrix. The independently
+        # published Pi preview has versioned links bound to its release receipt.
+        allowed = set()
+        receipt = ROOT / 'packaging/pi/release.json'
+        if receipt.is_file():
+            pi = repository.verified_pi_image_release(receipt)
+            base = pi['image_url'].rsplit('/', 1)[0]
+            allowed = {pi['image_url'], pi['imager_url'],
+                       f"{base}/vectorwarp_{pi['version']}-1_debian12_arm64.deb"}
+        links = set(re.findall(
+            r'https://github\.com/mickeyslaven/blah2-VectorWarp/releases/download/[^\s)<>"\x60]+',
+            text))
+        self.assertFalse(links - allowed, f'Untracked release downloads: {sorted(links - allowed)}')
+
     def release_manifest(self):
         entries = []
         for (format, distro, version), (_, architectures) in repository.TARGETS.items():
@@ -335,7 +350,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
         self.assertIn('sudo bash vectorwarp-install.sh --repo-only', readme)
         self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
-        self.assertNotRegex(readme, r'/releases/download/v[0-9]')
+        self.assert_download_links_are_current(readme)
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
@@ -380,11 +395,11 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(command, guide)
             self.assertIn(command, page)
 
-    def test_install_docs_use_canonical_page_not_hardcoded_release_assets(self):
+    def test_install_docs_use_canonical_page_and_published_pi_receipt(self):
         for document in ('README.md', 'docs/INSTALL.md'):
             text = (ROOT / document).read_text()
             self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', text)
-            self.assertNotRegex(text, r'https://github\.com/mickeyslaven/blah2-VectorWarp/releases/download/v')
+            self.assert_download_links_are_current(text)
 
     def test_future_release_homepage_has_only_its_own_asset_urls(self):
         manifest = self.release_manifest()

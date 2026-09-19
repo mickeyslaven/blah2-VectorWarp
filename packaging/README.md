@@ -10,9 +10,14 @@ To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven
 This document covers building and maintaining the packages.
 
 The previous Raspberry Pi OS Trixie installation route is deprecated for new
-Pi deployments. Its replacement is a planned **Pi 4 Bookworm 64-bit Lite image**;
-**Pi 5 remains future work**. Add and validate the matching Bookworm ARM64
-package target before building that image. No flashable image is published yet.
+Pi deployments. Its replacement is the **Pi 4 Bookworm 64-bit Lite preview**:
+[release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview),
+[Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest), and
+[image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz).
+It contains the Debian 12 ARM64 package built from
+`dfb16720510eaf68d5ffecc9e32a290997503897`; fresh-card boot and Wi-Fi
+qualification remain pending. **Pi 5 remains future work.** The preview is
+separate from stable 0.1.9 Linux packages and adds no Bookworm APT repository.
 See [Pi image packaging](../docs/PI_IMAGE_PACKAGING.md).
 
 Packages are published through the signed APT/DNF repositories and direct

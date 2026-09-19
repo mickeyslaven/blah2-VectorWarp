@@ -2,9 +2,9 @@
 
 Choose one path, then configure the receiver in Settings:
 
-1. **Raspberry Pi 4B:** use the forthcoming Bookworm Lite image when its
-   release artifact and Imager manifest are published. The candidate is being
-   built; it is not yet flash- or boot-verified. See [Pi 4](#pi-4b-bookworm-lite).
+1. **Raspberry Pi 4B:** use the Bookworm Lite **preview** through its
+   [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+   Fresh-card boot and Wi-Fi qualification are pending; see [Pi 4](#pi-4b-bookworm-lite).
 2. **Linux PC or supported non-image ARM64 system:** use the signed
    [DEB/RPM package repository](#linux-packages).
 3. **macOS:** use [Homebrew](#macos-with-homebrew), or a signed PKG when the
@@ -16,11 +16,13 @@ Bookworm. A 32 GB microSD card is recommended. Pi 5 is future work.
 
 ## Pi 4B Bookworm Lite
 
-When the release is available, download its versioned `.rpi-imager-manifest`
-and open that manifest in Raspberry Pi Imager before choosing the Pi 4
-Bookworm Lite image. The manifest is required: it enables Imager's hostname,
-locale, Wi-Fi, country, login and SSH customization. Do not select a bare
-`.img.xz` when you need headless Wi-Fi or SSH setup.
+Download the preview's versioned
+[`vectorwarp-pi4-0.1.10.rpi-imager-manifest`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
+and open it in Raspberry Pi Imager before choosing the Pi 4 Bookworm Lite image.
+The manifest is required: it enables Imager's hostname, locale, Wi-Fi, country,
+login and SSH customization. Do not select the bare
+[`vectorwarp-pi4-0.1.10-arm64.img.xz`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz)
+when you need headless Wi-Fi or SSH setup.
 
 Before writing the card, set a hostname, a username with password or SSH key,
 locale/time zone, and enable SSH. Set Wi-Fi name, password and country for a
@@ -31,11 +33,17 @@ SDRplay's vendor API yourself, then choose **Build SDRplay support** in
 Settings before selecting **Save & Restart**. Other receivers can be configured
 and started with **Save & Restart** once their settings are ready.
 
-The current image candidate is not published or boot-tested, so do not flash it
-as an installation route yet. Its eventual user flow is documented in the
-[Pi 4 guide](PI4_GUIDE.md). VectorWarp does not ship SDRplay software.
+This is a Pi 4 preview. Its internal software checks passed, but fresh-card boot
+and Wi-Fi provisioning have not been qualified. Review the [Pi 4 guide](PI4_GUIDE.md)
+and [validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing.
+VectorWarp does not ship SDRplay software.
 
 ## Linux packages
+
+**Bookworm ARM64 during the Pi preview:** download the [matching 0.1.10 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb)
+and run `sudo apt install ./vectorwarp_0.1.10-1_debian12_arm64.deb`. The repository
+commands below apply to the other listed stable targets; a Bookworm repository
+is not published yet. A freshly flashed Pi image already includes VectorWarp.
 
 Use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
 for current downloads and APT/DNF setup. The same package-manager steps are
@@ -182,18 +190,20 @@ sudo dnf install ./matching.rpm
 | System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 12 (Bookworm) | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 12 (Bookworm) | ARM64 | [Preview DEB 0.1.10](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb) |
 | Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
-| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Debian 12 ARM64 package](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
-Raspberry Pi OS Lite 64-bit Bookworm uses the Debian 12 ARM64 package. The Pi 4
-image candidate is not yet published or boot-tested; use the [Pi 4 guide](PI4_GUIDE.md)
-for the release flow and current qualification boundary. Existing Trixie
-installations are not automatically migrated or downgraded.
+Raspberry Pi OS Lite 64-bit Bookworm uses the Pi 4 preview image, which contains
+the Debian 12 ARM64 package built from `dfb16720510eaf68d5ffecc9e32a290997503897`.
+It is independent of the stable 0.1.9 Linux package release and does not add a
+Bookworm APT repository. Use the [Pi 4 guide](PI4_GUIDE.md) for preview updates
+and qualification boundaries. Existing Trixie installations are not automatically
+migrated or downgraded.
 
 A Raspberry Pi can also use a listed 64-bit Fedora, Debian or Ubuntu release;
 follow that operating system's instructions. These are build/package targets,
@@ -432,10 +442,11 @@ for driver and account-access details.
 
 ### Raspberry Pi 4B on Bookworm
 
-The current Pi route is source installation on Raspberry Pi OS Lite 64-bit
-Bookworm. Use the normal dependency, build, install, and web-setup steps above,
-then follow the [Pi 4 guide](PI4_GUIDE.md) for its exact qualified RSPduo
-workload and AUTO behavior. There is no Pi-specific install flag: `--gpu auto`
+The Pi 4 Bookworm preview image is the primary route. Source installation is an
+advanced alternative for development or an existing operating-system install;
+use the normal dependency, build, install, and web-setup steps above, then
+follow the [Pi 4 guide](PI4_GUIDE.md) for its exact qualified RSPduo workload
+and AUTO behavior. There is no Pi-specific install flag: `--gpu auto`
 builds the optional Vulkan path when its dependencies are available, while
 runtime `acceleration: auto` decides whether to use it. The native installer
 does not start VectorWarp; `--setup-pi-gpu` is optional and only offers the

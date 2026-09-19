@@ -6,9 +6,10 @@ For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
 Mac actions. The systemd services, APT/DNF packages, and privileged enrollment
 instructions below apply to Linux.
 
-1. On a Pi 4B, follow the [Pi 4 image guide](PI4_GUIDE.md); its candidate image
-   is not published or boot-tested yet. On other Linux systems, install VectorWarp
-   from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+1. On a Pi 4B, follow the [Pi 4 preview guide](PI4_GUIDE.md) and open its
+   [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+   Fresh-card boot and Wi-Fi qualification are pending. On other Linux systems,
+   install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
    On macOS, use the [Homebrew guide](MACOS_HOMEBREW.md). Then run `vectorwarp`
    to open **Settings** without starting radar.
 2. If the receiver is an RSPduo, first install SDRplay's vendor API yourself
@@ -38,10 +39,11 @@ Node.js requirements, receiver build choices, GPU build packages and startup
 commands. Choose the required `--backend` before building. Installing an SDR
 driver later does not add an adapter that was omitted from the VectorWarp build.
 
-For the Raspberry Pi 4B Bookworm route, use the [Pi 4 guide](PI4_GUIDE.md)
+For the Raspberry Pi 4B Bookworm preview, use the [Pi 4 guide](PI4_GUIDE.md)
 after installation. It documents the tested RSPduo configuration and the
-geometry-limited mixed AUTO path. The image candidate is not published or
-boot-tested; Pi 5 is future work.
+geometry-limited mixed AUTO path. Fresh-card boot and Wi-Fi qualification remain
+pending; see [validation limits](PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is
+future work.
 
 ## Check receiver software
 
