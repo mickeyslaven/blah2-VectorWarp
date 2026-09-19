@@ -65,6 +65,9 @@ jobs:
           python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-driver-probe
           icd="$GITHUB_WORKSPACE/build/standalone runtime/share/vulkan/icd.d/MoltenVK_icd.json"
           VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" python3 test/macos/standalone_driver_probe.py --observe-only --worker 'build/standalone runtime/bin/blah2-gpu-worker' --evidence build/staged-driver-control
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-compatibility-control
+          fi
       - name: Verify replay, configuration, and standalone isolation
         run: |
           set -euo pipefail
@@ -104,6 +107,24 @@ jobs:
           "$runtime/python/bin/python3" -s -P test/macos/config_runtime_test.py --gpu-capable --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-config.log
           "$runtime/python/bin/python3" -s -P test/macos/receiver_sdk_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-sdk-closure.log
           "$runtime/python/bin/python3" -s -P test/macos/processor_lifecycle_test.py --standalone --app-root "$runtime" --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-lifecycle.log
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            # A/B observation of the exact Metal encoder path seen in the crash.
+            # The default driver gate below is unchanged; this is not a waiver.
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 "$runtime/python/bin/python3" -s -P test/macos/standalone_driver_probe.py --observe-only --worker "$runtime/bin/blah2-gpu-worker" --evidence build/standalone-compatibility-control
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 "$runtime/python/bin/python3" -s -P - "$runtime/bin/blah2" <<'PY' > build/standalone-compatibility-replay.log 2>&1
+          import importlib.util, json, sys, traceback
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('gpu_control', 'test/macos/gpu_runtime_test.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          try:
+              result = module.run(Path(sys.argv[1]).resolve(), 'gpu', True)
+              print(json.dumps({'observe_only': True, 'passed': True, 'result': result}))
+          except Exception:
+              traceback.print_exc()
+              print(json.dumps({'observe_only': True, 'passed': False}))
+          PY
+          fi
           # Run CPU lifecycle first so a driver failure retains that evidence.
           # A failed/crashed probe still fails this job; diagnostics do not waive it.
           driver_status=0
@@ -143,6 +164,9 @@ jobs:
             build/standalone-sdk-closure.log
             build/source-driver-probe
             build/staged-driver-control
+            build/source-compatibility-control
+            build/standalone-compatibility-control
+            build/standalone-compatibility-replay.log
             build/standalone-driver-probe
             build/standalone-lifecycle.log
             build/standalone-audit.log

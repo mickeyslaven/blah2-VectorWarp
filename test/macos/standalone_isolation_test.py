@@ -12,13 +12,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def workflow_script():
+def workflow_script(arch='arm64'):
     source = (ROOT / '.github/workflows/macos-standalone.yml').read_text()
     block = re.search(r'      - name: Verify replay, configuration, and standalone isolation\n'
                       r'        run: \|\n((?:          .*\n)+)', source)
     if not block:
         raise AssertionError('workflow isolation block missing')
-    return textwrap.dedent(block.group(1)).replace('${{ matrix.arch }}', 'arm64')
+    return textwrap.dedent(block.group(1)).replace('${{ matrix.arch }}', arch)
 
 
 class StandaloneIsolationTest(unittest.TestCase):
@@ -70,7 +70,7 @@ class StandaloneIsolationTest(unittest.TestCase):
         for directory in (self.tools, self.runtime / 'bin'):
             self.executable(directory / 'sudo', sudo)
         self.executable(self.tools / 'brew', '#!/bin/bash\nprintf "%s\\n" "$FIXTURE_PREFIX"\n')
-        self.executable(self.tools / 'uname', '#!/bin/bash\nif [ "$1" = -s ]; then echo Darwin; else echo arm64; fi\n')
+        self.executable(self.tools / 'uname', '#!/bin/bash\nif [ "$1" = -s ]; then echo Darwin; else echo "$FIXTURE_ARCH"; fi\n')
         self.executable(self.runtime / 'bin/node', '#!/bin/bash\nexit 0\n')
         runtime_stub = textwrap.dedent('''\
             #!/bin/bash
@@ -87,6 +87,12 @@ class StandaloneIsolationTest(unittest.TestCase):
               test -e "$FIXTURE_PREFIX/.vectorwarp-ci-hidden/$name" || test -L "$FIXTURE_PREFIX/.vectorwarp-ci-hidden/$name"
             done
             echo runtime >> "$FIXTURE_LOG"
+            if [ "${MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS:-}" = 0 ]; then
+              case "$*" in
+                *--observe-only*|'-s -P - '*) exit 0 ;;
+                *) exit 91 ;;
+              esac
+            fi
             if [ "${3:-}" = test/macos/standalone_driver_probe.py ] && [ "$FIXTURE_MODE" = driver-failure ]; then
               exit 23
             fi
@@ -107,6 +113,7 @@ class StandaloneIsolationTest(unittest.TestCase):
             'FIXTURE_PREFIX': str(self.prefix), 'FIXTURE_MODE': 'success',
             'FIXTURE_LOG': str(self.log), 'FIXTURE_PYTHON': sys.executable,
             'FIXTURE_HELPER': str(helper),
+            'FIXTURE_ARCH': 'arm64',
         }
 
     def executable(self, path, source):
@@ -114,9 +121,9 @@ class StandaloneIsolationTest(unittest.TestCase):
         path.write_text(source)
         path.chmod(0o755)
 
-    def run_fixture(self, mode='success', **environment):
-        return subprocess.run(['/bin/bash', '-c', workflow_script()], cwd=self.root,
-                              env={**self.env, 'FIXTURE_MODE': mode, **environment},
+    def run_fixture(self, mode='success', arch='arm64', **environment):
+        return subprocess.run(['/bin/bash', '-c', workflow_script(arch)], cwd=self.root,
+                              env={**self.env, 'FIXTURE_MODE': mode, 'FIXTURE_ARCH': arch, **environment},
                               capture_output=True, text=True, timeout=30)
 
     def assert_restored(self):
@@ -150,6 +157,12 @@ class StandaloneIsolationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 23, result.stderr)
         self.assert_restored()
         self.assertEqual(self.log.read_text().splitlines(), ['runtime'] * 5 + ['audit'])
+
+    def test_intel_compatibility_observation_cannot_clear_default_driver_failure(self):
+        result = self.run_fixture('driver-failure', arch='x86_64')
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assert_restored()
+        self.assertEqual(self.log.read_text().splitlines(), ['runtime'] * 7 + ['audit'])
 
     def test_term_restores_contents_and_preserves_signal_status(self):
         result = self.run_fixture('signal')
