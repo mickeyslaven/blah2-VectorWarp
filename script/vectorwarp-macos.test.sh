@@ -1,6 +1,6 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Isolated launcher regression tests.  No physical receiver or global service.
-set -eu
+set -euo pipefail
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/vectorwarp-macos-test.XXXXXX")
 cleanup() {
@@ -26,6 +26,7 @@ cleanup() {
   fi
   exit "$status"
 }
+trap 'echo "lifecycle fixture failed at line ${LINENO}" >&2' ERR
 trap cleanup EXIT INT TERM
 mkdir -p "$TEMP/root/api" "$TEMP/root/config" "$TEMP/root/bin" "$TEMP/root/script" "$TEMP/tools"
 rsync -a --exclude node_modules "$ROOT/api/" "$TEMP/root/api/"
@@ -102,6 +103,9 @@ test "$(cat "$TEMP/state/processor.json")" = "$copied"
 OTHER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$TEMP/other-state/processor.json")
 kill -0 "$OTHER"
 run_other stop >/dev/null
+# The copied record belonged to the now-stopped other instance; remove this
+# fixture-only stale copy before testing a new start in the original state.
+rm -f "$TEMP/state/processor.json"
 
 # A Homebrew upgrade can replace both the Node Cellar path and the VectorWarp
 # Cellar release while an owned API is alive. Its old exact config remains

@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("transfer_macos_runtime",
@@ -71,11 +72,13 @@ class StandaloneTransferTest(unittest.TestCase):
         (root / "standalone.json").write_text(json.dumps(metadata, sort_keys=True))
         return root
 
-    def encrypt(self, runtime):
+    def encrypt(self, runtime, run_id=None, job=None):
         cipher = self.base / f"runtime-{self.index}.cms"
         metadata = self.base / f"runtime-{self.index}.cms.json"
-        transfer.encrypt(SimpleNamespace(runtime=runtime, certificate=self.certificate,
-                                         output=cipher, metadata=metadata))
+        environment = {} if run_id is None else {"GITHUB_RUN_ID": run_id, "GITHUB_JOB": job}
+        with mock.patch.object(transfer.os, "environ", environment):
+            transfer.encrypt(SimpleNamespace(runtime=runtime, certificate=self.certificate,
+                                             output=cipher, metadata=metadata))
         return cipher, metadata
 
     def decrypt_args(self, cipher, metadata, output, **expected):
@@ -121,6 +124,14 @@ class StandaloneTransferTest(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, message):
                 transfer.decrypt(self.decrypt_args(cipher, metadata, self.base / f"wrong-{name}",
                                                     **{name: value}))
+
+    def test_github_identity_is_explicit_and_not_inherited_from_the_test_environment(self):
+        cipher, metadata = self.encrypt(self.runtime(), run_id="987654", job="standalone-arm64")
+        sidecar = json.loads(metadata.read_text())
+        self.assertEqual(sidecar["ci"], {"github_run_id": "987654", "github_job": "standalone-arm64"})
+        transfer.decrypt(self.decrypt_args(cipher, metadata, self.base / "github-restored", run_id="987654"))
+        with self.assertRaisesRegex(ValueError, "GitHub run"):
+            transfer.decrypt(self.decrypt_args(cipher, metadata, self.base / "wrong-github-run", run_id="987655"))
 
     def test_safe_extract_rejects_traversal_before_writing_outside_destination(self):
         archive = self.base / "unsafe.tar"

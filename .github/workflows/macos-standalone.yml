@@ -33,7 +33,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build-host dependencies
-        run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb node@24 python@3.12 vulkan-loader vulkan-headers glslang molten-vk
+        run: |
+          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb node@24 vulkan-loader vulkan-headers glslang molten-vk
+          # Intel runners already link python.org's 3.12 into /usr/local/bin.
+          # Staging uses the explicit Homebrew path and needs no global links.
+          brew install --skip-link python@3.12
       - name: Select Node 24 and build CPU, GPU, and open receiver adapters
         run: |
           echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
