@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline release-agent policy and source-reuse checks."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -77,10 +78,28 @@ class SourceReuseTest(unittest.TestCase):
             path = Path(directory) / "headers.txt"
             path.write_text("asio 1.38.2\ncpp-httplib 0.54.1\nrapidjson 1.1.0\n"
                             "vulkan-headers 1.4.357.0\neigen 5.0.1\n")
-            self.assertEqual(inputs.parse_header_versions(path)["cpp-httplib"], "0.54.1")
-            path.write_text(path.read_text().replace("0.54.1", "0.56.0"))
+            self.assertEqual(inputs.parse_header_versions(path, "arm64")["cpp-httplib"], "0.54.1")
+            path.write_text(path.read_text().replace("0.54.1", "0.53.1"))
+            self.assertEqual(inputs.parse_header_versions(path, "x86_64")["cpp-httplib"], "0.53.1")
+            path.write_text(path.read_text().replace("0.53.1", "0.56.0"))
             with self.assertRaisesRegex(ValueError, "new source review"):
-                inputs.parse_header_versions(path)
+                inputs.parse_header_versions(path, "arm64")
+
+    def test_intel_formula_pins_reviewed_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "formula.json"
+            version, checksum = inputs.CPP_HEADER["x86_64"]
+            formula = {"formulae": [{"name": "cpp-httplib", "license": "MIT",
+                       "versions": {"stable": version},
+                       "urls": {"stable": {"url":
+                           f"https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz",
+                           "checksum": checksum}}}]}
+            path.write_text(json.dumps(formula))
+            self.assertTrue(inputs.verify_cpp_formula(path, "x86_64").endswith("v0.53.1.tar.gz"))
+            formula["formulae"][0]["urls"]["stable"]["checksum"] = "a" * 64
+            path.write_text(json.dumps(formula))
+            with self.assertRaisesRegex(ValueError, "formula source"):
+                inputs.verify_cpp_formula(path, "x86_64")
 
 
 if __name__ == "__main__":

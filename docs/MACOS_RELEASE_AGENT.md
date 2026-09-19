@@ -18,10 +18,13 @@ outdated corresponding source or notices would publish a misleading release.
 When that gate fails, the agent logs and notifies the owner; the changed
 dependency source/notices must be collected and reviewed before the release
 can be published. Homebrew formula updates can trigger this gate even without
-a source-code change. In particular, the reviewed bundle records
-`cpp-httplib 0.54.1`; a build using `0.56.0` will stop here. Thus merge builds
-are unattended, but tag publication is not guaranteed unattended across
-dependency drift.
+a source-code change. The reviewed base bundle covers `cpp-httplib 0.54.1`
+on Apple Silicon. The Intel hosted image currently uses `0.53.1`; the agent
+checks that CI's formula source URL and SHA-256, fetches that exact source
+archive, verifies its MIT license text matches the reviewed notice, and adds
+it to the new corresponding-source archive. Other header-version changes,
+including a build using `0.56.0`, still stop. Merge builds are unattended, but
+tag publication is not guaranteed unattended across future dependency drift.
 
 After this code is merged to `main`, install once on the signing Mac:
 

@@ -23,6 +23,8 @@ class StandaloneReleaseTriggerTest(unittest.TestCase):
         self.assertIn("script/transfer-macos-runtime.py encrypt", source)
         self.assertIn("brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers", source)
         self.assertIn("build/standalone-provenance/header-input-versions.txt", source)
+        self.assertIn("brew info --json=v2 cpp-httplib", source)
+        self.assertIn("build/standalone-provenance/cpp-httplib-formula.json", source)
         self.assertNotIn("script/sign-macos-standalone.py", source)
         self.assertNotIn("notarytool", source)
 

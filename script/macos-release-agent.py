@@ -207,7 +207,8 @@ def download_and_decrypt(settings, candidate, work):
             command("gh", "run", "download", str(candidate["mac_run"]), "--name",
                     f"standalone-encrypted-{arch}-{candidate['commit']}", "--dir", encrypted)
         if not (diagnostic / "standalone-provenance/inventory.json").is_file() or not (
-                diagnostic / "standalone-provenance/header-input-versions.txt").is_file():
+                diagnostic / "standalone-provenance/header-input-versions.txt").is_file() or not (
+                diagnostic / "standalone-provenance/cpp-httplib-formula.json").is_file():
             command("gh", "run", "download", str(candidate["mac_run"]), "--name",
                     f"standalone-runtime-diagnostics-{arch}", "--dir", diagnostic)
         runtime = root / "runtime"
@@ -241,6 +242,8 @@ def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
                 "--x86_64-inventory", diagnostics["x86_64"] / "inventory.json",
                 "--arm64-header-versions", diagnostics["arm64"] / "header-input-versions.txt",
                 "--x86_64-header-versions", diagnostics["x86_64"] / "header-input-versions.txt",
+                "--arm64-cpp-formula", diagnostics["arm64"] / "cpp-httplib-formula.json",
+                "--x86_64-cpp-formula", diagnostics["x86_64"] / "cpp-httplib-formula.json",
                 "--baseline-arm64-inventory", settings["baseline_arm64_inventory"],
                 "--baseline-x86_64-inventory", settings["baseline_x86_64_inventory"],
                 "--baseline-notices", settings["baseline_notices"],
