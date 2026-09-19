@@ -108,7 +108,7 @@ The standalone CI matrix builds both runtimes on macOS 15, temporarily hides
 Homebrew on the disposable runner, and tests replay, settings, SDK no-device
 handling, lifecycle and the unchanged bundle inventory. Virtual-runner driver
 discovery is separate from real GPU execution and physical receiver testing.
-CI runs for pull requests and version tags, uploading diagnostics and optionally
+CI runs for pull requests, main-branch merges and version tags, uploading diagnostics and optionally
 encrypted development payloads for local review. The recipient's private transfer
 key and Apple signing/notarization credentials stay on the local Mac; this public
 repository does not register that Mac as a self-hosted runner. Release packages

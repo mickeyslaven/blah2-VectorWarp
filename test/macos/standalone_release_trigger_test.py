@@ -9,10 +9,10 @@ WORKFLOW = (Path(__file__).resolve().parents[2] /
 
 
 class StandaloneReleaseTriggerTest(unittest.TestCase):
-    def test_version_tag_builds_both_hosted_architectures(self):
+    def test_main_merges_and_version_tags_build_both_hosted_architectures(self):
         source = WORKFLOW.read_text()
         triggers = source.split("permissions:", 1)[0]
-        self.assertRegex(triggers, r"(?m)^  push:\n    tags: \['v\*'\]$")
+        self.assertRegex(triggers, r"(?m)^  push:\n    branches: \[main\]\n    tags: \['v\*'\]$")
         self.assertIn("runner: macos-15\n            arch: arm64", source)
         self.assertIn("runner: macos-15-intel\n            arch: x86_64", source)
         self.assertNotRegex(source, r"(?i)runs-on:.*self.hosted")
