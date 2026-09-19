@@ -190,12 +190,22 @@ int main() try {
       std::vector<std::unique_ptr<IqData>> storage;
       std::vector<IqData*> multiQueues;
       for (unsigned ch=0;ch<channels;++ch) { storage.push_back(std::make_unique<IqData>(4)); multiQueues.push_back(storage.back().get()); }
-      std::atomic<bool> stopMulti{false};
+      std::atomic<bool> stopMulti{false}, fullFrameQueued{false};
       ReplayPlayer player;
-      std::thread cancel([&] { std::this_thread::sleep_for(std::chrono::milliseconds(5)); stopMulti=true; });
+      // The cancellation must occur while the grouped queues are actually
+      // full. A fixed delay races CI scheduling and can stop playback before
+      // it has written any channel, which tests scheduling rather than
+      // multi-channel alignment.
+      std::thread cancel([&] {
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(250);
+        while (!fullFrameQueued.load() && std::chrono::steady_clock::now()<deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        stopMulti=true;
+      });
       player.run(multiPath,{"auto","Mock",channels,1000000,100000000,0},multiQueues,4,false,stopMulti,
-        [](const ReplayProgress&) {}, [] { return false; });
+        [&](const ReplayProgress& progress) { if (progress.samples==4) fullFrameQueued=true; }, [] { return false; });
       cancel.join();
+      require(fullFrameQueued.load(),"Replay did not fill the coherent queues before cancellation");
       for (unsigned ch=0;ch<channels;++ch) {
         storage[ch]->lock(); const auto values=storage[ch]->get_data(); storage[ch]->unlock();
         require(values.size()==4 && values[0]==std::complex<double>(ch,0) && values[3]==std::complex<double>(ch,3),

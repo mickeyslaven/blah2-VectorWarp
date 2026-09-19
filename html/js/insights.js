@@ -338,7 +338,7 @@
     return locationMapDragging || Date.now() < locationMapHoldUntil;
   }
 
-  function renderAircraftOverlays(aircraft) {
+  function renderAircraftOverlays(aircraft, sites = []) {
     const schedule = window.requestAnimationFrame || (callback => callback());
     schedule(() => {
       const graph = document.getElementById('data');
@@ -367,6 +367,19 @@
         layer.appendChild(marker);
         return {item, marker};
       });
+      // Plotly's raster OSM style has no glyph source. Keep site labels in
+      // the existing HTML overlay instead of requesting unsupported symbols.
+      for (const site of sites) {
+        const marker = document.createElement('div');
+        marker.className = 'location-site-label';
+        marker.textContent = site.name;
+        Object.assign(marker.style, {position: 'absolute', margin: '10px 0 0 12px',
+          padding: '2px 5px', borderRadius: '4px', color: '#f3eee9',
+          background: 'rgba(16,20,18,.84)', font: '600 12px/1.3 Inter,system-ui,sans-serif',
+          whiteSpace: 'nowrap'});
+        layer.appendChild(marker);
+        markers.push({item: {lat: site.latitude, lon: site.longitude}, marker});
+      }
       layer._updatePositions = () => markers.forEach(({item, marker}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
         marker.style.left = `${point.x}px`;
@@ -432,10 +445,9 @@
     };
     const traces = tracks.map(item => ellipseTrace(item));
     traces.push({
-      type: 'scattermapbox', mode: 'markers+text', name: 'Radar sites',
+      type: 'scattermapbox', mode: 'markers', name: 'Radar sites',
       lat: [receiver.latitude, transmitter.latitude], lon: [receiver.longitude, transmitter.longitude],
       text: [receiver.name || 'Receiver', transmitter.name || 'Illuminator'],
-      textposition: ['bottom right', 'top right'],
       marker: {size: [13, 13], color: ['#f3eee9', '#f7c75f']},
       hovertemplate: '%{text}<br>%{lat:.5f}, %{lon:.5f}<extra></extra>'
     });
@@ -471,7 +483,10 @@
         zoom: locationMapViewport.zoom, uirevision: locationMapViewport.key},
       legend: {orientation: 'h', x: 0, y: 1.03, bgcolor: 'rgba(20,16,14,.82)'}
     }, plotConfig);
-    renderAircraftOverlays(aircraft);
+    renderAircraftOverlays(aircraft, [
+      {...receiver, name: receiver.name || 'Receiver'},
+      {...transmitter, name: transmitter.name || 'Illuminator'}
+    ]);
     setState(aircraftError || (tracks.length ? `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'}` : 'No current radar tracks'), aircraftError ? 'warning' : tracks.length ? 'good' : 'warning');
   }
 

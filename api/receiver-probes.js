@@ -113,6 +113,8 @@ function receiverStatusFromJson(text) {
 
 function createReceiverProbes(config, options = {}) {
   const snapshot = JSON.parse(JSON.stringify(config));
+  const platform = options.platform || process.platform;
+  const mac = platform === 'darwin' ? require('./macos-receiver-probes').createMacReceiverProbes(options) : null;
   // Options are dependency injection for tests, never request parameters.
   const read = options.readFile || smallFile;
   const list = options.readdir || (directory => fs.readdir(directory));
@@ -134,6 +136,7 @@ function createReceiverProbes(config, options = {}) {
 
   return {
     async usbInventory(_request, {signal} = {}) {
+      if (mac) return mac.usbInventory(_request, {signal});
       const directory = '/sys/bus/usb/devices';
       const names = await list(directory);
       if (!Array.isArray(names) || names.length > 512)
@@ -153,6 +156,7 @@ function createReceiverProbes(config, options = {}) {
       return devices;
     },
     async dependencyInventory(_request, context) {
+      if (mac) return mac.dependencyInventory(_request, context);
       return dependenciesFromCache(await command('libraries', ['-p'], context));
     },
     async nativeReceiverStatus(_request, context) {
@@ -161,6 +165,7 @@ function createReceiverProbes(config, options = {}) {
     async serviceStatus({serviceId}, context) {
       const units = SERVICE_UNITS[serviceId];
       if (!units) throw new Error('Unknown receiver service.');
+      if (mac) return {state: 'unknown'}; // Vendor services remain independently managed.
       // `systemctl show unit-a unit-b` can exit nonzero when one alias is not
       // installed, even if another alias is active. Observe aliases separately
       // so an absent historical name cannot conceal a running enrolled service.

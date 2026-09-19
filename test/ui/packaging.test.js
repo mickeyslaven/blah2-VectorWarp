@@ -68,7 +68,11 @@ assert.match(debPrerm, /systemctl stop[\s\S]*vectorwarp-sdrplay-build\.service/,
 assert.match(rpmSpec, /%preun[\s\S]*systemctl stop[\s\S]*vectorwarp-sdrplay-build\.service/,
   'RPM removal must stop the local RSPduo build oneshot before removing its files.');
 const receiverModules = read('cmake/ReceiverModules.cmake');
-assert.doesNotMatch(receiverModules, /INSTALL_RPATH[^\n]*\/usr\/local\/lib/);
+const macRspduoRpath = /if\(APPLE\)\s+(?:#[^\n]*\n\s*)*set_property\(TARGET blah2ReceiverRspduo APPEND PROPERTY INSTALL_RPATH "\/usr\/local\/lib"\)\s+endif\(\)/;
+assert.match(receiverModules, macRspduoRpath,
+  'The macOS RSPduo module alone may use the externally installed SDK runtime path.');
+assert.doesNotMatch(receiverModules.replace(macRspduoRpath, ''), /INSTALL_RPATH[^\n]*\/usr\/local\/lib/,
+  'Linux package targets must not acquire the macOS SDK runtime path.');
 assert.doesNotMatch(rpmSpec, /QA_RPATHS|__brp_check_rpaths/,
   'Universal packages must retain the normal RPM RPATH checks');
 assert.doesNotMatch(packageScript, /strip --strip-unneeded/,

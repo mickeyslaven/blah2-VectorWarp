@@ -14,6 +14,17 @@ const matching = {settings: {center_freq: 204640000, sample_rate: 2400000,
 operating_mode: 'coherent', reconfiguring: false, recovering: false,
 cooldown_active: false};
 assert.deepEqual(compareKrakenStatus(config, matching).issues, []);
+for (const state of ['FAILED', 'ERROR', 'failed']) {
+  const status = compareKrakenStatus(config, {...matching, calibration_state: state});
+  assert.equal(status.matched, false);
+  assert.equal(status.issues[0].severity, 'error');
+  assert.match(status.issues[0].message, /calibration failed.*restart to retry/);
+}
+for (const state of ['PENDING', 'RECOVERING']) {
+  const status = compareKrakenStatus(config, {...matching, calibration_state: state});
+  assert.equal(status.issues[0].severity, 'warning');
+}
+assert.equal(compareKrakenStatus(config, {...matching, calibration_state: 'CONVERGED'}).matched, true);
 assert.equal(compareKrakenStatus(config, {settings: {}}).matched, false);
 assert.equal(compareKrakenStatus(config, {...matching, settings: {center_freq: null}}).actual.centerFrequency, null);
 const mismatched = JSON.parse(JSON.stringify(matching));

@@ -27,9 +27,13 @@ for environment in ['VW_FIXTURE_DRIVER_THROW', 'VW_FIXTURE_DRIVER_OVERSIZE']:
     assert code == 1 and status['available'] is False and status['qualification'] == 'not-run'
     assert len(status['error']) <= 240 and '\n' not in status['error']
 with tempfile.TemporaryDirectory(prefix='vectorwarp-driver-status-fixture-') as directory:
+    linked = pathlib.Path(directory) / 'linked-gpu-worker'
+    linked.symlink_to(worker.resolve())
+    code, status = invoke(linked)
+    assert code == 0 and status['devices'][0]['name'] == 'fixture?"GPU\\'
     isolated = pathlib.Path(directory) / 'blah2-gpu-worker'
     shutil.copy2(worker, isolated)
     code, status = invoke(isolated)
     assert code == 1 and not status['available'] and status['devices'] == []
 assert invoke(argument='--unknown')[0] == 2
-print('Driver diagnostics: five offline ABI/fault/escaping cases PASS; no hardware opened')
+print('Driver diagnostics: six offline ABI/fault/escaping/symlink cases PASS; no hardware opened')

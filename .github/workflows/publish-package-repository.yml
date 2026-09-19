@@ -95,6 +95,23 @@ jobs:
           manifest_commit=$(jq -er '.source_commit | select(type == "string")' packages/package-manifest.json)
           [[ $manifest_version == "${TAG#v}" && ${manifest_commit,,} == ${tag_commit,,} ]] || {
             echo 'Release assets do not match the immutable release tag.' >&2; exit 1; }
+          macos_filename="vectorwarp-${manifest_version}-macos-universal.pkg"
+          macos_digest=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"${macos_filename}\") | .digest")
+          if [[ -n $macos_digest ]]; then
+            [[ $macos_digest =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo 'Mac release asset has no verified SHA-256 digest.' >&2; exit 1; }
+            macos_source="vectorwarp-${manifest_version}-macos-corresponding-source.tar.gz"
+            source_digest=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"${macos_source}\") | .digest")
+            [[ $source_digest =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo 'Mac corresponding source has no verified SHA-256 digest.' >&2; exit 1; }
+            gh release download "$TAG" --dir packages --pattern "$macos_filename" \
+              --pattern "$macos_source" --pattern macos-release.json
+            [[ -f packages/$macos_filename && -f packages/$macos_source && -f packages/macos-release.json ]] || {
+              echo 'Mac release asset, source, or receipt is missing.' >&2; exit 1; }
+            printf '%s  %s\n' "${macos_digest#sha256:}" "packages/$macos_filename" | sha256sum --check --strict
+            printf '%s  %s\n' "${source_digest#sha256:}" "packages/$macos_source" | sha256sum --check --strict
+            printf 'MACOS_RELEASE_FILE=packages/macos-release.json\n' >> "$GITHUB_ENV"
+          fi
           printf 'RELEASE_VERSION=%s\nRELEASE_COMMIT=%s\n' "$manifest_version" "$tag_commit" >> "$GITHUB_ENV"
       - name: Install repository signing tools
         run: |
@@ -119,12 +136,16 @@ jobs:
           FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
+          macos_args=()
+          if [[ -n ${MACOS_RELEASE_FILE:-} ]]; then
+            macos_args=(--macos-release "$MACOS_RELEASE_FILE")
+          fi
           python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
             --output repository --public-key packaging/keys/vectorwarp.asc \
             --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
             --installer-template script/install-release.sh \
             --expected-version "$RELEASE_VERSION" --expected-source-commit "$RELEASE_COMMIT" \
-            --require-release-matrix
+            --require-release-matrix "${macos_args[@]}"
           test -f repository/repository-manifest.json -a -f repository/install.sh
           test $(du -sm repository | awk '{print $1}') -le 900
       - name: Stage fresh repository for protected Pages deployment
@@ -163,12 +184,25 @@ jobs:
       - id: deployment
         name: Deploy reviewed repository
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+  verify-pages:
+    name: Verify public installation page and downloads
+    needs: [rebuild-repository, publish-pages]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download freshly rebuilt repository
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-package-repository
+          path: repository
       - name: Check public installation page and downloads
         env:
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          PAGE_URL: https://mickeyslaven.github.io/blah2-VectorWarp/
         run: |
           set -euo pipefail
-          [[ $PAGE_URL == https://mickeyslaven.github.io/blah2-VectorWarp/ ]]
+          if [[ "${PAGE_URL:-}" != "https://mickeyslaven.github.io/blah2-VectorWarp/" ]]; then
+            echo 'Unexpected deployment URL.' >&2; exit 1
+          fi
           # Allow bounded CDN propagation, but never call a stale page success.
           for file in index.html install.sh repository-manifest.json keys/vectorwarp.asc; do
             matched=false
@@ -179,7 +213,7 @@ jobs:
                 cmp --silent "repository/$file" "$RUNNER_TEMP/vectorwarp-public-file"; then
                 matched=true; break
               fi
-              sleep 5
+              sleep 30
             done
             $matched || { echo "Public repository file is unavailable or stale: $file" >&2; exit 1; }
           done
@@ -193,3 +227,14 @@ jobs:
               --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
               "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${filename}"
           done <<< "$filenames"
+          macos_filename=$(jq -r '.macos_package.filename // empty' repository/repository-manifest.json)
+          if [[ -n $macos_filename ]]; then
+            [[ $macos_filename == "vectorwarp-${version}-macos-universal.pkg" ]]
+            macos_source=$(jq -er '.macos_package.source_archive.filename' repository/repository-manifest.json)
+            [[ $macos_source == "vectorwarp-${version}-macos-corresponding-source.tar.gz" ]]
+            for asset in "$macos_filename" "$macos_source"; do
+              curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' \
+                --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
+                "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${asset}"
+            done
+          fi

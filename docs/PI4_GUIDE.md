@@ -1,96 +1,109 @@
 # Raspberry Pi 4 guide
 
-Status, 19 September 2026: Raspberry Pi 4B (8 GB) is the current target. The
-test host runs **Raspberry Pi OS Lite 64-bit Bookworm**, which is also the
-selected distribution baseline. A
-Pi 5 profile is future work and needs its own hardware, AUTO, and performance
-qualification. The older Raspberry Pi OS Trixie package route is deprecated
-for new Pi installations; existing systems are not automatically migrated.
+The supported Pi profile is a **Raspberry Pi 4B with 8 GB RAM** running
+**Raspberry Pi OS Lite 64-bit Bookworm**. It is a source installation today:
+there is no Bookworm package or flashable VectorWarp image. The older Raspberry
+Pi OS Trixie package route is deprecated for new Pi deployments and must not be
+forced onto Bookworm. Pi 5 is future work.
 
-No VectorWarp Pi image has been built, flashed, boot-tested, or published.
-The Imager-manifest generator and its four offline tests have passed, but an
-image also needs a Bookworm ARM64 package target and clean-card acceptance.
-RSPduo users must obtain and install SDRplay's vendor API themselves and
-accept its terms; VectorWarp does not redistribute that API. See
-[Pi image packaging](PI_IMAGE_PACKAGING.md) and
-[SDRplay setup](SDRPLAY_SETUP.md).
+## Headless Bookworm setup
 
-## Qualified workload and current evidence
+1. In Raspberry Pi Imager, select **Raspberry Pi OS Lite (64-bit) Bookworm**.
+   Before writing the card, set the hostname, locale/time zone, Wi-Fi name,
+   password and country, a username with password or SSH key, and enable SSH.
+   Write the card, boot the Pi, then connect by SSH. The planned VectorWarp
+   image is not a download and does not replace this step.
+2. Install the Linux build prerequisites in the
+   [source-install guide](INSTALL.md#1-install-build-dependencies), including
+   Node.js 22 or later at `/usr/bin/node`. For the Vulkan candidate, also install
+   the guide's Vulkan and glslang development packages.
+3. Clone, preflight, build, and install. `--jobs 1` is accepted by
+   `build-native.sh` and reduces peak build memory on the Pi; remove it only if
+   the Pi has sufficient memory and cooling for more parallel work.
 
-The Pi 4 work uses two RSPduo channels at 2 MS/s, 551 MHz, 500 ms (one-million
-sample) CPIs, clutter lags -10 through 399 (410 taps), map delays -10 through
-400 inclusive (411 bins), Doppler
-±300 Hz (301 rows), and detection and tracking enabled. CPU range FFT padding
-is 4096. These values describe the tested workload, not a universal performance
-promise.
+   ```sh
+   git clone https://github.com/mickeyslaven/blah2-VectorWarp.git
+   cd blah2-VectorWarp
+   script/build-native.sh --preflight --backend all --gpu auto --jobs 1
+   script/build-native.sh --backend all --gpu auto --jobs 1
+   sudo script/install-native.sh --preflight
+   sudo script/install-native.sh
+   ```
 
-The earlier production version passed a 40-minute live AUTO soak: 375.691 ms
-mean after qualification, p99 398.380 ms, maximum 470.71 ms, zero dropped
-samples/faults, and zero final complete-CPI backlog. AUTO selected CPU in that
-run. See the [complete soak result](PI_AUTO_SOAK_20260919.md).
+   `--backend all` builds Kraken, USRP, and HackRF support plus the local
+   RSPduo source kit. `--gpu auto` is the build default and includes Vulkan
+   when its dependencies are usable. The installer preserves existing
+   `/etc/vectorwarp/config.yml` and does not start VectorWarp.
+4. Run `vectorwarp` over SSH. It starts only the web API when needed and prints
+   its address. From another device on the same network, open
+   `http://<pi-address>:3000/`; do not use `localhost` from that other device.
+   Keep this unauthenticated UI on a trusted LAN/VPN or behind an authenticated
+   gateway.
+5. For an RSPduo, install and accept SDRplay's vendor Hardware API yourself.
+   VectorWarp does not distribute it. In Settings, select **RSPduo**, use
+   **Build SDRplay support**, wait for the local adapter build to complete, then
+   configure the receiver and choose **Save & Restart**. See
+   [SDRplay setup](SDRPLAY_SETUP.md) for the vendor/API service details.
 
-The repaired isolated mixed worker then passed two short live AUTO runs at
-**341.508 and 337.463 ms mean after qualification**, versus adjacent CPU
-controls at 383.306 and 378.377 ms. AUTO kept mixed active in both runs, with
-zero drops, faults, or final complete-CPI backlog. The pooled gain is 10.86%.
-The preserved experimental mixed prototype measured 334.582 ms alongside
-these runs. These are 30-second comparisons, not endurance qualification for
-the repaired worker. See the [repair and validation report](PI_MIXED_REPAIR_20260919.md).
+## Tested RSPduo configuration
+
+Use two RSPduo channels at **2 MS/s**, **551 MHz**, and **500 ms CPI** (one
+million samples). Enable clutter, detection, and tracking; use one surveillance
+path and no array reference. Set clutter lags **-10…399** (410 taps; the YAML
+upper bound is exclusive, so use `delayMax: 400`), delay map **-10…400** (411 bins),
+and Doppler map **±300 Hz** (301 rows). The qualified Pi path chooses CPU range
+FFT padding **4096** internally. These settings describe the tested workload; they are not a
+general real-time promise.
+
+Set **Settings → Processing → Acceleration** to **Automatic**. To be eligible
+for the Pi-specific mixed path, keep the device request at generic `auto` and
+keep exactly the Pi 4B/BCM2711, one-surveillance, no-array-reference,
+clutter-enabled 2 MS/s, one-million-sample, 301×411, 410-tap geometry above.
+An explicit GPU device or any other geometry follows the generic CPU/Vulkan
+policy.
+
+## Check that it is running
+
+After **Save & Restart**, confirm fresh receiver and processor status in
+Settings, then use:
+
+```sh
+vectorwarp status
+vectorwarp logs
+```
+
+For the exact eligible workload, successful qualification may report the mixed
+backend as `vulkan+cpu`. CPU is also a valid AUTO outcome when the timing or
+map checks do not accept mixed processing. Confirm that the map updates and
+detection/tracking are active before treating the setup as successful. For a
+driver diagnostic, run `/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`.
+
+## Evidence and limits
+
+The repaired isolated mixed worker passed two short live AUTO runs at **341.508
+and 337.463 ms** mean after qualification, versus adjacent CPU controls at
+**383.306 and 378.377 ms**. AUTO kept mixed active with zero drops, faults, or
+final complete-CPI backlog: a **10.86% pooled** improvement. These were
+30-second comparisons, not endurance qualification. No new 40-minute mixed
+soak has passed. An earlier 40-minute AUTO soak passed with CPU selected;
+that result applies only to the older CPU-selected binary. See the
+[repair and validation report](PI_MIXED_REPAIR_20260919.md) and
+[earlier soak result](PI_AUTO_SOAK_20260919.md).
 
 ## AUTO and mixed processing
 
-The setting is `process.performance.acceleration`. The new whole-CPI mixed
-candidate is considered only when it is `auto`, Linux identifies Pi 4B/BCM2711,
-the device request is generic `auto`, and the CPI has the exact geometry above
-(one surveillance path, no array reference, clutter enabled, 2 MS/s,
-one million samples, 301×411 map, 3322-sample correlation, 4096 range FFT,
-410 clutter bins, delays -10..400, Doppler -300..300 centered at zero):
+For the eligible Pi 4 configuration, the parent starts an isolated mixed child
+that owns Vulkan and the mixed DSP path. It first compares two complete child
+maps with CPU maps (RMS and peak relative error must each be at most `1e-4`),
+then alternates three CPU and three mixed whole CPIs. Mixed is selected only
+when its median CPI is more than 5% faster than CPU.
 
-```yaml
-process:
-  performance:
-    acceleration: auto
-```
-
-Pi 5, other hardware, explicitly selected GPU devices, and any other geometry
-continue through the existing generic AUTO or explicit-acceleration policy;
-this gate does not force them to CPU.
-
-For the Pi 4 candidate, the parent keeps the CPI inputs and starts an isolated
-mixed child. The child owns Vulkan and the frozen mixed DSP path; it returns a
-finite complete map plus the filtered tail through bounded IPC. AUTO first
-compares two child maps with the CPU map for every bin (RMS and peak relative
-error must each be at most `1e-4`). It then alternates three CPU and three mixed
-whole-CPI trials. Mixed is selected only when its median complete-CPI time is
-strictly below 95% of the CPU median (more than 5% faster). Live accuracy
-comparisons wait for a nearly empty capture queue and let CPU processing drain
-backlog between comparisons; they do not increase the queue or reduce the RF
-workload. Capture drops,
-inadequate or growing backlog, worker/IPC
-failure, invalid output, a failed map comparison, or later loss of the margin
-disable mixed processing and use CPU.
-
-“CPU” is a genuine CPU path. An explicit generic GPU request is handled by the
-generic accelerator; it does not override it with the Pi mixed child. Mixed
-telemetry describes the child as `vulkan+cpu` when it publishes a map. The
-mixed design still contains CPU work, including the dense FP64 solve and its
-CPU portions; it must not be described as a fully GPU ambiguity map.
-
-The isolated worker now sets FFTW's planner thread count before constructing
-its CPU helpers and checks that two actual clutter CPU slots exist. The older
-worker silently ran with only one slot; this was the main regression from the
-fast prototype. Direct paired live input also stays packed as signed16 during
-the worker transfer (8 MB instead of 32 MB of FP64). The child decodes into its
-persistent working buffers. The parent retains independent original samples
-for CPU recovery; this is not zero copy.
-
-The repaired worker and earlier CPU-selected soak are separate qualifications.
-The soak's only ≥750 ms event was an 871.52 ms startup accuracy comparison,
-which the profiler captured. Every ready-state frame stayed below 500 ms,
-with peak temperature 50.634°C and no throttling. Those endurance and hardware
-results apply to the old CPU-selected binary. See the
-[mixed-worker repair and short comparisons](PI_MIXED_REPAIR_20260919.md) for
-current correctness checks, timings, binary identities, and remaining limits.
+The paired live input crosses the worker boundary as packed signed 16-bit data
+(8 MB rather than 32 MB of FP64); the child decodes it into persistent buffers.
+The parent keeps the original samples and switches to CPU for a worker crash or
+hang, IPC failure, invalid/non-finite map, failed comparison, capture drop,
+unacceptable backlog, or loss of the timing margin. `vulkan+cpu` includes the
+worker's CPU work, including the FP64 coefficient solve, and is not a fully GPU map.
 
 ## Related records
 

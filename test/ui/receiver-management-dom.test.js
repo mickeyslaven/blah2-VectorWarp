@@ -10,7 +10,7 @@ const window = dom.window, saved = setupDefaults(), requests = [];
 saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0,
   surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
 saved.capture.fs = 2400000;
-let revision = 'a'.repeat(64), discoveryCount = 0, mode = 'ok';
+let revision = 'a'.repeat(64), discoveryCount = 0, mode = 'ok', directMacAction = false;
 window.liveApiUrl = value => value;
 window.rememberApiPort = () => {};
 window.fetchStatusResource = async (url, options) => window.fetch(url, options);
@@ -37,10 +37,11 @@ window.fetch = async (url, options = {}) => {
           [{configField: 'capture.fc', direction: 'direct-tuning'},
             ...(['RspDuo', 'HackRF'].includes(type) ? [{configField: 'capture.device.serial', direction: 'direct-tuning'}] : [])]})),
       management: {actions: [{id: 'reviewed-hackrf', receiverType: 'HackRF', kind: 'install-packages', available: true}]}, errors: []};
-  } else if (url === '/api/receivers/plan') body = {nonce: 'b'.repeat(64), configRevision: revision,
-    status: 'awaiting-local-authorization', lifetimeSeconds: 300, review: '<img src=x onerror=alert(1)>',
-    authorizationCommand: 'sudo /opt/vectorwarp/libexec/vectorwarp-receiver-helper authorize fixture',
-    transaction: {changes: [{name: 'hackrf', version: '1.2.3', origin: 'Fedora', archive: 'updates'}]}};
+  } else if (url === '/api/receivers/plan') body = directMacAction ? {nonce: 'c'.repeat(64), configRevision: revision,
+    status: 'ready', lifetimeSeconds: 300, review: 'Homebrew will install the open-source HackRF formula.', requiresAuthorization: false} :
+    {nonce: 'b'.repeat(64), configRevision: revision, status: 'awaiting-local-authorization', lifetimeSeconds: 300, review: '<img src=x onerror=alert(1)>',
+      authorizationCommand: 'sudo /opt/vectorwarp/libexec/vectorwarp-receiver-helper authorize fixture',
+      transaction: {changes: [{name: 'hackrf', version: '1.2.3', origin: 'Fedora', archive: 'updates'}]}};
   else if (url === '/api/receivers/execute') {
     if (mode === 'transport') throw new Error('Connection lost; action outcome unknown.');
     body = {ok: true, status: 'complete', message: 'Verified software state.'};
@@ -96,6 +97,13 @@ async function click(label) { const button = findButton(label); assert.ok(button
     await click('Run authorized action');
     assert.ok(window.document.querySelector('#receiver-setup').textContent.includes('outcome unknown'));
     assert.equal(findButton('Run authorized action'), undefined, 'Lost transport cannot silently retry a consumed action');
+    mode = 'ok'; directMacAction = true;
+    await click('Check receiver software');
+    await click('Review missing dependency install');
+    assert.equal(window.document.querySelector('#receiver-setup pre'), null, 'macOS reviewed Homebrew actions do not show a Linux sudo helper command');
+    await click('Run reviewed action');
+    const macSent = requests.filter(item => item.url === '/api/receivers/execute').at(-1);
+    assert.deepEqual(JSON.parse(macSent.options.body), {nonce: 'c'.repeat(64), configRevision: revision});
     console.log('Receiver software browser flow passed: four backends, reuse, explicit plan/grant/execute, escaped receipts and lost-transport handling.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

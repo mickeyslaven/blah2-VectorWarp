@@ -5,6 +5,9 @@
 #include <cassert>
 #include <iostream>
 #include <limits>
+#if defined(OVERFLOW)
+#undef OVERFLOW
+#endif
 struct Spec { std::string value = "A:A A:B"; std::string to_string() const { return value; } };
 struct Receiver {
   size_t count = 2;

@@ -4,9 +4,9 @@
 
 > **THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!**
 
-VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native Linux installation. Set up your radar, watch it run, and record or replay signals from the same interface.
+VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native installation on Linux and macOS. Set up your radar, watch it run, and record or replay signals from the same interface.
 
-[Install](https://mickeyslaven.github.io/blah2-VectorWarp/#install) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
+[Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
 
 ## What you get beyond blah2
 
@@ -26,7 +26,7 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.
 - **Processing fixes:** corrected detection SNR, track association, spectrum scaling, and invalid-data handling, with regression tests.
-- **Native Linux operation:** run without Docker, with build and package targets for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems.
+- **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel source-level CI support remains experimental.
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
@@ -92,6 +92,33 @@ from 69.7 to 44.7 ms versus the preceding VectorWarp version in the same campaig
 keep that separate from the upstream comparison. Heavier workloads can still
 miss deadlines; the full report includes every tested configuration.
 
+## Install on macOS with Homebrew
+
+With Homebrew and Xcode Command Line Tools installed:
+
+```sh
+brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
+brew install vectorwarp
+vectorwarp
+```
+
+This builds the app and local USB Kraken companion and opens Settings.
+Configure a receiver or replay file, then choose **Save & Restart** to start
+processing. See the [Homebrew guide](docs/MACOS_HOMEBREW.md) for prerequisites,
+services, updates and removal, and the [Mac guide](docs/MACOS.md) for receivers.
+
+Apple Silicon is tested on the development M2. Intel is experimental, with
+source-level CI coverage but no physical receiver, GPU, or installed-Homebrew
+qualification. The public tap builds from source; no bottle is supplied.
+The tap's update and restart commands are in the
+[Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates).
+The standalone macOS installer is documented separately in
+[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md). The universal package is
+Developer ID signed and Apple-notarized. When the [download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+lists a macOS PKG, it installs the app at `/Applications/VectorWarp.app`; launch it with
+`/Applications/VectorWarp.app/Contents/MacOS/VectorWarp`.
+
 ## Install on Linux
 
 Start with [downloads and APT/DNF setup](https://mickeyslaven.github.io/blah2-VectorWarp/#install). The [full installation guide](docs/INSTALL.md) also covers source builds.
@@ -128,9 +155,11 @@ details.
 `vectorwarp` (or `vectorwarp open`) opens only the web interface.
 `vectorwarp start` starts the full VectorWarp stack; `vectorwarp stop` stops it,
 including the web page; and `vectorwarp restart` restarts it in order.
-Use `vectorwarp status`, `vectorwarp logs` and `vectorwarp version` to check it,
-or `vectorwarp help` for all commands. These commands and upgrades never stop shared Kraken Suite or SDRplay
-services.
+Use `vectorwarp status`, `vectorwarp logs` and `vectorwarp help` to inspect it.
+Check the installed version with `vectorwarp version` on Linux or
+`brew list --versions vectorwarp` on macOS. For a service-managed Mac instance,
+use the [Homebrew service controls](docs/MACOS_HOMEBREW.md#optional-per-user-service).
+These commands and upgrades never stop shared Kraken Suite or SDRplay services.
 
 ### 4. Update
 
@@ -176,17 +205,31 @@ available for development or unsupported systems.
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
-| Raspberry Pi OS (legacy Pi route, deprecated) | Trixie, 64-bit | ARM64 | [Existing Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Public Homebrew tap](docs/MACOS_HOMEBREW.md) |
+| macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
+
+macOS development is documented in [the local build guide](docs/MACOS.md).
+Apple Silicon (`arm64`) has been exercised locally on an Apple M2 running macOS
+26.6.1, including CPU/replay, browser configuration and lifecycle, local
+Homebrew app/companion revision 17, and a calibrated local USB Kraken run.
+Vulkan through MoltenVK is qualified on that M2 for ambiguity and clutter, with
+CPU fallback retained. Intel (`x86_64`) is an experimental source-level CI
+target: its `macos-15-intel` job passed CPU, open receiver-adapter, synthetic
+Kraken, replay, API, browser, and lifecycle checks. It has no physical receiver,
+GPU, or installed-Homebrew claim.
+The public Homebrew tap is managed by the
+[main-merge workflow](docs/HOMEBREW_PUBLISHING.md). Release downloads appear in
+the [installation matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
+
+For new Raspberry Pi deployments, use the [Pi 4 guide](docs/PI4_GUIDE.md).
+The current validated Pi baseline is Raspberry Pi 4B (8 GB) with Raspberry Pi
+OS Lite 64-bit Bookworm, installed from source. The Trixie package route is
+deprecated for new Pi work and must not be installed on Bookworm. A Bookworm
+package target and Pi image are not published; Pi 5 support is future work.
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
-
-**New Pi distribution:** a headless Raspberry Pi 4 microSD image based on
-**Raspberry Pi OS Lite 64-bit Bookworm**, with Wi-Fi and SSH setup through
-Raspberry Pi Imager. It replaces the deprecated Pi installation route above
-once qualified and published. **Raspberry Pi 5 is future work.** Neither image
-is currently published; existing ARM64 packages do not imply a qualified Pi
-image. See the [Pi 4 guide](docs/PI4_GUIDE.md) and
-[Pi image packaging plan](docs/PI_IMAGE_PACKAGING.md).
 
 ## Credits and license
 

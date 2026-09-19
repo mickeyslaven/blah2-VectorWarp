@@ -33,16 +33,16 @@ async function main() {
   assert.throws(() => trustedOrigins(3000, ['https://receiver.example/path'], noNetlink, () => {}),
     /exact HTTP\(S\) origins/);
   const receiver = {type: 'HackRF', capabilities: {liveCompiled: false}};
-  let guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
+  let guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper', {platform: 'linux'});
   assert.equal(guide.length, 1);
   assert.match(guide[0].text, /build with support for this receiver/);
   assert.match(guide[0].text, /driver alone will not add support/);
   assert.equal(guide[0].command, undefined, 'An SDK install cannot enable an excluded backend');
   receiver.capabilities.liveCompiled = true; receiver.dependencies = {state: 'missing'};
-  guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper');
+  guide = receiverSetupGuide(receiver, '/opt/vectorwarp/libexec/vectorwarp-receiver-helper', {platform: 'linux'});
   assert(guide.some(item => item.command?.endsWith('enroll-packages HackRF')));
   assert(guide.some(item => /Fedora 44/.test(item.text)));
-  const remoteGuide = receiverSetupGuide({type: 'Kraken', locality: 'remote', capabilities: {liveCompiled: true}}, '/fixture');
+  const remoteGuide = receiverSetupGuide({type: 'Kraken', locality: 'remote', capabilities: {liveCompiled: true}}, '/fixture', {platform: 'linux'});
   assert(remoteGuide.some(item => /existing remote Suite/.test(item.text)));
   assert(!remoteGuide.some(item => item.command), 'Remote Suite does not acquire local service authority');
   assert.equal(sameReceiverOrigin(request('http://127.0.0.1:3000')), true);

@@ -1,5 +1,6 @@
 #include "GpuProcess.h"
 #include "GpuDriverStatus.h"
+#include "MacGpuCompatibility.h"
 #include <dlfcn.h>
 #include <iostream>
 #include <stdexcept>
@@ -8,6 +9,7 @@ int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--driver-status") {
     // Enumeration only: no logical device, FFT plan, IQ, or persistent cache.
     // The caller must bound this separate process, just like processing workers.
+    blah2::applyMacGpuCompatibilityPolicy();
     void* diagnostic = dlopen(blah2::gpuSiblingPath("blah2-gpu-vulkan.so").c_str(), RTLD_NOW | RTLD_LOCAL);
     std::string response;
     int code = 0;
@@ -30,6 +32,7 @@ int main(int argc, char** argv) {
   void* module = nullptr;
   const int result = blah2::runGpuWorker([&](const blah2::GpuGeometry& geometry,
       const std::string& device) -> std::unique_ptr<blah2::GpuBackend> {
+    blah2::applyMacGpuCompatibilityPolicy();
     module = dlopen(blah2::gpuSiblingPath("blah2-gpu-vulkan.so").c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!module) {
       const char* detail = dlerror();

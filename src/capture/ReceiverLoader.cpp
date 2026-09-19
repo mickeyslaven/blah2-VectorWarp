@@ -5,8 +5,13 @@
 #include <array>
 #include <cstring>
 #include <dlfcn.h>
+#include <limits.h>
 #include <stdexcept>
 #include <unistd.h>
+#include <vector>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -20,20 +25,50 @@ struct ModuleSpec {
   const char* remedy;
 };
 const std::array<ModuleSpec, 3> modules{{
-  {"Usrp", "blah2-receiver-usrp.so", BLAH2_BUILT_USRP,
+  {"Usrp", "blah2-receiver-usrp"
+#if defined(__APPLE__)
+    ".dylib"
+#else
+    ".so"
+#endif
+    , BLAH2_BUILT_USRP,
     "Install the matching UHD runtime using Receiver setup."},
-  {"HackRF", "blah2-receiver-hackrf.so", BLAH2_BUILT_HACKRF,
+  {"HackRF", "blah2-receiver-hackrf"
+#if defined(__APPLE__)
+    ".dylib"
+#else
+    ".so"
+#endif
+    , BLAH2_BUILT_HACKRF,
     "Install the libhackrf runtime using Receiver setup."},
-  {"RspDuo", "blah2-receiver-rspduo.so", BLAH2_BUILT_RSPDUO,
+  {"RspDuo", "blah2-receiver-rspduo"
+#if defined(__APPLE__)
+    ".dylib"
+#else
+    ".so"
+#endif
+    , BLAH2_BUILT_RSPDUO,
     "Install SDRplay API 3.15 locally after reviewing its vendor license; see Receiver setup."}
 }};
 
 std::string executable_directory() {
+#if defined(__APPLE__)
+  uint32_t size = 0;
+  _NSGetExecutablePath(nullptr, &size);
+  std::vector<char> path(size);
+  if (!size || _NSGetExecutablePath(path.data(), &size) != 0)
+    throw std::runtime_error("Cannot resolve the installed receiver module directory");
+  std::array<char, PATH_MAX> canonical{};
+  if (!realpath(path.data(), canonical.data()))
+    throw std::runtime_error("Cannot resolve the installed receiver module directory");
+  const std::string executable(canonical.data());
+#else
   std::array<char, 4096> path{};
   const auto count = readlink("/proc/self/exe", path.data(), path.size());
   if (count <= 0 || static_cast<std::size_t>(count) == path.size())
     throw std::runtime_error("Cannot resolve the installed receiver module directory");
   const std::string executable(path.data(), static_cast<std::size_t>(count));
+#endif
   return executable.substr(0, executable.find_last_of('/'));
 }
 
@@ -54,7 +89,12 @@ LoadedModule open_module(const ModuleSpec& module) {
   // Fedora does not put the vendor's standard /usr/local/lib installation in
   // its loader cache. No configurable path, environment search or sibling SDK
   // preload is permitted; only this exact root-owned SDK file is a fallback.
-  auto library = local ? open_pinned_receiver_library(path, local_gate.runtime, "libsdrplay_api.so.3") :
+  auto library = local ?
+#if defined(__linux__)
+    open_pinned_receiver_library(path, local_gate.runtime, "libsdrplay_api.so.3") :
+#else
+    open_receiver_library(path) :
+#endif
     open_receiver_library(path, std::strcmp(module.receiver, "RspDuo") == 0 ?
       "/usr/local/lib/libsdrplay_api.so.3.15" : nullptr, "libsdrplay_api.so.3");
   if (!library.handle) {

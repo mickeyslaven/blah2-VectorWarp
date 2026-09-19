@@ -101,6 +101,18 @@ void IqData::subtract_clutter(const std::complex<float>* estimate, uint32_t coun
   data->erase(sample, data->end());
 }
 
+void IqData::subtract_clutter(const std::complex<double>* estimate, uint32_t count,
+                              uint32_t divisor)
+{
+  if ((!estimate && count) || !divisor || count > data->size())
+    throw std::runtime_error("Clutter estimate does not match the IQ block");
+  auto sample = data->begin();
+  for (uint32_t i = 0; i < count; ++i, ++sample)
+    *sample = *sample - (estimate[i] / double(divisor));
+  // Match the filter's existing contract: publish only the conditioned CPI.
+  data->erase(sample, data->end());
+}
+
 void IqData::replace(std::deque<std::complex<double>>&& samples)
 {
   if (samples.size() > n)
@@ -108,6 +120,15 @@ void IqData::replace(std::deque<std::complex<double>>&& samples)
     samples.erase(samples.begin(), samples.end() - n);
   }
   *data = std::move(samples);
+}
+
+std::deque<std::complex<double>>& IqData::resize_for_write(uint32_t count)
+{
+  if (count > n)
+    throw std::runtime_error("Writable IQ block exceeds FIFO capacity");
+  if (count != data->size())
+    data->resize(count);
+  return *data;
 }
 
 void IqData::push_back(std::complex<double> sample)

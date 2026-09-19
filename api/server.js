@@ -2,9 +2,11 @@ const express = require('express');
 const net = require("net");
 const fs = require('fs');
 const yaml = require('js-yaml');
+const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
-const {spawn} = require('child_process');
+const {execFile} = require('child_process');
+const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
 const {readConfig, writable, saveConfig} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
@@ -69,17 +71,8 @@ function replayTruthStatus() {
 }
 
 let restartCommand = null;
-if (process.env.BLAH2_CONFIG_RESTART_COMMAND) {
-  try {
-    const parsed = JSON.parse(process.env.BLAH2_CONFIG_RESTART_COMMAND);
-    if (!Array.isArray(parsed) || parsed.length === 0 ||
-        parsed.some(value => typeof value !== 'string' || value.length === 0))
-      throw new Error('expected a JSON array of non-empty strings');
-    restartCommand = parsed;
-  } catch (error) {
-    console.error(`Invalid BLAH2_CONFIG_RESTART_COMMAND: ${error.message}`);
-  }
-}
+try { restartCommand = restartCommandFromEnvironment(); }
+catch (error) { console.error(`Invalid restart lifecycle configuration: ${error.message}`); }
 
 var stash_map = require('./stash/maxhold.js');
 var stash_detection = require('./stash/detection.js');
@@ -145,6 +138,8 @@ function currentGpuRuntime(freshness) {
 const app = express();
 const {readSdrplayStartup} = require('./sdrplay-startup');
 const {installSdrplayBuildRoutes, helperStatus} = require('./sdrplay-build');
+const {installMacRspduoBuildRoutes, createMacRspduoBuild} = require('./macos-rspduo-build');
+const macRspduoBuild = process.platform === 'darwin' ? createMacRspduoBuild() : null;
 app.use(express.json({limit: '256kb', strict: true}));
 function configWriteOriginAllowed(req) {
   return sameReceiverOrigin(req, receiverOrigins);
@@ -182,15 +177,7 @@ function configFileWritable() {
 }
 
 function restartCommandAvailable() {
-  if (!restartCommand) return false;
-  const command = restartCommand[0];
-  const candidates = command.includes(path.sep) ? [command] :
-    (process.env.PATH || '').split(path.delimiter)
-      .filter(Boolean).map(folder => path.join(folder, command));
-  return candidates.some(candidate => {
-    try { fs.accessSync(candidate, fs.constants.X_OK); return true; }
-    catch (_) { return false; }
-  });
+  return commandAvailable(restartCommand);
 }
 
 function configuredReceiverTypes() {
@@ -203,8 +190,8 @@ function localRspEnrolled() {
     (process.env.BLAH2_LOCAL_BUILD_RECEIVER_TYPES || '').split(',').map(item => item.trim()).includes('RspDuo');
 }
 async function localRspCurrent() {
-  if (process.env.BLAH2_PREVIEW === 'true' || !localRspEnrolled()) return false;
-  const status = await helperStatus(localSdrplayHelper);
+  if (process.env.BLAH2_PREVIEW === 'true' || (!macRspduoBuild && !localRspEnrolled())) return false;
+  const status = macRspduoBuild ? macRspduoBuild.status() : await helperStatus(localSdrplayHelper);
   return status?.ok === true && status.state === 'current';
 }
 
@@ -212,38 +199,15 @@ function launchRestart() {
   restartGeneration += 1;
   invalidateTimestampTelemetry();
   invalidateTimingTelemetry();
-  const [command, ...args] = restartCommand;
   restartState = {...restartState, state: 'running', startedAt: Date.now(),
     timestampConnections};
-  const child = spawn(command, args, {detached: true, stdio: ['ignore', 'ignore', 'pipe']});
-  let settled = false;
-  let diagnostic = '';
-  child.stderr.on('data', chunk => {
-    if (diagnostic.length < 512)
-      diagnostic += chunk.toString('utf8').replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 512 - diagnostic.length);
-  });
-  const timeout = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    restartState = {...restartState, state: 'failed',
-      message: 'Restart request outcome is unknown after 30 seconds. Check the service manager before retrying.'};
-  }, 30000);
-  timeout.unref();
-  child.on('error', error => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    restartState = {...restartState, state: 'failed', message: `Restart could not start: ${error.message}`};
-  });
-  child.on('close', (code, signal) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(timeout);
-    restartState = {...restartState, state: code === 0 ? 'command-complete' : 'failed',
-      message: code === 0 ? 'Restart request accepted. Waiting for a new radar connection.' :
-        `Restart request failed (${signal || `exit ${code}`}). ${diagnostic.trim() || 'Check the local service manager.'}`};
-  });
-  child.unref();
+  launchLifecycleRestart(restartCommand, {onComplete(result) {
+    restartState = {...restartState, state: result.ok ? 'command-complete' : 'failed',
+      message: result.ok ? 'Restart request accepted. Waiting for a new radar connection.' :
+        result.timeout ? 'Restart request outcome is unknown after 30 seconds. Check the service manager before retrying.' :
+        result.error ? `Restart could not start: ${result.error.message}` :
+        `Restart request failed (${result.signal || `exit ${result.code}`}). ${result.diagnostic || 'Check the local service manager.'}`};
+  }});
 }
 app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
@@ -370,14 +334,17 @@ const receiverManagement = installReceiverRoutes(app, {
   allowedOrigins: receiverOrigins,
   helperExecutable: process.env.BLAH2_RECEIVER_HELPER,
   extraOrigins: (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean),
-  transactionBusy: () => configWriteInProgress || ['running', 'scheduled'].includes(restartState.state) ||
+  transactionBusy: () => configWriteInProgress || macRspduoBuild?.busy() || ['running', 'scheduled'].includes(restartState.state) ||
     readSdrplayStartup(null)?.inProgress === true,
   processorStatus: () => processorStatusFresh(processorStatus) ? processorStatus.value : null,
   preview: process.env.BLAH2_PREVIEW === 'true',
   compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
     process.env.BLAH2_RECEIVER_TYPES.split(',').map(value => value.trim()).filter(Boolean) : null
 });
-installSdrplayBuildRoutes(app, {allowedOrigins: receiverOrigins,
+if (macRspduoBuild) installMacRspduoBuildRoutes(app, {allowedOrigins: receiverOrigins, build: macRspduoBuild,
+  transactionBusy: () => configWriteInProgress || receiverManagement.busy() ||
+    ['running', 'scheduled'].includes(restartState.state) || readSdrplayStartup(null)?.inProgress === true});
+else installSdrplayBuildRoutes(app, {allowedOrigins: receiverOrigins,
   helper: process.env.BLAH2_SDRPLAY_BUILD_HELPER || '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay'});
 app.post('/api/config/validate', async (req, res) => {
   if (!configWriteOriginAllowed(req))
@@ -390,6 +357,78 @@ app.post('/api/config/validate', async (req, res) => {
   }
   res.status(validation.valid ? 200 : 422).json(validation);
 });
+function localKrakenProfile(value) {
+  return value?.capture?.device?.type === 'Kraken' && value.capture?.replay?.state !== true &&
+    value.capture?.device?.heimdall?.host === '127.0.0.1';
+}
+function krakenEndpoint(value) {
+  const heimdall = value?.capture?.device?.heimdall || {};
+  return [heimdall.host, heimdall.port, heimdall.control_port ?? 8092].join(':');
+}
+async function runLocalKrakenLauncher(action, environment = process.env, timeout = 70000) {
+  const launcher = process.env.VECTORWARP_MACOS_LAUNCHER;
+  await new Promise((resolve, reject) => execFile(launcher, [action], {
+    cwd: '/', timeout, maxBuffer: 65536, env: environment
+  }, error => error ? reject(error) : resolve()));
+}
+async function ensureLocalKrakenController(candidate, current) {
+  if (process.platform !== 'darwin' || process.env.VECTORWARP_MACOS_LIFECYCLE !== '1') return;
+  const requestedKraken = candidate?.capture?.device?.type === 'Kraken' && candidate.capture?.replay?.state !== true;
+  if (requestedKraken && candidate.capture.device.heimdall?.host !== '127.0.0.1') {
+    const error = new Error('macOS local Kraken capture requires the 127.0.0.1 Heimdall host.');
+    error.code = 'LOCAL_KRAKEN_REMOTE_ENDPOINT'; error.status = 422; throw error;
+  }
+  if (!localKrakenProfile(candidate)) return;
+  const launcher = process.env.VECTORWARP_MACOS_LAUNCHER;
+  if (typeof launcher !== 'string' || !path.isAbsolute(launcher)) {
+    const error = new Error('The local Kraken launcher is unavailable. Start VectorWarp through vectorwarp-macos.');
+    error.code = 'LOCAL_KRAKEN_LAUNCHER_UNAVAILABLE'; error.status = 503; throw error;
+  }
+  const environment = {...process.env};
+  let candidateFile = null;
+  // Switching from another receiver needs a controller profile before the
+  // existing synchronizer can send its first bounded control transaction.
+  // This private candidate is not the saved YAML and survives only while its
+  // exact controller record needs it for an owned stop/restart.
+  const replaceOwnedController = !localKrakenProfile(current) || krakenEndpoint(candidate) !== krakenEndpoint(current);
+  if (replaceOwnedController) {
+    const state = process.env.VECTORWARP_MACOS_STATE;
+    if (typeof state !== 'string' || !path.isAbsolute(state)) {
+      const error = new Error('The local Kraken state directory is unavailable.');
+      error.code = 'LOCAL_KRAKEN_STATE_UNAVAILABLE'; error.status = 503; throw error;
+    }
+    const directory = path.join(state, 'kraken-controller', 'candidates');
+    fs.mkdirSync(directory, {recursive: true, mode: 0o700});
+    candidateFile = path.join(directory, `${crypto.randomBytes(24).toString('hex')}.yml`);
+    fs.writeFileSync(candidateFile, yaml.dump(candidate), {encoding: 'utf8', mode: 0o600, flag: 'wx'});
+    environment.VECTORWARP_MACOS_KRAKEN_CONFIG = candidateFile;
+  }
+  try {
+    if (replaceOwnedController && localKrakenProfile(current))
+      await runLocalKrakenLauncher('stop-kraken', process.env, 20000);
+    await runLocalKrakenLauncher('start-kraken', environment);
+  } catch (error) {
+    if (candidateFile) {
+      try { await runLocalKrakenLauncher('stop-kraken', process.env, 20000); }
+      catch (_) { /* launcher reports its own owned-record validation */ }
+    }
+    if (candidateFile) fs.rmSync(candidateFile, {force: true});
+    const failure = new Error('The local Kraken controller did not become ready. Check Receiver setup and the local launcher log.');
+    failure.code = 'LOCAL_KRAKEN_START_FAILED'; failure.status = 503;
+    throw failure;
+  }
+  return {candidateFile};
+}
+async function discardLocalKrakenCandidate(controller) {
+  if (!controller?.candidateFile) return;
+  try {
+    await runLocalKrakenLauncher('stop-kraken', process.env, 20000);
+  } catch (error) {
+    console.error(`Unable to stop failed local Kraken candidate: ${error.message}`);
+  } finally {
+    fs.rmSync(controller.candidateFile, {force: true});
+  }
+}
 app.put('/api/config', async (req, res) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== CONFIG_INTENT)
     return res.status(403).json({ok: false,
@@ -419,7 +458,7 @@ app.put('/api/config', async (req, res) => {
     return res.status(428).json({ok: false, errors: ['Reload settings before saving (configuration revision required).']});
   if (restartState.state === 'running' || restartState.state === 'scheduled')
     return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
-  if (configWriteInProgress || receiverManagement.busy())
+  if (configWriteInProgress || receiverManagement.busy() || macRspduoBuild?.busy())
     return res.status(409).json({ok: false,
       errors: ['Another settings transaction is in progress. Wait for its result.']});
   const allowedTypes = configuredReceiverTypes();
@@ -456,6 +495,7 @@ app.put('/api/config', async (req, res) => {
       errors: [`Receiver-controlled settings require the ${RECEIVER_SYNC_HEADER}: ${RECEIVER_SYNC_INTENT} intent header.`]});
   configWriteInProgress = true;
   let receiverSync = null;
+  let localKrakenController = null;
   const previousReceiverReceipt = receiverSyncState.receipt || null;
   try {
     // Hold the write flag across this bounded read-only query. A stale local
@@ -512,6 +552,7 @@ app.put('/api/config', async (req, res) => {
     }
     receiverSyncState = {state: receiverSyncRequired ? 'synchronizing' : 'not-required',
       startedAt: Date.now(), receipt: null};
+    localKrakenController = await ensureLocalKrakenController(req.body, currentDocument.config);
     receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
       {force: observeLiveReceiver});
     if (receiverSync.operations?.some(operation => operation.commandSent))
@@ -563,6 +604,7 @@ app.put('/api/config', async (req, res) => {
       setTimeout(launchRestart, 150).unref();
     }
   } catch (error) {
+    await discardLocalKrakenCandidate(localKrakenController);
     console.error(`Unable to save configuration: ${error.message}`);
     if (error.code === 'RECEIVER_JOURNAL_PERSISTENCE_FAILED') receiverReconciliationRequired = true;
     if (receiverSyncRequired) upstreamCache = null;

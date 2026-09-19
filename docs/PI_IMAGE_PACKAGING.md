@@ -15,11 +15,12 @@ Confirmed by the maintainer: **Bookworm is the Pi 4 image baseline**, and the
 previous Pi installation route can be deprecated. There is no requirement to
 preserve that route as the basis of the new image.
 
-Offer **VectorWarp for Raspberry Pi 4** as a downloadable `.img.xz`, with a
-companion `.rpi-imager-manifest` that opens Raspberry Pi Imager with the correct
-customization options. Base the initial image on **Raspberry Pi OS Lite 64-bit
-Bookworm**, matching the OS family used for the current Pi 4 performance work.
-Run the native processor, API and browser UI without a desktop or Docker runtime.
+After the acceptance work below completes, a release could offer **VectorWarp
+for Raspberry Pi 4** as a downloadable `.img.xz` with a companion
+`.rpi-imager-manifest`. Neither artifact exists or is downloadable today. The
+planned image would use **Raspberry Pi OS Lite 64-bit Bookworm**, matching the
+OS family used for current Pi 4 performance work, and run the native processor,
+API, and browser UI without a desktop or Docker runtime.
 
 **Raspberry Pi 5 is future work.** Keep it out of the initial image's supported
 device list and release claims. It needs its own physical boot, receiver, driver,
@@ -32,7 +33,10 @@ is that configuration; qualify other Pi 4 memory sizes before advertising them.
 Recommend a 32 GB microSD card initially, but determine and publish the actual
 minimum card size from the finished image and first-boot expansion tests.
 
-## What the user does
+## Intended user flow after publication
+
+These are release instructions to validate before publication, not steps for a
+currently available VectorWarp image.
 
 1. Install the current Raspberry Pi Imager on Windows, macOS or Linux.
 2. Download and open `vectorwarp-pi4.rpi-imager-manifest`. The manifest points

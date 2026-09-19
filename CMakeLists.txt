@@ -1,13 +1,25 @@
 cmake_minimum_required(VERSION 3.8)
 if(COMMAND cmake_policy)
   cmake_policy(SET CMP0003 NEW)
+  cmake_policy(SET CMP0068 NEW)
 endif(COMMAND cmake_policy)
 
 project(blah2)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 include(CMakePrintHelpers)
 include(CTest)
+
+if(APPLE)
+  # Mach-O resolves adjacent private libraries relative to the loading binary.
+  set(BLAH2_RUNTIME_RPATH "@loader_path")
+  # AppleClang diagnoses a legacy cached detector pointer that GCC accepts.
+  # Keep the project's warning policy while allowing this existing source ABI.
+  add_compile_options(-Wno-error=unused-private-field)
+else()
+  set(BLAH2_RUNTIME_RPATH "$ORIGIN")
+endif()
 
 option(BLAH2_KRAKEN_ONLY "Build only the Kraken capture backend" OFF)
 # Keep the historical CMake behavior unless a caller explicitly selects the
@@ -40,8 +52,13 @@ if(NOT TARGET asio::asio)
 endif()
 include(cmake/RapidJson.cmake)
 find_package(ryml CONFIG REQUIRED)
+# rapidyaml 0.16 keeps the legacy extraction operators behind this explicit
+# compatibility switch. The processor will migrate to .load() separately.
+add_compile_definitions(RYML_WITH_LEGACY_OPERATORS)
 find_package(httplib CONFIG REQUIRED)
 find_package(Armadillo REQUIRED)
+find_library(BLAH2_FFTW3_LIBRARY NAMES fftw3 REQUIRED)
+find_library(BLAH2_FFTW3_THREADS_LIBRARY NAMES fftw3_threads REQUIRED)
 if(BUILD_TESTING)
   find_package(Catch2 3 CONFIG REQUIRED)
 endif()
@@ -54,8 +71,15 @@ if(BLAH2_ENABLE_USRP)
 endif()
 
 if(BLAH2_ENABLE_HACKRF)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(HACKRF REQUIRED IMPORTED_TARGET libhackrf)
+  if(APPLE)
+    # Homebrew's libhackrf.pc can retain a replaced libusb Cellar path.
+    find_path(HACKRF_INCLUDE_DIR libhackrf/hackrf.h REQUIRED)
+    find_library(HACKRF_LIBRARY NAMES hackrf REQUIRED)
+    set(HACKRF_INCLUDE_DIRS "${HACKRF_INCLUDE_DIR}")
+  else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(HACKRF REQUIRED IMPORTED_TARGET libhackrf)
+  endif()
 endif()
 
 set(PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
@@ -75,9 +99,12 @@ include_directories(src)
 
 # TODO: create FindSdrplay.cmake for this
 if(BLAH2_ENABLE_RSPDUO)
+  # The official macOS API 3.15 installer supplies a universal Mach-O
+  # library with this Unix-compatible filename (not a .dylib filename).
+  set(BLAH2_SDRPLAY_LIBRARY_DEFAULT "/usr/local/lib/libsdrplay_api.so.3.15")
   set(BLAH2_SDRPLAY_INCLUDE_DIR "/usr/local/include" CACHE PATH
     "Directory containing sdrplay_api.h")
-  set(BLAH2_SDRPLAY_LIBRARY "/usr/local/lib/libsdrplay_api.so.3.15" CACHE FILEPATH
+  set(BLAH2_SDRPLAY_LIBRARY "${BLAH2_SDRPLAY_LIBRARY_DEFAULT}" CACHE FILEPATH
     "SDRplay API 3.15 shared library")
   if(NOT EXISTS "${BLAH2_SDRPLAY_INCLUDE_DIR}/sdrplay_api.h")
     message(FATAL_ERROR "SDRplay header not found: ${BLAH2_SDRPLAY_INCLUDE_DIR}/sdrplay_api.h")
@@ -124,13 +151,13 @@ target_link_libraries(blah2 PRIVATE
   asio::asio
   ryml::ryml
   httplib::httplib
-  armadillo
-  fftw3
-  fftw3_threads
+  ${ARMADILLO_LIBRARIES}
+  ${BLAH2_FFTW3_LIBRARY}
+  ${BLAH2_FFTW3_THREADS_LIBRARY}
   ${CMAKE_DL_LIBS}
   blah2ReceiverLoader
 )
-set_target_properties(blah2 PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+set_target_properties(blah2 PROPERTIES BUILD_RPATH "${BLAH2_RUNTIME_RPATH}" INSTALL_RPATH "${BLAH2_RUNTIME_RPATH}"
   BUILD_WITH_INSTALL_RPATH TRUE)
 foreach(receiver blah2ReceiverUsrp blah2ReceiverHackrf blah2ReceiverRspduo)
   if(TARGET ${receiver})
@@ -160,7 +187,7 @@ add_executable(testAcceleration
   src/process/ambiguity/Ambiguity.cpp
   src/process/meta/HammingNumber.cpp
   src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAcceleration PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(testAcceleration PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS})
 add_executable(testMixedAutoPolicy
   test/unit/process/mixed/TestMixedAutoPolicy.cpp)
 target_include_directories(testMixedAutoPolicy PRIVATE src)
@@ -196,14 +223,14 @@ add_executable(testAccelerationFallback
   test/unit/process/ambiguity/TestAccelerationFallback.cpp
   src/process/ambiguity/Acceleration.cpp src/process/ambiguity/Ambiguity.cpp
   src/process/meta/HammingNumber.cpp src/data/IqData.cpp src/data/Map.cpp)
-target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess fftw3 fftw3_threads Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(testAccelerationFallback PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS})
 add_test(NAME testAccelerationFallback COMMAND testAccelerationFallback)
 
 add_executable(testClutterFft
   test/unit/process/clutter/TestClutterFft.cpp
   src/process/clutter/WienerHopf.cpp src/data/IqData.cpp)
 target_compile_features(testClutterFft PRIVATE cxx_std_17)
-target_link_libraries(testClutterFft PRIVATE blah2RapidJson armadillo fftw3 fftw3_threads Threads::Threads)
+target_link_libraries(testClutterFft PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
 add_test(NAME clutterFftPadding COMMAND testClutterFft)
 set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
 
@@ -219,7 +246,15 @@ add_test(NAME iqDataFifo COMMAND testIqDataFifo)
 include(cmake/JsonOutputTests.cmake)
 
 # unit tests
-include(cmake/GpuProcessTests.cmake)
+if(APPLE)
+  add_executable(testMacLocalReceiverGate test/macos/TestLocalReceiverGate.cpp)
+  target_link_libraries(testMacLocalReceiverGate PRIVATE blah2RapidJson)
+  add_test(NAME macLocalReceiverGate COMMAND testMacLocalReceiverGate)
+  set_tests_properties(macLocalReceiverGate PROPERTIES TIMEOUT 15)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+  include(cmake/GpuProcessTests.cmake)
+endif()
 add_executable(testProcessingThreads
   test/unit/process/utility/TestProcessingThreads.cpp
   src/process/utility/ProcessingThreads.cpp
@@ -239,8 +274,8 @@ add_executable(testAmbiguity
 target_link_libraries(testAmbiguity PRIVATE 
   Catch2::Catch2WithMain 
   blah2RapidJson
-  fftw3 
-  fftw3_threads
+  ${BLAH2_FFTW3_LIBRARY}
+  ${BLAH2_FFTW3_THREADS_LIBRARY}
 )
 set_target_properties(testAmbiguity PROPERTIES 
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
@@ -291,7 +326,7 @@ add_test(NAME testTracker COMMAND testTracker)
 add_executable(testSpectrum
   test/unit/process/spectrum/TestSpectrum.cpp
   src/process/spectrum/SpectrumAnalyser.cpp src/data/IqData.cpp)
-target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain blah2RapidJson fftw3 Threads::Threads)
+target_link_libraries(testSpectrum PRIVATE Catch2::Catch2WithMain blah2RapidJson ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
 set_target_properties(testSpectrum PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testSpectrum COMMAND testSpectrum)

@@ -431,12 +431,17 @@ try
     surveillancePointers.push_back(surveillanceData[i].get());
   }
 
-  // set up process clutter
-  std::vector<std::unique_ptr<WienerHopf>> filter;
-  for (std::size_t pathIndex = 0;
-       pathIndex < surveillanceChannels.size(); pathIndex++)
-    filter.push_back(std::make_unique<WienerHopf>(delayMinClutter,
-      delayMaxClutter, nSamples));
+  // Allocate on the first CPU execution, including GPU qualification's CPU
+  // oracle, and prepare the common reference once per CPU-processed CPI.
+  std::vector<std::unique_ptr<WienerHopf>> filter(surveillanceChannels.size());
+  std::unique_ptr<WienerHopf::PreparedReference> cpuClutterReference;
+#ifdef VECTORWARP_MIXED_AUTO
+  // The qualified Pi path plans before capture starts. Delaying its measured
+  // FFT plans until the first CPU oracle would consume live queue headroom.
+  if (cpuBorrowed)
+    for (auto& pathFilter : filter)
+      pathFilter = std::make_unique<WienerHopf>(delayMinClutter, delayMaxClutter, nSamples);
+#endif
 
   ArrayReferenceSynthesizer::Config referenceConfig;
   if (tree["process"].has_child("reference_synthesis"))
@@ -663,7 +668,7 @@ try
             std::vector<IqData *> referencePointers;
             for (uint32_t channel : referenceChannels)
               referencePointers.push_back(captureData[channel].get());
-            referenceData = referenceSynthesizer.process(referencePointers);
+            referenceSynthesizer.process_into(referencePointers, *referenceData);
             const auto& metrics = referenceSynthesizer.get_metrics();
             if (metrics.updates != reportedReferenceUpdate)
             {
@@ -738,14 +743,34 @@ try
           {
             const bool success = acceleration.processClutter(*referenceData,
               surveillancePointers, [&] {
+#ifdef VECTORWARP_MIXED_AUTO
+                if (cpuBorrowed)
+                  return process_paths(surveillanceData.size(), surveillanceWorkers,
+                    [&](std::size_t pathIndex) {
+                      return filter[pathIndex]->process(referenceData.get(),
+                        surveillanceData[pathIndex].get(), true);
+                    });
+#endif
+                if (!cpuClutterReference) {
+                  auto pendingReference = std::make_unique<WienerHopf::PreparedReference>(
+                    delayMinClutter, delayMaxClutter, nSamples);
+                  std::vector<std::unique_ptr<WienerHopf>> pendingFilters;
+                  pendingFilters.reserve(filter.size());
+                  for (std::size_t pathIndex = 0; pathIndex < filter.size(); ++pathIndex)
+                    pendingFilters.push_back(std::make_unique<WienerHopf>(
+                      delayMinClutter, delayMaxClutter, nSamples,
+                      WienerHopf::Workspace::SharedReference));
+                  // A plan constructor may throw during GPU qualification.
+                  // Publish only a complete set so a later CPU fallback can
+                  // safely retry initialization.
+                  filter = std::move(pendingFilters);
+                  cpuClutterReference = std::move(pendingReference);
+                }
+                if (!cpuClutterReference->prepare(*referenceData)) return false;
                 return process_paths(surveillanceData.size(),
                   surveillanceWorkers, [&](std::size_t pathIndex) {
-                    return filter[pathIndex]->process(referenceData.get(),
-                      surveillanceData[pathIndex].get()
-#ifdef VECTORWARP_MIXED_AUTO
-                      , cpuBorrowed
-#endif
-                      );
+                    return filter[pathIndex]->process(*cpuClutterReference,
+                      surveillanceData[pathIndex].get());
                   });
               });
             if (!success)
@@ -864,7 +889,7 @@ try
             detectionJson = detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
           }
-          if (saveDetection)
+          if (saveDetection && isDetection)
           {
             detection->save(detectionJson, saveDetectionPath);
           }

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Homebrew exposes this launcher as a symlink in `bin`; resolve links before
+# locating the co-staged Python helper under the artifact's libexec directory.
+script=$0
+while [ -L "$script" ]; do
+  directory=$(CDPATH= cd -P -- "$(dirname -- "$script")" && pwd)
+  target=$(readlink "$script")
+  case "$target" in
+    /*) script=$target ;;
+    *) script=$directory/$target ;;
+  esac
+done
+directory=$(CDPATH= cd -P -- "$(dirname -- "$script")" && pwd)
+if [ -z "${VECTORWARP_MACOS_NODE:-}" ] && command -v brew >/dev/null 2>&1; then
+  node=$(brew --prefix node@24 2>/dev/null || true)/bin/node
+  [ -x "$node" ] && export VECTORWARP_MACOS_NODE=$node
+fi
+exec /usr/bin/env python3 "$directory/vectorwarp-macos.py" "$@"

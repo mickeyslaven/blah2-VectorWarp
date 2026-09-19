@@ -122,7 +122,9 @@ async function browser() {
     assert.equal(window.document.getElementById('config-state').textContent, 'Apply settings to confirm');
     const beforeApply = fs.readFileSync(filename, 'utf8');
     await window.saveConfiguration();
-    assert.match(window.document.getElementById('config-message').textContent, /connection failed/i);
+    // macOS may time out an unassigned 127.0.0.2 alias rather than reject immediately.
+    assert.match(window.document.getElementById('config-message').textContent,
+      /connection failed|Suite V2 did not send a compatible status update before the deadline/i);
     assert.equal(fs.readFileSync(filename, 'utf8'), beforeApply, 'Offline Apply must not fall back to pending save');
     assert.equal(fs.existsSync(restartMarker), false);
     window.close(); dom = null;

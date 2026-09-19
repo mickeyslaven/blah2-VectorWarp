@@ -29,7 +29,7 @@ target_link_libraries(blah2CaptureCore PRIVATE blah2RapidJson Threads::Threads)
 set_target_properties(blah2CaptureCore PROPERTIES OUTPUT_NAME blah2-capture-core
   VERSION 1.0.0 SOVERSION 1 LIBRARY_OUTPUT_DIRECTORY "${BLAH2_OUTPUT_DIR}"
   BUILD_WITH_INSTALL_RPATH TRUE
-  BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
+  BUILD_RPATH "${BLAH2_RUNTIME_RPATH}" INSTALL_RPATH "${BLAH2_RUNTIME_RPATH}")
 
 add_library(blah2ReceiverLoader STATIC ${PROJECT_ROOT}/src/capture/ReceiverLoader.cpp)
 target_compile_features(blah2ReceiverLoader PUBLIC cxx_std_17)
@@ -42,12 +42,17 @@ function(blah2_add_receiver target name definition source)
   target_compile_definitions(${target} PRIVATE ${definition}=1)
   target_include_directories(${target} PRIVATE "${PROJECT_BINARY_DIR}/receiver-generated")
   target_link_libraries(${target} PRIVATE blah2CaptureCore Threads::Threads ${ARGN})
-  target_link_options(${target} PRIVATE "-Wl,-z,defs")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(${target} PRIVATE "-Wl,-z,defs")
+  endif()
   set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME "blah2-receiver-${name}"
     LIBRARY_OUTPUT_DIRECTORY "${BLAH2_OUTPUT_DIR}"
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES
     BUILD_WITH_INSTALL_RPATH TRUE
-    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
+    BUILD_RPATH "${BLAH2_RUNTIME_RPATH}" INSTALL_RPATH "${BLAH2_RUNTIME_RPATH}")
+  if(APPLE)
+    set_target_properties(${target} PROPERTIES SUFFIX ".dylib")
+  endif()
 endfunction()
 if(BLAH2_ENABLE_USRP)
   blah2_add_receiver(blah2ReceiverUsrp usrp BLAH2_MODULE_USRP
@@ -55,16 +60,28 @@ if(BLAH2_ENABLE_USRP)
   target_include_directories(blah2ReceiverUsrp PRIVATE ${UHD_INCLUDE_DIRS})
 endif()
 if(BLAH2_ENABLE_HACKRF)
-  blah2_add_receiver(blah2ReceiverHackrf hackrf BLAH2_MODULE_HACKRF
-    ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp PkgConfig::HACKRF)
+  if(APPLE)
+    blah2_add_receiver(blah2ReceiverHackrf hackrf BLAH2_MODULE_HACKRF
+      ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp ${HACKRF_LIBRARY})
+  else()
+    blah2_add_receiver(blah2ReceiverHackrf hackrf BLAH2_MODULE_HACKRF
+      ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp PkgConfig::HACKRF)
+  endif()
+  target_include_directories(blah2ReceiverHackrf PRIVATE ${HACKRF_INCLUDE_DIRS})
 endif()
 if(BLAH2_ENABLE_RSPDUO)
   blah2_add_receiver(blah2ReceiverRspduo rspduo BLAH2_MODULE_RSPDUO
     ${PROJECT_ROOT}/src/capture/rspduo/RspDuo.cpp blah2Sdrplay)
-  # Vendor-local lookup is scoped to the RSPduo loader, not an absolute RUNPATH.
-  # Never retain a temporary SDK path or redistribute the licensed runtime.
+  if(APPLE)
+    # The official macOS SDK uses @rpath/libsdrplay_api.so.3 and its installer
+    # places the runtime symlinks in /usr/local/lib on both Mac architectures.
+    # Keep this lookup scoped to RSPduo; never retain a private extraction path
+    # or copy the licensed runtime into the artifact.
+    set_property(TARGET blah2ReceiverRspduo APPEND PROPERTY INSTALL_RPATH "/usr/local/lib")
+  endif()
+  # Linux vendor-local lookup remains scoped to the RSPduo loader.
 endif()
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   include(${PROJECT_ROOT}/cmake/ReceiverModuleTests.cmake)
 endif()

@@ -58,6 +58,12 @@ jobs:
         run: ctest --test-dir build/ci --output-on-failure --no-tests=error
       - name: Run offline full-processor replay harness
         run: python3 test/recording/processor_replay_test.py --binary build/ci/bin/blah2
+      - name: Run offline Pi packaging and diagnostics checks
+        run: |
+          python3 test/packaging/test_pi_image_manifest.py -v
+          python3 bench/test_pi_spike_diagnostics.py -v
+          python3 bench/test_live_rspduo_check.py -v
+          python3 bench/test_compare_outputs.py -v
       - name: Run repository generator unit and ephemeral integration tests
         run: |
           python3 test/packaging/test_repository.py -v

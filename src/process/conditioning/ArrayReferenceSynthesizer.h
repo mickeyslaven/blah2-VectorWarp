@@ -31,6 +31,8 @@ public:
   ArrayReferenceSynthesizer();
   explicit ArrayReferenceSynthesizer(Config config);
   std::unique_ptr<IqData> process(const std::vector<IqData *>& channels);
+  /// Reuse caller-owned sample storage. Output must not alias an input channel.
+  void process_into(const std::vector<IqData *>& channels, IqData& output);
   const Metrics& get_metrics() const { return metrics; }
 
 private:

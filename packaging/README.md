@@ -1,5 +1,11 @@
 # Native release packaging
 
+For macOS, use the [local Homebrew packaging guide](../docs/MACOS_HOMEBREW.md).
+The Mac app and Kraken companion formulas live in `Formula/`;
+[automatic public tap updates](../docs/HOMEBREW_PUBLISHING.md) are prepared for
+merges to `main`, with first publication still pending. No bottles are supplied.
+The DEB/RPM instructions below apply to Linux.
+
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 This document covers building and maintaining the packages.
 
@@ -14,8 +20,11 @@ release assets. This directory describes the release build for
 Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)
 and ARM64 (arm64 / aarch64). Ubuntu/Debian produce DEBs; Fedora produces RPMs.
 DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
-and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
-or hardware validation.
+and the legacy Raspberry Pi OS Trixie route selects Debian 13 ARM64. Neither is
+a separate image or hardware validation. The validated Pi 4B baseline is
+Raspberry Pi OS Lite 64-bit Bookworm, but a Bookworm package target is not
+released yet. Do not present a Trixie package as Bookworm-compatible; the Pi
+image remains a packaging plan, not a downloadable artifact.
 
 Each release package includes compiled Kraken, USRP and dual-HackRF support,
 our locally buildable RSPduo adapter source kit, and all replay formats. UHD,

@@ -481,13 +481,16 @@ function planReceiverSetup(request, discovery) {
 }
 
 function createReceiverManager(options = {}) {
-  exactKeys(options, ['probes', 'timeoutMs', 'now'], 'options');
+  exactKeys(options, ['probes', 'timeoutMs', 'now', 'standaloneDistribution'], 'options');
   const probes = options.probes === undefined ? {} : options.probes;
   exactKeys(probes, ['usbInventory', 'dependencyInventory', 'nativeReceiverStatus',
     'configuredUpstreamStatus', 'serviceStatus'], 'options.probes');
   const timeoutMs = normalizeTimeout(options.timeoutMs);
   const now = options.now === undefined ? Date.now : options.now;
   if (typeof now !== 'function') throw inputError('options.now must be a function.');
+  if (options.standaloneDistribution !== undefined && typeof options.standaloneDistribution !== 'boolean')
+    throw inputError('options.standaloneDistribution must be a boolean.');
+  const standaloneDistribution = options.standaloneDistribution === true;
 
   async function discover(input) {
     const request = validateDiscoveryInput(input);
@@ -594,6 +597,13 @@ function createReceiverManager(options = {}) {
       // A source kit is an explicit local-build capability, not evidence that
       // an adapter is compiled, loadable, or ready for live capture.
       const localBuildable = type === 'RspDuo' && native?.localBuildable === true;
+      if (standaloneDistribution && (type === 'Usrp' || type === 'HackRF')) {
+        // Bundled SDK readiness means the shipped adapter actually loaded; do
+        // not substitute a host Homebrew library or an environment manifest.
+        dependency = native?.compiled === true && native.moduleLoadable === true ?
+          {state: 'installed', installed: [DEFINITIONS[type].dependency], missing: [], unknown: []} :
+          {state: 'unknown', installed: [], missing: [], unknown: [DEFINITIONS[type].dependency]};
+      }
       // Successful loading resolves the adapter's actual SDK dependencies. A
       // local licensed SDRplay API need not appear in ldconfig's cache; this
       // evidence establishes software presence, never a device or running API.
@@ -601,7 +611,9 @@ function createReceiverManager(options = {}) {
           dependency.state !== 'installed')
         dependency = {state: 'installed', installed: [DEFINITIONS[type].dependency],
           missing: [], unknown: []};
-      const possible = liveCompiled && runtimeLoadable !== false && dependency.state !== 'missing';
+      const possible = standaloneDistribution && (type === 'Usrp' || type === 'HackRF') ?
+        native?.compiled === true && native.moduleLoadable === true :
+        liveCompiled && runtimeLoadable !== false && dependency.state !== 'missing';
       const serviceId = DEFINITIONS[type].service;
       const service = serviceId ? {
         id: serviceId, required: true, state: locality === 'local' ?
@@ -613,6 +625,7 @@ function createReceiverManager(options = {}) {
         type, label: DEFINITIONS[type].label, locality,
         capabilities: {detected, possible, configured, liveCompiled, localBuildable,
           runtimeLoadable, runtimeError: native?.error || null,
+          standaloneDistribution,
           ...(native ? {builtIn: native.builtIn} : {}),
           sourceSupported: DEFINITIONS[type].sourceSupported},
         detection: {configuredIdentityMatched: identityMatched,

@@ -1,15 +1,27 @@
 # Receiver setup
 
-1. Install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
-   then run `vectorwarp` to open **Settings** without starting radar.
+For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
+[Mac receiver guide](MACOS.md#runtime-scope). Local USB Kraken uses the
+[Homebrew Heimdall companion](MACOS_KRAKEN.md), and receiver setup uses per-user
+Mac actions. The systemd services, APT/DNF packages, and privileged enrollment
+instructions below apply to Linux.
+
+1. On Linux, install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+   On macOS, use the [Homebrew guide](MACOS_HOMEBREW.md). Then run `vectorwarp`
+   to open **Settings** without starting radar.
 2. Select and configure the receiver, then choose **Save & Restart** to save
    settings and start radar, including the first time. **Save for later** does
    not start it.
 3. Later, `vectorwarp start` brings up the full stack using saved settings;
    `vectorwarp stop` stops it, including the web interface; and
    `vectorwarp restart` restarts it in order. These commands do not stop shared Kraken
-   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`,
-   `vectorwarp version`, and `vectorwarp help` inspect it.
+   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`, and
+   `vectorwarp help` inspect it. Linux also has `vectorwarp version`; on macOS,
+   use `brew list --versions vectorwarp`.
+
+If you enabled a Mac Homebrew service, use `brew services stop vectorwarp` and
+`brew services restart vectorwarp` for service control. A plain `vectorwarp stop`
+leaves that supervisor running, so it restarts the child processes.
 
 Use the
 [source-build guide](INSTALL.md#build-from-source) for development or unsupported
@@ -21,6 +33,11 @@ The [installation guide](INSTALL.md) is the single source for dependencies,
 Node.js requirements, receiver build choices, GPU build packages and startup
 commands. Choose the required `--backend` before building. Installing an SDR
 driver later does not add an adapter that was omitted from the VectorWarp build.
+
+For the current Raspberry Pi 4B Bookworm route, use the [Pi 4 guide](PI4_GUIDE.md)
+after installation. It documents the tested RSPduo configuration and the
+geometry-limited mixed AUTO path. A Pi image is not available, and Pi 5 is not
+yet supported.
 
 ## Check receiver software
 

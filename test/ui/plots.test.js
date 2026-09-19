@@ -16,7 +16,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       fetchRadarJson: async url => url === '/api/detection' ? detected : new Promise(() => {}),
-      Plotly: Object.fromEntries(['newPlot', 'update', 'relayout'].map(method =>
+      Plotly: Object.fromEntries(['newPlot', 'update', 'relayout', 'restyle'].map(method =>
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
       startRadarPlot: (_url, render) => { update = render; return {stop() {}}; }
     });
@@ -40,8 +40,14 @@ const clone = value => JSON.parse(JSON.stringify(value));
       detected = {...detected, timestamp: 999};
       assert.equal(await update(clone(frame)), false, 'A late detection stream must remain retryable');
       assert.deepEqual(calls.at(-1).args[1].x[1], [], 'Do not overlay an older detection frame');
+      const painted = calls.length;
+      assert.equal(await update(clone(frame)), false);
+      assert.equal(calls.length, painted, 'Waiting for detections must not repaint the heatmap');
       detected = {...detected, timestamp: 1000};
       assert.equal(await update(clone(frame)), true);
+      assert.equal(calls.at(-1).method, 'restyle', 'Late detections update only marker trace');
+      assert.deepEqual(calls.at(-1).args[2], [1]);
+      assert.deepEqual(calls.at(-1).args[1].x, [[1]]);
     }
   }
   console.log('Original plot first-frame/update, frequency axis and late-stream tests passed.');

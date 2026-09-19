@@ -84,8 +84,27 @@ struct GpuCycle {
 };
 #endif
 struct WienerHopf::Impl {
+  // The shared-reference API deliberately has its own full-CPI workspace.
+  // It is lazy so the Pi borrowed path keeps its bounded allocation profile.
+  struct PreparedWorkspace {
+    Buffer scratch;
+    std::array<Plan, 4> plans;
+    PreparedWorkspace(uint32_t samples, uint32_t filterLength) : scratch(allocate(filterLength)) {
+      std::lock_guard<std::mutex> lock(plannerMutex());
+      const unsigned flags = fftw_plan_flags();
+      plans[0] = checked(fftw_plan_dft_1d(samples, fftData(scratch), fftData(scratch), FFTW_FORWARD, flags));
+      plans[1] = checked(fftw_plan_dft_1d(samples, fftData(scratch), fftData(scratch), FFTW_BACKWARD, flags));
+      plans[2] = checked(fftw_plan_dft_1d(filterLength, fftData(scratch), fftData(scratch), FFTW_FORWARD, flags));
+      plans[3] = checked(fftw_plan_dft_1d(filterLength, fftData(scratch), fftData(scratch), FFTW_BACKWARD, flags));
+    }
+    ~PreparedWorkspace() {
+      std::lock_guard<std::mutex> lock(plannerMutex());
+      for (auto& plan : plans) plan.reset();
+    }
+  };
   int32_t delayMin;
   uint32_t samples, taps, correlationLength, filterLength, lanes;
+  bool sharedReferenceWorkspace;
   bool blockedCorrelation, blockedFilter;
   bool viewReady = false;
   uint64_t generation = 0;
@@ -98,6 +117,7 @@ struct WienerHopf::Impl {
   // Declared after buffers so plan destruction precedes storage release.
   std::array<Plan, 4> fullPlans;
   std::array<Plan, 3> correlationPlans, filterPlans;
+  std::unique_ptr<PreparedWorkspace> preparedWorkspace;
   // At most three persistent workers supplement the caller's FFT slot.
   std::vector<std::unique_ptr<vectorwarp_clutter::CorrelationWorker>> correlationWorkers;
 #ifdef VECTORWARP_MIXED_FIR_BENCH
@@ -113,7 +133,8 @@ struct WienerHopf::Impl {
   uint64_t gpuCorrelationFrame = 0;
 #endif
 
-  Impl(int32_t first, int32_t last, uint32_t count) : delayMin(first), samples(count) {
+  Impl(int32_t first, int32_t last, uint32_t count, bool sharedReference)
+      : delayMin(first), samples(count), sharedReferenceWorkspace(sharedReference) {
     if (const char* path = std::getenv("VECTORWARP_BENCH_CONTIGUOUS_LOG")) {
       contiguousLog.open(path, std::ios::app);
       if (!contiguousLog) throw std::runtime_error("Contiguous CPI timing log open failed");
@@ -126,8 +147,14 @@ struct WienerHopf::Impl {
     const uint32_t filterBlock = blockLength(uint64_t(taps) * 2, 1024);
     blockedCorrelation = uint64_t(count) >= uint64_t(correlationLength) * 4;
     blockedFilter = uint64_t(count) >= uint64_t(filterBlock) * 4;
-    filterLength = blockedFilter ? filterBlock : blah2::nextFastFftLength(uint64_t(count) + taps + 1);
+    filterLength = sharedReferenceWorkspace ? blah2::nextFastFftLength(uint64_t(count) + taps + 1) :
+      (blockedFilter ? filterBlock : blah2::nextFastFftLength(uint64_t(count) + taps + 1));
     lanes = blockedFilter ? 4 : 1;
+    if (sharedReferenceWorkspace) {
+      preparedWorkspace = std::make_unique<PreparedWorkspace>(samples, filterLength);
+      b.set_size(taps); weights.set_size(taps);
+      return;
+    }
     matrix.set_size(taps, taps); a.set_size(taps); b.set_size(taps); weights.set_size(taps);
     x = allocate(count); y = allocate(count);
     filterX = allocate(uint64_t(filterLength) * lanes);
@@ -243,15 +270,46 @@ struct WienerHopf::Impl {
     // A worker may be executing correlationPlans[0]; join it before either its
     // FFT plan or buffers are released.
     correlationWorkers.clear();
+    preparedWorkspace.reset();
     std::lock_guard<std::mutex> lock(plannerMutex());
     for (auto& p : fullPlans) p.reset();
     for (auto& p : correlationPlans) p.reset();
     for (auto& p : filterPlans) p.reset();
   }
 
-  bool process(IqData* reference, IqData* surveillance, bool borrowOutput) {
+  bool process_prepared(const WienerHopf::PreparedReference& reference,
+                        IqData* surveillance) {
     viewReady = false;
-    if (!reference || !surveillance || reference->get_length() != samples || surveillance->get_length() != samples)
+    if (!preparedWorkspace)
+      preparedWorkspace = std::make_unique<PreparedWorkspace>(samples, reference.filterLength_);
+    auto& scratch = preparedWorkspace->scratch;
+    std::copy_n(surveillance->view_data().begin(), samples, scratch.get());
+    fftw_execute(preparedWorkspace->plans[0].get());
+    for (uint32_t i = 0; i < samples; ++i)
+      scratch.get()[i] *= std::conj(reference.spectrum_[i]);
+    fftw_execute(preparedWorkspace->plans[1].get());
+    for (uint32_t i = 0; i < taps; ++i)
+      b[i] = scratch.get()[i] / double(samples);
+    if (!arma::solve(weights, arma::trimatu(reference.cholesky_),
+                     arma::solve(arma::trimatl(arma::trans(reference.cholesky_)), b))) {
+      std::cerr << "Solve failed, skip clutter filter\n";
+      return false;
+    }
+    std::copy_n(weights.memptr(), taps, scratch.get());
+    std::fill(scratch.get() + taps, scratch.get() + reference.filterLength_, Complex{});
+    fftw_execute(preparedWorkspace->plans[2].get());
+    for (uint32_t i = 0; i < reference.filterLength_; ++i)
+      scratch.get()[i] *= reference.paddedSpectrum_[i];
+    fftw_execute(preparedWorkspace->plans[3].get());
+    surveillance->subtract_clutter(scratch.get(), samples, reference.filterLength_);
+    return true;
+  }
+
+  bool process(IqData* reference, IqData* surveillance, bool borrowOutput) {
+    if (sharedReferenceWorkspace)
+      throw std::logic_error("Shared-reference clutter workspace requires a prepared reference");
+    viewReady = false;
+    if (!reference || !surveillance || reference->get_length() < samples || surveillance->get_length() < samples)
       throw std::invalid_argument("Clutter input length differs from CPI");
     const auto inputStarted = std::chrono::steady_clock::now();
     vectorwarp_clutter::copy_rotation(reference->view_data(), samples, delayMin, x.get());
@@ -305,12 +363,14 @@ struct WienerHopf::Impl {
         gpuCorrelationTiming = gpuCorrelation->finish(a.memptr(), b.memptr());
 #endif
     } else {
-      fftw_execute(fullPlans[0].get()); fftw_execute(fullPlans[1].get());
+      fftw_execute(fullPlans[1].get());
+      fftw_execute(fullPlans[0].get());
       for (uint32_t i = 0; i < samples; ++i) {
         fullA.get()[i] = outX.get()[i] * std::conj(outX.get()[i]);
         fullB.get()[i] = outY.get()[i] * std::conj(outX.get()[i]);
       }
-      fftw_execute(fullPlans[2].get()); fftw_execute(fullPlans[3].get());
+      fftw_execute(fullPlans[2].get());
+      fftw_execute(fullPlans[3].get());
       for (uint32_t i = 0; i < taps; ++i) {
         a[i] = std::conj(fullA.get()[i]) / double(samples);
         b[i] = fullB.get()[i] / double(samples);
@@ -454,8 +514,81 @@ struct WienerHopf::Impl {
     return {x.get(), y.get(), samples, delayMin, generation};
   }
 };
-WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples) : impl_(std::make_unique<Impl>(first,last,samples)) {}
+WienerHopf::PreparedReference::PreparedReference(int32_t first, int32_t last,
+                                                 uint32_t count)
+  : delayMin_(first), samples_(count)
+{
+  const int64_t width = int64_t(last) - first;
+  if (!count || width <= 0 || uint64_t(width) > count)
+    throw std::invalid_argument("Clutter filter needs a non-empty half-open delay range no longer than the CPI");
+  taps_ = static_cast<uint32_t>(width);
+  filterLength_ = blah2::nextFastFftLength(uint64_t(count) + taps_ + 1);
+  rotated_.resize(samples_); spectrum_.resize(samples_); paddedSpectrum_.resize(filterLength_);
+  correlation_.set_size(taps_); cholesky_.set_size(taps_, taps_);
+  std::lock_guard<std::mutex> lock(plannerMutex());
+  referencePlan_ = fftw_plan_dft_1d(samples_, reinterpret_cast<fftw_complex*>(rotated_.data()),
+    reinterpret_cast<fftw_complex*>(spectrum_.data()), FFTW_FORWARD, fftw_plan_flags());
+  correlationPlan_ = fftw_plan_dft_1d(samples_, reinterpret_cast<fftw_complex*>(rotated_.data()),
+    reinterpret_cast<fftw_complex*>(rotated_.data()), FFTW_BACKWARD, fftw_plan_flags());
+  paddedPlan_ = fftw_plan_dft_1d(filterLength_, reinterpret_cast<fftw_complex*>(paddedSpectrum_.data()),
+    reinterpret_cast<fftw_complex*>(paddedSpectrum_.data()), FFTW_FORWARD, fftw_plan_flags());
+  if (!referencePlan_ || !correlationPlan_ || !paddedPlan_) {
+    if (referencePlan_) fftw_destroy_plan(referencePlan_);
+    if (correlationPlan_) fftw_destroy_plan(correlationPlan_);
+    if (paddedPlan_) fftw_destroy_plan(paddedPlan_);
+    throw std::runtime_error("Could not plan clutter reference FFT");
+  }
+}
+
+WienerHopf::PreparedReference::~PreparedReference()
+{
+  std::lock_guard<std::mutex> lock(plannerMutex());
+  fftw_destroy_plan(referencePlan_);
+  fftw_destroy_plan(correlationPlan_);
+  fftw_destroy_plan(paddedPlan_);
+}
+
+bool WienerHopf::PreparedReference::prepare(const IqData& reference)
+{
+  valid_ = false;
+  const auto& data = reference.view_data();
+  if (data.size() < samples_)
+    throw std::invalid_argument("Clutter reference is shorter than CPI");
+  for (uint32_t i = 0; i < samples_; ++i) {
+    const int64_t shifted = (int64_t(i) - delayMin_) % int64_t(samples_);
+    rotated_[i] = data[shifted < 0 ? shifted + samples_ : shifted];
+    paddedSpectrum_[i] = rotated_[i];
+  }
+  std::fill(paddedSpectrum_.begin() + samples_, paddedSpectrum_.end(), Complex{});
+  fftw_execute(paddedPlan_);
+  fftw_execute(referencePlan_);
+  for (uint32_t i = 0; i < samples_; ++i)
+    rotated_[i] = spectrum_[i] * std::conj(spectrum_[i]);
+  fftw_execute(correlationPlan_);
+  for (uint32_t i = 0; i < taps_; ++i)
+    correlation_[i] = std::conj(rotated_[i]) / double(samples_);
+  correlation_[0] = Complex(correlation_[0].real(), 0);
+  cholesky_ = arma::toeplitz(correlation_);
+  for (uint32_t row = 0; row < taps_; ++row)
+    for (uint32_t col = 0; col < row; ++col)
+      cholesky_(row, col) = std::conj(cholesky_(row, col));
+  valid_ = arma::chol(cholesky_, cholesky_);
+  if (!valid_) std::cerr << "Chol decomposition failed, skip clutter filter\n";
+  return valid_;
+}
+
+WienerHopf::WienerHopf(int32_t first, int32_t last, uint32_t samples, Workspace workspace)
+  : impl_(std::make_unique<Impl>(first, last, samples, workspace == Workspace::SharedReference)) {}
 WienerHopf::~WienerHopf() = default;
 uint32_t WienerHopf::filter_fft_length() const { return impl_->filterLength; }
 bool WienerHopf::process(IqData* x, IqData* y, bool borrowOutput) { return impl_->process(x,y,borrowOutput); }
+bool WienerHopf::process(const PreparedReference& reference, IqData* surveillance) {
+  if (reference.delayMin_ != impl_->delayMin || reference.taps_ != impl_->taps ||
+      reference.samples_ != impl_->samples)
+    throw std::invalid_argument("Clutter surveillance or prepared reference geometry does not match");
+  if (!surveillance || surveillance->get_length() < impl_->samples)
+    throw std::invalid_argument("Clutter input length differs from CPI");
+  if (!reference.valid_) return false;
+  return impl_->process_prepared(reference, surveillance);
+}
 WienerHopf::FilteredView WienerHopf::filtered_view() const { return impl_->filtered_view(); }

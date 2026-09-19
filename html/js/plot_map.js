@@ -69,6 +69,7 @@ var adsb = {};
 var adsbCache = null;
 var adsbReadAt = -Infinity;
 var adsbPending = false;
+var pendingDetectionTimestamp = null;
 
 function currentAdsbOverlay(enabled) {
   if (!enabled) return null;
@@ -91,6 +92,20 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   const runningConfig = await getRadarRuntimeConfig();
   const detected = runningConfig.process?.detection?.enable !== false ?
     await fetchRadarJson(urlDetection).catch(() => null) : null;
+  // The map was already painted on the first attempt. While its detection
+  // stream catches up, avoid uploading the same heatmap on every retry.
+  if (pendingDetectionTimestamp === data.timestamp) {
+    if (runningConfig.process?.detection?.enable === false) {
+      pendingDetectionTimestamp = null;
+      return true;
+    }
+    if (detected?.timestamp !== data.timestamp) return false;
+    await Plotly.restyle('data', {
+      x: [detected.delay], y: [detected.doppler]
+    }, [1]);
+    pendingDetectionTimestamp = null;
+    return true;
+  }
   // Separate TCP streams may arrive at different times; never put old
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
@@ -169,5 +184,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     };
     await Plotly.update('data', trace_update);
   }
-  return runningConfig.process?.detection?.enable === false || detected?.timestamp === data.timestamp;
+  const complete = runningConfig.process?.detection?.enable === false ||
+    detected?.timestamp === data.timestamp;
+  pendingDetectionTimestamp = complete ? null : data.timestamp;
+  return complete;
 });
