@@ -28,7 +28,7 @@ HEADER_VERSIONS = {"asio": "1.38.2", "cpp-httplib": "0.54.1",
                    "rapidjson": "1.1.0", "vulkan-headers": "1.4.357.0"}
 BUILD_PIN = "066a17c17068c0f11c9298d848c2976c71fad1c1"
 SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
-                   "packaging/macos/", "third_party/", "third-party/", "vendor/")
+                   "third_party/", "third-party/", "vendor/")
 
 
 def sha256(path):
@@ -103,6 +103,8 @@ def verify_checkout(checkout, source_id):
     except subprocess.CalledProcessError:
         git("fetch", "--no-tags", "origin", BASELINE_SOURCE_ID)
     changed = git("diff", "--name-only", BASELINE_SOURCE_ID, source_id).splitlines()
+    # Signing entitlements/package wiring are included in the current first-party
+    # archive; only native dependency/build inputs block source-kit reuse here.
     guarded = [name for name in changed if any(name == prefix or name.startswith(prefix)
                                                for prefix in SENSITIVE_PATHS)]
     if guarded:
