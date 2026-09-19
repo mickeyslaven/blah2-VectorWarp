@@ -1,6 +1,7 @@
 #include "Ambiguity.h"
 #include "RangeRowWorker.h"
 #include "RangeFft.h"
+#include "process/utility/FftwThreads.h"
 #ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
 #include "GpuPartialAmbiguity.h"
 #endif
@@ -27,8 +28,8 @@ bool fftw_threads_ready() {
   return ready;
 }
 struct RestoreFftwThreads {
-  const int saved = fftw_planner_nthreads();
-  ~RestoreFftwThreads() { fftw_plan_with_nthreads(saved); }
+  const int saved = blah2::fftw_planner_threads();
+  ~RestoreFftwThreads() { blah2::set_fftw_planner_threads(saved); }
 };
 unsigned fftw_plan_flags() {
   const char* mode = std::getenv("VECTORWARP_FFTW_PLAN");
@@ -166,21 +167,21 @@ Ambiguity::Ambiguity(int32_t _delayMin, int32_t _delayMax,
   try {
     int rangeLength = static_cast<int>(nfft);
     if (nfft <= 4096)
-      fftw_plan_with_nthreads(std::min(std::max(restoreThreads.saved, 1), 2));
+      blah2::set_fftw_planner_threads(std::min(std::max(restoreThreads.saved, 1), 2));
     fftXi = fftw_plan_many_dft(1, &rangeLength, 2,
       reinterpret_cast<fftw_complex *>(dataXi.data()), nullptr, 1, rangeLength,
       reinterpret_cast<fftw_complex *>(dataXi.data()), nullptr, 1, rangeLength,
       FFTW_FORWARD, planFlags);
     fftZi = fftw_plan_dft_1d(nfft, reinterpret_cast<fftw_complex *>(dataZi.data()),
                              reinterpret_cast<fftw_complex *>(dataZi.data()), FFTW_BACKWARD, planFlags);
-    fftw_plan_with_nthreads(restoreThreads.saved);
+    blah2::set_fftw_planner_threads(restoreThreads.saved);
     if (!fftXi || !fftZi)
       throw std::runtime_error("Could not create ambiguity range FFT plan");
 
-    if (nDopplerBins <= 1024) fftw_plan_with_nthreads(1);
+    if (nDopplerBins <= 1024) blah2::set_fftw_planner_threads(1);
     fftDoppler = fftw_plan_dft_1d(nDopplerBins, reinterpret_cast<fftw_complex *>(dataDoppler.data()),
                                   reinterpret_cast<fftw_complex *>(dataDoppler.data()), FFTW_FORWARD, planFlags);
-    fftw_plan_with_nthreads(restoreThreads.saved);
+    blah2::set_fftw_planner_threads(restoreThreads.saved);
     if (!fftDoppler)
       throw std::runtime_error("Could not create ambiguity Doppler FFT plan");
   } catch (...) {

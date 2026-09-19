@@ -1,6 +1,7 @@
 #include "process/clutter/WienerHopf.h"
 #include "process/clutter/CorrelationWorker.h"
 #include "process/meta/FftLength.h"
+#include "process/utility/FftwThreads.h"
 #include <armadillo>
 #include <fftw3.h>
 #include <cstdlib>
@@ -89,14 +90,14 @@ static void test_correlation_worker_fft(uint32_t samples, uint32_t taps,
   FftwBuffer expectedWorker(static_cast<Complex*>(fftw_malloc(sizeof(Complex) * length * 3)));
   require(planned && expectedCaller && expectedWorker,
     "Could not allocate correlation FFT workspace");
-  const int threadsBeforePlan = fftw_planner_nthreads();
-  fftw_plan_with_nthreads(1);
+  const int threadsBeforePlan = blah2::fftw_planner_threads();
+  blah2::set_fftw_planner_threads(1);
   int n = int(length);
   fftw_plan plan = fftw_plan_many_dft(1, &n, 3,
     reinterpret_cast<fftw_complex*>(planned.get()), nullptr, 1, length,
     reinterpret_cast<fftw_complex*>(planned.get()), nullptr, 1, length,
     FFTW_FORWARD, FFTW_ESTIMATE);
-  fftw_plan_with_nthreads(threadsBeforePlan);
+  blah2::set_fftw_planner_threads(threadsBeforePlan);
   require(plan != nullptr, "Could not plan correlation FFT");
   try {
     vectorwarp_clutter::CorrelationWorker worker(length, planned.get());
@@ -145,13 +146,13 @@ static void test_correlation_worker() {
   int n = length;
   // Production creates this blocked plan with one FFTW thread, then restores
   // the caller's global budget before the worker executes it.
-  const int threadsBeforePlan = fftw_planner_nthreads();
-  fftw_plan_with_nthreads(1);
+  const int threadsBeforePlan = blah2::fftw_planner_threads();
+  blah2::set_fftw_planner_threads(1);
   fftw_plan plan = fftw_plan_many_dft(1, &n, 3,
     reinterpret_cast<fftw_complex*>(planned.get()), nullptr, 1, length,
     reinterpret_cast<fftw_complex*>(planned.get()), nullptr, 1, length,
     FFTW_FORWARD, FFTW_ESTIMATE);
-  fftw_plan_with_nthreads(threadsBeforePlan);
+  blah2::set_fftw_planner_threads(threadsBeforePlan);
   require(plan != nullptr, "Could not plan correlation FFT");
   try {
     for (uint64_t begin = 0; begin < samples; begin += hop) {
@@ -202,8 +203,8 @@ static void test_filter_worker() {
   FftwBuffer expectedOutput(static_cast<Complex*>(fftw_malloc(sizeof(Complex) * values)));
   require(correlation && plannedInput && plannedOutput && serialInput && serialOutput &&
     expectedInput && expectedOutput, "Could not allocate filter FFT workspace");
-  const int threadsBeforePlan = fftw_planner_nthreads();
-  fftw_plan_with_nthreads(1);
+  const int threadsBeforePlan = blah2::fftw_planner_threads();
+  blah2::set_fftw_planner_threads(1);
   int n = length;
   fftw_plan forward = fftw_plan_many_dft(1, &n, lanes,
     reinterpret_cast<fftw_complex*>(plannedInput.get()), nullptr, 1, length,
@@ -213,7 +214,7 @@ static void test_filter_worker() {
     reinterpret_cast<fftw_complex*>(plannedOutput.get()), nullptr, 1, length,
     reinterpret_cast<fftw_complex*>(plannedOutput.get()), nullptr, 1, length,
     FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftw_plan_with_nthreads(threadsBeforePlan);
+  blah2::set_fftw_planner_threads(threadsBeforePlan);
   require(forward && inverse, "Could not plan filter FFT");
   try {
     const vectorwarp_clutter::FilterJob first{x.data(), weights.data(), samples,
@@ -249,9 +250,9 @@ static void test_filter_worker() {
 static void run(unsigned samples, int first, int last, double scale = 1) {
   const unsigned taps = last - first;
   IqData reference(samples + 3), surveillance(samples + 3);
-  const int threadsBefore = fftw_planner_nthreads();
+  const int threadsBefore = blah2::fftw_planner_threads();
   WienerHopf filter(first, last, samples);
-  require(fftw_planner_nthreads() == threadsBefore, "Clutter changed the global FFT thread budget");
+  require(blah2::fftw_planner_threads() == threadsBefore, "Clutter changed the configured FFT thread budget");
   uint32_t block = 1024;
   while (block < uint64_t(taps) * 2) block *= 2;
   const uint32_t expectedLength = samples >= uint64_t(block) * 4 ? block :
@@ -401,7 +402,7 @@ static void shared_reference(unsigned samples) {
 int main() {
   try {
     require(fftw_init_threads() != 0, "FFTW thread initialization failed");
-    fftw_plan_with_nthreads(2);
+    blah2::set_fftw_planner_threads(2);
     {
       ScopedPlanMode invalid("invalid");
       bool rejected = false;
@@ -454,17 +455,17 @@ int main() {
     run(20000, -10, 400, 8192); // Realistic ADC units and the Pi's tap count.
     // Requested slots cap at the caller FFT budget; each run reuses workers
     // over three partial-tail CPIs and checks the direct convolution oracle.
-    fftw_plan_with_nthreads(4);
+    blah2::set_fftw_planner_threads(4);
     { ScopedClutterWorkers one("1"); run(20000, -10, 400, 8192); }
-    fftw_plan_with_nthreads(1);
+    blah2::set_fftw_planner_threads(1);
     { ScopedClutterWorkers four("4"); run(20000, -10, 400, 8192); }
-    require(fftw_planner_nthreads() == 1, "Serial clutter changed FFT budget");
-    fftw_plan_with_nthreads(2);
+    require(blah2::fftw_planner_threads() == 1, "Serial clutter changed configured FFT budget");
+    blah2::set_fftw_planner_threads(2);
     { ScopedClutterWorkers four("4"); run(20000, -10, 400, 8192); }
-    require(fftw_planner_nthreads() == 2, "Threaded clutter changed FFT budget");
-    fftw_plan_with_nthreads(4);
+    require(blah2::fftw_planner_threads() == 2, "Threaded clutter changed configured FFT budget");
+    blah2::set_fftw_planner_threads(4);
     { ScopedClutterWorkers four("4"); run(20000, -10, 400, 8192); }
-    require(fftw_planner_nthreads() == 4, "Four-slot clutter changed FFT budget");
+    require(blah2::fftw_planner_threads() == 4, "Four-slot clutter changed configured FFT budget");
     shared_reference(127);
     // 16384 is the smallest geometry selecting the Pi blocked-correlation
     // path. Prepared references must still use their cached full CPI data.

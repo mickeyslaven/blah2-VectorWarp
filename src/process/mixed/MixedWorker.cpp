@@ -4,6 +4,7 @@
 #include "MixedProtocol.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/clutter/WienerHopf.h"
+#include "process/utility/FftwThreads.h"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -83,8 +84,8 @@ int main(){
     // The qualified benchmark configured FFTW's global planner count before
     // Wiener construction.  Wiener uses it to cap persistent CPU helpers.
     if(fftw_init_threads()==0)throw std::runtime_error("Mixed worker FFTW thread initialization failed");
-    fftw_plan_with_nthreads(4);
-    if(fftw_planner_nthreads()!=4)
+    blah2::set_fftw_planner_threads(4);
+    if(blah2::fftw_planner_threads()!=4)
       throw std::runtime_error("Mixed worker FFTW thread setting changed");
     WienerHopf clutter(-10,400,samples);
     if(clutter.cpu_worker_slots()!=2)
@@ -98,8 +99,8 @@ int main(){
     if(const char* path=std::getenv("VECTORWARP_MIXED_WORKER_LOG")){
       timingLog.open(path,std::ios::app);
       if(!timingLog)throw std::runtime_error("Mixed worker timing log open failed");
-      timingLog << "{\"event\":\"startup\",\"fftw_threads\":"
-        << fftw_planner_nthreads() << ",\"clutter_cpu_worker_slots\":"
+      timingLog << "{\"event\":\"startup\",\"fftw_configured_threads\":"
+        << blah2::fftw_planner_threads() << ",\"clutter_cpu_worker_slots\":"
         << clutter.cpu_worker_slots() << "}\n" << std::flush;
     }
     std::vector<Complex> completed(mapSamples+tailSamples);

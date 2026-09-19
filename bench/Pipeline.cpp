@@ -4,6 +4,7 @@
 #include "process/ambiguity/Ambiguity.h"
 #include "process/meta/HammingNumber.h"
 #include "process/clutter/WienerHopf.h"
+#include "process/utility/FftwThreads.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -269,7 +270,7 @@ int main(int argc, char** argv) try {
   const unsigned limit=parsedLimit;
   const unsigned workers=geometry.workers, fftThreads=geometry.fftThreads;
   if (!fftw_init_threads()) throw std::runtime_error("FFTW thread initialization failed");
-  fftw_plan_with_nthreads(fftThreads);
+  blah2::set_fftw_planner_threads(fftThreads);
   std::vector<std::unique_ptr<IqData>> capture, surveillance;
   std::vector<std::unique_ptr<Ambiguity>> ambiguity;
   std::vector<std::unique_ptr<WienerHopf>> filters;

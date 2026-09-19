@@ -10,6 +10,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "process/ambiguity/Ambiguity.h"
+#include "process/utility/FftwThreads.h"
 
 #include <random>
 #include <iostream>
@@ -141,13 +142,13 @@ TEST_CASE("Constructor_Round", "[constructor]")
 TEST_CASE("Ambiguity preserves the caller FFTW planning budget", "[constructor][fftw]")
 {
     REQUIRE(fftw_init_threads() != 0);
-    const int saved = fftw_planner_nthreads();
-    fftw_plan_with_nthreads(3);
+    const int saved = blah2::fftw_planner_threads();
+    blah2::set_fftw_planner_threads(3);
     {
       Ambiguity ambiguity(-7, 7, 0, 0, 1000, 1000);
     }
-    CHECK(fftw_planner_nthreads() == 3);
-    fftw_plan_with_nthreads(saved);
+    CHECK(blah2::fftw_planner_threads() == 3);
+    blah2::set_fftw_planner_threads(saved);
 }
 
 TEST_CASE("Ambiguity FFTW plan mode validates and preserves results", "[constructor][fftw]")

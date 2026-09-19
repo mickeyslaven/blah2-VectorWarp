@@ -18,6 +18,7 @@
 #include "process/mixed/MixedEligibility.h"
 #endif
 #include "process/clutter/WienerHopf.h"
+#include "process/utility/FftwThreads.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
 #include "process/detection/CfarDetector1D.h"
@@ -288,7 +289,7 @@ try
     configuredWorkers, fftThreads, blah2::available_cpu_threads());
   const std::size_t surveillanceWorkers = threadPlan.workers;
   fftThreads = static_cast<uint32_t>(threadPlan.fftThreads);
-  fftw_plan_with_nthreads(fftThreads);
+  blah2::set_fftw_planner_threads(fftThreads);
   std::cout << "Surveillance paths=" << surveillanceChannels.size()
     << " workers=" << surveillanceWorkers << " fft_threads=" << fftThreads
     << " available_cpus=" << threadPlan.availableCpus

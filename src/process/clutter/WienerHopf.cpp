@@ -11,6 +11,7 @@
 #include "gpu/GpuOperationGuard.h"
 #endif
 #include "process/meta/FftLength.h"
+#include "process/utility/FftwThreads.h"
 #include <armadillo>
 #include <fftw3.h>
 #include <algorithm>
@@ -56,8 +57,8 @@ uint32_t blockLength(uint64_t minimum, uint32_t floor) {
 }
 std::mutex& plannerMutex() { static std::mutex mutex; return mutex; }
 struct RestoreThreads {
-  const int previous = fftw_planner_nthreads();
-  ~RestoreThreads() { fftw_plan_with_nthreads(previous); }
+  const int previous = blah2::fftw_planner_threads();
+  ~RestoreThreads() { blah2::set_fftw_planner_threads(previous); }
 };
 unsigned fftw_plan_flags() {
   const char* mode = std::getenv("VECTORWARP_FFTW_PLAN");
@@ -227,7 +228,7 @@ struct WienerHopf::Impl {
     const uint32_t requestedWorkers = clutter_worker_slots();
     try {
       if (blockedCorrelation) {
-        fftw_plan_with_nthreads(1);
+        blah2::set_fftw_planner_threads(1);
         int length = int(correlationLength);
         correlationPlans[0] = checked(fftw_plan_many_dft(1, &length, 3,
           fftData(correlation), nullptr, 1, length, fftData(correlation), nullptr, 1, length,
@@ -240,7 +241,7 @@ struct WienerHopf::Impl {
         fullPlans[2] = checked(fftw_plan_dft_1d(count, fftData(fullA), fftData(fullA), FFTW_BACKWARD, planFlags));
         fullPlans[3] = checked(fftw_plan_dft_1d(count, fftData(fullB), fftData(fullB), FFTW_BACKWARD, planFlags));
       }
-      fftw_plan_with_nthreads(blockedFilter ? 1 : restore.previous);
+      blah2::set_fftw_planner_threads(blockedFilter ? 1 : restore.previous);
       int length = int(filterLength);
       filterPlans[0] = checked(fftw_plan_many_dft(1, &length, lanes,
         fftData(filterX), nullptr, 1, length, fftData(filterX), nullptr, 1, length, FFTW_FORWARD, planFlags));

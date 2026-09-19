@@ -1,5 +1,6 @@
 #pragma once
 #include <fftw3.h>
+#include "process/utility/FftwThreads.h"
 #include <algorithm>
 #include <cmath>
 #include <complex>
@@ -103,8 +104,8 @@ public:
     if (!fft) throw std::invalid_argument("Invalid ambiguity row FFT");
     {
       std::lock_guard<std::mutex> lock(planner_);
-      const int saved = fftw_planner_nthreads();
-      fftw_plan_with_nthreads(1);
+      const int saved = blah2::fftw_planner_threads();
+      blah2::set_fftw_planner_threads(1);
       int length = int(fft);
       forward_ = fftw_plan_many_dft(1,&length,2,
         reinterpret_cast<fftw_complex*>(input_.data()),nullptr,1,length,
@@ -113,7 +114,7 @@ public:
       inverse_ = fftw_plan_dft_1d(length,
         reinterpret_cast<fftw_complex*>(product_.data()),
         reinterpret_cast<fftw_complex*>(product_.data()),FFTW_BACKWARD,flags);
-      fftw_plan_with_nthreads(saved);
+      blah2::set_fftw_planner_threads(saved);
     }
     if (!forward_ || !inverse_) {
       std::lock_guard<std::mutex> lock(planner_);

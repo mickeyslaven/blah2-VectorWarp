@@ -234,6 +234,14 @@ target_link_libraries(testClutterFft PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIE
 add_test(NAME clutterFftPadding COMMAND testClutterFft)
 set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
 
+# Compile the wrapper against a minimal FFTW 3.3.8-shaped header: the public
+# API has a setter but no planner-thread getter.
+add_executable(testFftwThreadsLegacy test/unit/process/utility/TestFftwThreadsLegacy.cpp)
+target_compile_features(testFftwThreadsLegacy PRIVATE cxx_std_17)
+target_include_directories(testFftwThreadsLegacy BEFORE PRIVATE
+  ${PROJECT_ROOT}/test/unit/process/utility/legacy-fftw)
+add_test(NAME fftwThreadStateLegacyApi COMMAND testFftwThreadsLegacy)
+
 add_executable(testCfarEfficiency
   test/unit/process/detection/TestCfarEfficiency.cpp
   src/process/detection/CfarDetector1D.cpp src/data/Detection.cpp src/data/Map.cpp)

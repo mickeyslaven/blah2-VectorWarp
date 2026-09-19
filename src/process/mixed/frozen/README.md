@@ -30,5 +30,11 @@ two slots to one, unlike the prototype's four-thread setup.
 
 Keep kernel changes separate from AUTO policy work and requalify full frozen
 complex maps, detector/tracker output, and short live timing after any change.
+The shared `process/utility/FftwThreads.h` is an intentional exception to the
+snapshot: it tracks calls to FFTW's thread setter so temporary planning scopes
+can restore the configured count on FFTW 3.3.8, which has no public getter.
+It changes no DSP math or class layout. Startup telemetry names that setting
+`fftw_configured_threads`; the separate two-clutter-CPU-slot check still reads
+the constructed worker count.
 The evolving benchmark and validation record is the
 [Pi mixed repair report](../../../../docs/PI_MIXED_REPAIR_20260919.md).
