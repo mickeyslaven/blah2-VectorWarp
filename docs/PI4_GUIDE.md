@@ -120,14 +120,15 @@ driver diagnostic, run `/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`.
 
 ## Evidence and limits
 
-The repaired isolated mixed worker passed two short live AUTO runs at **341.508
-and 337.463 ms** mean after qualification, versus adjacent CPU controls at
-**383.306 and 378.377 ms**. AUTO kept mixed active with zero drops, faults, or
-final complete-CPI backlog: a **10.86% pooled** improvement. These were
+The integrated source passed two short live AUTO runs at **334.552
+and 347.726 ms** mean after qualification, versus adjacent CPU controls at
+**377.562 and 379.156 ms**. AUTO kept mixed active with zero drops, faults, or
+final complete-CPI backlog: a **9.84% pooled** improvement. These were
 30-second comparisons, not endurance qualification. No new 40-minute mixed
 soak has passed. An earlier 40-minute AUTO soak passed with CPU selected;
 that result applies only to the older CPU-selected binary. See the
-[repair and validation report](PI_MIXED_REPAIR_20260919.md) and
+[integration validation](PI4_PUBLICATION_VALIDATION_20260919.md),
+[earlier repair report](PI_MIXED_REPAIR_20260919.md) and
 [earlier soak result](PI_AUTO_SOAK_20260919.md).
 
 ## AUTO and mixed processing
@@ -147,6 +148,7 @@ worker's CPU work, including the FP64 coefficient solve, and is not a fully GPU 
 
 ## Related records
 
+- [Integrated-source regression and live checks](PI4_PUBLICATION_VALIDATION_20260919.md)
 - [Bookworm Lite OS history](PI_OS_LITE_20260918.md)
 - [Pi image packaging plan](PI_IMAGE_PACKAGING.md)
 - [GPU concurrency experiments](PI_GPU_CONCURRENCY_20260918.md)
