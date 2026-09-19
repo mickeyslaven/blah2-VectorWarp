@@ -90,7 +90,9 @@ physical Intel Mac execution remains unverified. ''' if macos else "")
 <code>{macos["sha256"]}</code>, then check the Apple installer signature and notarization:</p>
 <pre><code>shasum -a 256 {escape(macos["filename"])}
 pkgutil --check-signature {escape(macos["filename"])}
-spctl --assess --type install {escape(macos["filename"])}</code></pre>''' if macos else "")
+spctl --assess --type install {escape(macos["filename"])}</code></pre>
+<p><a href="{base}/{escape(macos["source_archive"]["filename"])}">Mac corresponding source archive</a>
+(SHA-256: <code>{macos["source_archive"]["sha256"]}</code>).</p>''' if macos else "")
     fingerprint = escape(manifest["signing_fingerprint"])
     # The site can be rebuilt from main before the next release exists. Describe
     # only behavior shipped by the verified packages in this manifest.
@@ -425,6 +427,8 @@ def verify_macos_release(path, packages, version, source_commit):
         raise ValueError("Mac release receipt must be a regular file")
     entry = json.loads(path.read_text())
     filename = f"vectorwarp-{version}-macos-universal.pkg"
+    source_name = f"vectorwarp-{version}-macos-corresponding-source.tar.gz"
+    source = entry.get("source_archive") if isinstance(entry, dict) else None
     if (not isinstance(entry, dict) or entry.get("schema") != 1 or
             entry.get("version") != version or entry.get("publication_commit") != source_commit.lower() or
             entry.get("filename") != filename or entry.get("apple_team_id") != "DJGHPX8T7R" or
@@ -436,6 +440,10 @@ def verify_macos_release(path, packages, version, source_commit):
             not re.fullmatch(r"[0-9a-f-]{36}", entry["notary_submission_id"]) or
             not isinstance(entry.get("sha256"), str) or
             not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) or
+            not isinstance(source, dict) or source.get("filename") != source_name or
+            not isinstance(source.get("sha256"), str) or
+            not re.fullmatch(r"[0-9a-f]{64}", source["sha256"]) or
+            type(source.get("size")) is not int or source["size"] <= 0 or
             type(entry.get("size")) is not int or entry["size"] <= 0):
         raise ValueError("Mac release receipt is incomplete or mismatched")
     package = packages / filename
@@ -443,6 +451,10 @@ def verify_macos_release(path, packages, version, source_commit):
         raise ValueError("Mac release package is missing or size differs")
     if sha256(package) != entry["sha256"]:
         raise ValueError("Mac release package checksum differs")
+    source_file = packages / source_name
+    if (source_file.is_symlink() or not source_file.is_file() or
+            source_file.stat().st_size != source["size"] or sha256(source_file) != source["sha256"]):
+        raise ValueError("Mac corresponding source archive differs")
     return entry
 
 

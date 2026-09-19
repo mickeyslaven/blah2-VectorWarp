@@ -75,12 +75,15 @@ class HomepageTests(unittest.TestCase):
         manifest = self.release_manifest()
         self.assertNotIn('Download signed PKG', repository.repository_homepage(manifest))
         manifest['macos_package'] = {'filename': 'vectorwarp-1.2.3-macos-universal.pkg',
-                                     'sha256': 'a' * 64}
+                                     'sha256': 'a' * 64,
+                                     'source_archive': {'filename': 'vectorwarp-1.2.3-macos-corresponding-source.tar.gz',
+                                                        'sha256': 'b' * 64}}
         page = repository.repository_homepage(manifest)
         self.assertIn('macOS 15+ · universal', page)
         self.assertIn('releases/download/v1.2.3/vectorwarp-1.2.3-macos-universal.pkg', page)
         self.assertIn('/Applications/VectorWarp.app/Contents/MacOS/VectorWarp', page)
         self.assertIn('pkgutil --check-signature vectorwarp-1.2.3-macos-universal.pkg', page)
+        self.assertIn('releases/download/v1.2.3/vectorwarp-1.2.3-macos-corresponding-source.tar.gz', page)
         manifest['macos_package']['filename'] = 'vectorwarp-1.2.2-macos-universal.pkg'
         with self.assertRaisesRegex(ValueError, 'Mac package filename'):
             repository.repository_homepage(manifest)
@@ -90,12 +93,16 @@ class HomepageTests(unittest.TestCase):
             folder = Path(temporary)
             package = folder / 'vectorwarp-1.2.3-macos-universal.pkg'
             package.write_bytes(b'fixture package')
+            source = folder / 'vectorwarp-1.2.3-macos-corresponding-source.tar.gz'
+            source.write_bytes(b'fixture source')
             receipt = folder / 'macos-release.json'
             entry = {'schema': 1, 'version': '1.2.3', 'publication_commit': 'a' * 40,
                      'filename': package.name, 'sha256': repository.sha256(package),
                      'size': package.stat().st_size, 'apple_team_id': 'DJGHPX8T7R',
                      'notary_status': 'Accepted', 'gatekeeper': 'Notarized Developer ID',
                      'runtime_source_id': 'b' * 40,
+                     'source_archive': {'filename': source.name, 'sha256': repository.sha256(source),
+                                        'size': source.stat().st_size},
                      'notary_submission_id': '63123801-5d8c-4f6a-be1a-2629ec61382d'}
             receipt.write_text(json.dumps(entry))
             self.assertEqual(repository.verify_macos_release(receipt, folder, '1.2.3', 'a' * 40), entry)

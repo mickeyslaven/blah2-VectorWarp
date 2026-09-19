@@ -100,10 +100,16 @@ jobs:
           if [[ -n $macos_digest ]]; then
             [[ $macos_digest =~ ^sha256:[0-9a-f]{64}$ ]] || {
               echo 'Mac release asset has no verified SHA-256 digest.' >&2; exit 1; }
-            gh release download "$TAG" --dir packages --pattern "$macos_filename" --pattern macos-release.json
-            [[ -f packages/$macos_filename && -f packages/macos-release.json ]] || {
-              echo 'Mac release asset or receipt is missing.' >&2; exit 1; }
+            macos_source="vectorwarp-${manifest_version}-macos-corresponding-source.tar.gz"
+            source_digest=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"${macos_source}\") | .digest")
+            [[ $source_digest =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo 'Mac corresponding source has no verified SHA-256 digest.' >&2; exit 1; }
+            gh release download "$TAG" --dir packages --pattern "$macos_filename" \
+              --pattern "$macos_source" --pattern macos-release.json
+            [[ -f packages/$macos_filename && -f packages/$macos_source && -f packages/macos-release.json ]] || {
+              echo 'Mac release asset, source, or receipt is missing.' >&2; exit 1; }
             printf '%s  %s\n' "${macos_digest#sha256:}" "packages/$macos_filename" | sha256sum --check --strict
+            printf '%s  %s\n' "${source_digest#sha256:}" "packages/$macos_source" | sha256sum --check --strict
             printf 'MACOS_RELEASE_FILE=packages/macos-release.json\n' >> "$GITHUB_ENV"
           fi
           printf 'RELEASE_VERSION=%s\nRELEASE_COMMIT=%s\n' "$manifest_version" "$tag_commit" >> "$GITHUB_ENV"
@@ -213,7 +219,11 @@ jobs:
           macos_filename=$(jq -r '.macos_package.filename // empty' repository/repository-manifest.json)
           if [[ -n $macos_filename ]]; then
             [[ $macos_filename == "vectorwarp-${version}-macos-universal.pkg" ]]
-            curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' \
-              --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
-              "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${macos_filename}"
+            macos_source=$(jq -er '.macos_package.source_archive.filename' repository/repository-manifest.json)
+            [[ $macos_source == "vectorwarp-${version}-macos-corresponding-source.tar.gz" ]]
+            for asset in "$macos_filename" "$macos_source"; do
+              curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' \
+                --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
+                "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${asset}"
+            done
           fi
