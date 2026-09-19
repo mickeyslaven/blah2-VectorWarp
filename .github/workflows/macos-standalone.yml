@@ -58,6 +58,7 @@ jobs:
           python3 test/macos/standalone_launcher_test.py
           python3 test/macos/standalone_package_test.py
           python3 test/macos/standalone_transfer_test.py
+          python3 test/macos/standalone_isolation_test.py
       - name: Verify replay, configuration, and standalone isolation
         run: |
           set -euo pipefail
@@ -68,10 +69,26 @@ jobs:
           runtime="$GITHUB_WORKSPACE/build/standalone runtime"
           test -x "$runtime/bin/node" && test -x "$runtime/python/bin/python3"
           prefix="$(brew --prefix)"
-          hidden="${prefix}.vectorwarp-ci-hidden"
+          # /usr/local is a macOS firmlink; its /usr parent is read-only.
+          # Hide prefix contents in place instead of renaming the mount itself.
+          hidden="$prefix/.vectorwarp-ci-hidden"
           test -d "$prefix" && test ! -e "$hidden"
-          trap 'if [ -d "$hidden" ]; then sudo mv "$hidden" "$prefix"; fi' EXIT INT TERM
-          sudo mv "$prefix" "$hidden"
+          shopt -s dotglob nullglob
+          restore_homebrew() {
+            test -d "$hidden" || return 0
+            for entry in "$hidden"/*; do
+              test ! -e "$prefix/${entry##*/}" && test ! -L "$prefix/${entry##*/}" || return 1
+              sudo mv "$entry" "$prefix/" || return 1
+            done
+            sudo rmdir "$hidden"
+          }
+          sudo mkdir "$hidden"
+          trap restore_homebrew EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          for entry in "$prefix"/*; do
+            if [ "$entry" != "$hidden" ]; then sudo mv "$entry" "$hidden/"; fi
+          done
           export PATH="$runtime/bin:/usr/bin:/bin:/usr/sbin:/sbin"
           export PYTHONHOME="$runtime/python" PYTHONDONTWRITEBYTECODE=1
           export VK_DRIVER_FILES="$runtime/share/vulkan/icd.d/MoltenVK_icd.json"
@@ -82,7 +99,7 @@ jobs:
           "$runtime/python/bin/python3" -s -P test/macos/receiver_sdk_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-sdk-closure.log
           "$runtime/bin/blah2-gpu-worker" --driver-status 2>&1 | tee build/standalone-driver-status.log
           "$runtime/python/bin/python3" -s -P test/macos/processor_lifecycle_test.py --standalone --app-root "$runtime" --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-lifecycle.log
-          sudo mv "$hidden" "$prefix"
+          restore_homebrew
           trap - EXIT INT TERM
           "$runtime/python/bin/python3" -s -P script/package-macos-standalone.py audit --runtime "$runtime" 2>&1 | tee build/standalone-audit.log
       - name: Encrypt the tested development runtime for local review

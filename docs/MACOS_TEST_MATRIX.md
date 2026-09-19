@@ -7,8 +7,12 @@ Restart, unchanged bundle contents after use, and bundled MoltenVK ambiguity
 and clutter execution. Universal app/package assembly and the active-process
 installer guard pass small ARM64/Intel executable fixtures; those fixtures are
 not full Intel VectorWarp runtime qualification. The local dependency set
-requires macOS 26. The new standalone CI workflow targets macOS 15 on both
-architectures; its results and a full combined installer remain pending.
+requires macOS 26. The standalone CI workflow targets macOS 15 on both
+architectures. The [Apple Silicon job for `36c70d8`](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35410057065/job/105807722419)
+passed its dependency audit, 18 replay cases, 11 configuration cases, open-SDK
+no-device handling, API lifecycle and unchanged-bundle audit with Homebrew hidden.
+Intel built and staged successfully but its isolation setup failed before replay;
+Intel runtime qualification and a full combined installer remain pending.
 Public binary distribution, Developer ID signing and notarization are not yet
 qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
 
