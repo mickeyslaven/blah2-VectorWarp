@@ -108,10 +108,15 @@ The standalone CI matrix builds both runtimes on macOS 15, temporarily hides
 Homebrew on the disposable runner, and tests replay, settings, SDK no-device
 handling, lifecycle and the unchanged bundle inventory. Virtual-runner driver
 discovery is separate from real GPU execution and physical receiver testing.
-CI uploads diagnostics and optionally encrypted development payloads for local
-review. Release packages are assembled and signed locally with the reviewed
-corresponding source and notices; an accepted, stapled PKG and release receipt
-are required before the public download page links an asset.
+CI runs for pull requests and version tags, uploading diagnostics and optionally
+encrypted development payloads for local review. The recipient's private transfer
+key and Apple signing/notarization credentials stay on the local Mac; this public
+repository does not register that Mac as a self-hosted runner. Release packages
+are assembled and signed locally with the reviewed corresponding source and
+notices; an accepted, stapled PKG and release receipt are required before the
+public download page links an asset. A new tag does not authorize reuse of a
+prior release's source archive or notice bindings: changed dependency or runtime
+inputs require fresh verification and may stop automatic publication.
 
 For confidential CI review, `script/transfer-macos-runtime.py` can encrypt a
 tested runtime to a public recipient certificate. The private key stays outside
