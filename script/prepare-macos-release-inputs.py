@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("macos_packager", ROOT / "script/package-macos-standalone.py")
@@ -24,8 +25,13 @@ SPEC.loader.exec_module(package)
 BASELINE_SOURCE_SHA256 = "193456313f51fc6d330c4e8332beec4957adfad8a80e4a4d81dea6fd7fbb19cd"
 BASELINE_SOURCE_ID = "f8135ac947a88dd416b0f0ae8d3d891dd546da1d"
 BASELINE_NPM_LOCK_SHA256 = "de38adb43b306b81ee4aac67dbc913927a6dfef1bd062d3a8bb8659956518c2d"
-HEADER_VERSIONS = {"asio": "1.38.2", "cpp-httplib": "0.54.1",
-                   "rapidjson": "1.1.0", "vulkan-headers": "1.4.357.0"}
+HEADER_VERSIONS = {"asio": "1.38.2", "rapidjson": "1.1.0",
+                   "vulkan-headers": "1.4.357.0"}
+CPP_HEADER = {
+    "arm64": ("0.54.1", "7310f5312e1423830d649b38ed028e9db86303a979ccbfdbd1c4b1574f422dfb"),
+    "x86_64": ("0.53.1", "185af9587e270de9a3bfee234c6740f02e82265da33c7a41f97e02ee42f979d2"),
+}
+CPP_LICENSE_SHA256 = "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed364d8b"
 BUILD_PIN = "066a17c17068c0f11c9298d848c2976c71fad1c1"
 SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
                    "third_party/", "third-party/", "vendor/")
@@ -65,16 +71,47 @@ def source_claims(inventory):
     return result
 
 
-def parse_header_versions(path):
+def parse_header_versions(path, arch):
     result = {}
     for line in Path(path).read_text().splitlines():
         parts = line.split()
         if len(parts) != 2 or parts[0] in result:
             raise ValueError("invalid or duplicate Homebrew header version")
         result[parts[0]] = parts[1]
-    if any(result.get(name) != version for name, version in HEADER_VERSIONS.items()):
+    if (any(result.get(name) != version for name, version in HEADER_VERSIONS.items()) or
+            result.get("cpp-httplib") != CPP_HEADER[arch][0]):
         raise ValueError("embedded-header input version changed; new source review required")
     return result
+
+
+def verify_cpp_formula(path, arch):
+    recipe = Path(path).read_text()
+    version, expected_sha = CPP_HEADER[arch]
+    expected_url = f"https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz"
+    url = re.findall(r'^\s*url "([^"]+)"\s*$', recipe, re.MULTILINE)
+    sha = re.findall(r'^\s*sha256 "([0-9a-f]{64})"\s*$', recipe, re.MULTILINE)
+    license_name = re.findall(r'^\s*license "([^"]+)"\s*$', recipe, re.MULTILINE)
+    if ("class CppHttplib < Formula" not in recipe or
+            url != [expected_url] or sha != [expected_sha] or license_name != ["MIT"]):
+        raise ValueError(f"{arch} cpp-httplib formula source, version, or license changed")
+    return expected_url
+
+
+def fetch_intel_cpp_source(output, url, baseline_notices):
+    archive = output / "cpp-httplib-0.53.1.tar.gz"
+    with urllib.request.urlopen(url, timeout=60) as response, archive.open("xb") as stream:
+        shutil.copyfileobj(response, stream)
+    if sha256(archive) != CPP_HEADER["x86_64"][1]:
+        raise ValueError("Intel cpp-httplib source archive hash differs from formula")
+    with tarfile.open(archive, "r:gz") as source:
+        member = source.extractfile("cpp-httplib-0.53.1/LICENSE")
+        if member is None:
+            raise ValueError("Intel cpp-httplib source has no LICENSE")
+        license_sha = hashlib.sha256(member.read()).hexdigest()
+    if (license_sha != CPP_LICENSE_SHA256 or
+            sha256(baseline_notices / "embedded/cpp-httplib/LICENSE") != license_sha):
+        raise ValueError("Intel cpp-httplib license differs from reviewed notice")
+    return archive
 
 
 def verify_inventory(path, baseline, runtime, source_id, arch):
@@ -129,6 +166,11 @@ def rebind_notices(baseline, output, source_id, runtimes):
     index = read_json(output / "INDEX.json")
     if index.get("source_id") != BASELINE_SOURCE_ID:
         raise ValueError("unexpected baseline notice index")
+    matches = [item for item in index.get("input_notices", [])
+               if item.get("file") == "embedded/cpp-httplib/LICENSE"]
+    if len(matches) != 1 or matches[0].get("sha256") != CPP_LICENSE_SHA256:
+        raise ValueError("reviewed cpp-httplib notice index changed")
+    matches[0]["origin"] += "; cpp-httplib-0.53.1.tar.gz::cpp-httplib-0.53.1/LICENSE (Intel)"
     index["source_id"] = source_id
     (output / "INDEX.json").write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
     notice = {"schema": 1, "source_id": source_id,
@@ -159,7 +201,7 @@ def add_file(archive, name, source):
         archive.addfile(info, stream)
 
 
-def source_archive(args, source_id, runtimes, output):
+def source_archive(args, source_id, runtimes, output, intel_cpp):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -169,12 +211,15 @@ def source_archive(args, source_id, runtimes, output):
                         "--prefix=VectorWarp-current-source/", source_id], check=True, stdout=stream)
     items = {"dependency-source-baseline-v0.1.9.tar.gz": baseline,
              "VectorWarp-current-source.tar.gz": first_party,
+             "cpp-httplib-0.53.1.tar.gz": intel_cpp,
              "runtime-arm64-standalone.json": runtimes["arm64"] / "standalone.json",
              "runtime-x86_64-standalone.json": runtimes["x86_64"] / "standalone.json",
              "inventory-arm64.json": Path(args.arm64_inventory),
              "inventory-x86_64.json": Path(args.x86_64_inventory),
              "header-input-versions-arm64.txt": Path(args.arm64_header_versions),
-             "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions)}
+             "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
+             "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
+             "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula)}
     manifest = {"schema": 1, "source_id": source_id, "version": args.version,
                 "baseline_source_id": BASELINE_SOURCE_ID,
                 "files": {name: {"sha256": sha256(path), "size": path.stat().st_size}
@@ -182,7 +227,9 @@ def source_archive(args, source_id, runtimes, output):
     readme = ("Current first-party source is VectorWarp-current-source.tar.gz at commit " + source_id +
               ". The nested v0.1.9 source kit supplies unchanged dependency sources, recipes, patches, "
               "licenses and build instructions. It is reused only after both architecture inventories, "
-              "embedded-header versions and npm lock passed exact-input checks. Extract that kit, "
+              "embedded-header versions and npm lock passed exact-input checks. Intel uses "
+              "cpp-httplib 0.53.1; its separately verified source archive is alongside this README, "
+              "with the same MIT license text as the 0.54.1 arm64 notice. Extract the baseline kit, "
               "then use the current first-party checkout for the build; do not use its historical "
               "f813 first-party archive. Current runtime manifests and CI inventories are included "
               "for provenance. No signing key, SDK, runtime binary or notarization credential is here.\n")
@@ -218,6 +265,7 @@ def source_archive(args, source_id, runtimes, output):
     if seen != set(expected):
         raise ValueError("corresponding-source archive is missing members")
     first_party.unlink()
+    intel_cpp.unlink()
     return archive_path
 
 
@@ -235,11 +283,14 @@ def prepare(args):
     for arch in package.ARCHES:
         verify_inventory(getattr(args, f"{arch}_inventory"),
                          getattr(args, f"baseline_{arch}_inventory"), runtimes[arch], source_id, arch)
-        parse_header_versions(getattr(args, f"{arch}_header_versions"))
+        parse_header_versions(getattr(args, f"{arch}_header_versions"), arch)
+        verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch)
     output.mkdir(parents=True)
     try:
+        intel_cpp = fetch_intel_cpp_source(
+            output, verify_cpp_formula(args.x86_64_cpp_formula, "x86_64"), Path(args.baseline_notices))
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes)
-        archive = source_archive(args, source_id, runtimes, output)
+        archive = source_archive(args, source_id, runtimes, output, intel_cpp)
         (output / "receipt.json").write_text(json.dumps({"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,
@@ -253,6 +304,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("arm64", "x86_64", "arm64-inventory", "x86_64-inventory",
                  "arm64-header-versions", "x86_64-header-versions",
+                 "arm64-cpp-formula", "x86_64-cpp-formula",
                  "baseline-arm64-inventory", "baseline-x86_64-inventory",
                  "baseline-notices", "baseline-source-archive", "checkout", "version", "output"):
         parser.add_argument("--" + name, required=True)
