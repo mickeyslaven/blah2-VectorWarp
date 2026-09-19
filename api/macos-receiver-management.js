@@ -15,10 +15,14 @@ const safeText = value => String(value || '').replace(/[\x00-\x1f\x7f]/g, ' ').s
 
 function createMacReceiverManagement({exists = fs.existsSync, run = execFile, home = os.homedir(), environment = process.env} = {}) {
   let running = false;
-  const brew = () => BREW_PATHS.find(file => exists(file)) || null;
+  const standalone = environment.VECTORWARP_MACOS_DISTRIBUTION === 'standalone';
+  const brew = () => standalone ? null : (BREW_PATHS.find(file => exists(file)) || null);
   const launcher = () => {
     const candidate = environment.VECTORWARP_MACOS_LAUNCHER;
-    return typeof candidate === 'string' && candidate.startsWith('/') && exists(candidate) ? candidate : null;
+    if (typeof candidate !== 'string' || !candidate.startsWith('/') || !exists(candidate)) return null;
+    const companion = environment.VECTORWARP_MACOS_HEIMDALL_EXECUTABLE;
+    if (standalone && (typeof companion !== 'string' || !companion.startsWith('/') || !exists(companion))) return null;
+    return candidate;
   };
   function discover() {
     const executable = brew();
@@ -26,9 +30,13 @@ function createMacReceiverManagement({exists = fs.existsSync, run = execFile, ho
     const actions = Object.entries(ACTIONS).flatMap(([id, action]) => {
       if (action.launcher) return localLauncher ? [{id, ...action, kind: 'start-local-controller',
         available: true, ready: true, message: 'Review starting the saved local Kraken controller.'}] : [];
+      if (standalone) return [];
       return executable ? [{id, ...action, kind: 'install-dependency', available: true, ready: false,
         message: `Review Homebrew installation of ${action.formula}.`}] : [];
     });
+    if (standalone && !localLauncher) return {ok: true, available: false, actions: [],
+      code: 'STANDALONE_COMPANION_REQUIRED',
+      message: 'The standalone package needs its separately installed local Heimdall companion for Kraken capture.'};
     if (!executable && !localLauncher) return {ok: true, available: false, actions: [], code: 'HOMEBREW_REQUIRED',
       message: 'Homebrew was not found. Install Homebrew yourself, then recheck receiver software.'};
     return {ok: true, available: actions.length > 0, actions,
@@ -36,7 +44,7 @@ function createMacReceiverManagement({exists = fs.existsSync, run = execFile, ho
   }
   function plan(actionId) {
     const action = ACTIONS[actionId]; const executable = brew(), localLauncher = launcher();
-    if (!action || (action.launcher ? !localLauncher : !executable)) return null;
+    if (!action || (action.launcher ? !localLauncher : (standalone || !executable))) return null;
     if (action.launcher) return {ok: true, status: 'ready', actionId, receiverType: action.receiverType,
       review: action.review, commandLabel: 'start saved local Kraken controller', requiresAuthorization: false,
       lifetimeSeconds: 300};
@@ -45,7 +53,7 @@ function createMacReceiverManagement({exists = fs.existsSync, run = execFile, ho
   }
   async function execute(actionId) {
     const action = ACTIONS[actionId]; const executable = brew(), localLauncher = launcher();
-    if (!action || (action.launcher ? !localLauncher : !executable)) { const error = new Error('This reviewed macOS action is unavailable.'); error.code = 'ACTION_NOT_REVIEWED'; throw error; }
+    if (!action || (action.launcher ? !localLauncher : (standalone || !executable))) { const error = new Error('This reviewed macOS action is unavailable.'); error.code = 'ACTION_NOT_REVIEWED'; throw error; }
     if (running) { const error = new Error('Another macOS receiver action is running.'); error.code = 'MANAGEMENT_BUSY'; throw error; }
     running = true;
     try {

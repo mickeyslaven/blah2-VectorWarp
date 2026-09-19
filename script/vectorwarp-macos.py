@@ -275,6 +275,23 @@ class Lifecycle:
             pass
         return None
 
+    def foreign_live(self, name):
+        """A birth-validated live record from another installation; never unlink it."""
+        try:
+            value = bounded_private_json(self.record_path(name))
+            argv, command = value.get('argv'), value.get('command')
+            identity = process_identity(value.get('pid'))
+            valid = lambda items: isinstance(items, list) and bool(items) and all(isinstance(item, str) and item for item in items)
+            return (valid(argv) and valid(command) and identity and
+                    identity.get('birth') == value.get('birth') and identity.get('command') == value.get('command') and
+                    command[-len(argv):] == argv and not self.expected_matches(name, argv))
+        except (OSError, ValueError, TypeError, AttributeError):
+            return False
+
+    def refuse_foreign_instances(self):
+        if any(self.foreign_live(name) for name in ('api', 'processor', 'kraken')):
+            raise RuntimeError('A live VectorWarp instance belongs to another installation; stop the original installation before switching.')
+
     def record(self, name, pid, argv):
         identity = process_identity(pid)
         if not identity or not self.expected_matches(name, argv):
@@ -345,17 +362,23 @@ process.stdout.write(yaml.dump(c));'''
         return f'http://[{host}]:{port}' if ':' in host else f'http://{host}:{port}'
 
     def receiver_types(self):
+        timeout = 20 if self.env.get('VECTORWARP_MACOS_DISTRIBUTION') == 'standalone' else 5
+        started = time.monotonic()
         try:
-            report = json.loads(subprocess.check_output([str(self.processor), '--receiver-status'], timeout=5,
+            report = json.loads(subprocess.check_output([str(self.processor), '--receiver-status'], timeout=timeout,
                 stderr=subprocess.DEVNULL, env=self.runtime_env()))
             if report.get('schema') != 1 or report.get('hardwareProbed') is not False:
                 return ''
             names = [item['receiver'] for item in report['receivers'] if item.get('compiled') is True]
             return ','.join(dict.fromkeys(name for name in names if name in RECEIVERS))
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+            # Fail closed while retaining only bounded diagnostic metadata.
+            print(f'Receiver capability probe failed ({type(error).__name__}) after {time.monotonic() - started:.1f}s.', file=sys.stderr)
             return ''
 
     def spawn(self, name, env=None, argv=None):
+        if self.foreign_live(name):
+            raise RuntimeError('A live VectorWarp instance belongs to another installation; stop the original installation before switching.')
         argv = argv or self.expected_argv(name)
         self.record_path(name).unlink(missing_ok=True)
         with (self.logs / f'{name}.log').open('ab') as log:
@@ -414,6 +437,8 @@ process.stdout.write(yaml.dump(c));'''
             raise
 
     def stop(self, name):
+        if self.foreign_live(name):
+            raise RuntimeError('A live VectorWarp instance belongs to another installation; stop the original installation before switching.')
         value = self.live(name)
         if value:
             try:
@@ -493,6 +518,7 @@ process.stdout.write(yaml.dump(c));'''
             print(f'API log: {self.logs / "api.log"}\nKraken log: {self.logs / "kraken.log"}\nProcessor log: {self.logs / "processor.log"}')
             return
         with self.lock():
+            self.refuse_foreign_instances()
             if action in ('stop', 'restart'):
                 self.stop('processor')
                 self.stop('kraken')
@@ -524,6 +550,7 @@ process.stdout.write(yaml.dump(c));'''
             while not stopping.is_set():
                 try:
                     with self.lock():
+                        self.refuse_foreign_instances()
                         self.prepare()
                         self.start_web()
                         self.start_kraken()
@@ -535,6 +562,7 @@ process.stdout.write(yaml.dump(c));'''
                             continue
                         # A partial stack is never left running after a crash.
                         with self.lock():
+                            self.refuse_foreign_instances()
                             self.stop('processor')
                             self.stop('kraken')
                             self.stop('api')

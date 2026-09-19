@@ -1,0 +1,122 @@
+name: macOS standalone runtime
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-standalone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Standalone runtime (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Install build-host dependencies
+        run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb node@24 python@3.12 vulkan-loader vulkan-headers glslang molten-vk
+      - name: Select Node 24 and build CPU, GPU, and open receiver adapters
+        run: |
+          echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
+          export PATH="$(brew --prefix node@24)/bin:$PATH"
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          git init build/VkFFT
+          git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
+          git -C build/VkFFT checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
+          VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
+      - name: Stage and audit standalone runtime
+        run: |
+          node="$(brew --prefix node@24)/bin/node"
+          python="$(brew --prefix python@3.12)/bin/python3.12"
+          python3 script/package-macos-standalone.py stage --artifact build/macos/artifact --node "$node" --python "$python" --moltenvk "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --output 'build/standalone runtime'
+          node api/macos-receiver-management.test.js
+          node api/macos-platform.test.js
+          python3 test/macos/license_inventory_test.py
+          python3 test/macos/standalone_launcher_test.py
+          python3 test/macos/standalone_package_test.py
+          python3 test/macos/standalone_transfer_test.py
+      - name: Verify replay, configuration, and standalone isolation
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_OS" = macOS
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          runtime="$GITHUB_WORKSPACE/build/standalone runtime"
+          test -x "$runtime/bin/node" && test -x "$runtime/python/bin/python3"
+          prefix="$(brew --prefix)"
+          hidden="${prefix}.vectorwarp-ci-hidden"
+          test -d "$prefix" && test ! -e "$hidden"
+          trap 'if [ -d "$hidden" ]; then sudo mv "$hidden" "$prefix"; fi' EXIT INT TERM
+          sudo mv "$prefix" "$hidden"
+          export PATH="$runtime/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          export PYTHONHOME="$runtime/python" PYTHONDONTWRITEBYTECODE=1
+          export VK_DRIVER_FILES="$runtime/share/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+          unset PYTHONPATH NODE_PATH NODE_OPTIONS DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+          "$runtime/python/bin/python3" -s -P test/recording/processor_replay_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-replay.log
+          "$runtime/python/bin/python3" -s -P test/macos/config_runtime_test.py --gpu-capable --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-config.log
+          "$runtime/python/bin/python3" -s -P test/macos/receiver_sdk_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-sdk-closure.log
+          "$runtime/bin/blah2-gpu-worker" --driver-status 2>&1 | tee build/standalone-driver-status.log
+          "$runtime/python/bin/python3" -s -P test/macos/processor_lifecycle_test.py --standalone --app-root "$runtime" --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-lifecycle.log
+          sudo mv "$hidden" "$prefix"
+          trap - EXIT INT TERM
+          "$runtime/python/bin/python3" -s -P script/package-macos-standalone.py audit --runtime "$runtime" 2>&1 | tee build/standalone-audit.log
+      - name: Encrypt the tested development runtime for local review
+        if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''
+        env:
+          RECIPIENT_CERT: ${{ vars.VECTORWARP_STANDALONE_RECIPIENT_CERT }}
+        run: |
+          certificate="$RUNNER_TEMP/vectorwarp-recipient.pem"
+          printf '%s\n' "$RECIPIENT_CERT" > "$certificate"
+          python3 script/transfer-macos-runtime.py encrypt --runtime 'build/standalone runtime' --certificate "$certificate" --output 'build/standalone-${{ matrix.arch }}.cms' --metadata 'build/standalone-${{ matrix.arch }}.transfer.json'
+          rm "$certificate"
+      - name: Upload encrypted development runtime
+        if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: standalone-encrypted-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            build/standalone-${{ matrix.arch }}.cms
+            build/standalone-${{ matrix.arch }}.transfer.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload standalone diagnostics only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: standalone-runtime-diagnostics-${{ matrix.arch }}
+          path: |
+            build/standalone runtime/standalone.json
+            build/standalone-replay.log
+            build/standalone-config.log
+            build/standalone-sdk-closure.log
+            build/standalone-driver-status.log
+            build/standalone-lifecycle.log
+            build/standalone-audit.log
+          if-no-files-found: warn
+          retention-days: 14
+
+# Intentionally no runtime/app artifact upload: corresponding source, notices,
+# and redistribution review must be complete before any binary distribution job.
+# The optional recipient certificate is public. Its private key stays with the
+# local reviewer; encryption is development transport, not a distribution gate.

@@ -1,5 +1,17 @@
 # macOS verification and remaining hardware coverage
 
+Standalone installer development is separate from the accepted Homebrew/source
+matrix below. Local Apple Silicon testing has verified relocation of 142 native
+files, bundled Python/Node startup, synthetic CPU replay with browser Save &
+Restart, unchanged bundle contents after use, and bundled MoltenVK ambiguity
+and clutter execution. Universal app/package assembly and the active-process
+installer guard pass small ARM64/Intel executable fixtures; those fixtures are
+not full Intel VectorWarp runtime qualification. The local dependency set
+requires macOS 26. The new standalone CI workflow targets macOS 15 on both
+architectures; its results and a full combined installer remain pending.
+Public binary distribution, Developer ID signing and notarization are not yet
+qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
+
 Local verification used macOS 26.6.1 on an Apple M2 with 8 GiB RAM,
 AppleClang and Node 24.21.0. Results below distinguish actual Mac execution,
 real SDK integration, simulated radio input, and a directly connected physical

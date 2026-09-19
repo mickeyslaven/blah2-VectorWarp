@@ -117,6 +117,8 @@ installable public Mac formula or bottle is published yet. The
 after merges to `main`; public v0.1.7 release assets remain Linux-only.
 After the public tap is published, its update and restart commands are in the
 [Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates-after-publication).
+The planned non-Homebrew macOS installer is documented separately in
+[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md); it has no public download yet.
 
 ## Install on Linux
 

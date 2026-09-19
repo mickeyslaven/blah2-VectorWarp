@@ -47,6 +47,8 @@ function sameReceiverOrigin(req, allowed = new Set(['http://127.0.0.1:3000'])) {
 function installReceiverRoutes(app, options) {
   const {readDocument, preview = false, compiledLiveTypes = null} = options;
   const platform = options.platform || process.platform;
+  const environment = options.environment || process.env;
+  const standaloneDistribution = platform === 'darwin' && environment.VECTORWARP_MACOS_DISTRIBUTION === 'standalone';
   const createProbes = options.createProbes || createReceiverProbes;
   const createManager = options.createManager || createReceiverManager;
   const allowed = options.allowedOrigins || trustedOrigins(options.port || 3000, options.extraOrigins || [],
@@ -54,7 +56,7 @@ function installReceiverRoutes(app, options) {
   // macOS has no privileged receiver broker. Keep its paths unreachable even
   // when a caller supplies a Linux helper test double.
   const helper = platform === 'darwin' ? null : (options.helper || createReceiverHelperClient());
-  const macManagement = platform === 'darwin' ? (options.macManagement || createMacReceiverManagement(options.macManagementOptions)) : null;
+  const macManagement = platform === 'darwin' ? (options.macManagement || createMacReceiverManagement({...options.macManagementOptions, environment})) : null;
   const now = options.now || Date.now;
   const helperExecutable = options.helperExecutable || '/opt/vectorwarp/libexec/vectorwarp-receiver-helper';
   if (!/^\/[A-Za-z0-9_./+-]+$/.test(helperExecutable))
@@ -95,7 +97,8 @@ function installReceiverRoutes(app, options) {
   async function snapshot(fresh = false) {
     const document = readDocument();
     if (!fresh && cached && cached.revision === document.revision && now() - cached.at < 5000) return cached.promise;
-    const manager = createManager({timeoutMs: 1800, probes: preview ? {} : createProbes(document.config, {platform})});
+    const manager = createManager({timeoutMs: 1800, standaloneDistribution,
+      probes: preview ? {} : createProbes(document.config, {platform, env: environment})});
     const promise = Promise.all([manager.discover({config: document.config, compiledLiveTypes: compiledLiveTypes || []}), management()])
       .then(([discovery, managed]) => {
         const remoteSuite = discovery.receivers?.some(receiver => receiver.type === 'Kraken' &&

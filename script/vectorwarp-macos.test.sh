@@ -96,7 +96,9 @@ run stop >/dev/null
 run_other() { PATH="$TEMP/tools:$PATH" VECTORWARP_MACOS_ROOT="$TEMP/root" VECTORWARP_MACOS_STATE="$TEMP/other-state" VECTORWARP_MACOS_API_PORT="$PORT" VECTORWARP_MACOS_NODE=node "$ROOT/script/vectorwarp-macos" "$@"; }
 run_other restart-processing >/dev/null
 cp "$TEMP/other-state/processor.json" "$TEMP/state/processor.json"
-run stop >/dev/null
+copied=$(cat "$TEMP/state/processor.json")
+if run stop >/dev/null 2>&1; then echo 'foreign installation record was accepted' >&2; exit 1; fi
+test "$(cat "$TEMP/state/processor.json")" = "$copied"
 OTHER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$TEMP/other-state/processor.json")
 kill -0 "$OTHER"
 run_other stop >/dev/null
@@ -123,6 +125,11 @@ life = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(new), 'VECTORWARP_MACOS_ST
 assert life.live('api'), 'old Cellar API should remain safely owned after upgrade'
 default_state = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(new), 'VECTORWARP_MACOS_NODE': '/usr/local/bin/node'})
 assert default_state.runtime_env()['VECTORWARP_MACOS_STATE'] == str(default_state.state), 'default state must reach native children'
+calls = []
+module.subprocess.check_output = lambda *args, **kwargs: (calls.append(kwargs) or json.dumps({'schema': 1, 'hardwareProbed': False, 'receivers': [{'receiver': 'Usrp', 'compiled': True}]}).encode())
+standalone = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(new), 'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
+assert standalone.receiver_types() == 'Usrp' and calls[-1]['timeout'] == 20
+assert default_state.receiver_types() == 'Usrp' and calls[-1]['timeout'] == 5
 old_processor = old/'bin/blah2'; old_processor.parent.mkdir(); old_processor.write_text('')
 new_processor = new/'bin/blah2'; new_processor.parent.mkdir(); new_processor.write_text('')
 processor_argv = [str(old_processor.resolve()), '--config', str(config.resolve())]

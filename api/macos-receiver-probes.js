@@ -56,13 +56,16 @@ function createMacReceiverProbes(options = {}) {
     try { await fs.access(file, require('fs').constants.R_OK); return true; }
     catch (_) { return false; }
   });
+  const standalone = env.VECTORWARP_MACOS_DISTRIBUTION === 'standalone';
   return {
     async usbInventory(_request, context) {
       return usbFromSystemProfiler(await run('/usr/sbin/system_profiler', ['SPUSBDataType', '-json'], context));
     },
     async dependencyInventory() {
       const result = Object.fromEntries(['Kraken', 'RspDuo', 'Usrp', 'HackRF'].map(type => [type, {state: 'unknown'}]));
-      for (const prefix of ['/opt/homebrew', '/usr/local']) {
+      // A standalone bundle must not infer readiness from an unrelated Homebrew
+      // installation. Its actual native module-load probe is authoritative.
+      if (!standalone) for (const prefix of ['/opt/homebrew', '/usr/local']) {
         if (await readable(path.join(prefix, 'lib/libhackrf.dylib'))) result.HackRF = {state: 'installed'};
       }
       // UHD minimum-version evidence comes from the actual native adapter's

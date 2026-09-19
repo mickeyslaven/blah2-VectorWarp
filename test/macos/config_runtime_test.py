@@ -63,7 +63,7 @@ def write_input(filename, fmt, fs, fc, cpi, channels=2):
                         out.write(struct.pack(encoding, int(values[(i*2+component+ch*17) % 2048]*scale)))
 
 
-def run_case(binary, name, changes, receiver='Usrp', channels=2):
+def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=False):
     with tempfile.TemporaryDirectory(prefix='vectorwarp-config-runtime-') as temporary:
         work = Path(temporary)
         output_dir = work / 'output with spaces'
@@ -111,12 +111,28 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2):
             assert map_data['doppler'][-1] <= ambiguity['dopplerMax']+1
             acceleration = timing['acceleration']
             requested = config['process']['performance']['acceleration']
-            assert acceleration['requested'] == requested and acceleration['active'] == 'cpu'
-            if requested != 'cpu':
-                assert acceleration['state'] == 'fallback' and acceleration['reason']
+            assert acceleration['requested'] == requested
+            if not gpu_capable:
+                assert acceleration['active'] == 'cpu'
+                if requested != 'cpu': assert acceleration['state'] == 'fallback' and acceleration['reason']
+            elif requested == 'cpu':
+                assert (acceleration['active'], acceleration['state']) == ('cpu', 'selected')
+            else:
+                assert (acceleration['active'], acceleration['state']) in {
+                    ('cpu', 'checking'), ('cpu', 'fallback'), ('vulkan', 'ready')}, acceleration
+                if acceleration['active'] == 'cpu': assert acceleration['reason']
             clutter = timing['clutterAcceleration']
-            assert clutter['cpuExecuted'] == config['process']['clutter']['enable']
-            assert not clutter['gpuExecuted']
+            if not gpu_capable:
+                assert clutter['cpuExecuted'] == config['process']['clutter']['enable']
+                assert not clutter['gpuExecuted']
+            elif config['process']['clutter']['enable']:
+                if clutter.get('state') == 'checking':
+                    assert requested != 'cpu' and clutter['active'] == 'cpu' and clutter['reason'], clutter
+                    assert clutter['cpuExecuted'] and clutter['gpuExecuted'], (name, clutter)
+                else:
+                    assert bool(clutter['cpuExecuted']) != bool(clutter['gpuExecuted']), (name, acceleration, clutter)
+                    assert clutter['active'] == ('vulkan' if clutter['gpuExecuted'] else 'cpu'), clutter
+            else: assert not clutter['cpuExecuted'] and not clutter['gpuExecuted']
             enabled = config['process']['detection']['enable']
             assert bool(sinks.bytes['detection']) == enabled
             assert bool(sinks.bytes['track']) == (enabled and config['process']['tracker']['enable'])
@@ -131,7 +147,8 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2):
                     assert files[0].stat().st_size > 0
                     replay.assert_finite(replay.first_json(files[0].read_bytes(), extension))
             return {'case': name, 'ok': True, 'format': fmt, 'settings': list(changes),
-                    'mapShape': [map_data['nRows'], map_data['nCols']]}
+                    'mapShape': [map_data['nRows'], map_data['nCols']], 'acceleration': acceleration,
+                    'clutterAcceleration': clutter}
         finally:
             if process is not None:
                 replay.stop_process(process)
@@ -142,6 +159,8 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--gpu-capable', action='store_true',
+                        help='allow qualified GPU execution or bounded first-frame qualification telemetry')
     args = parser.parse_args()
     binary = args.binary.resolve()
     cases = [
@@ -162,14 +181,17 @@ def main():
             'process.performance.surveillance_workers': 0, 'process.performance.fft_threads': 0}),
         ('requested-gpu-cpu-fallback', {'process.performance.acceleration': 'gpu', 'process.clutter.enable': True}),
     ]
-    results = [run_case(binary, name, changes) for name, changes in cases]
+    if args.gpu_capable:
+        cases[3] = ('auto-backend-selection', cases[3][1])
+        cases[4] = ('requested-gpu-telemetry', cases[4][1])
+    results = [run_case(binary, name, changes, gpu_capable=args.gpu_capable) for name, changes in cases]
     for fmt in ('blah2', 's16-interleaved', 's8-interleaved', 'usrp-blocks', 'mchq'):
         changes = {'capture.replay.format': fmt}
         if fmt == 'usrp-blocks':
             changes.update({'capture.replay.legacy_block_samples': 1024, 'process.data.cpi': .0256})
         if fmt == 'mchq':
             changes['capture.fs'] = 2400000
-        results.append(run_case(binary, 'replay-'+fmt, changes))
+        results.append(run_case(binary, 'replay-'+fmt, changes, gpu_capable=args.gpu_capable))
     # Local recording exercises built-in array code without any Kraken connection.
     results.append(run_case(binary, 'array-reference-workers', {
         'capture.device.surveillance_channels': [0, 1, 2],
@@ -180,7 +202,7 @@ def main():
         'process.reference_synthesis.analysis_interval': 2,
         'process.reference_synthesis.power_iterations': 4,
         'process.reference_synthesis.covariance_smoothing': .4,
-        'process.reference_synthesis.diagonal_loading': .01}, receiver='Kraken', channels=3))
+        'process.reference_synthesis.diagonal_loading': .01}, receiver='Kraken', channels=3, gpu_capable=args.gpu_capable))
     print(json.dumps({'acceptance': 'synthetic configuration runtime', 'count': len(results), 'cases': results}))
 
 

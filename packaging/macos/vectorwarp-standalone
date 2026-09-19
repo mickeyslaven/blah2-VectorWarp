@@ -1,0 +1,20 @@
+#!/bin/sh
+# All ordinary runtime dependencies belong to this architecture's app payload.
+set -eu
+directory=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd)
+runtime=$(CDPATH= cd -P -- "$directory/.." && pwd)
+export VECTORWARP_MACOS_ROOT="$runtime"
+export VECTORWARP_MACOS_NODE="$runtime/bin/node"
+export VECTORWARP_MACOS_DISTRIBUTION=standalone
+export PYTHONHOME="$runtime/python"
+export PYTHONDONTWRITEBYTECODE=1
+unset PYTHONPATH PYTHONSTARTUP PYTHONINSPECT PYTHONUSERBASE NODE_PATH NODE_OPTIONS
+unset DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+if [ -f "$runtime/share/vulkan/icd.d/MoltenVK_icd.json" ]; then
+  export VK_DRIVER_FILES="$runtime/share/vulkan/icd.d/MoltenVK_icd.json"
+  export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+fi
+# UHD images remain an explicit user-managed prerequisite, never an installer
+# download or a fallback to the build host's Homebrew tree.
+export UHD_IMAGES_DIR="${UHD_IMAGES_DIR:-${VECTORWARP_MACOS_STATE:-$HOME/Library/Application Support/VectorWarp}/uhd-images}"
+exec "$runtime/python/bin/python3" -B -s -P "$directory/vectorwarp-macos.py" "$@"

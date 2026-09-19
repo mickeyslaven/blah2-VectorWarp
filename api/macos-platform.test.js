@@ -27,6 +27,11 @@ const {createGpuSetupStatus} = require('./gpu-setup');
   assert.deepEqual(calls, ['/usr/sbin/system_profiler']);
   const missing = createReceiverProbes({}, {platform: 'darwin', env: {}, readable: async () => false});
   assert.equal((await missing.dependencyInventory({})).RspDuo.state, 'unknown', 'Unknown private SDK paths are not proof of absence.');
+  const standalone = createReceiverProbes({}, {platform: 'darwin',
+    env: {VECTORWARP_MACOS_DISTRIBUTION: 'standalone'},
+    readable: async file => file === '/opt/homebrew/lib/libhackrf.dylib'});
+  assert.equal((await standalone.dependencyInventory({})).HackRF.state, 'unknown',
+    'A standalone bundle must not call a host Homebrew library ready.');
   const custom = createReceiverProbes({}, {platform: 'darwin', env: {
     BLAH2_SDRPLAY_INCLUDE_DIR: '/custom/include', BLAH2_SDRPLAY_LIBRARY: '/custom/sdk.dylib'},
     readHeader: async () => '#define SDRPLAY_API_VERSION (float)(3.15) // vendor header form',
@@ -48,6 +53,18 @@ const {createGpuSetupStatus} = require('./gpu-setup');
     assert.ok(steps.some(step => /replay/.test(step.text)));
     if (type === 'RspDuo') assert.ok(steps.some(step => step.link === 'https://sdrplay.com/hardware-api/'));
   }
+  const standaloneKraken = receiverSetupGuide({type: 'Kraken', capabilities: {liveCompiled: true,
+    standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
+  assert.ok(standaloneKraken.some(step => /separately installed local Heimdall companion/.test(step.text)));
+  assert.ok(!standaloneKraken.some(step => /remote Suite/.test(step.text)));
+  const brokenBundle = receiverSetupGuide({type: 'HackRF', capabilities: {liveCompiled: true,
+    runtimeLoadable: false, standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
+  assert.ok(brokenBundle.some(step => /Reinstall the standalone VectorWarp package/.test(step.text)));
+  assert.ok(!brokenBundle.some(step => /Install libhackrf/.test(step.text)));
+  const bundledUsrp = receiverSetupGuide({type: 'Usrp', capabilities: {liveCompiled: true,
+    runtimeLoadable: true, standaloneDistribution: true}}, '/unused', {platform: 'darwin'});
+  assert.ok(bundledUsrp.some(step => /UHD_IMAGES_DIR/.test(step.text)));
+  assert.ok(!bundledUsrp.some(step => /Rebuild with the locally installed SDK/.test(step.text)));
   const routes = {};
   require('./receiver-routes').installReceiverRoutes({get: (key, handler) => routes[key] = handler,
     post: (key, handler) => routes[key] = handler}, {platform: 'darwin',
@@ -60,6 +77,18 @@ const {createGpuSetupStatus} = require('./gpu-setup');
     Origin: 'http://127.0.0.1:3000'})[name]}, response);
   assert.equal(response.value.managementAvailable, false);
   assert.equal(response.value.management.code, 'HOMEBREW_REQUIRED');
+  const standaloneRoutes = {};
+  require('./receiver-routes').installReceiverRoutes({get: (key, handler) => standaloneRoutes[key] = handler,
+    post: (key, handler) => standaloneRoutes[key] = handler}, {platform: 'darwin',
+    environment: {VECTORWARP_MACOS_DISTRIBUTION: 'standalone'},
+    macManagementOptions: {exists: file => file === '/opt/homebrew/bin/brew'},
+    readDocument: () => ({revision: 'standalone', config: {}}),
+    createProbes: () => ({}), createManager: () => ({discover: async () => ({receivers: []})})});
+  const standaloneResponse = {set() {}, removeHeader() {}, vary() {}, json(value) { this.value = value; }};
+  await standaloneRoutes['/api/receivers']({method: 'GET', get: name => ({Host: '127.0.0.1:3000',
+    Origin: 'http://127.0.0.1:3000'})[name]}, standaloneResponse);
+  assert.equal(standaloneResponse.value.management.code, 'STANDALONE_COMPANION_REQUIRED');
+  assert.deepEqual(standaloneResponse.value.management.actions, []);
   const managedRoutes = {};
   let helperCalls = 0; let executed = 0;
   require('./receiver-routes').installReceiverRoutes({get: (key, handler) => managedRoutes[key] = handler,

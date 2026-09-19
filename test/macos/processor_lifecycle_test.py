@@ -41,6 +41,8 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--app-root', type=Path, default=ROOT,
                         help='test a complete installed artifact instead of the source API and launcher')
+    parser.add_argument('--standalone', action='store_true',
+                        help='exercise a staged standalone runtime without Homebrew receiver actions')
     parser.add_argument('--endurance-seconds', type=int, default=0,
                         help='also test actual crash recovery, process pause/resume and bounded replay endurance')
     args = parser.parse_args()
@@ -50,6 +52,9 @@ def main():
     app_root = args.app_root.resolve()
     if not binary.is_file():
         raise SystemExit(f'Missing native processor: {binary}')
+    node = (app_root / 'bin/node').resolve() if args.standalone else Path(shutil.which('node') or '')
+    if not node.is_file():
+        raise SystemExit(f'Missing Node runtime: {node}')
     with tempfile.TemporaryDirectory(prefix='vectorwarp-macos-lifecycle-') as temporary:
         work = Path(temporary)
         state = work / 'state with spaces'
@@ -66,7 +71,7 @@ def main():
                                 {name: ports[name] for name in fixture.PORT_NAMES}, loop=True)
         # The native replay fixture is deliberately minimal; browser validation
         # also requires the regular application's display/site configuration.
-        base = json.loads(subprocess.check_output([shutil.which('node'), '-e',
+        base = json.loads(subprocess.check_output([str(node), '-e',
             'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
             str(app_root / 'config/config.yml')], cwd=app_root / 'api', text=True))
         base.update(config)
@@ -81,8 +86,10 @@ def main():
         (commands / 'open').chmod(0o755)
         env = dict(os.environ, VECTORWARP_MACOS_ROOT=str(app_root),
                    VECTORWARP_MACOS_STATE=str(state), VECTORWARP_MACOS_CONFIG=str(config_file),
-                   VECTORWARP_MACOS_PROCESSOR=str(binary), VECTORWARP_MACOS_NODE=shutil.which('node'),
+                   VECTORWARP_MACOS_PROCESSOR=str(binary), VECTORWARP_MACOS_NODE=str(node),
                    PATH=str(commands) + os.pathsep + os.environ['PATH'])
+        if args.standalone:
+            env.update(DISTRIBUTION='standalone', VECTORWARP_MACOS_DISTRIBUTION='standalone')
         launcher = app_root / 'script/vectorwarp-macos'
         base_url = f'http://127.0.0.1:{ports["api"]}'
         def run(action, success=True):
@@ -115,11 +122,19 @@ def main():
             assert capabilities['restartAvailable'] is True
             native = json.loads(subprocess.check_output([str(binary), '--receiver-status'], text=True))
             expected = {item['receiver'] for item in native['receivers'] if item['compiled']}
-            assert set(capabilities['compiledLiveTypes']) == expected, 'Browser must reflect the actual compiled adapters'
+            assert set(capabilities['compiledLiveTypes']) == expected, \
+                f'Browser adapters {capabilities["compiledLiveTypes"]} must match native {sorted(expected)}'
             assert len(capabilities['compiledLiveTypes']) == len(expected), 'Compiled receiver names must be unique'
             receivers = request('/api/receivers')
             assert len(receivers['receivers']) == 4
-            if any(Path(path).is_file() for path in ('/opt/homebrew/bin/brew', '/usr/local/bin/brew')):
+            if args.standalone:
+                assert receivers['managementAvailable'] is False
+                assert receivers['management']['code'] == 'STANDALONE_COMPANION_REQUIRED'
+                assert receivers['management']['actions'] == []
+                kraken = next(item for item in receivers['receivers'] if item['type'] == 'Kraken')
+                assert any('separately installed local Heimdall companion' in step['text']
+                           for step in kraken['setupGuide'])
+            elif any(Path(path).is_file() for path in ('/opt/homebrew/bin/brew', '/usr/local/bin/brew')):
                 assert receivers['managementAvailable'] is True
                 assert {action['id'] for action in receivers['management']['actions']} == {
                     'macos-install-uhd', 'macos-install-hackrf', 'macos-start-kraken'}

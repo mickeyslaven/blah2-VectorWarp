@@ -45,19 +45,36 @@ function receiverSetupGuide(receiver, helperExecutable, {platform = process.plat
 }
 function macosReceiverSetupGuide(receiver) {
   const steps = [];
+  const standalone = receiver.capabilities?.standaloneDistribution === true;
+  if (standalone && (receiver.type === 'Usrp' || receiver.type === 'HackRF') &&
+      receiver.capabilities.liveCompiled && receiver.capabilities.runtimeLoadable === false)
+    steps.push({text: 'The bundled receiver adapter could not load. Reinstall the standalone VectorWarp package, then recheck receiver software. Do not use Homebrew to repair this bundle.'});
   if (receiver.type === 'RspDuo') {
     steps.push({text: 'Obtain the macOS SDRplay API and headers directly from SDRplay and install them yourself. VectorWarp never downloads, bundles, or accepts the license for this SDK. Manage its API service using the vendor instructions.',
       link: 'https://sdrplay.com/hardware-api/', label: 'SDRplay hardware API'});
+  } else if (receiver.type === 'Kraken' && standalone) {
+    steps.push({text: 'Local Kraken capture requires the separately installed local Heimdall companion. Install or repair that companion, then recheck receiver software. This standalone package does not offer a remote-Suite fallback.'});
   } else if (receiver.type === 'Kraken') {
     steps.push({text: 'Run KrakenSDR Suite V2 on its supported Linux receiver host, then enter that host and its IQ/control ports here. VectorWarp on macOS uses the network stream and does not manage the remote service.'});
+  } else if (receiver.type === 'HackRF' && standalone) {
+    steps.push({text: receiver.capabilities.runtimeLoadable === true ?
+      'The bundled HackRF adapter is loadable. Live dual-HackRF use still requires two physical devices and separate hardware verification.' :
+      'The bundled HackRF adapter is unavailable. Reinstall the standalone VectorWarp package, then recheck receiver software. Do not install Homebrew libraries to repair this bundle.'});
   } else if (receiver.type === 'HackRF') {
     steps.push({text: 'Install libhackrf using the official macOS instructions, then build VectorWarp with its HackRF adapter. Dual HackRF operation requires two devices and separate hardware verification.',
       link: 'https://hackrf.readthedocs.io/en/latest/installing_hackrf_software.html', label: 'Official HackRF installation guide'});
+  } else if (receiver.type === 'Usrp' && standalone) {
+    steps.push({text: receiver.capabilities.runtimeLoadable === true ?
+      'The bundled UHD adapter is loadable. Install required UHD device images manually under your VectorWarp state directory at uhd-images, or set UHD_IMAGES_DIR. Device images and hardware readiness are separate.' :
+      'The bundled UHD adapter is unavailable. Reinstall the standalone VectorWarp package, then recheck receiver software. Install UHD device images manually only after the bundled adapter is loadable.'});
   } else if (receiver.type === 'Usrp') {
     steps.push({text: 'Install UHD 4.1 or newer and the appropriate device images using Ettus Research’s macOS instructions, then build the USRP adapter. Library detection does not verify a B210 or USB streaming.',
       link: 'https://files.ettus.com/manual/page_install.html', label: 'Official UHD installation guide'});
   }
-  if (!receiver.capabilities.liveCompiled) steps.push({text: 'This build supports replay for this profile but does not contain its live adapter. Rebuild with the locally installed SDK to enable live capture.',
+  if (!receiver.capabilities.liveCompiled) steps.push({text: standalone && receiver.type === 'RspDuo' ?
+    'Build the local RSPduo adapter after installing the vendor SDK and compatible Apple command-line tools. This adapter is deliberately omitted from the standalone package; reinstalling the package will not add it.' : standalone ?
+    'This standalone package supports replay for this profile but lacks its live adapter. Reinstall the standalone package and recheck receiver software.' :
+    'This build supports replay for this profile but does not contain its live adapter. Rebuild with the locally installed SDK to enable live capture.',
     link: 'https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS.md', label: 'macOS source build guide'});
   steps.push({text: 'Save & Restart applies the saved processor configuration. Receiver services remain independently managed. Check fresh processor status; software discovery and replay do not verify physical hardware.'});
   return steps;

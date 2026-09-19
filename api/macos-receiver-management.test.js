@@ -42,5 +42,18 @@ const {createMacReceiverManagement} = require('./macos-receiver-management');
   });
   const missing = createMacReceiverManagement({exists: () => false});
   assert.equal(missing.discover().code, 'HOMEBREW_REQUIRED');
+  const standaloneMissing = createMacReceiverManagement({
+    environment: {VECTORWARP_MACOS_DISTRIBUTION: 'standalone'},
+    exists: file => file === '/opt/homebrew/bin/brew'
+  });
+  assert.equal(standaloneMissing.discover().code, 'STANDALONE_COMPANION_REQUIRED');
+  assert.equal(standaloneMissing.plan('macos-install-uhd'), null,
+    'Standalone mode must never offer Homebrew even when brew is installed.');
+  const standaloneLocal = createMacReceiverManagement({environment: {
+    VECTORWARP_MACOS_DISTRIBUTION: 'standalone',
+    VECTORWARP_MACOS_LAUNCHER: '/Applications/VectorWarp/vectorwarp-macos',
+    VECTORWARP_MACOS_HEIMDALL_EXECUTABLE: '/Applications/Heimdall/heimdall'
+  }, exists: file => file === '/Applications/VectorWarp/vectorwarp-macos' || file === '/Applications/Heimdall/heimdall'});
+  assert.deepEqual(standaloneLocal.discover().actions.map(action => action.id), ['macos-start-kraken']);
   console.log('macOS receiver management tests passed; only fixed local commands are callable.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
