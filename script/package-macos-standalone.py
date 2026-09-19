@@ -13,6 +13,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -338,15 +339,57 @@ def audit_runtime(root, arch=None):
     native_audit(root, metadata['arch'], metadata['minimum_os'])
     return metadata
 
+def validated_notices(root, manifests, sources):
+    root = Path(root)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError('notices directory must be a real directory')
+    root = root.resolve(strict=True)
+    metadata_path = root / 'notices.json'
+    if metadata_path.is_symlink() or not metadata_path.is_file():
+        raise ValueError('notices manifest must be a regular file')
+    metadata = json.loads(metadata_path.read_text())
+    if (not isinstance(metadata, dict) or metadata.get('schema') != 1 or
+            metadata.get('source_id') != manifests['arm64']['source_id']):
+        raise ValueError('notices source identity mismatch')
+    expected = {arch: digest(sources[arch] / 'standalone.json') for arch in ARCHES}
+    if metadata.get('runtime_manifest_sha256') != expected:
+        raise ValueError('notices runtime manifest mismatch')
+    files = metadata.get('files')
+    if not isinstance(files, dict) or not files:
+        raise ValueError('invalid notices files manifest')
+    for name, checksum in files.items():
+        if (not isinstance(name, str) or not name or Path(name).is_absolute() or
+                '..' in Path(name).parts or name != Path(name).as_posix() or
+                name in ('.', 'notices.json') or not isinstance(checksum, str) or
+                not re.fullmatch(r'[0-9a-f]{64}', checksum)):
+            raise ValueError('unsafe notices path or digest')
+    actual = {}
+    for item in root.rglob('*'):
+        relative = item.relative_to(root).as_posix()
+        mode = item.lstat().st_mode
+        if stat.S_ISLNK(mode) or not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            raise ValueError('notices must not contain symlinks or special files')
+        if stat.S_ISDIR(mode) or relative == 'notices.json':
+            continue
+        actual[relative] = digest(item)
+    if actual != files:
+        raise ValueError('notices files do not match manifest')
+    return root, digest(metadata_path)
+
 
 def assemble(args):
     sources = {arch: Path(getattr(args, arch)).resolve(strict=True) for arch in ARCHES}
     separate_output(args.output, sources.values())
+    notices = getattr(args, 'notices_dir', None)
+    if notices:
+        separate_output(args.output, [Path(notices)])
     manifests = {arch: audit_runtime(path, arch) for arch, path in sources.items()}
     if len({data['source_id'] for data in manifests.values()}) != 1:
         raise ValueError('both architectures must come from the same source identity')
     if len({os_version(data['minimum_os']) for data in manifests.values()}) != 1:
         raise ValueError('both architectures must use the same deployment target')
+    if notices:
+        notices, notice_manifest_hash = validated_notices(notices, manifests, sources)
     minimum = manifests['arm64']['minimum_os']
     output = fresh(args.output)
     app = output / 'VectorWarp.app'
@@ -354,6 +397,12 @@ def assemble(args):
     (contents / 'MacOS').mkdir(parents=True)
     for arch, path in sources.items():
         shutil.copytree(path, contents / 'Resources/runtime' / arch, symlinks=True)
+    if notices:
+        destination = contents / 'Resources/ThirdPartyNotices'
+        shutil.copytree(notices, destination, symlinks=True)
+        _, copied_hash = validated_notices(destination, manifests, sources)
+        if copied_hash != notice_manifest_hash:
+            raise ValueError('notices manifest changed during assembly')
     launcher = contents / 'MacOS/VectorWarp'
     run('/usr/bin/clang', '-Wall', '-Wextra', '-Werror', '-arch', 'arm64', '-arch', 'x86_64',
         '-mmacosx-version-min=' + minimum, ROOT / 'packaging/macos/launcher.c', '-o', launcher)
@@ -420,6 +469,7 @@ def main():
     for name in (*ARCHES, 'output'):
         assemble_parser.add_argument('--' + name, type=Path, required=True)
     assemble_parser.add_argument('--version', default='0.1.7')
+    assemble_parser.add_argument('--notices-dir', type=Path)
     args = parser.parse_args()
     if sys.platform != 'darwin':
         parser.error('macOS host required')

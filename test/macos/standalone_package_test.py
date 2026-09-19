@@ -2,6 +2,7 @@
 """Focused offline Mach-O relocation/audit fixtures for standalone packaging."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -216,6 +217,73 @@ class StandalonePackageTest(unittest.TestCase):
         scripts = [path.name for path in expanded.rglob("Scripts/*")
                    if path.is_file() and not path.name.startswith("._")]
         self.assertTrue(set(scripts).issubset({"preinstall"}), scripts)
+
+    def test_assembly_validates_and_embeds_notice_bundle(self):
+        source_id = "e" * 40
+        arm, _, _ = self.runtime("arm64", source_id)
+        intel, _, _ = self.runtime("x86_64", source_id)
+        notices = self.base / "notices"; notices.mkdir(); (notices / "LICENSES").mkdir()
+        (notices / "LICENSES/example.txt").write_text("notice")
+        manifest = {"schema": 1, "source_id": source_id,
+          "runtime_manifest_sha256": {"arm64": packager.digest(arm / "standalone.json"), "x86_64": packager.digest(intel / "standalone.json")},
+          "files": {"LICENSES/example.txt": packager.digest(notices / "LICENSES/example.txt")}}
+        (notices / "notices.json").write_text(json.dumps(manifest))
+        output = self.base / "notice-output"
+        packager.assemble(SimpleNamespace(arm64=arm, x86_64=intel, output=output, version="1.2.3", notices_dir=notices))
+        self.assertEqual((output / "VectorWarp.app/Contents/Resources/ThirdPartyNotices/LICENSES/example.txt").read_text(), "notice")
+        self.assertEqual(packager.digest(arm / "standalone.json"), manifest["runtime_manifest_sha256"]["arm64"])
+        self.assertEqual(packager.digest(intel / "standalone.json"), manifest["runtime_manifest_sha256"]["x86_64"])
+        expanded = self.base / "notice-expanded"
+        packager.run('/usr/sbin/pkgutil', '--expand-full',
+                     output / 'VectorWarp-universal-local.pkg', expanded)
+        exported = list(expanded.rglob('ThirdPartyNotices/LICENSES/example.txt'))
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0].read_text(), 'notice')
+
+        for case in ('source', 'runtime-hash', 'altered', 'extra', 'unsafe-path',
+                     'root-symlink', 'file-symlink', 'directory-symlink',
+                     'manifest-symlink', 'fifo'):
+            with self.subTest(case=case):
+                candidate = self.base / ('notices-' + case)
+                shutil.copytree(notices, candidate)
+                candidate_metadata = candidate / 'notices.json'
+                value = json.loads(candidate_metadata.read_text())
+                if case == 'source':
+                    value['source_id'] = 'f' * 40
+                elif case == 'runtime-hash':
+                    value['runtime_manifest_sha256']['x86_64'] = '0' * 64
+                elif case == 'unsafe-path':
+                    value['files']['../outside'] = '0' * 64
+                elif case == 'altered':
+                    (candidate / 'LICENSES/example.txt').write_text('altered')
+                elif case == 'extra':
+                    (candidate / 'extra.txt').write_text('unexpected')
+                elif case == 'root-symlink':
+                    alias = self.base / 'notice-alias'
+                    alias.symlink_to(candidate, target_is_directory=True)
+                    candidate = alias
+                elif case == 'file-symlink':
+                    target = candidate / 'LICENSES/example.txt'
+                    target.unlink()
+                    target.symlink_to(notices / 'LICENSES/example.txt')
+                elif case == 'directory-symlink':
+                    (candidate / 'escape').symlink_to(notices, target_is_directory=True)
+                elif case == 'manifest-symlink':
+                    candidate_metadata.unlink()
+                    candidate_metadata.symlink_to(notices / 'notices.json')
+                elif case == 'fifo':
+                    os.mkfifo(candidate / 'special')
+                if case != 'manifest-symlink':
+                    candidate_metadata.write_text(json.dumps(value))
+                rejected_output = self.base / ('rejected-' + case)
+                with self.assertRaisesRegex(ValueError, 'notices'):
+                    packager.assemble(SimpleNamespace(arm64=arm, x86_64=intel,
+                        output=rejected_output, version='1.2.3', notices_dir=candidate))
+                self.assertFalse(rejected_output.exists(), 'invalid notices created output')
+        with self.assertRaisesRegex(ValueError, 'overlap'):
+            packager.assemble(SimpleNamespace(arm64=arm, x86_64=intel,
+                output=notices / 'overlap', version='1.2.3', notices_dir=notices))
+        self.assertFalse((notices / 'overlap').exists())
 
     def test_relocator_resolves_a_dylib_dependency_through_parent_rpath(self):
         """A copied dylib's @rpath inherits the executable's original runpath."""

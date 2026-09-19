@@ -23,6 +23,20 @@ strict signature verification. The expanded installer matches the app, both
 runtime manifests remain unchanged and no test processes remain. The package
 was inspected without installing it. These results do not qualify physical
 Intel hardware or GPUs.
+The later [standalone run 35420421113](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35420421113)
+passed both architectures for source `f8135ac947a88dd416b0f0ae8d3d891dd546da1d`.
+A local universal candidate from that run includes per-architecture third-party
+notices and passed the finalizer's explicit native signatures, refreshed core and
+runtime manifest bindings, and expanded-package equality checks. After local
+ad-hoc signing, Apple Silicon hot JavaScript/Wasm, Python native imports, app
+bootstrap, synthetic replay and Save & Restart passed. A synthetic GPU replay
+executed both Vulkan ambiguity and clutter processing with finite output. Intel
+Node/Python and processor-status smoke checks passed using an existing Rosetta
+installation; that is emulated execution, not physical Intel qualification.
+Ad-hoc mode deliberately omits hardened runtime. A small executable fixture
+showed that hardened ad-hoc processes could not load the private libraries
+without matching Team IDs. Developer ID mode retains the narrower production
+entitlements and awaits actual certificate-backed execution and Apple checks.
 Public binary distribution, Developer ID signing and notarization are not yet
 qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
 

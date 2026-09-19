@@ -60,6 +60,7 @@ jobs:
           python3 test/macos/standalone_provenance_test.py
           python3 test/macos/standalone_launcher_test.py
           python3 test/macos/standalone_package_test.py
+          python3 test/macos/standalone_signing_test.py
           python3 test/macos/standalone_transfer_test.py
           python3 test/macos/standalone_isolation_test.py
           python3 test/macos/standalone_driver_probe_test.py

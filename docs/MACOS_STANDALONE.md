@@ -13,7 +13,7 @@ treated as a public distribution until architecture CI qualification,
 redistribution review, Developer ID signing, and notarization are complete.
 
 The standalone CI matrix passed both macOS 15 runtime jobs for source revision
-`75b93031835df06c5b1edc681f07356cfd0dacf6` (run 35416945672). This is runtime
+`f8135ac947a88dd416b0f0ae8d3d891dd546da1d` ([run 35420421113](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35420421113)). This is runtime
 CI evidence. The combined local app and installer also passed assembly, Apple
 Silicon application lifecycle, unchanged-runtime and expanded-package checks.
 The Intel payload was exercised in CI; physical Intel execution remains untested.
@@ -122,3 +122,55 @@ checkout/build/stage sequence in CI establishes that the native artifact came
 from that source. When staging an artifact manually, the builder must preserve
 the same source/build provenance. The diagnostic license inventory is not a
 complete corresponding-source collector or a release approval check.
+
+## Notices and final signing
+
+Supply `assemble --notices-dir /path/to/reviewed-notices` when preparing a
+distribution candidate. This directory contains the reviewed license texts and
+a `notices.json` manifest with `schema: 1`, the runtimes' common `source_id`, both
+runtime-manifest SHA-256 values in `runtime_manifest_sha256`, and a `files` map
+from each notice's relative path to its SHA-256. The map excludes `notices.json`
+itself. The builder rejects changed or unlisted files, symlinks, unsafe paths and
+incorrect source/runtime bindings before creating the output. It places the
+verified notices in `Contents/Resources/ThirdPartyNotices` before sealing the app.
+Manifest integrity does not establish that every required notice is present.
+
+Provide the reviewed corresponding-source archive beside a public installer,
+with equivalent access, hashes and build/modify instructions. Original project
+MIT notices remain; the native binaries also incorporate FFTW/UHD and other
+dependencies with their own terms. The full binary's obligations are not described
+by the root MIT license alone. Retain complete Node/Python notices, native-library
+notices and sources, applicable patches, and the exact packaging scripts.
+
+After source/notices review, use `script/sign-macos-standalone.py` to create a
+fresh signing copy. It requires separate locally usable Developer ID Application
+and Developer ID Installer identities and their public Team ID:
+
+```sh
+python3 script/sign-macos-standalone.py \
+  --app "$HOME/Library/Caches/VectorWarp/new-installer/VectorWarp.app" \
+  --output "$HOME/Library/Caches/VectorWarp/new-signed-installer" \
+  --developer-id \
+  --application-identity 'Developer ID Application: Your Name (TEAMID1234)' \
+  --installer-identity 'Developer ID Installer: Your Name (TEAMID1234)' \
+  --team-id TEAMID1234
+```
+
+The helper signs native libraries before their executables, applies only the
+per-executable entitlement profiles, updates the local SDRplay adapter source
+kit's signed-core binding and runtime/notice manifests, then seals the outer app.
+It preserves original manifests and a signing-transformation receipt outside the
+app. The source input remains unchanged. This produces `VectorWarp-signed.pkg`;
+it does not submit to Apple, install the package or publish a release.
+
+For local development, `--ad-hoc` replaces the Developer ID options and produces
+`VectorWarp-local-ad-hoc.pkg`. This mode does not qualify hardened-runtime or
+Developer ID behavior. Both modes refuse to replace existing output and require
+a local output directory outside common synchronized folders.
+
+Keep Apple credentials in Apple's local keychain tools. Notarize the final signed
+package using a local `notarytool` profile, require an explicit `Accepted` result,
+inspect its log, staple the package and verify it before public distribution.
+Actual Developer ID startup, JIT, plugin loading, Gatekeeper and installation
+checks remain separate from local ad-hoc fixture tests. No Developer ID or
+notarization success is claimed for the current development package.
