@@ -19,7 +19,10 @@ SDK reports dual-tuner, 6 MHz ADC, 2 MS/s output, and decimation 1. It handles
 the alternate divided sample counter at its 32-bit rollover without changing
 the paired IQ data.
 
-The callbacks currently write each validated tuner pair directly into the two
-existing `IqData` buffers. A bounded paired-block queue remains a possible
-future throughput improvement, but it would change capture backpressure and
-shutdown behavior and is deliberately outside this adapter-only update.
+With `VECTORWARP_RSPDUO_CPI_QUEUE=1`, live dual-channel capture writes validated
+tuner pairs into a bounded signed16 CPI queue. The processor borrows one ready
+CPI at a time; paired queue capacity stays within the configured capture buffer.
+This keeps packed input available to the isolated mixed worker while retaining
+independent CPU recovery inputs. Without that opt-in, capture uses the existing
+two `IqData` buffers. See the [Pi 4 setup profile](../../../docs/PI4_GUIDE.md)
+for the tested service environment, workload and qualification limits.

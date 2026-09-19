@@ -34,18 +34,31 @@ forced onto Bookworm. Pi 5 is future work.
    RSPduo source kit. `--gpu auto` is the build default and includes Vulkan
    when its dependencies are usable. The installer preserves existing
    `/etc/vectorwarp/config.yml` and does not start VectorWarp.
-4. Run `vectorwarp` over SSH. It starts only the web API when needed and prints
+4. Check the GPU driver with
+   `/opt/vectorwarp/libexec/vectorwarp-gpu-setup --status`. If it reports a
+   missing driver, run
+   `sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver` and review
+   the distribution's Mesa transaction. If service-account access is missing,
+   run the helper's `--enable-service-access` action with `sudo`. See
+   [Pi GPU setup](PI_GPU_SETUP.md) for details.
+5. Run `vectorwarp` over SSH. It starts only the web API when needed and prints
    its address. From another device on the same network, open
    `http://<pi-address>:3000/`; do not use `localhost` from that other device.
    Keep this unauthenticated UI on a trusted LAN/VPN or behind an authenticated
    gateway.
-5. For an RSPduo, install and accept SDRplay's vendor Hardware API yourself.
+6. For an RSPduo, install and accept SDRplay's vendor Hardware API yourself.
    VectorWarp does not distribute it. In Settings, select **RSPduo**, use
    **Build SDRplay support**, wait for the local adapter build to complete, then
    configure the receiver and choose **Save & Restart**. See
    [SDRplay setup](SDRPLAY_SETUP.md) for the vendor/API service details.
 
 ## Tested RSPduo configuration
+
+The complete [Pi 4B example YAML](../config/config-pi4-rspduo.yml) contains this
+workload, one surveillance worker, four FFT threads, and tracking enabled.
+Use it as a reference when editing Settings; retain your receiver serial,
+network, recording and site values. The example's 551 MHz transmitter and
+neutral site coordinates must be adapted to your actual installation.
 
 Use two RSPduo channels at **2 MS/s**, **551 MHz**, and **500 ms CPI** (one
 million samples). Enable clutter, detection, and tracking; use one surveillance
@@ -61,6 +74,33 @@ keep exactly the Pi 4B/BCM2711, one-surveillance, no-array-reference,
 clutter-enabled 2 MS/s, one-million-sample, 301×411, 410-tap geometry above.
 An explicit GPU device or any other geometry follows the generic CPU/Vulkan
 policy.
+
+### Apply the tested service environment
+
+The fast paired-input path is opt-in. For this dual-RSPduo profile, install the
+[service drop-in](../contrib/systemd/pi4-rspduo-performance.conf) from the source
+checkout before choosing **Save & Restart**:
+
+```sh
+sudo install -d /etc/systemd/system/vectorwarp-processor.service.d
+sudo install -m 0644 contrib/systemd/pi4-rspduo-performance.conf \
+  /etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf
+sudo systemctl daemon-reload
+```
+
+The drop-in enables the bounded paired CPI queue and bulk USB transport, uses
+measured FFT plans and two clutter CPU slots, and limits BLAS/OpenMP to one
+thread. Its sample-counter ratio of three is accepted only for the tested
+dual-tuner 6 MHz ADC / 2 MS/s output mode; another receiver mode requires a
+separately qualified profile. These settings apply on the next processor
+start. An already-running processor needs `vectorwarp restart` after saving
+the configuration. Remove this drop-in and reload systemd to return to the
+normal service environment.
+
+The short comparisons also used a stock 1.8 GHz Pi 4 CPU with the performance
+governor and cooling that avoided throttling. The drop-in does not change the
+OS governor or clocks. Faster startup is not promised: measured FFT planning
+and AUTO's accuracy comparisons happen before steady operation.
 
 ## Check that it is running
 

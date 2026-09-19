@@ -1,0 +1,101 @@
+# Pi 4B / RSPduo benchmark-matched example; see docs/PI4_GUIDE.md.
+# Set your actual transmitter frequency, receiver serial and site coordinates.
+capture:
+  fs: 2000000
+  fc: 551000000
+  device:
+    type: "RspDuo"
+    # Leave blank only when exactly one RSPduo is connected.
+    serial: ""
+    agcSetPoint: -20
+    # 0 to disable AGC
+    #bandwidthNumber: 0
+    bandwidthNumber: 5
+    gainReduction: [50, 45]
+    lnaState: 1
+    dabNotch: false
+    rfNotch: false
+  replay:
+    state: false
+    loop: false
+    file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
+    format: 'auto'
+
+process:
+  performance:
+    acceleration: auto
+    surveillance_workers: 1
+    fft_threads: 4
+  data:
+    cpi: 0.5
+    buffer: 2
+    overlap: 0
+  ambiguity:
+    delayMin: -10
+    delayMax: 400
+    dopplerMin: -300
+    dopplerMax: 300
+  clutter:
+    enable: true
+    delayMin: -10
+    delayMax: 400
+  detection:
+    enable: true
+    pfa: 0.00001
+    nGuard: 2
+    nTrain: 6
+    minDelay: 5
+    minDoppler: 15
+    nCentroid: 6
+  tracker:
+    enable: true
+    initiate:
+      M: 3
+      N: 5
+      maxAcc: 10
+    delete: 10
+    smooth: "none"
+
+network:
+  ip: 0.0.0.0
+  ports:
+    api: 3000
+    map: 3001
+    detection: 3002
+    track: 3003
+    timestamp: 4000
+    timing: 4001
+    iqdata: 4002
+    config: 4003
+
+truth:
+  adsb:
+    enabled: false
+    tar1090: 'localhost:8080'
+    poll_interval: 1
+    smoothing_window: 10
+    max_position_age: 30
+  ais:
+    enabled: false
+    ip: 0.0.0.0
+    port: 30001
+
+location:
+  rx:
+    # Replace these neutral placeholders before enabling capture or truth data.
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set receiver site"
+  tx:
+    latitude: 0
+    longitude: 0
+    altitude: 0
+    name: "Set transmitter site"
+
+save:
+  iq: false
+  map: false
+  detection: false
+  timing: false
+  path: "/var/lib/vectorwarp/recordings/"
