@@ -2,7 +2,8 @@
 # private modules ship together, and are loaded only for the selected receiver.
 set(BLAH2_RECEIVER_ABI_INPUT "${CMAKE_CXX_COMPILER_ID}|${CMAKE_CXX_COMPILER_VERSION}|${CMAKE_SIZEOF_VOID_P}|${CMAKE_CXX_FLAGS}")
 foreach(interface src/capture/ReceiverModule.h src/capture/Source.h
-    src/capture/Recording.h src/capture/kraken/HeimdallFrame.h src/data/IqData.h)
+    src/capture/Recording.h src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
+    src/capture/kraken/HeimdallFrame.h src/data/IqData.h)
   file(SHA256 "${PROJECT_ROOT}/${interface}" interface_hash)
   string(APPEND BLAH2_RECEIVER_ABI_INPUT "|${interface_hash}")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_ROOT}/${interface}")

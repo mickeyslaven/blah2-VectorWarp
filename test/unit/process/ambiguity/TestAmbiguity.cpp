@@ -16,7 +16,27 @@
 #include <filesystem>
 #include <algorithm>
 #include <complex>
+#include <cstdlib>
 #include <deque>
+#include <string>
+
+namespace {
+class ScopedFftSetting {
+  const char* name_;
+  const char* previous_;
+  std::string saved_;
+public:
+  explicit ScopedFftSetting(const char* value, const char* name = "VECTORWARP_FFTW_PLAN")
+      : name_(name), previous_(std::getenv(name)) {
+    if (previous_) saved_ = previous_;
+    setenv(name_, value, 1);
+  }
+  ~ScopedFftSetting() {
+    if (previous_) setenv(name_, saved_.c_str(), 1);
+    else unsetenv(name_);
+  }
+};
+}
 
 /// @brief Use random_device as RNG.
 std::random_device g_rd;
@@ -128,6 +148,87 @@ TEST_CASE("Ambiguity preserves the caller FFTW planning budget", "[constructor][
     }
     CHECK(fftw_planner_nthreads() == 3);
     fftw_plan_with_nthreads(saved);
+}
+
+TEST_CASE("Ambiguity FFTW plan mode validates and preserves results", "[constructor][fftw]")
+{
+  {
+    ScopedFftSetting invalid("invalid");
+    REQUIRE_THROWS_AS(Ambiguity(-2, 2, 0, 0, 100, 8), std::invalid_argument);
+  }
+  std::deque<std::complex<double>> reference;
+  for (int i = 0; i < 8; ++i) reference.push_back({double(i + 1), -double(i)});
+  auto fill = [](IqData& value) {
+    for (int i = 0; i < 8; ++i) value.push_back({double(i - 2), double(i + 3)});
+  };
+  std::vector<std::vector<std::complex<double>>> expected;
+  {
+    ScopedFftSetting estimate("estimate");
+    Ambiguity ambiguity(-2, 2, 0, 0, 100, 8);
+    IqData surveillance(8); fill(surveillance);
+    expected = ambiguity.process(reference, &surveillance)->data;
+  }
+  {
+    ScopedFftSetting measure("measure");
+    Ambiguity ambiguity(-2, 2, 0, 0, 100, 8);
+    IqData surveillance(8); fill(surveillance);
+    const auto* reusable = &surveillance.view_data().front();
+    const auto& actual = ambiguity.process(reference, &surveillance, true)->data;
+    REQUIRE(surveillance.get_length() == 8);
+    REQUIRE(&surveillance.view_data().front() == reusable);
+    REQUIRE(actual.size() == expected.size());
+    for (size_t row = 0; row < expected.size(); ++row)
+      for (size_t col = 0; col < expected[row].size(); ++col)
+        CHECK_THAT(std::abs(actual[row][col] - expected[row][col]),
+          Catch::Matchers::WithinAbs(0, 1e-10));
+    ambiguity.process(reference, &surveillance);
+    REQUIRE(surveillance.get_length() == 0);
+  }
+}
+
+TEST_CASE("Power-of-two padding preserves signed delay-Doppler maps", "[process][regression][range-fft]")
+{
+  constexpr unsigned samples = 160;
+  const bool rounded = GENERATE(false, true);
+  std::deque<std::complex<double>> reference;
+  for (unsigned i = 0; i < samples; ++i)
+    reference.push_back({double(int(i % 11) - 5), double(int(i % 7) - 3)});
+  auto fill = [](IqData& signal) {
+    for (unsigned i = 0; i < samples; ++i)
+      signal.push_back({double(int(i % 13) - 6), double(int(i % 5) - 2)});
+  };
+  std::vector<std::vector<std::complex<double>>> expected;
+  {
+    ScopedFftSetting setting("default", "VECTORWARP_RANGE_FFT");
+    Ambiguity baseline(-7, 7, -40, 40, 1000, samples, rounded);
+    CHECK(baseline.get_nfft() == (rounded ? 20 : 19));
+    IqData signal(samples); fill(signal);
+    expected = baseline.process(reference, &signal)->data;
+  }
+  {
+    ScopedFftSetting setting("power2", "VECTORWARP_RANGE_FFT");
+    Ambiguity padded(-7, 7, -40, 40, 1000, samples, rounded);
+    REQUIRE(padded.get_nfft() == 32);
+    REQUIRE(padded.get_n_corr() == 12);
+    REQUIRE(padded.get_n_delay_bins() == 15);
+    REQUIRE(padded.get_n_doppler_bins() == 13);
+    IqData signal(samples); fill(signal);
+    const auto* actual = padded.process(reference, &signal);
+    REQUIRE(actual->delay.front() == -7);
+    REQUIRE(actual->delay.back() == 7);
+    REQUIRE(actual->data.size() == expected.size());
+    for (size_t row = 0; row < expected.size(); ++row) {
+      REQUIRE(actual->data[row].size() == expected[row].size());
+      for (size_t col = 0; col < expected[row].size(); ++col)
+        CHECK_THAT(std::abs(actual->data[row][col] - expected[row][col]),
+          Catch::Matchers::WithinAbs(0, 1e-10));
+    }
+    REQUIRE_THROWS_AS(Ambiguity(-1, 1, 0, 0, 65534, 65534), std::invalid_argument);
+  }
+  {
+    ScopedFftSetting setting("invalid", "VECTORWARP_RANGE_FFT");
+    REQUIRE_THROWS_AS(Ambiguity(-2, 2, 0, 0, 100, 8), std::invalid_argument);
+  }
 }
 
 TEST_CASE("Doppler buffer can exceed range FFT", "[process][regression]")

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline subprocess regression tests. The fake processor never opens an SDR."""
 import importlib.util
+import http.client
 import json
 from pathlib import Path
 import subprocess
@@ -97,8 +98,9 @@ while running:
     time.sleep(.06)
 for peer in peers.values(): peer.close()
 if mode != 'missing_final':
-    final = dict(state, captureStopped=True, captureBacklogSamples=[200000,200000],
+    final = dict(state, captureStopped=True, captureBacklogSamples=[0,0],
                  captureDroppedSamples=[0,0])
+    if mode == 'final_backlog': final['captureBacklogSamples'] = [1000000,1000000]
     if mode == 'final_dropped': final['captureDroppedSamples'] = [7,7]
     if mode == 'final_missing_counter': final.pop('captureDroppedSamples')
     if mode == 'final_bad_backlog': final['captureBacklogSamples'] = [0,False]
@@ -145,7 +147,7 @@ class LiveCheckTest(unittest.TestCase):
                 self.assertGreaterEqual(result["measuredSeconds"], .25)
                 self.assertIs(result["finalCaptureStatus"]["captureStopped"], True)
                 self.assertEqual(result["perChannelEndDrops"], [0, 0])
-                self.assertEqual(result["perChannelEndBacklog"], [200000, 200000])
+                self.assertEqual(result["perChannelEndBacklog"], [0, 0])
                 if mode == "slow_start":
                     self.assertGreater(result["startupSeconds"], .4)
 
@@ -159,7 +161,7 @@ class LiveCheckTest(unittest.TestCase):
                 self.assertTrue(result["failures"])
 
     def test_final_status_catches_tail_drops_faults_and_missing_counters(self):
-        for mode in ("missing_final", "final_dropped", "final_missing_counter", "final_bad_backlog",
+        for mode in ("missing_final", "final_dropped", "final_backlog", "final_missing_counter", "final_bad_backlog",
                      "final_wrong_channels", "final_bad_marker", "final_missing_receipt",
                      "final_invalid_state", "final_fault"):
             with self.subTest(mode=mode):
@@ -195,6 +197,51 @@ class LiveCheckTest(unittest.TestCase):
                         b'{"large":"' + b'x' * CHECK.MAX_FRAME_BYTES + b'"}'):
             with self.subTest(payload=payload), self.assertRaises((ValueError, UnicodeError)):
                 CHECK.JsonObjects(values.append).feed(payload, final=True)
+
+    def test_long_run_status_capacity_keeps_late_fault_and_final_stop(self):
+        server = CHECK.StatusServer()
+        server.start()
+        try:
+            def post(value):
+                connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=2)
+                try:
+                    connection.request("POST", "/api/processor/status", json.dumps(value))
+                    response = connection.getresponse()
+                    response.read()
+                    return response.status
+                finally:
+                    connection.close()
+
+            # The former 4096-record cap rejected the first of these late statuses.
+            server.states = [{"state": "live"}] * 4096
+            self.assertEqual(post({"state": "error", "error": "late callback fault"}), 204)
+            tail, errors = server.snapshot(4096)
+            self.assertEqual(tail, [{"state": "error", "error": "late callback fault"}])
+            self.assertEqual(errors, [])
+
+            server.states = [{"state": "live"}] * (CHECK.MAX_TELEMETRY_RECORDS - 1)
+            final = {"state": "live", "captureStopped": True,
+                     "captureDroppedSamples": [0, 0], "captureBacklogSamples": [0, 0]}
+            self.assertEqual(post(final), 204)
+            tail, errors = server.snapshot(CHECK.MAX_TELEMETRY_RECORDS - 1)
+            self.assertEqual(tail, [final])
+            self.assertEqual(errors, [])
+            self.assertEqual(post(final), 400)
+            self.assertIn("too many processor statuses", server.snapshot()[1])
+        finally:
+            server.close()
+
+    def test_incremental_timing_validation_preserves_absolute_indices(self):
+        frame = {"nCpi": 4097, "cpi": 420.0,
+                 "captureDroppedSamples": [0, 0], "captureBacklogSamples": [0, 0]}
+        self.assertEqual(CHECK.timing_errors([frame], 4096), [])
+        frame["captureDroppedSamples"] = [1, 0]
+        self.assertEqual(CHECK.timing_errors([frame], 4096),
+                         ["frame 4097: capture dropped samples"])
+        frame["captureDroppedSamples"] = [0, 0]
+        frame["nCpi"] = 4099
+        self.assertEqual(CHECK.timing_errors([frame], 4096),
+                         ["frame 4097: missing or nonsequential nCpi"])
 
 
 if __name__ == "__main__":

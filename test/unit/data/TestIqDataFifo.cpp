@@ -107,6 +107,28 @@ int main() {
     require(data.view_data()[0] == std::complex<double>(.25, .5) &&
       data.view_data()[1] == std::complex<double>(2, 2),
       "Clutter subtraction lost FP64 cancellation precision");
+    IqData pairedA(4), pairedB(4);
+    const int16_t paired[] = {1, 2, 101, 102, 3, 4, 103, 104,
+                              5, 6, 105, 106, 7, 8, 107, 108};
+    pairedA.assign_paired_i16(paired, 4, pairedB);
+    require(pairedA.view_data()[2] == std::complex<double>(5, 6) &&
+      pairedB.view_data()[2] == std::complex<double>(105, 106),
+      "Direct paired signed16 conversion changed channel order");
+    const auto* pairedAStorage = &pairedA.view_data().front();
+    const auto* pairedBStorage = &pairedB.view_data().front();
+    pairedA.assign_paired_i16(paired, 4, pairedB);
+    require(&pairedA.view_data().front() == pairedAStorage &&
+      &pairedB.view_data().front() == pairedBStorage,
+      "Direct paired conversion did not reuse completed CPI storage");
+    const std::complex<double> filtered[] = {{9, 10}, {11, 12}, {13, 14}, {15, 16}};
+    pairedB.assign_complex(filtered, 4);
+    require(&pairedB.view_data().front() == pairedBStorage &&
+      pairedB.view_data()[2] == filtered[2],
+      "Filtered complex CPI replacement did not reuse storage or changed samples");
+    bool pairedRejected = false;
+    try { pairedA.assign_paired_i16(nullptr, 1, pairedB); }
+    catch (const std::invalid_argument&) { pairedRejected = true; }
+    require(pairedRejected, "Invalid direct paired conversion was accepted");
     std::cout << "IQ FIFO ownership and retirement fixtures passed\n";
     return 0;
   } catch (const std::exception& error) {

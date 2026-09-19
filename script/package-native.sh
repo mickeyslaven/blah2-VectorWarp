@@ -103,7 +103,7 @@ case "$DISTRO" in
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
-for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so \
+for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-mixed-worker \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
@@ -112,7 +112,7 @@ done
 for notice in asio cpp-httplib rapidjson ryml VkFFT; do
   [[ -s $ARTIFACT/licenses/$notice.txt ]] || die "artifact lacks third-party notice: $notice"
 done
-[[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker ]] ||
+[[ -x $ARTIFACT/bin/blah2 && -x $ARTIFACT/bin/blah2-gpu-worker && -x $ARTIFACT/bin/blah2-mixed-worker ]] ||
   die 'release processor binaries are not executable'
 [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'installed launcher is missing from release artifact'
 [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing from release artifact'
@@ -243,6 +243,7 @@ if [[ $FORMAT == deb ]]; then
   binaries=(
     "$STAGE/opt/vectorwarp/current/bin/blah2"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-mixed-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-vulkan.so"
     "$STAGE/opt/vectorwarp/current/bin/libblah2-capture-core.so.1"
     "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-usrp.so"

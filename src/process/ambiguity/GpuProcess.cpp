@@ -29,10 +29,12 @@ namespace blah2 {
 namespace {
 using Clock = std::chrono::steady_clock;
 using Complex = std::complex<float>;
-constexpr uint32_t protocol = 0x42475003;
+constexpr uint32_t protocol = 0x42475004;
 enum Operation : uint32_t { initialize = 1, frame = 2, ready = 3, failure = 4,
-  quit = 5, clutterFrame = 6, clutterRejected = 7 };
+  quit = 5, clutterFrame = 6, clutterRejected = 7, firReference = 8,
+  firFinal = 9 };
 constexpr uint32_t clutterCapability = 1;
+constexpr uint32_t firCapability = 2;
 struct Message {
   uint32_t version = protocol, operation = 0, capabilities = 0;
   uint64_t sequence = 0, memoryBytes = 0;
@@ -43,7 +45,31 @@ struct Layout {
   size_t reference, surveillance, output;
   size_t clutterReference = 0, clutterSurveillance = 0, clutterOutput = 0;
   size_t clutterOffset = 0, bytes;
+  size_t firReference = 0, firWeights = 0, firOutput = 0;
+  size_t firOffset = 0;
   explicit Layout(GpuGeometry g) {
+    if (g.kind == GpuWorkKind::fir) {
+      if (g.range || g.doppler || g.delays || g.channels || g.delayMin ||
+          g.clutterSamples || g.clutterBins || g.clutterDelayMin ||
+          !g.firSamples || g.firSamples > 10000000 || !g.firTaps ||
+          g.firTaps > g.firSamples || g.firTaps > 2048 ||
+          g.firFft != 2048 || g.firTaps > g.firFft || g.firPercent != 50)
+        throw std::runtime_error("GPU FIR dimensions are unsupported; using CPU");
+      const uint64_t hop = uint64_t(g.firFft) - g.firTaps + 1;
+      const uint64_t totalBlocks = (uint64_t(g.firSamples) + hop - 1) / hop;
+      const uint64_t gpuBlocks = std::max<uint64_t>(1, totalBlocks / 2);
+      const uint64_t prefix = std::min<uint64_t>(g.firSamples, gpuBlocks * hop);
+      const uint64_t totalElements = prefix * 2 + g.firTaps;
+      const uint64_t total = totalElements * sizeof(Complex);
+      if (total > (512ULL << 20) || prefix > SIZE_MAX)
+        throw std::runtime_error("GPU FIR shared-memory budget exceeded; using CPU");
+      reference = surveillance = output = 0;
+      firReference = firOutput = size_t(prefix); firWeights = g.firTaps;
+      firOffset = 0; bytes = size_t(total); return;
+    }
+    if (g.kind != GpuWorkKind::radar || g.firSamples || g.firTaps ||
+        g.firFft || g.firPercent)
+      throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
     if (!g.range || g.range > 65535 || !g.doppler || g.doppler > 65535 ||
         !g.delays || g.delays > 65535 || !g.channels || g.channels > 8)
       throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
@@ -119,7 +145,7 @@ void reap(pid_t process) noexcept {
   } catch (...) {} // SIGKILL was already sent; parent must still recover.
 }
 class Process final : public GpuBackend, public GpuFrameBackend,
-    public GpuClutterFrameBackend {
+    public GpuClutterFrameBackend, public GpuFirFrameBackend {
   Layout layout_;
   GpuProcessOptions options_;
   int socket_ = -1, memory_ = -1;
@@ -127,7 +153,8 @@ class Process final : public GpuBackend, public GpuFrameBackend,
   Complex* shared_ = nullptr;
   GpuDevice device_;
   uint64_t sequence_ = 0;
-  bool clutterSupported_ = false;
+  bool clutterSupported_ = false, firSupported_ = false, firActive_ = false,
+    firFinalSubmitted_ = false;
   void stop() noexcept {
     if (socket_ >= 0) { close(socket_); socket_ = -1; }
     reap(process_); process_ = -1;
@@ -193,6 +220,7 @@ public:
         throw std::runtime_error("GPU worker initialization response is invalid; using CPU");
       device_ = {response.id, response.name, response.memoryBytes};
       clutterSupported_ = response.capabilities & clutterCapability;
+      firSupported_ = response.capabilities & firCapability;
     } catch (...) {
       if (actionsReady) posix_spawn_file_actions_destroy(&actions);
       if (childSocket >= 0) close(childSocket);
@@ -203,6 +231,8 @@ public:
   ~Process() override { stop(); }
   GpuDevice device() const override { return device_; }
   GpuFrameBuffers frameBuffers() override {
+    if (!layout_.reference)
+      throw std::runtime_error("GPU radar processing is unavailable; using CPU");
     if (socket_ < 0 || !shared_)
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     return {shared_, layout_.reference,
@@ -210,6 +240,48 @@ public:
       shared_ + layout_.reference + layout_.surveillance, layout_.output};
   }
   bool clutterAvailable() const override { return clutterSupported_; }
+  bool firAvailable() const override { return firSupported_; }
+  GpuFirBuffers firBuffers() override {
+    if (!firSupported_ || !layout_.firReference)
+      throw std::runtime_error("GPU FIR processing is unavailable; using CPU");
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    auto* start = shared_ + layout_.firOffset;
+    return {start, layout_.firReference,
+      start + layout_.firReference, layout_.firWeights,
+      start + layout_.firReference + layout_.firWeights, layout_.firOutput};
+  }
+  void submitFirReference() override {
+    if (!firSupported_ || !layout_.firReference)
+      throw std::runtime_error("GPU FIR processing is unavailable; using CPU");
+    if (socket_ < 0 || !shared_)
+      throw std::runtime_error("GPU worker is no longer available; using CPU");
+    if (firActive_) throw std::logic_error("GPU FIR frame is already active");
+    try {
+      Message request; request.operation = firReference;
+      request.sequence = ++sequence_; sendMessage(socket_, request);
+      firActive_ = true; firFinalSubmitted_ = false;
+    } catch (...) { stop(); throw; }
+  }
+  void submitFirWeights() override {
+    if (!firActive_ || firFinalSubmitted_)
+      throw std::logic_error("GPU FIR reference was not submitted exactly once");
+    try {
+      Message request; request.operation = firFinal; request.sequence = sequence_;
+      sendMessage(socket_, request); firFinalSubmitted_ = true;
+    } catch (...) { stop(); throw; }
+  }
+  void finishFir() override {
+    if (!firActive_ || !firFinalSubmitted_)
+      throw std::logic_error("GPU FIR final phase was not submitted");
+    try {
+      const auto response = receiveMessage(socket_, options_.frameMs, "FIR execution");
+      if (response.operation == failure) throw std::runtime_error(response.reason);
+      if (response.operation != ready || response.sequence != sequence_)
+        throw std::runtime_error("GPU worker returned the wrong FIR frame; using CPU");
+      firActive_ = false; firFinalSubmitted_ = false;
+    } catch (...) { stop(); throw; }
+  }
   GpuClutterBuffers clutterBuffers() override {
     if (!clutterSupported_ || !layout_.clutterReference)
       throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");
@@ -222,6 +294,8 @@ public:
       layout_.clutterOutput};
   }
   void processFrame() override {
+    if (!layout_.reference)
+      throw std::runtime_error("GPU radar processing is unavailable; using CPU");
     if (socket_ < 0 || !shared_)
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     try {
@@ -251,6 +325,8 @@ public:
   }
   void process(const std::vector<Complex>& reference, const std::vector<Complex>& surveillance,
       std::vector<Complex>& output) override {
+    if (!layout_.reference)
+      throw std::runtime_error("GPU radar processing is unavailable; using CPU");
     if (socket_ < 0) throw std::runtime_error("GPU worker is no longer available; using CPU");
     if (reference.size() != layout_.reference || surveillance.size() != layout_.surveillance)
       throw std::invalid_argument("GPU input dimensions changed");
@@ -276,6 +352,14 @@ std::unique_ptr<GpuBackend> createGpuProcess(const GpuGeometry& geometry,
     const std::string& device, const GpuProcessOptions& options) {
   return std::make_unique<Process>(geometry, device, options);
 }
+std::unique_ptr<GpuBackend> createGpuFirProcess(uint32_t samples, uint32_t taps,
+    const std::string& device, const GpuProcessOptions& options) {
+  GpuGeometry geometry{};
+  geometry.kind = GpuWorkKind::fir;
+  geometry.firSamples = samples; geometry.firTaps = taps;
+  geometry.firFft = 2048; geometry.firPercent = 50;
+  return std::make_unique<Process>(geometry, device, options);
+}
 int runGpuWorker(const GpuFactory& factory) {
   const pid_t parent = getppid();
   if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) return 1;
@@ -299,8 +383,10 @@ int runGpuWorker(const GpuFactory& factory) {
     const auto device = backend->device();
     auto* buffers = dynamic_cast<GpuBufferBackend*>(backend.get());
     auto* clutter = dynamic_cast<GpuClutterBufferBackend*>(backend.get());
+    auto* fir = dynamic_cast<GpuFirBufferBackend*>(backend.get());
     Message response; response.operation = ready; response.memoryBytes = device.memoryBytes;
     if (clutter && layout.clutterReference) response.capabilities |= clutterCapability;
+    if (fir && layout.firReference) response.capabilities |= firCapability;
     std::snprintf(response.id, sizeof(response.id), "%s", device.id.c_str());
     std::snprintf(response.name, sizeof(response.name), "%s", device.name.c_str());
     sendMessage(3, response);
@@ -309,15 +395,37 @@ int runGpuWorker(const GpuFactory& factory) {
       reference.resize(layout.reference);
       surveillance.resize(layout.surveillance);
     }
-    uint64_t sequence = 0;
+    uint64_t sequence = 0, firSequence = 0;
+    bool firActive = false;
     for (;;) {
       // Idle waits are not GPU work. Parent death closes the socket or kills us.
       const auto request = receiveMessage(3, INT_MAX, "idle request");
       if (request.operation == quit) break;
-      if ((request.operation != frame && request.operation != clutterFrame) ||
+      auto* writable = static_cast<Complex*>(mapping);
+      if (request.operation == firReference) {
+        if (!fir || !layout.firReference || firActive ||
+            request.sequence != sequence + 1)
+          throw std::runtime_error("Invalid GPU worker FIR reference request");
+        const auto* start = shared + layout.firOffset;
+        fir->submitFirReferenceBuffers(start, layout.firReference);
+        firSequence = request.sequence; firActive = true;
+        continue; // Deliberately no acknowledgement: CPU correlation overlaps.
+      }
+      if (request.operation == firFinal) {
+        if (!fir || !layout.firReference || !firActive ||
+            request.sequence != firSequence)
+          throw std::runtime_error("Invalid GPU worker FIR final request");
+        auto* start = writable + layout.firOffset;
+        fir->processFirWeightsBuffers(start + layout.firReference,
+          layout.firWeights, start + layout.firReference + layout.firWeights,
+          layout.firOutput);
+        sequence = firSequence; firActive = false;
+        response.operation = ready; response.sequence = sequence;
+        sendMessage(3, response); continue;
+      }
+      if (firActive || (request.operation != frame && request.operation != clutterFrame) ||
           request.sequence != ++sequence)
         throw std::runtime_error("Invalid GPU worker frame request");
-      auto* writable = static_cast<Complex*>(mapping);
       if (request.operation == clutterFrame) {
         if (!clutter || !layout.clutterReference)
           throw std::runtime_error("GPU clutter processing is unavailable; using CPU clutter");

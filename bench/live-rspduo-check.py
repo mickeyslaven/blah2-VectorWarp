@@ -25,6 +25,7 @@ PORT_NAMES = ("map", "detection", "track", "timestamp", "timing", "iqdata")
 SDK_STAGES = ("open", "apiVersion", "lock", "enumerate", "select", "unlock",
               "debugEnable", "getDeviceParams", "init", "gainUpdateA", "gainUpdateB")
 MAX_FRAME_BYTES = 1 << 20
+MAX_TELEMETRY_RECORDS = 10000  # > 2 Hz for the maximum 3600-second observation, plus startup/stop.
 
 
 def invalid_constant(value):
@@ -115,7 +116,7 @@ class Sinks:
 
     def emit(self, value):
         with self.lock:
-            if len(self.timing) >= 10000:
+            if len(self.timing) >= MAX_TELEMETRY_RECORDS:
                 raise ValueError("too many timing frames")
             self.timing.append(value)
             self.received.append(time.monotonic())
@@ -164,9 +165,10 @@ class Sinks:
                         with self.lock:
                             self.exceptions.append(str(error))
 
-    def snapshot(self):
+    def snapshot(self, start=0):
         with self.lock:
-            return (list(self.timing), list(self.received), list(self.exceptions), dict(self.bytes))
+            return (list(self.timing[start:]), list(self.received[start:]),
+                    list(self.exceptions), dict(self.bytes))
 
     def close(self):
         # Called after child exit: active sockets drain to EOF before the thread exits.
@@ -208,7 +210,7 @@ class StatusServer:
                     if not isinstance(value, dict):
                         raise ValueError("processor status is not an object")
                     with owner.lock:
-                        if len(owner.states) >= 4096:
+                        if len(owner.states) >= MAX_TELEMETRY_RECORDS:
                             raise ValueError("too many processor statuses")
                         owner.states.append(value)
                 except (ValueError, OSError) as error:
@@ -234,9 +236,9 @@ class StatusServer:
     def start(self):
         self.thread.start()
 
-    def snapshot(self):
+    def snapshot(self, start=0):
         with self.lock:
-            return list(self.states), list(self.errors)
+            return list(self.states[start:]), list(self.errors)
 
     def close(self):
         self.server.shutdown()
@@ -322,25 +324,27 @@ def final_status_errors(states, cfg):
         if not channel_counts(counts):
             errors.append(f"final capture status: invalid {field}")
         elif field == "captureDroppedSamples" and any(counts):
-            errors.append("final capture status: capture FIFO dropped samples")
+            errors.append("final capture status: capture dropped samples")
+        elif field == "captureBacklogSamples" and any(counts):
+            errors.append("final capture status: complete CPI backlog remained at stop")
     return final, errors
 
 
-def timing_errors(frames):
+def timing_errors(frames, start_index=0, require_nonempty=True):
     errors = []
-    if not frames:
+    if require_nonempty and not frames:
         errors.append("no timing frames")
-    for index, frame in enumerate(frames):
-        if type(frame.get("nCpi")) is not int or frame["nCpi"] != index + 1:
-            errors.append(f"frame {index + 1}: missing or nonsequential nCpi")
+    for index, frame in enumerate(frames, start_index + 1):
+        if type(frame.get("nCpi")) is not int or frame["nCpi"] != index:
+            errors.append(f"frame {index}: missing or nonsequential nCpi")
         if not finite_number(frame.get("cpi")) or frame["cpi"] < 0:
-            errors.append(f"frame {index + 1}: missing or invalid cpi")
+            errors.append(f"frame {index}: missing or invalid cpi")
         for field in ("captureDroppedSamples", "captureBacklogSamples"):
             values = frame.get(field)
             if not channel_counts(values):
-                errors.append(f"frame {index + 1}: invalid {field}")
+                errors.append(f"frame {index}: invalid {field}")
             elif field == "captureDroppedSamples" and any(values):
-                errors.append(f"frame {index + 1}: capture FIFO dropped samples")
+                errors.append(f"frame {index}: capture dropped samples")
     return errors
 
 
@@ -367,7 +371,7 @@ def stop_process(process):
         return True
 
 
-def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
+def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60, observer=None):
     output.parent.mkdir(parents=True, exist_ok=True)
     status, sinks, process = StatusServer(), Sinks(), None
     started = time.monotonic()
@@ -375,10 +379,15 @@ def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
     measurement_end = None
     failures = []
     forced = False
+    frame_count = 0
+    state_count = 0
+    startup_accepted = False
     cfg = config(status.port, sinks.ports(), acceleration)
     try:
         status.start()
         sinks.start()
+        if observer is not None:
+            observer.start()
         with tempfile.TemporaryDirectory(prefix="vectorwarp-live-rspduo-") as temporary:
             path = Path(temporary) / "live.yml"
             path.write_text(json.dumps(cfg))
@@ -389,6 +398,8 @@ def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
                 try:
                     process = subprocess.Popen([str(binary.resolve()), "--config", str(path)],
                                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                    if observer is not None:
+                        observer.processor_started(process.pid)
                 except OSError as error:
                     failures.append(f"processor launch failed: {error}")
                 startup_deadline = time.monotonic() + startup_timeout
@@ -397,19 +408,33 @@ def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
                     if process.poll() is not None:
                         failures.append("processor exited before the observation interval completed")
                         break
-                    frames, _, sink_errors, _ = sinks.snapshot()
-                    states, status_errors = status.snapshot()
+                    frames, arrivals, sink_errors, _ = sinks.snapshot(frame_count)
+                    states, status_errors = status.snapshot(state_count)
+                    frame_start = frame_count
+                    frame_count += len(frames)
+                    state_count += len(states)
+                    if observer is not None:
+                        try:
+                            observer.observe(frames, arrivals, states)
+                        except (OSError, ValueError) as error:
+                            failures.append(f"diagnostic recording failed: {error}")
+                            break
+                        if observer.errors:
+                            failures.append("diagnostic collector failed during capture")
+                            break
+                    startup_accepted = startup_accepted or any(
+                        accepted_receipt(state, cfg) for state in states)
                     if sink_errors or status_errors:
                         failures.append("telemetry receiver rejected input")
                         break
                     if any(state.get("state") in ("error", "fault") or state.get("error") or state.get("fault") for state in states):
                         failures.append("processor reported a fault")
                         break
-                    if frames and timing_errors(frames):
+                    if frames and timing_errors(frames, frame_start):
                         failures.append("timing telemetry failed validation")
                         break
                     if measurement_start is None:
-                        if frames and any(accepted_receipt(state, cfg) for state in states):
+                        if frame_count and startup_accepted:
                             measurement_start = now
                         elif now >= startup_deadline:
                             failures.append("startup deadline expired before accepted receipt and timing")
@@ -419,12 +444,31 @@ def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
                         break
                     time.sleep(.02)
                 if process is not None:
+                    if observer is not None and failures:
+                        observer.trigger("harness_failure", {"failures": failures})
+                    if observer is not None:
+                        observer.processor_stopping()
                     forced = stop_process(process)
     finally:
         if process is not None and process.poll() is None:
+            if observer is not None:
+                observer.processor_stopping()
             forced = stop_process(process) or forced
         sinks.close()
         status.close()
+        if observer is not None:
+            tail_frames, tail_arrivals, _, _ = sinks.snapshot(frame_count)
+            tail_states, _ = status.snapshot(state_count)
+            if observer.started:
+                try:
+                    observer.observe(tail_frames, tail_arrivals, tail_states)
+                except (OSError, ValueError) as error:
+                    failures.append(f"final diagnostic recording failed: {error}")
+            try:
+                observer.close()
+            except (OSError, ValueError) as error:
+                failures.append(f"diagnostic finalization failed: {error}")
+            failures.extend(f"diagnostics: {error}" for error in observer.errors)
 
     frames, received, sink_errors, stream_bytes = sinks.snapshot()
     states, status_errors = status.snapshot()
@@ -469,11 +513,13 @@ def run_check(binary, seconds, output, acceleration="cpu", startup_timeout=60):
         "perChannelEndBacklog": final_status.get("captureBacklogSamples") if final_status else [],
         "finalCaptureStatus": final_status,
         "sdkStartupAccepted": accepted, "hardwareVerified": False,
-        "observationScope": "Cumulative capture FIFO overflow through receiver stop and reported capture faults; no RF/coherence verification",
+        "observationScope": "Cumulative capture FIFO or paired CPI queue loss through receiver stop and reported capture faults; no RF/coherence verification",
         "faults": faults[-8:], "statuses": states, "timing": frames,
         "sinkExceptions": sink_errors, "statusExceptions": status_errors,
         "normalStop": normal_stop, "returnCode": process.returncode if process is not None else None,
         "streamBytes": stream_bytes}
+    if observer is not None:
+        evidence["diagnostics"] = observer.summary()
     with output.with_suffix(".evidence.json").open("x") as stream:
         json.dump(evidence, stream, indent=2, allow_nan=False)
     return evidence
@@ -484,14 +530,24 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--seconds", type=float, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--acceleration", choices=("cpu", "auto"), default="cpu")
+    parser.add_argument("--acceleration", choices=("cpu", "auto", "gpu"), default="cpu")
     parser.add_argument("--startup-timeout", type=float, default=60)
+    parser.add_argument("--spike-diagnostics", action="store_true",
+                        help="Pi/Linux: bounded system-wide perf flight recorder (requires root)")
+    parser.add_argument("--spike-ms", type=float, default=750)
     args = parser.parse_args()
-    if not args.binary.is_file() or not math.isfinite(args.seconds) or not 0 < args.seconds <= 600:
-        parser.error("binary must exist and seconds must be finite with 0 < seconds <= 600")
+    if not args.binary.is_file() or not math.isfinite(args.seconds) or not 0 < args.seconds <= 3600:
+        parser.error("binary must exist and seconds must be finite with 0 < seconds <= 3600")
     if not math.isfinite(args.startup_timeout) or not 0 < args.startup_timeout <= 120:
         parser.error("startup-timeout must be finite with 0 < value <= 120")
-    evidence = run_check(args.binary, args.seconds, args.output, args.acceleration, args.startup_timeout)
+    if not math.isfinite(args.spike_ms) or args.spike_ms < 500:
+        parser.error("spike-ms must be finite and at least 500")
+    observer = None
+    if args.spike_diagnostics:
+        from pi_spike_diagnostics import SpikeDiagnostics
+        observer = SpikeDiagnostics(args.output, spike_ms=args.spike_ms)
+    evidence = run_check(args.binary, args.seconds, args.output, args.acceleration,
+                         args.startup_timeout, observer)
     print(json.dumps(evidence, allow_nan=False))
     return 0 if evidence["ok"] else 1
 

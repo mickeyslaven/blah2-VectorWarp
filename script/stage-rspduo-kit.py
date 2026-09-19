@@ -8,7 +8,7 @@ import shutil
 
 SOURCES = {
     'src/capture/ReceiverFactory.cpp', 'src/capture/ReceiverModule.h',
-    'src/capture/Source.h', 'src/capture/Recording.h',
+    'src/capture/Source.h', 'src/capture/Recording.h', 'src/capture/PairedCpiQueue.h', 'src/capture/PairedCpiSource.h',
     'src/capture/kraken/HeimdallFrame.h', 'src/data/IqData.h',
     'src/capture/rspduo/RspDuo.cpp', 'src/capture/rspduo/RspDuo.h',
     'src/capture/rspduo/SampleSequence.h', 'src/capture/rspduo/SdkSampleClock.h',

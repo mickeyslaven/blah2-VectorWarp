@@ -153,9 +153,17 @@ sudo dnf install ./matching.rpm
 | Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS (legacy Pi route, deprecated) | Trixie, 64-bit | ARM64 | [Existing packages](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
+
+The replacement Pi distribution will be a headless **Raspberry Pi 4 / Raspberry
+Pi OS Lite 64-bit Bookworm** microSD image with Wi-Fi and SSH setup in Raspberry
+Pi Imager. It is not published yet. **Pi 5 is future work.** Existing Pi installs
+are not automatically migrated or downgraded; see the
+[Pi 4 guide](PI4_GUIDE.md) and [image packaging plan](PI_IMAGE_PACKAGING.md).
+Do not install the Trixie package
+on Bookworm by bypassing the platform check.
 
 A Raspberry Pi can also use a listed 64-bit Fedora, Debian or Ubuntu release;
 follow that operating system's instructions. These are build/package targets,

@@ -108,6 +108,14 @@ public:
   /// @warning Caller holds the lock; like the vector overload, retains newest n.
   void append_unlocked(const std::complex<float>* samples, std::size_t count);
 
+  /// @brief Replace two coherent buffers from signed16 IIQQ capture storage.
+  /// @warning Caller exclusively owns both buffers.
+  void assign_paired_i16(const int16_t* samples, uint32_t count, IqData& other);
+
+  /// @brief Overwrite a complete complex CPI while reusing existing deque storage.
+  /// @warning Caller exclusively owns this buffer.
+  void assign_complex(const std::complex<double>* samples, uint32_t count);
+
   /// @brief Pop the front of the queue.
   /// @return Sample from the front of the queue.
   std::complex<double> pop_front();

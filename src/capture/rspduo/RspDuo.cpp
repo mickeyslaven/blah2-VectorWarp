@@ -1,4 +1,5 @@
 #include "RspDuo.h"
+#include "capture/PairedCpiQueue.h"
 #include "SampleSequence.h"
 #include "UsbMode.h"
 
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <cmath>
+#include <chrono>
 #include <iomanip>
 #include <limits>
 #include <locale>
@@ -150,13 +152,12 @@ void RspDuo::start()
   run_fg = true;
   deviceRemoved = false;
   callbackFault = false;
+  callbackFaultReason = nullptr;
   streamEstablished = false;
   {
     std::lock_guard<std::mutex> pairingLock(callbackMutex);
-    callbackSamples = 0;
-    callbackFirstSample = 0;
-    callbackSlot = -1;
-    callbackSlotBusy = {{false, false}};
+    pendingHead = pendingCount = 0;
+    callbackSlotBusy.fill(false);
     expectedFirstSampleValid = false;
     sampleClock.clear();
   }
@@ -212,8 +213,21 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
   {
     if (stats_fg)
     {
-      std::cerr << "[RspDuo]" << " max_a_nr: " << max_a_nr << 
-        " max_b_nr: " << max_b_nr << std::endl;
+      const auto ackStart = ackStartNs.load(std::memory_order_acquire);
+      const auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+      std::cerr << "[RspDuo] max_a_nr: " << max_a_nr <<
+        " max_b_nr: " << max_b_nr <<
+        " gainA=" << gainEventsA.exchange(0) <<
+        " gainB=" << gainEventsB.exchange(0) <<
+        " overloadA=" << overloadEventsA.exchange(0) <<
+        " overloadB=" << overloadEventsB.exchange(0) <<
+        " ack_count=" << ackCount.exchange(0) <<
+        " ack_errors=" << ackErrorCount.exchange(0) <<
+        " ack_max_us=" << ackMaxUs.exchange(0) <<
+        " ack_pending_ms=" << (ackStart ? (nowNs - ackStart) / 1000000 : 0) <<
+        " ack_tuner=" << ackTuner.load() <<
+        " ack_last_status=" << ackLastStatus.load() << std::endl;
       max_a_nr = 0;
       max_b_nr = 0;
     }
@@ -221,7 +235,9 @@ void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
   }
   if (deviceRemoved) throw std::runtime_error("[RspDuo] Receiver disconnected. Reconnect it and check the SDRplay API service before restarting.");
   if (callbackFault)
-    throw std::runtime_error("[RspDuo] Dual-tuner callback pairing fault. Input is stopping; restart after checking the SDRplay API service and receiver connection.");
+    throw std::runtime_error(std::string("[RspDuo] Dual-tuner callback pairing fault: ") +
+      (callbackFaultReason.load() ? callbackFaultReason.load() : "unspecified callback failure") +
+      ". Input is stopping; restart after checking the SDRplay API service and receiver connection.");
 }
 
 void RspDuo::signal_callback_fault(const char* discontinuity) noexcept
@@ -232,8 +248,34 @@ void RspDuo::signal_callback_fault(const char* discontinuity) noexcept
     try { recording_discontinuity(discontinuity); }
     catch (...) {}
   }
+  if (pairedCpiQueue) {
+    try { pairedCpiQueue->discontinuity(); }
+    catch (...) {}
+  }
+  const char* expected = nullptr;
+  callbackFaultReason.compare_exchange_strong(expected,
+    discontinuity ? discontinuity : "unspecified callback failure");
   callbackFault.store(true, std::memory_order_relaxed);
   run_fg = false;
+}
+
+void RspDuo::clear_pending_locked() noexcept
+{
+  while (pendingCount) {
+    callbackSlotBusy[pendingSlots[pendingHead]] = false;
+    pendingHead = (pendingHead + 1) % CALLBACK_SLOTS;
+    --pendingCount;
+  }
+  pendingHead = 0;
+}
+
+void RspDuo::set_paired_cpi_queue(PairedCpiQueue* queue)
+{
+  std::lock_guard<std::mutex> lifecycle(lifecycleMutex);
+  std::lock_guard<std::mutex> pairing(callbackMutex);
+  if (deviceInitialized || pendingCount)
+    throw std::logic_error("Paired CPI queue must be configured before RSPduo starts");
+  pairedCpiQueue = queue;
 }
 
 void RspDuo::validate() {
@@ -388,7 +430,17 @@ void RspDuo::get_device()
   require_api(sdrplay_api_UnlockDeviceApi(), "Unlock device API");
   apiLocked = false;
   { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.unlock = true; }
-  require_api(sdrplay_api_DebugEnable(chosenDevice->dev, sdrplay_api_DbgLvl_Verbose), "Enable API diagnostic logging");
+  // Keep SDK errors, but avoid emitting thousands of
+  // verbose service/journal lines during an RF overload/AGC burst. A caller
+  // may opt back into the exact original behavior for comparison.
+  const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
+  if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
+      std::strcmp(debugLevel, "error") != 0)
+    throw std::invalid_argument("VECTORWARP_SDRPLAY_DEBUG_LEVEL must be error or verbose");
+  require_api(sdrplay_api_DebugEnable(chosenDevice->dev,
+    debugLevel && std::strcmp(debugLevel, "verbose") == 0 ?
+      sdrplay_api_DbgLvl_Verbose : sdrplay_api_DbgLvl_Error),
+    "Enable API diagnostic logging");
   { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.debugEnable = true; }
 
   return;
@@ -479,23 +531,14 @@ unsigned int reset, void *cbContext)
     }
   }
   if (reset || malformed || discontinuity || scaledRateChanged) {
-    if (callbackSlot >= 0) callbackSlotBusy[callbackSlot] = false;
-    callbackSamples = 0; callbackFirstSample = 0;
-    callbackSlot = -1;
+    clear_pending_locked();
     expectedFirstSampleValid = false;
     sampleClock.clear();
-    if ((malformed && !reset) || scaledRateChanged || streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
+    if ((malformed && !reset) || scaledRateChanged || streamEstablished.load(std::memory_order_relaxed))
+      signal_callback_fault(malformed ? "stream A invalid callback" :
+        scaledRateChanged ? "stream A sample rate changed" :
+        discontinuity ? "stream A sample counter gap" : "stream A reset");
     recording_discontinuity("RSPduo stream A reset, sample-rate change, invalid sample count, or sample sequence discontinuity");
-    return;
-  }
-  if (callbackSamples) {
-    callbackSlotBusy[callbackSlot] = false;
-    callbackSamples = 0; callbackFirstSample = 0;
-    callbackSlot = -1;
-    expectedFirstSampleValid = false;
-    sampleClock.clear();
-    if (streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
-    recording_discontinuity("RSPduo callback pairing gap before stream A");
     return;
   }
   unsigned int i = 0;
@@ -507,15 +550,18 @@ unsigned int reset, void *cbContext)
   if (freeSlot < 0) {
     expectedFirstSampleValid = false;
     sampleClock.clear();
-    signal_callback_fault();
+    signal_callback_fault("stream A callback storage exhausted while B publishes");
     recording_discontinuity("RSPduo callback storage exhausted before stream A");
     return;
   }
   short* paired = callbackStorage[freeSlot].data();
-  callbackSlot = freeSlot;
   callbackSlotBusy[freeSlot] = true;
-  callbackSamples = numSamples;
-  callbackFirstSample = params->firstSampleNum;
+  pendingSamples[freeSlot] = numSamples;
+  pendingFirstSamples[freeSlot] = params->firstSampleNum;
+  pendingSlots[(pendingHead + pendingCount) % CALLBACK_SLOTS] = freeSlot;
+  ++pendingCount;
+  expectedFirstSample = rspduo_sequence::next(params->firstSampleNum, numSamples);
+  expectedFirstSampleValid = true;
 
   // IIQQxxxx
   for (i = 0; i < numSamples; i++)
@@ -559,24 +605,25 @@ unsigned int reset, void *cbContext)
     if (!run_fg || callbackFault.load(std::memory_order_relaxed)) return;
     const bool malformed = !xi || !xq || !params || !numSamples || numSamples > MAX_CALLBACK_SAMPLES;
     const bool scaledRateChanged = !malformed && scaledSampleCounter && params->fsChanged;
-    const bool pairingMismatch = !malformed && (!callbackSamples || callbackSamples != numSamples ||
-        callbackFirstSample != params->firstSampleNum);
+    const int pendingSlot = pendingCount ? int(pendingSlots[pendingHead]) : -1;
+    const bool pairingMismatch = !malformed && (pendingSlot < 0 ||
+      pendingSamples[pendingSlot] != numSamples ||
+      pendingFirstSamples[pendingSlot] != params->firstSampleNum);
     if (reset || malformed || pairingMismatch || scaledRateChanged) {
-      if (callbackSlot >= 0) callbackSlotBusy[callbackSlot] = false;
-      callbackSamples = 0; callbackFirstSample = 0;
-      callbackSlot = -1;
+      clear_pending_locked();
       expectedFirstSampleValid = false;
       sampleClock.clear();
-      if ((malformed && !reset) || scaledRateChanged || streamEstablished.load(std::memory_order_relaxed)) signal_callback_fault();
+      if ((malformed && !reset) || scaledRateChanged || streamEstablished.load(std::memory_order_relaxed))
+        signal_callback_fault(malformed ? "stream B invalid callback" :
+          scaledRateChanged ? "stream B sample rate changed" :
+          pairingMismatch ? "stream B did not match pending A" : "stream B reset");
       recording_discontinuity("RSPduo callback pairing reset, sample-rate change, gap, sample-count, or epoch mismatch");
       return;
     }
-    pairedSlot = callbackSlot;
+    pairedSlot = pendingSlot;
     paired = callbackStorage[pairedSlot].data();
-    callbackSamples = 0; callbackFirstSample = 0;
-    callbackSlot = -1;
-    expectedFirstSample = rspduo_sequence::next(params->firstSampleNum, numSamples);
-    expectedFirstSampleValid = true;
+    pendingHead = (pendingHead + 1) % CALLBACK_SLOTS;
+    --pendingCount;
     streamEstablished.store(true, std::memory_order_relaxed);
   }
   try {
@@ -594,7 +641,7 @@ unsigned int reset, void *cbContext)
     paired[j++] = xq[i];
   }
 
-  {
+  if (!pairedCpiQueue) {
     // Fixed order avoids inter-channel deadlock; RAII releases both locks if
     // a FIFO allocation throws and the C callback wrapper converts it to a
     // fault. Keep them only for the FIFO append.
@@ -605,6 +652,15 @@ unsigned int reset, void *cbContext)
       outputBuffer1->push_back({(double)paired[i], (double)paired[i+1]});
       outputBuffer2->push_back({(double)paired[i+2], (double)paired[i+3]});
     }
+  }
+
+  if (pairedCpiQueue) {
+    // The validated SDK counter can change phase at an ADC rollover. The A
+    // callback already checks continuity; use delivered-sample positions for
+    // the queue's contiguous CPI assembly.
+    pairedCpiQueue->push(reinterpret_cast<const int16_t*>(paired), numSamples,
+      pairedPublishedSamples);
+    pairedPublishedSamples += numSamples;
   }
 
   // write data to file
@@ -639,38 +695,44 @@ unsigned int reset, void *cbContext)
   return;
 }
 
-void RspDuo::event_callback(sdrplay_api_EventT eventId, 
-sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params, 
-void *cbContext)
+void RspDuo::event_callback(sdrplay_api_EventT eventId,
+  sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params,
+  void *cbContext)
 {
-  std::string tuner_str = (tuner == sdrplay_api_Tuner_A) ? 
-    "sdrplay_api_Tuner_A" : "sdrplay_api_Tuner_B";
-  switch (eventId)
-  {
+  (void)params;
+  (void)cbContext;
+  const bool tunerA = tuner == sdrplay_api_Tuner_A;
+  switch (eventId) {
   case sdrplay_api_GainChange:
-    std::cerr << "[RspDuo] Gain change, tuner=" << tuner_str << " ";
-    std::cerr << "gRdB=" << params->gainParams.gRdB << " ";
-    std::cerr << "lnaGRdB=" << params->gainParams.lnaGRdB << " ";
-    std::cerr << "systemGain=" << params->gainParams.currGain << std::endl;
+    (tunerA ? gainEventsA : gainEventsB).fetch_add(1, std::memory_order_relaxed);
     break;
-
-  case sdrplay_api_PowerOverloadChange:
-    std::cerr << "[RspDuo] PowerOverloadChange, tuner=" << tuner_str << " ";
-    std::cerr << "powerOverloadChangeType=" << 
-      ((params->powerOverloadParams.powerOverloadChangeType 
-      == sdrplay_api_Overload_Detected) ? "sdrplay_api_Overload_Detected" : 
-      "sdrplay_api_Overload_Corrected") << std::endl;
-    // send update message to acknowledge power overload message received
-    sdrplay_api_Update(chosenDevice->dev, tuner, 
+  case sdrplay_api_PowerOverloadChange: {
+    (tunerA ? overloadEventsA : overloadEventsB).fetch_add(1, std::memory_order_relaxed);
+    const auto begin = std::chrono::steady_clock::now();
+    const auto beginNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      begin.time_since_epoch()).count();
+    ackTuner.store(tunerA ? 0 : 1, std::memory_order_relaxed);
+    ackStartNs.store(beginNs, std::memory_order_release);
+    // Preserve the vendor example's synchronous overload acknowledgement.
+    const auto status = sdrplay_api_Update(chosenDevice->dev, tuner,
       sdrplay_api_Update_Ctrl_OverloadMsgAck, sdrplay_api_Update_Ext1_None);
+    ackStartNs.store(0, std::memory_order_release);
+    ackLastStatus.store(static_cast<int>(status), std::memory_order_relaxed);
+    ackCount.fetch_add(1, std::memory_order_relaxed);
+    if (status != sdrplay_api_Success)
+      ackErrorCount.fetch_add(1, std::memory_order_relaxed);
+    const auto durationUs = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now() - begin).count();
+    auto previous = ackMaxUs.load(std::memory_order_relaxed);
+    while (previous < static_cast<uint64_t>(durationUs) &&
+      !ackMaxUs.compare_exchange_weak(previous, durationUs, std::memory_order_relaxed)) {}
     break;
-
+  }
   case sdrplay_api_DeviceRemoved:
     std::cerr << "[RspDuo] Device removed" << std::endl;
     deviceRemoved = true;
     run_fg = false;
     break;
-
   default:
     std::cerr << "[RspDuo] Unknown event " << eventId << std::endl;
     break;

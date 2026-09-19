@@ -21,6 +21,7 @@
 
 #include "sdrplay_api.h"
 #include "capture/Source.h"
+#include "capture/PairedCpiSource.h"
 #include "data/IqData.h"
 #include "SdkSampleClock.h"
 
@@ -33,7 +34,7 @@
 
 #define BUFFER_SIZE_NR 1024
 
-class RspDuo : public Source
+class RspDuo : public Source, public PairedCpiSource
 {
   friend struct RspDuoTestAccess;
 private:
@@ -56,25 +57,37 @@ private:
   bool deviceInitialized = false;
   std::atomic<bool> deviceRemoved{false};
   std::atomic<bool> callbackFault{false};
+  std::atomic<const char*> callbackFaultReason{nullptr};
   std::atomic<bool> streamEstablished{false};
+  // Diagnostic counters only; no per-event I/O on the SDK event thread.
+  std::atomic<uint64_t> gainEventsA{0}, gainEventsB{0};
+  std::atomic<uint64_t> overloadEventsA{0}, overloadEventsB{0};
+  std::atomic<uint64_t> ackCount{0}, ackErrorCount{0}, ackMaxUs{0};
+  std::atomic<uint64_t> ackStartNs{0};
+  std::atomic<int> ackTuner{-1}, ackLastStatus{0};
   // Storage is allocated with the receiver, never by the vendor callback.
   // Pair state belongs to this receiver so one instance cannot consume
   // another instance's tuner-A block.
-  std::array<std::vector<short>, 2> callbackStorage;
+  static constexpr size_t CALLBACK_SLOTS = 8;
+  std::array<std::vector<short>, CALLBACK_SLOTS> callbackStorage;
   std::mutex callbackMutex;
   // Serialize B-side conversion and publication in SDK delivery order while
   // allowing A to fill the other preallocated pair slot.
   std::mutex callbackBProcessingMutex;
-  int callbackSlot = -1;
-  std::array<bool, 2> callbackSlotBusy{{false, false}};
-  unsigned int callbackSamples = 0;
-  uint32_t callbackFirstSample = 0;
+  std::array<bool, CALLBACK_SLOTS> callbackSlotBusy{};
+  std::array<size_t, CALLBACK_SLOTS> pendingSlots{};
+  std::array<unsigned int, CALLBACK_SLOTS> pendingSamples{};
+  std::array<uint32_t, CALLBACK_SLOTS> pendingFirstSamples{};
+  size_t pendingHead = 0, pendingCount = 0;
   uint32_t expectedFirstSample = 0;
   bool expectedFirstSampleValid = false;
   bool scaledSampleCounter = false;
   SdkSampleClock sampleClock;
   IqData* outputBuffer1 = nullptr;
   IqData* outputBuffer2 = nullptr;
+  PairedCpiQueue* pairedCpiQueue = nullptr;
+  uint32_t pairedPublishedSamples = 0;
+  void clear_pending_locked() noexcept;
   void signal_callback_fault(const char* discontinuity = nullptr) noexcept;
   void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)
@@ -217,6 +230,8 @@ public:
     std::string path, bool *saveIq, int agcSetPoint, 
     int bandwidthNumber, int gainReductionA, int gainReductionB, 
     int lnaState, bool dabNotch, bool rfNotch, std::string serial = "");
+
+  void set_paired_cpi_queue(PairedCpiQueue* queue) override;
 
   /// @brief Implement capture function on RSPduo.
   /// @param buffer1 Pointer to reference buffer.

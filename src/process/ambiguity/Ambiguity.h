@@ -15,6 +15,13 @@
 #include <fftw3.h>
 #include <deque>
 #include <memory>
+#include <fstream>
+#include <vector>
+
+class RangeRowWorker;
+#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
+class GpuPartialAmbiguity;
+#endif
 
 class Ambiguity
 {
@@ -45,7 +52,14 @@ public:
   Map<Complex> *process(IqData *x, IqData *y);
 
   /// @brief Process against a shared, immutable reference CPI.
-  Map<Complex> *process(const std::deque<Complex>& x, IqData *y);
+  Map<Complex> *process(const std::deque<Complex>& x, IqData *y,
+    bool preserveSurveillance = false);
+  // Benchmark-only borrow: owner retains both buffers through this synchronous call.
+  // rotatedReference may be null to keep the original deque reference reader.
+  Map<Complex> *process_borrowed(const std::deque<Complex>& originalReference,
+    IqData* surveillanceOwner, const Complex* rotatedReference,
+    const Complex* filteredSurveillance, uint32_t fullSamples,
+    int32_t clutterDelayMin, bool preserveSurveillance = false);
 
   double get_doppler_middle() const;
 
@@ -66,6 +80,10 @@ public:
   Map<Complex>* result() const { return map.get(); }
 
 private:
+  Map<Complex> *process_impl(const std::deque<Complex>& originalReference,
+    IqData* surveillanceOwner, const Complex* rotatedReference,
+    const Complex* filteredSurveillance, uint32_t fullSamples,
+    int32_t clutterDelayMin, bool preserveSurveillance);
   /// @brief Minimum delay (bins).
   int32_t delayMin;
 
@@ -122,5 +140,16 @@ private:
 
   /// @brief Map to store result.
   std::unique_ptr<Map<Complex>> map;
+
+  // Benchmark-only opt-in. Zero retains the frozen two-thread inner FFT path.
+  uint32_t rangeWorkers = 0;
+  std::unique_ptr<RangeRowWorker> rangeCaller;
+  std::unique_ptr<RangeRowWorker> rangeThread;
+#ifdef VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH
+  std::unique_ptr<GpuPartialAmbiguity> gpuPartial;
+#endif
+  std::vector<Complex> rangeRows;
+  std::ofstream rangeLog;
+  uint64_t rangeFrame = 0;
 
 };

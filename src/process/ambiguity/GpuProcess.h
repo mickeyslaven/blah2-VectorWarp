@@ -14,6 +14,8 @@ struct GpuProcessOptions {
 using GpuFactory = std::function<std::unique_ptr<GpuBackend>(const GpuGeometry&, const std::string&)>;
 std::unique_ptr<GpuBackend> createGpuProcess(const GpuGeometry&, const std::string&,
   const GpuProcessOptions& = {});
+std::unique_ptr<GpuBackend> createGpuFirProcess(uint32_t samples, uint32_t taps,
+  const std::string&, const GpuProcessOptions& = {});
 std::string gpuSiblingPath(const char* filename);
 int runGpuWorker(const GpuFactory&);
 }

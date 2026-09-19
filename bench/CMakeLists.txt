@@ -40,6 +40,12 @@ foreach(engine IN ITEMS upstream fast)
       ${PROJECT_ROOT}/src/process/conditioning/ArrayReferenceSynthesizer.cpp
       ${PROJECT_ROOT}/src/process/fusion/Noncoherent.cpp)
     target_link_libraries(bench-${engine} PRIVATE blah2GpuProcess)
+    if(TARGET blah2MixedWorker)
+      target_sources(bench-${engine} PRIVATE
+        ${PROJECT_ROOT}/src/process/mixed/MixedProcess.cpp)
+      target_compile_definitions(bench-${engine} PRIVATE VECTORWARP_MIXED_AUTO=1)
+      add_dependencies(bench-${engine} blah2MixedWorker)
+    endif()
     if(TARGET blah2GpuWorker)
       add_dependencies(bench-${engine} blah2GpuWorker)
     endif()

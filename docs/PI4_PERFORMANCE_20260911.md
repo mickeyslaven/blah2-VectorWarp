@@ -1,5 +1,10 @@
 # Raspberry Pi 4: VectorWarp, blah2 and blah2-arm
 
+> **Historical CPU comparison, September 2026:** these Fedora Pi 4 recorded-IQ
+> measurements use a different 2.4 MS/s, 200 ms profile. They do not describe
+> the current Bookworm Lite baseline or the geometry-gated whole-CPI mixed AUTO
+> candidate. See the [Pi 4 guide](PI4_GUIDE.md).
+
 VectorWarp CPU processing took **7.5–12.6% less time than original blah2**
 and **6.7–11.9% less than Off World Labs' ARM fork** in these matched tests.
 All three used the same Pi 4, recorded IQ, four CPU cores and NEON-enabled FFTW.

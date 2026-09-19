@@ -7,6 +7,11 @@ verification is limited to the devices and driver versions in
 Capture, reference synthesis, the small FP64 clutter coefficient solve,
 detection and tracking remain on the CPU.
 
+The selection details below describe the generic Vulkan path. Raspberry Pi 4
+also has a newer, tightly geometry-gated whole-CPI mixed candidate; it does not
+replace generic AUTO on other hardware or geometries, and has not completed
+production acceptance. See the [Pi 4 guide](PI4_GUIDE.md).
+
 On the Fedora 44 Pi 4, installed Mesa 26.0.3-4 timed out during production-size
 pipeline creation and fell back to CPU. A later diagnostic loaded Mesa 26.1.8-1
 without installing it and ran both GPU stages, reducing processing from

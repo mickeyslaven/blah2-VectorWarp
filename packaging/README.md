@@ -3,6 +3,12 @@
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 This document covers building and maintaining the packages.
 
+The previous Raspberry Pi OS Trixie installation route is deprecated for new
+Pi deployments. Its replacement is a planned **Pi 4 Bookworm 64-bit Lite image**;
+**Pi 5 remains future work**. Add and validate the matching Bookworm ARM64
+package target before building that image. No flashable image is published yet.
+See [Pi image packaging](../docs/PI_IMAGE_PACKAGING.md).
+
 Packages are published through the signed APT/DNF repositories and direct
 release assets. This directory describes the release build for
 Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)

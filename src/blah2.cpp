@@ -3,6 +3,7 @@
 /// @author 30hours
 
 #include "capture/Capture.h"
+#include "capture/PairedCpiQueue.h"
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "data/Detection.h"
@@ -10,6 +11,12 @@
 #include "data/Track.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
+#ifdef VECTORWARP_MIXED_AUTO
+#include "process/mixed/MixedProcess.h"
+#include "process/mixed/MixedAutoPolicy.h"
+#include "process/mixed/MixedMap.h"
+#include "process/mixed/MixedEligibility.h"
+#endif
 #include "process/clutter/WienerHopf.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
@@ -306,6 +313,21 @@ try
 
   // set up process CPI
   uint32_t nSamples = fs * tCpi;
+  const char* pairedQueueEnv = std::getenv("VECTORWARP_RSPDUO_CPI_QUEUE");
+  const bool pairedQueueRequested = !state && type == "RspDuo" &&
+    captureChannelCount == 2 && pairedQueueEnv && std::string(pairedQueueEnv) == "1";
+  std::unique_ptr<PairedCpiQueue> pairedCpiQueue;
+  if (pairedQueueRequested) {
+    if (!nSamples || captureBufferSamples < 2 * uint64_t(nSamples))
+      throw std::invalid_argument("Invalid paired CPI queue geometry");
+    // One CPI may be actively filled; retain the configured bounded capture
+    // capacity across ready plus partial data, rather than adding a hidden CPI.
+    const size_t cpis = captureBufferSamples / nSamples;
+    pairedCpiQueue = std::make_unique<PairedCpiQueue>(nSamples,
+      cpis - 1);
+    capture->set_paired_cpi_queue(pairedCpiQueue.get());
+    std::cout << "RSPduo paired CPI queue requested: " << cpis << " CPI capacity\n";
+  }
   auto referenceData = std::make_unique<IqData>(nSamples);
   std::vector<std::unique_ptr<IqData>> captureData;
   for (std::size_t channel = 0; channel < captureChannelCount; channel++)
@@ -317,6 +339,13 @@ try
   {
     surveillanceData.push_back(std::make_unique<IqData>(nSamples));
   }
+  // The paired live receiver has one reference and one surveillance channel.
+  // Keep their completed deques and overwrite the samples next CPI instead of
+  // allocating two million deque elements again on every capture handoff.
+  const bool directPairedIq = pairedQueueRequested && !arrayReference &&
+    surveillanceChannels.size() == 1 &&
+    ((referenceChannel == 0 && surveillanceChannels[0] == 1) ||
+     (referenceChannel == 1 && surveillanceChannels[0] == 0));
   std::unique_ptr<Map<std::complex<double>>> map;
   std::unique_ptr<Detection> detection;
   std::unique_ptr<Detection> detection1;
@@ -353,7 +382,41 @@ try
       tree["process"]["performance"].has_child("acceleration"))
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
-  blah2::Acceleration acceleration(accelerationMode,
+#ifdef VECTORWARP_MIXED_AUTO
+  const blah2::mixed::Shape mixedShape{fs,nSamples,
+    uint32_t(surveillanceChannels.size()),ambiguity.front()->get_n_doppler_bins(),
+    ambiguity.front()->get_n_delay_bins(),ambiguity.front()->get_n_corr(),
+    ambiguity.front()->get_nfft(),uint32_t(clutterBins),delayMinClutter,
+    delayMin,delayMax,dopplerMin,dopplerMax,
+    ambiguity.front()->get_doppler_middle(),arrayReference,isClutter};
+  const bool commonCpuCpi = blah2::mixed::qualified(mixedShape);
+  const bool mixedAuto = blah2::mixed::autoCandidate(accelerationMode,mixedShape,
+    blah2::mixed::pi4Host(),gpuDevice ? gpuDevice : "auto");
+  const bool cpuBorrowed = commonCpuCpi &&
+    (accelerationMode == "cpu" || mixedAuto);
+  blah2::mixed::AutoPolicy mixedPolicy;
+  std::unique_ptr<blah2::mixed::Process> mixedWorker;
+  blah2::AccelerationStatus mixedStatus;
+  mixedStatus.requested = "auto";
+  mixedStatus.state = "checking";
+  mixedStatus.reason = "Checking complete mixed-DSP map and CPI cost";
+  if (mixedAuto) {
+    try {
+      mixedWorker = std::make_unique<blah2::mixed::Process>();
+      mixedStatus.device = "V3D mixed worker";
+    } catch (const std::exception& error) {
+      mixedPolicy.disable(error.what());
+      mixedStatus.state = "fallback";
+      mixedStatus.reason = error.what();
+    }
+  }
+#endif
+  blah2::Acceleration acceleration(
+#ifdef VECTORWARP_MIXED_AUTO
+    mixedAuto ? "cpu" : accelerationMode,
+#else
+    accelerationMode,
+#endif
     {ambiguity.front()->get_nfft(), ambiguity.front()->get_n_doppler_bins(),
      ambiguity.front()->get_n_delay_bins(), uint32_t(ambiguity.size()), delayMin,
      isClutter ? nSamples : 0u,
@@ -480,30 +543,99 @@ try
   std::thread t2([&]{
     try {
       uint64_t replayGeneration = capture->replayGeneration.load();
-      while (!capture->stopping.load())
+      bool pairedQueueWasActive = false;
+      while (!capture->stopping.load() || (pairedQueueWasActive &&
+        (capture->pairedCpiQueueActive.load() || pairedCpiQueue->backlog_samples() >= nSamples)))
       {
-        if (STOP_SIGNAL) { capture->request_stop(); break; }
-        BufferLocks captureLocks(captureBuffers);
-        bool ready = true;
-        for (auto *buffer : captureBuffers)
-          ready = ready && buffer->get_length() >= nSamples;
+        if (STOP_SIGNAL && !capture->stopping.load()) capture->request_stop();
+        pairedQueueWasActive = pairedQueueWasActive ||
+          (pairedCpiQueue && capture->pairedCpiQueueActive.load());
+        const bool usePairedQueue = pairedQueueWasActive;
+        const bool pairedDirectFrame = usePairedQueue && directPairedIq;
+        bool ready = false;
+        uint64_t captureStartUs = 0;
+        std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
+#ifdef VECTORWARP_MIXED_AUTO
+        blah2::mixed::Choice mixedChoice = blah2::mixed::Choice::cpu;
+        bool mixedChoiceMade = false, mixedInputPrepared = false;
+#endif
+        if (usePairedQueue) {
+          size_t slot = 0;
+          if (pairedCpiQueue->acquire(slot)) {
+            try {
+              const auto& block = pairedCpiQueue->block(slot);
+              captureStartUs = current_time_us();
+              if (pairedDirectFrame) {
+#ifdef VECTORWARP_MIXED_AUTO
+                if (mixedAuto && mixedWorker && !mixedPolicy.disabled()) {
+                  // Decide while the packed CPI is borrowed, so shared input
+                  // can retain signed16 IQ. CPU choices keep the
+                  // original decode path, and the queue loan ends as before.
+                  const auto queue = pairedCpiQueue->stats();
+                  mixedChoice = mixedPolicy.choose(static_cast<uint32_t>(
+                    std::min<uint64_t>(pairedCpiQueue->backlog_samples(), UINT32_MAX)),
+                    captureBufferSamples, queue.discardedSamples);
+                  mixedChoiceMade = true;
+                  if (mixedChoice != blah2::mixed::Choice::cpu) {
+                    try {
+                      mixedWorker->prepare_paired_i16(block.iq.data(), nSamples,
+                        *referenceData, *surveillanceData[0], referenceChannel);
+                      mixedInputPrepared = true;
+                    } catch (const std::exception& error) {
+                      mixedPolicy.disable(error.what());
+                      mixedWorker.reset();
+                      mixedChoice = blah2::mixed::Choice::cpu;
+                    }
+                  }
+                }
+                if (!mixedInputPrepared) {
+#endif
+                if (referenceChannel == 0)
+                  referenceData->assign_paired_i16(block.iq.data(), nSamples,
+                    *surveillanceData[0]);
+                else
+                  surveillanceData[0]->assign_paired_i16(block.iq.data(), nSamples,
+                    *referenceData);
+#ifdef VECTORWARP_MIXED_AUTO
+                }
+#endif
+              } else {
+                captureData[0]->assign_paired_i16(block.iq.data(), nSamples,
+                  *captureData[1]);
+              }
+              ready = true;
+            } catch (...) { pairedCpiQueue->release(slot); throw; }
+            pairedCpiQueue->release(slot);
+          }
+          const auto queue = pairedCpiQueue->stats();
+          captureBacklogSamples.resize(2);
+          captureDroppedSamples.resize(2);
+          const uint64_t queued = uint64_t(pairedCpiQueue->backlog_samples());
+          captureBacklogSamples[0] = captureBacklogSamples[1] = queued;
+          captureDroppedSamples[0] = captureDroppedSamples[1] = queue.discardedSamples;
+        } else {
+          BufferLocks captureLocks(captureBuffers);
+          ready = true;
+          for (auto *buffer : captureBuffers)
+            ready = ready && buffer->get_length() >= nSamples;
+          if (ready) {
+            captureBacklogSamples.reserve(captureBuffers.size());
+            captureDroppedSamples.reserve(captureBuffers.size());
+            for (auto* buffer : captureBuffers) {
+              captureBacklogSamples.push_back(buffer->get_length());
+              captureDroppedSamples.push_back(buffer->get_dropped_samples());
+            }
+            for (std::size_t channel = 0; channel < captureChannelCount; channel++)
+              captureData[channel]->replace(captureBuffers[channel]->drain_front(nSamples));
+          }
+          captureLocks.unlock();
+        }
         if (ready)
         {
-          std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
-          captureBacklogSamples.reserve(captureBuffers.size());
-          captureDroppedSamples.reserve(captureBuffers.size());
-          for (auto* buffer : captureBuffers) {
-            captureBacklogSamples.push_back(buffer->get_length());
-            captureDroppedSamples.push_back(buffer->get_dropped_samples());
-          }
           // Keep ReplayPlayer's EOF/loop drain from observing an empty queue
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
-          time.push_back(current_time_us());
-          for (std::size_t channel = 0; channel < captureChannelCount; channel++)
-            captureData[channel]->replace(
-              captureBuffers[channel]->drain_front(nSamples));
-          captureLocks.unlock();
+          time.push_back(captureStartUs ? captureStartUs : current_time_us());
           const uint64_t nextReplayGeneration = capture->replayGeneration.load();
           if (nextReplayGeneration != replayGeneration)
           {
@@ -519,7 +651,7 @@ try
           // later rejects it. UI publication timestamps remain wall-clock.
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
-          if (!arrayReference)
+          if (!arrayReference && !pairedDirectFrame)
             referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time, "extract_buffer");
 
@@ -554,18 +686,54 @@ try
           }
           // Synthesis is the last reader of the captured channels. Transfer
           // complete sample blocks to conditioning instead of copying a CPI.
-          for (std::size_t pathIndex = 0;
-               pathIndex < surveillanceChannels.size(); pathIndex++)
-            surveillanceData[pathIndex]->replace(
-              captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
+          if (!pairedDirectFrame)
+            for (std::size_t pathIndex = 0;
+                 pathIndex < surveillanceChannels.size(); pathIndex++)
+              surveillanceData[pathIndex]->replace(
+                captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time,
             "reference_synthesis");
           
           // spectrum
           spectrumAnalyser->process(referenceData.get());
           timing_helper(timing_name, timing_time, time, "spectrum");
+
+#ifdef VECTORWARP_MIXED_AUTO
+          std::vector<std::complex<double>> mixedMap, mixedTail;
+          bool mixedCandidateReady = false;
+          if (mixedAuto && mixedWorker && !mixedPolicy.disabled()) {
+            const uint64_t backlog = captureBacklogSamples.empty() ? 0 :
+              *std::max_element(captureBacklogSamples.begin(), captureBacklogSamples.end());
+            const uint64_t drops = captureDroppedSamples.empty() ? 0 :
+              *std::max_element(captureDroppedSamples.begin(), captureDroppedSamples.end());
+            if (!mixedChoiceMade)
+              mixedChoice = mixedPolicy.choose(static_cast<uint32_t>(std::min<uint64_t>(
+                backlog, UINT32_MAX)), captureBufferSamples, drops);
+            if (mixedChoice != blah2::mixed::Choice::cpu) {
+              try {
+                if (mixedInputPrepared)
+                  mixedWorker->run_prepared(mixedMap, mixedTail);
+                else
+                  mixedWorker->run(referenceData->view_data(),
+                    surveillanceData[0]->view_data(), mixedMap, mixedTail);
+                mixedCandidateReady = true;
+              } catch (const std::exception& error) {
+                mixedPolicy.disable(error.what());
+                mixedStatus.state = "fallback";
+                mixedStatus.reason = error.what();
+                mixedWorker.reset();
+                mixedChoice = blah2::mixed::Choice::cpu;
+              }
+            }
+          }
+          bool mixedPublished = mixedChoice == blah2::mixed::Choice::mixed &&
+            mixedCandidateReady;
+#endif
           
           // Filter each surveillance channel independently.
+#ifdef VECTORWARP_MIXED_AUTO
+          if (!mixedPublished)
+#endif
           if (isClutter)
           {
             const bool success = acceleration.processClutter(*referenceData,
@@ -573,7 +741,11 @@ try
                 return process_paths(surveillanceData.size(),
                   surveillanceWorkers, [&](std::size_t pathIndex) {
                     return filter[pathIndex]->process(referenceData.get(),
-                      surveillanceData[pathIndex].get());
+                      surveillanceData[pathIndex].get()
+#ifdef VECTORWARP_MIXED_AUTO
+                      , cpuBorrowed
+#endif
+                      );
                   });
               });
             if (!success)
@@ -589,14 +761,64 @@ try
           // Produce one map per surveillance channel, then combine their power.
           std::vector<Map<std::complex<double>> *> channelMaps(
             surveillanceData.size());
+#ifdef VECTORWARP_MIXED_AUTO
+          if (mixedPublished) {
+            try {
+              blah2::mixed::commitMap(std::move(mixedMap),
+                *ambiguity[0]->result());
+              if (!pairedDirectFrame) {
+                surveillanceData[0]->discard_front(blah2::mixed::usedSamples);
+                surveillanceData[0]->assign_complex(mixedTail.data(),
+                  blah2::mixed::tailSamples);
+              }
+            } catch (const std::exception& error) {
+              // Original input is still authoritative until commit. A map
+              // assignment failure can be recomputed from the raw CPI.
+              if (!pairedDirectFrame && surveillanceData[0]->get_length() != nSamples)
+                throw;
+              mixedPolicy.disable(error.what());
+              mixedStatus.state = "fallback";
+              mixedStatus.reason = error.what();
+              mixedWorker.reset();
+              mixedPublished = false;
+              mixedChoice = blah2::mixed::Choice::cpu;
+              if (!filter[0]->process(referenceData.get(),
+                    surveillanceData[0].get(), cpuBorrowed))
+                throw std::runtime_error("CPU clutter fallback rejected CPI");
+            }
+          }
+          if (!mixedPublished)
+#endif
           acceleration.process(referenceData->view_data(), surveillancePointers,
             ambiguityPointers, [&] { process_paths(surveillanceData.size(), surveillanceWorkers,
             [&](std::size_t pathIndex) {
+#ifdef VECTORWARP_MIXED_AUTO
+              if (cpuBorrowed) {
+                const auto view = filter[pathIndex]->filtered_view();
+                channelMaps[pathIndex] = ambiguity[pathIndex]->process_borrowed(
+                  referenceData->view_data(), surveillanceData[pathIndex].get(),
+                  view.rotatedReference, view.filteredSurveillance,
+                  view.samples, view.delayMin, pairedDirectFrame);
+              } else
+#endif
               channelMaps[pathIndex] = ambiguity[pathIndex]->process(
                 referenceData->view_data(),
-                surveillanceData[pathIndex].get());
+                surveillanceData[pathIndex].get(), pairedDirectFrame);
               return true;
             }); });
+#ifdef VECTORWARP_MIXED_AUTO
+          if (mixedChoice == blah2::mixed::Choice::shadow &&
+              mixedCandidateReady && !mixedPolicy.disabled()) {
+            const auto error = blah2::mixed::compareMap(mixedMap,
+              *ambiguity[0]->result());
+            mixedPolicy.shadow(error.rms, error.peak);
+            if (mixedPolicy.disabled()) {
+              mixedStatus.state = "fallback";
+              mixedStatus.reason = mixedPolicy.reason();
+              mixedWorker.reset();
+            }
+          }
+#endif
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
           }
@@ -663,15 +885,56 @@ try
           timing_name.push_back("cpi");
           timing_time.push_back(delta_ms);
           std::cout << "CPI time (ms): " << delta_ms << "\n";
+#ifdef VECTORWARP_MIXED_AUTO
+          if (mixedAuto) {
+            if (!mixedPolicy.disabled() &&
+                mixedChoice != blah2::mixed::Choice::shadow)
+              mixedPolicy.complete(mixedChoice, delta_ms);
+            if (mixedPolicy.disabled() ||
+                (mixedPolicy.trials() == 6 && !mixedPolicy.selected()))
+              mixedWorker.reset();
+            mixedStatus.active = mixedPublished ? "vulkan+cpu" : "cpu";
+            mixedStatus.cpuMs = mixedPolicy.cpuMs();
+            mixedStatus.gpuMs = mixedPolicy.mixedMs();
+            mixedStatus.reason = mixedPolicy.reason();
+            mixedStatus.state = mixedPolicy.disabled() ? "fallback" :
+              mixedPolicy.trials() == 6 ? "ready" : "checking";
+            std::cout << "Mixed AUTO active=" << mixedStatus.active
+              << " state=" << mixedStatus.state
+              << " cpu_cpi_ms=" << mixedStatus.cpuMs
+              << " mixed_cpi_ms=" << mixedStatus.gpuMs
+              << " shadow_passes=" << mixedPolicy.shadowPasses()
+              << " oracle_worker_executed="
+              << (mixedChoice == blah2::mixed::Choice::shadow && mixedCandidateReady)
+              << " trials=" << mixedPolicy.trials()
+              << " reason=" << mixedStatus.reason << "\n";
+          }
+#endif
 
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
           timing->set_capture_queues(std::move(captureBacklogSamples),
             std::move(captureDroppedSamples));
-          timing->set_acceleration(acceleration.status());
+          timing->set_acceleration(
+#ifdef VECTORWARP_MIXED_AUTO
+            mixedAuto ? mixedStatus :
+#endif
+            acceleration.status());
           if (isClutter)
-            timing->set_clutter_acceleration(acceleration.clutterStatus(),
+            timing->set_clutter_acceleration(
+#ifdef VECTORWARP_MIXED_AUTO
+              mixedAuto ? mixedStatus :
+#endif
+              acceleration.clutterStatus(),
+#ifdef VECTORWARP_MIXED_AUTO
+              mixedAuto ? mixedCandidateReady :
+#endif
               acceleration.clutterTiming().gpuExecuted,
+#ifdef VECTORWARP_MIXED_AUTO
+              // Mixed frames execute CPU correlation/solve/FIR/range work
+              // inside the child, even when no parent CPU oracle runs.
+              mixedAuto ? true :
+#endif
               acceleration.clutterTiming().cpuExecuted);
           else {
             blah2::AccelerationStatus disabled;
@@ -693,7 +956,6 @@ try
         }
         else
         {
-          captureLocks.unlock();
           // short delay to prevent tight looping
           std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }

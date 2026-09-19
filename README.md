@@ -6,7 +6,7 @@
 
 VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native Linux installation. Set up your radar, watch it run, and record or replay signals from the same interface.
 
-[Install](https://mickeyslaven.github.io/blah2-VectorWarp/#install) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md)
+[Install](https://mickeyslaven.github.io/blah2-VectorWarp/#install) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
 
 ## What you get beyond blah2
 
@@ -176,9 +176,17 @@ available for development or unsupported systems.
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS (legacy Pi route, deprecated) | Trixie, 64-bit | ARM64 | [Existing Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
+
+**New Pi distribution:** a headless Raspberry Pi 4 microSD image based on
+**Raspberry Pi OS Lite 64-bit Bookworm**, with Wi-Fi and SSH setup through
+Raspberry Pi Imager. It replaces the deprecated Pi installation route above
+once qualified and published. **Raspberry Pi 5 is future work.** Neither image
+is currently published; existing ARM64 packages do not imply a qualified Pi
+image. See the [Pi 4 guide](docs/PI4_GUIDE.md) and
+[Pi image packaging plan](docs/PI_IMAGE_PACKAGING.md).
 
 ## Credits and license
 

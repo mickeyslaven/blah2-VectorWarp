@@ -87,6 +87,101 @@ int main() {
       check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD, "GPU worker was not reaped");
       std::cout << "PASS isolation=" << mode << '\n';
     }
+    for (const std::string mode : {"ok", "hang-fir-reference", "hang-fir-final",
+        "error-fir-reference", "error-fir-final"}) {
+      blah2::GpuProcessOptions options;
+      options.executable = blah2::gpuSiblingPath("testGpuWorkerDouble");
+      options.argument = mode; options.startupMs = 300; options.frameMs = 150;
+      const auto start = std::chrono::steady_clock::now();
+      bool failed = false;
+      try {
+        auto worker = blah2::createGpuFirProcess(10000, 410, "auto", options);
+        auto* fir = dynamic_cast<blah2::GpuFirFrameBackend*>(worker.get());
+        check(fir && fir->firAvailable(), "FIR capability was not negotiated");
+        auto buffers = fir->firBuffers();
+        check(buffers.referenceCount == 4917 && buffers.weightCount == 410 &&
+          buffers.outputCount == 4917, "FIR shared-frame geometry differs");
+        try { fir->submitFirWeights(); check(false, "FIR final-before-reference was accepted"); }
+        catch (const std::logic_error&) {}
+        for (size_t i = 0; i < buffers.referenceCount; ++i)
+          buffers.reference[i] = {float(i), -float(i)};
+        buffers.weights[0] = {2, 3};
+        const auto submitStart = std::chrono::steady_clock::now();
+        fir->submitFirReference();
+        check(std::chrono::steady_clock::now() - submitStart < std::chrono::milliseconds(100),
+          "FIR reference submission waited for worker execution");
+        try { fir->submitFirReference(); check(false, "Duplicate FIR reference was accepted"); }
+        catch (const std::logic_error&) {}
+        fir->submitFirWeights();
+        try { fir->submitFirWeights(); check(false, "Duplicate FIR final was accepted"); }
+        catch (const std::logic_error&) {}
+        fir->finishFir();
+        check(buffers.output[17] == buffers.reference[17] + buffers.weights[0],
+          "FIR shared-memory output differs");
+        // The completed sequence can be reused without stale output or state.
+        buffers.reference[0] = {-7, 9}; buffers.weights[0] = {1, -2};
+        fir->submitFirReference(); fir->submitFirWeights(); fir->finishFir();
+        check(buffers.output[0] == std::complex<float>(-6, 7),
+          "FIR worker reused stale frame data");
+      } catch (const std::runtime_error& error) {
+        failed = true;
+        if (mode.find("hang-fir") == 0)
+          check(std::string(error.what()).find("FIR execution timed out after 150 ms") != std::string::npos,
+            "FIR timeout lost its phase/deadline");
+        std::cout << "Recovered " << mode << ": " << error.what() << '\n';
+      }
+      check(failed == (mode != "ok"), "FIR worker failure expectation differs");
+      check(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
+        "FIR worker recovery was not bounded");
+      int status;
+      check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD,
+        "FIR worker was not reaped");
+      std::cout << "PASS fir-isolation=" << mode << '\n';
+    }
+    for (const auto& invalid : {std::pair<uint32_t,uint32_t>{0, 1},
+        {1000, 0}, {1000, 1001}, {10000001, 410}}) {
+      bool rejected = false;
+      try { (void)blah2::createGpuFirProcess(invalid.first, invalid.second, "auto"); }
+      catch (const std::runtime_error&) { rejected = true; }
+      check(rejected, "Malformed FIR geometry was accepted");
+    }
+    {
+      blah2::GpuProcessOptions options;
+      options.executable = blah2::gpuSiblingPath("testGpuWorkerDouble");
+      options.argument = "no-fir"; options.startupMs = 300; options.frameMs = 150;
+      auto worker = blah2::createGpuFirProcess(10000, 410, "auto", options);
+      auto* fir = dynamic_cast<blah2::GpuFirFrameBackend*>(worker.get());
+      check(fir && !fir->firAvailable(), "Missing FIR backend advertised FIR capability");
+      bool rejected = false;
+      try { (void)fir->firBuffers(); } catch (const std::runtime_error&) { rejected = true; }
+      check(rejected, "Unavailable FIR backend exposed shared buffers");
+    }
+    {
+      blah2::GpuProcessOptions options;
+      options.executable = blah2::gpuSiblingPath("testGpuWorkerDouble");
+      options.argument = "hang-fir-reference"; options.startupMs = 300; options.frameMs = 150;
+      const auto start = std::chrono::steady_clock::now();
+      {
+        auto worker = blah2::createGpuFirProcess(10000, 410, "auto", options);
+        auto* fir = dynamic_cast<blah2::GpuFirFrameBackend*>(worker.get());
+        fir->submitFirReference();
+      }
+      check(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
+        "Outstanding FIR reference was not bounded during destruction");
+      int status;
+      check(waitpid(-1, &status, WNOHANG) == -1 && errno == ECHILD,
+        "Outstanding FIR worker was not reaped");
+    }
+    unsigned invalidVariant = 0;
+    for (auto geometry : {blah2::GpuGeometry{}, blah2::GpuGeometry{}}) {
+      geometry.kind = blah2::GpuWorkKind::fir; geometry.firSamples = 10000;
+      geometry.firTaps = 410; geometry.firFft = 2048; geometry.firPercent = 50;
+      if (!invalidVariant++) geometry.firFft = 1024; else geometry.range = 1;
+      bool rejected = false;
+      try { (void)blah2::createGpuProcess(geometry, "auto"); }
+      catch (const std::runtime_error&) { rejected = true; }
+      check(rejected, "Malformed tagged FIR geometry was accepted");
+    }
     {
       using namespace blah2::gpu_memory;
       Properties properties{{

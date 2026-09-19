@@ -1,6 +1,7 @@
 // Link with RspDuo.cpp, Source.cpp and Recording.cpp; never link SDRplay's
 // runtime library. These SDK functions are local failure-injection stubs.
 #include "capture/rspduo/RspDuo.h"
+#include "capture/PairedCpiQueue.h"
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
@@ -19,7 +20,7 @@ struct RspDuoTestAccess {
   static IqData& reference(RspDuo& receiver) { return *receiver.outputBuffer1; }
   static bool pairClaimed(RspDuo& receiver) {
     std::lock_guard<std::mutex> lock(receiver.callbackMutex);
-    return receiver.callbackSlot == -1 && receiver.callbackSlotBusy[0];
+    return receiver.pendingCount == 0 && receiver.callbackSlotBusy[0];
   }
   static bool processing(RspDuo& receiver) {
     if (!receiver.callbackBProcessingMutex.try_lock()) return true;
@@ -142,9 +143,12 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
       // output order below then cannot depend on mutex waiter fairness.
       assert(RspDuoTestAccess::processing(*receiver));
       callA2(102);
+      // A may deliver another contiguous block while B1 is still publishing.
+      // Both pending A blocks must remain paired with their matching B block.
+      callA2(104);
       std::thread second([&] { callB2(102); });
       RspDuoTestAccess::reference(*receiver).unlock();
-      first.join(); second.join(); run_fg = false;
+      first.join(); second.join(); callB2(104); run_fg = false;
       break;
     }
     case CallbackScenario::None: break;
@@ -353,14 +357,16 @@ int main() {
     assert(failed != matched);
     if (matched) {
       const auto a = reference.get_data(), b = surveillance.get_data();
-      const unsigned expected = (scenario == CallbackScenario::Wraparound ||
-        scenario == CallbackScenario::ConcurrentPairHandoff) ? 4 : 2;
+      const unsigned expected = scenario == CallbackScenario::ConcurrentPairHandoff ? 6 :
+        scenario == CallbackScenario::Wraparound ? 4 : 2;
       assert(a.size() == expected && b.size() == expected);
       assert(a.front() == std::complex<double>(1, 2));
       assert(b.front() == std::complex<double>(7, 8));
       if (scenario == CallbackScenario::ConcurrentPairHandoff) {
         assert(a[2] == std::complex<double>(21, 22));
         assert(b[2] == std::complex<double>(27, 28));
+        assert(a[4] == std::complex<double>(21, 22));
+        assert(b[4] == std::complex<double>(27, 28));
       }
     } else if (scenario == CallbackScenario::Removed) {
       assert(message.find("Receiver disconnected") != std::string::npos);
@@ -377,5 +383,19 @@ int main() {
         scenario == CallbackScenario::ScaledFsChangedA || scenario == CallbackScenario::ScaledFsChangedB)
       unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
   }
+  // The opt-in queue takes complete paired IIQQ blocks before any FIFO
+  // conversion.  The mock SDK proves callback pairing and direct handoff
+  // without opening an SDRplay runtime.
+  reset(); callbackScenario = CallbackScenario::Matched;
+  RspDuo queued("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, true);
+  PairedCpiQueue queue(2, 1);
+  queued.set_paired_cpi_queue(&queue);
+  queued.start(); queued.process(nullptr, nullptr); queued.stop(); queue.close();
+  size_t queueSlot = 0; assert(queue.acquire(queueSlot));
+  const auto& queuedBlock = queue.block(queueSlot);
+  assert(queuedBlock.first == 0 && queuedBlock.iq[0] == 1 &&
+    queuedBlock.iq[1] == 2 && queuedBlock.iq[2] == 7 && queuedBlock.iq[3] == 8);
+  queue.release(queueSlot);
   std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

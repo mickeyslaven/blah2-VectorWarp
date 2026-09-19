@@ -8,7 +8,8 @@ stage_spec=importlib.util.spec_from_file_location('stage_rspduo_kit',ROOT/'scrip
 def digest(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 class LocalBuild(unittest.TestCase):
   def test_callback_headers_are_in_every_source_kit_allowlist(self):
-    headers={'src/capture/rspduo/SdkSampleClock.h','src/capture/rspduo/UsbMode.h'}
+    headers={'src/capture/rspduo/SdkSampleClock.h','src/capture/rspduo/UsbMode.h',
+             'src/capture/PairedCpiQueue.h','src/capture/PairedCpiSource.h'}
     self.assertTrue(headers <= builder.REQUIRED)
     self.assertTrue(headers <= stage.SOURCES)
     cmake=(ROOT/'cmake/RspduoLocalKit.cmake').read_text()

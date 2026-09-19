@@ -1,5 +1,6 @@
 #include "Capture.h"
 #include "kraken/Kraken.h"
+#include "capture/PairedCpiSource.h"
 #include <iostream>
 #include <thread>
 #include <csignal>
@@ -41,6 +42,14 @@ void Capture::process(const std::vector<IqData *>& buffers,
     try {
       device = factory_source(type, config, buffers.size());
       if (!device) throw std::runtime_error("Capture backend is unavailable in this build");
+      if (pairedCpiQueue) {
+        if (auto* paired = dynamic_cast<PairedCpiSource*>(device.get())) {
+          paired->set_paired_cpi_queue(pairedCpiQueue);
+          pairedCpiQueueActive.store(true);
+        } else {
+          std::cerr << "RSPduo paired CPI queue unavailable in this receiver module; using FIFO capture\n";
+        }
+      }
     } catch (const std::exception& error) { processing_error(error.what()); }
   }
   std::thread control([&] {
@@ -121,6 +130,8 @@ void Capture::process(const std::vector<IqData *>& buffers,
   } catch (const std::exception& error) {
     processing_error(error.what()); request_input_stop();
   }
+  if (pairedCpiQueueActive.exchange(false) && pairedCpiQueue)
+    pairedCpiQueue->close();
   // Keep status available at EOF or after an input error. The browser can show
   // what happened and restart with corrected settings instead of losing the API.
   control.join();
@@ -141,6 +152,14 @@ void Capture::process(const std::vector<IqData *>& buffers,
       for (auto* buffer : buffers) {
         backlog.push_back(buffer->get_length());
         dropped.push_back(buffer->get_dropped_samples());
+      }
+    }
+    if (pairedCpiQueue) {
+      const auto queue = pairedCpiQueue->stats();
+      if (queue.published || queue.discardedSamples || queue.trailingSamples || queue.discontinuities) {
+        const uint64_t queued = uint64_t(pairedCpiQueue->backlog_samples());
+        backlog.assign(buffers.size(), queued);
+        dropped.assign(buffers.size(), queue.discardedSamples);
       }
     }
     rapidjson::Document finalStatus;
@@ -195,6 +214,13 @@ std::string Capture::status_json() const {
   text("recordingFile",recording.file); text("recordingError",recording.error);
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);
+  if (pairedCpiQueue) {
+    const auto queue = pairedCpiQueue->stats();
+    document.AddMember("pairedCpiQueue", pairedCpiQueueActive.load(), a);
+    document.AddMember("pairedCpiBacklogSamples", uint64_t(pairedCpiQueue->backlog_samples()), a);
+    document.AddMember("pairedCpiDropped", queue.discardedSamples, a);
+    document.AddMember("pairedCpiTrailingSamples", queue.trailingSamples, a);
+  }
   if (type == "RspDuo" && device) {
     const auto receiptJson = blah2::receiver_startup_receipt(device);
     rapidjson::Document receipt;
