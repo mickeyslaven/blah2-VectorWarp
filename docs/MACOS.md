@@ -1,9 +1,9 @@
 # macOS installation and local development
 
-This port is under local validation. Public Homebrew formulas await the first
-successful [main-merge publishing run](HOMEBREW_PUBLISHING.md); the local source
+This port is under local validation. Public Homebrew formulas follow successful
+[main-merge publishing runs](HOMEBREW_PUBLISHING.md); the local source
 installation is available now. Linux release installation and systemd
-services remain separate; public v0.1.7 is a Linux release. Apple Silicon
+services remain separate. Apple Silicon
 (`arm64`) was exercised locally on an Apple M2 running macOS 26.6.1. That work
 covered CPU and replay processing, browser configuration and service lifecycle,
 the local Homebrew app and Kraken companion through revision 17, a calibrated
@@ -17,10 +17,11 @@ checks. Physical Intel receivers, GPU processing and installed Homebrew remain
 unverified.
 
 The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized
-and installs at `/Applications/VectorWarp.app`; it has no public download or
-release claim yet. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target
+and installs at `/Applications/VectorWarp.app`. Published versions appear in the
+[release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target
 layout, commands and qualification boundaries.
-Homebrew is the macOS packaging path: see [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md)
+Homebrew is another macOS packaging path: see [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md)
 for a local source snapshot, service lifecycle, upgrades and removal. CPU processing
 is always available. Optional Vulkan/MoltenVK processing is described in
 [MACOS_GPU.md](MACOS_GPU.md); readiness comes from numerical checks on the running
@@ -107,7 +108,7 @@ The launcher alone does not register a login service. Homebrew’s explicit
 choosing a valid receiver or replay file in Settings.
 
 For installed Homebrew command names, updates, and service restarts, see the
-[macOS Homebrew guide](MACOS_HOMEBREW.md#public-tap-updates-after-publication).
+[macOS Homebrew guide](MACOS_HOMEBREW.md#public-tap-updates).
 The local development tap must be regenerated from its source snapshot; it does
 not receive public-tap upgrades.
 

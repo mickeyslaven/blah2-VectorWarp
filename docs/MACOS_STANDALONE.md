@@ -1,7 +1,8 @@
 # Standalone macOS installer development
 
-This guide describes the standalone macOS installer in development. It is not a public
-download or current release. Local implementation and testing are ongoing.
+This guide describes the standalone macOS installer and its local verification.
+Published packages, when available, are linked in the
+[release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 
 The `.pkg` targets one `VectorWarp.app` in `/Applications`. The app
 contains separate `arm64` and `x86_64` runtimes; its universal launcher
@@ -12,7 +13,7 @@ The local universal candidate has Developer ID Application and Installer
 signatures. Its hardened-runtime checks passed on Apple Silicon, including CPU
 lifecycle and actual Vulkan ambiguity/clutter execution. Apple notarization was
 accepted and stapled; local Gatekeeper installer assessment passed. Actual installer
-execution remains untested, and this is not a public distribution.
+execution remains untested.
 The ad-hoc mode described below remains available for development fixtures.
 
 The standalone CI matrix passed both macOS 15 runtime jobs for source revision
@@ -20,7 +21,7 @@ The standalone CI matrix passed both macOS 15 runtime jobs for source revision
 CI evidence. The combined local app and installer also passed assembly, Apple
 Silicon application lifecycle, unchanged-runtime and expanded-package checks.
 The Intel payload was exercised in CI; physical Intel execution remains untested.
-Public distribution remains pending final release review.
+Release publication is verified separately through the public download matrix.
 
 ## Commands
 
@@ -107,9 +108,10 @@ The standalone CI matrix builds both runtimes on macOS 15, temporarily hides
 Homebrew on the disposable runner, and tests replay, settings, SDK no-device
 handling, lifecycle and the unchanged bundle inventory. Virtual-runner driver
 discovery is separate from real GPU execution and physical receiver testing.
-Until the corresponding-source and notices review is complete, CI uploads
-diagnostics and optionally encrypted development payloads for local review.
-No public installer or automatic package-release workflow is enabled yet.
+CI uploads diagnostics and optionally encrypted development payloads for local
+review. Release packages are assembled and signed locally with the reviewed
+corresponding source and notices; an accepted, stapled PKG and release receipt
+are required before the public download page links an asset.
 
 For confidential CI review, `script/transfer-macos-runtime.py` can encrypt a
 tested runtime to a public recipient certificate. The private key stays outside

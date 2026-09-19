@@ -94,13 +94,12 @@ miss deadlines; the full report includes every tested configuration.
 
 ## Install on macOS with Homebrew
 
-From a checkout containing this macOS port, with Homebrew and Xcode Command
-Line Tools installed, run these commands in the repository root:
+With Homebrew and Xcode Command Line Tools installed:
 
 ```sh
-script/package-homebrew-local.sh build/homebrew-local --install-tap
-brew trust vectorwarp/local
-brew install --build-from-source vectorwarp/local/vectorwarp
+brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
+brew install vectorwarp
 vectorwarp
 ```
 
@@ -111,17 +110,13 @@ services, updates and removal, and the [Mac guide](docs/MACOS.md) for receivers.
 
 Apple Silicon is tested on the development M2. Intel is experimental, with
 source-level CI coverage but no physical receiver, GPU, or installed-Homebrew
-qualification. This local source installation requires the port checkout: no
-installable public Mac formula or bottle is published yet. The
-[public tap automation](docs/HOMEBREW_PUBLISHING.md) will publish tested formulas
-after merges to `main`; public v0.1.7 release assets remain Linux-only.
-After the public tap is published, its update and restart commands are in the
-[Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates-after-publication).
-The planned non-Homebrew macOS installer is documented separately in
-[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md). The local universal package is
-Developer ID signed and Apple-notarized, but it has no public download or release
-asset yet. When a release provides `VectorWarp-signed.pkg`, it installs the app at
-`/Applications/VectorWarp.app`; launch it with
+qualification. The public tap builds from source; no bottle is supplied.
+The tap's update and restart commands are in the
+[Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates).
+The standalone macOS installer is documented separately in
+[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md). The universal package is
+Developer ID signed and Apple-notarized. When the [download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+lists a macOS PKG, it installs the app at `/Applications/VectorWarp.app`; launch it with
 `/Applications/VectorWarp.app/Contents/MacOS/VectorWarp`.
 
 ## Install on Linux
@@ -211,7 +206,7 @@ available for development or unsupported systems.
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
 | Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Homebrew source installation](docs/MACOS_HOMEBREW.md) |
+| macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Public Homebrew tap](docs/MACOS_HOMEBREW.md) |
 | macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
 
 macOS development is documented in [the local build guide](docs/MACOS.md).
@@ -223,9 +218,10 @@ CPU fallback retained. Intel (`x86_64`) is an experimental source-level CI
 target: its `macos-15-intel` job passed CPU, open receiver-adapter, synthetic
 Kraken, replay, API, browser, and lifecycle checks. It has no physical receiver,
 GPU, or installed-Homebrew claim.
-The public Homebrew tap is prepared; its first formula publication awaits the
-[main-merge workflow](docs/HOMEBREW_PUBLISHING.md). Public v0.1.7 release assets
-remain Linux packages. See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
+The public Homebrew tap is managed by the
+[main-merge workflow](docs/HOMEBREW_PUBLISHING.md). Release downloads appear in
+the [installation matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 

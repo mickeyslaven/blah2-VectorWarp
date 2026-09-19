@@ -71,7 +71,28 @@ def release_installation(manifest):
     for distro_version in ("22.04", "24.04", "26.04"):
         row(f"DragonOS · Ubuntu {distro_version} base", "ubuntu", distro_version)
     row("Raspberry Pi OS · 64-bit Trixie", "debian", "13", pi=True)
+    macos = manifest.get("macos_package")
+    if macos:
+        filename = macos["filename"]
+        if filename != f"vectorwarp-{version}-macos-universal.pkg":
+            raise ValueError("Mac package filename disagrees with release version")
+        if not isinstance(macos.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", macos["sha256"]):
+            raise ValueError("Mac package checksum is missing")
+        rows.append(f'<tr><th scope="row">macOS 15+ · universal</th>'
+                    f'<td colspan="2"><a href="{base}/{escape(filename)}">Download signed PKG</a></td></tr>')
     table_rows = "\n".join(rows)
+    macos_guidance = ('''For macOS, open the signed, notarized PKG in Finder, then launch
+<code>/Applications/VectorWarp.app/Contents/MacOS/VectorWarp</code>.''' if macos else
+                      '''For macOS, use the public Homebrew tap; this release has no PKG asset.''')
+    macos_scope = ('''The macOS PKG is universal, with Apple Silicon validation on M2;
+physical Intel Mac execution remains unverified. ''' if macos else "")
+    macos_verify = (f'''<p>For the macOS PKG, compare its SHA-256 with
+<code>{macos["sha256"]}</code>, then check the Apple installer signature and notarization:</p>
+<pre><code>shasum -a 256 {escape(macos["filename"])}
+pkgutil --check-signature {escape(macos["filename"])}
+spctl --assess --type install {escape(macos["filename"])}</code></pre>
+<p><a href="{base}/{escape(macos["source_archive"]["filename"])}">Mac corresponding source archive</a>
+(SHA-256: <code>{macos["source_archive"]["sha256"]}</code>).</p>''' if macos else "")
     fingerprint = escape(manifest["signing_fingerprint"])
     # The site can be rebuilt from main before the next release exists. Describe
     # only behavior shipped by the verified packages in this manifest.
@@ -117,13 +138,19 @@ to activate updated code. Do not run it mid-transaction; it does not restart
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>1. Install for your OS</h3>
-<p>Copy the command for your OS. It installs the prerequisites, adds our signed
-repository, installs VectorWarp and opens the web interface. Enter your
+<p>For Linux, copy the command for your OS. It installs the prerequisites, adds
+our signed repository, installs VectorWarp and opens the web interface. On macOS,
+use the Homebrew tap or the signed PKG in the download table. Enter your
 administrator password if prompted.</p>
 <h4>Fedora 44</h4>
 <pre><code>{escape(fedora_install)}</code></pre>
 <h4>Ubuntu, Debian and compatible DragonOS / Raspberry Pi OS</h4>
 <pre><code>{escape(apt_install)}</code></pre>
+<h4>macOS with Homebrew</h4>
+<pre><code>brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
+brew install vectorwarp
+vectorwarp</code></pre>
 <p>The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>
 is available to read separately.</p>
 <h3>2. Configure and start radar</h3>
@@ -139,30 +166,39 @@ SDRplay API. Follow <a href="https://github.com/mickeyslaven/blah2-VectorWarp/bl
 after installing.</p>
 <h3>3. Start, stop and check services</h3>
 <p>{control_guidance}</p>
+<p>On macOS, the Homebrew command is <code>vectorwarp</code>. The standalone PKG
+uses <code>/Applications/VectorWarp.app/Contents/MacOS/VectorWarp</code>.
+Append <code>start</code>, <code>stop</code>, <code>restart</code>, or
+<code>status</code> to either launcher path as needed.</p>
 <h3>4. Update</h3>
-<p>Your repository is already configured; do not repeat the installation steps.</p>
+<p>For Linux, your repository is already configured; do not repeat the installation steps.</p>
 <p>Ubuntu, Debian and compatible DragonOS / Raspberry Pi OS:</p>
 <pre><code>sudo apt update &amp;&amp; sudo apt install vectorwarp</code></pre>
 <p>Fedora:</p>
 <pre><code>sudo dnf upgrade --refresh vectorwarp</code></pre>
+<p>For macOS Homebrew: <code>brew upgrade vectorwarp vectorwarp-heimdall</code>.
+For a standalone PKG, use the next release's PKG through the normal Installer flow.</p>
 <p>{upgrade_guidance}</p>
 <h3>Direct downloads</h3>
-<p>Prefer the installer above for automatic updates. For a manual installation,
-choose the package matching your OS version and architecture. Install it with
+<p>For Linux, prefer the installer above for automatic updates. For a manual installation,
+choose the package matching your OS version and architecture. Install Linux packages with
 <code>sudo apt install ./matching.deb</code> on Ubuntu, Debian, or DragonOS, or
 <code>sudo dnf install ./matching.rpm</code> on Fedora, so dependencies resolve.
-Do not use <code>dpkg</code> alone or manually mix release libraries.</p>
+Do not use <code>dpkg</code> alone or manually mix release libraries.
+{macos_guidance}</p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Package downloads by operating system and architecture">
-<table><caption>VectorWarp {version} · one package per OS and architecture</caption>
+<table><caption>VectorWarp {version} · verified packages by OS and architecture</caption>
 <thead><tr><th scope="col">Operating system</th><th scope="col">x86-64<br>(amd64 / x86_64)</th><th scope="col">ARM64<br>(arm64 / aarch64)</th></tr></thead>
 <tbody>{table_rows}</tbody></table></div>
-<p class="scope">x86-64 covers Intel and AMD PCs. DragonOS uses its Ubuntu base;
+<p class="scope">{macos_scope}x86-64 covers Intel and AMD PCs.
+DragonOS uses its Ubuntu base;
 check <code>/etc/os-release</code>. FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,
 not Ubuntu 26.04. Raspberry Pi OS Trixie uses Debian 13 ARM64. No 32-bit package
 is provided. For other systems, use the
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
 <details><summary>Verify a direct download</summary>
-<p>Save your package, <a href="{base}/SHA256SUMS">checksums</a>,
+{macos_verify}
+<p>For Linux DEB/RPM packages, save your package, <a href="{base}/SHA256SUMS">checksums</a>,
 <a href="{base}/SHA256SUMS.asc">checksum signature</a>, and
 <a href="{base}/vectorwarp-archive-key.asc">public signing key</a> in the same folder.
 The release key fingerprint is <code>{fingerprint}</code>; compare it with the
@@ -213,10 +249,8 @@ code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer
 <p><strong>THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!</strong></p>
 <p>Native passive radar for Linux and macOS with multicore processing, optional GPU acceleration,
 and browser controls for live displays, settings, recording and replay.</p>
-<p class="scope">macOS uses a local Homebrew source installation: Apple Silicon is tested on M2;
-Intel Mac support remains experimental. Public formulas await their first successful
-Homebrew publishing run; no Mac bottles are supplied.
-The release downloads below are Linux packages.</p>
+<p class="scope">Apple Silicon macOS is tested on M2; Intel Mac support remains experimental.
+The download table lists only packages present in the verified release.</p>
 <div class="actions"><a class="button" href="#install">Get started</a>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Explore the project</a></div>
 </section>
@@ -386,6 +420,44 @@ def verify_release_matrix(entries):
         raise ValueError(f"Release matrix is incomplete or inconsistent (missing={missing}, extra={extra})")
 
 
+def verify_macos_release(path, packages, version, source_commit):
+    """Bind an Apple-reviewed release asset to this immutable release."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Mac release receipt must be a regular file")
+    entry = json.loads(path.read_text())
+    filename = f"vectorwarp-{version}-macos-universal.pkg"
+    source_name = f"vectorwarp-{version}-macos-corresponding-source.tar.gz"
+    source = entry.get("source_archive") if isinstance(entry, dict) else None
+    if (not isinstance(entry, dict) or entry.get("schema") != 1 or
+            entry.get("version") != version or entry.get("publication_commit") != source_commit.lower() or
+            entry.get("filename") != filename or entry.get("apple_team_id") != "DJGHPX8T7R" or
+            entry.get("notary_status") != "Accepted" or
+            entry.get("gatekeeper") != "Notarized Developer ID" or
+            not isinstance(entry.get("runtime_source_id"), str) or
+            not re.fullmatch(r"[0-9a-f]{40}", entry["runtime_source_id"]) or
+            not isinstance(entry.get("notary_submission_id"), str) or
+            not re.fullmatch(r"[0-9a-f-]{36}", entry["notary_submission_id"]) or
+            not isinstance(entry.get("sha256"), str) or
+            not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]) or
+            not isinstance(source, dict) or source.get("filename") != source_name or
+            not isinstance(source.get("sha256"), str) or
+            not re.fullmatch(r"[0-9a-f]{64}", source["sha256"]) or
+            type(source.get("size")) is not int or source["size"] <= 0 or
+            type(entry.get("size")) is not int or entry["size"] <= 0):
+        raise ValueError("Mac release receipt is incomplete or mismatched")
+    package = packages / filename
+    if package.is_symlink() or not package.is_file() or package.stat().st_size != entry["size"]:
+        raise ValueError("Mac release package is missing or size differs")
+    if sha256(package) != entry["sha256"]:
+        raise ValueError("Mac release package checksum differs")
+    source_file = packages / source_name
+    if (source_file.is_symlink() or not source_file.is_file() or
+            source_file.stat().st_size != source["size"] or sha256(source_file) != source["sha256"]):
+        raise ValueError("Mac corresponding source archive differs")
+    return entry
+
+
 def verify_metadata(entry, file):
     if entry["format"] == "deb":
         actual = run(["dpkg-deb", "--field", str(file), "Package", "Version", "Architecture"]).decode()
@@ -455,6 +527,9 @@ def build(args):
         raise ValueError("Package manifest source commit does not match the selected release tag")
     if getattr(args, "require_release_matrix", False):
         verify_release_matrix(entries)
+    macos_release = getattr(args, "macos_release", None)
+    macos_entry = (verify_macos_release(macos_release, packages, manifest["version"],
+                                        manifest["source_commit"]) if macos_release else None)
     public_key = Path(args.public_key).resolve(strict=True)
     if public_fingerprint(public_key) != fingerprint:
         raise ValueError("Public key fingerprint does not match the pinned release key")
@@ -546,6 +621,8 @@ def build(args):
         document = {"schema": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
                     "version": manifest["version"], "source_commit": manifest["source_commit"].lower(),
                     "signing_fingerprint": fingerprint, "packages": published}
+        if macos_entry:
+            document["macos_package"] = macos_entry
         (site / "repository-manifest.json").write_text(json.dumps(document, indent=2) + "\n")
         if args.installer_template:
             template = Path(args.installer_template).read_text()
@@ -568,6 +645,7 @@ def main():
     parser.add_argument("--expected-source-commit")
     parser.add_argument("--require-release-matrix", action="store_true")
     parser.add_argument("--installer-template")
+    parser.add_argument("--macos-release", help="verified Mac release receipt beside its PKG in --packages")
     args = parser.parse_args()
     try:
         document = build(args)

@@ -1,17 +1,17 @@
 # Homebrew installation
 
-The [public tap automation](HOMEBREW_PUBLISHING.md) is prepared for
-`mickeyslaven/vectorwarp`. Its public formulas become installable after the
-workflow is merged and its first Apple Silicon build and installation checks
-pass. Until then, use the local source installation below. This distinction
-keeps an empty tap from being mistaken for a published package.
+The public `mickeyslaven/vectorwarp` tap is live. Its
+[publishing workflow](HOMEBREW_PUBLISHING.md) updates formulas after a merge
+passes Apple Silicon build and installation checks. A local source-snapshot
+installation remains available below for development.
 
-## Public installation (after publication)
+## Public installation
 
 With Homebrew and Xcode Command Line Tools installed, add the public tap once:
 
 ```sh
 brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
 brew install vectorwarp
 vectorwarp
 ```
@@ -19,11 +19,13 @@ vectorwarp
 The full formula name is `mickeyslaven/vectorwarp/vectorwarp`
 (`owner/tap/package`). After adding the tap, the short package names work.
 Homebrew builds the application and its Kraken companion from source; no
-prebuilt bottles or `.pkg`/`.dmg` installers are currently published.
+prebuilt bottles are supplied. The standalone `.pkg` is a separate installation
+route listed in the [release matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+when published.
 
-## Public-tap updates (after publication)
+## Public-tap updates
 
-Once the public formulas have been published, update both components with:
+Update both components with:
 
 ```sh
 brew update
@@ -33,8 +35,7 @@ vectorwarp restart
 
 If VectorWarp runs as a per-user Homebrew service, use `brew services restart
 vectorwarp` instead of `vectorwarp restart`. Both paths retain the user's
-configuration and recordings. The public tap is empty until the first
-main-merge publishing run succeeds; these commands do not apply to the local
+configuration and recordings. These commands do not apply to the local
 development tap below.
 
 ## Local source installation

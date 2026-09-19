@@ -2,22 +2,22 @@
 
 Choose the installation path for your operating system:
 
-- **macOS:** [Homebrew from the local port checkout](#macos-with-homebrew), or
-  the [signed standalone installer](#macos-standalone-installer) when an approved
-  release provides it. Apple Silicon is tested on M2; Intel remains experimental
+- **macOS:** [Public Homebrew tap](#macos-with-homebrew), or
+  the [signed standalone installer](#macos-standalone-installer) when the
+  [download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install) lists it.
+  Apple Silicon is tested on M2; Intel remains experimental
   and unverified.
 - **Linux:** [Published DEB/RPM packages](#install-a-package) for 64-bit Linux
   with systemd: x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
 
 ## macOS with Homebrew
 
-With Homebrew and Xcode Command Line Tools installed, run from the root of a
-checkout containing the macOS port:
+With Homebrew and Xcode Command Line Tools installed:
 
 ```sh
-script/package-homebrew-local.sh build/homebrew-local --install-tap
-brew trust vectorwarp/local
-brew install --build-from-source vectorwarp/local/vectorwarp
+brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
+brew install vectorwarp
 vectorwarp
 ```
 
@@ -29,18 +29,17 @@ without starting radar; configure your receiver or replay file, then choose
 
 Follow the [Homebrew guide](MACOS_HOMEBREW.md) for installation checks, per-user
 services, updates and removal. The [Mac guide](MACOS.md) covers receiver setup,
-configuration paths and direct source builds. The package is locally tested
-through revision 17 on Apple M2. Public Mac formulas and bottles are not
-available yet; the commands require this port checkout. The
-[public tap workflow](HOMEBREW_PUBLISHING.md) is prepared to publish formulas
-after merges to `main` pass its installation checks. Public v0.1.7 release assets
-remain Linux-only.
+configuration paths and direct source builds. Local development packages were
+tested through revision 17 on Apple M2. The public tap builds from source and
+supplies no bottle. Its [publishing workflow](HOMEBREW_PUBLISHING.md) checks a
+merge before updating the formulas.
 
 ## macOS standalone installer
 
-The universal `VectorWarp-signed.pkg` is Developer ID signed, Apple-notarized and
-installs `VectorWarp.app` at `/Applications/VectorWarp.app`. When an approved
-release provides that package, open it in Finder and complete the normal macOS
+The universal macOS `.pkg` is Developer ID signed, Apple-notarized and installs
+`VectorWarp.app` at `/Applications/VectorWarp.app`. Download the version listed in
+the [release matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
+open it in Finder and complete the normal macOS
 Installer flow. Then launch VectorWarp with:
 
 ```sh
@@ -49,8 +48,7 @@ Installer flow. Then launch VectorWarp with:
 
 The package does not configure a login service or start radar automatically.
 Choose a receiver or replay file in Settings, then select **Save & Restart**.
-No public standalone package download is published yet; do not substitute a local
-development artifact for a released installer. See [the standalone guide](MACOS_STANDALONE.md)
+Use only the PKG linked for the current release in the matrix. See [the standalone guide](MACOS_STANDALONE.md)
 for verification scope and limitations.
 
 ## Linux installation
