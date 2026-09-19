@@ -6,7 +6,9 @@ For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
 Mac actions. The systemd services, APT/DNF packages, and privileged enrollment
 instructions below apply to Linux.
 
-1. On Linux, install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+1. On a Pi 4B, follow the [Pi 4 image guide](PI4_GUIDE.md); its candidate image
+   is not published or boot-tested yet. On other Linux systems, install VectorWarp
+   from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
    On macOS, use the [Homebrew guide](MACOS_HOMEBREW.md). Then run `vectorwarp`
    to open **Settings** without starting radar.
 2. Select and configure the receiver, then choose **Save & Restart** to save
@@ -34,10 +36,10 @@ Node.js requirements, receiver build choices, GPU build packages and startup
 commands. Choose the required `--backend` before building. Installing an SDR
 driver later does not add an adapter that was omitted from the VectorWarp build.
 
-For the current Raspberry Pi 4B Bookworm route, use the [Pi 4 guide](PI4_GUIDE.md)
+For the Raspberry Pi 4B Bookworm route, use the [Pi 4 guide](PI4_GUIDE.md)
 after installation. It documents the tested RSPduo configuration and the
-geometry-limited mixed AUTO path. A Pi image is not available, and Pi 5 is not
-yet supported.
+geometry-limited mixed AUTO path. The image candidate is not published or
+boot-tested; Pi 5 is future work.
 
 ## Check receiver software
 

@@ -111,6 +111,7 @@ for (const relative of [
 assert.match(packageScript, /Ubuntu 22\.04/);
 assert.match(packageScript, /Ubuntu 24\.04/);
 assert.match(packageScript, /Ubuntu 26\.04/);
+assert.match(packageScript, /Debian 12 Bookworm/);
 assert.match(packageScript, /Debian 13 Trixie/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
@@ -216,6 +217,7 @@ function supportRows(markdown) {
 function nativeTarget(entry) {
   const ubuntu = /^ubuntu(22\.04|24\.04|26\.04)$/.exec(entry.distro);
   if (ubuntu) return {os: 'Ubuntu', version: ubuntu[1], format: 'deb'};
+  if (entry.distro === 'debian12') return {os: 'Debian', version: '12 (Bookworm)', format: 'deb'};
   if (entry.distro === 'debian13') return {os: 'Debian', version: '13 (Trixie)', format: 'deb'};
   if (entry.distro === 'fedora44') return {os: 'Fedora', version: '44', format: 'rpm'};
   throw new Error(`release target ${entry.distro} has no README support-table mapping`);
@@ -247,7 +249,7 @@ function assertMatrixDocumented(entries, rows) {
 }
 const nativeMatrix = matrixEntries(releaseWorkflow).filter(entry => entry.distro && entry.format && entry.arch);
 const readmeRows = supportRows(read('README.md'));
-assert.equal(nativeMatrix.length, 10, 'release matrix must build all ten native package targets');
+assert.equal(nativeMatrix.length, 11, 'release matrix must build all eleven native package targets');
 assertMatrixDocumented(nativeMatrix, readmeRows);
 assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], distro: 'ubuntu27.04'}], readmeRows),
   /support-table mapping/);
@@ -262,15 +264,19 @@ assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
   row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, architectures: ['ARM64']} : row)),
   /lacks Ubuntu amd64/);
 for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
-  for (const row of readmeRows.filter(row => row.os === os))
-    assert.deepEqual(row.architectures, [architectureLabels.amd64, architectureLabels.arm64],
-      `${os} must use the same public architecture labels`);
+  for (const row of readmeRows.filter(row => row.os === os)) {
+    const expected = row.os === 'Debian' && row.versions.includes('12 (Bookworm)')
+      ? [architectureLabels.arm64]
+      : [architectureLabels.amd64, architectureLabels.arm64];
+    assert.deepEqual(row.architectures, expected,
+      `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
+  }
 const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
-assert.deepEqual(piRow.versions, ['Trixie', '64-bit']);
+assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
 assert.match(piRow.package,
-  /\[Debian 13 ARM64 DEB\]\(https:\/\/mickeyslaven\.github\.io\/blah2-VectorWarp\/#install\)$/,
-  'Raspberry Pi OS must identify Debian 13 ARM64 and link to the current package page');
+  /\[Debian 12 ARM64 DEB\]\(https:\/\/mickeyslaven\.github\.io\/blah2-VectorWarp\/#install\)$/,
+  'Raspberry Pi OS must identify Debian 12 ARM64 and link to the current package page');
 assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
   arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
 })), readmeRows);
@@ -287,7 +293,7 @@ for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md'
   assert.ok(document.includes('ARM64 (arm64 / aarch64)') || document.includes(architectureAliasLegend),
     `${file}: explain both ARM64 aliases`);
 }
-assert.match(releaseWorkflow, /expected ten package manifests/);
+assert.match(releaseWorkflow, /expected eleven package manifests/);
 assert.match(releaseWorkflow, /-eq 10/);
 assert.match(releaseWorkflow, /Stable tags must point to the exact current main commit/);
 assert.match(releaseWorkflow, /Unsigned test packages must be built from the exact current main commit/);
@@ -359,6 +365,8 @@ for (const [id, version, ubuntuCodename, versionCodename, machine, expected, dpk
   ['ubuntu', '24.04', 'noble', 'noble', 'arm64', 'apt/noble/arm64'],
   ['ubuntu', '26.04', 'resolute', 'resolute', 'x86_64', 'apt/resolute/amd64'],
   ['ubuntu', '26.04', 'resolute', 'resolute', 'arm64', 'apt/resolute/arm64'],
+  ['debian', '12', '', 'bookworm', 'aarch64', 'apt/bookworm/arm64'],
+  ['debian', '12', '', 'bookworm', 'arm64', 'apt/bookworm/arm64'],
   ['debian', '13', '', 'trixie', 'x86_64', 'apt/trixie/amd64'],
   ['debian', '13', '', 'trixie', 'arm64', 'apt/trixie/arm64'],
   ['raspbian', '13', '', 'trixie', 'aarch64', 'apt/trixie/arm64'],

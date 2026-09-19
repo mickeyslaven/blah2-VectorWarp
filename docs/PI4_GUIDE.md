@@ -1,12 +1,40 @@
 # Raspberry Pi 4 guide
 
 The supported Pi profile is a **Raspberry Pi 4B with 8 GB RAM** running
-**Raspberry Pi OS Lite 64-bit Bookworm**. It is a source installation today:
-there is no Bookworm package or flashable VectorWarp image. The older Raspberry
-Pi OS Trixie package route is deprecated for new Pi deployments and must not be
-forced onto Bookworm. Pi 5 is future work.
+**Raspberry Pi OS Lite 64-bit Bookworm**. Use a 32 GB microSD card initially.
+The Bookworm package and image candidate are being built, but the image is not
+published, flashed, or boot-tested yet. Pi 5 is future work.
 
-## Headless Bookworm setup
+## Flash and first boot when the image is released
+
+1. Install Raspberry Pi Imager, open the release's versioned
+   `.rpi-imager-manifest`, and choose the Pi 4 Bookworm Lite image. The manifest
+   is required for Imager customization; a bare image selection does not provide
+   the headless Wi-Fi and login flow.
+2. In Imager customization, set hostname, locale/time zone, a username with a
+   password or SSH key, and enable SSH. For Wi-Fi, also set the network name,
+   password, and country. Ethernet can omit Wi-Fi. The image contains no factory
+   login or preconfigured network.
+3. Write the card, boot the Pi, and connect over SSH or open
+   `http://<hostname>.local:3000/` from a device on the same network. Use the
+   DHCP address if mDNS is unavailable. Choose the receiver in Settings and
+   review the neutral 100 MHz frequency and zero-valued site placeholders before
+   selecting **Save & Restart** to start processing.
+4. For an RSPduo, obtain, install, and accept SDRplay's vendor API yourself.
+   In Settings choose **Build SDRplay support**, wait for the local build, then
+   configure the receiver. VectorWarp does not distribute SDRplay software.
+
+The image profile prepares the tested Pi 4B 8 GB RSPduo geometry: 2 MS/s,
+500 ms CPI, ±300 Hz (301×411), tracking, and Automatic acceleration. It starts
+with radar stopped. Its performance drop-in is only valid for that dual-tuner
+2 MS/s mode; remove the drop-in before using another RSPduo mode. Other receiver
+profiles ignore those RSPduo-specific flags.
+
+The candidate has not completed this flow on a clean card. Do not treat these
+steps as a released image installation until its artifact and manifest are
+published.
+
+## Advanced: source installation on Bookworm
 
 1. In Raspberry Pi Imager, select **Raspberry Pi OS Lite (64-bit) Bookworm**.
    Before writing the card, set the hostname, locale/time zone, Wi-Fi name,

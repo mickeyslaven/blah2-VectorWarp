@@ -202,10 +202,11 @@ available for development or unsupported systems.
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, 26.04 | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 12 (Bookworm) | ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Debian 13 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Debian 12 ARM64 DEB](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Public Homebrew tap](docs/MACOS_HOMEBREW.md) |
 | macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
 
@@ -223,11 +224,12 @@ The public Homebrew tap is managed by the
 the [installation matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
 
-For new Raspberry Pi deployments, use the [Pi 4 guide](docs/PI4_GUIDE.md).
-The current validated Pi baseline is Raspberry Pi 4B (8 GB) with Raspberry Pi
-OS Lite 64-bit Bookworm, installed from source. The Trixie package route is
-deprecated for new Pi work and must not be installed on Bookworm. A Bookworm
-package target and Pi image are not published; Pi 5 support is future work.
+For a Raspberry Pi 4B, start with the [Pi 4 guide](docs/PI4_GUIDE.md): it
+organizes the forthcoming Imager flash flow, Linux package route, and advanced
+source build. The 8 GB Bookworm Lite profile is the tested baseline; use a 32 GB
+microSD card initially. The candidate image is not published or boot-tested yet.
+Pi 5 is future work. RSPduo users install SDRplay's vendor API themselves, then
+choose **Build SDRplay support** in Settings.
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 

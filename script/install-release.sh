@@ -115,9 +115,11 @@ detect_platform() {
       case "$variant_id" in raspbian|raspios) pi=true ;; esac ;;
     raspbian)
       family=debian; pi=true
-      [[ $os_version == 13 && $version_codename == trixie ]] ||
-        die 'Raspberry Pi OS is packaged only for 64-bit Trixie (Debian 13)'
-      base_version=13 ;;
+      case "$os_version/$version_codename" in
+        12/bookworm) base_version=12 ;;
+        13/trixie) base_version=13 ;;
+        *) die 'Raspberry Pi OS is packaged only for 64-bit Bookworm (Debian 12) or Trixie (Debian 13)' ;;
+      esac ;;
     dragonos|dragonos-*)
       dragon=true
       base_codename=${ubuntu_codename:-$version_codename}
@@ -137,7 +139,7 @@ detect_platform() {
         22.04|24.04|26.04)
           [[ $os_version == "$base_version" ]] || die 'conflicting DragonOS Ubuntu version and codename in /etc/os-release' ;;
       esac ;;
-    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 44, Debian 13, Ubuntu 22.04/24.04/26.04, matching DragonOS editions and 64-bit Raspberry Pi OS Trixie" ;;
+    *) die "distribution '$os_id' is not packaged; supported systems are Fedora 44, Debian 12 ARM64, Debian 13, Ubuntu 22.04/24.04/26.04, matching DragonOS editions and 64-bit Raspberry Pi OS Bookworm or Trixie" ;;
   esac
   if $pi; then
     [[ $machine == aarch64 || $machine == arm64 ]] ||
@@ -165,9 +167,14 @@ detect_platform() {
         die 'conflicting Ubuntu version and VERSION_CODENAME in /etc/os-release'
     fi
   else
-    [[ $base_version == 13 && $version_codename == trixie && -z $ubuntu_codename ]] ||
-      die 'Debian packages require unambiguous Debian 13 (Trixie) metadata'
-    codename=trixie
+    case "$base_version/$version_codename" in
+      12/bookworm)
+        [[ $deb_arch == arm64 ]] || die 'Debian 12 Bookworm is packaged only for arm64'
+        codename=bookworm ;;
+      13/trixie) codename=trixie ;;
+      *) die 'Debian packages require unambiguous Debian 12 (Bookworm) or Debian 13 (Trixie) metadata' ;;
+    esac
+    [[ -z $ubuntu_codename ]] || die 'Debian packages must not define UBUNTU_CODENAME'
   fi
   [[ $dpkg_arch == "$deb_arch" ]] ||
     die "package-manager architecture '$dpkg_arch' does not match supported $deb_arch userspace"

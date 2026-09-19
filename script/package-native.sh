@@ -20,7 +20,7 @@ Usage: script/package-native.sh [options]
 Build a distro-native VectorWarp release package from a native artifact.
 
   --format deb|rpm        Package format
-  --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian13 or fedora44
+  --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44
   --version X.Y.Z         Stable release version (without v)
   --artifact PATH         Artifact made by build-native.sh
   --node-runtime PATH     Extracted official Node.js 24.21.0 Linux archive
@@ -91,6 +91,11 @@ case "$DISTRO" in
     [[ $FORMAT == deb && ${ID:-} == ubuntu && ${VERSION_ID:-} == 26.04 ]] ||
       die 'ubuntu26.04 DEBs must be built on Ubuntu 26.04'
     DISTRO_NAME=ubuntu; DISTRO_VERSION=26.04; CODENAME=resolute; PACKAGE_ARCH=$DEB_ARCH ;;
+  debian12)
+    [[ $FORMAT == deb && ${ID:-} == debian && ${VERSION_ID:-} == 12 && ${VERSION_CODENAME:-} == bookworm ]] ||
+      die 'debian12 DEBs must be built on Debian 12 Bookworm'
+    [[ $DEB_ARCH == arm64 ]] || die 'debian12 packages are available only for arm64'
+    DISTRO_NAME=debian; DISTRO_VERSION=12; CODENAME=bookworm; PACKAGE_ARCH=$DEB_ARCH ;;
   debian13)
     [[ $FORMAT == deb && ${ID:-} == debian && ${VERSION_ID:-} == 13 && ${VERSION_CODENAME:-} == trixie ]] ||
       die 'debian13 DEBs must be built on Debian 13 Trixie'
@@ -99,7 +104,7 @@ case "$DISTRO" in
     [[ $FORMAT == rpm && ${ID:-} == fedora && ${VERSION_ID:-} == 44 ]] ||
       die 'fedora44 RPMs must be built in Fedora 44 userspace'
     DISTRO_NAME=fedora; DISTRO_VERSION=44; CODENAME=; PACKAGE_ARCH=$RPM_ARCH ;;
-  *) die '--distro must be ubuntu22.04, ubuntu24.04, ubuntu26.04, debian13 or fedora44' ;;
+  *) die '--distro must be ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44' ;;
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done

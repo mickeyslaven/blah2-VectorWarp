@@ -1,13 +1,14 @@
 # Headless Raspberry Pi image
 
 > **Maintained status:** The target is a Raspberry Pi 4B Bookworm Lite 64-bit
-> image; Pi 5 is future work. No flashable image has been built, boot-tested,
-> or published. See the concise [Pi 4 guide](PI4_GUIDE.md) for current
+> image; Pi 5 is future work. A candidate is being built, but no flashable image
+> has been boot-tested or published. See the concise [Pi 4 guide](PI4_GUIDE.md) for current
 > installation and AUTO boundaries.
 
-Status: packaging design and Imager metadata tooling, 19 September 2026.
-No flashable VectorWarp image has been built, boot-tested, or published yet.
-The mixed CPU/GPU AUTO integration is proceeding separately.
+Status: the Pi 4 Bookworm candidate is being assembled from a pristine
+2026-09-15 Raspberry Pi OS Lite image and the Bookworm ARM64 DEB. It is not
+boot-tested or published. The mixed CPU/GPU AUTO integration is proceeding
+separately.
 
 ## Product decision
 
@@ -102,8 +103,12 @@ The image stage must:
   The image builder must explicitly enable the API offline: package `postinst`
   skips live service activation when no running systemd exists in the chroot.
 - Ship neutral site/receiver configuration and `acceleration: auto` once the
-  integrated AUTO path passes acceptance. The benchmark's 551 MHz frequency,
-  site data, environment overrides and temporary ports are not factory defaults.
+  integrated AUTO path passes acceptance. The candidate profile uses neutral
+  100 MHz and zero-valued site placeholders, 2 MS/s, 500 ms CPI, ±300 Hz
+  (301×411), tracking, and the Pi RSPduo performance drop-in; radar stays
+  stopped until the user reviews settings and chooses Save & Restart. The
+  benchmark's 551 MHz frequency, site data, environment overrides and temporary
+  ports are not factory defaults.
 - Keep the stock supported clock and record kernel, firmware, Mesa, FFTW, BLAS,
   Node and application versions. Record any performance governor/service tuning
   in the image profile; test it with normal capture and thermal conditions.
@@ -134,13 +139,8 @@ do not offer the replacement as released until a tested image exists. Existing
 Pi installations do not receive an automatic OS downgrade. The replacement is
 a fresh Bookworm image, with an explicit user-config export/import path.
 
-Currently `script/install-release.sh` and `.github/workflows/release-packages.yml`
-support Debian 13 / Raspberry Pi OS Trixie. Our measured Pi uses Bookworm. A
-Trixie DEB must not be installed on Bookworm by bypassing the detector. Before
-building the first image, add a Debian 12 ARM64 build/repository target, matching
-installer detection, dependency resolution and installed-package/upgrade tests.
-Update `script/package-native.sh`, `script/build-package-repository.py`, the
-release matrix and generated installation catalog as required by that target.
+The Bookworm ARM64 DEB has its own Debian 12 target and must be used for this
+image. Do not substitute a Debian 13/Trixie package or bypass platform detection.
 
 Use normal signed APT updates for the application, preserving user config and
 the package's existing service-restoration behavior. Do not reflash the card
@@ -162,6 +162,9 @@ accept its terms, followed by **Build SDRplay support** in Settings. See
 [vendor's API page](https://www.sdrplay.com/hardware-api/).
 Current browser setup builds the adapter; it does not install the vendor API.
 The documented API installation can be done over SSH and remains headless.
+The image's RSPduo performance profile applies only to the qualified dual-tuner
+2 MS/s mode; its ratio-three counter guard rejects other RSPduo modes. Other
+receivers ignore the profile flags.
 
 For a completely browser-only RSPduo setup, separately resolve redistribution
 with SDRplay or design a user-authorized vendor installation workflow. Do not
@@ -231,5 +234,6 @@ atomic preservation of existing output, and unsafe URL forms. All four passed
 with `jsonschema` validation against the official Imager schema retrieved on
 19 September 2026 (SHA-256
 `c3e323aa297e9ef3f386f522abb4497db5eb9a1ca5f7f3c7a3b1f9a75862ac85`).
-This validates metadata generation, not image construction or headless boot.
-The Bookworm package target, pi-gen stage and physical acceptance remain to do.
+This validates metadata generation, not candidate-image construction or headless
+boot. The Bookworm package target is present; the pi-gen build and physical
+acceptance remain to do.

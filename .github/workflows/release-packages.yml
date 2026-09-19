@@ -211,6 +211,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, distro: ubuntu24.04, format: deb, arch: arm64, node_arch: arm64 }
           - { runner: ubuntu-24.04, distro: ubuntu26.04, format: deb, arch: amd64, node_arch: x64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
           - { runner: ubuntu-24.04-arm, distro: ubuntu26.04, format: deb, arch: arm64, node_arch: arm64, distro_env: ubuntu26.04, image: docker.io/library/ubuntu@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d }
+          - { runner: ubuntu-24.04-arm, distro: debian12, format: deb, arch: arm64, node_arch: arm64, distro_env: debian12, image: docker.io/library/debian@sha256:f37a335e82bca302e955fa39f9dfe28f1be618f016f8a2b56318e5a5111afc26 }
           - { runner: ubuntu-24.04, distro: debian13, format: deb, arch: amd64, node_arch: x64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
           - { runner: ubuntu-24.04-arm, distro: debian13, format: deb, arch: arm64, node_arch: arm64, distro_env: debian13, image: docker.io/library/debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1 }
           - { runner: ubuntu-24.04, distro: fedora44, format: rpm, arch: x86_64, node_arch: x64 }
@@ -254,8 +255,8 @@ jobs:
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
-      - name: Build native Ubuntu 22.04/26.04 or Debian 13 package in pinned isolated userspace
-        if: github.event_name != 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13')
+      - name: Build native Ubuntu 22.04/26.04 or Debian 12/13 package in pinned isolated userspace
+        if: github.event_name != 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
@@ -334,7 +335,7 @@ jobs:
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
       - name: Build local-kit all-receiver Debian-family package for PR verification
-        if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian13')
+        if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
         env:
           NODE_ARCH: ${{ matrix.node_arch }}
           NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
@@ -466,8 +467,8 @@ jobs:
           python3 - <<'PY'
           import datetime, json, os, pathlib, re
           manifests = sorted(pathlib.Path('packages').glob('*.manifest.json'))
-          if len(manifests) != 10:
-              raise SystemExit(f'expected ten package manifests, found {len(manifests)}')
+          if len(manifests) != 11:
+              raise SystemExit(f'expected eleven package manifests, found {len(manifests)}')
           entries = [json.loads(path.read_text()) for path in manifests]
           required = {'name', 'version', 'release', 'format', 'distro', 'distro_version',
                       'arch', 'filename', 'sha256', 'size', 'backend', 'compiled_receivers',
@@ -486,6 +487,8 @@ jobs:
               ('deb', 'ubuntu', '24.04', arch) for arch in ('amd64', 'arm64')
           } | {
               ('deb', 'ubuntu', '26.04', arch) for arch in ('amd64', 'arm64')
+          } | {
+              ('deb', 'debian', '12', 'arm64')
           } | {
               ('deb', 'debian', '13', arch) for arch in ('amd64', 'arm64')
           } | {

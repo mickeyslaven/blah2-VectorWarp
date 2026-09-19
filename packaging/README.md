@@ -17,14 +17,12 @@ See [Pi image packaging](../docs/PI_IMAGE_PACKAGING.md).
 
 Packages are published through the signed APT/DNF repositories and direct
 release assets. This directory describes the release build for
-Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)
-and ARM64 (arm64 / aarch64). Ubuntu/Debian produce DEBs; Fedora produces RPMs.
-DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
-and the legacy Raspberry Pi OS Trixie route selects Debian 13 ARM64. Neither is
-a separate image or hardware validation. The validated Pi 4B baseline is
-Raspberry Pi OS Lite 64-bit Bookworm, but a Bookworm package target is not
-released yet. Do not present a Trixie package as Bookworm-compatible; the Pi
-image remains a packaging plan, not a downloadable artifact.
+Ubuntu 22.04/24.04/26.04, Debian 12 Bookworm ARM64, Debian 13, and Fedora 44.
+Ubuntu, Debian 13, and Fedora 44 cover x86-64 (amd64 / x86_64) and ARM64
+(arm64 / aarch64); Debian 12 is ARM64 only. Ubuntu/Debian produce DEBs; Fedora
+produces RPMs. DragonOS selects a matching Ubuntu repository only when its OS
+metadata matches. Raspberry Pi OS Lite 64-bit Bookworm selects the Debian 12
+ARM64 package; the older Trixie route remains available through Debian 13.
 
 Each release package includes compiled Kraken, USRP and dual-HackRF support,
 our locally buildable RSPduo adapter source kit, and all replay formats. UHD,
