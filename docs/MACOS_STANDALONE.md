@@ -1,25 +1,28 @@
 # Standalone macOS installer development
 
-This guide describes the planned standalone macOS installer. It is not a public
+This guide describes the standalone macOS installer in development. It is not a public
 download or current release. Local implementation and testing are ongoing.
 
-The intended `.pkg` installs one `VectorWarp.app` in `/Applications`. The app
-will contain separate `arm64` and `x86_64` runtimes; its universal launcher
+The `.pkg` targets one `VectorWarp.app` in `/Applications`. The app
+contains separate `arm64` and `x86_64` runtimes; its universal launcher
 selects the matching runtime. macOS 15 or newer is the target. Homebrew is not
 needed at runtime.
 
-Local development artifacts are ad-hoc signed only. They must not be
-treated as a public distribution until architecture CI qualification,
-redistribution review, Developer ID signing, and notarization are complete.
+The local universal candidate has Developer ID Application and Installer
+signatures. Its hardened-runtime checks passed on Apple Silicon, including CPU
+lifecycle and actual Vulkan ambiguity/clutter execution. Apple notarization was
+accepted and stapled; local Gatekeeper installer assessment passed. Actual installer
+execution remains untested, and this is not a public distribution.
+The ad-hoc mode described below remains available for development fixtures.
 
 The standalone CI matrix passed both macOS 15 runtime jobs for source revision
 `f8135ac947a88dd416b0f0ae8d3d891dd546da1d` ([run 35420421113](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35420421113)). This is runtime
 CI evidence. The combined local app and installer also passed assembly, Apple
 Silicon application lifecycle, unchanged-runtime and expanded-package checks.
 The Intel payload was exercised in CI; physical Intel execution remains untested.
-Public distribution remains pending the reviews above.
+Public distribution remains pending final release review.
 
-## Planned commands
+## Commands
 
 The app opens Settings by default. Its executable is:
 
@@ -171,6 +174,8 @@ a local output directory outside common synchronized folders.
 Keep Apple credentials in Apple's local keychain tools. Notarize the final signed
 package using a local `notarytool` profile, require an explicit `Accepted` result,
 inspect its log, staple the package and verify it before public distribution.
-Actual Developer ID startup, JIT, plugin loading, Gatekeeper and installation
-checks remain separate from local ad-hoc fixture tests. No Developer ID or
-notarization success is claimed for the current development package.
+Actual Developer ID startup, JIT and plugin/GPU loading passed on the local Apple
+Silicon candidate; those results are separate from ad-hoc fixture tests. See the
+[test matrix](MACOS_TEST_MATRIX.md) for scope and remaining hardware coverage.
+Apple notarization, stapling and Gatekeeper installer assessment passed; actual
+installation has not been tested.

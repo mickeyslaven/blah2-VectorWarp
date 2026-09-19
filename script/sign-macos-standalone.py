@@ -197,7 +197,8 @@ def verify_installer_signature_report(report, team):
     status = re.search(r'^\s*Status:\s*(.+?)\s*$', report, re.MULTILINE)
     if not status or status.group(1) not in {
             'signed by a certificate trusted by macOS',
-            'signed by a certificate trusted by Mac OS X'}:
+            'signed by a certificate trusted by Mac OS X',
+            'signed by a developer certificate issued by Apple for distribution'}:
         raise ValueError('installer certificate is not reported trusted')
     leaf = re.search(r'^\s*1\.\s+(.+?)\s*$', report, re.MULTILINE)
     if not leaf or not re.fullmatch(r'Developer ID Installer: .+ \(' + re.escape(team) + r'\)', leaf.group(1)):

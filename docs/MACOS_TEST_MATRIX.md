@@ -35,10 +35,18 @@ Node/Python and processor-status smoke checks passed using an existing Rosetta
 installation; that is emulated execution, not physical Intel qualification.
 Ad-hoc mode deliberately omits hardened runtime. A small executable fixture
 showed that hardened ad-hoc processes could not load the private libraries
-without matching Team IDs. Developer ID mode retains the narrower production
-entitlements and awaits actual certificate-backed execution and Apple checks.
-Public binary distribution, Developer ID signing and notarization are not yet
-qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
+without matching Team IDs. A subsequent local Developer ID candidate passed
+signature, Team ID, trusted-timestamp and entitlement checks for all 284 native
+runtime objects and its universal launcher, plus Apple's installer-signature
+validation. On Apple M2, the signed hardened-runtime app passed Node hot
+JavaScript/Wasm, Python native imports, open-SDK no-device handling, synthetic
+CPU lifecycle and forced Vulkan ambiguity/clutter checks with finite output.
+An initially shortened GPU fixture stopped before the eight qualification frames;
+restoring the original nine-CPI fixture passed without changing the app or gates.
+These checks do not qualify signed execution on physical Intel hardware.
+Apple accepted the signed installer for notarization; its ticket was stapled and
+local Gatekeeper installer assessment passed. Actual installer execution and public
+binary distribution remain pending. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
 
 Local verification used macOS 26.6.1 on an Apple M2 with 8 GiB RAM,
 AppleClang and Node 24.21.0. Results below distinguish actual Mac execution,

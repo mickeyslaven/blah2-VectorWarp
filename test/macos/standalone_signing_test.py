@@ -119,11 +119,19 @@ class SigningTest(unittest.TestCase):
     def test_installer_report_requires_trusted_matching_leaf(self):
         good = '''Package "fixture.pkg":\n   Status: signed by a certificate trusted by macOS\n   Certificate Chain:\n    1. Developer ID Installer: Example (ABCDE12345)\n    2. Developer ID Certification Authority\n'''
         signer.verify_installer_signature_report(good, 'ABCDE12345')
+        macos26 = '''Package "fixture.pkg":\n   Status: signed by a developer certificate issued by Apple for distribution\n   Signed with a trusted timestamp on: 2026-09-19 14:29:56 +0000\n   Certificate Chain:\n    1. Developer ID Installer: Example (ABCDE12345)\n       SHA256 fingerprint: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    2. Developer ID Certification Authority\n    3. Apple Root CA\n'''
+        signer.verify_installer_signature_report(macos26, 'ABCDE12345')
         for bad in (good.replace('ABCDE12345', 'WRONG12345'),
                     good.replace('Example (ABCDE12345)', 'ABCDE12345 Example (WRONG12345)'),
                     good.replace('Developer ID Installer:', 'Developer ID Application:'),
                     good.replace('signed by a certificate trusted by macOS', 'signed by an untrusted certificate'),
-                    good.replace('1. Developer ID Installer:', '2. Developer ID Installer:')):
+                    good.replace('signed by a certificate trusted by macOS', 'unsigned'),
+                    macos26.replace('signed by a developer certificate issued by Apple for distribution',
+                                    'signed by a developer certificate issued by Apple for development'),
+                    good.replace('1. Developer ID Installer:', '2. Developer ID Installer:'),
+                    macos26.replace('Example (ABCDE12345)', 'ABCDE12345 Example (WRONG12345)'),
+                    macos26.replace('Developer ID Installer:', 'Developer ID Application:'),
+                    macos26.replace('signed by a developer certificate issued by Apple for distribution', 'signed by an untrusted certificate')):
             with self.assertRaises(ValueError):
                 signer.verify_installer_signature_report(bad, 'ABCDE12345')
 

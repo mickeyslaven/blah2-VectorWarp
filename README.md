@@ -118,7 +118,11 @@ after merges to `main`; public v0.1.7 release assets remain Linux-only.
 After the public tap is published, its update and restart commands are in the
 [Homebrew guide](docs/MACOS_HOMEBREW.md#public-tap-updates-after-publication).
 The planned non-Homebrew macOS installer is documented separately in
-[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md); it has no public download yet.
+[MACOS_STANDALONE.md](docs/MACOS_STANDALONE.md). The local universal package is
+Developer ID signed and Apple-notarized, but it has no public download or release
+asset yet. When a release provides `VectorWarp-signed.pkg`, it installs the app at
+`/Applications/VectorWarp.app`; launch it with
+`/Applications/VectorWarp.app/Contents/MacOS/VectorWarp`.
 
 ## Install on Linux
 

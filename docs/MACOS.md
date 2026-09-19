@@ -16,9 +16,10 @@ open receiver-adapter, synthetic Kraken, replay, API, browser and lifecycle
 checks. Physical Intel receivers, GPU processing and installed Homebrew remain
 unverified.
 
-The planned standalone `.pkg` is a separate local-development effort, with no
-public download or release claim. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md)
-for its target layout, commands and qualification boundaries.
+The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized
+and installs at `/Applications/VectorWarp.app`; it has no public download or
+release claim yet. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target
+layout, commands and qualification boundaries.
 Homebrew is the macOS packaging path: see [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md)
 for a local source snapshot, service lifecycle, upgrades and removal. CPU processing
 is always available. Optional Vulkan/MoltenVK processing is described in
