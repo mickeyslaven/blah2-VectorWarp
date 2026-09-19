@@ -42,18 +42,22 @@ after adding the signing subkey. Only that public `.asc` file belongs in Git.
 
 ## Release process
 
-The intended build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13 DEBs,
-plus Fedora 44 RPMs, each for x86-64 (amd64 / x86_64) and
-ARM64 (arm64 / aarch64): ten packages. The x86-64 aliases both cover Intel
-and AMD CPUs. Preserve distribution-native architecture names in package
-metadata, filenames and commands.
+The build matrix is Ubuntu 22.04/24.04/26.04 and Debian 13 DEBs, plus Fedora
+44 RPMs, each for x86-64 (amd64 / x86_64) and ARM64 (arm64 / aarch64). Releases
+before 0.1.10 retain that historical ten-package matrix. Starting with 0.1.10,
+add one Debian 12 Bookworm ARM64 DEB for an eleven-package matrix; Bookworm has
+no x86-64 package target. The x86-64 aliases cover both Intel and AMD CPUs.
+Preserve distribution-native architecture names in package metadata, filenames
+and commands.
 Ubuntu 22.04/26.04 and Debian 13 are built in their own
 pinned userspaces; the containers are build conveniences only and are never a
 VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
 selection through `/etc/os-release`; it is not an independently built or
 boot-tested DragonOS target. Raspberry Pi OS Trixie selects the Debian 13
 ARM64 (arm64 / aarch64) package; its installation and Pi hardware performance need separate
-validation. No 32-bit or custom SD-card image is produced.
+validation. Raspberry Pi OS Bookworm uses the Debian 12 ARM64 package in the
+separate Pi 4 preview image; see [Pi image packaging](PI_IMAGE_PACKAGING.md).
+No 32-bit package is produced.
 Each package includes compiled Kraken, USRP and dual-HackRF adapters, CPU
 processing with Vulkan auto-detection, and VectorWarp's locally buildable
 RSPduo source kit. The kit is not a compiled RSPduo adapter and contains no
@@ -61,7 +65,8 @@ SDRplay files. The user installs SDRplay's separately licensed API and headers,
 then explicitly chooses **Build SDRplay support** in Settings. UHD, libhackrf,
 normal C++ compiler tools and binutils are native package dependencies.
 
-Stable and PR package jobs build the same `all` profile on all ten targets:
+Stable and PR package jobs build the same `all` profile on every applicable
+target: eleven from 0.1.10, and the historical ten before it.
 `compiled_receivers=Usrp,HackRF,Kraken` and
 `local_build_receivers=RspDuo`. Neither job receives, downloads, accepts terms
 for, caches, uploads or packages the SDRplay SDK. The explicit `rspduo`
@@ -71,7 +76,8 @@ the SDK locally; it is not the release-package path. PR jobs use the empty
 jobs may upload the same checked package inputs for the separate signing flow.
 
 1. `CI` validates CPU-only Kraken CTest, portable replay and API/UI tests.
-   `Build release packages` runs all ten native package smoke checks on PRs
+   `Build release packages` runs every native package smoke check on PRs (eleven
+   from 0.1.10; ten for older release versions)
    using the same three compiled adapters and RSPduo local source kit as a
    stable package, without proprietary SDK inputs. Each target also runs the
    [installed service and browser checks](PACKAGE_TESTING.md): Save & Restart,
@@ -81,7 +87,8 @@ jobs may upload the same checked package inputs for the separate signing flow.
    same package contract, then the separate protected `release-signing` flow
    signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a
    draft release; its manual version input is dry-run only.
-2. Confirm the ten package assets, `SHA256SUMS`, `package-manifest.json` and
+2. Confirm every package asset: eleven from 0.1.10, or the historical ten for
+   an older release, plus `SHA256SUMS`, `package-manifest.json` and
    `repository-manifest.json`. The tag creates a draft release. If the
    [local macOS release agent](MACOS_RELEASE_AGENT.md) is installed and its
    source/notices gates pass, it adds the notarized Mac package and source,
