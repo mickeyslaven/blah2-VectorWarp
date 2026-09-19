@@ -21,6 +21,8 @@ class StandaloneReleaseTriggerTest(unittest.TestCase):
         source = WORKFLOW.read_text()
         self.assertIn("if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''", source)
         self.assertIn("script/transfer-macos-runtime.py encrypt", source)
+        self.assertIn("brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers", source)
+        self.assertIn("build/standalone-provenance/header-input-versions.txt", source)
         self.assertNotIn("script/sign-macos-standalone.py", source)
         self.assertNotIn("notarytool", source)
 

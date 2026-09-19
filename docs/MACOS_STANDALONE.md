@@ -112,7 +112,8 @@ CI runs for pull requests, main-branch merges and version tags, uploading diagno
 encrypted development payloads for local review. The recipient's private transfer
 key and Apple signing/notarization credentials stay on the local Mac; this public
 repository does not register that Mac as a self-hosted runner. Release packages
-are assembled and signed locally with the reviewed corresponding source and
+are assembled and signed by the [scripted local release agent](MACOS_RELEASE_AGENT.md)
+with the reviewed corresponding source and
 notices; an accepted, stapled PKG and release receipt are required before the
 public download page links an asset. A new tag does not authorize reuse of a
 prior release's source archive or notice bindings: changed dependency or runtime
