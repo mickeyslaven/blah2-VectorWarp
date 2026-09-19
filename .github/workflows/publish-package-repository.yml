@@ -95,6 +95,17 @@ jobs:
           manifest_commit=$(jq -er '.source_commit | select(type == "string")' packages/package-manifest.json)
           [[ $manifest_version == "${TAG#v}" && ${manifest_commit,,} == ${tag_commit,,} ]] || {
             echo 'Release assets do not match the immutable release tag.' >&2; exit 1; }
+          macos_filename="vectorwarp-${manifest_version}-macos-universal.pkg"
+          macos_digest=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"${macos_filename}\") | .digest")
+          if [[ -n $macos_digest ]]; then
+            [[ $macos_digest =~ ^sha256:[0-9a-f]{64}$ ]] || {
+              echo 'Mac release asset has no verified SHA-256 digest.' >&2; exit 1; }
+            gh release download "$TAG" --dir packages --pattern "$macos_filename" --pattern macos-release.json
+            [[ -f packages/$macos_filename && -f packages/macos-release.json ]] || {
+              echo 'Mac release asset or receipt is missing.' >&2; exit 1; }
+            printf '%s  %s\n' "${macos_digest#sha256:}" "packages/$macos_filename" | sha256sum --check --strict
+            printf 'MACOS_RELEASE_FILE=packages/macos-release.json\n' >> "$GITHUB_ENV"
+          fi
           printf 'RELEASE_VERSION=%s\nRELEASE_COMMIT=%s\n' "$manifest_version" "$tag_commit" >> "$GITHUB_ENV"
       - name: Install repository signing tools
         run: |
@@ -119,12 +130,16 @@ jobs:
           FINGERPRINT: ${{ vars.VECTORWARP_ARCHIVE_KEY_FINGERPRINT }}
         run: |
           set -euo pipefail
+          macos_args=()
+          if [[ -n ${MACOS_RELEASE_FILE:-} ]]; then
+            macos_args=(--macos-release "$MACOS_RELEASE_FILE")
+          fi
           python3 script/build-package-repository.py --packages packages --manifest packages/package-manifest.json \
             --output repository --public-key packaging/keys/vectorwarp.asc \
             --fingerprint "$FINGERPRINT" --signing-key "$FINGERPRINT" \
             --installer-template script/install-release.sh \
             --expected-version "$RELEASE_VERSION" --expected-source-commit "$RELEASE_COMMIT" \
-            --require-release-matrix
+            --require-release-matrix "${macos_args[@]}"
           test -f repository/repository-manifest.json -a -f repository/install.sh
           test $(du -sm repository | awk '{print $1}') -le 900
       - name: Stage fresh repository for protected Pages deployment
@@ -195,3 +210,10 @@ jobs:
               --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
               "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${filename}"
           done <<< "$filenames"
+          macos_filename=$(jq -r '.macos_package.filename // empty' repository/repository-manifest.json)
+          if [[ -n $macos_filename ]]; then
+            [[ $macos_filename == "vectorwarp-${version}-macos-universal.pkg" ]]
+            curl --fail --silent --show-error --head --location --proto '=https' --proto-redir '=https' \
+              --connect-timeout 10 --max-time 30 --retry 2 --output /dev/null \
+              "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v${version}/${macos_filename}"
+          fi

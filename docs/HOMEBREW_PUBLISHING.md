@@ -2,9 +2,9 @@
 
 The public tap is `mickeyslaven/homebrew-vectorwarp`; its Homebrew name is
 `mickeyslaven/vectorwarp`. The repository and publishing credential are separate
-from the Linux package repositories. The initial tap stays empty until the
-publishing workflow has reached `main` and its first installation check passes.
-Local source installation remains available in [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md).
+from the Linux package repositories. The tap is live; updates require the
+publishing workflow on `main` and a passing installation check. Local source
+installation remains available in [MACOS_HOMEBREW.md](MACOS_HOMEBREW.md).
 
 ## After a merge
 
@@ -67,7 +67,7 @@ The full formula name is `mickeyslaven/vectorwarp/vectorwarp`
 (`owner/tap/package`); adding the tap enables the short `vectorwarp` name.
 Homebrew builds these formulas from source because no bottles are published.
 
-Use the [Homebrew user guide](MACOS_HOMEBREW.md#public-tap-updates-after-publication)
+Use the [Homebrew user guide](MACOS_HOMEBREW.md#public-tap-updates)
 or the tap's generated README for updates, optional per-user services and
 removal. Existing `vectorwarp/local` users must stop their service and instance,
 uninstall both local formulas, then untap `vectorwarp/local` before installing

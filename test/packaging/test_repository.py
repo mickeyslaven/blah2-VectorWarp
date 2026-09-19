@@ -71,6 +71,38 @@ class HomepageTests(unittest.TestCase):
         self.assertNotIn('Raspberry Pi OS · 64-bit Trixie', page)
         self.assertEqual(page.count('Download RPM'), 1)
 
+    def test_macos_download_requires_verified_release_entry(self):
+        manifest = self.release_manifest()
+        self.assertNotIn('Download signed PKG', repository.repository_homepage(manifest))
+        manifest['macos_package'] = {'filename': 'vectorwarp-1.2.3-macos-universal.pkg'}
+        page = repository.repository_homepage(manifest)
+        self.assertIn('macOS 15+ · universal', page)
+        self.assertIn('releases/download/v1.2.3/vectorwarp-1.2.3-macos-universal.pkg', page)
+        self.assertIn('/Applications/VectorWarp.app/Contents/MacOS/VectorWarp', page)
+        manifest['macos_package']['filename'] = 'vectorwarp-1.2.2-macos-universal.pkg'
+        with self.assertRaisesRegex(ValueError, 'Mac package filename'):
+            repository.repository_homepage(manifest)
+
+    def test_macos_release_receipt_binds_version_commit_and_package_hash(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            package = folder / 'vectorwarp-1.2.3-macos-universal.pkg'
+            package.write_bytes(b'fixture package')
+            receipt = folder / 'macos-release.json'
+            entry = {'schema': 1, 'version': '1.2.3', 'publication_commit': 'a' * 40,
+                     'filename': package.name, 'sha256': repository.sha256(package),
+                     'size': package.stat().st_size, 'apple_team_id': 'DJGHPX8T7R',
+                     'notary_status': 'Accepted', 'gatekeeper': 'Notarized Developer ID',
+                     'runtime_source_id': 'b' * 40,
+                     'notary_submission_id': '63123801-5d8c-4f6a-be1a-2629ec61382d'}
+            receipt.write_text(json.dumps(entry))
+            self.assertEqual(repository.verify_macos_release(receipt, folder, '1.2.3', 'a' * 40), entry)
+            for change in ({'version': '1.2.4'}, {'publication_commit': 'c' * 40},
+                           {'notary_status': 'Rejected'}, {'sha256': '0' * 64}):
+                receipt.write_text(json.dumps({**entry, **change}))
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    repository.verify_macos_release(receipt, folder, '1.2.3', 'a' * 40)
+
     def test_downloads_reject_unsafe_or_duplicate_identities(self):
         for invalid in ('latest', '../main', '1.2.3?bad', '<script>'):
             manifest = self.release_manifest()
