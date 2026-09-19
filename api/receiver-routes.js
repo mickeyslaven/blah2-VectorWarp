@@ -4,6 +4,7 @@ const os = require('os');
 const {createReceiverManager, RECEIVER_TYPES} = require('./receiver-manager');
 const {createReceiverProbes} = require('./receiver-probes');
 const {createReceiverHelperClient} = require('./receiver-helper-client');
+const {createMacReceiverManagement} = require('./macos-receiver-management');
 const {receiverSetupGuide} = require('./receiver-setup-guide');
 const INTENT = 'receiver-management-v1';
 
@@ -45,11 +46,17 @@ function sameReceiverOrigin(req, allowed = new Set(['http://127.0.0.1:3000'])) {
 
 function installReceiverRoutes(app, options) {
   const {readDocument, preview = false, compiledLiveTypes = null} = options;
+  const platform = options.platform || process.platform;
+  const environment = options.environment || process.env;
+  const standaloneDistribution = platform === 'darwin' && environment.VECTORWARP_MACOS_DISTRIBUTION === 'standalone';
   const createProbes = options.createProbes || createReceiverProbes;
   const createManager = options.createManager || createReceiverManager;
   const allowed = options.allowedOrigins || trustedOrigins(options.port || 3000, options.extraOrigins || [],
     options.networkInterfaces || os.networkInterfaces, options.warn || console.warn);
-  const helper = options.helper || createReceiverHelperClient();
+  // macOS has no privileged receiver broker. Keep its paths unreachable even
+  // when a caller supplies a Linux helper test double.
+  const helper = platform === 'darwin' ? null : (options.helper || createReceiverHelperClient());
+  const macManagement = platform === 'darwin' ? (options.macManagement || createMacReceiverManagement({...options.macManagementOptions, environment})) : null;
   const now = options.now || Date.now;
   const helperExecutable = options.helperExecutable || '/opt/vectorwarp/libexec/vectorwarp-receiver-helper';
   if (!/^\/[A-Za-z0-9_./+-]+$/.test(helperExecutable))
@@ -81,6 +88,7 @@ function installReceiverRoutes(app, options) {
   }
   async function management() {
     if (preview) return {available: false, code: 'PREVIEW', actions: [], message: 'Host management is disabled in UI previews.'};
+    if (platform === 'darwin') return macManagement.discover();
     try {
       const result = await helper({verb: 'discover'});
       return {...result, available: result.ok === true};
@@ -89,7 +97,8 @@ function installReceiverRoutes(app, options) {
   async function snapshot(fresh = false) {
     const document = readDocument();
     if (!fresh && cached && cached.revision === document.revision && now() - cached.at < 5000) return cached.promise;
-    const manager = createManager({timeoutMs: 1800, probes: preview ? {} : createProbes(document.config)});
+    const manager = createManager({timeoutMs: 1800, standaloneDistribution,
+      probes: preview ? {} : createProbes(document.config, {platform, env: environment})});
     const promise = Promise.all([manager.discover({config: document.config, compiledLiveTypes: compiledLiveTypes || []}), management()])
       .then(([discovery, managed]) => {
         const remoteSuite = discovery.receivers?.some(receiver => receiver.type === 'Kraken' &&
@@ -100,7 +109,7 @@ function installReceiverRoutes(app, options) {
               message: 'The saved Suite endpoint is remote; local receiver service control does not apply.'} : action)};
         return {...discovery,
         receivers: discovery.receivers.map(receiver => ({...receiver,
-          setupGuide: receiverSetupGuide(receiver, helperExecutable)})),
+          setupGuide: receiverSetupGuide(receiver, helperExecutable, {platform})})),
         configRevision: document.revision,
         setupRequired: document.setupRequired === true, buildCapabilitiesKnown: compiledLiveTypes !== null,
         preview, managementAvailable: managed.available, management: managed,
@@ -134,18 +143,20 @@ function installReceiverRoutes(app, options) {
       const action = discovery.management.actions?.find(item => item.id === req.body.actionId && item.receiverType === req.body.receiverType);
       if (preview || !action?.available)
         return res.status(409).json({ok: false, code: 'ACTION_NOT_REVIEWED', errors: ['This installation has no available reviewed action for this receiver.']});
-      const result = await helper({verb: 'plan', actionId: action.id, configRevision: discovery.configRevision});
+      const result = platform === 'darwin' ? macManagement.plan(action.id) :
+        await helper({verb: 'plan', actionId: action.id, configRevision: discovery.configRevision});
+      if (!result) return res.status(409).json({ok: false, code: 'ACTION_NOT_REVIEWED', errors: ['This installation has no available reviewed action for this receiver.']});
       if (!result.ok) return res.status(409).json({...result, errors: [result.message]});
       if (result.status === 'not-required') return res.json({...result, configRevision: discovery.configRevision});
-      if (!/^[a-f0-9]{64}$/.test(result.planId)) throw new Error('The receiver helper returned an invalid plan ID.');
+      if (platform !== 'darwin' && !/^[a-f0-9]{64}$/.test(result.planId)) throw new Error('The receiver helper returned an invalid plan ID.');
       for (const [id, grant] of grants) if (grant.expiresAt <= now()) grants.delete(id);
       if (grants.size >= 64) return res.status(429).json({ok: false, errors: ['Too many plans are pending; wait for them to expire.']});
       const nonce = crypto.randomBytes(32).toString('hex');
-      const grant = {planId: result.planId, configRevision: discovery.configRevision,
+      const grant = {planId: result.planId, actionId: action.id, macos: platform === 'darwin', configRevision: discovery.configRevision,
         origin: req.get('Origin'), expiresAt: now() + Math.min(result.lifetimeSeconds || 300, 300) * 1000};
       grants.set(nonce, grant);
       res.json({...result, nonce, configRevision: grant.configRevision, expiresAt: grant.expiresAt,
-        authorizationCommand: `sudo ${helperExecutable} authorize ${result.planId}`});
+        ...(platform === 'darwin' ? {} : {authorizationCommand: `sudo ${helperExecutable} authorize ${result.planId}`})});
     } catch (error) { failure(res, error); }
   });
   app.post('/api/receivers/execute', async (req, res) => {
@@ -166,7 +177,8 @@ function installReceiverRoutes(app, options) {
     grants.delete(req.body.nonce);
     running = true;
     try {
-      const result = await helper({verb: 'execute', planId: grant.planId, configRevision: grant.configRevision});
+      const result = grant.macos ? await macManagement.execute(grant.actionId) :
+        await helper({verb: 'execute', planId: grant.planId, configRevision: grant.configRevision});
       if (result.code === 'LOCAL_AUTHORIZATION_REQUIRED') grants.set(req.body.nonce, grant);
       cached = null;
       res.status(result.ok ? 200 : 409).json({...result, ...(result.ok ? {} : {errors: [result.message]})});

@@ -1,6 +1,10 @@
 #include "process/ambiguity/GpuProcess.h"
 #include <algorithm>
 #include <csignal>
+#include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
+#include <iostream>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdexcept>
@@ -14,7 +18,10 @@ public:
   blah2::GpuDevice device() const override { return {"double", "Isolated test worker", 1}; }
   void process(const std::vector<std::complex<float>>& reference,
       const std::vector<std::complex<float>>&, std::vector<std::complex<float>>& output) override {
-    if (mode_ == "hang-frame") for (;;) pause();
+    if (mode_ == "hang-frame" || mode_ == "orphan-frame") {
+      if (mode_ == "orphan-frame") std::cout << getpid() << std::endl;
+      for (;;) pause();
+    }
     if (mode_ == "crash-frame") raise(SIGSEGV);
     if (mode_ == "error-frame") throw std::runtime_error("Injected GPU failure");
     if (mode_ == "bad-packet") { send(3, "bad", 3, MSG_NOSIGNAL); for (;;) pause(); }
@@ -58,6 +65,19 @@ public:
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "ok";
   return blah2::runGpuWorker([&](const blah2::GpuGeometry& g, const std::string&) {
+    if (mode == "fd-closed") {
+      const char* inherited = std::getenv("BLAH2_TEST_INHERITED_FD");
+      if (!inherited || fcntl(std::atoi(inherited), F_GETFD) >= 0 || errno != EBADF)
+        throw std::runtime_error("GPU worker inherited a parent descriptor");
+#ifdef __APPLE__
+      if (fcntl(4, F_GETFD) >= 0 || errno != EBADF)
+        throw std::runtime_error("GPU worker retained a resizable shared-memory descriptor");
+#endif
+    }
+    if (mode == "orphan-init") {
+      std::cout << getpid() << std::endl;
+      for (;;) pause();
+    }
     if (mode == "hang-init") for (;;) pause();
     if (mode == "crash-init") raise(SIGSEGV);
     if (mode == "error-init") throw std::runtime_error("Injected initialization failure");

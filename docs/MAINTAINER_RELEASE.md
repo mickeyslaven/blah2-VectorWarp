@@ -105,6 +105,9 @@ jobs may upload the same checked package inputs for the separate signing flow.
    packaging/README, DragonOS and Pi setup pages together, removing their
    **pending first release** wording. Keep source instructions and record which
    platforms were tested; a successful package build is not a hardware test.
+   macOS uses the separate [Homebrew publishing workflow](HOMEBREW_PUBLISHING.md)
+   after merges to `main`; it does not require a Linux release tag or alter
+   this package-signing process.
    Give each OS one complete copy/paste command: install curl and GnuPG from
    the distribution, download the HTTPS installer, run `--repo-only`, install
    VectorWarp with APT or DNF, then run `vectorwarp` to open the web interface.

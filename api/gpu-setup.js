@@ -19,7 +19,7 @@ function isPi(read = fs.readFileSync) {
 function fromRuntime(setup, {acceleration, clutterAcceleration, fresh} = {}) {
   // Runtime telemetry may demonstrate a distro backport works. Never reject a
   // qualified device solely by version or turn package/enumeration into proof.
-  if (!setup.pi || !fresh) return setup;
+  if ((!setup.pi && setup.platform !== 'darwin') || !fresh) return setup;
   const ready = value => value?.active === 'vulkan' && value?.state === 'ready';
   const stages = {ambiguity: ready(acceleration), clutter: ready(clutterAcceleration)};
   if (!stages.ambiguity && !stages.clutter) return {...setup, runtimeStages: stages};
@@ -30,11 +30,17 @@ function fromRuntime(setup, {acceleration, clutterAcceleration, fresh} = {}) {
       '.'};
 }
 
-function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile, now = Date.now} = {}) {
+function createGpuSetupStatus({preview = false, pi = isPi(), execute = execFile, now = Date.now, platform = process.platform} = {}) {
   let cached = null;
   const unavailable = message => ({version: 1, pi, state: 'driver-unverified',
     qualification: 'not-run', message, command: INSTALL_COMMAND, accessCommand: ACCESS_COMMAND});
   return async runtime => {
+    if (platform === 'darwin') {
+      const setup = {version: 1, platform: 'darwin', pi: false, state: 'unqualified',
+        qualification: 'not-run', message: 'macOS GPU processing uses Vulkan through MoltenVK. Each processing stage checks correctness and speed at startup; CPU fallback remains available. Waiting for current GPU qualification telemetry.'};
+      const currentRuntime = typeof runtime === 'function' ? runtime() : runtime || {};
+      return preview ? setup : fromRuntime(setup, currentRuntime);
+    }
     if (preview) return unavailable('GPU setup is unavailable in preview.');
     if (!cached || now() - cached.at >= 60000) {
       const candidates = [path.resolve(__dirname, '../../../libexec/vectorwarp-gpu-setup'),

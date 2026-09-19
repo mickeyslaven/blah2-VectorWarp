@@ -2,8 +2,8 @@
 # No vendor SDK, build directory, recording, model or general source-tree copy.
 set(BLAH2_RSPDUO_KIT_ID "")
 if(BLAH2_LOCAL_BUILD_RSPDUO)
-  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    message(FATAL_ERROR "The local RSPduo build contract currently requires GNU C++")
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT (APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"))
+    message(FATAL_ERROR "The local RSPduo build contract requires GNU C++ on Linux or AppleClang on macOS")
   endif()
   set(BLAH2_RSPDUO_KIT_SOURCES
     src/capture/ReceiverFactory.cpp src/capture/ReceiverModule.h
@@ -19,7 +19,7 @@ if(BLAH2_LOCAL_BUILD_RSPDUO)
   if(NOT target_result EQUAL 0 OR NOT BLAH2_RSPDUO_COMPILER_TARGET MATCHES "^[A-Za-z0-9_.+-]+$")
     message(FATAL_ERROR "Cannot identify the local-adapter compiler target")
   endif()
-  set(kit_identity "local-rspduo-v1|${BLAH2_RECEIVER_COHORT}|${BLAH2_RSPDUO_KIT_FLAGS}|${BLAH2_RSPDUO_COMPILER_TARGET}")
+  set(kit_identity "local-rspduo-v2|${CMAKE_CXX_COMPILER_ID}|${BLAH2_RECEIVER_COHORT}|${BLAH2_RSPDUO_KIT_FLAGS}|${BLAH2_RSPDUO_COMPILER_TARGET}")
   # Core implementation changes also invalidate a previously built adapter.
   foreach(source ${BLAH2_RSPDUO_KIT_SOURCES}
       src/capture/Source.cpp src/capture/Recording.cpp
@@ -58,7 +58,7 @@ function(blah2_write_rspduo_plan)
   endforeach()
   file(WRITE "${PROJECT_BINARY_DIR}/receiver-generated/rspduo-plan.json"
     "{\"schema\":1,\"receiver\":\"RspDuo\",\"kit_id\":\"${BLAH2_RSPDUO_KIT_ID}\","
-    "\"cohort\":\"${BLAH2_RECEIVER_COHORT}\",\"compiler\":{\"id\":\"GNU\","
+    "\"cohort\":\"${BLAH2_RECEIVER_COHORT}\",\"compiler\":{\"id\":\"${CMAKE_CXX_COMPILER_ID}\","
     "\"version\":\"${CMAKE_CXX_COMPILER_VERSION}\",\"target\":\"${BLAH2_RSPDUO_COMPILER_TARGET}\","
     "\"cxx_flags\":[${flag_json}]},\"sources\":{${sources}}}\n")
 endfunction()

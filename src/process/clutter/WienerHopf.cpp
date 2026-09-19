@@ -2,169 +2,147 @@
 #include "process/meta/FftLength.h"
 #include <complex>
 #include <iostream>
-#include <vector>
+#include <stdexcept>
 
-// constructor
-WienerHopf::WienerHopf(int32_t _delayMin, int32_t _delayMax, uint32_t _nSamples)
-{
-  // input
-  delayMin = _delayMin;
-  delayMax = _delayMax;
+namespace {
+struct Geometry {
+  uint32_t bins, filter;
+};
+Geometry geometry(int32_t delayMin, int32_t delayMax, uint32_t samples) {
   const int64_t taps = int64_t(delayMax) - delayMin;
-  if (!_nSamples || taps <= 0 || uint64_t(taps) > _nSamples)
+  if (!samples || taps <= 0 || uint64_t(taps) > samples)
     throw std::invalid_argument("Clutter filter needs a non-empty half-open delay range no longer than the CPI");
-  nBins = static_cast<uint32_t>(taps);
-  nSamples = _nSamples;
-  // Pad only the linear convolution; keep taps and circular correlations unchanged.
-  nFilter = blah2::nextFastFftLength(uint64_t(nSamples) + nBins + 1);
+  return {static_cast<uint32_t>(taps),
+    blah2::nextFastFftLength(uint64_t(samples) + taps + 1)};
+}
+fftw_complex* fft_data(std::vector<std::complex<double>>& data) {
+  return reinterpret_cast<fftw_complex*>(data.data());
+}
+}
 
-  // initialise data
-  A = arma::cx_mat(nBins, nBins);
-  a = arma::cx_vec(nBins);
-  b = arma::cx_vec(nBins);
-  w = arma::cx_vec(nBins);
+WienerHopf::PreparedReference::PreparedReference(int32_t minimum, int32_t maximum,
+                                                 uint32_t samples)
+  : delayMin(minimum), nBins(geometry(minimum, maximum, samples).bins),
+    nSamples(samples), nFilter(geometry(minimum, maximum, samples).filter),
+    rotated(samples), spectrum(samples), paddedSpectrum(nFilter),
+    cholesky(nBins, nBins), correlation(nBins)
+{
+  fftReference = fftw_plan_dft_1d(nSamples, fft_data(rotated), fft_data(spectrum),
+                                  FFTW_FORWARD, FFTW_ESTIMATE);
+  fftCorrelation = fftw_plan_dft_1d(nSamples, fft_data(rotated), fft_data(rotated),
+                                    FFTW_BACKWARD, FFTW_ESTIMATE);
+  fftPadded = fftw_plan_dft_1d(nFilter, fft_data(paddedSpectrum),
+                                fft_data(paddedSpectrum), FFTW_FORWARD, FFTW_ESTIMATE);
+  if (!fftReference || !fftCorrelation || !fftPadded) {
+    if (fftReference) fftw_destroy_plan(fftReference);
+    if (fftCorrelation) fftw_destroy_plan(fftCorrelation);
+    if (fftPadded) fftw_destroy_plan(fftPadded);
+    throw std::runtime_error("Could not plan clutter reference FFT");
+  }
+}
 
-  // compute FFTW plans in constructor
-  dataX = new std::complex<double>[nSamples];
-  dataY = new std::complex<double>[nSamples];
-  dataOutX = new std::complex<double>[nSamples];
-  dataOutY = new std::complex<double>[nSamples];
-  dataA = new std::complex<double>[nSamples];
-  dataB = new std::complex<double>[nSamples];
-  filtX = new std::complex<double>[nFilter];
-  filtW = new std::complex<double>[nFilter];
-  filt = new std::complex<double>[nFilter];
-  fftX = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataX),
-                          reinterpret_cast<fftw_complex *>(dataOutX), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftY = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataY),
-                          reinterpret_cast<fftw_complex *>(dataOutY), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftA = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataA),
-                          reinterpret_cast<fftw_complex *>(dataA), FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftB = fftw_plan_dft_1d(nSamples, reinterpret_cast<fftw_complex *>(dataB),
-                          reinterpret_cast<fftw_complex *>(dataB), FFTW_BACKWARD, FFTW_ESTIMATE);
-  fftFiltX = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filtX),
-                              reinterpret_cast<fftw_complex *>(filtX), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftFiltW = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filtW),
-                              reinterpret_cast<fftw_complex *>(filtW), FFTW_FORWARD, FFTW_ESTIMATE);
-  fftFilt = fftw_plan_dft_1d(nFilter, reinterpret_cast<fftw_complex *>(filt),
-                             reinterpret_cast<fftw_complex *>(filt), FFTW_BACKWARD, FFTW_ESTIMATE);
+WienerHopf::PreparedReference::~PreparedReference()
+{
+  fftw_destroy_plan(fftReference);
+  fftw_destroy_plan(fftCorrelation);
+  fftw_destroy_plan(fftPadded);
+}
+
+bool WienerHopf::PreparedReference::prepare(const IqData& reference)
+{
+  valid = false;
+  const auto& data = reference.view_data();
+  if (data.size() < nSamples)
+    throw std::invalid_argument("Clutter reference is shorter than CPI");
+  for (uint32_t i = 0; i < nSamples; ++i) {
+    const int64_t shifted = (int64_t(i) - delayMin) % int64_t(nSamples);
+    rotated[i] = data[shifted < 0 ? shifted + nSamples : shifted];
+    paddedSpectrum[i] = rotated[i];
+  }
+  for (uint32_t i = nSamples; i < nFilter; ++i) paddedSpectrum[i] = {};
+  fftw_execute(fftPadded);
+  fftw_execute(fftReference);
+  for (uint32_t i = 0; i < nSamples; ++i)
+    rotated[i] = spectrum[i] * std::conj(spectrum[i]);
+  fftw_execute(fftCorrelation);
+  for (uint32_t i = 0; i < nBins; ++i)
+    correlation[i] = std::conj(rotated[i]) / double(nSamples);
+  cholesky = arma::toeplitz(correlation);
+  // Armadillo's Toeplitz constructor does not make the lower half Hermitian.
+  for (uint32_t i = 0; i < nBins; ++i)
+    for (uint32_t j = 0; j < i; ++j)
+      cholesky(i, j) = std::conj(cholesky(i, j));
+  valid = arma::chol(cholesky, cholesky);
+  if (!valid) std::cerr << "Chol decomposition failed, skip clutter filter" << std::endl;
+  return valid;
+}
+
+WienerHopf::WienerHopf(int32_t minimum, int32_t maximum, uint32_t samples)
+  : delayMin(minimum), nBins(geometry(minimum, maximum, samples).bins),
+    nSamples(samples), nFilter(geometry(minimum, maximum, samples).filter),
+    scratch(nFilter), correlation(nBins), weights(nBins)
+{
+  fftSurveillance = fftw_plan_dft_1d(nSamples, fft_data(scratch), fft_data(scratch),
+                                      FFTW_FORWARD, FFTW_ESTIMATE);
+  ifftCorrelation = fftw_plan_dft_1d(nSamples, fft_data(scratch), fft_data(scratch),
+                                      FFTW_BACKWARD, FFTW_ESTIMATE);
+  fftWeights = fftw_plan_dft_1d(nFilter, fft_data(scratch), fft_data(scratch),
+                                 FFTW_FORWARD, FFTW_ESTIMATE);
+  ifftFiltered = fftw_plan_dft_1d(nFilter, fft_data(scratch), fft_data(scratch),
+                                   FFTW_BACKWARD, FFTW_ESTIMATE);
+  if (!fftSurveillance || !ifftCorrelation || !fftWeights || !ifftFiltered) {
+    if (fftSurveillance) fftw_destroy_plan(fftSurveillance);
+    if (ifftCorrelation) fftw_destroy_plan(ifftCorrelation);
+    if (fftWeights) fftw_destroy_plan(fftWeights);
+    if (ifftFiltered) fftw_destroy_plan(ifftFiltered);
+    throw std::runtime_error("Could not plan clutter surveillance FFT");
+  }
 }
 
 WienerHopf::~WienerHopf()
 {
-  fftw_destroy_plan(fftX);
-  fftw_destroy_plan(fftY);
-  fftw_destroy_plan(fftA);
-  fftw_destroy_plan(fftB);
-  fftw_destroy_plan(fftFiltX);
-  fftw_destroy_plan(fftFiltW);
-  fftw_destroy_plan(fftFilt);
+  fftw_destroy_plan(fftSurveillance);
+  fftw_destroy_plan(ifftCorrelation);
+  fftw_destroy_plan(fftWeights);
+  fftw_destroy_plan(ifftFiltered);
 }
 
-bool WienerHopf::process(IqData *x, IqData *y)
+bool WienerHopf::process(const PreparedReference& reference, IqData *surveillance)
 {
-  uint32_t i, j;
-  const auto& xData = x->view_data();
-  const auto& yData = y->view_data();
-
-  // change deque to std::complex
-  for (i = 0; i < nSamples; i++)
-  {
-    const int64_t shifted = (int64_t(i) - delayMin) % int64_t(nSamples);
-    dataX[i] = xData[shifted < 0 ? shifted + nSamples : shifted];
-    dataY[i] = yData[i];
-  }
-
-  // pre-compute FFT of signals
-  fftw_execute(fftX);
-  fftw_execute(fftY);
-
-  // auto-correlation matrix A
-  for (i = 0; i < nSamples; i++)
-  {
-    dataA[i] = (dataOutX[i] * std::conj(dataOutX[i]));
-  }
-  fftw_execute(fftA);
-  for (i = 0; i < nBins; i++)
-  {
-    a[i] = std::conj(dataA[i]) / (double)nSamples;
-  }
-  A = arma::toeplitz(a);
-
-  // conjugate upper diagonal as arma does not
-  for (i = 0; i < nBins; i++)
-  {
-    for (j = 0; j < nBins; j++)
-    {
-      if (i > j)
-      {
-        A(i, j) = std::conj(A(i, j));
-      }
-    }
-  }
-
-  // cross-correlation vector b
-  for (i = 0; i < nSamples; i++)
-  {
-    dataB[i] = (dataOutY[i] * std::conj(dataOutX[i]));
-  }
-  fftw_execute(fftB);
-  for (i = 0; i < nBins; i++)
-  {
-    b[i] = dataB[i] / (double)nSamples;
-  }
-
-  // compute weights
-  success = arma::chol(A, A);
-  if (!success)
-  {
-    std::cerr << "Chol decomposition failed, skip clutter filter" << std::endl;
-    return false;
-  }
-  success = arma::solve(w, arma::trimatu(A), arma::solve(arma::trimatl(arma::trans(A)), b));
-  if (!success)
-  {
+  if (!surveillance || surveillance->view_data().size() < nSamples ||
+      reference.delayMin != delayMin || reference.nBins != nBins ||
+      reference.nSamples != nSamples || reference.nFilter != nFilter)
+    throw std::invalid_argument("Clutter surveillance or prepared reference geometry does not match");
+  if (!reference.valid) return false;
+  const auto& data = surveillance->view_data();
+  for (uint32_t i = 0; i < nSamples; ++i) scratch[i] = data[i];
+  fftw_execute(fftSurveillance);
+  for (uint32_t i = 0; i < nSamples; ++i)
+    scratch[i] *= std::conj(reference.spectrum[i]);
+  fftw_execute(ifftCorrelation);
+  for (uint32_t i = 0; i < nBins; ++i)
+    correlation[i] = scratch[i] / double(nSamples);
+  const bool success = arma::solve(weights, arma::trimatu(reference.cholesky),
+    arma::solve(arma::trimatl(arma::trans(reference.cholesky)), correlation));
+  if (!success) {
     std::cerr << "Solve failed, skip clutter filter" << std::endl;
     return false;
   }
-
-  // assign and pad x
-  for (i = 0; i < nSamples; i++)
-  {
-    filtX[i] = dataX[i];
-  }
-  for (i = nSamples; i < nFilter; i++)
-  {
-    filtX[i] = {0, 0};
-  }
-
-  // assign and pad w
-  for (i = 0; i < nBins; i++)
-  {
-    filtW[i] = w[i];
-  }
-  for (i = nBins; i < nFilter; i++)
-  {
-    filtW[i] = {0, 0};
-  }
-
-  // compute fft
-  fftw_execute(fftFiltX);
-  fftw_execute(fftFiltW);
-
-  // compute convolution/filter
-  for (i = 0; i < nFilter; i++)
-  {
-    filt[i] = (filtW[i] * filtX[i]);
-  }
-  fftw_execute(fftFilt);
-
-  // update surveillance signal
-  y->clear();
-  for (i = 0; i < nSamples; i++)
-  {
-    y->push_back(dataY[i] - (filt[i] / (double)nFilter));
-  }
-
+  for (uint32_t i = 0; i < nBins; ++i) scratch[i] = weights[i];
+  for (uint32_t i = nBins; i < nFilter; ++i) scratch[i] = {};
+  fftw_execute(fftWeights);
+  for (uint32_t i = 0; i < nFilter; ++i)
+    scratch[i] *= reference.paddedSpectrum[i];
+  fftw_execute(ifftFiltered);
+  surveillance->subtract_clutter(scratch.data(), nSamples, nFilter);
   return true;
+}
+
+bool WienerHopf::process(IqData *reference, IqData *surveillance)
+{
+  if (!reference) throw std::invalid_argument("Clutter reference is null");
+  if (!ownedReference)
+    ownedReference = std::make_unique<PreparedReference>(delayMin,
+      int32_t(int64_t(delayMin) + nBins), nSamples);
+  return ownedReference->prepare(*reference) && process(*ownedReference, surveillance);
 }

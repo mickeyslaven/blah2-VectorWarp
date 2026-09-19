@@ -37,15 +37,38 @@ function maxhold() {
 }
 
 function detection() {
-  return history(null, frame => ['delay', 'doppler', 'snr'].every(key =>
-    Array.isArray(frame[key]) && frame[key].length === frame.delay.length),
-  (frames, frame) => ({
-    frameTimestamp: frame.timestamp,
-    timestamp: frames.flatMap(item => item.delay.map(() => item.timestamp)),
-    delay: frames.flatMap(item => item.delay),
-    doppler: frames.flatMap(item => item.doppler),
-    snr: frames.flatMap(item => item.snr)
-  }));
+  let frames = []; let first = 0; let lastTimestamp = -Infinity; let frameTimestamp = null;
+  let dirty = true; let output = null;
+  const valid = frame => ['delay', 'doppler', 'snr'].every(key => Array.isArray(frame[key]) && frame[key].length === frame.delay.length);
+  const expire = timestamp => {
+    while (first < frames.length && timestamp - frames[first].timestamp > 300000) {
+      frames[first++] = null; // Release payloads immediately; compaction only removes empty slots.
+    }
+    if (first === frames.length) { frames = []; first = 0; }
+    // Avoid retaining an ever-growing consumed prefix during high-rate sparse detection streams.
+    if (first > 1024 && first * 2 >= frames.length) { frames = frames.slice(first); first = 0; }
+  };
+  return {
+    update_data(message) {
+      let frame; try { frame = typeof message === 'string' ? JSON.parse(message) : message; } catch (_) { return; }
+      if (!frame || !Number.isFinite(frame.timestamp) || !valid(frame) || frame.timestamp <= lastTimestamp) return;
+      lastTimestamp = frame.timestamp; frameTimestamp = frame.timestamp; expire(frame.timestamp);
+      // Empty detector frames advance expiry and the completed-message timestamp,
+      // but carry no data and must not consume five minutes of history each.
+      if (frame.delay.length) frames.push({timestamp: frame.timestamp, delay: [...frame.delay], doppler: [...frame.doppler], snr: [...frame.snr]});
+      output = null; dirty = true;
+    },
+    get_data() {
+      if (!dirty) return output;
+      const timestamp = []; const delay = []; const doppler = []; const snr = [];
+      for (let i = first; i < frames.length; i++) {
+        const frame = frames[i];
+        for (let j = 0; j < frame.delay.length; j++) { timestamp.push(frame.timestamp); delay.push(frame.delay[j]); doppler.push(frame.doppler[j]); snr.push(frame.snr[j]); }
+      }
+      output = frameTimestamp === null ? null : Object.freeze({frameTimestamp, timestamp: Object.freeze(timestamp), delay: Object.freeze(delay), doppler: Object.freeze(doppler), snr: Object.freeze(snr)}); dirty = false;
+      return output;
+    }
+  };
 }
 
 function iqdata() {

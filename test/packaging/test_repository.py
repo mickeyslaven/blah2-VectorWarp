@@ -302,11 +302,13 @@ class HomepageTests(unittest.TestCase):
                                    for heading in headings}
                         self.assertIn(anchor, anchors)
 
-    def test_readme_primary_install_link_uses_the_live_package_page(self):
+    def test_readme_install_routes_cover_mac_and_live_linux_packages(self):
         readme = (ROOT / 'README.md').read_text()
-        self.assertIn('[Install](https://mickeyslaven.github.io/blah2-VectorWarp/#install)', readme)
+        self.assertIn('[Install](docs/INSTALL.md)', readme)
+        self.assertIn('[macOS / Homebrew](docs/MACOS_HOMEBREW.md)', readme)
         guide = (ROOT / 'docs/INSTALL.md').read_text()
         self.assertIn('(https://mickeyslaven.github.io/blah2-VectorWarp/#install)', guide)
+        self.assertIn('(MACOS_HOMEBREW.md)', guide)
         self.assertIn('## Build from source', guide)
         page = repository.repository_homepage(self.release_manifest())
         for command in ('sudo bash vectorwarp-install.sh --repo-only',

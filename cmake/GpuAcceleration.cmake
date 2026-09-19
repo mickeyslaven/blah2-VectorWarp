@@ -1,4 +1,9 @@
-set(BLAH2_GPU "AUTO" CACHE STRING "Build GPU module: AUTO, ON or OFF")
+if(APPLE)
+  set(BLAH2_GPU_DEFAULT "OFF")
+else()
+  set(BLAH2_GPU_DEFAULT "AUTO")
+endif()
+set(BLAH2_GPU "${BLAH2_GPU_DEFAULT}" CACHE STRING "Build GPU module: AUTO, ON or OFF")
 set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
 set(VKFFT_ROOT "" CACHE PATH "VkFFT 1.3.4 source directory")
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
@@ -37,15 +42,42 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE ${GLSLANG_C_INCLUDE})
     target_link_libraries(blah2GpuVulkan PRIVATE Vulkan::Vulkan glslang::glslang
       glslang::SPIRV glslang::glslang-default-resource-limits)
+    if(APPLE)
+      # FP64 chirp tables are setup constants; all frame FFTs remain on the GPU.
+      target_link_libraries(blah2GpuVulkan PRIVATE ${BLAH2_FFTW3_LIBRARY})
+    endif()
     # Vulkan's zero-initialized structs intentionally initialize sType first.
     target_compile_options(blah2GpuVulkan PRIVATE -Wno-missing-field-initializers)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      # This versioned C++ plugin ABI uses unmangled names for dlsym; these
+      # exports are never called from C. Keep the stable names under -Werror.
+      target_compile_options(blah2GpuVulkan PRIVATE -Wno-return-type-c-linkage)
+    endif()
     set_target_properties(blah2GpuVulkan PROPERTIES PREFIX "" OUTPUT_NAME "blah2-gpu-vulkan"
       LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
     if(TARGET blah2)
       add_dependencies(blah2 blah2GpuVulkan)
     endif()
-    add_executable(blah2GpuWorker ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
+    set(BLAH2_GPU_WORKER_SOURCES ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
+    if(APPLE)
+      # CMake 3.8 does not reliably enable an OBJCXX project language. Compile
+      # this one worker-only source with AppleClang's explicit language flag.
+      set(BLAH2_MAC_GPU_COMPATIBILITY ${PROJECT_ROOT}/src/process/ambiguity/MacGpuCompatibility.mm)
+      set_source_files_properties(${BLAH2_MAC_GPU_COMPATIBILITY} PROPERTIES
+        LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
+      list(APPEND BLAH2_GPU_WORKER_SOURCES ${BLAH2_MAC_GPU_COMPATIBILITY})
+      find_library(BLAH2_METAL_FRAMEWORK Metal)
+      find_library(BLAH2_FOUNDATION_FRAMEWORK Foundation)
+      if(NOT BLAH2_METAL_FRAMEWORK OR NOT BLAH2_FOUNDATION_FRAMEWORK)
+        message(FATAL_ERROR "macOS GPU worker compatibility needs Metal and Foundation frameworks")
+      endif()
+    endif()
+    add_executable(blah2GpuWorker ${BLAH2_GPU_WORKER_SOURCES})
     target_link_libraries(blah2GpuWorker PRIVATE blah2GpuProcess ${CMAKE_DL_LIBS})
+    if(APPLE)
+      # Metal enumeration is isolated to the worker; never link it to blah2.
+      target_link_libraries(blah2GpuWorker PRIVATE ${BLAH2_METAL_FRAMEWORK} ${BLAH2_FOUNDATION_FRAMEWORK})
+    endif()
     set_target_properties(blah2GpuWorker PROPERTIES OUTPUT_NAME "blah2-gpu-worker")
     add_dependencies(blah2GpuWorker blah2GpuVulkan)
     if(TARGET blah2)

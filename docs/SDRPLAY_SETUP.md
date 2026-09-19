@@ -1,5 +1,10 @@
 # SDRplay RSPduo setup
 
+For the macOS Homebrew package, follow the [Mac SDK and adapter instructions](MACOS.md#prerequisites)
+and [Homebrew guide](MACOS_HOMEBREW.md). Obtain the proprietary SDK separately
+from SDRplay; VectorWarp never bundles or downloads it. The system services and
+package administration described below apply to Linux.
+
 1. Install [VectorWarp](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 2. Install SDRplay's API and build the local adapter as described below.
 3. Configure RSPduo in Settings, then choose **Save & Restart** to start radar.

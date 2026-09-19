@@ -53,11 +53,14 @@ function compareKrakenStatus(config, live) {
       expected: 'ready', actual: actual.reconfiguring ? 'reconfiguring' :
         actual.recovering ? 'recovering coherence' : 'calibrating',
       severity: 'warning'});
-  if (actual.calibrationState &&
-      !['CALIBRATED', 'CONVERGED'].includes(String(actual.calibrationState).toUpperCase()))
+  const calibration = String(actual.calibrationState || '').toUpperCase();
+  if (calibration && !['CALIBRATED', 'CONVERGED'].includes(calibration))
     issues.push({field: 'capture.device.heimdall', label: 'Calibration',
       expected: 'converged', actual: actual.calibrationState,
-      severity: 'warning'});
+      severity: ['FAILED', 'ERROR'].includes(calibration) ? 'error' : 'warning',
+      ...(['FAILED', 'ERROR'].includes(calibration) ? {
+        message: 'Kraken calibration failed. Check the controller log, then restart to retry.'
+      } : {})});
   return {expected, actual, issues, matched: issues.length === 0};
 }
 

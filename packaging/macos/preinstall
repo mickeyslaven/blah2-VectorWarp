@@ -1,0 +1,15 @@
+#!/bin/sh
+# Package updates never stop services or replace a running standalone runtime.
+set -eu
+target="${3:-/}"
+target="${target%/}/Applications/VectorWarp.app/Contents/"
+processes=$(/bin/ps -axo comm=) || exit 1
+if printf '%s\n' "$processes" | /usr/bin/awk -v prefix="$target" '
+  index($0, prefix) == 1 { found = 1 }
+  END { exit !found }
+'; then
+  echo 'VectorWarp is running. Stop its processor and web service before installing this update.' >&2
+  echo 'Run: /Applications/VectorWarp.app/Contents/MacOS/VectorWarp stop' >&2
+  exit 1
+fi
+exit 0

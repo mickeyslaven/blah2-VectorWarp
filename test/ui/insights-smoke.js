@@ -88,7 +88,7 @@ const common = require('../../html/js/common.js');
 global.getRadarRuntimeConfig = common.getRadarRuntimeConfig;
 global.startRadarUpdates = common.startRadarUpdates;
 
-vm.runInThisContext(fs.readFileSync('html/js/insights.js', 'utf8'), {filename: 'insights.js'});
+vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 
 setTimeout(() => {
   const plotViews = new Set(['activity', 'site', 'locations', 'evaluation', 'tracks']);
@@ -106,6 +106,9 @@ setTimeout(() => {
     errors.push('ADS-B plane symbols were not rendered');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
+  if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
+      lastPlot.traces.some(trace => trace.mode?.includes('text')))
+    errors.push('raster OSM style cannot render text symbols without a glyph source');
   if (/\b(?:undefined|NaN)\b/.test(rendered)) errors.push('view rendered an invalid value');
   if (rendered.length < 100) errors.push('view rendered too little content');
   if (errors.length) {

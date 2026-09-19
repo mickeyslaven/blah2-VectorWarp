@@ -105,6 +105,10 @@ TEST_CASE("Heimdall V2 rejects calibration and retune frames")
   write_be_u32(bytes, 12, 0x100U | HeimdallFrame::CALIBRATED);
   REQUIRE(HeimdallFrame::is_synchronized_data(
     HeimdallFrame::decode_header(bytes)));
+
+  write_be_u32(bytes, 12, 0x200U | HeimdallFrame::CALIBRATED);
+  REQUIRE_FALSE(HeimdallFrame::is_synchronized_data(
+    HeimdallFrame::decode_header(bytes)));
 }
 
 TEST_CASE("Heimdall V2 validates frame dimensions")

@@ -1,5 +1,9 @@
 # GPU acceleration
 
+For macOS, see [Vulkan/MoltenVK support and M2 validation](MACOS_GPU.md) and
+[Homebrew installation](MACOS_HOMEBREW.md). The driver and package instructions
+on this page describe Linux; CPU fallback remains available on both platforms.
+
 The delay–Doppler processor can use a Vulkan GPU. The implementation targets AMD,
 Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
 verification is limited to the devices and driver versions in

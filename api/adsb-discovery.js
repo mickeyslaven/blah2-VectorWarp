@@ -1,6 +1,8 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const LOCAL_SOURCES = Object.freeze([
@@ -28,6 +30,23 @@ const SOURCE_CHOICES = Object.freeze([
   ...LOCAL_SOURCES.map(source => Object.freeze({value: source.value,
     label: source.label, mode: 'local'}))
 ]);
+
+// The selection values remain stable across platforms. Locations are a local
+// allowlist; the browser cannot turn ADS-B discovery into an arbitrary file read.
+function localFileSources({platform = process.platform, arch = process.arch,
+  home = os.homedir(), brewPrefix = process.env.HOMEBREW_PREFIX} = {}) {
+  if (platform !== 'darwin') return LOCAL_SOURCES;
+  const prefix = brewPrefix || (arch === 'arm64' ? '/opt/homebrew' : '/usr/local');
+  if (!path.isAbsolute(prefix) || !path.isAbsolute(home))
+    throw new Error('Local ADS-B directories must be absolute paths');
+  return LOCAL_SOURCES.flatMap(source => {
+    const decoder = source.value.slice('local:'.length);
+    return [
+      path.join(prefix, 'var/run', decoder, 'aircraft.json'),
+      path.join(home, 'Library/Application Support/VectorWarp/adsb', decoder, 'aircraft.json')
+    ].map(filename => ({...source, path: filename}));
+  });
+}
 
 function withDeadline(promise, timeoutMs, message = 'ADS-B file source timed out') {
   return new Promise((resolve, reject) => {
@@ -148,18 +167,28 @@ function requireOne(sources, absentMessage) {
   return sources[0];
 }
 
-async function selectLocalAdsb(value, {fileSources = LOCAL_SOURCES, ...options} = {}) {
-  const source = fileSources.find(candidate => candidate.value === value);
-  if (!source) throw new Error('Unknown local ADS-B source');
-  try { return await probeFile(source, options); }
+async function selectLocalAdsb(value, {fileSources = localFileSources(), ...options} = {}) {
+  const candidates = fileSources.filter(candidate => candidate.value === value);
+  if (!candidates.length) throw new Error('Unknown local ADS-B source');
+  const source = candidates[0];
+  try {
+    if (candidates.length === 1) return await probeFile(source, options);
+    const healthy = await healthyUnique(candidates, candidate => probeFile(candidate, options));
+    if (healthy.length > 1) throw discoveryError(
+      `Multiple ${source.label} files are healthy; stop the duplicate decoder or select its HTTP address.`,
+      healthy.map(result => result.source));
+    if (healthy.length === 1) return healthy[0];
+    return await probeFile(source, options);
+  }
   catch (error) {
+    if (error.sources) throw error;
     throw discoveryError(`${source.label} is unavailable: ${error.message}`,
       [{mode: 'local', kind: 'file', value: source.value,
         label: source.label, path: source.path}]);
   }
 }
 
-async function discoverLocalAdsb({fileSources = LOCAL_SOURCES,
+async function discoverLocalAdsb({fileSources = localFileSources(),
   httpSources = HTTP_SOURCES, ...options} = {}) {
   // Decoder JSON is authoritative and does not require a tar1090 frontend.
   const files = await healthyUnique(fileSources, candidate => probeFile(candidate, options));
@@ -168,6 +197,6 @@ async function discoverLocalAdsb({fileSources = LOCAL_SOURCES,
   return requireOne(http, 'No healthy local ADS-B decoder source was discovered.');
 }
 
-module.exports = {LOCAL_SOURCES, HTTP_SOURCES, SOURCE_CHOICES, classifyAdsbSource,
+module.exports = {LOCAL_SOURCES, HTTP_SOURCES, SOURCE_CHOICES, localFileSources, classifyAdsbSource,
   withDeadline,
   validateAircraftData, readJsonFile, selectLocalAdsb, discoverLocalAdsb};

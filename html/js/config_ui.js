@@ -1243,6 +1243,10 @@ async function monitorRadarRestart(previousState) {
 
 function upstreamRestartError(status) {
   if (!status?.available) return null;
+  const calibration = status.issues?.find(issue => issue.label === 'Calibration' &&
+    issue.severity === 'error');
+  if (calibration)
+    return calibration.message || 'Kraken calibration failed. Check the controller log, then restart to retry.';
   const mismatch = status.issues?.find(issue => issue.severity === 'error' &&
     ['capture.fc', 'capture.fs', 'capture.device.channel_count'].includes(issue.field));
   if (!mismatch) return null;
@@ -1527,13 +1531,15 @@ function renderReceiverSetup() {
       throw new Error('Save or discard your edits first. Receiver actions use saved settings.');
     const plan = await post('/api/receivers/plan', {receiverType, actionId});
     if (plan.status === 'not-required') { paragraph(plan.message); return; }
-    paragraph('Run this command on the VectorWarp computer to authorize this action, then return here.');
-    const command = document.createElement('pre'); command.textContent = plan.authorizationCommand;
-    output.appendChild(command);
+    if (plan.requiresAuthorization !== false) {
+      paragraph('Run this command on the VectorWarp computer to authorize this action, then return here.');
+      const command = document.createElement('pre'); command.textContent = plan.authorizationCommand;
+      output.appendChild(command);
+    }
     paragraph(`Review: ${plan.review}. The plan expires in ${plan.lifetimeSeconds} seconds.`);
     for (const item of plan.transaction?.changes || [])
       paragraph(`Install ${item.name} ${item.version} (${item.architecture}; ${item.origin} ${item.archive}; ${item.site}).`);
-    button('Run authorized action', async element => {
+    button(plan.requiresAuthorization === false ? 'Run reviewed action' : 'Run authorized action', async element => {
       if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
         throw new Error('Settings changed. Check receiver software and review the action again.');
       element.textContent = 'Running…';
@@ -1589,13 +1595,14 @@ function renderReceiverSetup() {
               sdrplayLink();
               button('Build SDRplay support', async element => {
                 element.textContent = 'Starting build…';
-                const result = await post('/api/sdrplay-build', {}, 10000, 'sdrplay-local-build-v1');
+                const result = await post('/api/sdrplay-build', {}, 210000, 'sdrplay-local-build-v1');
                 paragraph(result.message || 'Build requested. Checking progress…');
                 buildPolls = 0;
                 refreshBuildStatus();
               });
             } else if (build.buildable && build.state === 'current') paragraph('SDRplay adapter is up to date. See device and service status above.');
             else if (build.buildable) { paragraph(build.reason || 'Cannot check the SDRplay adapter. No build started.'); sdrplayLink(); }
+            else if (build.reason) paragraph(build.reason);
             if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
           } catch (_) { paragraph('Cannot check the SDRplay adapter. No build started.'); }
         }
@@ -1626,8 +1633,7 @@ function renderReceiverSetup() {
             `${receiver.label} selected. Save to apply.` :
             `${receiver.label} selected but not saved. Build its adapter before live capture.`);
         });
-        for (const action of result.management?.actions?.filter(item =>
-          receiver.capabilities.liveCompiled && item.receiverType === receiver.type) || []) {
+        for (const action of result.management?.actions?.filter(item => item.receiverType === receiver.type) || []) {
           if (action.available && !action.ready) button(action.kind === 'start-service' ?
             (receiver.type === 'RspDuo' ? 'Review Start SDRplay' : 'Review receiver service start') : 'Review missing dependency install',
             () => reviewAction(receiver.type, action.id));
@@ -1887,7 +1893,7 @@ async function refreshConfigDiagnostics() {
     if (acceleration) {
       acceleration.textContent = `Delay–Doppler: ${accelerationSummary(status.acceleration, status.radar)}. ` +
         `Clutter: ${accelerationSummary(status.clutterAcceleration, status.radar)}.`;
-      if (status.gpuSetup?.pi || ['group-access-needed', 'unavailable'].includes(status.gpuSetup?.serviceAccess?.state)) {
+      if (status.gpuSetup?.platform === 'darwin' || status.gpuSetup?.pi || ['group-access-needed', 'unavailable'].includes(status.gpuSetup?.serviceAccess?.state)) {
         const setup = document.createElement('div');
         setup.textContent = `GPU setup: ${status.gpuSetup.message}`;
         acceleration.append(setup);

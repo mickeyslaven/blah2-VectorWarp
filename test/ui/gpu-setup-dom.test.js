@@ -39,6 +39,11 @@ window.eval(fs.readFileSync(path.resolve(__dirname, '../../html/js/config_ui.js'
   assert.match(target.textContent, /Activate the updated receiver helper/);
   assert(!target.textContent.includes('--install-driver'));
   assert(!target.textContent.includes('--enable-service-access'), 'Unknown access must not be reported as a missing group');
+  state = {...state, gpuSetup: {platform: 'darwin', pi: false, state: 'unqualified',
+    message: 'macOS GPU acceleration has not been qualified. Use CPU processing.'}};
+  await window.refreshConfigDiagnostics();
+  assert.match(target.textContent, /macOS GPU acceleration has not been qualified/);
+  assert(!target.textContent.includes('sudo '), 'macOS must not offer Linux driver helpers');
   state = {...state, radar: 'stale', gpuSetup: {pi: false}};
   await window.refreshConfigDiagnostics();
   assert.match(target.textContent, /Waiting for radar/); assert(!target.textContent.includes('GPU: V3D'));

@@ -24,3 +24,9 @@ bench/*.jsonl
 bench/*.maps
 bench/*receipt*.json
 bench/*session*.json
+
+# Local macOS build dependencies and vendor installers.
+node_modules/
+*.dylib
+SDRplay*.pkg
+SDRplay*.dmg

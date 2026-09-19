@@ -1,0 +1,117 @@
+diff --git a/src/librtlsdr.c b/src/librtlsdr.c
+index 9f11bb0..6666ad3 100644
+--- a/src/librtlsdr.c
++++ b/src/librtlsdr.c
+@@ -965,39 +965,64 @@ int rtlsdr_demod_write_reg(rtlsdr_dev_t *dev, uint8_t page, uint16_t addr, uint1
+ }
+ 
+ 
++/* GPIO control must retain libusb failures and short transfers. The older
++ * uint16_t register API cannot represent a negative USB result. */
++static int rtlsdr_gpio_read(rtlsdr_dev_t *dev, uint16_t addr, uint8_t *value)
++{
++	int ret = rtlsdr_read_array(dev, SYSB, addr, value, 1);
++	return ret == 1 ? 0 : (ret < 0 ? ret : -1);
++}
++
++static int rtlsdr_gpio_write(rtlsdr_dev_t *dev, uint16_t addr, uint8_t value)
++{
++	int ret = rtlsdr_write_array(dev, SYSB, addr, &value, 1);
++	return ret == 1 ? 0 : (ret < 0 ? ret : -1);
++}
++
+ int rtlsdr_set_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int val)
+ {
+-	uint16_t r, retval;
++	uint8_t value, mask;
++	int ret;
+ 
+-	gpio = 1 << gpio;
+-	r = rtlsdr_read_reg(dev, SYSB, GPO, 1);
+-	r = val ? (r | gpio) : (r & ~gpio);
+-	retval = rtlsdr_write_reg(dev, SYSB, GPO, r, 1);
+-	return retval;
++	if (!dev || gpio >= 8)
++		return -1;
++	mask = (uint8_t)(1U << gpio);
++	ret = rtlsdr_gpio_read(dev, GPO, &value);
++	if (ret < 0)
++		return ret;
++	value = val ? (uint8_t)(value | mask) : (uint8_t)(value & ~mask);
++	return rtlsdr_gpio_write(dev, GPO, value);
+ }
+ 
+ int rtlsdr_set_gpio_output(rtlsdr_dev_t *dev, uint8_t gpio)
+ {
+-	int r, retval = 0;
+-	gpio = 1 << gpio;
++	uint8_t value, mask;
++	int ret;
++
++	if (!dev || gpio >= 8)
++		return -1;
++	mask = (uint8_t)(1U << gpio);
+ 
+ 	/* state: bitmask over pins 0 .. 7: = 0 == write, 1 == read */
+-	if ( !(dev->gpio_state_known & gpio) || (dev->gpio_state & gpio) )
+-	{
+-		r = rtlsdr_read_reg(dev, SYSB, GPD, 1);
+-		retval = rtlsdr_write_reg(dev, SYSB, GPD, r & ~gpio, 1);
+-		if (retval < 0)
+-			return retval;
+-		r = rtlsdr_read_reg(dev, SYSB, GPOE, 1);
+-		retval = rtlsdr_write_reg(dev, SYSB, GPOE, r | gpio, 1);
+-		if (retval < 0)
+-			return retval;
++	if (!(dev->gpio_state_known & mask) || (dev->gpio_state & mask)) {
++		ret = rtlsdr_gpio_read(dev, GPD, &value);
++		if (ret < 0)
++			return ret;
++		ret = rtlsdr_gpio_write(dev, GPD, (uint8_t)(value & ~mask));
++		if (ret < 0)
++			return ret;
++		ret = rtlsdr_gpio_read(dev, GPOE, &value);
++		if (ret < 0)
++			return ret;
++		ret = rtlsdr_gpio_write(dev, GPOE, (uint8_t)(value | mask));
++		if (ret < 0)
++			return ret;
+ 
+-		dev->gpio_state_known |= gpio;
+-		dev->gpio_state &= ~( (uint32_t)gpio );
++		dev->gpio_state_known |= mask;
++		dev->gpio_state &= ~((uint32_t)mask);
+ 	}
+ 
+-	return retval;
++	return 0;
+ }
+ 
+ int rtlsdr_get_gpio_bit(rtlsdr_dev_t *dev, uint8_t gpio, int *val)
+@@ -4303,16 +4328,24 @@ err:
+ 
+ int rtlsdr_set_bias_tee_gpio(rtlsdr_dev_t *dev, int gpio, int on)
+ {
++	int ret;
++
+ 	if (!dev)
+ 		return -1;
++	if (gpio < 0 || gpio >= 8)
++		return -1;
+ 
+ 	#if LOG_API_CALLS
+ 	fprintf(stderr, "LOG: rtlsdr_set_bias_tee_gpio(gpio %d, on %d)\n",
+ 		gpio, on);
+ 	#endif
+ 
+-	rtlsdr_set_gpio_output(dev, gpio);
+-	rtlsdr_set_gpio_bit(dev, gpio, on);
++	ret = rtlsdr_set_gpio_output(dev, gpio);
++	if (ret < 0)
++		return ret;
++	ret = rtlsdr_set_gpio_bit(dev, gpio, on);
++	if (ret < 0)
++		return ret;
+ 	reactivate_softagc(dev, SOFTSTATE_RESET);
+ 
+ 	return 0;

@@ -1,0 +1,188 @@
+name: macOS standalone runtime
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-standalone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Standalone runtime (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      MACOSX_DEPLOYMENT_TARGET: '15.0'
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Install build-host dependencies
+        run: |
+          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb node@24 vulkan-loader vulkan-headers glslang molten-vk
+          # Intel runners already link python.org's 3.12 into /usr/local/bin.
+          # Staging uses the explicit Homebrew path and needs no global links.
+          brew install --skip-link python@3.12
+      - name: Select Node 24 and build CPU, GPU, and open receiver adapters
+        run: |
+          echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
+          export PATH="$(brew --prefix node@24)/bin:$PATH"
+          npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          git init build/VkFFT
+          git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
+          git -C build/VkFFT checkout --detach 066a17c17068c0f11c9298d848c2976c71fad1c1
+          VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
+      - name: Stage and audit standalone runtime
+        run: |
+          node="$(brew --prefix node@24)/bin/node"
+          python="$(brew --prefix python@3.12)/bin/python3.12"
+          python3 script/package-macos-standalone.py stage --artifact build/macos/artifact --node "$node" --python "$python" --moltenvk "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --output 'build/standalone runtime'
+          provenance="$GITHUB_WORKSPACE/build/standalone-provenance"
+          python3 script/collect-macos-standalone-provenance.py --runtime "$GITHUB_WORKSPACE/build/standalone runtime" --cellar "$(brew --cellar)" --output "$provenance/inventory.json" --notices-dir "$provenance/notices"
+          node api/macos-receiver-management.test.js
+          node api/macos-platform.test.js
+          python3 test/macos/license_inventory_test.py
+          python3 test/macos/standalone_provenance_test.py
+          python3 test/macos/standalone_launcher_test.py
+          python3 test/macos/standalone_package_test.py
+          python3 test/macos/standalone_signing_test.py
+          python3 test/macos/standalone_transfer_test.py
+          python3 test/macos/standalone_isolation_test.py
+          python3 test/macos/standalone_driver_probe_test.py
+      - name: Record original-build GPU driver control
+        run: |
+          python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-driver-probe
+          icd="$GITHUB_WORKSPACE/build/standalone runtime/share/vulkan/icd.d/MoltenVK_icd.json"
+          VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" python3 test/macos/standalone_driver_probe.py --observe-only --worker 'build/standalone runtime/bin/blah2-gpu-worker' --evidence build/staged-driver-control
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-compatibility-control
+          fi
+      - name: Verify replay, configuration, and standalone isolation
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_OS" = macOS
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = "${{ matrix.arch }}"
+          runtime="$GITHUB_WORKSPACE/build/standalone runtime"
+          test -x "$runtime/bin/node" && test -x "$runtime/python/bin/python3"
+          prefix="$(brew --prefix)"
+          # /usr/local is a macOS firmlink; its /usr parent is read-only.
+          # Hide prefix contents in place instead of renaming the mount itself.
+          hidden="$prefix/.vectorwarp-ci-hidden"
+          test -d "$prefix" && test ! -e "$hidden"
+          shopt -s dotglob nullglob
+          restore_homebrew() {
+            test -d "$hidden" || return 0
+            for entry in "$hidden"/*; do
+              test ! -e "$prefix/${entry##*/}" && test ! -L "$prefix/${entry##*/}" || return 1
+              sudo mv "$entry" "$prefix/" || return 1
+            done
+            sudo rmdir "$hidden"
+          }
+          sudo mkdir "$hidden"
+          trap restore_homebrew EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          for entry in "$prefix"/*; do
+            if [ "$entry" != "$hidden" ]; then sudo mv "$entry" "$hidden/"; fi
+          done
+          export PATH="$runtime/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+          export PYTHONHOME="$runtime/python" PYTHONDONTWRITEBYTECODE=1
+          export VK_DRIVER_FILES="$runtime/share/vulkan/icd.d/MoltenVK_icd.json"
+          export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+          unset PYTHONPATH NODE_PATH NODE_OPTIONS DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH DYLD_INSERT_LIBRARIES
+          "$runtime/python/bin/python3" -s -P test/recording/processor_replay_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-replay.log
+          "$runtime/python/bin/python3" -s -P test/macos/config_runtime_test.py --gpu-capable --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-config.log
+          "$runtime/python/bin/python3" -s -P test/macos/receiver_sdk_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-sdk-closure.log
+          "$runtime/python/bin/python3" -s -P test/macos/processor_lifecycle_test.py --standalone --app-root "$runtime" --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-lifecycle.log
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            # A/B observation of the exact Metal encoder path seen in the crash.
+            # The default driver gate below is unchanged; this is not a waiver.
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 "$runtime/python/bin/python3" -s -P test/macos/standalone_driver_probe.py --observe-only --worker "$runtime/bin/blah2-gpu-worker" --evidence build/standalone-compatibility-control
+            MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS=0 "$runtime/python/bin/python3" -s -P - "$runtime/bin/blah2" <<'PY' > build/standalone-compatibility-replay.log 2>&1
+          import importlib.util, json, sys, traceback
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('gpu_control', 'test/macos/gpu_runtime_test.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          try:
+              result = module.run(Path(sys.argv[1]).resolve(), 'gpu', True)
+              print(json.dumps({'observe_only': True, 'passed': True, 'result': result}))
+          except Exception:
+              traceback.print_exc()
+              print(json.dumps({'observe_only': True, 'passed': False}))
+          PY
+          fi
+          # Run CPU lifecycle first so a driver failure retains that evidence.
+          # A failed/crashed probe still fails this job; diagnostics do not waive it.
+          driver_status=0
+          "$runtime/python/bin/python3" -s -P test/macos/standalone_driver_probe.py --worker "$runtime/bin/blah2-gpu-worker" --evidence build/standalone-driver-probe || driver_status=$?
+          restore_homebrew
+          trap - EXIT INT TERM
+          "$runtime/python/bin/python3" -s -P script/package-macos-standalone.py audit --runtime "$runtime" 2>&1 | tee build/standalone-audit.log
+          exit "$driver_status"
+      - name: Encrypt the tested development runtime for local review
+        if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''
+        env:
+          RECIPIENT_CERT: ${{ vars.VECTORWARP_STANDALONE_RECIPIENT_CERT }}
+        run: |
+          certificate="$RUNNER_TEMP/vectorwarp-recipient.pem"
+          printf '%s\n' "$RECIPIENT_CERT" > "$certificate"
+          python3 script/transfer-macos-runtime.py encrypt --runtime 'build/standalone runtime' --certificate "$certificate" --output 'build/standalone-${{ matrix.arch }}.cms' --metadata 'build/standalone-${{ matrix.arch }}.transfer.json'
+          rm "$certificate"
+      - name: Upload encrypted development runtime
+        if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: standalone-encrypted-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            build/standalone-${{ matrix.arch }}.cms
+            build/standalone-${{ matrix.arch }}.transfer.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload standalone diagnostics only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: standalone-runtime-diagnostics-${{ matrix.arch }}
+          # The explicitly listed provenance tree contains reviewed .brew recipes.
+          # Keep those inputs; no runtime tree, raw receipt or private key is listed.
+          include-hidden-files: true
+          path: |
+            build/standalone runtime/standalone.json
+            build/standalone-provenance/inventory.json
+            build/standalone-provenance/notices
+            build/standalone-replay.log
+            build/standalone-config.log
+            build/standalone-sdk-closure.log
+            build/source-driver-probe
+            build/staged-driver-control
+            build/source-compatibility-control
+            build/standalone-compatibility-control
+            build/standalone-compatibility-replay.log
+            build/standalone-driver-probe
+            build/standalone-lifecycle.log
+            build/standalone-audit.log
+          if-no-files-found: warn
+          retention-days: 14
+
+# Intentionally no runtime/app artifact upload: corresponding source, notices,
+# and redistribution review must be complete before any binary distribution job.
+# The optional recipient certificate is public. Its private key stays with the
+# local reviewer; encryption is development transport, not a distribution gate.

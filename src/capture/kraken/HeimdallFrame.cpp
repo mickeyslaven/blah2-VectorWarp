@@ -125,5 +125,6 @@ std::vector<std::vector<std::complex<float>>> HeimdallFrame::decode_payload(
 bool HeimdallFrame::is_synchronized_data(const Header& header)
 {
   return (header.phaseState & 0xffU) == CALIBRATED &&
+    (header.phaseState & 0x200U) == 0 &&  // Heimdall's stale calibration flag.
     header.noiseSource == 0 && header.retuningInProgress == 0;
 }

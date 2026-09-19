@@ -28,7 +28,7 @@ async function main() {
     return {ok: true, status: 'complete', postconditionVerified: true};
   };
   const installed = installReceiverRoutes({get: (key, handler) => routes[key] = handler,
-    post: (key, handler) => routes[key] = handler}, {readDocument: () => ({revision, config: {}}),
+    post: (key, handler) => routes[key] = handler}, {platform: 'linux', readDocument: () => ({revision, config: {}}),
     allowedOrigins: new Set([origin]), helper, now: () => timestamp,
     createProbes: () => ({}), createManager: () => ({discover: async () => ({schemaVersion: 1, receivers: []}), plan: () => ({})})});
   async function call(path, body, headers) {

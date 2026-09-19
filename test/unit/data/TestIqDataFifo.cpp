@@ -82,6 +82,20 @@ int main() {
       "Bulk discard changed retained tail");
     data.discard_front(2);
     require(data.get_length() == 0, "Full discard retained samples");
+    data.replace({{1, 2}, {3, 4}, {5, 6}});
+    const auto* writable = &data.view_data().front();
+    auto& sameSize = data.resize_for_write(3);
+    require(&sameSize.front() == writable && sameSize.size() == 3,
+      "Same-size writable resize replaced sample storage");
+    const auto beforeOversizedResize = data.get_data();
+    rejects([&] { data.resize_for_write(6); });
+    require(data.view_data() == beforeOversizedResize,
+      "Oversized writable resize changed input");
+    auto& resized = data.resize_for_write(5);
+    resized[3] = {7, 8};
+    resized[4] = {9, 10};
+    require(data.get_length() == 5 && data.view_data()[4] == std::complex<double>(9, 10),
+      "Writable resize did not expose the requested block");
     for (unsigned repeat = 0; repeat < 256; ++repeat) {
       data.append_unlocked({{1, 2}, {3, 4}, {5, 6}, {7, 8}, {9, 10}, {11, 12}});
       require(data.get_length() == 5 && data.view_data().front().real() == 3,
@@ -101,6 +115,21 @@ int main() {
     require(data.view_data()[0] == std::complex<double>(.25, .5) &&
       data.view_data()[1] == std::complex<double>(2, 2),
       "Clutter subtraction lost FP64 cancellation precision");
+    data.replace({{100000000.25, 100000000.5}, {3, 4}, {5, 6}});
+    const auto* doubleOwned = &data.view_data().front();
+    const std::complex<double> doubleEstimate[] = {{200000000, 200000000}, {2, 4}};
+    const auto doubleUnmodified = data.get_data();
+    rejects([&] { data.subtract_clutter(nullptr, 2, 2); });
+    rejects([&] { data.subtract_clutter(doubleEstimate, 4, 2); });
+    rejects([&] { data.subtract_clutter(doubleEstimate, 2, 0); });
+    require(data.view_data() == doubleUnmodified,
+      "Rejected FP64 clutter estimate changed input");
+    data.subtract_clutter(doubleEstimate, 2, 2);
+    require(&data.view_data().front() == doubleOwned && data.get_length() == 2,
+      "FP64 clutter subtraction copied the block or retained unfiltered samples");
+    require(data.view_data()[0] == std::complex<double>(.25, .5) &&
+      data.view_data()[1] == std::complex<double>(2, 2),
+      "FP64 clutter subtraction changed the divide-before-subtract result");
     std::cout << "IQ FIFO ownership and retirement fixtures passed\n";
     return 0;
   } catch (const std::exception& error) {

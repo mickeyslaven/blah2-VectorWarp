@@ -386,6 +386,7 @@ jobs:
         run: |
           npm ci --prefix test/browser --ignore-scripts --no-audit --no-fund
           test/browser/node_modules/.bin/playwright install --with-deps chromium --only-shell
+          node test/browser/locations.cjs
       - name: Prove a fresh package starts its installed services and works in Chromium
         env:
           DISTRO: ${{ matrix.distro }}

@@ -281,6 +281,16 @@ async function expectReject(promise, pattern) {
     assert.equal(item.detection.state, 'unknown',
       'Absent preview probes must never become fabricated absence evidence');
 
+  const standalone = await createReceiverManager({standaloneDistribution: true, probes: {
+    usbInventory: async () => [], dependencyInventory: async () => ({HackRF: {state: 'installed'}}),
+    nativeReceiverStatus: async () => ({schema: 1, hardwareProbed: false, receivers: RECEIVER_TYPES.map(receiver =>
+      ({receiver, builtIn: false, compiled: receiver === 'HackRF', moduleLoadable: false, error: receiver === 'HackRF' ? 'missing bundled dylib' : ''}))})
+  }}).discover({config: {capture: {device: {type: 'HackRF'}}}, compiledLiveTypes: ['HackRF']});
+  const standaloneHackrf = standalone.receivers.find(item => item.type === 'HackRF');
+  assert.equal(standaloneHackrf.dependencies.state, 'unknown');
+  assert.equal(standaloneHackrf.capabilities.possible, false,
+    'Standalone readiness requires the actual bundled module-load result.');
+
   await expectReject(manager.discover({config: {}, compiledLiveTypes: ['RTL-SDR']}),
     /compiledLiveTypes/);
   await expectReject(manager.discover({config: {}, compiledLiveTypes: [], extra: true}),
