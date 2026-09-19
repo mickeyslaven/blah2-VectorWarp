@@ -2,6 +2,9 @@ name: macOS standalone runtime
 
 on:
   pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -38,6 +41,8 @@ jobs:
           # Intel runners already link python.org's 3.12 into /usr/local/bin.
           # Staging uses the explicit Homebrew path and needs no global links.
           brew install --skip-link python@3.12
+          mkdir -p build/standalone-provenance
+          brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers > build/standalone-provenance/header-input-versions.txt
       - name: Select Node 24 and build CPU, GPU, and open receiver adapters
         run: |
           echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
@@ -62,6 +67,8 @@ jobs:
           python3 test/macos/standalone_package_test.py
           python3 test/macos/standalone_signing_test.py
           python3 test/macos/standalone_transfer_test.py
+          python3 test/macos/standalone_release_trigger_test.py
+          python3 test/macos/release_agent_test.py
           python3 test/macos/standalone_isolation_test.py
           python3 test/macos/standalone_driver_probe_test.py
       - name: Record original-build GPU driver control
@@ -167,6 +174,7 @@ jobs:
           path: |
             build/standalone runtime/standalone.json
             build/standalone-provenance/inventory.json
+            build/standalone-provenance/header-input-versions.txt
             build/standalone-provenance/notices
             build/standalone-replay.log
             build/standalone-config.log

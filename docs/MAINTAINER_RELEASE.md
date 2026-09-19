@@ -82,9 +82,12 @@ jobs may upload the same checked package inputs for the separate signing flow.
    signs reviewed outputs. Use the immutable `vMAJOR.MINOR.PATCH` tag for a
    draft release; its manual version input is dry-run only.
 2. Confirm the ten package assets, `SHA256SUMS`, `package-manifest.json` and
-   `repository-manifest.json`. The tag creates a draft release for review; it
-   does not publish packages.
-3. After review, publish that release and run `Publish verified package
+   `repository-manifest.json`. The tag creates a draft release. If the
+   [local macOS release agent](MACOS_RELEASE_AGENT.md) is installed and its
+   source/notices gates pass, it adds the notarized Mac package and source,
+   then publishes the draft. Dependency drift stops automatic publication for
+   review rather than publishing an outdated source bundle.
+3. Publishing the complete draft triggers `Publish verified package
    repository`. It signs/generates repository metadata and deploys to Pages
    only when the protected environments and key/fingerprint validate.
 4. On clean hosts, install from the APT and DNF repositories, verify the signing
