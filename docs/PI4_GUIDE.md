@@ -18,9 +18,9 @@ published, flashed, or boot-tested yet. Pi 5 is future work.
 3. Write the card, boot the Pi, and connect over SSH or open
    `http://<hostname>.local:3000/` from a device on the same network. Use the
    DHCP address if mDNS is unavailable. For an RSPduo, obtain, install, and
-   accept SDRplay's vendor API yourself, then choose **Build SDRplay support**
-   in Settings and wait for the local build. VectorWarp does not distribute
-   SDRplay software.
+   accept [SDRplay's vendor API](SDRPLAY_SETUP.md) yourself, then choose
+   **Build SDRplay support** in Settings and wait for the local build.
+   VectorWarp does not distribute SDRplay software.
 4. Choose the receiver in Settings and review the neutral 100 MHz frequency and
    zero-valued site placeholders. For an RSPduo, complete the vendor API and
    **Build SDRplay support** step first. Then select **Save & Restart** to start
@@ -35,6 +35,29 @@ RSPduo mode. Other receiver profiles ignore those RSPduo-specific flags.
 The candidate has not completed this flow on a clean card. Do not treat these
 steps as a released image installation until its artifact and manifest are
 published.
+
+## Updating a preview image
+
+The preview image does not add a VectorWarp APT repository because no stable
+Bookworm repository is published yet. For a future VectorWarp application
+update, obtain the matching Bookworm ARM64 DEB, copy it to the Pi, and install
+that exact file:
+
+```sh
+sudo apt install ./vectorwarp_X.Y.Z-1_debian12_arm64.deb
+```
+
+Use a release-supplied `vectorwarp_<version>-1_debian12_arm64.deb`; do not use
+a Debian 13/Trixie package. This command updates VectorWarp while resolving its
+dependencies from Raspberry Pi OS and preserves the image's Pi 4 RSPduo
+performance drop-in. Continue normal OS maintenance separately:
+
+```sh
+sudo apt update && sudo apt full-upgrade
+```
+
+Do not expect `apt upgrade vectorwarp` to update the preview application until
+a stable Bookworm VectorWarp repository is available.
 
 ## Advanced: source installation on Bookworm
 
@@ -107,9 +130,11 @@ policy.
 
 ### Apply the tested service environment
 
-The fast paired-input path is opt-in. For this dual-RSPduo profile, install the
-[service drop-in](../contrib/systemd/pi4-rspduo-performance.conf) from the source
-checkout before choosing **Save & Restart**:
+The image already includes the Pi 4 RSPduo performance drop-in and its stock
+BCM2711 performance-governor unit. A matching-DEB update preserves that image
+configuration. The following opt-in commands apply only to a source install or
+an existing operating-system installation being configured for this exact
+dual-RSPduo profile; run them before choosing **Save & Restart**:
 
 ```sh
 sudo install -d /etc/systemd/system/vectorwarp-processor.service.d

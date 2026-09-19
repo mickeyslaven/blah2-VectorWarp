@@ -136,16 +136,17 @@ contracts, not interchangeable labels; a later Trixie image must validate its
 own cloud-init configuration. Use the exact schema spellings documented by
 [Raspberry Pi Imager](https://github.com/raspberrypi/rpi-imager/blob/main/doc/json-schema/os-list-schema.json).
 
-Pinning pi-gen alone does not make APT input reproducible. Retain a package
-version manifest and exact application artifacts; use dated package snapshots
-or retained package inputs where available. Refresh OS/security packages in
-reviewed image revisions and repeat hardware acceptance after driver changes.
+Pinning the base image alone does not make APT input reproducible. Retain a
+package version manifest and exact application artifacts; use dated package
+snapshots or retained package inputs where available. Refresh OS/security
+packages in reviewed image revisions and repeat hardware acceptance after driver
+changes.
 
 ## Existing packaging to reuse, and the OS gap
 
 The existing package provides the native program, API/UI, service accounts,
-systemd units, receiver setup helpers, local RSPduo build kit and signed APT
-update path. Reuse these rather than installing a copied developer directory.
+systemd units, receiver setup helpers, and local RSPduo build kit. Reuse these
+rather than installing a copied developer directory.
 
 The previous Raspberry Pi OS Trixie package installation route is **deprecated
 for new Pi deployments**. Keep existing artifacts available during the transition;
@@ -156,11 +157,22 @@ a fresh Bookworm image, with an explicit user-config export/import path.
 The Bookworm ARM64 DEB has its own Debian 12 target and must be used for this
 image. Do not substitute a Debian 13/Trixie package or bypass platform detection.
 
-Use normal signed APT updates for the application, preserving user config and
-the package's existing service-restoration behavior. Do not reflash the card
-for routine VectorWarp updates. Major base-OS migration and transactional OS
-rollback are separate future work; keep a documented config-export/reflash
-recovery path for the initial image.
+The preview image deliberately adds no VectorWarp APT repository: the public
+stable repository has no Bookworm package yet. Until a stable Bookworm
+repository exists, update the application with a future matching DEB supplied
+for Bookworm ARM64:
+
+```sh
+sudo apt install ./vectorwarp_X.Y.Z-1_debian12_arm64.deb
+```
+
+That package update preserves user configuration and uses Raspberry Pi OS APT
+only to resolve dependencies. Keep OS maintenance separate with normal
+`sudo apt update && sudo apt full-upgrade`. Do not promise
+`apt upgrade vectorwarp` for the preview application, and do not reflash the
+card for a routine matching-DEB update. Major base-OS migration and
+transactional OS rollback are separate future work; keep a documented
+config-export/reflash recovery path for the initial image.
 
 ## SDRplay first-run dependency
 
