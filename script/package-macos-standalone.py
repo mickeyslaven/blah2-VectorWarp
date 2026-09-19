@@ -363,6 +363,11 @@ def assemble(args):
         'LSUIElement': True, 'NSHighResolutionCapable': True}
     with (contents / 'Info.plist').open('wb') as stream:
         plistlib.dump(info, stream)
+    # Finder/file-provider metadata can appear on a newly created local bundle.
+    # Apple QA1940 forbids these two attributes when signing. Normalize only the
+    # generated copy; retain quarantine/provenance and all input runtime files.
+    for attribute in ('com.apple.FinderInfo', 'com.apple.ResourceFork'):
+        run('/usr/bin/xattr', '-dr', attribute, app)
     # Runtime executables are already signed; seal the launcher/app last.
     run('/usr/bin/codesign', '--force', '--sign', '-', app)
     run('/usr/bin/codesign', '--verify', '--deep', '--strict', app)

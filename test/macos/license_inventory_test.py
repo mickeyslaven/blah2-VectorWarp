@@ -60,6 +60,21 @@ with tempfile.TemporaryDirectory(prefix="private host path ") as temporary:
     opt.symlink_to(root)
     resolved = tool.inventory([str(opt / 'lib/libexample.dylib')])['components'][0]
     assert resolved['input'] == component['input'] and resolved['input_sha256'] == tool.sha256(lib)
+    # Symlinked recipe and notice roots must not make the sanitized export read
+    # or copy material outside the resolved Cellar keg.
+    outside = temporary / "outside"; outside.mkdir()
+    (outside / "escaped.rb").write_text('url "https://example.invalid/outside"\n')
+    (outside / "LICENSE").write_text("outside notice")
+    escaped = temporary / "opt/homebrew/Cellar/escaped/1.0"
+    escaped_lib = escaped / "lib/escaped.dylib"; escaped_lib.parent.mkdir(parents=True); escaped_lib.write_bytes(b"escaped")
+    (escaped / ".brew").symlink_to(outside, target_is_directory=True)
+    (escaped / "share").symlink_to(outside, target_is_directory=True)
+    escaped_notices = temporary / "escaped-notices"
+    escaped_component = tool.inventory([str(escaped_lib)], str(escaped_notices))["components"][0]
+    assert not escaped_component["formula_recipe"]["present"]
+    assert "formula recipe" in escaped_component["missing_provenance"]
+    assert "license/notice file" in escaped_component["missing_provenance"]
+    assert not list(escaped_notices.rglob("*.rb")) and not list(escaped_notices.rglob("LICENSE"))
     try: tool.cellar_identity("relative.dylib")
     except ValueError: pass
     else: raise AssertionError("relative input accepted")

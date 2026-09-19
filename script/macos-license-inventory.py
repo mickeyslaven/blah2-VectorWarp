@@ -44,8 +44,19 @@ def cellar_identity(file):
     return Path(*parts[:index + 3]), formula, version
 
 
-def read_json_summary(path):
-    summary = {"present": path.is_file(), "sha256": None, "bytes": None,
+def contained(path, root):
+    try:
+        return path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (OSError, ValueError):
+        return None
+
+
+def safe_regular(path, root):
+    return not path.is_symlink() and contained(path, root) is not None and path.is_file()
+
+
+def read_json_summary(path, root):
+    summary = {"present": safe_regular(path, root), "sha256": None, "bytes": None,
                "json": {"valid": False, "top_level_keys": []}}
     if not summary["present"]:
         return summary
@@ -60,8 +71,8 @@ def read_json_summary(path):
     return summary
 
 
-def recipe_metadata(recipe):
-    if not recipe.is_file(): return {"present": False, "sha256": None, "urls": [], "source_sha256": [], "dependencies": []}
+def recipe_metadata(recipe, root):
+    if not safe_regular(recipe, root): return {"present": False, "sha256": None, "urls": [], "source_sha256": [], "dependencies": []}
     text = recipe.read_text(encoding="utf-8", errors="replace")
     return {"present": True, "sha256": sha256(recipe),
             "urls": re.findall(r'^\s*url\s+["\']([^"\']+)', text, re.M),
@@ -76,8 +87,11 @@ def is_notice_name(name):
 
 def notice_files(root):
     """Scan bounded notice locations, never the whole installed source/dependency tree."""
+    root = root.resolve(strict=True)
     candidates = [root]
-    candidates.extend(root / item for item in NOTICE_ROOTS if (root / item).is_dir())
+    candidates.extend(root / item for item in NOTICE_ROOTS
+                      if not (root / item).is_symlink() and (root / item).is_dir() and
+                      contained(root / item, root) is not None)
     found = set()
     for base in candidates:
         for directory, names, filenames in os.walk(base, followlinks=False):
@@ -86,13 +100,14 @@ def notice_files(root):
                 depth = len(current.relative_to(base).parts)
             except ValueError:
                 continue
-            names[:] = sorted(name for name in names if name not in SKIP_NOTICE_DIRS and depth < MAX_NOTICE_DEPTH)
+            names[:] = sorted(name for name in names if name not in SKIP_NOTICE_DIRS and depth < MAX_NOTICE_DEPTH
+                              and not (current / name).is_symlink() and contained(current / name, root) is not None)
             if depth > MAX_NOTICE_DEPTH:
                 names[:] = []
                 continue
             for name in sorted(filenames):
                 candidate = current / name
-                if not is_notice_name(name) or candidate.is_symlink():
+                if not is_notice_name(name) or not safe_regular(candidate, root):
                     continue
                 try:
                     if candidate.is_file() and candidate.stat().st_size <= MAX_NOTICE_BYTES:
@@ -103,6 +118,8 @@ def notice_files(root):
 
 
 def copy_record(source, root, destination, copied):
+    if not safe_regular(source, root):
+        fail("refusing to copy a record outside the keg")
     relative = source.relative_to(root)
     target = destination / relative
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -128,20 +145,20 @@ def inventory(files, notices_dir=None):
             # Raw receipt/SBOM records may contain private build paths. Export
             # only their summaries, retaining the originals in the local keg.
             for source in (recipe,):
-                if source.is_file() and not source.is_symlink():
+                if safe_regular(source, root):
                     copy_record(source, root, destination, copied)
             for source in notices:
                 copy_record(source, root, destination, copied)
         records.append({
           "input": raw_path.relative_to(root).as_posix(), "input_sha256": sha256(raw_path),
           "formula": formula, "version": version,
-          "formula_recipe": {"path": f".brew/{formula}.rb", **recipe_metadata(recipe)},
-          "install_receipt": {"path": "INSTALL_RECEIPT.json", **read_json_summary(receipt)},
-          "sbom": {"path": "sbom.spdx.json", **read_json_summary(sbom)},
+          "formula_recipe": {"path": f".brew/{formula}.rb", **recipe_metadata(recipe, root)},
+          "install_receipt": {"path": "INSTALL_RECEIPT.json", **read_json_summary(receipt, root)},
+          "sbom": {"path": "sbom.spdx.json", **read_json_summary(sbom, root)},
           "notice_files": [{"path": item.relative_to(root).as_posix(), "sha256": sha256(item)} for item in notices],
           "copied_files": copied,
-          "missing_provenance": [item for item, present in (("formula recipe", recipe.is_file()),
-             ("INSTALL_RECEIPT.json", receipt.is_file()), ("sbom.spdx.json", sbom.is_file()),
+          "missing_provenance": [item for item, present in (("formula recipe", safe_regular(recipe, root)),
+             ("INSTALL_RECEIPT.json", safe_regular(receipt, root)), ("sbom.spdx.json", safe_regular(sbom, root)),
              ("license/notice file", bool(notices))) if not present]})
     return {"schema": 1, "purpose": "read-only standalone bundle dependency inventory",
       "redistribution_status": "not-reviewed-not-approved",

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 
@@ -173,9 +174,29 @@ class StandalonePackageTest(unittest.TestCase):
         self.add_standalone_script(arm)
         self.add_standalone_script(intel)
         output = self.base / "assembled output"
-        packager.assemble(SimpleNamespace(arm64=arm, x86_64=intel,
-                                          output=output, version="1.2.3"))
         app = output / "VectorWarp.app"
+        original_run = packager.run
+
+        def add_finder_metadata_after_compile(*command):
+            result = original_run(*command)
+            if command[0] == '/usr/bin/clang':
+                # Reproduce metadata attached by Finder/file providers after
+                # the generated app directory exists, before bundle signing.
+                original_run('/usr/bin/xattr', '-wx', 'com.apple.FinderInfo',
+                             '00' * 8 + '0400' + '00' * 22, app)
+                original_run('/usr/bin/xattr', '-w', 'com.apple.ResourceFork',
+                             'fixture', app / 'Contents/Resources/runtime/arm64/script/vectorwarp-standalone')
+                original_run('/usr/bin/xattr', '-w', 'io.vectorwarp.keep', 'retained', app)
+            return result
+
+        with mock.patch.object(packager, 'run', side_effect=add_finder_metadata_after_compile):
+            packager.assemble(SimpleNamespace(arm64=arm, x86_64=intel,
+                                              output=output, version="1.2.3"))
+        self.assertEqual(original_run('/usr/bin/xattr', '-p', 'io.vectorwarp.keep', app).strip(), 'retained')
+        attributes = original_run('/usr/bin/xattr', '-r', app)
+        self.assertNotIn('com.apple.FinderInfo', attributes)
+        self.assertNotIn('com.apple.ResourceFork', attributes)
+        self.assertNotIn('io.vectorwarp.keep', original_run('/usr/bin/xattr', '-r', arm))
         launcher = app / "Contents/MacOS/VectorWarp"
         package = output / "VectorWarp-universal-local.pkg"
         self.assertTrue(package.is_file())

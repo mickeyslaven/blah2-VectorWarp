@@ -12,12 +12,17 @@ architectures. The [Apple Silicon job for `36c70d8`](https://github.com/mickeysl
 passed its dependency audit, 18 replay cases, 11 configuration cases, open-SDK
 no-device handling, API lifecycle and unchanged-bundle audit with Homebrew hidden.
 Intel subsequently passed the same CPU/replay, configuration, SDK, lifecycle and
-unchanged-bundle checks with Homebrew hidden. Its virtual Metal driver aborts
-during MoltenVK argument-buffer initialization; an isolated compatibility control
-avoids that abort, but the virtual GPU then fails the accuracy check and correctly
-falls back to CPU. See the [Intel diagnostic run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35415430589/job/105823041815).
-Validation of the narrow driver workaround and a full combined installer remain
-pending. These virtual-runner results do not qualify physical Intel GPUs.
+unchanged-bundle checks with Homebrew hidden. [Run 35416945672](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35416945672) passed the current
+macOS 15 arm64 and Intel runtime jobs for source revision
+`75b93031835df06c5b1edc681f07356cfd0dacf6`. The Intel GPU driver probe returns
+valid JSON in 0.135 seconds under the narrow Apple virtual-device workaround.
+Forced GPU replay still fails accuracy qualification and correctly falls back to
+CPU. Full combined installer assembly passed locally. Its Apple Silicon app
+passed synthetic replay, web-only/start/restart/Save & Restart/stop, bootstrap and
+strict signature verification. The expanded installer matches the app, both
+runtime manifests remain unchanged and no test processes remain. The package
+was inspected without installing it. These results do not qualify physical
+Intel hardware or GPUs.
 Public binary distribution, Developer ID signing and notarization are not yet
 qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
 

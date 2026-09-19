@@ -52,9 +52,12 @@ jobs:
           node="$(brew --prefix node@24)/bin/node"
           python="$(brew --prefix python@3.12)/bin/python3.12"
           python3 script/package-macos-standalone.py stage --artifact build/macos/artifact --node "$node" --python "$python" --moltenvk "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --output 'build/standalone runtime'
+          provenance="$GITHUB_WORKSPACE/build/standalone-provenance"
+          python3 script/collect-macos-standalone-provenance.py --runtime "$GITHUB_WORKSPACE/build/standalone runtime" --cellar "$(brew --cellar)" --output "$provenance/inventory.json" --notices-dir "$provenance/notices"
           node api/macos-receiver-management.test.js
           node api/macos-platform.test.js
           python3 test/macos/license_inventory_test.py
+          python3 test/macos/standalone_provenance_test.py
           python3 test/macos/standalone_launcher_test.py
           python3 test/macos/standalone_package_test.py
           python3 test/macos/standalone_transfer_test.py
@@ -159,6 +162,8 @@ jobs:
           name: standalone-runtime-diagnostics-${{ matrix.arch }}
           path: |
             build/standalone runtime/standalone.json
+            build/standalone-provenance/inventory.json
+            build/standalone-provenance/notices
             build/standalone-replay.log
             build/standalone-config.log
             build/standalone-sdk-closure.log

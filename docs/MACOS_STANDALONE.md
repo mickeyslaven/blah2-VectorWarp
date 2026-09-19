@@ -12,6 +12,13 @@ Local development artifacts are ad-hoc signed only. They must not be
 treated as a public distribution until architecture CI qualification,
 redistribution review, Developer ID signing, and notarization are complete.
 
+The standalone CI matrix passed both macOS 15 runtime jobs for source revision
+`75b93031835df06c5b1edc681f07356cfd0dacf6` (run 35416945672). This is runtime
+CI evidence. The combined local app and installer also passed assembly, Apple
+Silicon application lifecycle, unchanged-runtime and expanded-package checks.
+The Intel payload was exercised in CI; physical Intel execution remains untested.
+Public distribution remains pending the reviews above.
+
 ## Planned commands
 
 The app opens Settings by default. Its executable is:
@@ -49,8 +56,9 @@ GPU use remains optional and requires separate runtime acceptance. UHD device
 image readiness is separate from the bundled UHD module.
 GPU discovery alone does not enable acceleration: the processor also checks
 accuracy and performance, and falls back to CPU with a reported reason when
-qualification fails. The Intel CI virtual GPU fails the accuracy check; physical
-Intel GPU operation remains unverified.
+qualification fails. The Intel CI virtual device fails forced-GPU replay
+accuracy qualification and uses CPU; physical Intel GPU operation remains
+unverified.
 
 Kraken capture requires a separately built or imported local Heimdall companion;
 the Suite is not bundled because its redistribution terms are not established.
@@ -79,8 +87,14 @@ them. For two audited runtime directories from the same source revision:
 python3 script/package-macos-standalone.py assemble \
   --arm64 /path/to/arm64-runtime \
   --x86_64 /path/to/x86_64-runtime \
-  --output /path/to/new-output-directory
+  --output "$HOME/Library/Caches/VectorWarp/new-installer"
 ```
+
+Use a fresh local output directory outside iCloud Drive or other synchronized
+folders. Finder metadata prevented signing in the local synchronized Documents
+checkout and remained after cleanup. The builder removes only the two metadata
+attributes disallowed by [Apple signing rules](https://developer.apple.com/library/archive/qa/qa1940/_index.html)
+from its generated app copy; it preserves quarantine and provenance attributes.
 
 This creates `VectorWarp.app` and `VectorWarp-universal-local.pkg`. It does not
 install, publish, or notarize them. A universal launcher selects one complete
