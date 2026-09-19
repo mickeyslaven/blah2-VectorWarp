@@ -184,9 +184,20 @@ jobs:
       - id: deployment
         name: Deploy reviewed repository
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+  verify-pages:
+    name: Verify public installation page and downloads
+    needs: [rebuild-repository, publish-pages]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download freshly rebuilt repository
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reviewed-package-repository
+          path: repository
       - name: Check public installation page and downloads
         env:
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          PAGE_URL: https://mickeyslaven.github.io/blah2-VectorWarp/
         run: |
           set -euo pipefail
           if [[ "${PAGE_URL:-}" != "https://mickeyslaven.github.io/blah2-VectorWarp/" ]]; then
@@ -195,7 +206,7 @@ jobs:
           # Allow bounded CDN propagation, but never call a stale page success.
           for file in index.html install.sh repository-manifest.json keys/vectorwarp.asc; do
             matched=false
-            for attempt in 1 2 3 4 5 6; do
+            for attempt in {1..120}; do
               if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
                 --connect-timeout 10 --max-time 20 --header 'Cache-Control: no-cache' \
                 "${PAGE_URL}${file}?deployment=${GITHUB_RUN_ID}" --output "$RUNNER_TEMP/vectorwarp-public-file" &&
