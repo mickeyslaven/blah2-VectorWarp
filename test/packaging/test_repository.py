@@ -74,11 +74,13 @@ class HomepageTests(unittest.TestCase):
     def test_macos_download_requires_verified_release_entry(self):
         manifest = self.release_manifest()
         self.assertNotIn('Download signed PKG', repository.repository_homepage(manifest))
-        manifest['macos_package'] = {'filename': 'vectorwarp-1.2.3-macos-universal.pkg'}
+        manifest['macos_package'] = {'filename': 'vectorwarp-1.2.3-macos-universal.pkg',
+                                     'sha256': 'a' * 64}
         page = repository.repository_homepage(manifest)
         self.assertIn('macOS 15+ · universal', page)
         self.assertIn('releases/download/v1.2.3/vectorwarp-1.2.3-macos-universal.pkg', page)
         self.assertIn('/Applications/VectorWarp.app/Contents/MacOS/VectorWarp', page)
+        self.assertIn('pkgutil --check-signature vectorwarp-1.2.3-macos-universal.pkg', page)
         manifest['macos_package']['filename'] = 'vectorwarp-1.2.2-macos-universal.pkg'
         with self.assertRaisesRegex(ValueError, 'Mac package filename'):
             repository.repository_homepage(manifest)

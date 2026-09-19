@@ -76,6 +76,8 @@ def release_installation(manifest):
         filename = macos["filename"]
         if filename != f"vectorwarp-{version}-macos-universal.pkg":
             raise ValueError("Mac package filename disagrees with release version")
+        if not isinstance(macos.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", macos["sha256"]):
+            raise ValueError("Mac package checksum is missing")
         rows.append(f'<tr><th scope="row">macOS 15+ · universal</th>'
                     f'<td colspan="2"><a href="{base}/{escape(filename)}">Download signed PKG</a></td></tr>')
     table_rows = "\n".join(rows)
@@ -84,6 +86,11 @@ def release_installation(manifest):
                       '''For macOS, use the public Homebrew tap; this release has no PKG asset.''')
     macos_scope = ('''The macOS PKG is universal, with Apple Silicon validation on M2;
 physical Intel Mac execution remains unverified. ''' if macos else "")
+    macos_verify = (f'''<p>For the macOS PKG, compare its SHA-256 with
+<code>{macos["sha256"]}</code>, then check the Apple installer signature and notarization:</p>
+<pre><code>shasum -a 256 {escape(macos["filename"])}
+pkgutil --check-signature {escape(macos["filename"])}
+spctl --assess --type install {escape(macos["filename"])}</code></pre>''' if macos else "")
     fingerprint = escape(manifest["signing_fingerprint"])
     # The site can be rebuilt from main before the next release exists. Describe
     # only behavior shipped by the verified packages in this manifest.
@@ -129,8 +136,9 @@ to activate updated code. Do not run it mid-transaction; it does not restart
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp {version}</h2>
 <h3>1. Install for your OS</h3>
-<p>Copy the command for your OS. It installs the prerequisites, adds our signed
-repository, installs VectorWarp and opens the web interface. Enter your
+<p>For Linux, copy the command for your OS. It installs the prerequisites, adds
+our signed repository, installs VectorWarp and opens the web interface. On macOS,
+use the Homebrew tap or the signed PKG in the download table. Enter your
 administrator password if prompted.</p>
 <h4>Fedora 44</h4>
 <pre><code>{escape(fedora_install)}</code></pre>
@@ -187,7 +195,8 @@ not Ubuntu 26.04. Raspberry Pi OS Trixie uses Debian 13 ARM64. No 32-bit package
 is provided. For other systems, use the
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
 <details><summary>Verify a direct download</summary>
-<p>Save your package, <a href="{base}/SHA256SUMS">checksums</a>,
+{macos_verify}
+<p>For Linux DEB/RPM packages, save your package, <a href="{base}/SHA256SUMS">checksums</a>,
 <a href="{base}/SHA256SUMS.asc">checksum signature</a>, and
 <a href="{base}/vectorwarp-archive-key.asc">public signing key</a> in the same folder.
 The release key fingerprint is <code>{fingerprint}</code>; compare it with the
