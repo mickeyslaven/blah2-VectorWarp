@@ -87,6 +87,9 @@ class StandaloneIsolationTest(unittest.TestCase):
               test -e "$FIXTURE_PREFIX/.vectorwarp-ci-hidden/$name" || test -L "$FIXTURE_PREFIX/.vectorwarp-ci-hidden/$name"
             done
             echo runtime >> "$FIXTURE_LOG"
+            if [ "${3:-}" = test/macos/standalone_driver_probe.py ] && [ "$FIXTURE_MODE" = driver-failure ]; then
+              exit 23
+            fi
             if [ "${3:-}" = test/recording/processor_replay_test.py ]; then
               case "$FIXTURE_MODE" in
                 failure) exit 23 ;;
@@ -141,6 +144,12 @@ class StandaloneIsolationTest(unittest.TestCase):
         self.assertEqual(result.returncode, 29, result.stderr)
         self.assert_restored()
         self.assertFalse(self.log.exists())
+
+    def test_driver_failure_still_audits_and_fails_after_restoring(self):
+        result = self.run_fixture('driver-failure')
+        self.assertEqual(result.returncode, 23, result.stderr)
+        self.assert_restored()
+        self.assertEqual(self.log.read_text().splitlines(), ['runtime'] * 5 + ['audit'])
 
     def test_term_restores_contents_and_preserves_signal_status(self):
         result = self.run_fixture('signal')

@@ -59,6 +59,12 @@ jobs:
           python3 test/macos/standalone_package_test.py
           python3 test/macos/standalone_transfer_test.py
           python3 test/macos/standalone_isolation_test.py
+          python3 test/macos/standalone_driver_probe_test.py
+      - name: Record original-build GPU driver control
+        run: |
+          python3 test/macos/standalone_driver_probe.py --observe-only --worker build/macos/artifact/bin/blah2-gpu-worker --icd-library "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --evidence build/source-driver-probe
+          icd="$GITHUB_WORKSPACE/build/standalone runtime/share/vulkan/icd.d/MoltenVK_icd.json"
+          VK_DRIVER_FILES="$icd" VK_ICD_FILENAMES="$icd" python3 test/macos/standalone_driver_probe.py --observe-only --worker 'build/standalone runtime/bin/blah2-gpu-worker' --evidence build/staged-driver-control
       - name: Verify replay, configuration, and standalone isolation
         run: |
           set -euo pipefail
@@ -97,11 +103,15 @@ jobs:
           "$runtime/python/bin/python3" -s -P test/recording/processor_replay_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-replay.log
           "$runtime/python/bin/python3" -s -P test/macos/config_runtime_test.py --gpu-capable --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-config.log
           "$runtime/python/bin/python3" -s -P test/macos/receiver_sdk_test.py --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-sdk-closure.log
-          "$runtime/bin/blah2-gpu-worker" --driver-status 2>&1 | tee build/standalone-driver-status.log
           "$runtime/python/bin/python3" -s -P test/macos/processor_lifecycle_test.py --standalone --app-root "$runtime" --binary "$runtime/bin/blah2" 2>&1 | tee build/standalone-lifecycle.log
+          # Run CPU lifecycle first so a driver failure retains that evidence.
+          # A failed/crashed probe still fails this job; diagnostics do not waive it.
+          driver_status=0
+          "$runtime/python/bin/python3" -s -P test/macos/standalone_driver_probe.py --worker "$runtime/bin/blah2-gpu-worker" --evidence build/standalone-driver-probe || driver_status=$?
           restore_homebrew
           trap - EXIT INT TERM
           "$runtime/python/bin/python3" -s -P script/package-macos-standalone.py audit --runtime "$runtime" 2>&1 | tee build/standalone-audit.log
+          exit "$driver_status"
       - name: Encrypt the tested development runtime for local review
         if: vars.VECTORWARP_STANDALONE_RECIPIENT_CERT != ''
         env:
@@ -131,7 +141,9 @@ jobs:
             build/standalone-replay.log
             build/standalone-config.log
             build/standalone-sdk-closure.log
-            build/standalone-driver-status.log
+            build/source-driver-probe
+            build/staged-driver-control
+            build/standalone-driver-probe
             build/standalone-lifecycle.log
             build/standalone-audit.log
           if-no-files-found: warn
