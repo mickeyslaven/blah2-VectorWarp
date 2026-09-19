@@ -76,25 +76,40 @@ requirements in its [vendor guide](https://www.raspberrypi.com/news/how-to-add-y
 
 ## Image construction
 
-Use a pinned **pi-gen `bookworm-arm64` Lite build**, followed by a small
-VectorWarp stage. This preserves the normal Pi firmware, networking and Imager
-first-boot integration. The branch head inspected for this design was
-`850ee74bdd025e44975581efbbe8623bdd17bd1d`; pin the reviewed revision for the
-builder rather than following a moving branch. Upstream documents Lite stages,
-custom stages, first-user provisioning and XZ export in
-[pi-gen's README](https://github.com/RPi-Distro/pi-gen/blob/850ee74bdd025e44975581efbbe8623bdd17bd1d/README.md).
+The builder customizes the pristine official **2026-09-15 Raspberry Pi OS
+Lite 64-bit Bookworm** image. It verifies the pinned compressed SHA-256
+`bcaefdf9c40dbed31dcaeb3b8494e498b4f1e3078c2604b0d9f5f595f8f6fd91`, expands a
+new regular image file to 8 GiB, and installs the exact Bookworm ARM64 DEB into
+its root filesystem. It preserves the official FAT boot partition, firmware,
+networking, Imager customization and first-boot expansion hooks. It does not
+clone the benchmark Pi or its remote migration partition layout.
 
-Build on a disposable Linux ARM64 runner with sufficient disk space, outside
-timed Pi tests. Use stages 0–2 plus our image stage; export only the final stage.
-Set Bookworm, ARM64 and XZ output explicitly. Preserve standard FAT boot and
-ext4 root partitions and first-boot root expansion. The experimental test Pi's
-old root, alternate boot files and remote migration partition layout are not
-part of the distributable image.
+Run on native ARM64 Linux with at least 17 GiB free, outside timed Pi tests.
+The assembler accepts image files and creates its own loop device; it never
+flashes a physical disk. Signed OS repositories supply runtime dependencies.
+The private Node runtime and local RSPduo source kit come from the package.
+
+```sh
+sudo packaging/pi/build-pi4-image.sh \
+  --base 2026-09-15-raspios-bookworm-arm64-lite.img.xz \
+  --base-sha256 bcaefdf9c40dbed31dcaeb3b8494e498b4f1e3078c2604b0d9f5f595f8f6fd91 \
+  --deb vectorwarp_0.1.10-1_debian12_arm64.deb \
+  --output vectorwarp-pi4-0.1.10-arm64.img.xz \
+  --source-revision COMMIT_SHA --allow-network
+sudo packaging/pi/verify-pi4-image.sh \
+  --image vectorwarp-pi4-0.1.10-arm64.img.xz --workdir /var/tmp/vectorwarp-image-check
+```
+
+Replace `COMMIT_SHA` with the exact source commit used for the package.
+The output includes a provenance JSON with hashes, installed package versions,
+and the enabled image profile. Compression is limited to two threads and
+512 MiB. Verification checks the image's native runtime and starts the normal
+API in an isolated network/PID namespace on a disposable copy. It does not
+claim physical boot, radio, GPU or Wi-Fi acceptance.
 
 The image stage must:
 
-- Install a verified, exact-version **Bookworm ARM64 VectorWarp DEB** and signed
-  package repository, native runtime dependencies, the packaged private Node
+- Install a verified, exact-version **Bookworm ARM64 VectorWarp DEB** with native runtime dependencies, the packaged private Node
   runtime, Mesa/V3D/Vulkan support and the AUTO worker from that same release.
 - Include NetworkManager, wireless firmware/regulatory data, Avahi and the
   standard Pi user/SSH provisioning hooks. Preserve Imager choices rather than
@@ -107,8 +122,7 @@ The image stage must:
   100 MHz and zero-valued site placeholders, 2 MS/s, 500 ms CPI, ±300 Hz
   (301×411), tracking, and the Pi RSPduo performance drop-in; radar stays
   stopped until the user reviews settings and chooses Save & Restart. The
-  benchmark's 551 MHz frequency, site data, environment overrides and temporary
-  ports are not factory defaults.
+  benchmark's 551 MHz frequency, site data and temporary ports are not factory defaults.
 - Keep the stock supported clock and record kernel, firmware, Mesa, FFTW, BLAS,
   Node and application versions. Record any performance governor/service tuning
   in the image profile; test it with normal capture and thermal conditions.
@@ -235,5 +249,6 @@ with `jsonschema` validation against the official Imager schema retrieved on
 19 September 2026 (SHA-256
 `c3e323aa297e9ef3f386f522abb4497db5eb9a1ca5f7f3c7a3b1f9a75862ac85`).
 This validates metadata generation, not candidate-image construction or headless
-boot. The Bookworm package target is present; the pi-gen build and physical
-acceptance remain to do.
+boot. The Bookworm package target, image assembler and isolated software verifier are
+present. Native image assembly and acceptance results must identify the exact
+artifact; physical clean-card acceptance remains separate.

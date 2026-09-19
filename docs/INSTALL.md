@@ -16,23 +16,24 @@ Bookworm. A 32 GB microSD card is recommended. Pi 5 is future work.
 
 ## Pi 4B Bookworm Lite
 
-When the release is available, download its versioned `.rpi-imager-manifest`,
-open it in Raspberry Pi Imager, and choose the Pi 4 Bookworm Lite image. The
-manifest is required: it enables Imager's hostname, locale, Wi-Fi, country,
-login and SSH customization. Do not expect a bare `.img.xz` selection to set
-up headless Wi-Fi.
+When the release is available, download its versioned `.rpi-imager-manifest`
+and open that manifest in Raspberry Pi Imager before choosing the Pi 4
+Bookworm Lite image. The manifest is required: it enables Imager's hostname,
+locale, Wi-Fi, country, login and SSH customization. Do not select a bare
+`.img.xz` when you need headless Wi-Fi or SSH setup.
 
 Before writing the card, set a hostname, a username with password or SSH key,
 locale/time zone, and enable SSH. Set Wi-Fi name, password and country for a
 wireless setup; Ethernet may omit Wi-Fi. The image has no factory login and
 does not include a network profile. After boot, browse to
-`http://<hostname>.local:3000/` or the DHCP address, choose a receiver in
-Settings, and select **Save & Restart** to begin processing.
+`http://<hostname>.local:3000/` or the DHCP address. For an RSPduo, install
+SDRplay's vendor API yourself, then choose **Build SDRplay support** in
+Settings before selecting **Save & Restart**. Other receivers can be configured
+and started with **Save & Restart** once their settings are ready.
 
 The current image candidate is not published or boot-tested, so do not flash it
 as an installation route yet. Its eventual user flow is documented in the
-[Pi 4 guide](PI4_GUIDE.md). For an RSPduo, install SDRplay's vendor API yourself,
-then choose **Build SDRplay support** in Settings; VectorWarp does not ship it.
+[Pi 4 guide](PI4_GUIDE.md). VectorWarp does not ship SDRplay software.
 
 ## Linux packages
 

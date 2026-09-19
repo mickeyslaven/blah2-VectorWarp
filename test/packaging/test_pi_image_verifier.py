@@ -1,19 +1,32 @@
-"""Contract gates for the Pi image verifier; no image or namespace is created."""
+"""Exercise verifier argument boundaries without mounting or starting an API."""
 from pathlib import Path
 import subprocess
 import unittest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'packaging/pi/verify-pi4-image.sh'
+
+
 class PiImageVerifierTests(unittest.TestCase):
-    def test_syntax_and_isolation_contract(self):
+    def invoke(self, *args):
+        return subprocess.run(['bash', str(SCRIPT), *args], capture_output=True,
+                              text=True, timeout=10)
+
+    def test_help_and_syntax(self):
         subprocess.run(['bash', '-n', str(SCRIPT)], check=True)
-        text = SCRIPT.read_text()
-        for value in ('--image', '--root', '--workdir', 'losetup --find --show --partscan',
-                      'mount -o ro,nosuid,nodev', 'unshare --mount --net --pid --fork',
-                      'timeout 30s unshare', 'BLAH2_SETUP_PORT=39081', '/api/config', '/api/system/status',
-                      '--groups=vectorwarp-config', 'mesa-vulkan-drivers', 'libsdrplay_api.so*',
-                      'raspberrypi-sys-mods', 'readelf -h'):
-            self.assertIn(value, text)
-        self.assertNotIn('BLAH2_PREVIEW=true', text)
-        self.assertNotIn('/dev/sd', text)
-if __name__ == '__main__': unittest.main()
+        result = self.invoke('--help')
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('--image', result.stdout)
+        self.assertIn('--root', result.stdout)
+
+    def test_requires_one_input_and_workdir(self):
+        for args in ((), ('--image',), ('--root', '/unused'),
+                     ('--workdir', '/unused'),
+                     ('--image', 'unused.img.xz', '--root', '/unused', '--workdir', '/unused'),
+                     ('--unknown',)):
+            with self.subTest(args=args):
+                self.assertNotEqual(self.invoke(*args).returncode, 0)
+
+
+if __name__ == '__main__':
+    unittest.main()

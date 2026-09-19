@@ -8,6 +8,23 @@ VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU a
 
 [Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
 
+## Choose an installation path
+
+1. **Raspberry Pi 4B:** the Bookworm Lite image candidate is still unpublished
+   and has not completed clean-card boot testing. Follow the planned
+   [Pi 4 Imager flow](docs/PI4_GUIDE.md); Pi 5 is future work.
+2. **Linux PC or non-image ARM64 system:** install a matching signed DEB or RPM
+   from the [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+3. **macOS:** install with [Homebrew](docs/MACOS_HOMEBREW.md), or use a signed
+   PKG when the package page lists one.
+4. **Development or an unsupported system:** use the
+   [source-install instructions](docs/INSTALL.md#build-from-source).
+
+Every route opens Settings before radar starts. Configure a receiver or replay
+file there, then choose **Save & Restart**. RSPduo users must install SDRplay's
+vendor API themselves and choose **Build SDRplay support** before that first
+start; VectorWarp does not distribute the vendor software.
+
 ## What you get beyond blah2
 
 - **GPU acceleration:** use a compatible GPU for clutter filtering and delay–Doppler processing, with automatic selection and CPU fallback.

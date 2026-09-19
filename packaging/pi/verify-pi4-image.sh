@@ -22,7 +22,7 @@ while (($#)); do case "$1" in
   -h|--help) usage; exit 0;; *) die "unknown option: $1";; esac; done
 [[ -n $workdir ]] && { [[ -n $image && -z $root ]] || [[ -z $image && -n $root ]]; } || { usage >&2; exit 64; }
 [[ $(id -u) == 0 ]] || die 'must run as root for loop and namespace isolation'
-for c in awk chroot cp df dpkg find grep ip losetup mount mountpoint parted readelf realpath rm rsync sha256sum sort stat timeout umount unshare xz; do command -v "$c" >/dev/null || die "missing $c"; done
+for c in awk chroot cp df dpkg find findmnt grep ip losetup mount mountpoint parted readelf realpath rm rsync sha256sum sort stat timeout umount unshare xz; do command -v "$c" >/dev/null || die "missing $c"; done
 workdir=$(realpath -m "$workdir")
 [[ $workdir =~ ^[-A-Za-z0-9_./+]+$ ]] || die '--workdir has unsafe characters'
 mkdir -p "$workdir"; [[ -d $workdir && ! -L $workdir ]] || die '--workdir must be a real directory'
@@ -46,6 +46,10 @@ if [[ -n $image ]]; then
   root=$scratch/root; mkdir "$root"; mount -o ro,nosuid,nodev "$loop"p2 "$root"; mounted+=("$root")
 else
   root=$(realpath -e "$root"); [[ -d $root && ! -L $root ]] || die '--root must be a real mounted root directory'
+  mounted_source=$(findmnt -n -o SOURCE --target "$root")
+  mounted_options=$(findmnt -n -o OPTIONS --target "$root")
+  [[ $mounted_source =~ ^/dev/loop[0-9]+p[0-9]+$ ]] || die '--root must be mounted from a loop partition'
+  [[ ,$mounted_options, == *,ro,* ]] || die '--root must be mounted read-only'
 fi
 
 test_root() {
@@ -69,11 +73,18 @@ test_root() {
   test -f "$r/etc/vectorwarp/config.yml"; grep -qx '  fc: 100000000' "$r/etc/vectorwarp/config.yml"
   grep -qx '    type: "RspDuo"' "$r/etc/vectorwarp/config.yml"
   chroot "$r" /bin/sh -ec 'id -nG vectorwarp | tr " " "\n" | grep -qx render; id -nG vectorwarp | tr " " "\n" | grep -qx video; find /usr/share/vulkan/icd.d -type f -name "*.json" -print -quit | grep -q .'
-  for elf in "$r/opt/vectorwarp/runtime/node/bin/node" "$r/opt/vectorwarp/current/bin/blah2" "$r/opt/vectorwarp/current/bin/blah2-gpu-worker" "$r/opt/vectorwarp/current/bin/blah2-mixed-worker" "$r"/opt/vectorwarp/current/bin/*.so*; do
-    [[ -f $elf ]] || continue
+  required_elfs=("$r/opt/vectorwarp/runtime/node/bin/node" "$r/opt/vectorwarp/current/bin/blah2" "$r/opt/vectorwarp/current/bin/blah2-gpu-worker" "$r/opt/vectorwarp/current/bin/blah2-mixed-worker")
+  for elf in "${required_elfs[@]}"; do
     [[ -x $elf ]] || die "missing required native worker: ${elf#$r}"
     readelf -h "$elf" | grep -q 'Machine:.*AArch64'
-    ! chroot "$r" /usr/bin/ldd "${elf#$r}" | grep -q 'not found'
+    if ! ldd_output=$(chroot "$r" /usr/bin/ldd "${elf#$r}"); then die "ldd failed for ${elf#$r}"; fi
+    [[ $ldd_output != *'not found'* ]] || die "unresolved native dependency: ${elf#$r}"
+  done
+  for elf in "$r"/opt/vectorwarp/current/bin/*.so*; do
+    [[ -f $elf ]] || continue
+    readelf -h "$elf" | grep -q 'Machine:.*AArch64'
+    if ! ldd_output=$(chroot "$r" /usr/bin/ldd "${elf#$r}"); then die "ldd failed for ${elf#$r}"; fi
+    [[ $ldd_output != *'not found'* ]] || die "unresolved native dependency: ${elf#$r}"
   done
 }
 test_root "$root"
