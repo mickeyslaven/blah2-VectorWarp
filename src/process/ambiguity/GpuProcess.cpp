@@ -70,7 +70,15 @@ struct Layout {
         throw std::runtime_error("GPU FIR shared-memory budget exceeded; using CPU");
       reference = surveillance = output = 0;
       firReference = firOutput = size_t(prefix); firWeights = g.firTaps;
-      firOffset = 0; bytes = size_t(total); return;
+      firOffset = 0; bytes = size_t(total);
+#ifdef __APPLE__
+      // Darwin reports POSIX shared-memory lengths rounded to a VM page. Use the
+      // same explicit size in both processes so the exact fstat check stays useful.
+      const long page = sysconf(_SC_PAGESIZE);
+      if (page <= 0) throw std::runtime_error("Cannot size GPU shared memory; using CPU");
+      bytes = ((bytes + size_t(page) - 1) / size_t(page)) * size_t(page);
+#endif
+      return;
     }
     if (g.kind != GpuWorkKind::radar || g.firSamples || g.firTaps ||
         g.firFft || g.firPercent)
