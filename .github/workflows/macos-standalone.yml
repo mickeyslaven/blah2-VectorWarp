@@ -43,7 +43,7 @@ jobs:
           brew install --skip-link python@3.12
           mkdir -p build/standalone-provenance
           brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers > build/standalone-provenance/header-input-versions.txt
-          brew info --json=v2 cpp-httplib > build/standalone-provenance/cpp-httplib-formula.json
+          cp "$(brew --prefix cpp-httplib)/.brew/cpp-httplib.rb" build/standalone-provenance/cpp-httplib-formula.rb
       - name: Select Node 24 and build CPU, GPU, and open receiver adapters
         run: |
           echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
@@ -176,7 +176,7 @@ jobs:
             build/standalone runtime/standalone.json
             build/standalone-provenance/inventory.json
             build/standalone-provenance/header-input-versions.txt
-            build/standalone-provenance/cpp-httplib-formula.json
+            build/standalone-provenance/cpp-httplib-formula.rb
             build/standalone-provenance/notices
             build/standalone-replay.log
             build/standalone-config.log

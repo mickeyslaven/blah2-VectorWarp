@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Offline release-agent policy and source-reuse checks."""
 import importlib.util
-import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -87,17 +86,15 @@ class SourceReuseTest(unittest.TestCase):
 
     def test_intel_formula_pins_reviewed_source(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "formula.json"
+            path = Path(directory) / "formula.rb"
             version, checksum = inputs.CPP_HEADER["x86_64"]
-            formula = {"formulae": [{"name": "cpp-httplib", "license": "MIT",
-                       "versions": {"stable": version},
-                       "urls": {"stable": {"url":
-                           f"https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz",
-                           "checksum": checksum}}}]}
-            path.write_text(json.dumps(formula))
+            formula = ("class CppHttplib < Formula\n"
+                       f'  url "https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz"\n'
+                       f'  sha256 "{checksum}"\n'
+                       '  license "MIT"\nend\n')
+            path.write_text(formula)
             self.assertTrue(inputs.verify_cpp_formula(path, "x86_64").endswith("v0.53.1.tar.gz"))
-            formula["formulae"][0]["urls"]["stable"]["checksum"] = "a" * 64
-            path.write_text(json.dumps(formula))
+            path.write_text(formula.replace(checksum, "a" * 64))
             with self.assertRaisesRegex(ValueError, "formula source"):
                 inputs.verify_cpp_formula(path, "x86_64")
 

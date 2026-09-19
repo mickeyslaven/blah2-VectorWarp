@@ -85,18 +85,14 @@ def parse_header_versions(path, arch):
 
 
 def verify_cpp_formula(path, arch):
-    document = read_json(path)
-    formulas = document.get("formulae") if isinstance(document, dict) else None
-    if not isinstance(formulas, list) or len(formulas) != 1:
-        raise ValueError("missing single cpp-httplib Homebrew formula")
-    formula = formulas[0]
+    recipe = Path(path).read_text()
     version, expected_sha = CPP_HEADER[arch]
-    source = formula.get("urls", {}).get("stable", {})
     expected_url = f"https://github.com/yhirose/cpp-httplib/archive/refs/tags/v{version}.tar.gz"
-    if (formula.get("name") != "cpp-httplib" or
-            formula.get("versions", {}).get("stable") != version or
-            source.get("url") != expected_url or source.get("checksum") != expected_sha or
-            formula.get("license") != "MIT"):
+    url = re.findall(r'^\s*url "([^"]+)"\s*$', recipe, re.MULTILINE)
+    sha = re.findall(r'^\s*sha256 "([0-9a-f]{64})"\s*$', recipe, re.MULTILINE)
+    license_name = re.findall(r'^\s*license "([^"]+)"\s*$', recipe, re.MULTILINE)
+    if ("class CppHttplib < Formula" not in recipe or
+            url != [expected_url] or sha != [expected_sha] or license_name != ["MIT"]):
         raise ValueError(f"{arch} cpp-httplib formula source, version, or license changed")
     return expected_url
 
@@ -222,8 +218,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp):
              "inventory-x86_64.json": Path(args.x86_64_inventory),
              "header-input-versions-arm64.txt": Path(args.arm64_header_versions),
              "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
-             "cpp-httplib-formula-arm64.json": Path(args.arm64_cpp_formula),
-             "cpp-httplib-formula-x86_64.json": Path(args.x86_64_cpp_formula)}
+             "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
+             "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula)}
     manifest = {"schema": 1, "source_id": source_id, "version": args.version,
                 "baseline_source_id": BASELINE_SOURCE_ID,
                 "files": {name: {"sha256": sha256(path), "size": path.stat().st_size}
