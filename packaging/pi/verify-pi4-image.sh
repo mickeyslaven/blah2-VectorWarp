@@ -37,8 +37,8 @@ trap cleanup EXIT INT TERM
 
 if [[ -n $image ]]; then
   image=$(realpath -e "$image"); [[ $image == *.img.xz && -f $image ]] || die '--image must be a .img.xz file'
-  xz --test "$image"
-  raw=$scratch/image.img; xz -dc -- "$image" >"$raw"
+  # Decompression validates XZ integrity; avoid a redundant full-image pass.
+  raw=$scratch/image.img; xz -dc -- "$image" >"$raw" || die 'image decompression failed'
   loop=$(losetup --find --show --partscan "$raw"); [[ $loop =~ ^/dev/loop[0-9]+$ ]] || die 'unexpected loop device'
   [[ $(realpath "$(cat "/sys/class/block/${loop##*/}/loop/backing_file")") == "$raw" ]] || die 'loop backing mismatch'
   parted -s "$loop" unit s print | grep -Eq '^ 1[[:space:]].*fat' || die 'partition 1 is not FAT boot'
