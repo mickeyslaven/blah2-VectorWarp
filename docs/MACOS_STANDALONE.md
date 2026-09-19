@@ -47,6 +47,10 @@ or create a login item, and it does not replace per-user settings or recordings.
 The planned package targets CPU/replay operation and bundled open SDR modules.
 GPU use remains optional and requires separate runtime acceptance. UHD device
 image readiness is separate from the bundled UHD module.
+GPU discovery alone does not enable acceleration: the processor also checks
+accuracy and performance, and falls back to CPU with a reported reason when
+qualification fails. The Intel CI virtual GPU fails the accuracy check; physical
+Intel GPU operation remains unverified.
 
 Kraken capture requires a separately built or imported local Heimdall companion;
 the Suite is not bundled because its redistribution terms are not established.

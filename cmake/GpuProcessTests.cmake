@@ -1,6 +1,12 @@
 add_executable(testGpuWorkerDouble ${PROJECT_ROOT}/test/gpu/WorkerDouble.cpp)
 target_link_libraries(testGpuWorkerDouble PRIVATE blah2GpuProcess)
 include(${PROJECT_ROOT}/cmake/RapidJson.cmake)
+if(APPLE)
+  add_executable(testMacGpuCompatibility ${PROJECT_ROOT}/test/gpu/TestMacGpuCompatibility.cpp)
+  target_compile_features(testMacGpuCompatibility PRIVATE cxx_std_17)
+  target_include_directories(testMacGpuCompatibility PRIVATE ${PROJECT_ROOT}/src)
+  add_test(NAME macGpuCompatibilityPolicy COMMAND testMacGpuCompatibility)
+endif()
 add_executable(testGpuProcess ${PROJECT_ROOT}/test/gpu/TestGpuProcess.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
@@ -40,8 +46,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 set_target_properties(testGpuDriverModule PROPERTIES PREFIX "" OUTPUT_NAME "blah2-gpu-vulkan"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver-status-fixture")
-add_executable(testGpuDriverWorker ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
+set(BLAH2_GPU_DRIVER_WORKER_SOURCES ${PROJECT_ROOT}/src/process/ambiguity/GpuWorker.cpp)
+if(APPLE)
+  set(BLAH2_MAC_GPU_COMPATIBILITY ${PROJECT_ROOT}/src/process/ambiguity/MacGpuCompatibility.mm)
+  set_source_files_properties(${BLAH2_MAC_GPU_COMPATIBILITY} PROPERTIES
+    LANGUAGE CXX COMPILE_FLAGS "-x objective-c++")
+  list(APPEND BLAH2_GPU_DRIVER_WORKER_SOURCES ${BLAH2_MAC_GPU_COMPATIBILITY})
+  find_library(BLAH2_METAL_FRAMEWORK Metal)
+  find_library(BLAH2_FOUNDATION_FRAMEWORK Foundation)
+  if(NOT BLAH2_METAL_FRAMEWORK OR NOT BLAH2_FOUNDATION_FRAMEWORK)
+    message(FATAL_ERROR "macOS GPU worker compatibility needs Metal and Foundation frameworks")
+  endif()
+endif()
+add_executable(testGpuDriverWorker ${BLAH2_GPU_DRIVER_WORKER_SOURCES})
 target_link_libraries(testGpuDriverWorker PRIVATE blah2GpuProcess ${CMAKE_DL_LIBS})
+if(APPLE)
+  target_link_libraries(testGpuDriverWorker PRIVATE ${BLAH2_METAL_FRAMEWORK} ${BLAH2_FOUNDATION_FRAMEWORK})
+endif()
 set_target_properties(testGpuDriverWorker PROPERTIES OUTPUT_NAME "blah2-gpu-worker"
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/driver-status-fixture")
 add_dependencies(testGpuDriverWorker testGpuDriverModule)

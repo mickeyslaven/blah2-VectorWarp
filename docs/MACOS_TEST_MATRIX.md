@@ -11,8 +11,13 @@ requires macOS 26. The standalone CI workflow targets macOS 15 on both
 architectures. The [Apple Silicon job for `36c70d8`](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35410057065/job/105807722419)
 passed its dependency audit, 18 replay cases, 11 configuration cases, open-SDK
 no-device handling, API lifecycle and unchanged-bundle audit with Homebrew hidden.
-Intel built and staged successfully but its isolation setup failed before replay;
-Intel runtime qualification and a full combined installer remain pending.
+Intel subsequently passed the same CPU/replay, configuration, SDK, lifecycle and
+unchanged-bundle checks with Homebrew hidden. Its virtual Metal driver aborts
+during MoltenVK argument-buffer initialization; an isolated compatibility control
+avoids that abort, but the virtual GPU then fails the accuracy check and correctly
+falls back to CPU. See the [Intel diagnostic run](https://github.com/mickeyslaven/blah2-VectorWarp/actions/runs/35415430589/job/105823041815).
+Validation of the narrow driver workaround and a full combined installer remain
+pending. These virtual-runner results do not qualify physical Intel GPUs.
 Public binary distribution, Developer ID signing and notarization are not yet
 qualified. See [MACOS_STANDALONE.md](MACOS_STANDALONE.md).
 
