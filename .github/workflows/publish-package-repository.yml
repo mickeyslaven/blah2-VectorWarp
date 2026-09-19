@@ -206,14 +206,14 @@ jobs:
           # Allow bounded CDN propagation, but never call a stale page success.
           for file in index.html install.sh repository-manifest.json keys/vectorwarp.asc; do
             matched=false
-            for attempt in {1..120}; do
+            for attempt in 1 2 3 4 5 6; do
               if curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
                 --connect-timeout 10 --max-time 20 --header 'Cache-Control: no-cache' \
                 "${PAGE_URL}${file}?deployment=${GITHUB_RUN_ID}" --output "$RUNNER_TEMP/vectorwarp-public-file" &&
                 cmp --silent "repository/$file" "$RUNNER_TEMP/vectorwarp-public-file"; then
                 matched=true; break
               fi
-              sleep 5
+              sleep 30
             done
             $matched || { echo "Public repository file is unavailable or stale: $file" >&2; exit 1; }
           done
