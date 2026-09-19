@@ -69,6 +69,10 @@ test_root() {
   ! find "$r" -xdev -iname '*testpi*' -print -quit | grep -q .
   ! find "$r" -xdev -type f -name 'libsdrplay_api.so*' -print -quit | grep -q .
   test -f "$r/opt/vectorwarp/current/api/server.js"; test -f "$r/opt/vectorwarp/current/api/config-manager.js"
+  test -f "$r/opt/vectorwarp/current/html/index.html"
+  test -x "$r/usr/lib/raspberrypi-sys-mods/firstboot"
+  test -x "$r/usr/lib/raspberrypi-sys-mods/imager_custom"
+  test -L "$r/usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket"
   test -x "$r/opt/vectorwarp/runtime/node/bin/node"; test -f "$r/opt/vectorwarp/current/receiver-source/rspduo/kit.json"
   test -f "$r/etc/vectorwarp/config.yml"; grep -qx '  fc: 100000000' "$r/etc/vectorwarp/config.yml"
   grep -qx '    type: "RspDuo"' "$r/etc/vectorwarp/config.yml"
@@ -105,7 +109,7 @@ chroot --userspec=vectorwarp-api:vectorwarp-api --groups=vectorwarp-config "$r" 
   test -r /etc/vectorwarp/config.yml; test -w /var/lib/vectorwarp-api
   BLAH2_SETUP_PORT=39081 /opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/current/api/server.js /etc/vectorwarp/config.yml >/tmp/vectorwarp-api-smoke.log 2>&1 &
   api=$!; trap "kill \$api 2>/dev/null || true; wait \$api 2>/dev/null || true" EXIT INT TERM
-  /opt/vectorwarp/runtime/node/bin/node -e "const http=require(\"http\"), paths=[\"/api/config\",\"/api/system/status\"], deadline=Date.now()+10000; function one(path){return new Promise((ok,bad)=>{let q=http.get({host:\"127.0.0.1\",port:39081,path,timeout:2000},r=>{let s=\"\";r.on(\"data\",x=>s+=x);r.on(\"end\",()=>{try { r.statusCode===200&&JSON.parse(s)?ok():bad(new Error(path+\": \"+r.statusCode)) } catch(e) { bad(e) }}).on(\"error\",bad)});q.on(\"timeout\",()=>q.destroy(new Error(\"HTTP timeout\")));q.on(\"error\",bad)})}; (function check(){Promise.all(paths.map(one)).then(()=>process.exit(0),e=>Date.now()<deadline?setTimeout(check,100):(()=>{console.error(e);process.exit(1)})())})()"
+  /opt/vectorwarp/runtime/node/bin/node -e "const http=require(\"http\"), paths=[\"/\",\"/api/config\",\"/api/system/status\"], deadline=Date.now()+10000; function one(path){return new Promise((ok,bad)=>{let q=http.get({host:\"127.0.0.1\",port:39081,path,timeout:2000},r=>{let s=\"\";r.on(\"data\",x=>s+=x);r.on(\"end\",()=>{try { r.statusCode===200&&(path===\"/\"?/<html/i.test(s):JSON.parse(s))?ok():bad(new Error(path+\": \"+r.statusCode)) } catch(e) { bad(e) }}).on(\"error\",bad)});q.on(\"timeout\",()=>q.destroy(new Error(\"HTTP timeout\")));q.on(\"error\",bad)})}; (function check(){Promise.all(paths.map(one)).then(()=>process.exit(0),e=>Date.now()<deadline?setTimeout(check,100):(()=>{console.error(e);process.exit(1)})())})()"
 '
 NS
 printf 'verified Pi image root and isolated API smoke test\n'

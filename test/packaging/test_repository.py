@@ -106,7 +106,7 @@ class HomepageTests(unittest.TestCase):
                                 "image_url": "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz",
                                 "imager_url": "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest"}
         page = repository.repository_homepage(manifest)
-        self.assertIn("Install VectorWarp 0.1.9", page)
+        self.assertIn("VectorWarp 0.1.9 · verified packages", page)
         self.assertIn("Preview image 0.1.10", page)
         self.assertIn(manifest["pi_image"]["image_url"], page)
         self.assertIn(manifest["pi_image"]["imager_url"], page)
@@ -196,7 +196,7 @@ class HomepageTests(unittest.TestCase):
         manifest = self.release_manifest()
         manifest['version'] = '0.1.6'
         old_page = repository.repository_homepage(manifest)
-        self.assertIn('Install VectorWarp 0.1.6', old_page)
+        self.assertIn('VectorWarp 0.1.6 · verified packages', old_page)
         self.assertIn('A package update does not restart a running API or receiver helper', old_page)
         self.assertIn('sudo systemctl enable --now vectorwarp-api.service', old_page)
         self.assertIn('sudo systemctl restart vectorwarp-receiver.service', old_page)
@@ -206,7 +206,7 @@ class HomepageTests(unittest.TestCase):
 
         manifest['version'] = '0.1.7'
         new_page = repository.repository_homepage(manifest)
-        self.assertIn('Install VectorWarp 0.1.7', new_page)
+        self.assertIn('VectorWarp 0.1.7 · verified packages', new_page)
         self.assertIn('<code>vectorwarp start</code>', new_page)
         self.assertIn('<code>vectorwarp restart</code>', new_page)
         self.assertIn('<code>vectorwarp help</code>', new_page)

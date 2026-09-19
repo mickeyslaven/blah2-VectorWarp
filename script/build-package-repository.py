@@ -141,12 +141,14 @@ to activate updated code. Do not run it mid-transaction; it does not restart
     pi_download = ""
     if pi_image:
         image_status = "Preview image" if pi_image["status"] == "preview" else "Pi image"
-        pi_download = f'''<p><a class="button" href="{escape(pi_image["imager_url"], quote=True)}">Open {image_status.lower()} in Raspberry Pi Imager</a></p>
+        pi_download = f'''<p><a class="button" href="{escape(pi_image["imager_url"], quote=True)}">Download Imager manifest</a></p>
 <p>{image_status} {escape(pi_image["version"])} ·
 <a href="{escape(pi_image["image_url"], quote=True)}">Download .img.xz directly</a>.
 Open the companion manifest to keep Wi-Fi and SSH customization available.</p>'''
+        if pi_image["status"] == "preview":
+            pi_download += '<p class="scope">Preview: software checks passed; fresh-card boot and Wi-Fi qualification are still pending.</p>'
     return f'''<section class="panel" aria-labelledby="install">
-<h2 id="install">Install VectorWarp {version}</h2>
+<h2 id="install">Install VectorWarp</h2>
 <h3>1. Install for your OS</h3>
 <nav class="install-choices" aria-label="Choose an installation path">
 <a href="#install-pi"><strong>Raspberry Pi 4</strong><span>Flash a card and set up in your browser</span></a>
