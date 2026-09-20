@@ -11,9 +11,11 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import urllib.request
@@ -35,6 +37,10 @@ CPP_LICENSE_SHA256 = "4b45cbe16d7b71b89ae6127e26e0d90a029198ca5e958ad8e3d0b8bbed
 BUILD_PIN = "066a17c17068c0f11c9298d848c2976c71fad1c1"
 SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
                    "third_party/", "third-party/", "vendor/")
+REVIEW_PURPOSE = "first-party-build-only"
+REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
+REVIEW_MAX_BYTES = 64 * 1024
+REVIEW_PATH = re.compile(r"(?:CMakeLists\.txt|cmake/[A-Za-z0-9][A-Za-z0-9._-]*\.cmake)")
 
 
 def sha256(path):
@@ -128,7 +134,75 @@ def verify_inventory(path, baseline, runtime, source_id, arch):
         raise ValueError(f"{arch} CI provenance has new gaps or review status")
 
 
-def verify_checkout(checkout, source_id):
+def review_json(raw):
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("review receipt has duplicate JSON keys")
+            result[key] = value
+        return result
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("review receipt is not valid UTF-8 JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError("review receipt must be a JSON object")
+    return value
+
+
+def owner_only_bytes(path):
+    path = Path(path)
+    before = path.lstat()
+    if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid() or
+            before.st_mode & 0o077 or before.st_size > REVIEW_MAX_BYTES):
+        raise ValueError("review receipt must be a bounded owner-only regular file")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(after.st_mode) or after.st_uid != os.getuid() or
+                after.st_mode & 0o077 or after.st_size != before.st_size or
+                (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)):
+            raise ValueError("review receipt changed while being read")
+        raw = os.read(descriptor, REVIEW_MAX_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(raw) != before.st_size or len(raw) > REVIEW_MAX_BYTES:
+        raise ValueError("review receipt exceeds its bounded size")
+    return raw
+
+
+def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
+    """Validate a tag-specific reviewed CMake delta and return immutable bytes."""
+    if not isinstance(source_id, str) or not re.fullmatch(r"[0-9a-f]{40}", source_id):
+        raise ValueError("review receipt source commit is invalid")
+    guarded = sorted(guarded)
+    if not guarded or len(set(guarded)) != len(guarded) or any(not REVIEW_PATH.fullmatch(path) for path in guarded):
+        raise ValueError("review receipt cannot approve non-CMake guarded paths")
+    raw = owner_only_bytes(receipt_path)
+    record = review_json(raw)
+    if set(record) != {"schema", "purpose", "source_id", "baseline_source_id", "files"}:
+        raise ValueError("review receipt has an unexpected schema")
+    if (record["schema"] != 1 or record["purpose"] != REVIEW_PURPOSE or
+            record["source_id"] != source_id or record["baseline_source_id"] != BASELINE_SOURCE_ID):
+        raise ValueError("review receipt does not bind this candidate and baseline")
+    files = record["files"]
+    if not isinstance(files, dict) or set(files) != set(guarded):
+        raise ValueError("review receipt files do not exactly match guarded changes")
+    for path, expected in files.items():
+        if not REVIEW_PATH.fullmatch(path) or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise ValueError("review receipt has an unsafe path or invalid file digest")
+        blob = subprocess.check_output(["git", "-C", str(checkout), "show", source_id + ":" + path])
+        if hashlib.sha256(blob).hexdigest() != expected:
+            raise ValueError("review receipt file digest differs from candidate Git blob: " + path)
+    return {"record": record, "raw": raw,
+            "metadata": {"sha256": hashlib.sha256(raw).hexdigest(),
+                         "archive_member": REVIEW_ARCHIVE_MEMBER,
+                         "source_id": source_id, "baseline_source_id": BASELINE_SOURCE_ID}}
+
+
+def verify_checkout(checkout, source_id, review_receipt=None):
     def git(*args):
         return subprocess.check_output(["git", "-C", str(checkout), *args], text=True).strip()
     if git("rev-parse", "HEAD") != source_id or git("status", "--porcelain"):
@@ -145,7 +219,11 @@ def verify_checkout(checkout, source_id):
     guarded = [name for name in changed if any(name == prefix or name.startswith(prefix)
                                                for prefix in SENSITIVE_PATHS)]
     if guarded:
-        raise ValueError("build or vendored source changed; new source review required: " + ", ".join(guarded[:8]))
+        if review_receipt is None:
+            raise ValueError("build or vendored source changed; new source review required: " + ", ".join(guarded[:8]))
+        reviewed_build_changes(checkout, source_id, guarded, review_receipt)
+    elif review_receipt is not None:
+        raise ValueError("review receipt is present without guarded build changes")
     workflow = (checkout / ".github/workflows/macos-standalone.yml").read_text()
     if BUILD_PIN not in workflow or "brew install cmake ninja pkgconf asio rapidyaml cpp-httplib" not in workflow:
         raise ValueError("hosted build inputs or VkFFT pin changed")
@@ -155,21 +233,11 @@ def verify_checkout(checkout, source_id):
 def rebind_notices(baseline, output, source_id, runtimes):
     if output.exists() or output.is_symlink():
         raise ValueError("refusing to replace notices output")
-    old = read_json(baseline / "notices.json")
-    if old.get("source_id") != BASELINE_SOURCE_ID or old.get("schema") != 1:
-        raise ValueError("unexpected baseline notices identity")
-    before = {p.relative_to(baseline).as_posix(): sha256(p)
-              for p in baseline.rglob("*") if p.is_file() and p.name != "notices.json"}
-    if before != old.get("files"):
-        raise ValueError("baseline notices content differs from its reviewed manifest")
+    validated_baseline_notices(baseline)
     shutil.copytree(baseline, output, symlinks=False)
     index = read_json(output / "INDEX.json")
-    if index.get("source_id") != BASELINE_SOURCE_ID:
-        raise ValueError("unexpected baseline notice index")
     matches = [item for item in index.get("input_notices", [])
                if item.get("file") == "embedded/cpp-httplib/LICENSE"]
-    if len(matches) != 1 or matches[0].get("sha256") != CPP_LICENSE_SHA256:
-        raise ValueError("reviewed cpp-httplib notice index changed")
     matches[0]["origin"] += "; cpp-httplib-0.53.1.tar.gz::cpp-httplib-0.53.1/LICENSE (Intel)"
     index["source_id"] = source_id
     (output / "INDEX.json").write_text(json.dumps(index, sort_keys=True, indent=2) + "\n")
@@ -182,6 +250,24 @@ def rebind_notices(baseline, output, source_id, runtimes):
     (output / "notices.json").write_text(json.dumps(notice, sort_keys=True, indent=2) + "\n")
     package.validated_notices(output, {arch: read_json(path / "standalone.json")
                                        for arch, path in runtimes.items()}, runtimes)
+
+
+def validated_baseline_notices(baseline):
+    baseline = Path(baseline)
+    old = read_json(baseline / "notices.json")
+    if old.get("source_id") != BASELINE_SOURCE_ID or old.get("schema") != 1:
+        raise ValueError("unexpected baseline notices identity")
+    before = {p.relative_to(baseline).as_posix(): sha256(p)
+              for p in baseline.rglob("*") if p.is_file() and p.name != "notices.json"}
+    if before != old.get("files"):
+        raise ValueError("baseline notices content differs from its reviewed manifest")
+    index = read_json(baseline / "INDEX.json")
+    if index.get("source_id") != BASELINE_SOURCE_ID:
+        raise ValueError("unexpected baseline notice index")
+    matches = [item for item in index.get("input_notices", [])
+               if item.get("file") == "embedded/cpp-httplib/LICENSE"]
+    if len(matches) != 1 or matches[0].get("sha256") != CPP_LICENSE_SHA256:
+        raise ValueError("reviewed cpp-httplib notice index changed")
 
 
 def add_bytes(archive, name, content):
@@ -201,7 +287,7 @@ def add_file(archive, name, source):
         archive.addfile(info, stream)
 
 
-def source_archive(args, source_id, runtimes, output, intel_cpp):
+def source_archive(args, source_id, runtimes, output, intel_cpp, review=None):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -220,6 +306,8 @@ def source_archive(args, source_id, runtimes, output, intel_cpp):
              "header-input-versions-x86_64.txt": Path(args.x86_64_header_versions),
              "cpp-httplib-formula-arm64.rb": Path(args.arm64_cpp_formula),
              "cpp-httplib-formula-x86_64.rb": Path(args.x86_64_cpp_formula)}
+    if review is not None:
+        items["build-source-review.json"] = output / "public-build-source/build-source-review.json"
     manifest = {"schema": 1, "source_id": source_id, "version": args.version,
                 "baseline_source_id": BASELINE_SOURCE_ID,
                 "files": {name: {"sha256": sha256(path), "size": path.stat().st_size}
@@ -232,7 +320,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp):
               "with the same MIT license text as the 0.54.1 arm64 notice. Extract the baseline kit, "
               "then use the current first-party checkout for the build; do not use its historical "
               "f813 first-party archive. Current runtime manifests and CI inventories are included "
-              "for provenance. No signing key, SDK, runtime binary or notarization credential is here.\n")
+              "for provenance. No signing key, SDK, runtime binary or notarization credential is here." +
+              (" build-source-review.json records the reviewed first-party CMake delta for this tag.\n"
+               if review is not None else "\n"))
     archive_path = output / f"vectorwarp-{args.version}-macos-corresponding-source.tar.gz"
     manifest_bytes = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
     with archive_path.open("xb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", filename="",
@@ -269,32 +359,68 @@ def source_archive(args, source_id, runtimes, output, intel_cpp):
     return archive_path
 
 
-def prepare(args):
-    output = Path(args.output)
-    if output.exists() or output.is_symlink():
-        raise ValueError("refusing to replace existing release input directory")
+def verify_inputs(args):
+    baseline_source = Path(args.baseline_source_archive)
+    if sha256(baseline_source) != BASELINE_SOURCE_SHA256:
+        raise ValueError("accepted baseline source archive changed")
+    validated_baseline_notices(Path(args.baseline_notices))
     runtimes = {arch: Path(getattr(args, arch)).resolve(strict=True) for arch in package.ARCHES}
     manifests = {arch: package.audit_runtime(path, arch) for arch, path in runtimes.items()}
     ids = {value["source_id"] for value in manifests.values()}
     if len(ids) != 1:
         raise ValueError("the two runtimes have different source commits")
     source_id = ids.pop()
-    verify_checkout(Path(args.checkout), source_id)
+    review_receipt = getattr(args, "review_receipt", None)
+    changed = verify_checkout(Path(args.checkout), source_id, review_receipt)
+    guarded = [name for name in changed if any(name == prefix or name.startswith(prefix)
+                                               for prefix in SENSITIVE_PATHS)]
+    review = (reviewed_build_changes(Path(args.checkout), source_id, guarded, review_receipt)
+              if review_receipt is not None else None)
     for arch in package.ARCHES:
         verify_inventory(getattr(args, f"{arch}_inventory"),
                          getattr(args, f"baseline_{arch}_inventory"), runtimes[arch], source_id, arch)
         parse_header_versions(getattr(args, f"{arch}_header_versions"), arch)
         verify_cpp_formula(getattr(args, f"{arch}_cpp_formula"), arch)
+    return runtimes, source_id, review
+
+
+def persist_review(output, review):
+    directory = output / "public-build-source"
+    directory.mkdir(mode=0o700)
+    directory.chmod(0o700)
+    path = directory / "build-source-review.json"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        offset = 0
+        while offset < len(review["raw"]):
+            offset += os.write(descriptor, review["raw"][offset:])
+    finally:
+        os.close(descriptor)
+    if sha256(path) != review["metadata"]["sha256"]:
+        raise ValueError("persisted review receipt digest differs")
+    return path
+
+
+def prepare(args):
+    output = Path(args.output)
+    if output.exists() or output.is_symlink():
+        raise ValueError("refusing to replace existing release input directory")
+    runtimes, source_id, review = verify_inputs(args)
     output.mkdir(parents=True)
     try:
         intel_cpp = fetch_intel_cpp_source(
             output, verify_cpp_formula(args.x86_64_cpp_formula, "x86_64"), Path(args.baseline_notices))
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes)
-        archive = source_archive(args, source_id, runtimes, output, intel_cpp)
-        (output / "receipt.json").write_text(json.dumps({"schema": 1, "source_id": source_id,
+        if review is not None:
+            persist_review(output, review)
+        archive = source_archive(args, source_id, runtimes, output, intel_cpp, review)
+        receipt = {"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,
-            "notices_sha256": sha256(output / "notices/notices.json")}, sort_keys=True, indent=2) + "\n")
+            "notices_sha256": sha256(output / "notices/notices.json")}
+        if review is not None:
+            receipt["build_source_review"] = review["metadata"]
+        (output / "receipt.json").write_text(json.dumps(receipt, sort_keys=True, indent=2) + "\n")
     except Exception:
         shutil.rmtree(output)
         raise
@@ -308,6 +434,7 @@ def main():
                  "baseline-arm64-inventory", "baseline-x86_64-inventory",
                  "baseline-notices", "baseline-source-archive", "checkout", "version", "output"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--review-receipt", type=Path)
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
         parser.error("version must be semver")

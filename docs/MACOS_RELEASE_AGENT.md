@@ -26,6 +26,41 @@ it to the new corresponding-source archive. Other header-version changes,
 including a build using `0.56.0`, still stop. Merge builds are unattended, but
 tag publication is not guaranteed unattended across future dependency drift.
 
+First-party CMake changes can be reviewed without replacing the dependency
+baseline or moving an existing release tag. Review the complete diff from
+the baseline commit reported by `prepare-macos-release-inputs.py` to the
+candidate tag. Confirm that every guarded change only changes first-party
+build wiring and introduces no new dependency source, version, recipe, or
+license requirement. If dependency inputs changed, collect and review a new
+corresponding-source baseline instead; this mechanism cannot approve them.
+
+Record that review in an owner-only regular JSON file (`chmod 600`) outside
+the checkout. Its exact fields are `schema: 1`,
+`purpose: "first-party-build-only"`, `baseline_source_id`, `source_id`, and
+`files`. Both source IDs must be full commit hashes. `files` maps **every**
+guarded changed path to the SHA-256 of that file's Git blob at `source_id`.
+Only `CMakeLists.txt` and files immediately inside `cmake/` ending in
+`.cmake` are eligible. Use the bytes from `git show COMMIT:PATH`, not a
+working-tree copy. Extra or missing paths, a different candidate, an old
+baseline, changed hashes, symlinks, or group/world-readable receipts stop
+publication. A receipt records a completed human/operator source review;
+generating hashes alone does not establish that dependencies are unchanged.
+
+Add the receipt's absolute path as the optional `review_receipt` field in
+the existing local agent configuration. Keep the configuration owner-only
+and preserve its other fields. The helper runs from the agent's updated,
+reviewed `main` checkout; the runtime and archived application source remain
+at the immutable release tag. The review applies to that one candidate only.
+Remove or replace the configuration field after reviewing a later candidate.
+The receipt is copied into the corresponding-source archive as
+`VectorWarp-corresponding-source/build-source-review.json`; its digest and
+source IDs also appear in `macos-release.json`. Do not put secrets in it.
+
+All original runtime, inventory, header, formula, npm lock, baseline source,
+notice, and hosted-build pin checks still run. Cached release inputs repeat
+those checks and must match the current review receipt before signing.
+Without a receipt, the original fail-closed build-change policy applies.
+
 After this code is merged to `main`, install once on the signing Mac:
 
 ```sh
