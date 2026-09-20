@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Offline release-agent policy and source-reuse checks."""
 import importlib.util
+import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,6 +72,74 @@ class AgentPolicyTest(unittest.TestCase):
             self.assertEqual(agent.read_state(path, "a" * 40)["stage"], "published")
             with self.assertRaisesRegex(ValueError, "another commit"):
                 agent.read_state(path, "b" * 40)
+
+    def test_publication_accepts_generic_heading_but_requires_current_manifest(self):
+        pkg = "vectorwarp-0.1.11-macos-universal.pkg"
+        source = "vectorwarp-0.1.11-macos-corresponding-source.tar.gz"
+        page = f"<h1>Install VectorWarp</h1><a>{pkg}</a><a>{source}</a>".encode()
+        manifest = {"version": "0.1.11", "macos_package": {
+            "version": "0.1.11", "filename": pkg, "source_archive": {"filename": source}}}
+        with mock.patch.object(agent.urllib.request, "urlopen", side_effect=[
+                io.BytesIO(page), io.BytesIO(json.dumps(manifest).encode())]):
+            self.assertTrue(agent.verify_public("v0.1.11"))
+        manifest["version"] = "0.1.9"
+        with mock.patch.object(agent.urllib.request, "urlopen", side_effect=[
+                io.BytesIO(page), io.BytesIO(json.dumps(manifest).encode())]):
+            self.assertFalse(agent.verify_public("v0.1.11"))
+
+    def test_public_release_receipt_carries_source_review(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            package, archive = work / "package.pkg", work / "source.tar.gz"
+            package.write_bytes(b"signed package fixture")
+            archive.write_bytes(b"reviewed source fixture")
+            review = {"sha256": "a" * 64, "source_id": "b" * 40}
+            assets = agent.release_files({"team_id": "DJGHPX8T7R"},
+                {"tag": "v0.1.11", "commit": "b" * 40}, work, package, archive,
+                "00000000-0000-0000-0000-000000000000", review)
+            self.assertEqual(json.loads(assets[-1].read_text())["build_source_review"], review)
+
+    def test_cached_inputs_repeat_gates_using_trusted_tooling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            output = work / "release-inputs"
+            output.mkdir()
+            archive = output / "vectorwarp-0.1.11-macos-corresponding-source.tar.gz"
+            archive.write_bytes(b"fixture archive")
+            (output / "notices").mkdir()
+            (output / "notices/notices.json").write_text("{}")
+            runtimes = {arch: work / arch for arch in agent.ARCHES}
+            for runtime in runtimes.values():
+                runtime.mkdir()
+                (runtime / "standalone.json").write_text("{}")
+            candidate = {"tag": "v0.1.11", "commit": "b" * 40}
+            review = {"metadata": {"sha256": "a" * 64, "source_id": candidate["commit"]}}
+            receipt = {"schema": 1, "version": "0.1.11", "source_id": candidate["commit"],
+                       "source_archive": archive.name, "source_archive_size": archive.stat().st_size,
+                       "source_archive_sha256": agent.digest(archive),
+                       "notices_sha256": agent.digest(output / "notices/notices.json"),
+                       "build_source_review": review["metadata"]}
+            (output / "receipt.json").write_text(json.dumps(receipt))
+            settings = {key: work / key for key in ("checkout", "baseline_notices",
+                "baseline_source_archive", "baseline_arm64_inventory", "baseline_x86_64_inventory")}
+            helper = mock.Mock()
+            helper.verify_inputs.return_value = (runtimes, candidate["commit"], review)
+            with mock.patch.object(agent.importlib.util, "spec_from_file_location") as spec, \
+                    mock.patch.object(agent.importlib.util, "module_from_spec", return_value=helper):
+                result = agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
+                self.assertEqual(result[2], review["metadata"])
+                self.assertEqual(spec.call_args.args[1], settings["checkout"] / "script/prepare-macos-release-inputs.py")
+                helper.prepare.assert_not_called()
+                helper.package.validated_notices.assert_called_once()
+                helper.verify_inputs.side_effect = ValueError("new source review required")
+                with self.assertRaisesRegex(ValueError, "new source review required"):
+                    agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
+                helper.verify_inputs.side_effect = None
+                for bad_review in (None, {"sha256": "c" * 64}):
+                    receipt["build_source_review"] = bad_review
+                    (output / "receipt.json").write_text(json.dumps(receipt))
+                    with self.assertRaisesRegex(ValueError, "release input receipt differs"):
+                        agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
 
 
 class SourceReuseTest(unittest.TestCase):

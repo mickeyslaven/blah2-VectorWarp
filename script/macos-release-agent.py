@@ -68,10 +68,14 @@ def config(path):
                 "baseline_arm64_inventory", "baseline_x86_64_inventory",
                 "baseline_notices", "baseline_source_archive", "application_identity",
                 "installer_identity", "team_id", "notary_profile"}
-    if set(value) != required or value["team_id"] != "DJGHPX8T7R":
+    if (not required <= set(value) or set(value) - required - {"review_receipt"} or
+            value["team_id"] != "DJGHPX8T7R"):
         raise ValueError("invalid local agent configuration")
     for name in required - {"application_identity", "installer_identity", "team_id", "notary_profile"}:
         value[name] = Path(value[name]).expanduser().resolve()
+    if "review_receipt" in value:
+        # Preserve the final path component so the helper can reject symlinks.
+        value["review_receipt"] = Path(value["review_receipt"]).expanduser().absolute()
     if not value["recipient_key"].is_file() or value["recipient_key"].stat().st_mode & 0o077:
         raise ValueError("recipient private key is missing or not owner-only")
     return value
@@ -240,27 +244,47 @@ def download_and_decrypt(settings, candidate, work):
 
 def prepare_inputs(settings, candidate, work, source, runtimes, diagnostics):
     output = work / "release-inputs"
+    # Tooling follows reviewed main; runtime and first-party source stay bound
+    # to the immutable candidate tag. This also allows repairing publication
+    # tooling without rebuilding or retagging a release.
+    helper_path = settings["checkout"] / "script/prepare-macos-release-inputs.py"
+    spec = importlib.util.spec_from_file_location("release_input_preparation", helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    values = {"checkout": source, "version": candidate["tag"][1:], "output": output,
+              "baseline_notices": settings["baseline_notices"],
+              "baseline_source_archive": settings["baseline_source_archive"],
+              "review_receipt": settings.get("review_receipt")}
+    for arch in ARCHES:
+        values[arch] = runtimes[arch]
+        values[arch + "_inventory"] = diagnostics[arch] / "inventory.json"
+        values[arch + "_header_versions"] = diagnostics[arch] / "header-input-versions.txt"
+        values[arch + "_cpp_formula"] = diagnostics[arch] / "cpp-httplib-formula.rb"
+        values["baseline_" + arch + "_inventory"] = settings["baseline_" + arch + "_inventory"]
+    args = argparse.Namespace(**values)
+    # A cached directory must never turn into an alternate path around review
+    # or dependency checks, including when the configured receipt changes.
+    verified_runtimes, source_id, review = helper.verify_inputs(args)
+    if source_id != candidate["commit"]:
+        raise ValueError("release input source differs from candidate")
+    expected_review = review["metadata"] if review is not None else None
     if not output.exists():
-        command(sys.executable, source / "script/prepare-macos-release-inputs.py",
-                "--arm64", runtimes["arm64"], "--x86_64", runtimes["x86_64"],
-                "--arm64-inventory", diagnostics["arm64"] / "inventory.json",
-                "--x86_64-inventory", diagnostics["x86_64"] / "inventory.json",
-                "--arm64-header-versions", diagnostics["arm64"] / "header-input-versions.txt",
-                "--x86_64-header-versions", diagnostics["x86_64"] / "header-input-versions.txt",
-                "--arm64-cpp-formula", diagnostics["arm64"] / "cpp-httplib-formula.rb",
-                "--x86_64-cpp-formula", diagnostics["x86_64"] / "cpp-httplib-formula.rb",
-                "--baseline-arm64-inventory", settings["baseline_arm64_inventory"],
-                "--baseline-x86_64-inventory", settings["baseline_x86_64_inventory"],
-                "--baseline-notices", settings["baseline_notices"],
-                "--baseline-source-archive", settings["baseline_source_archive"],
-                "--checkout", source, "--version", candidate["tag"][1:], "--output", output)
+        helper.prepare(args)
     receipt = json.loads((output / "receipt.json").read_text())
-    archive = output / receipt["source_archive"]
-    if (receipt["source_id"] != candidate["commit"] or
+    archive = output / f"vectorwarp-{args.version}-macos-corresponding-source.tar.gz"
+    if (output.is_symlink() or archive.is_symlink() or not archive.is_file() or
+            receipt.get("schema") != 1 or receipt.get("version") != args.version or
+            receipt.get("source_archive") != archive.name or
+            receipt.get("source_archive_size") != archive.stat().st_size or
+            receipt.get("build_source_review") != expected_review or
+            receipt["source_id"] != candidate["commit"] or
             receipt["source_archive_sha256"] != digest(archive) or
             receipt["notices_sha256"] != digest(output / "notices/notices.json")):
         raise ValueError("release input receipt differs from staged source or notices")
-    return output, archive
+    helper.package.validated_notices(output / "notices",
+            {arch: json.loads((runtime / "standalone.json").read_text())
+             for arch, runtime in verified_runtimes.items()}, verified_runtimes)
+    return output, archive, expected_review
 
 
 def sign_package(settings, candidate, work, source, runtimes, inputs):
@@ -325,7 +349,7 @@ def notarize(settings, package, state, state_path):
     return submission
 
 
-def release_files(settings, candidate, work, package, archive, submission):
+def release_files(settings, candidate, work, package, archive, submission, build_source_review=None):
     staging = work / "upload"
     staging.mkdir(exist_ok=True)
     version_text = candidate["tag"][1:]
@@ -343,6 +367,8 @@ def release_files(settings, candidate, work, package, archive, submission):
                                   "size": source_target.stat().st_size},
                "apple_team_id": settings["team_id"], "notary_status": "Accepted",
                "notary_submission_id": submission, "gatekeeper": "Notarized Developer ID"}
+    if build_source_review is not None:
+        receipt["build_source_review"] = build_source_review
     receipt_path = staging / "macos-release.json"
     encoded = json.dumps(receipt, sort_keys=True, indent=2) + "\n"
     if receipt_path.exists() and receipt_path.read_text() != encoded:
@@ -375,9 +401,15 @@ def upload_and_publish(candidate, assets):
 
 def verify_public(tag):
     page = urllib.request.urlopen(BASE_URL + "index.html?release=" + tag, timeout=20).read().decode()
+    manifest = json.loads(urllib.request.urlopen(
+        BASE_URL + "repository-manifest.json?release=" + tag, timeout=20).read())
     pkg = f"vectorwarp-{tag[1:]}-macos-universal.pkg"
     source = f"vectorwarp-{tag[1:]}-macos-corresponding-source.tar.gz"
-    return f"Install VectorWarp {tag[1:]}" in page and pkg in page and source in page
+    macos = manifest.get("macos_package", {})
+    return (manifest.get("version") == tag[1:] and macos.get("version") == tag[1:] and
+            macos.get("filename") == pkg and
+            macos.get("source_archive", {}).get("filename") == source and
+            pkg in page and source in page)
 
 
 def process(settings, candidate):
@@ -397,12 +429,12 @@ def process(settings, candidate):
     work = path.parent
     source = ensure_checkout(settings, candidate, work)
     runtimes, diagnostics = download_and_decrypt(settings, candidate, work)
-    inputs, archive = prepare_inputs(settings, candidate, work, source, runtimes, diagnostics)
+    inputs, archive, review = prepare_inputs(settings, candidate, work, source, runtimes, diagnostics)
     pkg = sign_package(settings, candidate, work, source, runtimes, inputs)
     submission = notarize(settings, pkg, state, path)
     if not submission:
         return "waiting for Apple notarization"
-    assets = release_files(settings, candidate, work, pkg, archive, submission)
+    assets = release_files(settings, candidate, work, pkg, archive, submission, review)
     upload_and_publish(candidate, assets)
     state["stage"] = "published"
     save_state(path, state)

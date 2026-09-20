@@ -70,6 +70,7 @@ jobs:
           python3 test/macos/standalone_transfer_test.py
           python3 test/macos/standalone_release_trigger_test.py
           python3 test/macos/release_agent_test.py
+          python3 test/macos/reviewed_release_inputs_test.py
           python3 test/macos/standalone_isolation_test.py
           python3 test/macos/standalone_driver_probe_test.py
       - name: Record original-build GPU driver control
