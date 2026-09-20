@@ -44,10 +44,10 @@ not yet establish fresh-card boot, Wi-Fi, SSH, receiver, or radar reliability.
 
 ## Updating a preview image
 
-The preview image does not add a VectorWarp APT repository because no stable
-Bookworm repository is published yet. For a future VectorWarp application
-update, obtain the matching Bookworm ARM64 DEB, copy it to the Pi, and install
-that exact file:
+The preview image does not preconfigure the stable VectorWarp APT repository.
+For application updates, use the [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+to configure the signed Bookworm repository, then update with APT. You can instead
+obtain a matching stable Bookworm ARM64 DEB and install that exact file:
 
 ```sh
 sudo apt install ./vectorwarp_X.Y.Z-1_debian12_arm64.deb
@@ -62,8 +62,11 @@ performance drop-in. Continue normal OS maintenance separately:
 sudo apt update && sudo apt full-upgrade
 ```
 
-Do not expect `apt upgrade vectorwarp` to update the preview application until
-a stable Bookworm VectorWarp repository is available.
+After configuring the stable Bookworm repository, update with:
+
+```sh
+sudo apt update && sudo apt install vectorwarp
+```
 
 ## Advanced: source installation on Bookworm
 

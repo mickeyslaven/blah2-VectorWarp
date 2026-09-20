@@ -17,7 +17,9 @@ Pi deployments. Its replacement is the **Pi 4 Bookworm 64-bit Lite preview**:
 It contains the Debian 12 ARM64 package built from
 `dfb16720510eaf68d5ffecc9e32a290997503897`; fresh-card boot and Wi-Fi
 qualification remain pending. **Pi 5 remains future work.** The preview is
-separate from stable 0.1.9 Linux packages and adds no Bookworm APT repository.
+separate from the stable packages and does not preconfigure the Bookworm APT
+repository. Current stable Bookworm ARM64 packages are on the
+[installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [Pi image packaging](../docs/PI_IMAGE_PACKAGING.md).
 
 Packages are published through the signed APT/DNF repositories and direct

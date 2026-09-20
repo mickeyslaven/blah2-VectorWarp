@@ -140,9 +140,10 @@ these RSPduo-specific flags.
 
 ## Preview update policy
 
-The preview image deliberately adds no VectorWarp APT repository because the
-public stable repository does not yet provide Bookworm packages. Until that
-changes, update VectorWarp only with a future matching Bookworm DEB:
+The preview image deliberately does not preconfigure the VectorWarp APT repository.
+Use the [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+to configure the stable Bookworm repository, or update VectorWarp with a matching
+Bookworm DEB:
 
 ```sh
 sudo apt install ./vectorwarp_X.Y.Z-1_debian12_arm64.deb

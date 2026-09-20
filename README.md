@@ -221,7 +221,7 @@ available for development or unsupported systems.
 | Operating system | Versions | Architectures | Package |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, 26.04 | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 12 (Bookworm) | ARM64 | [Preview DEB 0.1.10](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb) |
+| Debian | 12 (Bookworm) | ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
@@ -249,8 +249,9 @@ The 8 GB Bookworm Lite profile is the tested baseline; use a 32 GB microSD card
 initially. The preview has not completed fresh-card boot or Wi-Fi qualification;
 see [validation limits](docs/PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is future
 work. RSPduo users install SDRplay's vendor API themselves, then choose
-**Build SDRplay support** in Settings. Stable Linux and macOS packages remain
-version 0.1.9; this Pi image is the separate 0.1.10 preview and adds no APT repo.
+**Build SDRplay support** in Settings. Stable packages, including Bookworm ARM64,
+are listed on the [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+This Pi image remains the separate 0.1.10 preview and does not preconfigure that repository.
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
