@@ -556,7 +556,7 @@ jobs:
             --output release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
           gpgv --keyring repository/keys/vectorwarp.gpg \
             release-assets/SHA256SUMS.asc release-assets/SHA256SUMS
-          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 10
+          test $(find release-assets -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l) -eq 11
       - name: Create draft release for maintainer review
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,6 +1,7 @@
 """No hardware or SDK needed: enforce source/release redistribution boundaries."""
 from pathlib import Path
 import json
+import re
 import subprocess
 import unittest
 
@@ -81,6 +82,18 @@ class DistributionTests(unittest.TestCase):
     def test_notice_files_follow_the_existing_html_payload(self):
         for name in ('plotly-LICENSE.txt', 'plotly.min.js.LICENSE.txt', 'ieee754-LICENSE.txt'):
             self.assertGreater((ROOT / 'html/lib' / name).stat().st_size, 200)
+
+    def test_signed_asset_count_matches_build_matrix(self):
+        workflow = workflow_document()
+        matrix = workflow['jobs']['package']['strategy']['matrix']['include']
+        signing = workflow['jobs']['sign-and-draft-release']
+        collection = next(step for step in signing['steps']
+                          if step.get('name') == 'Collect final signed release assets and checksums')
+        count = re.search(r'(?m)^test \$\(find release-assets .+\| wc -l\) -eq ([0-9]+)$',
+                          collection['run'])
+        self.assertIsNotNone(count, 'signed assets must be checked before draft creation')
+        self.assertEqual(int(count[1]), len(matrix),
+                         'signing must accept exactly the complete package build matrix')
 
 
 if __name__ == '__main__':

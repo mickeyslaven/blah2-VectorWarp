@@ -37,17 +37,29 @@ class AgentPolicyTest(unittest.TestCase):
         self.assertEqual(agent.choose_run(runs, sha)["databaseId"], 6)
         self.assertIsNone(agent.choose_run(runs, "c" * 40))
 
-    def test_incomplete_linux_matrix_refused(self):
-        number = "0.2.0"
+    def linux_assets(self, number, *, bookworm=False):
         names = [f"vectorwarp_{number}-1_{distro}_{arch}.deb"
                  for distro in ("ubuntu22.04", "ubuntu24.04", "ubuntu26.04", "debian13")
                  for arch in ("amd64", "arm64")]
+        if bookworm:
+            names.append(f"vectorwarp_{number}-1_debian12_arm64.deb")
         names += [f"vectorwarp-{number}-1.fc44.{arch}.rpm" for arch in ("x86_64", "aarch64")]
-        assets = [{"name": name} for name in names]
-        assets += [{"name": name} for name in ("SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json")]
-        agent.required_linux_assets({"assets": assets}, "v0.2.0")
-        with self.assertRaisesRegex(ValueError, "complete Linux draft"):
-            agent.required_linux_assets({"assets": assets[:-1]}, "v0.2.0")
+        names += ["SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"]
+        return {"assets": [{"name": name} for name in names]}
+
+    def test_linux_matrix_requires_bookworm_arm64_for_new_stable_versions(self):
+        for number in ("0.1.10", "0.1.11", "0.2.0"):
+            with self.subTest(version=number):
+                tag = "v" + number
+                complete = self.linux_assets(number, bookworm=True)
+                agent.required_linux_assets(complete, tag)
+                with self.assertRaisesRegex(ValueError, "complete Linux draft"):
+                    agent.required_linux_assets(self.linux_assets(number), tag)
+                with self.assertRaisesRegex(ValueError, "complete Linux draft"):
+                    agent.required_linux_assets({"assets": complete["assets"][:-1]}, tag)
+
+    def test_legacy_v019_keeps_its_ten_package_contract(self):
+        agent.required_linux_assets(self.linux_assets("0.1.9"), "v0.1.9")
 
     def test_state_is_idempotent_and_bound_to_commit(self):
         with tempfile.TemporaryDirectory() as directory:

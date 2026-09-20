@@ -294,7 +294,7 @@ for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md'
     `${file}: explain both ARM64 aliases`);
 }
 assert.match(releaseWorkflow, /expected eleven package manifests/);
-assert.match(releaseWorkflow, /-eq 10/);
+assert.match(releaseWorkflow, /-eq 11/);
 assert.match(releaseWorkflow, /Stable tags must point to the exact current main commit/);
 assert.match(releaseWorkflow, /Unsigned test packages must be built from the exact current main commit/);
 assert.match(releaseWorkflow, /'version': version, 'source_commit': source_commit\.lower\(\)/);
