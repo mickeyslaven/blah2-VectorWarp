@@ -40,10 +40,9 @@ VectorWarp does not ship SDRplay software.
 
 ## Linux packages
 
-**Bookworm ARM64 during the Pi preview:** download the [matching 0.1.10 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb)
-and run `sudo apt install ./vectorwarp_0.1.10-1_debian12_arm64.deb`. The repository
-commands below apply to the other listed stable targets; a Bookworm repository
-is not published yet. A freshly flashed Pi image already includes VectorWarp.
+**Bookworm ARM64:** use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+for the current signed repository setup or matching stable DEB. A freshly flashed
+Pi preview image already includes its preview build and does not preconfigure the repository.
 
 Use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
 for current downloads and APT/DNF setup. The same package-manager steps are
@@ -190,7 +189,7 @@ sudo dnf install ./matching.rpm
 | System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
-| Debian | 12 (Bookworm) | ARM64 | [Preview DEB 0.1.10](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb) |
+| Debian | 12 (Bookworm) | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
@@ -200,7 +199,7 @@ Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 Raspberry Pi OS Lite 64-bit Bookworm uses the Pi 4 preview image, which contains
 the Debian 12 ARM64 package built from `dfb16720510eaf68d5ffecc9e32a290997503897`.
-It is independent of the stable 0.1.9 Linux package release and does not add a
+It is independent of the stable package release and does not preconfigure the
 Bookworm APT repository. Use the [Pi 4 guide](PI4_GUIDE.md) for preview updates
 and qualification boundaries. Existing Trixie installations are not automatically
 migrated or downgraded.

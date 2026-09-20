@@ -38,10 +38,11 @@ Record that review in an owner-only regular JSON file (`chmod 600`) outside
 the checkout. Its exact fields are `schema: 1`,
 `purpose: "first-party-build-only"`, `baseline_source_id`, `source_id`, and
 `files`. Both source IDs must be full commit hashes. `files` maps **every**
-guarded changed path to the SHA-256 of that file's Git blob at `source_id`.
+guarded changed path to the SHA-256 of that file's Git blob at `source_id`,
+the reviewed source commit.
 Only `CMakeLists.txt` and files immediately inside `cmake/` ending in
 `.cmake` are eligible. Use the bytes from `git show COMMIT:PATH`, not a
-working-tree copy. Extra or missing paths, a different candidate, an old
+working-tree copy. Extra or missing paths, an unrelated reviewed commit, an old
 baseline, changed hashes, symlinks, or group/world-readable receipts stop
 publication. A receipt records a completed human/operator source review;
 generating hashes alone does not establish that dependencies are unchanged.
@@ -50,8 +51,14 @@ Add the receipt's absolute path as the optional `review_receipt` field in
 the existing local agent configuration. Keep the configuration owner-only
 and preserve its other fields. The helper runs from the agent's updated,
 reviewed `main` checkout; the runtime and archived application source remain
-at the immutable release tag. The review applies to that one candidate only.
-Remove or replace the configuration field after reviewing a later candidate.
+at the immutable release tag. The review can also cover a later tag only when
+the receipt's reviewed source commit is an ancestor of that tag, its complete
+guarded path set is unchanged from the reviewed commit, and every guarded Git
+blob at both commits still has the recorded digest. This reuses identical
+reviewed first-party build inputs; a new, removed, or changed guarded build
+input still requires a new review receipt. The archived receipt bytes remain
+unchanged. For an ancestor reuse, derived release metadata records both the
+reviewed source commit and the actual candidate source commit.
 The receipt is copied into the corresponding-source archive as
 `VectorWarp-corresponding-source/build-source-review.json`; its digest and
 source IDs also appear in `macos-release.json`. Do not put secrets in it.
