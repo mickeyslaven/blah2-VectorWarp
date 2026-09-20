@@ -113,7 +113,8 @@ class AgentPolicyTest(unittest.TestCase):
                 runtime.mkdir()
                 (runtime / "standalone.json").write_text("{}")
             candidate = {"tag": "v0.1.11", "commit": "b" * 40}
-            review = {"metadata": {"sha256": "a" * 64, "source_id": candidate["commit"]}}
+            review = {"metadata": {"sha256": "a" * 64, "source_id": candidate["commit"],
+                                   "reviewed_source_id": "c" * 40}}
             receipt = {"schema": 1, "version": "0.1.11", "source_id": candidate["commit"],
                        "source_archive": archive.name, "source_archive_size": archive.stat().st_size,
                        "source_archive_sha256": agent.digest(archive),
@@ -135,7 +136,9 @@ class AgentPolicyTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "new source review required"):
                     agent.prepare_inputs(settings, candidate, work, work / "tag-source", runtimes, runtimes)
                 helper.verify_inputs.side_effect = None
-                for bad_review in (None, {"sha256": "c" * 64}):
+                for bad_review in (None, {"sha256": "c" * 64},
+                        {**review["metadata"], "reviewed_source_id": "d" * 40},
+                        {"sha256": "a" * 64, "source_id": candidate["commit"]}):
                     receipt["build_source_review"] = bad_review
                     (output / "receipt.json").write_text(json.dumps(receipt))
                     with self.assertRaisesRegex(ValueError, "release input receipt differs"):

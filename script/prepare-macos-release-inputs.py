@@ -174,7 +174,7 @@ def owner_only_bytes(path):
 
 
 def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
-    """Validate a tag-specific reviewed CMake delta and return immutable bytes."""
+    """Validate reviewed CMake post-images for this candidate and return immutable bytes."""
     if not isinstance(source_id, str) or not re.fullmatch(r"[0-9a-f]{40}", source_id):
         raise ValueError("review receipt source commit is invalid")
     guarded = sorted(guarded)
@@ -184,22 +184,54 @@ def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
     record = review_json(raw)
     if set(record) != {"schema", "purpose", "source_id", "baseline_source_id", "files"}:
         raise ValueError("review receipt has an unexpected schema")
+    reviewed_source_id = record["source_id"]
     if (record["schema"] != 1 or record["purpose"] != REVIEW_PURPOSE or
-            record["source_id"] != source_id or record["baseline_source_id"] != BASELINE_SOURCE_ID):
-        raise ValueError("review receipt does not bind this candidate and baseline")
+            not isinstance(reviewed_source_id, str) or not re.fullmatch(r"[0-9a-f]{40}", reviewed_source_id) or
+            record["baseline_source_id"] != BASELINE_SOURCE_ID):
+        raise ValueError("review receipt does not bind a reviewed source and baseline")
+    try:
+        reviewed_type = subprocess.check_output(["git", "-C", str(checkout), "cat-file", "-t",
+                                                 reviewed_source_id], stderr=subprocess.DEVNULL, text=True).strip()
+    except subprocess.CalledProcessError as error:
+        raise ValueError("review receipt reviewed source commit is unavailable") from error
+    if reviewed_type != "commit":
+        raise ValueError("review receipt reviewed source must identify a commit directly")
+    if subprocess.run(["git", "-C", str(checkout), "merge-base", "--is-ancestor",
+                       reviewed_source_id, source_id], capture_output=True, check=False).returncode:
+        raise ValueError("review receipt source is not an ancestor of the candidate")
+    reviewed_changed = subprocess.check_output(
+        ["git", "-C", str(checkout), "diff", "--name-only", BASELINE_SOURCE_ID, reviewed_source_id],
+        text=True).splitlines()
+    reviewed_guarded = sorted(name for name in reviewed_changed
+                              if any(name == prefix or name.startswith(prefix)
+                                     for prefix in SENSITIVE_PATHS))
+    candidate_changed = subprocess.check_output(
+        ["git", "-C", str(checkout), "diff", "--name-only", BASELINE_SOURCE_ID, source_id],
+        text=True).splitlines()
+    candidate_guarded = sorted(name for name in candidate_changed
+                               if any(name == prefix or name.startswith(prefix)
+                                      for prefix in SENSITIVE_PATHS))
+    if reviewed_guarded != guarded or candidate_guarded != guarded:
+        raise ValueError("review receipt guarded paths differ from the candidate")
     files = record["files"]
     if not isinstance(files, dict) or set(files) != set(guarded):
         raise ValueError("review receipt files do not exactly match guarded changes")
     for path, expected in files.items():
         if not REVIEW_PATH.fullmatch(path) or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
             raise ValueError("review receipt has an unsafe path or invalid file digest")
-        blob = subprocess.check_output(["git", "-C", str(checkout), "show", source_id + ":" + path])
-        if hashlib.sha256(blob).hexdigest() != expected:
-            raise ValueError("review receipt file digest differs from candidate Git blob: " + path)
-    return {"record": record, "raw": raw,
-            "metadata": {"sha256": hashlib.sha256(raw).hexdigest(),
-                         "archive_member": REVIEW_ARCHIVE_MEMBER,
-                         "source_id": source_id, "baseline_source_id": BASELINE_SOURCE_ID}}
+        for commit, label in ((reviewed_source_id, "reviewed"), (source_id, "candidate")):
+            try:
+                blob = subprocess.check_output(["git", "-C", str(checkout), "show", commit + ":" + path],
+                                               stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError as error:
+                raise ValueError("review receipt path is absent from " + label + " source: " + path) from error
+            if hashlib.sha256(blob).hexdigest() != expected:
+                raise ValueError("review receipt file digest differs from " + label + " Git blob: " + path)
+    metadata = {"sha256": hashlib.sha256(raw).hexdigest(), "archive_member": REVIEW_ARCHIVE_MEMBER,
+                "source_id": source_id, "baseline_source_id": BASELINE_SOURCE_ID}
+    if reviewed_source_id != source_id:
+        metadata["reviewed_source_id"] = reviewed_source_id
+    return {"record": record, "raw": raw, "metadata": metadata}
 
 
 def verify_checkout(checkout, source_id, review_receipt=None):
