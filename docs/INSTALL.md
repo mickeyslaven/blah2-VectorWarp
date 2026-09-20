@@ -1,63 +1,53 @@
 # Install VectorWarp
 
-Choose the installation path for your operating system:
+Choose one path, then configure the receiver in Settings:
 
-- **macOS:** [Public Homebrew tap](#macos-with-homebrew), or
-  the [signed standalone installer](#macos-standalone-installer) when the
-  [download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install) lists it.
-  Apple Silicon is tested on M2; Intel remains experimental
-  and unverified.
-- **Linux:** [Published DEB/RPM packages](#install-a-package) for 64-bit Linux
-  with systemd: x86-64 (amd64 / x86_64) or ARM64 (arm64 / aarch64).
+1. **Raspberry Pi 4B:** use the Bookworm Lite **preview** through its
+   [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+   Fresh-card boot and Wi-Fi qualification are pending; see [Pi 4](#pi-4b-bookworm-lite).
+2. **Linux PC or supported non-image ARM64 system:** use the signed
+   [DEB/RPM package repository](#linux-packages).
+3. **macOS:** use [Homebrew](#macos-with-homebrew), or a signed PKG when the
+   [download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install) lists one.
+4. **Development or an unsupported system:** use [source installation](#build-from-source).
 
-## macOS with Homebrew
+The Pi 4 target is an 8 GB Raspberry Pi 4B with Raspberry Pi OS Lite 64-bit
+Bookworm. A 32 GB microSD card is recommended. Pi 5 is future work.
 
-With Homebrew and Xcode Command Line Tools installed:
+## Pi 4B Bookworm Lite
 
-```sh
-brew tap mickeyslaven/vectorwarp
-brew trust mickeyslaven/vectorwarp
-brew install vectorwarp
-vectorwarp
-```
+Download the preview's versioned
+[`vectorwarp-pi4-0.1.10.rpi-imager-manifest`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
+and open it in Raspberry Pi Imager before choosing the Pi 4 Bookworm Lite image.
+The manifest is required: it enables Imager's hostname, locale, Wi-Fi, country,
+login and SSH customization. Do not select the bare
+[`vectorwarp-pi4-0.1.10-arm64.img.xz`](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz)
+when you need headless Wi-Fi or SSH setup.
 
-The formula builds VectorWarp, its local USB Kraken companion, the UHD/HackRF
-adapters and optional Vulkan/MoltenVK processing with CPU fallback. It does not
-include or download the proprietary SDRplay SDK. `vectorwarp` opens Settings
-without starting radar; configure your receiver or replay file, then choose
-**Save & Restart**.
+Before writing the card, set a hostname, a username with password or SSH key,
+locale/time zone, and enable SSH. Set Wi-Fi name, password and country for a
+wireless setup; Ethernet may omit Wi-Fi. The image has no factory login and
+does not include a network profile. After boot, browse to
+`http://<hostname>.local:3000/` or the DHCP address. For an RSPduo, install
+SDRplay's vendor API yourself, then choose **Build SDRplay support** in
+Settings before selecting **Save & Restart**. Other receivers can be configured
+and started with **Save & Restart** once their settings are ready.
 
-Follow the [Homebrew guide](MACOS_HOMEBREW.md) for installation checks, per-user
-services, updates and removal. The [Mac guide](MACOS.md) covers receiver setup,
-configuration paths and direct source builds. Local development packages were
-tested through revision 17 on Apple M2. The public tap builds from source and
-supplies no bottle. Its [publishing workflow](HOMEBREW_PUBLISHING.md) checks a
-merge before updating the formulas.
+This is a Pi 4 preview. Its internal software checks passed, but fresh-card boot
+and Wi-Fi provisioning have not been qualified. Review the [Pi 4 guide](PI4_GUIDE.md)
+and [validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing.
+VectorWarp does not ship SDRplay software.
 
-## macOS standalone installer
+## Linux packages
 
-The universal macOS `.pkg` is Developer ID signed, Apple-notarized and installs
-`VectorWarp.app` at `/Applications/VectorWarp.app`. Download the version listed in
-the [release matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
-open it in Finder and complete the normal macOS
-Installer flow. Then launch VectorWarp with:
-
-```sh
-/Applications/VectorWarp.app/Contents/MacOS/VectorWarp
-```
-
-The package does not configure a login service or start radar automatically.
-Choose a receiver or replay file in Settings, then select **Save & Restart**.
-Use only the PKG linked for the current release in the matrix. See [the standalone guide](MACOS_STANDALONE.md)
-for verification scope and limitations.
-
-## Linux installation
+**Bookworm ARM64 during the Pi preview:** download the [matching 0.1.10 DEB](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb)
+and run `sudo apt install ./vectorwarp_0.1.10-1_debian12_arm64.deb`. The repository
+commands below apply to the other listed stable targets; a Bookworm repository
+is not published yet. A freshly flashed Pi image already includes VectorWarp.
 
 Use the [package download and installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
 for current downloads and APT/DNF setup. The same package-manager steps are
 included below; [building from source](#build-from-source) is a separate route.
-
-## Install a package
 
 ### 1. Install VectorWarp
 
@@ -200,18 +190,59 @@ sudo dnf install ./matching.rpm
 | System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |
 | Ubuntu | 22.04, 24.04, or 26.04 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Debian | 12 (Bookworm) | ARM64 | [Preview DEB 0.1.10](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp_0.1.10-1_debian12_arm64.deb) |
 | Debian | 13 (Trixie) | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64 or ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | [DragonOS](DRAGONOS.md) | Matching Ubuntu base listed above | x86-64 or ARM64 | [Use `/etc/os-release` metadata](DRAGONOS.md) |
-| Raspberry Pi OS | Trixie, 64-bit | ARM64 | [Installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
+| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
 
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
+
+Raspberry Pi OS Lite 64-bit Bookworm uses the Pi 4 preview image, which contains
+the Debian 12 ARM64 package built from `dfb16720510eaf68d5ffecc9e32a290997503897`.
+It is independent of the stable 0.1.9 Linux package release and does not add a
+Bookworm APT repository. Use the [Pi 4 guide](PI4_GUIDE.md) for preview updates
+and qualification boundaries. Existing Trixie installations are not automatically
+migrated or downgraded.
 
 A Raspberry Pi can also use a listed 64-bit Fedora, Debian or Ubuntu release;
 follow that operating system's instructions. These are build/package targets,
 not a guarantee that every radar workload will run in real time on every device.
 DragonOS and Raspberry Pi OS package selection has fixture coverage, not a
 clean-host installation claim. A 32-bit operating system is not supported.
+
+## macOS
+
+### macOS with Homebrew
+
+With Homebrew and Xcode Command Line Tools installed:
+
+```sh
+brew tap mickeyslaven/vectorwarp
+brew trust mickeyslaven/vectorwarp
+brew install vectorwarp
+vectorwarp
+```
+
+The formula builds VectorWarp, its local USB Kraken companion, the UHD/HackRF
+adapters and optional Vulkan/MoltenVK processing with CPU fallback. It does not
+include or download the proprietary SDRplay SDK. `vectorwarp` opens Settings
+without starting radar; configure a receiver or replay file, then choose
+**Save & Restart**. See the [Homebrew guide](MACOS_HOMEBREW.md) for updates,
+services, and removal.
+
+### macOS standalone installer
+
+When the [release matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install)
+lists a signed PKG, it installs `VectorWarp.app` at
+`/Applications/VectorWarp.app`. Open it in Finder, then launch:
+
+```sh
+/Applications/VectorWarp.app/Contents/MacOS/VectorWarp
+```
+
+The app does not start radar automatically. See [the standalone guide](MACOS_STANDALONE.md)
+for verification scope and limitations.
 
 <a id="build-from-source"></a>
 
@@ -304,7 +335,10 @@ sudo script/install-native.sh --preflight && \
 sudo script/install-native.sh
 ```
 
-The build creates `build/native/artifact`. Use `--gpu off` in both build
+The build creates `build/native/artifact`. `--backend all` is the default and
+builds Kraken, USRP and HackRF plus the local RSPduo source kit; it does not
+compile an RSPduo adapter without the separately installed SDRplay API. The
+build wrapper's default GPU setting is `auto`; use `--gpu off` in both build
 commands for a CPU-only build. Installation preserves an existing
 `/etc/vectorwarp/config.yml` and does not enable or start VectorWarp services.
 A first RSPduo-enabled installation can start an already-installed standard
@@ -405,6 +439,18 @@ sudo /opt/vectorwarp/libexec/vectorwarp-gpu-setup --install-driver
 
 It does not start or restart radar processing. See [Pi GPU setup](PI_GPU_SETUP.md)
 for driver and account-access details.
+
+### Raspberry Pi 4B on Bookworm
+
+The Pi 4 Bookworm preview image is the primary route. Source installation is an
+advanced alternative for development or an existing operating-system install;
+use the normal dependency, build, install, and web-setup steps above, then
+follow the [Pi 4 guide](PI4_GUIDE.md) for its exact qualified RSPduo workload
+and AUTO behavior. There is no Pi-specific install flag: `--gpu auto`
+builds the optional Vulkan path when its dependencies are available, while
+runtime `acceleration: auto` decides whether to use it. The native installer
+does not start VectorWarp; `--setup-pi-gpu` is optional and only offers the
+distribution's Mesa transaction after installation.
 
 <a id="future-package-route"></a>
 

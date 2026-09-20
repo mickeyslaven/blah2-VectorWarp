@@ -4,8 +4,16 @@ import fcntl, hashlib, importlib.util, json, os, pathlib, shutil, signal, stat, 
 from unittest import mock
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('builder',ROOT/'script/vectorwarp-build-sdrplay.py'); builder=importlib.util.module_from_spec(spec); spec.loader.exec_module(builder)
+stage_spec=importlib.util.spec_from_file_location('stage_rspduo_kit',ROOT/'script/stage-rspduo-kit.py'); stage=importlib.util.module_from_spec(stage_spec); stage_spec.loader.exec_module(stage)
 def digest(p): return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 class LocalBuild(unittest.TestCase):
+  def test_callback_headers_are_in_every_source_kit_allowlist(self):
+    headers={'src/capture/rspduo/SdkSampleClock.h','src/capture/rspduo/UsbMode.h',
+             'src/capture/PairedCpiQueue.h','src/capture/PairedCpiSource.h'}
+    self.assertTrue(headers <= builder.REQUIRED)
+    self.assertTrue(headers <= stage.SOURCES)
+    cmake=(ROOT/'cmake/RspduoLocalKit.cmake').read_text()
+    for header in headers: self.assertIn(header,cmake)
   def setUp(self):
     self.t=tempfile.TemporaryDirectory(); base=pathlib.Path(self.t.name); self.k=base/'kit'; self.k.mkdir(); self.o=base/'out'; self.o.mkdir(); self.core=base/'core'; self.core.write_bytes(b'core'); self.inc=base/'inc'; self.inc.mkdir(); (self.inc/'sdrplay_api.h').write_bytes(b'#define SDRPLAY_API_VERSION (float)(3.15)\n'); self.lib=base/'lib'; self.lib.write_bytes(b'\x7fELF\x02\x01\x01'+bytes(9)+(3).to_bytes(2,'little')+({'x86_64':62,'aarch64':183,'arm64':183}.get(os.uname().machine,62)).to_bytes(2,'little'))
     for n in builder.REQUIRED:

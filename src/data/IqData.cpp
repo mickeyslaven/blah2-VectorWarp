@@ -1,4 +1,5 @@
 #include "IqData.h"
+#include <algorithm>
 #include <iostream>
 #include <cstdlib>
 
@@ -31,6 +32,8 @@ uint32_t IqData::get_length()
 {
   return data->size();
 }
+
+uint64_t IqData::get_dropped_samples() const { return droppedSamples; }
 
 void IqData::lock()
 {
@@ -130,6 +133,7 @@ std::deque<std::complex<double>>& IqData::resize_for_write(uint32_t count)
 
 void IqData::push_back(std::complex<double> sample)
 {
+  if (!n) { ++droppedSamples; return; }
   if (data->size() < n)
   {
     data->push_back(sample);
@@ -137,6 +141,7 @@ void IqData::push_back(std::complex<double> sample)
   else
   {
     data->pop_front();
+    ++droppedSamples;
     data->push_back(sample);
   }
 }
@@ -151,8 +156,10 @@ void IqData::append_unlocked(const std::complex<float>* samples, std::size_t cou
 {
   if (!count) return;
   if (!samples) throw std::invalid_argument("Null IQ sample block");
+  if (!n) { droppedSamples += count; return; }
   if (count >= n)
   {
+    droppedSamples += data->size() + count - n;
     data->clear();
     data->insert(data->end(), samples + (count - n), samples + count);
     return;
@@ -160,9 +167,33 @@ void IqData::append_unlocked(const std::complex<float>* samples, std::size_t cou
   const std::size_t required = data->size() + count;
   if (required > n)
   {
-    data->erase(data->begin(), data->begin() + (required - n));
+    const std::size_t retired = required - n;
+    data->erase(data->begin(), data->begin() + retired);
+    droppedSamples += retired;
   }
   data->insert(data->end(), samples, samples + count);
+}
+
+void IqData::assign_paired_i16(const int16_t* samples, uint32_t count, IqData& other)
+{
+  if (this == &other || count > n || count > other.n || (count && !samples))
+    throw std::invalid_argument("Invalid paired IQ sample replacement");
+  data->resize(count);
+  other.data->resize(count);
+  auto first = data->begin();
+  auto second = other.data->begin();
+  for (uint32_t i = 0; i < count; ++i, ++first, ++second, samples += 4) {
+    *first = {double(samples[0]), double(samples[1])};
+    *second = {double(samples[2]), double(samples[3])};
+  }
+}
+
+void IqData::assign_complex(const std::complex<double>* samples, uint32_t count)
+{
+  if (count > n || (count && !samples))
+    throw std::invalid_argument("Invalid complex IQ sample replacement");
+  data->resize(count);
+  std::copy_n(samples, count, data->begin());
 }
 
 std::complex<double> IqData::pop_front()

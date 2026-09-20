@@ -53,7 +53,17 @@ class DistributionTests(unittest.TestCase):
 
     def test_pr_matrix_builds_the_same_local_kit_contract(self):
         package = workflow_document()['jobs']['package']
-        self.assertEqual(len(package['strategy']['matrix']['include']), 10)
+        matrix = package['strategy']['matrix']['include']
+        expected = [('ubuntu' + version, 'deb', arch)
+                    for version in ('22.04', '24.04', '26.04')
+                    for arch in ('amd64', 'arm64')]
+        expected += [('debian12', 'deb', 'arm64'),
+                     ('debian13', 'deb', 'amd64'), ('debian13', 'deb', 'arm64'),
+                     ('fedora44', 'rpm', 'x86_64'), ('fedora44', 'rpm', 'aarch64')]
+        # Check each supported target (including Bookworm ARM64), not just a
+        # count that could hide a missing target behind a duplicated entry.
+        self.assertCountEqual([(row['distro'], row['format'], row['arch'])
+                               for row in matrix], expected)
         pr_steps = [step for step in package['steps']
                     if 'PR verification' in step.get('name', '')]
         self.assertEqual(len(pr_steps), 3)

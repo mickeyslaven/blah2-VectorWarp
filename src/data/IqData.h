@@ -25,6 +25,9 @@ private:
   /// @brief Pointer to IQ data.
   std::deque<std::complex<double>> *data;
 
+  /// @brief Samples retired because this bounded queue overflowed.
+  uint64_t droppedSamples = 0;
+
   /// @brief Minimum value.
   double min;
 
@@ -59,6 +62,9 @@ public:
   /// @brief Getter for current data length.
   /// @return Number of samples currently in data.
   uint32_t get_length();
+
+  /// @brief Cumulative overflow retirement count; caller owns queue locking.
+  uint64_t get_dropped_samples() const;
 
   /// @brief Locker for mutex.
   /// @return Void.
@@ -110,6 +116,14 @@ public:
   /// @brief Append an existing receive block without a temporary vector.
   /// @warning Caller holds the lock; like the vector overload, retains newest n.
   void append_unlocked(const std::complex<float>* samples, std::size_t count);
+
+  /// @brief Replace two coherent buffers from signed16 IIQQ capture storage.
+  /// @warning Caller exclusively owns both buffers.
+  void assign_paired_i16(const int16_t* samples, uint32_t count, IqData& other);
+
+  /// @brief Overwrite a complete complex CPI while reusing existing deque storage.
+  /// @warning Caller exclusively owns this buffer.
+  void assign_complex(const std::complex<double>* samples, uint32_t count);
 
   /// @brief Pop the front of the queue.
   /// @return Sample from the front of the queue.

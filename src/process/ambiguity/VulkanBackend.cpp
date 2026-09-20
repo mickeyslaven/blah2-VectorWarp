@@ -369,7 +369,7 @@ struct NativePlan {
   VkFFTApplication app{};
   Buffer& buffer_;
   NativePlan(Context& context, Buffer& buffer, uint32_t length, uint32_t batches,
-      bool twiddleLut = false) : buffer_(buffer) {
+      bool twiddleLut = false, bool firTuning = false) : buffer_(buffer) {
     VkFFTConfiguration config{};
     config.FFTdim = 1; config.size[0] = length; config.numberBatches = batches;
     // VkFFT's FP32 defaults calculate twiddles on NVIDIA/AMD but use a LUT on
@@ -383,6 +383,13 @@ struct NativePlan {
     // Binding during initialization can leave descriptors pointing at null LUTs.
     config.bufferSize = &buffer.bytes;
     config.isCompilerInitialized = 1;
+    // Preserve the qualified Pi FIR tuning without changing existing radar or
+    // whole-clutter VkFFT choices. normalize applies to inverse transforms.
+    if (firTuning) {
+      config.normalize = 1;
+      config.warpSize = 32;
+      config.coalescedMemory = 64;
+    }
     startupTrace(("VkFFT plan begin length=" + std::to_string(length) + " batches=" + std::to_string(batches)).c_str());
     const auto result = initializeVkFFT(&app, config);
     startupTrace(("VkFFT plan complete result=" + std::to_string(result)).c_str());
@@ -640,7 +647,8 @@ struct Plan {
 #ifdef __APPLE__
   std::unique_ptr<PortablePrimePlan> portable_;
 #endif
-  Plan(Context& context,Buffer& buffer,uint32_t length,uint32_t batches,bool twiddleLut=false) {
+  Plan(Context& context,Buffer& buffer,uint32_t length,uint32_t batches,
+      bool twiddleLut=false,bool firTuning=false) {
 #ifdef __APPLE__
     uint32_t rest=length;
     for (uint32_t radix:{2u,3u,5u,7u,11u,13u}) while(rest%radix==0) rest/=radix;
@@ -649,7 +657,7 @@ struct Plan {
       return;
     }
 #endif
-    native_=std::make_unique<NativePlan>(context,buffer,length,batches,twiddleLut);
+    native_=std::make_unique<NativePlan>(context,buffer,length,batches,twiddleLut,firTuning);
   }
   void append(VkCommandBuffer command,int direction) {
 #ifdef __APPLE__
@@ -982,6 +990,220 @@ public:
   }
 };
 
+constexpr const char* firPackSource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Input { vec2 inputData[]; };
+layout(binding=1) writeonly buffer Work { vec2 work[]; };
+layout(push_constant) uniform Parameters { uint count; uint fft; uint history; uint hop; int valid; } p;
+void main() {
+  uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
+  if (i >= p.count) return;
+  int source = p.valid + int((i / p.fft) * p.hop + i % p.fft) - int(p.history);
+  work[i] = source < 0 || source >= inputData.length() ? vec2(0.0) : inputData[source];
+})glsl";
+constexpr const char* firMultiplySource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) buffer Work { vec2 work[]; };
+layout(binding=1) readonly buffer Weights { vec2 weights[]; };
+layout(push_constant) uniform Parameters { uint count; uint fft; uint history; uint hop; int valid; } p;
+void main() {
+  uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
+  if (i >= p.count) return;
+  vec2 x = work[i], w = weights[i % p.fft];
+  work[i] = vec2(x.x*w.x-x.y*w.y, x.x*w.y+x.y*w.x);
+})glsl";
+constexpr const char* firGatherSource = R"glsl(#version 450
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Work { vec2 work[]; };
+layout(binding=1) writeonly buffer Output { vec2 outputData[]; };
+layout(push_constant) uniform Parameters { uint count; uint fft; uint history; uint hop; int valid; } p;
+void main() {
+  uint i = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 128;
+  if (i >= p.count) return;
+  outputData[uint(p.valid)+i] = work[(i/p.hop)*p.fft+p.history+i%p.hop];
+})glsl";
+
+void firComputeBarrier(VkCommandBuffer command) {
+  VkMemoryBarrier memory{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+  memory.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  memory.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &memory, 0, nullptr, 0, nullptr);
+}
+
+// Production FIR-only backend. The worker protocol owns sequencing; this class
+// enforces its two-phase device state and never allocates radar/clutter buffers.
+class VulkanFirBackend final : public GpuBackend, public GpuFirBufferBackend {
+  Context context_;
+  uint32_t samples_, taps_, fft_, hop_, blocks_, outputs_;
+  std::unique_ptr<Buffer> input_, weights_, work_, output_;
+  std::unique_ptr<Kernel> pack_, multiply_, gather_;
+  std::unique_ptr<Plan> workPlan_, weightPlan_;
+  VkCommandBuffer referenceCommand_ = VK_NULL_HANDLE, finalCommand_ = VK_NULL_HANDLE;
+  VkFence referenceFence_ = VK_NULL_HANDLE;
+  bool referencePending_ = false, finalPending_ = false, poisoned_ = false;
+
+  void resetAfterFinal() {
+    check(vkResetFences(context_.device, 1, &context_.fence), "FIR final fence reset");
+    check(vkResetFences(context_.device, 1, &referenceFence_), "FIR reference fence reset");
+    referencePending_ = false; finalPending_ = false;
+  }
+public:
+  VulkanFirBackend(std::shared_ptr<Instance> instance, Candidate candidate,
+      const GpuGeometry& g)
+    : context_(std::move(instance), std::move(candidate)),
+      samples_(g.firSamples), taps_(g.firTaps), fft_(g.firFft) {
+    if (context_.candidate.properties.vendorID != 5348 ||
+        context_.candidate.info.name.find("V3D") == std::string::npos)
+      throw std::runtime_error("Qualified FIR-only processing requires an actual Pi V3D GPU");
+    if (g.kind != GpuWorkKind::fir || g.range || g.doppler || g.delays ||
+        g.channels || g.delayMin || g.clutterSamples || g.clutterBins ||
+        g.clutterDelayMin || !samples_ || samples_ > 10000000 || !taps_ ||
+        taps_ > samples_ || taps_ > 2048 || fft_ != 2048 || taps_ > fft_ ||
+        g.firPercent != 50)
+      throw std::invalid_argument("Invalid FIR-only GPU geometry");
+    hop_ = fft_ - taps_ + 1;
+    const uint64_t totalBlocks = (uint64_t(samples_) + hop_ - 1) / hop_;
+    const uint64_t selected = std::max<uint64_t>(1, totalBlocks * g.firPercent / 100);
+    const uint64_t outputs = std::min<uint64_t>(samples_, selected * hop_);
+    if (!totalBlocks || selected > UINT32_MAX || outputs > UINT32_MAX ||
+        selected > UINT32_MAX / fft_)
+      throw std::invalid_argument("FIR-only GPU geometry overflows its bounds");
+    blocks_ = uint32_t(selected); outputs_ = uint32_t(outputs);
+    const uint64_t workElements = uint64_t(blocks_) * fft_;
+    const auto& limits = context_.candidate.properties.limits;
+    if (limits.maxComputeWorkGroupInvocations < 128 ||
+        limits.maxComputeWorkGroupSize[0] < 128 ||
+        limits.maxComputeWorkGroupCount[0] < 65535 ||
+        workElements * sizeof(std::complex<float>) > limits.maxStorageBufferRange ||
+        uint64_t(outputs_) * sizeof(std::complex<float>) > limits.maxStorageBufferRange)
+      throw std::runtime_error("GPU capacity is too small for FIR-only processing");
+    constexpr auto mapped = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    constexpr auto preferred = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+      VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+    input_ = std::make_unique<Buffer>(context_, uint64_t(outputs_) * 8, mapped, preferred);
+    weights_ = std::make_unique<Buffer>(context_, uint64_t(fft_) * 8, mapped, preferred);
+    // The qualified V3D path used the same unified mapped memory type for its
+    // full FIR workspace; retain that choice for performance parity.
+    work_ = std::make_unique<Buffer>(context_, workElements * 8, mapped, preferred);
+    output_ = std::make_unique<Buffer>(context_, uint64_t(outputs_) * 8, mapped, preferred);
+    pack_ = std::make_unique<Kernel>(context_, firPackSource,
+      std::vector<Buffer*>{input_.get(), work_.get()});
+    multiply_ = std::make_unique<Kernel>(context_, firMultiplySource,
+      std::vector<Buffer*>{work_.get(), weights_.get()});
+    gather_ = std::make_unique<Kernel>(context_, firGatherSource,
+      std::vector<Buffer*>{work_.get(), output_.get()});
+    workPlan_ = std::make_unique<Plan>(context_, *work_, fft_, blocks_, true, true);
+    weightPlan_ = std::make_unique<Plan>(context_, *weights_, fft_, 1, true, true);
+    VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    allocation.commandPool = context_.pool; allocation.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocation.commandBufferCount = 1;
+    check(vkAllocateCommandBuffers(context_.device, &allocation, &referenceCommand_),
+      "FIR reference command allocation");
+    check(vkAllocateCommandBuffers(context_.device, &allocation, &finalCommand_),
+      "FIR final command allocation");
+    VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    check(vkCreateFence(context_.device, &fenceInfo, nullptr, &referenceFence_),
+      "FIR reference fence allocation");
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    check(vkBeginCommandBuffer(referenceCommand_, &begin), "FIR reference recording");
+    VkMemoryBarrier hostWrite{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    hostWrite.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    hostWrite.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(referenceCommand_, VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &hostWrite, 0, nullptr, 0, nullptr);
+    Push shape{uint32_t(workElements), fft_, taps_-1, hop_, 0};
+    pack_->append(referenceCommand_, shape); firComputeBarrier(referenceCommand_);
+    workPlan_->append(referenceCommand_, -1); firComputeBarrier(referenceCommand_);
+    check(vkEndCommandBuffer(referenceCommand_), "FIR reference recording");
+    check(vkBeginCommandBuffer(finalCommand_, &begin), "FIR final recording");
+    hostWrite.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(finalCommand_, VK_PIPELINE_STAGE_HOST_BIT,
+      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &hostWrite, 0, nullptr, 0, nullptr);
+    // FIFO queue order plus this dependency makes the early FFT visible here.
+    firComputeBarrier(finalCommand_);
+    weightPlan_->append(finalCommand_, -1); firComputeBarrier(finalCommand_);
+    multiply_->append(finalCommand_, shape); firComputeBarrier(finalCommand_);
+    workPlan_->append(finalCommand_, 1); firComputeBarrier(finalCommand_);
+    shape.count = outputs_;
+    gather_->append(finalCommand_, shape);
+    VkMemoryBarrier hostRead{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    hostRead.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    hostRead.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+    vkCmdPipelineBarrier(finalCommand_, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+      VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &hostRead, 0, nullptr, 0, nullptr);
+    check(vkEndCommandBuffer(finalCommand_), "FIR final recording");
+    startupTrace("FIR-only backend ready");
+  }
+  ~VulkanFirBackend() override {
+    if (context_.device && (referencePending_ || finalPending_))
+      vkDeviceWaitIdle(context_.device);
+    if (referenceCommand_) vkFreeCommandBuffers(context_.device, context_.pool, 1, &referenceCommand_);
+    if (finalCommand_) vkFreeCommandBuffers(context_.device, context_.pool, 1, &finalCommand_);
+    if (referenceFence_) vkDestroyFence(context_.device, referenceFence_, nullptr);
+  }
+  GpuDevice device() const override { return context_.candidate.info; }
+  void process(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&,
+      std::vector<std::complex<float>>&) override {
+    throw std::logic_error("FIR-only GPU backend rejects radar processing");
+  }
+  void submitFirReferenceBuffers(const std::complex<float>* reference,
+      size_t referenceCount) override {
+    if (poisoned_ || referencePending_ || finalPending_ || !reference ||
+        referenceCount != outputs_)
+      throw std::invalid_argument("Invalid FIR reference phase");
+    if (!std::all_of(reference, reference + referenceCount, [](auto value) {
+          return std::isfinite(value.real()) && std::isfinite(value.imag());
+        })) throw std::invalid_argument("Non-finite FIR reference input");
+    std::memcpy(input_->mapped, reference, input_->bytes);
+    input_->flush(0, input_->bytes);
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1; submit.pCommandBuffers = &referenceCommand_;
+    const VkResult result = vkQueueSubmit(context_.queue, 1, &submit, referenceFence_);
+    if (result != VK_SUCCESS) { poisoned_ = true; check(result, "FIR reference submission"); }
+    referencePending_ = true;
+  }
+  void processFirWeightsBuffers(const std::complex<float>* weights,
+      size_t weightCount, std::complex<float>* output, size_t outputCount) override {
+    if (poisoned_ || !referencePending_ || finalPending_ || !weights || !output ||
+        weightCount != taps_ || outputCount != outputs_)
+      throw std::invalid_argument("Invalid FIR final phase");
+    if (!std::all_of(weights, weights + weightCount, [](auto value) {
+          return std::isfinite(value.real()) && std::isfinite(value.imag());
+        })) throw std::invalid_argument("Non-finite FIR weights");
+    auto* destination = static_cast<std::complex<float>*>(weights_->mapped);
+    std::copy_n(weights, taps_, destination);
+    std::fill(destination + taps_, destination + fft_, std::complex<float>{});
+    weights_->flush(0, weights_->bytes);
+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    submit.commandBufferCount = 1; submit.pCommandBuffers = &finalCommand_;
+    const VkResult submitted = vkQueueSubmit(context_.queue, 1, &submit, context_.fence);
+    if (submitted != VK_SUCCESS) { poisoned_ = true; check(submitted, "FIR final submission"); }
+    finalPending_ = true;
+    constexpr uint64_t timeoutNs = 5000000000ULL;
+    const VkResult completed = vkWaitForFences(context_.device, 1,
+      &context_.fence, VK_TRUE, timeoutNs);
+    if (completed != VK_SUCCESS) { poisoned_ = true; check(completed, "FIR final execution"); }
+    const VkResult referenceCompleted = vkWaitForFences(context_.device, 1,
+      &referenceFence_, VK_TRUE, 0);
+    if (referenceCompleted != VK_SUCCESS) {
+      poisoned_ = true; check(referenceCompleted, "FIR reference completion");
+    }
+    resetAfterFinal();
+    output_->invalidate(0, output_->bytes);
+    const auto* source = static_cast<const std::complex<float>*>(output_->mapped);
+    // The V3D mapping is uncached on the qualified Pi. Read it once, then
+    // validate the cached shared result before the worker sends READY. The
+    // parent cannot consume this candidate until that response succeeds.
+    std::memcpy(output, source, output_->bytes);
+    if (!std::all_of(output, output + outputs_, [](auto value) {
+          return std::isfinite(value.real()) && std::isfinite(value.imag());
+        })) { poisoned_ = true; throw std::runtime_error("Non-finite FIR GPU output"); }
+  }
+};
+
 class VulkanBackend final : public GpuBackend, public GpuBufferBackend,
     public GpuClutterBufferBackend {
   Context context_;
@@ -996,6 +1218,9 @@ class VulkanBackend final : public GpuBackend, public GpuBufferBackend,
 public:
   VulkanBackend(std::shared_ptr<Instance> instance, Candidate candidate, GpuGeometry g)
     : context_(std::move(instance), std::move(candidate)), geometry_(g) {
+    if (g.kind != GpuWorkKind::radar || g.firSamples || g.firTaps ||
+        g.firFft || g.firPercent)
+      throw std::invalid_argument("Invalid radar GPU work geometry");
     if (!g.range || g.range > 65535 || !g.doppler || g.doppler > 65535 ||
         !g.delays || g.delays > 65535 || !g.channels || g.channels > 8)
       throw std::runtime_error("GPU radar dimensions are unsupported; using CPU");
@@ -1244,7 +1469,11 @@ extern "C" blah2::GpuBackend* blah2_gpu_create(unsigned abi, const blah2::GpuGeo
   const std::string selection = requested ? requested : "auto";
   for (const auto& candidate : blah2::enumerate(*instance)) {
     if (selection != "auto" && selection != candidate.info.id) continue;
-    try { return new blah2::VulkanBackend(instance, candidate, *geometry); }
+    try {
+      if (geometry->kind == blah2::GpuWorkKind::fir)
+        return new blah2::VulkanFirBackend(instance, candidate, *geometry);
+      return new blah2::VulkanBackend(instance, candidate, *geometry);
+    }
     catch (const std::exception& error) { reason = error.what(); }
   }
   throw std::runtime_error(reason);

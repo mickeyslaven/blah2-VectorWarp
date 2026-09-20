@@ -50,6 +50,11 @@ std::string Timing::to_json()
   clutter.AddMember("gpuExecuted", clutterGpuExecuted, allocator);
   clutter.AddMember("cpuExecuted", clutterCpuExecuted, allocator);
   document.AddMember("clutterAcceleration", clutter, allocator);
+  rapidjson::Value backlog(rapidjson::kArrayType), dropped(rapidjson::kArrayType);
+  for (uint64_t value : captureBacklogSamples) backlog.PushBack(value, allocator);
+  for (uint64_t value : captureDroppedSamples) dropped.PushBack(value, allocator);
+  document.AddMember("captureBacklogSamples", backlog, allocator);
+  document.AddMember("captureDroppedSamples", dropped, allocator);
   rapidjson::Value name_value;
   for (size_t i = 0; i < time.size(); i++)
   {

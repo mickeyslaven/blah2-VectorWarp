@@ -1,9 +1,10 @@
 // Finite replay instrumentation, compiled against unchanged upstream or fork DSP.
 // Network/UI transport and hardware acquisition are deliberately not benchmarked.
-#include "MchqReader.h"
+#include "BenchmarkReader.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/meta/HammingNumber.h"
 #include "process/clutter/WienerHopf.h"
+#include "process/utility/FftwThreads.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -24,6 +25,13 @@
 #include <sys/resource.h>
 #ifdef BLAH2_BENCH_FAST
 #include "process/ambiguity/Acceleration.h"
+#include "process/ambiguity/RangeFft.h"
+#ifdef VECTORWARP_MIXED_AUTO
+#include "process/mixed/MixedProcess.h"
+#include "process/mixed/MixedAutoPolicy.h"
+#include "process/mixed/MixedMap.h"
+#include "process/mixed/MixedEligibility.h"
+#endif
 #include "process/utility/ProcessingThreads.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
@@ -146,8 +154,24 @@ Geometry inspectGeometry(const rapidjson::Document& cfg, bool array) {
       value.delayMax >= static_cast<int64_t>(value.nCorr))
     throw std::invalid_argument("Delay limits exceed the correlation block; reduce the delay range or narrow the Doppler span");
   value.roundHamming=boolean(cfg,"round_hamming");
+#ifdef BLAH2_BENCH_FAST
+  const uint32_t maxLag=static_cast<uint32_t>(std::max(
+    std::abs(static_cast<int64_t>(value.delayMin)),
+    std::abs(static_cast<int64_t>(value.delayMax))));
+  value.nfft=value.nCorr+maxLag;
+#else
   value.nfft=2*value.nCorr-1;
+#endif
   if (value.roundHamming) value.nfft=next_hamming(value.nfft);
+#ifdef BLAH2_BENCH_FAST
+  value.nfft=blah2::selectedRangeFftLength(value.nfft);
+#ifdef VECTORWARP_MIXED_AUTO
+  if(!array && value.samples==1000000 && value.dopplerBins==301 &&
+      value.nCorr==3322 && value.delayMin==-10 && value.delayBins==411 &&
+      value.dopplerMin==-300 && value.dopplerMax==300)
+    value.nfft=4096;
+#endif
+#endif
   if (!value.nfft || value.delayBins > value.nfft)
     throw std::invalid_argument("Delay geometry exceeds the range FFT");
   value.effectiveCpi=static_cast<double>(value.nCorr)*value.dopplerBins/value.fs;
@@ -208,15 +232,18 @@ int main(int argc, char** argv) try {
     return 0;
   }
   if (argc != 9) throw std::invalid_argument(
-    "Usage: bench-{upstream,fast} input.mchq profile.json output-prefix pair|array cpu|auto|gpu max-frames write|compare|none golden.maps; or --inspect-geometry profile.json pair|array");
+    "Usage: bench-{upstream,fast} input.mchq profile.json output-prefix pair|array cpu|auto|gpu|mixed max-frames write|compare|none golden.maps; or --inspect-geometry profile.json pair|array");
   const auto started = Clock::now();
   const std::string prefix=argv[3], profile=argv[4], mode=argv[5], goldenMode=argv[7];
   const bool array = profile == "array";
-  if ((!array && profile != "pair") || (mode != "cpu" && mode != "auto" && mode != "gpu") ||
+  if ((!array && profile != "pair") || (mode != "cpu" && mode != "auto" && mode != "gpu" && mode != "mixed") ||
       (goldenMode != "write" && goldenMode != "compare" && goldenMode != "none"))
     throw std::invalid_argument("Invalid benchmark mode");
 #ifndef BLAH2_BENCH_FAST
   if (array || mode != "cpu") throw std::invalid_argument("Upstream supports only the physical two-channel CPU comparison");
+#endif
+#ifndef VECTORWARP_MIXED_AUTO
+  if (mode == "mixed") throw std::invalid_argument("Mixed benchmark requires the Pi mixed worker build");
 #endif
   const auto cfg=loadConfig(argv[2]);
   auto number = [&](const char* key) -> double {
@@ -243,7 +270,7 @@ int main(int argc, char** argv) try {
   const unsigned limit=parsedLimit;
   const unsigned workers=geometry.workers, fftThreads=geometry.fftThreads;
   if (!fftw_init_threads()) throw std::runtime_error("FFTW thread initialization failed");
-  fftw_plan_with_nthreads(fftThreads);
+  blah2::set_fftw_planner_threads(fftThreads);
   std::vector<std::unique_ptr<IqData>> capture, surveillance;
   std::vector<std::unique_ptr<Ambiguity>> ambiguity;
   std::vector<std::unique_ptr<WienerHopf>> filters;
@@ -264,7 +291,36 @@ int main(int argc, char** argv) try {
       ambiguity[0]->get_n_corr() != geometry.nCorr)
     throw std::runtime_error("DSP geometry differs from the inspected benchmark contract");
 #ifdef BLAH2_BENCH_FAST
-  blah2::Acceleration acceleration(mode,
+#ifdef VECTORWARP_MIXED_AUTO
+  const blah2::mixed::Shape mixedShape{fs,samples,pathCount,
+    geometry.dopplerBins,geometry.delayBins,geometry.nCorr,geometry.nfft,
+    uint32_t(clutterBins),clutterMin,geometry.delayMin,geometry.delayMax,
+    geometry.dopplerMin,geometry.dopplerMax,
+    ambiguity[0]->get_doppler_middle(),array,true};
+  const bool commonCpuCpi=blah2::mixed::qualified(mixedShape);
+  const char* mixedDevice=std::getenv("BLAH2_GPU_DEVICE");
+  const bool forcedMixed=mode=="mixed";
+  const char* pairedSetting=std::getenv("VECTORWARP_BENCH_PAIRED_INPUT");
+  if(pairedSetting && std::string(pairedSetting)!="0" && std::string(pairedSetting)!="1")
+    throw std::invalid_argument("VECTORWARP_BENCH_PAIRED_INPUT must be 0 or 1");
+  const bool pairedInput=pairedSetting && std::string(pairedSetting)=="1";
+  if(pairedInput && (!forcedMixed || channels!=2 || surveillanceChannel!=1-referenceChannel))
+    throw std::invalid_argument("Paired input verification requires forced mixed and two distinct channels");
+  const bool mixedAuto=blah2::mixed::autoCandidate(forcedMixed?"auto":mode,mixedShape,
+    blah2::mixed::pi4Host(),mixedDevice?mixedDevice:"auto");
+  if(forcedMixed&&!mixedAuto)throw std::invalid_argument("Mixed benchmark requires qualified Pi 4 geometry/device");
+  const bool cpuBorrowed=commonCpuCpi && (mode=="cpu" || mixedAuto);
+  blah2::mixed::AutoPolicy mixedPolicy;
+  std::unique_ptr<blah2::mixed::Process> mixedWorker;
+  if(mixedAuto)try{mixedWorker=std::make_unique<blah2::mixed::Process>();}
+    catch(const std::exception& error){if(forcedMixed)throw;mixedPolicy.disable(error.what());}
+#endif
+  blah2::Acceleration acceleration(
+#ifdef VECTORWARP_MIXED_AUTO
+    mixedAuto?"cpu":mode,
+#else
+    mode,
+#endif
     {ambiguity[0]->get_nfft(), ambiguity[0]->get_n_doppler_bins(),
       ambiguity[0]->get_n_delay_bins(), pathCount, int(number("delay_min")),
       samples, uint32_t(clutterBins), clutterMin},
@@ -285,7 +341,11 @@ int main(int argc, char** argv) try {
   Interpolate interpolate(true, true);
   Tracker tracker(number("tracker_m"), number("tracker_n"), number("tracker_delete"),
     ambiguity[0]->get_cpi(), number("tracker_max_acceleration"), 299792458.0/fs, 299792458.0/fc);
-  MchqReader reader(argv[1], channels, fc);
+  if (cfg.HasMember("recording_format") && !cfg["recording_format"].IsString())
+    throw std::invalid_argument("recording_format must be a string");
+  const std::string recordingFormat = cfg.HasMember("recording_format") ?
+    cfg["recording_format"].GetString() : "mchq";
+  BenchmarkReader reader(argv[1], channels, fc, recordingFormat);
   std::ofstream frames(prefix+".frames.csv"), outputs(prefix+".outputs.jsonl");
   if (!frames || !outputs) throw std::runtime_error("Cannot open benchmark outputs");
   std::fstream golden;
@@ -322,6 +382,24 @@ int main(int argc, char** argv) try {
     if (paced) std::this_thread::sleep_until(release);
     const auto beforeRead=Clock::now();
     if (!reader.read(samples, decoded)) break;
+#ifdef VECTORWARP_MIXED_AUTO
+    // Verification fixture only: reconstruct signed16 capture input before
+    // timing, then exercise the production packed decode/IPC entry point.
+    std::vector<int16_t> paired;
+    if(pairedInput){
+      paired.resize(uint64_t(samples)*4);
+      for(uint32_t i=0;i<samples;++i)for(unsigned channel=0;channel<2;++channel){
+        const auto v=decoded[channel][i];
+        const double parts[]={v.real(),v.imag()};
+        for(unsigned component=0;component<2;++component){
+          const double value=parts[component];
+          if(!std::isfinite(value)||value<-32768||value>32767||std::trunc(value)!=value)
+            throw std::runtime_error("Paired verification input is not lossless signed16 IQ");
+          paired[uint64_t(i)*4+channel*2+component]=static_cast<int16_t>(value);
+        }
+      }
+    }
+#endif
     const auto begin=Clock::now(); auto mark=begin;
     std::vector<double> times;
     auto tick=[&] { const auto now=Clock::now(); times.push_back(ms(mark, now)); mark=now; };
@@ -329,6 +407,12 @@ int main(int argc, char** argv) try {
     // Keep decoded IQ immutable for the independent oracle. Model the native
     // consumer's block ownership, including synthesis's final read before the
     // same surveillance blocks pass to conditioning without another copy.
+#ifdef VECTORWARP_MIXED_AUTO
+    if(pairedInput)
+      mixedWorker->prepare_paired_i16(paired.data(),samples,*reference,
+        *surveillance[0],referenceChannel);
+    else
+#endif
     if (array) for (unsigned i=0; i<channels; ++i)
       capture[i]->replace(std::deque<Complex>(decoded[i]));
     else {
@@ -349,14 +433,44 @@ int main(int argc, char** argv) try {
     }
 #endif
     tick(); spectrum.process(reference.get()); tick();
+#ifdef VECTORWARP_MIXED_AUTO
+    blah2::mixed::Choice mixedChoice=blah2::mixed::Choice::cpu;
+    std::vector<Complex> mixedMap,mixedTail;
+    bool mixedCandidateReady=false;
+    if(mixedAuto && mixedWorker && !mixedPolicy.disabled()){
+      mixedChoice=forcedMixed?blah2::mixed::Choice::mixed:mixedPolicy.choose(0,2*samples,0);
+      if(mixedChoice!=blah2::mixed::Choice::cpu)try{
+        if(pairedInput)mixedWorker->run_prepared(mixedMap,mixedTail);
+        else mixedWorker->run(reference->view_data(),surveillance[0]->view_data(),
+          mixedMap,mixedTail);
+        mixedCandidateReady=true;
+      }catch(const std::exception& error){
+        if(forcedMixed)throw;
+        mixedPolicy.disable(error.what());mixedWorker.reset();
+        mixedChoice=blah2::mixed::Choice::cpu;
+      }
+    }
+    bool mixedPublished=mixedChoice==blah2::mixed::Choice::mixed && mixedCandidateReady;
+#endif
     bool clutterGpuExecuted=false, clutterCpuExecuted=true;
     double clutterPrepare=0, clutterDispatch=0, clutterAccept=0;
     std::string clutterBackend="cpu", clutterState="upstream";
 #ifdef BLAH2_BENCH_FAST
+    if(
+#ifdef VECTORWARP_MIXED_AUTO
+      !mixedPublished
+#else
+      true
+#endif
+      ){
     const bool clutterSuccess=acceleration.processClutter(*reference, surPointers, [&] {
       std::atomic<bool> success{true};
       paths(pathCount, workers, [&](unsigned i) {
-        if (!filters[i]->process(reference.get(), surveillance[i].get())) success.store(false);
+        if (!filters[i]->process(reference.get(), surveillance[i].get()
+#ifdef VECTORWARP_MIXED_AUTO
+          ,cpuBorrowed
+#endif
+          )) success.store(false);
       });
       return success.load();
     });
@@ -371,9 +485,20 @@ int main(int argc, char** argv) try {
       (clutterCpuExecuted ? "vulkan_fft+cpu_solve+cpu_oracle" :
         "vulkan_fft+cpu_solve") : "cpu";
     clutterState=acceleration.clutterStatus().state;
+#ifdef VECTORWARP_MIXED_AUTO
+    if(mixedChoice==blah2::mixed::Choice::shadow&&mixedCandidateReady){
+      clutterGpuExecuted=true;clutterCpuExecuted=true;
+      clutterBackend="mixed_oracle+cpu";clutterState="checking";
+    }
+#endif
     if (mode == "gpu" && frame >= SteadyStartFrame &&
         (!clutterGpuExecuted || acceleration.clutterStatus().active != "vulkan"))
       throw std::runtime_error("FORCED_GPU_CLUTTER_FALLBACK: explicit GPU case did not execute clutter on Vulkan");
+    }
+#ifdef VECTORWARP_MIXED_AUTO
+    else{clutterGpuExecuted=true;clutterCpuExecuted=true;
+      clutterBackend="vulkan_corr68+fir50";clutterState="ready";}
+#endif
 #else
     paths(pathCount, workers, [&](unsigned i) {
       if (!filters[i]->process(reference.get(), surveillance[i].get()))
@@ -386,13 +511,61 @@ int main(int argc, char** argv) try {
     std::string active="cpu", state="upstream";
 #ifdef BLAH2_BENCH_FAST
     bool cpuExecuted=false;
+    if(
+#ifdef VECTORWARP_MIXED_AUTO
+      mixedPublished
+#else
+      false
+#endif
+      ){
+#ifdef VECTORWARP_MIXED_AUTO
+      try{
+        blah2::mixed::commitMap(std::move(mixedMap),*ambiguity[0]->result());
+        surveillance[0]->discard_front(blah2::mixed::usedSamples);
+        surveillance[0]->assign_complex(mixedTail.data(),blah2::mixed::tailSamples);
+        active="vulkan+cpu";state="ready";
+      }catch(const std::exception& error){
+        if(forcedMixed)throw;
+        if(surveillance[0]->get_length()!=samples)throw;
+        mixedPolicy.disable(error.what());mixedWorker.reset();
+        mixedPublished=false;mixedChoice=blah2::mixed::Choice::cpu;
+        if(!filters[0]->process(reference.get(),surveillance[0].get(),cpuBorrowed))
+          throw std::runtime_error("CPU clutter fallback rejected CPI");
+      }
+#endif
+    }
+    if(
+#ifdef VECTORWARP_MIXED_AUTO
+      !mixedPublished
+#else
+      true
+#endif
+      ){
     acceleration.process(reference->view_data(), surPointers, ambPointers, [&] {
       cpuExecuted=true;
-      paths(pathCount, workers, [&](unsigned i) { ambiguity[i]->process(reference->view_data(), surveillance[i].get()); });
+      paths(pathCount, workers, [&](unsigned i) {
+#ifdef VECTORWARP_MIXED_AUTO
+        if(cpuBorrowed){
+          const auto view=filters[i]->filtered_view();
+          ambiguity[i]->process_borrowed(reference->view_data(),surveillance[i].get(),
+            view.rotatedReference,view.filteredSurveillance,view.samples,view.delayMin);
+        }else
+#endif
+        ambiguity[i]->process(reference->view_data(), surveillance[i].get());
+      });
     });
     // The AUTO policy can transition to CPU after accepting a GPU result. The
     // callback, not the post-frame policy status, identifies this frame's DSP.
     active=cpuExecuted ? "cpu" : "vulkan"; state=acceleration.status().state;
+    }
+#ifdef VECTORWARP_MIXED_AUTO
+    if(mixedChoice==blah2::mixed::Choice::shadow&&mixedCandidateReady&&
+        !mixedPolicy.disabled()){
+      const auto error=blah2::mixed::compareMap(mixedMap,*ambiguity[0]->result());
+      mixedPolicy.shadow(error.rms,error.peak);
+      if(mixedPolicy.disabled())mixedWorker.reset();
+    }
+#endif
     if (mode == "gpu" && frame >= SteadyStartFrame && active != "vulkan")
       throw std::runtime_error("FORCED_GPU_FALLBACK: explicit GPU case did not execute on Vulkan");
     for (unsigned i=0; i<pathCount; ++i) maps[i]=ambiguity[i]->result();
@@ -417,6 +590,16 @@ int main(int argc, char** argv) try {
     auto detectionJson=detections->to_json(timestamp); auto trackJson=tracks->to_json(timestamp);
     jsonBytes+=iqJson.size()+mapJson.size()+detectionJson.size()+trackJson.size(); tick();
     const double pipeline=ms(begin, mark), readMs=ms(beforeRead, begin);
+#ifdef VECTORWARP_MIXED_AUTO
+    if(mixedAuto&&!forcedMixed){
+      if(!mixedPolicy.disabled()&&mixedChoice!=blah2::mixed::Choice::shadow)
+        mixedPolicy.complete(mixedChoice,pipeline);
+      if(mixedPolicy.disabled() || (mixedPolicy.trials()==6&&!mixedPolicy.selected()))
+        mixedWorker.reset();
+      state=mixedPolicy.disabled()?"fallback":
+        mixedPolicy.trials()==6?"ready":"checking";
+    }
+#endif
     double errorPower=0, signalPower=0, maxError=0, maxSignal=0;
     for (unsigned ch=0; ch<pathCount; ++ch) {
       const uint32_t shape[4]={frame,ch,maps[ch]->get_nRows(),maps[ch]->get_nCols()};
@@ -473,7 +656,8 @@ int main(int argc, char** argv) try {
       throw std::runtime_error("Post-fusion magnitude map is inconsistent with complex channel maps");
     const double validationMs=ms(mark,Clock::now());
     const char* phase=frame >= SteadyStartFrame ? "steady" :
-      (mode == "cpu" ? (frame == 0 ? "cold" : "warmup") : "gpu_qualification");
+      (mode == "cpu" ? (frame == 0 ? "cold" : "warmup") :
+       mode == "mixed" ? "mixed_warmup" : "gpu_qualification");
     frames << frame << ',' << phase << ',' << uint64_t(frame)*samples << ',' << samples << ',' << readMs;
     for (double value : times) frames << ',' << value;
     frames << ',' << clutterPrepare << ',' << clutterDispatch << ',' << clutterAccept
@@ -482,9 +666,9 @@ int main(int argc, char** argv) try {
     frames << ',' << pipeline << ',' << pipeline << ',' << validationMs << ',' << active << ',' << state << ','
       << detections->get_nDetections() << ',' << tracks->get_n() << ',' << rms << ',' << peak
       << ',' << fusionRms << ',' << fusionPeak << '\n';
-    outputs << "{\"frame\":" << frame << ",\"detections\":" << detectionJson << ",\"tracks\":" << trackJson << "}\n";
+    outputs << "{\"frame\":" << frame << ",\"detections\":" << detectionJson << ",\"tracks\":" << trackJson << ",\"iq\":" << iqJson << "}\n";
     if (!frames || !outputs || (goldenMode == "write" && !golden)) throw std::runtime_error("Benchmark output write failed");
-    if (active == "vulkan") ++gpuFrames;
+    if (active == "vulkan" || active == "vulkan+cpu") ++gpuFrames;
     else if (active == "cpu") ++cpuFrames;
     else throw std::runtime_error("Benchmark reported an unknown processing backend");
     if (clutterGpuExecuted) ++clutterGpuFrames;
@@ -501,6 +685,10 @@ int main(int argc, char** argv) try {
     if (frame % 50 == 0) std::cerr << "frames=" << frame << " backend=" << active << " processing_ms=" << totalPipeline/frame << '\n';
   }
   if (!frame) throw std::runtime_error("Recording has no complete frames");
+#ifdef VECTORWARP_MIXED_AUTO
+  if(forcedMixed && (gpuFrames!=frame || cpuFrames))
+    throw std::runtime_error("FORCED_MIXED_FALLBACK: mixed benchmark must publish every frame through the worker");
+#endif
   if (mode == "gpu" && (frame <= SteadyStartFrame || gpuFrames != frame-SteadyStartFrame))
     throw std::runtime_error("FORCED_GPU_UNQUALIFIED: explicit GPU case has no complete post-qualification Vulkan result");
   if (goldenMode == "compare" && !limit && golden.peek() != std::char_traits<char>::eof())
@@ -547,6 +735,7 @@ int main(int argc, char** argv) try {
     << ",\"clutter_dispatch_ms\":" << totalClutterDispatch
     << ",\"clutter_accept_ms\":" << totalClutterAccept
     << ",\"forced_gpu_verified\":" << (mode=="gpu"?"true":"null")
+    << ",\"forced_mixed_verified\":" << (mode=="mixed"?"true":"null")
     << ",\"workers\":" << workers << ",\"fft_threads\":" << fftThreads
     << ",\"round_hamming\":" << (geometry.roundHamming?"true":"false")
     << ",\"requested_cpi_ms\":" << geometry.requestedCpi*1000
@@ -558,7 +747,17 @@ int main(int argc, char** argv) try {
     << ",\"detection_input_map\":\"" << (std::string(Engine)=="fast"?"noncoherent_magnitude":"complex_upstream") << "\""
     << ",\"map_rms_relative\":" << worstRms << ",\"map_peak_relative\":" << worstPeak
     << ",\"fusion_rms_relative\":" << worstFusionRms
-    << ",\"fusion_peak_relative\":" << worstFusionPeak << "}\n";
+    << ",\"fusion_peak_relative\":" << worstFusionPeak
+#ifdef VECTORWARP_MIXED_AUTO
+    << ",\"paired_input_verified\":" << (pairedInput?"true":"false")
+    << ",\"mixed_auto_eligible\":" << (mixedAuto?"true":"false")
+    << ",\"mixed_auto_selected\":" << (mixedAuto&&mixedPolicy.selected()?"true":"false")
+    << ",\"mixed_auto_shadows\":" << (mixedAuto?mixedPolicy.shadowPasses():0)
+    << ",\"mixed_auto_trials\":" << (mixedAuto?mixedPolicy.trials():0)
+    << ",\"mixed_cpu_cpi_ms\":" << (mixedAuto?mixedPolicy.cpuMs():0)
+    << ",\"mixed_gpu_cpi_ms\":" << (mixedAuto?mixedPolicy.mixedMs():0)
+#endif
+    << "}\n";
   if (!summary) throw std::runtime_error("Cannot write benchmark summary");
   return 0;
 } catch (const std::exception& error) { std::cerr << "BENCHMARK FAILED: " << error.what() << '\n'; return 1; }

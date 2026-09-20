@@ -212,7 +212,8 @@ if [[ -z $DESTDIR ]]; then
     ldd "$ARTIFACT/bin/blah2" >&2
     die 'processor runtime libraries are missing; install SDK libraries and run ldconfig'
   fi
-  for runtime in "$ARTIFACT/bin/blah2-gpu-worker" "$ARTIFACT/bin/blah2-gpu-vulkan.so"; do
+  for runtime in "$ARTIFACT/bin/blah2-gpu-worker" "$ARTIFACT/bin/blah2-gpu-vulkan.so" \
+      "$ARTIFACT/bin/blah2-mixed-worker"; do
     if [[ -e $runtime ]] && ldd "$runtime" 2>&1 | grep -q 'not found'; then
       ldd "$runtime" >&2
       die "runtime libraries are missing for $(basename "$runtime")"

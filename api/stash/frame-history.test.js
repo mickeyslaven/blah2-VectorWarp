@@ -14,7 +14,9 @@ for (let i = 1; i <= 30; i++) {
   map.update_data(frame); // Duplicate same-frame delivery is harmless.
   assert.deepEqual(frame.data, [[i, -i]], 'Max hold must not mutate live map data');
   spectrum.update_data({timestamp, frequency: [100, 101], spectrum: [i, i + 1]});
-  timing.update_data({timestamp, cpi: 5, nCpi: i, ...(i > 20 ? {tracker: 1} : {})});
+  timing.update_data({timestamp, cpi: 5, nCpi: i, captureDroppedSamples: [0, 0],
+    captureBacklogSamples: [1000000, 1000000], clutterAcceleration: {active: 'cpu'},
+    ...(i > 20 ? {tracker: 1} : {})});
   detections.update_data({timestamp, delay: [i], doppler: [2], snr: [10]});
 }
 assert.deepEqual(map.get_data().data, [[30, -11]]);
@@ -23,6 +25,8 @@ assert.equal(spectrum.get_data().frameTimestamp, 600);
 assert.equal(timing.get_data().timestamp.length, 20);
 assert.equal(timing.get_data().tracker.length, 20);
 assert.equal(timing.get_data().tracker[0], null, 'Late stages stay aligned with timestamps');
+for (const metadata of ['captureDroppedSamples', 'captureBacklogSamples', 'clutterAcceleration'])
+  assert.equal(timing.get_data()[metadata], undefined, 'Queue/backend metadata is not a timing stage');
 assert.equal(detections.get_data().delay.length, 30, 'Fast frames must not be limited by a 100 ms poller');
 map.update_data('malformed');
 map.update_data({timestamp: 610, data: []});

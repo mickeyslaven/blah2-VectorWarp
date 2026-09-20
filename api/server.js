@@ -18,6 +18,7 @@ const {createAdsbSource} = require('./adsb-source.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
+const jsonFrames = require('./json-frames.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
 // parse config file
@@ -93,12 +94,6 @@ var track = '';
 var timestamp = '';
 var timing = '';
 var iqdata = '';
-var data_map = '';
-var data_detection = '';
-var data_tracker = '';
-var data_timestamp = '';
-var data_timing = '';
-var data_iqdata = '';
 var capture = false;
 var captureStartedAt = null;
 let captureRevision = 0;
@@ -107,7 +102,6 @@ function invalidateTimestampTelemetry() {
   activeTimestampConnection = ++timestampGeneration;
   lastFrameAt = null;
   timestamp = '';
-  data_timestamp = '';
   return {restart: restartGeneration, connection: activeTimestampConnection};
 }
 
@@ -115,7 +109,6 @@ function invalidateTimingTelemetry() {
   activeTimingConnection = ++timingGeneration;
   lastTimingAt = null;
   timing = '';
-  data_timing = '';
   return {restart: restartGeneration, connection: activeTimingConnection};
 }
 
@@ -782,53 +775,40 @@ function listenData(server, name) {
   });
 }
 
-// tcp listener map
-const server_map = net.createServer((socket)=>{
-    socket.on("data",(msg)=>{
-        data_map = data_map + msg.toString();
-        if (data_map.slice(-1) === "}")
-        {
-          map = data_map;
-          stash_map.update_data(map);
-          data_map = '';
-        }
+function jsonStreamServer(name, onFrame) {
+  return net.createServer(socket => {
+    const feed = jsonFrames(frame => {
+      onFrame(frame);
+      // A new complete frame proves this listener and connection recovered.
+      serviceErrors.delete(name);
     });
-    socket.on("close",()=>{
-        console.log("Connection closed.");
-    })
+    socket.on('data', chunk => {
+      try { feed(chunk); }
+      catch (error) {
+        serviceErrors.set(name, `${name} connection: ${error.message}`);
+        console.error(`${name} connection rejected: ${error.message}`);
+        socket.destroy();
+      }
+    });
+    socket.on('close', () => console.log('Connection closed.'));
+  });
+}
+
+// Each JSON payload stream has per-connection framing. Timestamp stays plain.
+const server_map = jsonStreamServer('map', frame => {
+  map = frame;
+  stash_map.update_data(map);
 });
 listenData(server_map, 'map');
 
-// tcp listener detection
-const server_detection = net.createServer((socket)=>{
-  socket.on("data",(msg)=>{
-      data_detection = data_detection + msg.toString();
-      if (data_detection.slice(-1) === "}")
-      {
-        detection = data_detection;
-        stash_detection.update_data(detection);
-        data_detection = '';
-      }
-  });
-  socket.on("close",()=>{
-      console.log("Connection closed.");
-  })
+const server_detection = jsonStreamServer('detection', frame => {
+  detection = frame;
+  stash_detection.update_data(detection);
 });
 listenData(server_detection, 'detection');
 
-// tcp listener tracker
-const server_tracker = net.createServer((socket)=>{
-  socket.on("data",(msg)=>{
-      data_tracker = data_tracker + msg.toString();
-      if (data_tracker.slice(-1) === "}")
-      {
-        track = data_tracker;
-        data_tracker = '';
-      }
-  });
-  socket.on("close",()=>{
-      console.log("Connection closed.");
-  })
+const server_tracker = jsonStreamServer('track', frame => {
+  track = frame;
 });
 listenData(server_tracker, 'track');
 
@@ -839,9 +819,7 @@ const server_timestamp = net.createServer((socket)=>{
   socket.on("data",(msg)=>{
     if (!timestampConnectionCurrent(generation)) return;
     lastFrameAt = Date.now();
-    data_timestamp = data_timestamp + msg.toString();
-    timestamp = data_timestamp;
-    data_timestamp = '';
+    timestamp = msg.toString();
   });
   socket.on("close",()=>{
       if (timestampConnectionCurrent(generation)) invalidateTimestampTelemetry();
@@ -850,41 +828,33 @@ const server_timestamp = net.createServer((socket)=>{
 });
 listenData(server_timestamp, 'timestamp');
 
-// tcp listener timing
-const server_timing = net.createServer((socket)=>{
+const server_timing = net.createServer(socket => {
   const generation = invalidateTimingTelemetry();
-  socket.on("data",(msg)=>{
+  const feed = jsonFrames(frame => {
     if (!timingConnectionCurrent(generation)) return;
-    data_timing = data_timing + msg.toString();
-    if (data_timing.slice(-1) === "}")
-    {
-      timing = data_timing;
-      lastTimingAt = Date.now();
-      stash_timing.update_data(timing);
-      data_timing = '';
+    timing = frame;
+    lastTimingAt = Date.now();
+    stash_timing.update_data(timing);
+    serviceErrors.delete('timing');
+  });
+  socket.on('data', chunk => {
+    try { feed(chunk); }
+    catch (error) {
+      serviceErrors.set('timing', `timing connection: ${error.message}`);
+      console.error(`timing connection rejected: ${error.message}`);
+      socket.destroy();
     }
   });
-  socket.on("close",()=>{
-      if (timingConnectionCurrent(generation)) invalidateTimingTelemetry();
-      console.log("Connection closed.");
-  })
+  socket.on('close', () => {
+    if (timingConnectionCurrent(generation)) invalidateTimingTelemetry();
+    console.log('Connection closed.');
+  });
 });
 listenData(server_timing, 'timing');
 
-// tcp listener iqdata metadata
-const server_iqdata = net.createServer((socket)=>{
-  socket.on("data",(msg)=>{
-    data_iqdata = data_iqdata + msg.toString();
-    if (data_iqdata.slice(-1) === "}")
-    {
-      iqdata = data_iqdata;
-      stash_iqdata.update_data(iqdata);
-      data_iqdata = '';
-    }
-  });
-  socket.on("close",()=>{
-      console.log("Connection closed.");
-  })
+const server_iqdata = jsonStreamServer('iqdata', frame => {
+  iqdata = frame;
+  stash_iqdata.update_data(iqdata);
 });
 listenData(server_iqdata, 'iqdata');
 

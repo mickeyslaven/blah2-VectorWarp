@@ -11,6 +11,14 @@ verification is limited to the devices and driver versions in
 Capture, reference synthesis, the small FP64 clutter coefficient solve,
 detection and tracking remain on the CPU.
 
+The selection details below describe the generic Vulkan path. On the qualified
+Raspberry Pi 4B Bookworm geometry, AUTO also has an isolated whole-CPI
+`vulkan+cpu` mixed candidate. It needs verified maps and a greater than 5%
+whole-CPI median benefit before selection; a crash, hang, invalid map, or missed
+safeguard returns processing to CPU. It does not replace generic AUTO on other
+hardware or geometries, and has not completed mixed-worker endurance acceptance.
+See the [Pi 4 guide](PI4_GUIDE.md).
+
 On the Fedora 44 Pi 4, installed Mesa 26.0.3-4 timed out during production-size
 pipeline creation and fell back to CPU. A later diagnostic loaded Mesa 26.1.8-1
 without installing it and ran both GPU stages, reducing processing from

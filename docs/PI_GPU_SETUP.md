@@ -1,5 +1,12 @@
 # Raspberry Pi GPU setup
 
+> This page describes the generic Vulkan driver and stage-qualification path.
+> The current Raspberry Pi target is Pi 4B (8 GB) on Raspberry Pi OS Lite
+> 64-bit Bookworm, installed from source. Its geometry-gated whole-CPI mixed
+> AUTO path is documented in the [Pi 4 guide](PI4_GUIDE.md); no Pi image or
+> Bookworm package is published, and the mixed worker has no new 40-minute
+> soak result.
+
 ## 1. Install VectorWarp
 
 Install the matching package from the [download and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install),
@@ -92,6 +99,10 @@ Passing the startup checks does not establish that a selected workload meets
 its processing deadline. Check live processing timing before increasing load.
 
 ## Pi 4 driver diagnostic
+
+> **Historical, Fedora 44 diagnostic:** the measurements in this section are
+> not the current Bookworm Lite Pi 4 workload or a claim for the newer mixed
+> AUTO candidate. See the [Pi 4 guide](PI4_GUIDE.md) for current limits.
 
 The tested Fedora 44 Pi 4's installed Mesa `26.0.3-4` timed out during VkFFT
 pipeline creation and fell back to CPU. Loading signed Fedora Mesa `26.1.8-1`

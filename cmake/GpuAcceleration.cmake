@@ -83,6 +83,44 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     if(TARGET blah2)
       add_dependencies(blah2 blah2GpuWorker)
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      # The qualified mixed CPI runs in its own bounded worker. A stuck V3D
+      # fence can then be killed without blocking capture or CPU recovery.
+      add_executable(blah2MixedWorker
+        ${PROJECT_ROOT}/src/process/mixed/MixedWorker.cpp
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity/Ambiguity.cpp
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity/GpuPartialAmbiguity.cpp
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/WienerHopf.cpp
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu/GpuBlockedCorrelation.cpp
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu/OwlGpuFilter.cpp
+        ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
+        ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp)
+      target_compile_features(blah2MixedWorker PRIVATE cxx_std_17)
+      target_compile_definitions(blah2MixedWorker PRIVATE
+        VKFFT_BACKEND=0 VECTORWARP_MIXED_FIR_BENCH=1
+        VECTORWARP_GPU_BLOCKED_FULL_BENCH=1
+        VECTORWARP_GPU_PARTIAL_AMBIGUITY_BENCH=1)
+      target_compile_options(blah2MixedWorker PRIVATE -Wno-missing-field-initializers)
+      # The child links frozen DSP implementations: every translation unit must
+      # see their matching class layouts before the directory-wide src include.
+      target_include_directories(blah2MixedWorker BEFORE PRIVATE
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/clutter/gpu
+        ${PROJECT_ROOT}/src/process/mixed/frozen/src/process/ambiguity
+        ${PROJECT_ROOT}/src/process/mixed
+        ${PROJECT_ROOT}/src)
+      target_include_directories(blah2MixedWorker SYSTEM PRIVATE
+        ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+      target_link_libraries(blah2MixedWorker PRIVATE Vulkan::Vulkan
+        glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
+        fftw3 fftw3_threads armadillo Threads::Threads blah2RapidJson)
+      set_target_properties(blah2MixedWorker PROPERTIES OUTPUT_NAME "blah2-mixed-worker")
+      if(TARGET blah2)
+        target_sources(blah2 PRIVATE ${PROJECT_ROOT}/src/process/mixed/MixedProcess.cpp)
+        target_compile_definitions(blah2 PRIVATE VECTORWARP_MIXED_AUTO=1)
+        add_dependencies(blah2 blah2MixedWorker)
+      endif()
+    endif()
     message(STATUS "GPU acceleration: portable Vulkan module enabled")
   elseif(BLAH2_GPU STREQUAL "ON")
     message(FATAL_ERROR "GPU build needs Vulkan/glslang development packages and VKFFT_ROOT (VkFFT 1.3.4)")

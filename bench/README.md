@@ -16,8 +16,8 @@ capture/drop simulation or proof of sustained live acquisition.
 
 `bench-upstream` compiles unchanged DSP/data sources from an explicitly selected
 upstream checkout. `bench-fast` compiles this fork's sources. Both use the same
-MCHQ adapter, input normalization, configuration, compiler and DSP libraries.
-The adapter's packet-wise DC removal is shared input preparation, not a change
+input adapter, input preparation, configuration, compiler and DSP libraries.
+The MCHQ adapter's packet-wise DC removal is shared input preparation, not a change
 to upstream DSP. A physical reference/surveillance pair permits a matching
 upstream comparison. The all-channel synthesized-reference profile has no
 upstream equivalent and must be reported separately.
@@ -72,8 +72,15 @@ case because its wider Doppler scratch regression is fixed. Upstream remains a
 physical reference/surveillance pair CPU comparison only; array scaling is
 VectorWarp-only.
 
-The current benchmark adapter reads MCHQ recordings; application
-replay also supports the other formats documented in the setup guide.
+The default `recording_format` is `mchq`. Set it to `rspduo-s16le` for a
+retained two-channel raw ADC recording: little-endian signed 16-bit values in
+repeating `A_I, A_Q, B_I, B_Q` order. This adapter preserves ADC integers as
+doubles, matching live RSPduo capture; it performs no normalization, DC removal,
+resampling or sample repetition. Raw files have no embedded metadata: pin the
+true sample rate, frequency, channel order, capture provenance and file checksum
+alongside the profile. Empty files and incomplete sample pairs are rejected;
+an incomplete final CPI is counted separately. Application replay supports the
+other formats documented in the setup guide.
 
 `pipeline_ms` and its identical `dsp_ms` alias measure extract through JSON
 serialization. IQ reading, construction/initialization and complex-map
@@ -93,8 +100,15 @@ the post-fusion magnitude map. Detection delay, Doppler and SNR fields and track
 outputs remain in JSON for separate comparison; a known SNR-field difference
 must not be mislabeled as a complex-map mismatch or sensitivity gain.
 
+`compare-outputs.py baseline.outputs.jsonl candidate.outputs.jsonl` checks every
+frame's spectrum, axes, detections and track identities/state/history. Counts,
+timestamps and frequency axes are exact; display values allow one 0.01 rounding
+step or relative error of 1e-6. It rejects nonfinite values and missing/reordered
+frames. This supplements, rather than replaces, the complex-map comparison.
+
 Reduced-load Pi profiles must retain the standard excess-path window and the
-recording's real 2.4-MS/s sample rate. A different sample rate requires genuinely
+recording's real sample rate (for example, 2.4 MS/s Kraken or 2 MS/s RSPduo).
+A different sample rate requires genuinely
 filtered/decimated samples for both binaries, never just a changed header.
 Narrower Doppler or a different clutter window must be identical between
 engines and disclosed beside the results, with the standard configuration kept
@@ -131,3 +145,36 @@ counts and detection/track agreement. Retain incomplete logs separately and labe
 partial or thermally blocked results; do not turn an aborted prefix into a
 completed performance claim. Driver caches are not cleared: fresh processes are
 not necessarily cold driver-cache starts.
+
+## Explicit live RSPduo check
+
+After recorded correctness passes, `live-rspduo-check.py` can run a bounded
+receiver check against a supplied processor binary. It opens the radio and
+uses temporary configuration plus private localhost HTTP/TCP peers; it does
+not install the binary or change the running API configuration. Its fixed
+profile is 2 MS/s, 551 MHz, 500 ms CPI, delays -10..400, Doppler ±300 Hz,
+410 clutter taps, one surveillance worker and four FFT threads.
+
+```sh
+python3 bench/live-rspduo-check.py --binary /path/to/blah2 \
+  --seconds 120 --output /path/to/new-live-result --acceleration cpu
+```
+
+The SDK must already be available and the receiver free. The RSPduo counter
+scale and USB transport opt-ins are documented in
+[`src/capture/rspduo/README.md`](../src/capture/rspduo/README.md). Use them only
+with their stated clock/mode assumptions. Run the command under the same host
+thermal/memory/deadline guard as other hardware workloads.
+
+The harness retains configuration, processor log, every Timing frame and SDK
+status receipt, and a JSON verdict. Startup has a separate bounded deadline.
+The measured interval requires sequential CPIs, sufficient output cadence,
+valid backlog/drop counters, no overflow or receiver fault, and clean shutdown
+with a final capture counter snapshot. SDK call acceptance does not establish
+independent hardware readback or RF/channel coherence. Offline fake-processor
+tests exercise the harness without accessing a radio.
+
+Measured Pi 4B results and live-throughput limits for the ARM port are in
+[the September 18 campaign report](../docs/PI_ARM_PORT_RESULTS_20260918.md).
+The full 500 ms profile in that campaign exceeded the live processing budget;
+the harness correctly rejects its capture overflow.

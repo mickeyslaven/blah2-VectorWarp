@@ -218,7 +218,9 @@ jobs:
             $matched || { echo "Public repository file is unavailable or stale: $file" >&2; exit 1; }
           done
           version=$(jq -er '.version | strings | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' repository/repository-manifest.json)
-          filenames=$(jq -er '.packages | select(type == "array" and length == 10) |
+          expected_packages=11
+          if [[ $(printf '%s\n' "$version" 0.1.10 | sort -V | head -n 1) != 0.1.10 ]]; then expected_packages=10; fi
+          filenames=$(jq -er --argjson expected_packages "$expected_packages" '.packages | select(type == "array" and length == $expected_packages) |
             map(.filename) | select(all(.[]; type == "string" and
             test("^vectorwarp[-_][A-Za-z0-9_.+-]+\\.(deb|rpm)$"))) |
             select(length == (unique | length)) | .[]' repository/repository-manifest.json)

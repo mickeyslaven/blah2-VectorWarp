@@ -16,6 +16,7 @@
 #include "capture/Source.h"
 #include "capture/ReceiverLoader.h"
 #include "capture/Replay.h"
+#include "capture/PairedCpiQueue.h"
 
 class Capture
 {
@@ -45,6 +46,7 @@ private:
 
 public:
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
+  std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
   void request_stop() { inputStopped.store(true); stopping.store(true); }
   void request_input_stop() { inputStopped.store(true); }
@@ -95,6 +97,12 @@ public:
   /// @return Void.
   void set_replay(bool loop, std::string file, std::string format = "auto",
     uint32_t legacyBlockSamples = 0);
+  // Optional receiver extension, installed before start when the loaded
+  // module supports it. Older modules retain the normal FIFO contract.
+  void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
+
+private:
+  PairedCpiQueue* pairedCpiQueue = nullptr;
 
 };
 

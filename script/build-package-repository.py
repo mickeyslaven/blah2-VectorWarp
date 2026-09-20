@@ -26,6 +26,7 @@ TARGETS = {
     ("deb", "ubuntu", "22.04"): ("jammy", {"amd64", "arm64"}),
     ("deb", "ubuntu", "24.04"): ("noble", {"amd64", "arm64"}),
     ("deb", "ubuntu", "26.04"): ("resolute", {"amd64", "arm64"}),
+    ("deb", "debian", "12"): ("bookworm", {"arm64"}),
     ("deb", "debian", "13"): ("trixie", {"amd64", "arm64"}),
     ("rpm", "fedora", "44"): (None, {"x86_64", "aarch64"}),
 }
@@ -66,11 +67,12 @@ def release_installation(manifest):
             rows.append(f'<tr><th scope="row">{escape(label)}</th>{cells}</tr>')
 
     for distro, distro_version in (("ubuntu", "22.04"), ("ubuntu", "24.04"),
-                                   ("ubuntu", "26.04"), ("debian", "13"), ("fedora", "44")):
+                                   ("ubuntu", "26.04"), ("debian", "12"), ("debian", "13"),
+                                   ("fedora", "44")):
         row(f"{distro.title()} {distro_version}", distro, distro_version)
     for distro_version in ("22.04", "24.04", "26.04"):
         row(f"DragonOS · Ubuntu {distro_version} base", "ubuntu", distro_version)
-    row("Raspberry Pi OS · 64-bit Trixie", "debian", "13", pi=True)
+    row("Raspberry Pi OS · 64-bit Bookworm", "debian", "12", pi=True)
     macos = manifest.get("macos_package")
     if macos:
         filename = macos["filename"]
@@ -135,22 +137,65 @@ After receiver-management actions finish and pending authorizations expire, an
 administrator may run <code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
 to activate updated code. Do not run it mid-transaction; it does not restart
 <code>vectorwarp-processor.service</code> or radar processing.'''
+    pi_image = manifest.get("pi_image")
+    pi_download = ""
+    if pi_image:
+        image_status = "Preview image" if pi_image["status"] == "preview" else "Pi image"
+        pi_download = f'''<p><a class="button" href="{escape(pi_image["imager_url"], quote=True)}">Download Imager manifest</a></p>
+<p>{image_status} {escape(pi_image["version"])} ·
+<a href="{escape(pi_image["image_url"], quote=True)}">Download .img.xz directly</a>.
+Open the companion manifest to keep Wi-Fi and SSH customization available.</p>'''
+        if pi_image["status"] == "preview":
+            pi_download += '<p class="scope">Preview: software checks passed; fresh-card boot and Wi-Fi qualification are still pending.</p>'
     return f'''<section class="panel" aria-labelledby="install">
-<h2 id="install">Install VectorWarp {version}</h2>
+<h2 id="install">Install VectorWarp</h2>
 <h3>1. Install for your OS</h3>
-<p>For Linux, copy the command for your OS. It installs the prerequisites, adds
-our signed repository, installs VectorWarp and opens the web interface. On macOS,
-use the Homebrew tap or the signed PKG in the download table. Enter your
-administrator password if prompted.</p>
-<h4>Fedora 44</h4>
-<pre><code>{escape(fedora_install)}</code></pre>
-<h4>Ubuntu, Debian and compatible DragonOS / Raspberry Pi OS</h4>
+<nav class="install-choices" aria-label="Choose an installation path">
+<a href="#install-pi"><strong>Raspberry Pi 4</strong><span>Flash a card and set up in your browser</span></a>
+<a href="#install-linux"><strong>Linux PC or server</strong><span>Install a package for your existing OS</span></a>
+<a href="#install-macos"><strong>macOS</strong><span>Use the app installer or Homebrew</span></a>
+</nav>
+<h4 id="install-pi">Raspberry Pi 4 image</h4>
+{pi_download}
+<p>The Pi route includes Raspberry Pi OS Lite 64-bit Bookworm and VectorWarp.
+Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_GUIDE.md">Pi image download and flashing guide</a>
+for the current image and its validation status. The first target is Pi 4B with 8 GB RAM;
+use a 32 GB or larger microSD card. Pi 5 is future work.</p>
+<ol>
+<li>Open the image's <code>.rpi-imager-manifest</code> in Raspberry Pi Imager,
+then select the microSD card.</li>
+<li>Before writing, choose your hostname, username, password or SSH key, locale,
+Wi-Fi network and country, and enable SSH. Ethernet users can omit Wi-Fi.
+Use the manifest so Imager offers customization; a bare custom image can hide it.</li>
+<li>Write and verify, boot the Pi, then open <code>http://&lt;hostname&gt;.local:3000/</code>
+from another device. Use the router's assigned IP if the name does not resolve.</li>
+<li>Review your receiver, transmitter frequency and site in Settings. For RSPduo,
+install your licensed SDRplay API over SSH, then choose <strong>Build SDRplay support</strong>.
+Choose <strong>Save &amp; Restart</strong> when setup is complete.</li>
+</ol>
+<p>The image has no factory login or Wi-Fi credentials. Radar remains stopped
+until setup. Do not run the Linux installer below on a freshly flashed image.</p>
+<h4 id="install-linux">Linux packages</h4>
+<p>Keep your existing 64-bit operating system. Select its matching version in the
+<a href="#package-downloads">package table</a>; DragonOS follows its Ubuntu base.
+Copy one command below. It installs prerequisites, adds the signed repository,
+installs VectorWarp and opens the web interface. Enter your administrator password if prompted.</p>
+<p><strong>Ubuntu, Debian and compatible DragonOS</strong></p>
 <pre><code>{escape(apt_install)}</code></pre>
-<h4>macOS with Homebrew</h4>
+<p><strong>Fedora 44</strong></p>
+<pre><code>{escape(fedora_install)}</code></pre>
+<h4 id="install-macos">macOS</h4>
+<p>{macos_guidance} The <a href="#package-downloads">download table</a> lists a PKG
+only when it is present in this release. Apple Silicon is tested on M2; Intel
+remains experimental. Follow the
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_STANDALONE.md">standalone app guide</a>
+or use Homebrew with Xcode Command Line Tools:</p>
 <pre><code>brew tap mickeyslaven/vectorwarp
 brew trust mickeyslaven/vectorwarp
 brew install vectorwarp
 vectorwarp</code></pre>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_HOMEBREW.md">Homebrew setup and updates</a>
+· <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Advanced: build from source</a></p>
 <p>The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>
 is available to read separately.</p>
 <h3>2. Configure and start radar</h3>
@@ -171,15 +216,15 @@ uses <code>/Applications/VectorWarp.app/Contents/MacOS/VectorWarp</code>.
 Append <code>start</code>, <code>stop</code>, <code>restart</code>, or
 <code>status</code> to either launcher path as needed.</p>
 <h3>4. Update</h3>
-<p>For Linux, your repository is already configured; do not repeat the installation steps.</p>
-<p>Ubuntu, Debian and compatible DragonOS / Raspberry Pi OS:</p>
+<p>For Linux package installations, your repository is already configured; do not repeat the installation steps. Pi image users should follow the update instructions for their image release.</p>
+<p>Ubuntu, Debian and compatible DragonOS:</p>
 <pre><code>sudo apt update &amp;&amp; sudo apt install vectorwarp</code></pre>
 <p>Fedora:</p>
 <pre><code>sudo dnf upgrade --refresh vectorwarp</code></pre>
 <p>For macOS Homebrew: <code>brew upgrade vectorwarp vectorwarp-heimdall</code>.
 For a standalone PKG, use the next release's PKG through the normal Installer flow.</p>
 <p>{upgrade_guidance}</p>
-<h3>Direct downloads</h3>
+<h3 id="package-downloads">Direct downloads</h3>
 <p>For Linux, prefer the installer above for automatic updates. For a manual installation,
 choose the package matching your OS version and architecture. Install Linux packages with
 <code>sudo apt install ./matching.deb</code> on Ubuntu, Debian, or DragonOS, or
@@ -193,7 +238,7 @@ Do not use <code>dpkg</code> alone or manually mix release libraries.
 <p class="scope">{macos_scope}x86-64 covers Intel and AMD PCs.
 DragonOS uses its Ubuntu base;
 check <code>/etc/os-release</code>. FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,
-not Ubuntu 26.04. Raspberry Pi OS Trixie uses Debian 13 ARM64. No 32-bit package
+not Ubuntu 26.04. Raspberry Pi OS Bookworm uses Debian 12 ARM64. No 32-bit package
 is provided. For other systems, use the
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
 <details><summary>Verify a direct download</summary>
@@ -239,6 +284,7 @@ th:first-child{padding-left:0}td:last-child{font-weight:700;color:#873200}
 .scope{font-size:.85rem;color:#59544b}.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}
 pre{max-width:100%;overflow-x:auto;padding:1rem;background:#f3f0eb;border-radius:.4rem;font-size:.85rem;line-height:1.5}
 code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer;font-weight:650}details{margin-top:1rem}
+.install-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:.8rem;margin:1.2rem 0 2rem}.install-choices a{display:flex;flex-direction:column;gap:.3rem;padding:1rem;border:1px solid #d8c8b7;border-radius:.5rem;text-decoration:none}.install-choices span{font-size:.88rem;color:#59544b}html{scroll-behavior:smooth}h4[id]{scroll-margin-top:1rem}
 .features h3{font-size:1rem;margin:0}.features p{margin:.3rem 0 0}footer{font-size:.85rem;color:#59544b}
 @media(max-width:40rem){main,header,footer{padding:1rem}.panel{padding:1rem}}
 </style></head><body>
@@ -294,6 +340,15 @@ Doppler buffer cannot safely represent the configuration.</p>
 from 69.7 to 44.7 ms versus the preceding VectorWarp version in this campaign.
 Heavier workloads still miss some deadlines; the full report includes all
 configurations, a separate before/after comparison and remaining processing costs.</p>
+<h2>Pi 4B with concurrent CPU and GPU processing</h2>
+<p>On the 8 GB Pi 4B running Bookworm Lite, four short live RSPduo runs with tracking
+measured <strong>378 ms CPU-only versus 341 ms AUTO mixed</strong> after qualification,
+about 9.8% less processing time. Both AUTO runs retained mixed processing, with
+zero capture drops or faults. This used two 2 MS/s channels, 500 ms CPIs, 410 clutter
+taps and a 301×411 map spanning ±300 Hz. It is a native runtime comparison;
+image boot qualification is recorded separately.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PUBLICATION_VALIDATION_20260919.md">Pi 4B settings, regression checks and timing details →</a></p>
+<details><summary>Earlier Pi workloads and comparisons</summary>
 <p>On Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took 798.2 ms
 in VectorWarp, versus 905.1 ms in original blah2 and 905.9 ms in Off World Labs'
 ARM fork, with NEON FFTW enabled for all three.
@@ -301,7 +356,7 @@ ARM fork, with NEON FFTW enabled for all three.
 <p>A separate Pi 4 replay loaded a newer Mesa driver for the test and reduced
 processing from 797.2 ms CPU-only to 578.1 ms with GPU Automatic (27.5% less
 time). It still missed the 200 ms deadline; the driver was not installed system-wide.
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">Pi GPU results and supported driver updates →</a></p>
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">Pi GPU results and supported driver updates →</a></p></details>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
@@ -379,7 +434,7 @@ def load_manifest(file, packages):
         if entry.get("name") != "vectorwarp" or not filename.endswith("." + entry["format"]):
             raise ValueError(f"Wrong package name or extension: {filename}")
         if entry["format"] == "deb":
-            distro_label = "debian13" if entry["distro"] == "debian" else "ubuntu" + entry["distro_version"]
+            distro_label = "debian" + entry["distro_version"] if entry["distro"] == "debian" else "ubuntu" + entry["distro_version"]
             expected_filename = (f"vectorwarp_{version}-{release}_{distro_label}_{entry['arch']}.deb")
         else:
             expected_filename = f"vectorwarp-{version}-{release}.{entry['arch']}.rpm"
@@ -411,13 +466,72 @@ def load_manifest(file, packages):
     return manifest, entries
 
 
-def verify_release_matrix(entries):
+def release_targets_for_version(version):
+    """Bookworm ARM64 joins the immutable release matrix at 0.1.10."""
+    parts = tuple(map(int, version.split(".")))
+    return (RELEASE_TARGETS if parts >= (0, 1, 10) else
+            {target for target in RELEASE_TARGETS if target[:3] != ("deb", "debian", "12")})
+
+
+def verify_release_matrix(entries, version):
     actual = {(entry["format"], entry["distro"], entry["distro_version"], entry["arch"])
               for entry in entries}
-    if actual != RELEASE_TARGETS or len(entries) != len(RELEASE_TARGETS):
-        missing = sorted(RELEASE_TARGETS - actual)
-        extra = sorted(actual - RELEASE_TARGETS)
+    expected = release_targets_for_version(version)
+    if actual != expected or len(entries) != len(expected):
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
         raise ValueError(f"Release matrix is incomplete or inconsistent (missing={missing}, extra={extra})")
+
+
+def verified_pi_image_release(path, version=None, source_commit=None):
+    """Load a checked-in Pi release receipt without reading image artifacts."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+        raise ValueError("Pi image release receipt must be a bounded regular file")
+    record = json.loads(path.read_text())
+    required = {"version", "status", "tag", "source_revision", "image", "imager"}
+    if not isinstance(record, dict) or set(record) != required:
+        raise ValueError("Pi image release receipt has an invalid schema")
+    if (not isinstance(record["version"], str) or
+            not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", record["version"]) or
+            record["status"] not in ("preview", "stable") or
+            not isinstance(record["tag"], str) or
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", record["tag"]) or
+            not isinstance(record["source_revision"], str) or
+            not re.fullmatch(r"[0-9A-Fa-f]{40}", record["source_revision"])):
+        raise ValueError("Pi image release receipt has invalid release identity")
+    if version is not None and record["version"] != version:
+        raise ValueError("Pi image release receipt does not match the selected release")
+    if source_commit is not None and record["source_revision"].lower() != source_commit.lower():
+        raise ValueError("Pi image release receipt does not match the selected release")
+
+    def artifact(name, suffix):
+        entry = record[name]
+        fields = {"filename", "sha256", "bytes"}
+        if name == "image": fields |= {"raw_sha256", "raw_bytes"}
+        if not isinstance(entry, dict) or set(entry) != fields:
+            raise ValueError(f"Pi {name} receipt has an invalid schema")
+        if (not isinstance(entry["filename"], str) or not FILENAME.fullmatch(entry["filename"]) or
+                not entry["filename"].endswith(suffix)):
+            raise ValueError(f"Pi {name} receipt has an unsafe filename")
+        checksum_fields = ("sha256", "raw_sha256") if name == "image" else ("sha256",)
+        size_fields = ("bytes", "raw_bytes") if name == "image" else ("bytes",)
+        if any(not isinstance(entry[field], str) or not re.fullmatch(r"[0-9a-fA-F]{64}", entry[field])
+               for field in checksum_fields):
+            raise ValueError(f"Pi {name} receipt has an invalid checksum")
+        if any(type(entry[field]) is not int or entry[field] <= 0 for field in size_fields):
+            raise ValueError(f"Pi {name} receipt has an invalid size")
+        normalized = {**entry, "sha256": entry["sha256"].lower()}
+        if name == "image": normalized["raw_sha256"] = entry["raw_sha256"].lower()
+        return normalized
+
+    image = artifact("image", ".img.xz")
+    imager = artifact("imager", ".rpi-imager-manifest")
+    base = f"https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/{record['tag']}"
+    return {"version": record["version"], "status": record["status"], "tag": record["tag"],
+            "source_revision": record["source_revision"].lower(), "image": image,
+            "imager": imager, "image_url": f"{base}/{image['filename']}",
+            "imager_url": f"{base}/{imager['filename']}"}
 
 
 def verify_macos_release(path, packages, version, source_commit):
@@ -526,10 +640,17 @@ def build(args):
             manifest["source_commit"].lower() != expected_source_commit.lower()):
         raise ValueError("Package manifest source commit does not match the selected release tag")
     if getattr(args, "require_release_matrix", False):
-        verify_release_matrix(entries)
+        verify_release_matrix(entries, manifest["version"])
     macos_release = getattr(args, "macos_release", None)
     macos_entry = (verify_macos_release(macos_release, packages, manifest["version"],
                                         manifest["source_commit"]) if macos_release else None)
+    pi_release_path = getattr(args, "pi_image_release", None)
+    if pi_release_path is None:
+        candidate = Path("packaging/pi/release.json")
+        pi_release_path = candidate if candidate.is_file() and not candidate.is_symlink() else None
+    pi_entry = None
+    if pi_release_path is not None:
+        pi_entry = verified_pi_image_release(pi_release_path)
     public_key = Path(args.public_key).resolve(strict=True)
     if public_fingerprint(public_key) != fingerprint:
         raise ValueError("Public key fingerprint does not match the pinned release key")
@@ -623,6 +744,8 @@ def build(args):
                     "signing_fingerprint": fingerprint, "packages": published}
         if macos_entry:
             document["macos_package"] = macos_entry
+        if pi_entry:
+            document["pi_image"] = pi_entry
         (site / "repository-manifest.json").write_text(json.dumps(document, indent=2) + "\n")
         if args.installer_template:
             template = Path(args.installer_template).read_text()
@@ -646,6 +769,7 @@ def main():
     parser.add_argument("--require-release-matrix", action="store_true")
     parser.add_argument("--installer-template")
     parser.add_argument("--macos-release", help="verified Mac release receipt beside its PKG in --packages")
+    parser.add_argument("--pi-image-release", help="checked-in Pi image release receipt; defaults to packaging/pi/release.json when it exists")
     args = parser.parse_args()
     try:
         document = build(args)

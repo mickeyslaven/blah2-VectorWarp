@@ -188,6 +188,34 @@ add_executable(testAcceleration
   src/process/meta/HammingNumber.cpp
   src/data/IqData.cpp src/data/Map.cpp)
 target_link_libraries(testAcceleration PRIVATE blah2RapidJson blah2GpuProcess ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads ${CMAKE_DL_LIBS})
+add_executable(testMixedAutoPolicy
+  test/unit/process/mixed/TestMixedAutoPolicy.cpp)
+target_include_directories(testMixedAutoPolicy PRIVATE src)
+add_test(NAME mixedAutoPolicy COMMAND testMixedAutoPolicy)
+add_executable(testMixedMap
+  test/unit/process/mixed/TestMixedMap.cpp src/data/Map.cpp)
+target_include_directories(testMixedMap PRIVATE src)
+target_link_libraries(testMixedMap PRIVATE blah2RapidJson)
+add_test(NAME mixedFullMapGuard COMMAND testMixedMap)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(testMixedWorkerDouble
+    test/unit/process/mixed/MixedWorkerDouble.cpp)
+  target_include_directories(testMixedWorkerDouble PRIVATE src)
+  add_executable(testMixedProcess
+    test/unit/process/mixed/TestMixedProcess.cpp
+    src/data/IqData.cpp
+    src/process/mixed/MixedProcess.cpp)
+  target_include_directories(testMixedProcess PRIVATE src)
+  target_link_libraries(testMixedProcess PRIVATE Threads::Threads blah2RapidJson)
+  add_test(NAME mixedWorkerFaults COMMAND testMixedProcess
+    $<TARGET_FILE:testMixedWorkerDouble>)
+  set_tests_properties(mixedWorkerFaults PROPERTIES TIMEOUT 10)
+endif()
+target_compile_options(testMixedAutoPolicy PRIVATE -UNDEBUG)
+target_compile_options(testMixedMap PRIVATE -UNDEBUG)
+if(TARGET testMixedProcess)
+  target_compile_options(testMixedProcess PRIVATE -UNDEBUG)
+endif()
 if(TARGET blah2GpuVulkan)
   add_dependencies(testAcceleration blah2GpuWorker)
 endif()
@@ -202,9 +230,17 @@ add_executable(testClutterFft
   test/unit/process/clutter/TestClutterFft.cpp
   src/process/clutter/WienerHopf.cpp src/data/IqData.cpp)
 target_compile_features(testClutterFft PRIVATE cxx_std_17)
-target_link_libraries(testClutterFft PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} Threads::Threads)
+target_link_libraries(testClutterFft PRIVATE blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
 add_test(NAME clutterFftPadding COMMAND testClutterFft)
 set_tests_properties(clutterFftPadding PROPERTIES TIMEOUT 30)
+
+# Compile the wrapper against a minimal FFTW 3.3.8-shaped header: the public
+# API has a setter but no planner-thread getter.
+add_executable(testFftwThreadsLegacy test/unit/process/utility/TestFftwThreadsLegacy.cpp)
+target_compile_features(testFftwThreadsLegacy PRIVATE cxx_std_17)
+target_include_directories(testFftwThreadsLegacy BEFORE PRIVATE
+  ${PROJECT_ROOT}/test/unit/process/utility/legacy-fftw)
+add_test(NAME fftwThreadStateLegacyApi COMMAND testFftwThreadsLegacy)
 
 add_executable(testCfarEfficiency
   test/unit/process/detection/TestCfarEfficiency.cpp

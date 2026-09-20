@@ -12,6 +12,7 @@
 #include "data/IqData.h"
 #include <stdint.h>
 #include <fftw3.h>
+#include <vector>
 
 class SpectrumAnalyser
 {
@@ -42,6 +43,12 @@ private:
 
   /// @brief Resolution of spectrum (Hz).
   double resolution;
+
+  // A divisible, sparse output grid can use a shorter folded transform while
+  // producing the exact bins selected by the legacy full transform.
+  bool folded = false;
+  std::vector<std::complex<double>> blockPhase;
+  std::vector<std::complex<double>> binPhase;
 
 public:
   /// @brief Constructor.

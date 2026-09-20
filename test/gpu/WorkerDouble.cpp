@@ -62,6 +62,35 @@ public:
     return true;
   }
 };
+class FirDouble final : public blah2::GpuBackend, public blah2::GpuFirBufferBackend {
+  std::string mode_;
+  std::vector<std::complex<float>> reference_;
+  size_t taps_;
+public:
+  FirDouble(std::string mode, const blah2::GpuGeometry& g)
+    : mode_(std::move(mode)), taps_(g.firTaps) {}
+  blah2::GpuDevice device() const override { return {"fir-double", "FIR test worker", 1}; }
+  void process(const std::vector<std::complex<float>>&,
+      const std::vector<std::complex<float>>&,
+      std::vector<std::complex<float>>&) override {
+    throw std::runtime_error("Radar processing called on FIR test worker");
+  }
+  void submitFirReferenceBuffers(const std::complex<float>* reference,
+      size_t referenceCount) override {
+    if (mode_ == "hang-fir-reference") for (;;) pause();
+    if (mode_ == "error-fir-reference") throw std::runtime_error("Injected FIR reference failure");
+    if (!reference || !referenceCount) throw std::runtime_error("Invalid FIR test reference");
+    reference_.assign(reference, reference + referenceCount);
+  }
+  void processFirWeightsBuffers(const std::complex<float>* weights,
+      size_t weightCount, std::complex<float>* output, size_t outputCount) override {
+    if (mode_ == "hang-fir-final") for (;;) pause();
+    if (mode_ == "error-fir-final") throw std::runtime_error("Injected FIR final failure");
+    if (!weights || weightCount != taps_ || !output || outputCount != reference_.size())
+      throw std::runtime_error("Invalid FIR test final buffers");
+    for (size_t i = 0; i < outputCount; ++i) output[i] = reference_[i] + weights[0];
+  }
+};
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "ok";
   return blah2::runGpuWorker([&](const blah2::GpuGeometry& g, const std::string&) {
@@ -81,6 +110,8 @@ int main(int argc, char** argv) {
     if (mode == "hang-init") for (;;) pause();
     if (mode == "crash-init") raise(SIGSEGV);
     if (mode == "error-init") throw std::runtime_error("Injected initialization failure");
+    if (g.kind == blah2::GpuWorkKind::fir && mode != "no-fir")
+      return std::unique_ptr<blah2::GpuBackend>(std::make_unique<FirDouble>(mode, g));
     if (mode == "raw" || mode == "hang-clutter" || mode == "reject-clutter")
       return std::unique_ptr<blah2::GpuBackend>(std::make_unique<RawDouble>(mode, g));
     return std::unique_ptr<blah2::GpuBackend>(std::make_unique<Double>(mode, g));

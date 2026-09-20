@@ -9,13 +9,25 @@ The DEB/RPM instructions below apply to Linux.
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 This document covers building and maintaining the packages.
 
+The previous Raspberry Pi OS Trixie installation route is deprecated for new
+Pi deployments. Its replacement is the **Pi 4 Bookworm 64-bit Lite preview**:
+[release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview),
+[Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest), and
+[image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz).
+It contains the Debian 12 ARM64 package built from
+`dfb16720510eaf68d5ffecc9e32a290997503897`; fresh-card boot and Wi-Fi
+qualification remain pending. **Pi 5 remains future work.** The preview is
+separate from stable 0.1.9 Linux packages and adds no Bookworm APT repository.
+See [Pi image packaging](../docs/PI_IMAGE_PACKAGING.md).
+
 Packages are published through the signed APT/DNF repositories and direct
 release assets. This directory describes the release build for
-Ubuntu 22.04/24.04/26.04, Debian 13, and Fedora 44 on x86-64 (amd64 / x86_64)
-and ARM64 (arm64 / aarch64). Ubuntu/Debian produce DEBs; Fedora produces RPMs.
-DragonOS selects a matching Ubuntu repository only when its OS metadata matches,
-and Raspberry Pi OS Trixie selects Debian 13 ARM64. Neither is a separate image
-or hardware validation.
+Ubuntu 22.04/24.04/26.04, Debian 12 Bookworm ARM64, Debian 13, and Fedora 44.
+Ubuntu, Debian 13, and Fedora 44 cover x86-64 (amd64 / x86_64) and
+ARM64 (arm64 / aarch64); Debian 12 is ARM64 only. Ubuntu/Debian produce DEBs; Fedora
+produces RPMs. DragonOS selects a matching Ubuntu repository only when its OS
+metadata matches. Raspberry Pi OS Lite 64-bit Bookworm selects the Debian 12
+ARM64 package; the older Trixie route remains available through Debian 13.
 
 Each release package includes compiled Kraken, USRP and dual-HackRF support,
 our locally buildable RSPduo adapter source kit, and all replay formats. UHD,

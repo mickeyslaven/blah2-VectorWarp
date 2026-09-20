@@ -7,10 +7,11 @@ if(BLAH2_LOCAL_BUILD_RSPDUO)
   endif()
   set(BLAH2_RSPDUO_KIT_SOURCES
     src/capture/ReceiverFactory.cpp src/capture/ReceiverModule.h
-    src/capture/Source.h src/capture/Recording.h
+    src/capture/Source.h src/capture/Recording.h src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
     src/capture/kraken/HeimdallFrame.h src/data/IqData.h
     src/capture/rspduo/RspDuo.cpp src/capture/rspduo/RspDuo.h
-    src/capture/rspduo/SampleSequence.h LICENSE)
+    src/capture/rspduo/SampleSequence.h src/capture/rspduo/SdkSampleClock.h
+    src/capture/rspduo/UsbMode.h LICENSE)
   string(TOUPPER "${CMAKE_BUILD_TYPE}" build_type)
   set(BLAH2_RSPDUO_KIT_FLAGS "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${build_type}}")
   execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine

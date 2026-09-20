@@ -28,6 +28,21 @@ SPEC.loader.exec_module(repository)
 
 
 class HomepageTests(unittest.TestCase):
+    def assert_download_links_are_current(self, text):
+        # Desktop downloads follow the canonical matrix. The independently
+        # published Pi preview has versioned links bound to its release receipt.
+        allowed = set()
+        receipt = ROOT / 'packaging/pi/release.json'
+        if receipt.is_file():
+            pi = repository.verified_pi_image_release(receipt)
+            base = pi['image_url'].rsplit('/', 1)[0]
+            allowed = {pi['image_url'], pi['imager_url'],
+                       f"{base}/vectorwarp_{pi['version']}-1_debian12_arm64.deb"}
+        links = set(re.findall(
+            r'https://github\.com/mickeyslaven/blah2-VectorWarp/releases/download/[^\s)<>"\x60]+',
+            text))
+        self.assertFalse(links - allowed, f'Untracked release downloads: {sorted(links - allowed)}')
+
     def release_manifest(self):
         entries = []
         for (format, distro, version), (_, architectures) in repository.TARGETS.items():
@@ -47,15 +62,15 @@ class HomepageTests(unittest.TestCase):
         package_links = {link for link in links if link.endswith((".deb", ".rpm"))}
         base = "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3"
         self.assertEqual(package_links, {f"{base}/{entry['filename']}" for entry in manifest['packages']})
-        self.assertEqual(len(package_links), 10)
-        for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 13', 'Fedora 44',
+        self.assertEqual(len(package_links), 11)
+        for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 12', 'Debian 13', 'Fedora 44',
                       'DragonOS · Ubuntu 22.04 base', 'DragonOS · Ubuntu 24.04 base',
-                      'DragonOS · Ubuntu 26.04 base', 'Raspberry Pi OS · 64-bit Trixie',
+                      'DragonOS · Ubuntu 26.04 base', 'Raspberry Pi OS · 64-bit Bookworm',
                       'amd64 / x86_64', 'arm64 / aarch64'):
             self.assertIn(label, page)
         pi_row = next(row for row in re.findall(r'<tr>.*?</tr>', page) if 'Raspberry Pi OS' in row)
         self.assertIn('<td>—</td>', pi_row)
-        self.assertIn('debian13_arm64.deb', pi_row)
+        self.assertIn('debian12_arm64.deb', pi_row)
         self.assertNotIn('amd64.deb', pi_row)
         self.assertLess(page.index('id="install"'), page.index('id="results"'))
 
@@ -63,12 +78,13 @@ class HomepageTests(unittest.TestCase):
         preview = repository.repository_homepage()
         self.assertIn('downloads are not available in this preview', preview)
         self.assertNotIn('/releases/download/', preview)
+        self.assertNotIn('.img.xz', preview)
         manifest = self.release_manifest()
         manifest['packages'] = [entry for entry in manifest['packages'] if
                                 (entry['distro'], entry['arch']) == ('fedora', 'aarch64')]
         page = repository.repository_homepage(manifest)
         self.assertNotIn('Download DEB', page)
-        self.assertNotIn('Raspberry Pi OS · 64-bit Trixie', page)
+        self.assertNotIn('Raspberry Pi OS · 64-bit Bookworm', page)
         self.assertEqual(page.count('Download RPM'), 1)
 
     def test_macos_download_requires_verified_release_entry(self):
@@ -87,6 +103,28 @@ class HomepageTests(unittest.TestCase):
         manifest['macos_package']['filename'] = 'vectorwarp-1.2.2-macos-universal.pkg'
         with self.assertRaisesRegex(ValueError, 'Mac package filename'):
             repository.repository_homepage(manifest)
+
+    def test_pi_preview_can_accompany_an_older_desktop_release(self):
+        manifest = self.release_manifest()
+        manifest["version"] = "0.1.9"
+        for entry in manifest["packages"]:
+            entry["filename"] = entry["filename"].replace("1.2.3", "0.1.9")
+        manifest["packages"] = [entry for entry in manifest["packages"]
+                                if entry["distro_version"] != "12"]
+        manifest["pi_image"] = {"version": "0.1.10", "status": "preview",
+                                "tag": "v0.1.10-pi4-preview", "source_revision": "a" * 40,
+                                "image": {"filename": "vectorwarp-pi4-0.1.10-arm64.img.xz",
+                                          "sha256": "b" * 64, "bytes": 1,
+                                          "raw_sha256": "c" * 64, "raw_bytes": 2},
+                                "imager": {"filename": "vectorwarp-pi4-0.1.10.rpi-imager-manifest",
+                                           "sha256": "d" * 64, "bytes": 3},
+                                "image_url": "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz",
+                                "imager_url": "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest"}
+        page = repository.repository_homepage(manifest)
+        self.assertIn("VectorWarp 0.1.9 · verified packages", page)
+        self.assertIn("Preview image 0.1.10", page)
+        self.assertIn(manifest["pi_image"]["image_url"], page)
+        self.assertIn(manifest["pi_image"]["imager_url"], page)
 
     def test_macos_release_receipt_binds_version_commit_and_package_hash(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -140,7 +178,7 @@ class HomepageTests(unittest.TestCase):
                      'Successful upgrades restart previously running VectorWarp services',
                      'intentionally stopped radar stopped',
                      'FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,\nnot Ubuntu 26.04',
-                     'installs the prerequisites', 'installer source',
+                     'installs prerequisites', 'installer source',
                      'On a fresh install, radar processing stays stopped',
                      'SHA256SUMS.asc', 'vectorwarp-archive-key.asc', 'A' * 40,
                      'checksum alone does not authenticate', 'gpgv --keyring',
@@ -173,7 +211,7 @@ class HomepageTests(unittest.TestCase):
         manifest = self.release_manifest()
         manifest['version'] = '0.1.6'
         old_page = repository.repository_homepage(manifest)
-        self.assertIn('Install VectorWarp 0.1.6', old_page)
+        self.assertIn('VectorWarp 0.1.6 · verified packages', old_page)
         self.assertIn('A package update does not restart a running API or receiver helper', old_page)
         self.assertIn('sudo systemctl enable --now vectorwarp-api.service', old_page)
         self.assertIn('sudo systemctl restart vectorwarp-receiver.service', old_page)
@@ -183,7 +221,7 @@ class HomepageTests(unittest.TestCase):
 
         manifest['version'] = '0.1.7'
         new_page = repository.repository_homepage(manifest)
-        self.assertIn('Install VectorWarp 0.1.7', new_page)
+        self.assertIn('VectorWarp 0.1.7 · verified packages', new_page)
         self.assertIn('<code>vectorwarp start</code>', new_page)
         self.assertIn('<code>vectorwarp restart</code>', new_page)
         self.assertIn('<code>vectorwarp help</code>', new_page)
@@ -312,7 +350,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('repository installer chooses the matching signed APT or DNF repository', readme)
         self.assertIn('sudo bash vectorwarp-install.sh --repo-only', readme)
         self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', readme)
-        self.assertNotRegex(readme, r'/releases/download/v[0-9]')
+        self.assert_download_links_are_current(readme)
         self.assertIn('replaying the same recorded signal at its original rate', readme)
         self.assertIn('CPU budget', readme)
         self.assertIn('2–8-channel network input', readme)
@@ -357,11 +395,11 @@ class HomepageTests(unittest.TestCase):
             self.assertIn(command, guide)
             self.assertIn(command, page)
 
-    def test_install_docs_use_canonical_page_not_hardcoded_release_assets(self):
+    def test_install_docs_use_canonical_page_and_published_pi_receipt(self):
         for document in ('README.md', 'docs/INSTALL.md'):
             text = (ROOT / document).read_text()
             self.assertIn('https://mickeyslaven.github.io/blah2-VectorWarp/#install', text)
-            self.assertNotRegex(text, r'https://github\.com/mickeyslaven/blah2-VectorWarp/releases/download/v')
+            self.assert_download_links_are_current(text)
 
     def test_future_release_homepage_has_only_its_own_asset_urls(self):
         manifest = self.release_manifest()
@@ -496,12 +534,24 @@ class PublicDeploymentTests(unittest.TestCase):
         manifest = HomepageTests().release_manifest()
         expected = {f'https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3/{p["filename"]}'
                     for p in manifest['packages']}
-        for mode, count in (('current', 14), ('retry', 15)):
+        for mode, count in (('current', 15), ('retry', 16)):
             with self.subTest(mode=mode):
                 result, requests = self.run_check(mode)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(requests), count)
                 self.assertEqual({url for url in requests if '/releases/download/' in url}, expected)
+
+    def test_legacy_release_pages_require_the_pre_bookworm_matrix(self):
+        manifest = HomepageTests().release_manifest()
+        manifest["version"] = "0.1.9"
+        manifest["packages"] = [entry for entry in manifest["packages"]
+                                if entry["distro_version"] != "12"]
+        for entry in manifest["packages"]:
+            entry["filename"] = entry["filename"].replace("1.2.3", "0.1.9")
+        result, requests = self.run_check(manifest=manifest)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(requests), 14)
+        self.assertEqual(sum('/releases/download/v0.1.9/' in url for url in requests), 10)
 
     def test_stale_unavailable_or_missing_downloads_fail(self):
         for mode in ('stale', 'unavailable', 'missing-package'):
@@ -584,6 +634,14 @@ class ManifestTests(unittest.TestCase):
                  "sha256": repository.sha256(package)}
         self.assertEqual(self.load([entry]), [entry])
 
+    def test_debian_bookworm_arm64_target_is_valid(self):
+        package = self.root / "vectorwarp_1.2.3-1_debian12_arm64.deb"
+        package.write_bytes(b"bookworm arm64 manifest fixture, not a DEB")
+        entry = {**self.entry, "distro": "debian", "distro_version": "12", "codename": "bookworm",
+                 "arch": "arm64", "filename": package.name, "size": package.stat().st_size,
+                 "sha256": repository.sha256(package)}
+        self.assertEqual(self.load([entry]), [entry])
+
     def test_bad_document_shapes(self):
         for document in ([], None, 1, "text", {"schema": 2, "packages": []},
                          {"schema": 1, "packages": []}, {"schema": 1, "packages": [None]}):
@@ -606,11 +664,46 @@ class ManifestTests(unittest.TestCase):
         for format, distro, version, arch in repository.RELEASE_TARGETS:
             entries.append({"format": format, "distro": distro, "distro_version": version,
                             "arch": arch})
-        repository.verify_release_matrix(entries)
+        repository.verify_release_matrix(entries, "0.1.10")
         with self.assertRaisesRegex(ValueError, "matrix"):
-            repository.verify_release_matrix(entries[:-1])
+            repository.verify_release_matrix(entries[:-1], "0.1.10")
         with self.assertRaisesRegex(ValueError, "matrix"):
-            repository.verify_release_matrix(entries + [entries[0]])
+            repository.verify_release_matrix(entries + [entries[0]], "0.1.10")
+        legacy = [entry for entry in entries if entry["distro_version"] != "12"]
+        repository.verify_release_matrix(legacy, "0.1.9")
+        with self.assertRaisesRegex(ValueError, "matrix"):
+            repository.verify_release_matrix(entries, "0.1.9")
+
+    def test_pi_image_receipt_is_validated_and_never_invented(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "release.json"
+            record = {"version": "1.2.3", "status": "preview", "tag": "v1.2.3",
+                      "source_revision": "a" * 40,
+                      "image": {"filename": "vectorwarp-pi4-1.2.3-arm64.img.xz", "sha256": "b" * 64,
+                                "bytes": 123, "raw_sha256": "c" * 64, "raw_bytes": 456},
+                      "imager": {"filename": "vectorwarp-pi4-1.2.3.rpi-imager-manifest", "sha256": "d" * 64,
+                                 "bytes": 789}}
+            receipt.write_text(json.dumps(record))
+            entry = repository.verified_pi_image_release(receipt, "1.2.3", "a" * 40)
+            self.assertEqual(entry["image_url"],
+                             "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3/vectorwarp-pi4-1.2.3-arm64.img.xz")
+            self.assertEqual(entry["imager_url"],
+                             "https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v1.2.3/vectorwarp-pi4-1.2.3.rpi-imager-manifest")
+            preview = {**record, "version": "0.1.10", "tag": "v0.1.10-pi4-preview"}
+            receipt.write_text(json.dumps(preview))
+            preview_entry = repository.verified_pi_image_release(receipt)
+            self.assertEqual(preview_entry["tag"], "v0.1.10-pi4-preview")
+            self.assertIn("/v0.1.10-pi4-preview/", preview_entry["image_url"])
+            with self.assertRaises(ValueError):
+                repository.verified_pi_image_release(receipt, "0.1.9", "a" * 40)
+            for change in ({"tag": "../v1.2.3"},
+                           {"image": {**record["image"], "filename": "../image.img.xz"}},
+                           {"imager": {**record["imager"], "bytes": 0}},
+                           {"source_revision": "bad"}):
+                with self.subTest(change=change):
+                    receipt.write_text(json.dumps({**record, **change}))
+                    with self.assertRaises(ValueError):
+                        repository.verified_pi_image_release(receipt, "1.2.3", "a" * 40)
 
     def test_path_traversal_and_duplicate_names(self):
         for name in ("../a.deb", "/tmp/a.deb", "a/b.deb", "-a.deb", "a\nb.deb"):
@@ -718,6 +811,7 @@ class SignedRepositoryTests(unittest.TestCase):
         for codename, distro, version, arch in (("jammy", "ubuntu", "22.04", "amd64"),
                                                 ("noble", "ubuntu", "24.04", "arm64"),
                                                 ("resolute", "ubuntu", "26.04", "amd64"),
+                                                ("bookworm", "debian", "12", "arm64"),
                                                 ("trixie", "debian", "13", "amd64")):
             stage = cls.root / f"deb-{codename}"
             (stage / "DEBIAN").mkdir(parents=True)
@@ -726,7 +820,7 @@ class SignedRepositoryTests(unittest.TestCase):
                 "Maintainer: Test <test@example.invalid>\nDescription: Repository test only\n")
             (stage / "usr/share/vectorwarp").mkdir(parents=True)
             (stage / "usr/share/vectorwarp/test.txt").write_text("Not an application package.\n")
-            distro_label = "debian13" if distro == "debian" else f"ubuntu{version}"
+            distro_label = f"debian{version}" if distro == "debian" else f"ubuntu{version}"
             package = cls.packages / f"vectorwarp_1.2.3-1_{distro_label}_{arch}.deb"
             repository.run(["dpkg-deb", "--build", "--root-owner-group", str(stage), str(package)])
             cls.entries.append(cls.entry(package, "deb", distro, version, arch, codename))
@@ -775,8 +869,8 @@ class SignedRepositoryTests(unittest.TestCase):
         original_hashes = {file.name: repository.sha256(file) for file in self.packages.iterdir()}
         document = repository.build(args)
         site = Path(args.output)
-        self.assertEqual(len(document["packages"]), 5)
-        for codename in ("jammy", "noble", "resolute", "trixie"):
+        self.assertEqual(len(document["packages"]), 6)
+        for codename in ("jammy", "noble", "resolute", "bookworm", "trixie"):
             self.assertIn("Valid-Until:", (site / f"apt/dists/{codename}/Release").read_text())
             self.assertTrue((site / f"apt/dists/{codename}/InRelease").is_file())
         self.assertIn(self.fingerprint, (site / "install.sh").read_text())
@@ -790,7 +884,7 @@ class SignedRepositoryTests(unittest.TestCase):
         sources = apt_state / "sources.list"
         sources.write_text("".join(
             f"deb [arch=amd64 signed-by={site}/keys/vectorwarp.gpg] file://{site}/apt {codename} main\n"
-            for codename in ("jammy", "noble", "resolute", "trixie")))
+            for codename in ("jammy", "noble", "resolute", "bookworm", "trixie")))
         repository.run(["apt-get", "-o", f"Dir::Etc::sourcelist={sources}",
                         "-o", "Dir::Etc::sourceparts=-", "-o", f"Dir::State={apt_state}",
                         "-o", f"Dir::State::status={apt_state}/status", "-o", f"Dir::Cache={apt_state}/cache",
