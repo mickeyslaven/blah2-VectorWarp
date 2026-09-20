@@ -49,7 +49,7 @@ add one Debian 12 Bookworm ARM64 DEB for an eleven-package matrix; Bookworm has
 no x86-64 package target. The x86-64 aliases cover both Intel and AMD CPUs.
 Preserve distribution-native architecture names in package metadata, filenames
 and commands.
-Ubuntu 22.04/26.04 and Debian 13 are built in their own
+Ubuntu 22.04/26.04 and Debian 12/13 are built in their own
 pinned userspaces; the containers are build conveniences only and are never a
 VectorWarp runtime requirement. DragonOS receives the matching Ubuntu APT
 selection through `/etc/os-release`; it is not an independently built or
@@ -128,7 +128,7 @@ jobs may upload the same checked package inputs for the separate signing flow.
    configuration in place: use `sudo dnf upgrade --refresh vectorwarp` on Fedora,
    or `sudo apt update` then `sudo apt install vectorwarp` on APT.
 
-The Pages layout is `/apt/dists/jammy|noble|resolute|trixie` for APT,
+The Pages layout is `/apt/dists/jammy|noble|resolute|bookworm|trixie` for APT,
 `/rpm/fedora/44/$basearch` for DNF, and `/keys/vectorwarp.asc` for the public
 key. It is a contract for the release workflow, not proof that those endpoints
 currently exist.

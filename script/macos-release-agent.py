@@ -141,6 +141,11 @@ def required_linux_assets(detail, tag):
     expected = {f"vectorwarp_{number}-1_{distro}_{arch}.deb"
                 for distro in ("ubuntu22.04", "ubuntu24.04", "ubuntu26.04", "debian13")
                 for arch in ("amd64", "arm64")}
+    # Debian 12 ARM64 joined the stable package matrix after v0.1.9.  Keep
+    # the original draft contract for its immutable release, but do not let a
+    # newer draft publish until Bookworm's package is present.
+    if version(tag) >= (0, 1, 10):
+        expected.add(f"vectorwarp_{number}-1_debian12_arm64.deb")
     expected.update(f"vectorwarp-{number}-1.fc44.{arch}.rpm" for arch in ("x86_64", "aarch64"))
     expected.update(("SHA256SUMS", "SHA256SUMS.asc", "package-manifest.json"))
     if not expected <= names:

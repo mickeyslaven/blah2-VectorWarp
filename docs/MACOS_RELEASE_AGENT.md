@@ -3,7 +3,7 @@
 This is a local `launchd` job, not a Codex/AI automation or a GitHub
 self-hosted runner. GitHub-hosted macOS 15 runners build and test both runtimes
 on every pull request, merge to `main`, and stable version tag. The tag also
-creates the ten Linux packages in a draft release. Every 15 minutes while this
+creates the eleven Linux packages in a draft release. Every 15 minutes while this
 Mac is logged in, the local agent looks for a newer stable draft. It accepts
 only a tag on `main` with successful Linux and macOS push runs at the exact
 tag commit. It decrypts the two audited CI runtimes, checks corresponding
