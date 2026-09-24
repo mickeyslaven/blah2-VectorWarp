@@ -84,6 +84,19 @@ online, and have usable GitHub authentication and unlocked Apple signing/
 notarization credentials. A failed run is retried at the next interval without
 overwriting a published asset.
 
+Temporary GitHub or Apple connection failures are logged and retried quietly
+at the next interval. They do not produce a macOS attention notification or
+mark a release complete. The Git update check is bounded to 60 seconds.
+Authentication errors, changed source inputs, signing failures, and other
+actionable errors still stop publication and notify the owner. An unchanged
+error notifies once until a successful check clears it; a different error
+notifies again. A network interruption does not reset that suppression.
+
+Notification state is stored atomically in the owner-only `health.json` beside
+the local agent configuration, outside the disposable release cache. Clearing
+downloaded build artifacts therefore does not restart a notification loop.
+The `--check` command does not update this state or send notifications.
+
 Inspect the service and logs with:
 
 ```sh
