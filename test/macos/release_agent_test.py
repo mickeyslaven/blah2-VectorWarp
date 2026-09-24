@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest import mock
 
@@ -23,6 +24,134 @@ inputs = load("macos_release_inputs", "prepare-macos-release-inputs.py")
 
 
 class AgentPolicyTest(unittest.TestCase):
+
+    def run_error(self, directory, error, *, check=False, candidate=None):
+        path = Path(directory) / "agent.json"
+        settings = {"checkout": Path(directory), "cache": Path(directory) / "cache"}
+        commands = mock.Mock(side_effect=["", error] if not check else [error])
+        with mock.patch.object(agent, "config", return_value=settings), \
+                mock.patch.object(agent, "command", commands), \
+                mock.patch.object(agent, "check_candidate", return_value=candidate), \
+                mock.patch.object(agent, "notify") as notify:
+            status = agent.run_config(path, check)
+        return status, notify
+
+    def test_same_actionable_error_notifies_once_across_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            error = ValueError("release receipt differs")
+            first, notified = self.run_error(directory, error)
+            second, repeated = self.run_error(directory, error)
+            self.assertEqual((first, second), (1, 1))
+            self.assertEqual(notified.call_count + repeated.call_count, 1)
+
+    def test_changed_actionable_error_notifies_again(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, first = self.run_error(directory, ValueError("first release gate"))
+            _, second = self.run_error(directory, ValueError("second release gate"))
+            self.assertEqual(first.call_count + second.call_count, 2)
+
+    def test_network_failure_is_quiet_and_preserves_prior_notification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, first = self.run_error(directory, ValueError("signature gate failed"))
+            network = subprocess.CalledProcessError(1, ["gh", "api"],
+                stderr="dial tcp 140.82.112.6:443: i/o timeout")
+            status, transient = self.run_error(directory, network)
+            health = json.loads((Path(directory) / "health.json").read_text())
+            _, repeated = self.run_error(directory, ValueError("signature gate failed"))
+            self.assertEqual(status, 0)
+            self.assertEqual(first.call_count + transient.call_count + repeated.call_count, 1)
+            self.assertIn("retrying", health)
+
+    def test_successful_iteration_clears_failure_deduplication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, first = self.run_error(directory, ValueError("signature gate failed"))
+            path = Path(directory) / "agent.json"
+            settings = {"checkout": Path(directory), "cache": Path(directory) / "cache"}
+            with mock.patch.object(agent, "config", return_value=settings), \
+                    mock.patch.object(agent, "command", side_effect=["", ""]), \
+                    mock.patch.object(agent, "check_candidate", return_value=None):
+                self.assertEqual(agent.run_config(path, False), 0)
+            _, recovered = self.run_error(directory, ValueError("signature gate failed"))
+            self.assertEqual(first.call_count + recovered.call_count, 2)
+
+    def test_health_file_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.run_error(directory, subprocess.CalledProcessError(1, ["git"],
+                stderr="fatal: unable to access: Could not resolve host"))
+            self.assertEqual((Path(directory) / "health.json").stat().st_mode & 0o777, 0o600)
+
+    def test_check_error_never_writes_or_notifies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agent.json"
+            health = Path(directory) / "health.json"
+            health.write_text('{"last_notified_error": "old"}\n')
+            original = health.read_bytes()
+            with mock.patch.object(agent, "config", side_effect=ValueError("bad configuration")), \
+                    mock.patch.object(agent, "notify") as notify:
+                self.assertEqual(agent.run_config(path, True), 1)
+            self.assertEqual(health.read_bytes(), original)
+            notify.assert_not_called()
+
+    def test_auth_error_is_actionable_not_transient(self):
+        error = subprocess.CalledProcessError(1, ["gh", "api"], stderr="HTTP 401 authentication required")
+        self.assertFalse(agent.is_transient_network_error(error))
+        timeout = subprocess.CalledProcessError(1, ["gh", "api"],
+            stderr="request https://api.github.com/jobs/140123 timed out: i/o timeout")
+        self.assertTrue(agent.is_transient_network_error(timeout))
+
+    def test_cache_cleanup_does_not_reset_notification_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "cache"
+            cache.mkdir()
+            error = ValueError("signature gate failed")
+            _, first = self.run_error(directory, error)
+            cache.rmdir()
+            _, repeated = self.run_error(directory, error)
+            self.assertEqual(first.call_count + repeated.call_count, 1)
+            self.assertTrue((Path(directory) / "health.json").is_file())
+
+    def test_network_text_only_applies_to_network_commands_and_handles_bytes(self):
+        network = subprocess.CalledProcessError(1, ["gh", "api"],
+            stderr=b"dial tcp 140.82.112.6:443: operation timed out")
+        self.assertTrue(agent.is_transient_network_error(network))
+        self.assertFalse(agent.is_transient_network_error(ValueError("offline receipt")))
+        self.assertFalse(agent.is_transient_network_error(
+            subprocess.CalledProcessError(1, ["pkgbuild"], stderr="connection reset")))
+
+    def test_timeout_is_quiet_only_for_network_commands_and_auth_wins(self):
+        self.assertTrue(agent.is_transient_network_error(
+            subprocess.TimeoutExpired(["git", "pull"], 60)))
+        self.assertFalse(agent.is_transient_network_error(
+            subprocess.TimeoutExpired(["pkgbuild"], 60)))
+        self.assertFalse(agent.is_transient_network_error(
+            subprocess.TimeoutExpired(["gh", "api"], 60, output=b"HTTP 403 forbidden")))
+
+    def test_error_summary_redacts_urls_and_labels_generic_commands(self):
+        error = subprocess.CalledProcessError(1, ["gh", "api"],
+            stderr="request https://token@example.test/path failed")
+        self.assertEqual(agent.error_text(error), "request <URL> failed")
+        self.assertEqual(agent.error_text(subprocess.CalledProcessError(1, ["gh", "api"])),
+                         "command failed (gh api)")
+
+    def test_notification_fingerprint_is_saved_before_notification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "agent.json"
+            settings = {"checkout": Path(directory), "cache": Path(directory) / "cache"}
+            with mock.patch.object(agent, "config", return_value=settings), \
+                    mock.patch.object(agent, "command", side_effect=["", ValueError("release gate")]), \
+                    mock.patch.object(agent, "notify", side_effect=RuntimeError("interrupted")):
+                with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                    agent.run_config(path, False)
+            self.assertEqual(json.loads((Path(directory) / "health.json").read_text())[
+                "last_notified_error"], "release gate")
+
+    def test_actual_subprocess_stderr_network_error_is_transient(self):
+        with self.assertRaises(subprocess.CalledProcessError) as captured:
+            agent.command("git", "-c",
+                "alias.network=!sh -c 'echo dial tcp 127.0.0.1:443: i/o timeout >&2; exit 1'",
+                "network")
+        self.assertTrue(agent.is_transient_network_error(captured.exception))
+
     def test_release_selection_requires_new_stable_version(self):
         releases = [{"tagName": "v0.1.9", "isPrerelease": False},
                     {"tagName": "v0.2.0", "isPrerelease": False},
