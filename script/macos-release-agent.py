@@ -6,6 +6,7 @@ version tag creates the Linux draft. This worker completes that draft locally
 only if the exact CI/source, signatures, notarization and asset gates pass.
 """
 import argparse
+import errno
 import fcntl
 import hashlib
 import importlib.util
@@ -14,9 +15,11 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,9 +30,9 @@ ARCHES = ("arm64", "x86_64")
 RELEASE_ASSETS = ("macos-release.json",)
 
 
-def command(*args, cwd=None, capture=True):
+def command(*args, cwd=None, capture=True, timeout=None):
     result = subprocess.run([str(item) for item in args], cwd=cwd, text=True,
-                            capture_output=capture, check=True)
+                            capture_output=capture, check=True, timeout=timeout)
     return result.stdout.strip() if capture else ""
 
 
@@ -111,6 +114,92 @@ def save_state(path, data):
         json.dump(data, stream, sort_keys=True, indent=2)
         stream.write("\n")
     os.replace(temporary, path)
+
+
+def health_file(config_path):
+    return Path(config_path).parent / "health.json"
+
+
+def read_health(path):
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError("local release health state is invalid")
+    return data
+
+
+def error_detail(error):
+    """Return diagnostic text for classification; callers must redact it for display."""
+    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        value = error.stderr or getattr(error, "stdout", None) or error.output or "command failed"
+    elif isinstance(error, urllib.error.URLError):
+        value = str(error.reason)
+    else:
+        value = str(error)
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    return " ".join(value.split())
+
+
+def operation_label(error):
+    command = getattr(error, "cmd", None)
+    if not isinstance(command, (list, tuple)) or not command:
+        return "command"
+    parts = [Path(str(item)).name if index == 0 else str(item)
+             for index, item in enumerate(command[:2])]
+    return " ".join(parts)
+
+
+def error_text(error):
+    """Return bounded diagnostics without command lines or URL credentials."""
+    value = error_detail(error)
+    value = re.sub(r"\b[a-z][a-z0-9+.-]*://\S+", "<URL>", value, flags=re.IGNORECASE)
+    if value == "command failed":
+        value += " (" + operation_label(error) + ")"
+    return " ".join(value.split())[:300]
+
+
+def is_network_command(command):
+    if not isinstance(command, (list, tuple)) or not command:
+        return False
+    executable = Path(str(command[0])).name
+    return (executable in {"git", "gh"} or
+            executable == "xcrun" and len(command) > 1 and command[1] == "notarytool")
+
+
+def is_transient_network_error(error):
+    text = error_detail(error).lower()
+    if (re.search(r"\b(?:401|403)\b", text) or
+            any(word in text for word in ("authentication", "permission denied",
+                                         "unauthorized", "forbidden", "bad credentials"))):
+        return False
+    if isinstance(error, subprocess.TimeoutExpired):
+        return is_network_command(error.cmd)
+    if isinstance(error, urllib.error.URLError):
+        reason = error.reason
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True
+        if isinstance(reason, OSError):
+            return (reason.errno in NETWORK_ERRNOS or
+                    isinstance(reason, socket.gaierror) and reason.errno in GAI_ERRNOS)
+        return False
+    if isinstance(error, socket.gaierror):
+        return error.errno in GAI_ERRNOS
+    if isinstance(error, OSError) and not isinstance(error, subprocess.CalledProcessError):
+        return error.errno in NETWORK_ERRNOS
+    return (isinstance(error, subprocess.CalledProcessError) and
+            is_network_command(error.cmd) and
+            any(signal in text for signal in NETWORK_SIGNALS))
+
+
+NETWORK_ERRNOS = {errno.ETIMEDOUT, errno.ECONNRESET, errno.ENETUNREACH, errno.EHOSTUNREACH}
+GAI_ERRNOS = {getattr(socket, "EAI_AGAIN", None), getattr(socket, "EAI_NONAME", None)} - {None}
+NETWORK_SIGNALS = ("i/o timeout", "connection timed out", "connection timeout",
+                   "network is unreachable", "host is unreachable", "connection reset",
+                   "temporary failure in name resolution", "could not resolve host",
+                   "name or service not known", "nodename nor servname", "no route to host",
+                   "operation timed out")
 
 
 def release_list():
@@ -445,43 +534,75 @@ def process(settings, candidate):
     return "waiting for public Pages deployment"
 
 
-def main():
+def run_config(config_path, check):
+    health_path = health_file(config_path)
+    try:
+        settings = config(config_path)
+        if not check:
+            if command("git", "-C", settings["checkout"], "status", "--porcelain"):
+                raise ValueError("agent checkout has local changes; refusing to update trusted main")
+            command("git", "-C", settings["checkout"],
+                    "-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=30",
+                    "pull", "--ff-only", "origin", "main", timeout=60)
+        settings["cache"].mkdir(parents=True, mode=0o700, exist_ok=True)
+        if settings["cache"].stat().st_mode & 0o077:
+            raise ValueError("release cache is not owner-only")
+        lock = settings["cache"] / "agent.lock"
+        with lock.open("a+") as stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print("another local release-agent run is active")
+                return 0
+            candidate = check_candidate(settings)
+            if not candidate:
+                print("no new release candidate")
+            elif check:
+                print(json.dumps(candidate, sort_keys=True))
+            else:
+                result = process(settings, candidate)
+                print(candidate["tag"] + ": " + result)
+                if result == "complete":
+                    notify(candidate["tag"] + " Mac release and public download verified")
+        if not check:
+            save_state(health_path, {})
+        return 0
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired, urllib.error.URLError) as error:
+        summary = error_text(error)
+        if check:
+            print("macos-release-agent: " + summary, file=sys.stderr)
+            return 1
+        try:
+            health = read_health(health_path)
+        except (OSError, ValueError):
+            # Replace only this auxiliary state; it must not hide the release
+            # failure that caused this invocation to need attention.
+            health = {}
+        if is_transient_network_error(error):
+            health["retrying"] = summary
+            save_state(health_path, health)
+            print("macos-release-agent: transient network failure; retrying: " + summary,
+                  file=sys.stderr)
+            return 0
+        health.pop("retrying", None)
+        changed = health.get("last_notified_error") != summary
+        if changed:
+            health["last_notified_error"] = summary
+        save_state(health_path, health)
+        if changed:
+            notify("Mac release needs attention: " + summary)
+        print("macos-release-agent: " + summary, file=sys.stderr)
+        return 1
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--check", action="store_true", help="read-only candidate report")
-    args = parser.parse_args()
-    settings = config(args.config)
-    if not args.check:
-        if command("git", "-C", settings["checkout"], "status", "--porcelain"):
-            raise ValueError("agent checkout has local changes; refusing to update trusted main")
-        command("git", "-C", settings["checkout"], "pull", "--ff-only", "origin", "main")
-    settings["cache"].mkdir(parents=True, mode=0o700, exist_ok=True)
-    if settings["cache"].stat().st_mode & 0o077:
-        raise ValueError("release cache is not owner-only")
-    lock = settings["cache"] / "agent.lock"
-    with lock.open("a+") as stream:
-        try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("another local release-agent run is active")
-            return
-        candidate = check_candidate(settings)
-        if not candidate:
-            print("no new release candidate")
-            return
-        if args.check:
-            print(json.dumps(candidate, sort_keys=True))
-            return
-        result = process(settings, candidate)
-        print(candidate["tag"] + ": " + result)
-        if result == "complete":
-            notify(candidate["tag"] + " Mac release and public download verified")
+    args = parser.parse_args(argv)
+    return run_config(args.config, args.check)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
-        print("macos-release-agent: " + str(error), file=sys.stderr)
-        notify("Mac release needs attention: " + str(error))
-        raise SystemExit(1)
+    raise SystemExit(main())
