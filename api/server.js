@@ -315,8 +315,14 @@ app.listen(PORT, HOST, () => {
 // tcp listener map
 const server_map = net.createServer((socket)=>{
     socket.on("data",(msg)=>{
-        data_map = data_map + msg.toString();
-        if (data_map.slice(-1) === "}")
+        // Test the chunk's last character, never the accumulated buffer's.
+        // `data_map + s` is a lazy rope, and reading data_map's last character
+        // flattens the whole rope on every TCP chunk, which made ingest
+        // quadratic in map size. A chunk is never empty, so its last
+        // character is the buffer's. Same rule for the three listeners below.
+        const s = msg.toString();
+        data_map += s;
+        if (s.charCodeAt(s.length - 1) === 125)  // '}'
         {
           map = data_map;
           data_map = '';
@@ -332,8 +338,9 @@ server_map.listen(config.network.ports.map);
 let processingDetection = false;
 const server_detection = net.createServer((socket)=>{
   socket.on("data", async (msg)=>{
-      data_detection = data_detection + msg.toString();
-      if (data_detection.slice(-1) === "}" && !processingDetection)
+      const s = msg.toString();
+      data_detection += s;
+      if (s.charCodeAt(s.length - 1) === 125 && !processingDetection)
       {
         processingDetection = true;
         try {
@@ -416,8 +423,9 @@ server_timestamp.listen(config.network.ports.timestamp);
 // tcp listener timing
 const server_timing = net.createServer((socket)=>{
   socket.on("data",(msg)=>{
-    data_timing = data_timing + msg.toString();
-    if (data_timing.slice(-1) === "}")
+    const s = msg.toString();
+    data_timing += s;
+    if (s.charCodeAt(s.length - 1) === 125)
     {
       timing = data_timing;
       data_timing = '';
@@ -432,8 +440,9 @@ server_timing.listen(config.network.ports.timing);
 // tcp listener iqdata metadata
 const server_iqdata = net.createServer((socket)=>{
   socket.on("data",(msg)=>{
-    data_iqdata = data_iqdata + msg.toString();
-    if (data_iqdata.slice(-1) === "}")
+    const s = msg.toString();
+    data_iqdata += s;
+    if (s.charCodeAt(s.length - 1) === 125)
     {
       iqdata = data_iqdata;
       data_iqdata = '';
