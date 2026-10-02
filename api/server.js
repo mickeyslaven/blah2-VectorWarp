@@ -109,19 +109,29 @@ app.use(function(req, res, next) {
 app.get('/', (req, res) => {
   res.send('Hello World');
 });
+// These hold JSON text exactly as blah2 sent it, so the type is set and the
+// string sent as-is. res.send(string) alone labels it text/html, and res.json
+// would re-encode the string as a JSON string literal.
 app.get('/api/map', (req, res) => {
+  res.type('application/json');
   res.send(map);
 });
 app.get('/api/detection', (req, res) => {
+  res.type('application/json');
   res.send(detection);
 });
+// A bare integer (ms). text/plain, not JSON, so the front end's $.get keeps
+// receiving it as a string, as it always has.
 app.get('/api/timestamp', (req, res) => {
+  res.type('text/plain');
   res.send(timestamp);
 });
 app.get('/api/timing', (req, res) => {
+  res.type('application/json');
   res.send(timing);
 });
 app.get('/api/iqdata', (req, res) => {
+  res.type('application/json');
   res.send(iqdata);
 });
 app.get('/api/config', (req, res) => {

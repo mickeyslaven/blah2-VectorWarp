@@ -267,6 +267,25 @@ location:
       }
       sock.destroy();
     }
+
+    // ---- timestamp: a bare integer, served raw ----
+    console.log('timestamp:');
+    const tsSock = await connect(PORTS.timestamp);
+    await writeAll(tsSock, ['1757400003000'], 0);
+    const ts = await waitForBody('/api/timestamp', '1757400003000', 5000);
+    check('timestamp served raw', ts.body === '1757400003000', ts.body);
+    tsSock.destroy();
+
+    // ---- content types ----
+    // The four JSON routes say so; the timestamp stays text so the front
+    // end's $.get keeps receiving a string.
+    console.log('content types:');
+    for (const route of ['/api/map', '/api/detection', '/api/timing', '/api/iqdata']) {
+      const res = await get(route);
+      check(`${route} is application/json`, /^application\/json\b/.test(res.type || ''), res.type);
+    }
+    const tsRes = await get('/api/timestamp');
+    check('/api/timestamp is text/plain', /^text\/plain\b/.test(tsRes.type || ''), tsRes.type);
   } finally {
     server.kill();
     fs.unlinkSync(cfgPath);
