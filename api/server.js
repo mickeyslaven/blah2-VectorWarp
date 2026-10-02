@@ -4,9 +4,9 @@ const fs = require('fs');
 const yaml = require('js-yaml');
 const dns = require('dns');
 const http = require('http');
-const bistatic = require('./bistatic.js');
 const { extrapolateAdsbData, aircraftAtTimestamp, stampPositionTimes } = require('./lib/extrapolation');
 const retuneLib = require('./lib/retune');
+const { matchDetections } = require('./lib/adsb_match');
 
 // parse config file
 var config;
@@ -350,44 +350,10 @@ const server_detection = net.createServer((socket)=>{
             // where it was last reported; see aircraftAtTimestamp().
             const aircraft = aircraftAtTimestamp(await getCachedAircraft(),
               typeof det.timestamp === 'number' ? det.timestamp / 1000 : undefined);
-            det.adsb = det.delay.map((delay, idx) => {
-              const doppler = det.doppler[idx];
-              let bestMatch = null;
-              let bestScore = Infinity;
-              for (const ac of aircraft) {
-                if (!ac.lat || !ac.lon || (!ac.alt_geom && !ac.alt_baro)) continue;
-                const expected_delay = bistatic.computeBistaticDelay(ac,
-                  config.location.rx, config.location.tx);
-                const expected_doppler = bistatic.computeBistaticDoppler(ac,
-                  config.location.rx, config.location.tx, config.capture.fc);
-                if (expected_delay === null || expected_doppler === null) continue;
-                const delay_err = Math.abs(delay - expected_delay);
-                const doppler_err = Math.abs(doppler - expected_doppler);
-                const delay_tol = config.truth.adsb.delay_tolerance || 2.0;
-                const doppler_tol = config.truth.adsb.doppler_tolerance || 5.0;
-                if (delay_err < delay_tol && doppler_err < doppler_tol) {
-                  const score = delay_err / delay_tol + doppler_err / doppler_tol;
-                  if (score < bestScore) {
-                    bestScore = score;
-                    bestMatch = {
-                      hex: ac.hex,
-                      lat: ac.lat,
-                      lon: ac.lon,
-                      alt: ac.alt_geom ?? ac.alt_baro,
-                      gs: ac.gs,
-                      track: ac.track,
-                      expected_delay: Math.round(expected_delay * 100) / 100,
-                      expected_doppler: Math.round(expected_doppler * 100) / 100,
-                      delay_residual: Math.round((delay - expected_delay) * 100) / 100,
-                      doppler_residual: Math.round((doppler - expected_doppler) * 100) / 100,
-                      position_age: ac.position_age === undefined
-                        ? undefined : Math.round(ac.position_age * 10) / 10
-                    };
-                  }
-                }
-              }
-              return bestMatch;
-            });
+            det.adsb = matchDetections(det.delay, det.doppler, aircraft,
+              config.location.rx, config.location.tx, config.capture.fc,
+              config.truth.adsb.delay_tolerance || 2.0,
+              config.truth.adsb.doppler_tolerance || 5.0);
           }
           detection = JSON.stringify(det);
           // Forward to external tracker if enabled
