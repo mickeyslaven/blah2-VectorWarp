@@ -4,9 +4,9 @@ const fs = require('fs');
 const yaml = require('js-yaml');
 const dns = require('dns');
 const http = require('http');
-const bistatic = require('./bistatic.js');
 const { extrapolateAdsbData, aircraftAtTimestamp, stampPositionTimes } = require('./lib/extrapolation');
 const retuneLib = require('./lib/retune');
+const { matchDetections } = require('./lib/adsb_match');
 
 // parse config file
 var config;
@@ -109,19 +109,29 @@ app.use(function(req, res, next) {
 app.get('/', (req, res) => {
   res.send('Hello World');
 });
+// These hold JSON text exactly as blah2 sent it, so the type is set and the
+// string sent as-is. res.send(string) alone labels it text/html, and res.json
+// would re-encode the string as a JSON string literal.
 app.get('/api/map', (req, res) => {
+  res.type('application/json');
   res.send(map);
 });
 app.get('/api/detection', (req, res) => {
+  res.type('application/json');
   res.send(detection);
 });
+// A bare integer (ms). text/plain, not JSON, so the front end's $.get keeps
+// receiving it as a string, as it always has.
 app.get('/api/timestamp', (req, res) => {
+  res.type('text/plain');
   res.send(timestamp);
 });
 app.get('/api/timing', (req, res) => {
+  res.type('application/json');
   res.send(timing);
 });
 app.get('/api/iqdata', (req, res) => {
+  res.type('application/json');
   res.send(iqdata);
 });
 app.get('/api/config', (req, res) => {
@@ -315,8 +325,14 @@ app.listen(PORT, HOST, () => {
 // tcp listener map
 const server_map = net.createServer((socket)=>{
     socket.on("data",(msg)=>{
-        data_map = data_map + msg.toString();
-        if (data_map.slice(-1) === "}")
+        // Test the chunk's last character, never the accumulated buffer's.
+        // `data_map + s` is a lazy rope, and reading data_map's last character
+        // flattens the whole rope on every TCP chunk, which made ingest
+        // quadratic in map size. A chunk is never empty, so its last
+        // character is the buffer's. Same rule for the three listeners below.
+        const s = msg.toString();
+        data_map += s;
+        if (s.charCodeAt(s.length - 1) === 125)  // '}'
         {
           map = data_map;
           data_map = '';
@@ -332,8 +348,9 @@ server_map.listen(config.network.ports.map);
 let processingDetection = false;
 const server_detection = net.createServer((socket)=>{
   socket.on("data", async (msg)=>{
-      data_detection = data_detection + msg.toString();
-      if (data_detection.slice(-1) === "}" && !processingDetection)
+      const s = msg.toString();
+      data_detection += s;
+      if (s.charCodeAt(s.length - 1) === 125 && !processingDetection)
       {
         processingDetection = true;
         try {
@@ -343,44 +360,10 @@ const server_detection = net.createServer((socket)=>{
             // where it was last reported; see aircraftAtTimestamp().
             const aircraft = aircraftAtTimestamp(await getCachedAircraft(),
               typeof det.timestamp === 'number' ? det.timestamp / 1000 : undefined);
-            det.adsb = det.delay.map((delay, idx) => {
-              const doppler = det.doppler[idx];
-              let bestMatch = null;
-              let bestScore = Infinity;
-              for (const ac of aircraft) {
-                if (!ac.lat || !ac.lon || (!ac.alt_geom && !ac.alt_baro)) continue;
-                const expected_delay = bistatic.computeBistaticDelay(ac,
-                  config.location.rx, config.location.tx);
-                const expected_doppler = bistatic.computeBistaticDoppler(ac,
-                  config.location.rx, config.location.tx, config.capture.fc);
-                if (expected_delay === null || expected_doppler === null) continue;
-                const delay_err = Math.abs(delay - expected_delay);
-                const doppler_err = Math.abs(doppler - expected_doppler);
-                const delay_tol = config.truth.adsb.delay_tolerance || 2.0;
-                const doppler_tol = config.truth.adsb.doppler_tolerance || 5.0;
-                if (delay_err < delay_tol && doppler_err < doppler_tol) {
-                  const score = delay_err / delay_tol + doppler_err / doppler_tol;
-                  if (score < bestScore) {
-                    bestScore = score;
-                    bestMatch = {
-                      hex: ac.hex,
-                      lat: ac.lat,
-                      lon: ac.lon,
-                      alt: ac.alt_geom ?? ac.alt_baro,
-                      gs: ac.gs,
-                      track: ac.track,
-                      expected_delay: Math.round(expected_delay * 100) / 100,
-                      expected_doppler: Math.round(expected_doppler * 100) / 100,
-                      delay_residual: Math.round((delay - expected_delay) * 100) / 100,
-                      doppler_residual: Math.round((doppler - expected_doppler) * 100) / 100,
-                      position_age: ac.position_age === undefined
-                        ? undefined : Math.round(ac.position_age * 10) / 10
-                    };
-                  }
-                }
-              }
-              return bestMatch;
-            });
+            det.adsb = matchDetections(det.delay, det.doppler, aircraft,
+              config.location.rx, config.location.tx, config.capture.fc,
+              config.truth.adsb.delay_tolerance || 2.0,
+              config.truth.adsb.doppler_tolerance || 5.0);
           }
           detection = JSON.stringify(det);
           // Forward to external tracker if enabled
@@ -416,8 +399,9 @@ server_timestamp.listen(config.network.ports.timestamp);
 // tcp listener timing
 const server_timing = net.createServer((socket)=>{
   socket.on("data",(msg)=>{
-    data_timing = data_timing + msg.toString();
-    if (data_timing.slice(-1) === "}")
+    const s = msg.toString();
+    data_timing += s;
+    if (s.charCodeAt(s.length - 1) === 125)
     {
       timing = data_timing;
       data_timing = '';
@@ -432,8 +416,9 @@ server_timing.listen(config.network.ports.timing);
 // tcp listener iqdata metadata
 const server_iqdata = net.createServer((socket)=>{
   socket.on("data",(msg)=>{
-    data_iqdata = data_iqdata + msg.toString();
-    if (data_iqdata.slice(-1) === "}")
+    const s = msg.toString();
+    data_iqdata += s;
+    if (s.charCodeAt(s.length - 1) === 125)
     {
       iqdata = data_iqdata;
       data_iqdata = '';
