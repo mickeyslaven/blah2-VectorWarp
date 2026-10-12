@@ -115,6 +115,34 @@ TEST_CASE("Constructor_Round", "[constructor]")
     CHECK(ambiguity.get_nfft() == 6750);
 }
 
+/// @brief Test constructor at the shipped geometry, +/-1000 Hz.
+/// @details The span every node runs (retina-node's default.yml, mirrored in
+/// config/config.yml for standalone use). 2 Hz bins give 1001 Doppler bins and
+/// nCorr 999, and the delay window must fit inside nCorr. The FFT length rounds
+/// 1997 up to 2000 = 2^4 * 5^3.
+TEST_CASE("Constructor_Round_Shipped", "[constructor]")
+{
+    int32_t delayMin{-10};
+    int32_t delayMax{400};
+    int32_t dopplerMin{-1000};
+    int32_t dopplerMax{1000};
+
+    uint32_t fs{2'000'000};
+    float tCpi{0.5};
+    uint32_t nSamples = tCpi * fs;    // narrow on purpose
+
+    Ambiguity ambiguity(delayMin, delayMax, dopplerMin,
+      dopplerMax, fs, nSamples, true);
+
+    CHECK_THAT(ambiguity.get_cpi(), Catch::Matchers::WithinAbs(tCpi, 0.02));
+    CHECK(ambiguity.get_doppler_middle() == 0);
+    CHECK(ambiguity.get_n_corr() == 999);
+    CHECK(ambiguity.get_n_delay_bins() == 411);
+    CHECK(ambiguity.get_n_delay_bins() < ambiguity.get_n_corr());
+    CHECK(ambiguity.get_n_doppler_bins() == 1001);
+    CHECK(ambiguity.get_nfft() == 2000);
+}
+
 /// @brief Test simple ambiguity processing.
 TEST_CASE("Process_Simple", "[process]")
 {
