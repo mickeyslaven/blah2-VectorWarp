@@ -31,7 +31,7 @@ std::unique_ptr<Detection> CfarDetector1D::process(Map<std::complex<double>> *x)
   // The training window and the false-alarm factor depend on the delay bin
   // only, not on Doppler, so they are the same for every row. Building them
   // once per CPI replaces one heap allocation and one pow() per cell, which at
-  // the shipped geometry is 123,711 of each.
+  // the shipped geometry (1001 Doppler x 411 delay bins) is 411,411 of each.
   //
   // The left window uses k >= 0 like the right one. The original used k > 0,
   // silently excluding bin 0 from the left window while including it on the
