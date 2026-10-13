@@ -50,10 +50,15 @@ VkFFT 1.3.4's native prime plans through MoltenVK on Apple M2. Changing its Rade
 Bluestein and twiddle-table tuning alone did not resolve the failures. macOS
 portability devices therefore use an explicit Bluestein convolution whenever
 the transform has a prime factor above 13. Constant chirp spectra are generated
-once in FP64 with FFTW; every frame's input, convolution FFTs and output remain
-on the GPU. The convolution uses smooth-length VkFFT transforms. Transform
-dimensions, map coordinates and error tolerances are unchanged. All extra
-device allocations pass through the existing allocation budget.
+once in FP64 with FFTW. For this FFT path, each frame's chirp modulation,
+convolution FFTs and output reconstruction run on the GPU. The convolution uses
+smooth-length VkFFT transforms. Transform dimensions, map coordinates and error
+tolerances are unchanged. All extra device allocations pass through the
+existing allocation budget.
+
+The shared [Vulkan clutter path](GPU_ACCELERATION.md#clutter-precision-and-capacity)
+also computes an FP64 linear baseline and coefficient solves on the CPU,
+including on macOS.
 
 Clutter can safely remain on the CPU when its stricter weak-residual check
 rejects an FP32 result. Such a rejection must not be described as fully

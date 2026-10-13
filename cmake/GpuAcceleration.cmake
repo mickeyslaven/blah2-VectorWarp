@@ -41,11 +41,10 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     find_path(GLSLANG_C_INCLUDE glslang_c_interface.h PATH_SUFFIXES glslang/Include REQUIRED)
     target_include_directories(blah2GpuVulkan SYSTEM PRIVATE ${GLSLANG_C_INCLUDE})
     target_link_libraries(blah2GpuVulkan PRIVATE Vulkan::Vulkan glslang::glslang
-      glslang::SPIRV glslang::glslang-default-resource-limits)
-    if(APPLE)
-      # FP64 chirp tables are setup constants; all frame FFTs remain on the GPU.
-      target_link_libraries(blah2GpuVulkan PRIVATE ${BLAH2_FFTW3_LIBRARY})
-    endif()
+      glslang::SPIRV glslang::glslang-default-resource-limits
+      ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+    # The isolated module owns the short FP64 clutter baseline and macOS
+    # prime-plan constants. Its loader-only worker does not use FFTW directly.
     # Vulkan's zero-initialized structs intentionally initialize sType first.
     target_compile_options(blah2GpuVulkan PRIVATE -Wno-missing-field-initializers)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
