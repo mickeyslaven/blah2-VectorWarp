@@ -8,8 +8,8 @@ The delay–Doppler processor can use a Vulkan GPU. The implementation targets A
 Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
 verification is limited to the devices and driver versions in
 [GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
-Capture, reference synthesis, the small FP64 clutter coefficient solve,
-detection and tracking remain on the CPU.
+Capture, reference synthesis, the FP64 clutter coefficient solves and linear
+baseline, detection and tracking remain on the CPU.
 
 The selection details below describe the generic Vulkan path. On the qualified
 Raspberry Pi 4B Bookworm geometry, AUTO also has an isolated whole-CPI
@@ -49,8 +49,9 @@ processor, not the computer displaying the browser.
 
 Startup qualification is per processor instance, selected device and geometry:
 GPU results must agree with the CPU's complex-valued map before detection sees
-them. After qualification, accepted GPU frames do not repeat CPU clutter or
-complex-map accuracy computations. Every-frame finite-output, numerical-solve,
+them. After qualification, accepted GPU frames do not repeat the full CPU
+clutter oracle or complex-map accuracy comparison. Every-frame finite-output,
+numerical-solve,
 worker-error and timeout protections remain, as does AUTO's sustained GPU timing
 comparison against the CPU cost measured at startup. This does not continuously
 revalidate accuracy against changing signal conditions; independent benchmark
@@ -59,6 +60,20 @@ available for same-frame CPU recovery. Once validated clutter output is committe
 in place, an unexpected exception aborts the frame rather than retrying CPU
 filtering on already changed IQ. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
+
+## Clutter precision and capacity
+
+The generic Vulkan clutter path keeps its initial coefficients and linear
+clutter estimate in FP64 on the CPU. It then uses GPU correlation and filtering
+for one residual correction, with coefficient solves still on the CPU. This
+reduces rounding error when cancelling strong clutter. Existing accuracy checks
+and CPU fallback remain in force; GPU double-precision shaders are not required.
+
+The reference transform and matrix factorization are reused across channel
+batches within a frame and refreshed for the next frame. If all clutter channels
+cannot fit at once, processing tries smaller batches under the same allocation
+limit. This preserves the configured channel count and all-or-nothing frame
+acceptance.
 
 ## Measured performance
 
