@@ -362,7 +362,11 @@ function rspDuoOverloadStatus(status, expected = false, now = Date.now()) {
   const health = processor.receiverHealth;
   const count = value => Number.isSafeInteger(value) && value >= 0;
   const validChannel = channel => channel && typeof channel.active === 'boolean' &&
-    ['detectedCount', 'correctedCount', 'lastDetectedAt', 'lastCorrectedAt'].every(key => count(channel[key]));
+    ['detectedCount', 'correctedCount', 'lastDetectedAt', 'lastCorrectedAt'].every(key => count(channel[key])) &&
+    channel.correctedCount <= channel.detectedCount &&
+    channel.detectedCount - channel.correctedCount === (channel.active ? 1 : 0) &&
+    (channel.detectedCount === 0) === (channel.lastDetectedAt === 0) &&
+    (channel.correctedCount === 0) === (channel.lastCorrectedAt === 0);
   if (health?.schema !== 1 || health.receiver !== 'RspDuo' ||
       !count(health.ackFailures) || !['A', 'B'].every(key => validChannel(health.overload?.[key])))
     return unavailable('RSPduo overload telemetry unavailable. An older installed receiver module may need a rebuild.');

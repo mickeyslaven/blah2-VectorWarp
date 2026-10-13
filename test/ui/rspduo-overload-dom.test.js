@@ -122,7 +122,16 @@ const assertBoth = pattern => {
       value => { delete value.processor.receiverHealth; },
       value => { value.processor.receiverHealth.schema = 2; },
       value => { delete value.processor.receiverHealth.overload.B; },
-      value => { value.processor.receiverHealth.overload.A.active = 'false'; }
+      value => { value.processor.receiverHealth.overload.A.active = 'false'; },
+      value => { value.processor.receiverHealth.overload.A.active = true; },
+      value => { value.processor.receiverHealth.overload.A.correctedCount = 1; },
+      value => { value.processor.receiverHealth.overload.A.detectedCount = 1; },
+      value => { value.processor.receiverHealth.overload.A.lastDetectedAt = now; },
+      value => { value.processor.receiverHealth.overload.A.lastCorrectedAt = now; },
+      value => { Object.assign(value.processor.receiverHealth.overload.A,
+        {active: true, detectedCount: 1}); },
+      value => { Object.assign(value.processor.receiverHealth.overload.A,
+        {detectedCount: 1, correctedCount: 1, lastDetectedAt: now}); }
     ]) {
       status = live(); change(status); await update();
       assertBoth(/telemetry unavailable.*older installed receiver module may need a rebuild/i);

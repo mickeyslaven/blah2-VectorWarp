@@ -111,7 +111,7 @@ because overload reports may be incomplete.
 If overload repeats, increase the affected channel's gain reduction when AGC is
 off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more
 negative AGC target. Choose **Save & Restart**, then check both channels again.
-VectorWarp does not change gain automatically. Stale status, stopped receivers,
+Overload warnings do not change gain automatically. Stale status, stopped receivers,
 replay and unavailable telemetry are shown as unknown or unavailable. If an
 older installed RSPduo module has no telemetry, rebuild SDRplay support using
 the receiver software check in Settings.
