@@ -30,6 +30,43 @@ endif()
 add_test(NAME gpuClutterCpuOracle COMMAND testClutterAcceleration)
 set_tests_properties(gpuClutterCpuOracle PROPERTIES TIMEOUT 30)
 
+add_executable(testClutterBatch ${PROJECT_ROOT}/test/gpu/TestClutterBatch.cpp)
+target_compile_features(testClutterBatch PRIVATE cxx_std_17)
+target_include_directories(testClutterBatch PRIVATE ${PROJECT_ROOT}/src)
+add_test(NAME gpuClutterBatch COMMAND testClutterBatch)
+set_tests_properties(gpuClutterBatch PROPERTIES TIMEOUT 10)
+
+# The FP64 baseline has an independent direct-convolution CPU oracle. This
+# default regression needs no Vulkan driver or worker, including GPU=OFF builds.
+find_path(BLAH2_FFTW3_INCLUDE_DIR NAMES fftw3.h)
+if(NOT BLAH2_FFTW3_INCLUDE_DIR)
+  message(FATAL_ERROR "GPU clutter CPU regression needs FFTW development headers")
+endif()
+add_executable(testClutterRefinement ${PROJECT_ROOT}/test/gpu/TestClutterRefinement.cpp)
+target_compile_features(testClutterRefinement PRIVATE cxx_std_17)
+target_include_directories(testClutterRefinement PRIVATE ${PROJECT_ROOT}/src)
+target_include_directories(testClutterRefinement SYSTEM PRIVATE ${BLAH2_FFTW3_INCLUDE_DIR})
+target_link_libraries(testClutterRefinement PRIVATE
+  ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+add_test(NAME gpuClutterRefinementCpuOracle COMMAND testClutterRefinement)
+set_tests_properties(gpuClutterRefinementCpuOracle PROPERTIES TIMEOUT 10)
+
+# Explicit physical-device regression: production geometry and strict retention
+# of both qualified GPU stages. Never run this expensive case in default CTest.
+add_executable(testClutterProduction ${PROJECT_ROOT}/test/gpu/TestClutterProduction.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/Acceleration.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/Ambiguity.cpp
+  ${PROJECT_ROOT}/src/process/clutter/WienerHopf.cpp
+  ${PROJECT_ROOT}/src/process/meta/HammingNumber.cpp
+  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp)
+target_compile_features(testClutterProduction PRIVATE cxx_std_17)
+target_include_directories(testClutterProduction SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
+target_link_libraries(testClutterProduction PRIVATE blah2RapidJson blah2GpuProcess
+  ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY} ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+if(TARGET blah2GpuWorker)
+  add_dependencies(testClutterProduction blah2GpuWorker)
+endif()
+
 # The diagnostic command is tested against a sibling stub, never a host driver.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(testGpuOrphanParent ${PROJECT_ROOT}/test/gpu/OrphanParent.cpp)

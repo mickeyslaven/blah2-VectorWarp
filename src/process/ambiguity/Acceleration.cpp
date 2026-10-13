@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -175,26 +176,39 @@ bool Acceleration::processClutter(const IqData& reference,
       if (!success) return false;
       bool invalid = false;
       double worstInputRms = 0, worstFilteredRms = 0;
+      std::ostringstream failures;
       for (size_t channel = 0; channel < surveillance.size(); ++channel) {
         double error = 0, filtered = 0, input = 0;
         double maxError = 0, maxFiltered = 0, maxInput = 0;
+        size_t maxErrorSample = 0;
         const auto& expected = surveillance[channel]->view_data();
         for (size_t i = 0; i < samples; ++i) {
           const std::complex<double> actual = candidate[channel][i];
           const double delta = std::norm(actual - expected[i]);
           error += delta; filtered += std::norm(expected[i]);
           input += std::norm(frame.surveillance[channel * samples + i]);
-          maxError = std::max(maxError, delta);
+          if (delta > maxError) { maxError = delta; maxErrorSample = i; }
           maxFiltered = std::max(maxFiltered, std::norm(expected[i]));
           maxInput = std::max(maxInput,
             double(std::norm(frame.surveillance[channel * samples + i])));
         }
         const double filteredFloor = std::max(filtered, input * 1e-8);
         const double peakFloor = std::max(maxFiltered, maxInput * 1e-8);
-        invalid = invalid || error > std::max(input * 1e-8, 1e-20) ||
+        const bool channelInvalid = error > std::max(input * 1e-8, 1e-20) ||
           error > std::max(filteredFloor * 1e-8, 1e-20) ||
           maxError > std::max(maxInput * 1e-8, 1e-20) ||
           maxError > std::max(peakFloor * 1e-8, 1e-20);
+        invalid = invalid || channelInvalid;
+        if (channelInvalid) {
+          failures << " [channel=" << channel
+            << " relative_input_rms=" << std::sqrt(error / std::max(input, 1e-30))
+            << " relative_filtered_rms=" << std::sqrt(error / std::max(filteredFloor, 1e-30))
+            << " relative_input_peak=" << std::sqrt(maxError / std::max(maxInput, 1e-30))
+            << " relative_filtered_peak=" << std::sqrt(maxError / std::max(peakFloor, 1e-30))
+            << " peak_sample=" << maxErrorSample
+            << " input_rms=" << std::sqrt(input / samples)
+            << " filtered_rms=" << std::sqrt(filtered / samples) << ']';
+        }
         worstInputRms = std::max(worstInputRms,
           std::sqrt(error / std::max(input, 1e-30)));
         worstFilteredRms = std::max(worstFilteredRms,
@@ -207,7 +221,9 @@ bool Acceleration::processClutter(const IqData& reference,
         clutterStatus_.reason = "GPU clutter accuracy check failed; using CPU clutter";
         std::cerr << "GPU clutter validation worst_channel_relative_input_rms="
           << worstInputRms << " worst_channel_relative_filtered_rms=" << worstFilteredRms
-          << '\n';
+          << " samples=" << samples << " bins=" << geometry_.clutterBins
+          << " qualification_frame=" << clutterChecks_ + combinedChecks_ + 1
+          << failures.str() << '\n';
         return true;
       }
       clutterCpuTimes_.push_back(cpuMs); clutterGpuTimes_.push_back(gpuMs);
@@ -269,23 +285,35 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
     cpuRun();
     bool invalid = false;
     double worstRms = 0, worstPeak = 0;
+    std::ostringstream failures;
     for (size_t channel = 0; channel < cpu.size(); ++channel) {
       const auto& expected = cpu[channel]->result()->data;
       const auto& actual = candidateMaps[channel];
       if (actual.size() != expected.size()) throw std::runtime_error("CPU composed map rows changed");
       double signal = 0, error = 0, peak = 0, maxError = 0;
+      size_t maxErrorRow = 0, maxErrorColumn = 0;
       for (size_t row = 0; row < expected.size(); ++row) {
         if (actual[row].size() != expected[row].size())
           throw std::runtime_error("CPU composed map columns changed");
         for (size_t column = 0; column < expected[row].size(); ++column) {
           const double delta = std::norm(actual[row][column] - expected[row][column]);
           error += delta; signal += std::norm(expected[row][column]);
-          maxError = std::max(maxError, delta);
+          if (delta > maxError) {
+            maxError = delta; maxErrorRow = row; maxErrorColumn = column;
+          }
           peak = std::max(peak, std::norm(expected[row][column]));
         }
       }
-      invalid = invalid || error > std::max(signal * 1e-8, 1e-20) ||
+      const bool channelInvalid = error > std::max(signal * 1e-8, 1e-20) ||
         maxError > std::max(peak * 1e-8, 1e-20);
+      invalid = invalid || channelInvalid;
+      if (channelInvalid) {
+        failures << " [channel=" << channel
+          << " relative_rms=" << std::sqrt(error / std::max(signal, 1e-30))
+          << " relative_peak=" << std::sqrt(maxError / std::max(peak, 1e-30))
+          << " peak_doppler_row=" << maxErrorRow
+          << " peak_delay_column=" << maxErrorColumn << ']';
+      }
       worstRms = std::max(worstRms, std::sqrt(error / std::max(signal, 1e-30)));
       worstPeak = std::max(worstPeak, std::sqrt(maxError / std::max(peak, 1e-30)));
     }
@@ -295,7 +323,9 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       clutterStatus_.state = "fallback";
       clutterStatus_.reason = "GPU clutter with CPU ambiguity accuracy check failed; using CPU clutter";
       std::cerr << "GPU clutter/CPU ambiguity validation relative_rms=" << worstRms
-        << " relative_peak=" << worstPeak << '\n';
+        << " relative_peak=" << worstPeak
+        << " samples=" << geometry_.clutterSamples << " bins=" << geometry_.clutterBins
+        << " qualification_frame=" << combinedChecks_ + 1 << failures.str() << '\n';
       return;
     }
     if (++combinedChecks_ == CombinedQualificationFrames) {
@@ -404,8 +434,10 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
       cpuRun();
       bool invalid = false;
       double worstRms = 0, worstPeak = 0;
+      std::ostringstream failures;
       for (size_t channel = 0; channel < cpu.size(); ++channel) {
         double signal = 0, error = 0, peak = 0, maxError = 0;
+        uint32_t maxErrorDoppler = 0, maxErrorDelay = 0;
         for (uint32_t d = 0; d < geometry_.doppler; ++d) {
           const auto row = cpu[channel]->result()->get_row(d);
           for (uint32_t r = 0; r < geometry_.delays; ++r) {
@@ -415,11 +447,21 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
             const double delta = std::norm(value - row[r]);
             signal += std::norm(row[r]); error += delta;
             peak = std::max(peak, std::norm(row[r]));
-            maxError = std::max(maxError, delta);
+            if (delta > maxError) {
+              maxError = delta; maxErrorDoppler = d; maxErrorDelay = r;
+            }
           }
         }
-        invalid = invalid || error > std::max(signal * 1e-8, 1e-20) ||
+        const bool channelInvalid = error > std::max(signal * 1e-8, 1e-20) ||
           maxError > std::max(peak * 1e-8, 1e-20);
+        invalid = invalid || channelInvalid;
+        if (channelInvalid) {
+          failures << " [channel=" << channel
+            << " relative_rms=" << std::sqrt(error / std::max(signal, 1e-30))
+            << " relative_peak=" << std::sqrt(maxError / std::max(peak, 1e-30))
+            << " peak_doppler_row=" << maxErrorDoppler
+            << " peak_delay_column=" << maxErrorDelay << ']';
+        }
         worstRms = std::max(worstRms,
           std::sqrt(error / std::max(signal, 1e-30)));
         worstPeak = std::max(worstPeak,
@@ -431,7 +473,9 @@ void Acceleration::process(const std::deque<std::complex<double>>& reference,
         clutterStatus_.state = "fallback";
         clutterStatus_.reason = "Composed GPU clutter/ambiguity accuracy check failed; using CPU clutter";
         std::cerr << "GPU composed validation relative_rms=" << worstRms
-          << " relative_peak=" << worstPeak << '\n';
+          << " relative_peak=" << worstPeak
+          << " samples=" << geometry_.clutterSamples << " bins=" << geometry_.clutterBins
+          << " qualification_frame=" << combinedChecks_ + 1 << failures.str() << '\n';
         return;
       }
       if (++combinedChecks_ == CombinedQualificationFrames) {
