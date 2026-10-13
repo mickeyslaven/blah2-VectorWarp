@@ -40,6 +40,7 @@ add_test(NAME usrpAppliedReadback COMMAND testUsrpReadback)
 add_executable(testRspDuoHelpers ${PROJECT_ROOT}/test/capture/RspDuoHelpersFixture.cpp)
 target_compile_features(testRspDuoHelpers PRIVATE cxx_std_17)
 target_include_directories(testRspDuoHelpers PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(testRspDuoHelpers PRIVATE Threads::Threads)
 target_compile_options(testRspDuoHelpers PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_test(NAME rspduoCallbackHelpers COMMAND testRspDuoHelpers)
 

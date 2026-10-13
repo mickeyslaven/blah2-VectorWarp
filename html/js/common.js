@@ -13,7 +13,7 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div>`;
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
@@ -341,6 +341,104 @@ async function fetchStatusResource(url, options = {}, timeoutMs = 1800) {
   }
 }
 
+// The SDK reports overload events, not measured clipping or overall RF quality.
+// Counts keep events visible even if detection and recovery occur between polls.
+function rspDuoOverloadStatus(status, expected = false, now = Date.now()) {
+  const processor = status?.processor;
+  const unavailable = message => ({visible: true, severity: 'unavailable', message, channels: []});
+  if (processor?.receiver !== 'RspDuo') return expected ? unavailable(processor ?
+    'RSPduo is not the running receiver. Overload status unavailable.' :
+    'No current RSPduo status. Overload status unavailable.') : {visible: false};
+  if (processor.input === 'replay')
+    return unavailable('Replay is running. Live RSPduo overload status unavailable.');
+  if (status.processorFresh !== true)
+    return unavailable('RSPduo status is stale. Current overload state is unknown.');
+  if (['scheduled', 'running'].includes(status.restart?.state))
+    return unavailable('Receiver restarting. Current overload state is unknown.');
+  if (processor.input !== 'live' || processor.state !== 'live')
+    return unavailable(processor.state === 'stopped' ?
+      'Receiver stopped. Current overload state is unknown.' :
+      'Receiver is not capturing live input. Current overload state is unknown.');
+  const health = processor.receiverHealth;
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const validChannel = channel => channel && typeof channel.active === 'boolean' &&
+    ['detectedCount', 'correctedCount', 'lastDetectedAt', 'lastCorrectedAt'].every(key => count(channel[key])) &&
+    channel.correctedCount <= channel.detectedCount &&
+    channel.detectedCount - channel.correctedCount === (channel.active ? 1 : 0) &&
+    (channel.detectedCount === 0) === (channel.lastDetectedAt === 0) &&
+    (channel.correctedCount === 0) === (channel.lastCorrectedAt === 0);
+  if (health?.schema !== 1 || health.receiver !== 'RspDuo' ||
+      !count(health.ackFailures) || !['A', 'B'].every(key => validChannel(health.overload?.[key])))
+    return unavailable('RSPduo overload telemetry unavailable. An older installed receiver module may need a rebuild.');
+  if (health.monitoring !== true)
+    return unavailable('RSPduo overload monitoring is not active. Current overload state is unknown.');
+  const channels = ['A', 'B'].map(key => {
+    const channel = health.overload[key];
+    const recovered = channel.correctedCount > 0;
+    const recent = recovered && channel.lastCorrectedAt > 0 &&
+      now >= channel.lastCorrectedAt && now - channel.lastCorrectedAt < 60000;
+    return {...channel, label: `${key} (${key === 'A' ? 'reference' : 'surveillance'})`,
+      state: channel.active ? 'Overload active' : recent ? 'Recently recovered' :
+        recovered ? 'Recovered' : channel.detectedCount > 0 ? 'Overload reported earlier' : 'No overload reported'};
+  });
+  const severity = channels.some(channel => channel.active) ? 'bad' :
+    health.ackFailures || channels.some(channel => channel.detectedCount || channel.correctedCount) ? 'warning' : 'neutral';
+  const message = channels.map(channel => `${channel.label}: ${channel.state.toLowerCase()}` +
+    (channel.detectedCount ? ` (${channel.detectedCount} detected)` : '')).join(' · ') +
+    (health.ackFailures ? ` · SDK acknowledgement failures: ${health.ackFailures}; overload reports may be incomplete.` : '');
+  return {visible: true, severity, message, channels, ackFailures: health.ackFailures};
+}
+
+function renderReceiverHealth(status, target = document.getElementById('receiver-health-status'), detailed = false) {
+  if (!target) return;
+  const expected = detailed || (!status?.processor && target.dataset.receiver === 'RspDuo');
+  const view = rspDuoOverloadStatus(status, expected);
+  target.dataset.receiver = view.visible ? 'RspDuo' : '';
+  target.hidden = !view.visible;
+  // Avoid re-announcing identical status every two seconds to screen readers.
+  const signature = JSON.stringify(view);
+  if (target.dataset.healthView === signature) return;
+  target.dataset.healthView = signature;
+  target.dataset.severity = view.severity || '';
+  target.replaceChildren();
+  if (!view.visible) return;
+  const message = document.createElement(detailed ? 'p' : 'span');
+  message.textContent = detailed ? view.message : `RSPduo overload · ${view.message}`;
+  if (detailed) {
+    const heading = document.createElement('h3');
+    heading.textContent = 'RSPduo overload check';
+    message.setAttribute('role', 'status');
+    message.setAttribute('aria-live', 'polite');
+    target.append(heading, message);
+    const channels = document.createElement('div');
+    channels.className = 'receiver-health-channels';
+    const eventTime = timestamp => timestamp ? new Date(timestamp).toLocaleString() : 'None reported';
+    for (const channel of view.channels) {
+      const card = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = channel.label;
+      const state = document.createElement('p');
+      state.textContent = channel.state;
+      const counts = document.createElement('p');
+      counts.textContent = `Detected: ${channel.detectedCount} · Recovered: ${channel.correctedCount}`;
+      const times = document.createElement('p');
+      times.textContent = `Last detected: ${eventTime(channel.lastDetectedAt)}. Last recovered: ${eventTime(channel.lastCorrectedAt)}.`;
+      card.append(title, state, counts, times); channels.appendChild(card);
+    }
+    target.appendChild(channels);
+    const help = document.createElement('p');
+    help.textContent = 'Counts reset when receiver capture starts. SDRplay overload events do not prove continuous ADC clipping. “No overload reported” does not guarantee RF quality. ' +
+      'If overload repeats, increase the affected channel’s gain reduction with AGC off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more negative AGC target. Use Save & Restart, then check both channels again.';
+    target.appendChild(help);
+  } else {
+    target.appendChild(message);
+    const link = document.createElement('a');
+    link.href = '/display/configuration';
+    link.textContent = 'Receiver gain settings';
+    target.appendChild(link);
+  }
+}
+
 async function refreshLiveStatus() {
   const radarLabel = document.getElementById('live-status');
   const adsbLabel = document.getElementById('adsb-status');
@@ -351,6 +449,7 @@ async function refreshLiveStatus() {
     const response = await fetchStatusResource(liveApiUrl('/api/system/status'), {cache: 'no-store'});
     if (!response.ok) throw new Error('Radar status unavailable');
     const status = await response.json();
+    renderReceiverHealth(status);
     const processor = status.processorFresh ? status.processor : null;
     const replay = processor?.input === 'replay' ? processor : null;
     const restarting = ['scheduled', 'running'].includes(status.restart?.state);
@@ -386,6 +485,7 @@ async function refreshLiveStatus() {
       }
     }
   } catch (_) {
+    renderReceiverHealth(null);
     radarLabel.innerHTML = '<span class="live-dot offline"></span>RADAR OFFLINE';
     if (adsbLabel && window.blah2AdsbEnabled) {
       adsbLabel.hidden = false;

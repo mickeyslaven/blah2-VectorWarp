@@ -71,3 +71,9 @@ extern "C" const Blah2ReceiverApi* blah2_receiver_api_v1() noexcept {
 #endif
   return &api;
 }
+
+#ifdef FIXTURE_HEALTH
+extern "C" const char* blah2_rspduo_health_json_v1(const Source*) noexcept {
+  return "{\"fixtureHealth\":true}";
+}
+#endif

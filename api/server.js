@@ -305,7 +305,12 @@ app.post('/api/processor/status', (req, res) => {
   if (!processorStatusOriginAllowed(req))
     return res.status(403).json({ok: false, errors: ['Processor telemetry must come from this VectorWarp host.']});
   const checked = validateProcessorStatus(req.body);
-  if (!checked.valid) return res.status(422).json({ok: false, errors: checked.errors});
+  if (!checked.valid) {
+    // A supplied health sample supersedes previous overload claims, even when
+    // malformed. Do not display the earlier healthy reading as current.
+    if (req.body?.receiverHealth !== undefined) processorStatus = null;
+    return res.status(422).json({ok: false, errors: checked.errors});
+  }
   processorStatus = {value: checked.value, receivedAt: Date.now()};
   if (checked.value.input === 'replay') adsbSource.clear();
   if (checked.value.input === 'live' && checked.value.recordingError &&

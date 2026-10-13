@@ -13,10 +13,17 @@
 #include <rapidjson/document.h>
 extern std::atomic<bool> run_fg;
 extern "C" const char* blah2_rspduo_startup_receipt_json_v1(const Source*) noexcept;
+extern "C" const char* blah2_rspduo_health_json_v1(const Source*) noexcept;
 
 // Access only the synchronization points needed to force an overlapping pair.
 // Redefining `private` also rewrites libstdc++ internals on GCC and is invalid.
 struct RspDuoTestAccess {
+  static void overload(RspDuo& receiver, sdrplay_api_TunerSelectT tuner,
+      sdrplay_api_PowerOverloadCbEventIdT change) {
+    sdrplay_api_EventParamsT params{};
+    params.powerOverloadParams.powerOverloadChangeType = change;
+    RspDuo::_event_callback(sdrplay_api_PowerOverloadChange, tuner, &params, &receiver);
+  }
   static IqData& reference(RspDuo& receiver) { return *receiver.outputBuffer1; }
   static bool pairClaimed(RspDuo& receiver) {
     std::lock_guard<std::mutex> lock(receiver.callbackMutex);
@@ -32,6 +39,7 @@ struct RspDuoTestAccess {
 namespace {
 std::string failAt;
 unsigned opened, closed, locked, unlocked, selected, released, initialized, uninitialized;
+unsigned overloadAcks = 0;
 sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
@@ -49,6 +57,7 @@ rapidjson::Document receipt(const RspDuo& receiver) {
 }
 sdrplay_api_ErrT result(const char* stage) { return failAt == stage ? sdrplay_api_Fail : sdrplay_api_Success; }
 void reset() {
+  overloadAcks = 0;
   opened = closed = locked = unlocked = selected = released = initialized = uninitialized = 0;
   deviceParameters = {}; tunerA = {}; tunerB = {};
   parameters = {&deviceParameters, &tunerA, &tunerB};
@@ -157,12 +166,51 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
 }
 sdrplay_api_ErrT sdrplay_api_Uninit(HANDLE) { ++uninitialized; return sdrplay_api_Success; }
 sdrplay_api_ErrT sdrplay_api_Update(HANDLE, sdrplay_api_TunerSelectT tuner,
-    sdrplay_api_ReasonForUpdateT, sdrplay_api_ReasonForUpdateExtension1T) {
+    sdrplay_api_ReasonForUpdateT reason, sdrplay_api_ReasonForUpdateExtension1T) {
+  if (reason == sdrplay_api_Update_Ctrl_OverloadMsgAck) {
+    ++overloadAcks; return result("overload-ack");
+  }
   if (stopAfterGain && tuner == sdrplay_api_Tuner_B) run_fg = false;
   return result(tuner == sdrplay_api_Tuner_A ? "gain-a" : "gain-b");
 }
 int main() {
   bool record = false;
+  {
+    reset(); stopAfterGain = true;
+    RspDuo receiver("RspDuo", 551000000, 2000000, "/unused", &record,
+      -20, 0, 43, 42, 2, true, true);
+    auto health = [&] {
+      rapidjson::Document d;
+      d.Parse(blah2_rspduo_health_json_v1(&receiver));
+      assert(!d.HasParseError() && d.IsObject()); return d;
+    };
+    assert(!health()["monitoring"].GetBool());
+    receiver.start();
+    IqData first(32), second(32);
+    receiver.process(&first, &second);
+    assert(health()["monitoring"].GetBool());
+    RspDuoTestAccess::overload(receiver, sdrplay_api_Tuner_B, sdrplay_api_Overload_Corrected);
+    assert(health()["overload"]["B"]["correctedCount"].GetUint64() == 0);
+    RspDuoTestAccess::overload(receiver, sdrplay_api_Tuner_A, sdrplay_api_Overload_Detected);
+    RspDuoTestAccess::overload(receiver, sdrplay_api_Tuner_A, sdrplay_api_Overload_Detected);
+    auto d = health();
+    assert(d["overload"]["A"]["active"].GetBool());
+    assert(d["overload"]["A"]["detectedCount"].GetUint64() == 1);
+    assert(d["overload"]["A"]["lastDetectedAt"].GetUint64() > 0);
+    assert(!d["overload"]["B"]["active"].GetBool());
+    RspDuoTestAccess::overload(receiver, sdrplay_api_Tuner_A, sdrplay_api_Overload_Corrected);
+    d = health();
+    assert(!d["overload"]["A"]["active"].GetBool());
+    assert(d["overload"]["A"]["correctedCount"].GetUint64() == 1);
+    failAt = "overload-ack";
+    RspDuoTestAccess::overload(receiver, sdrplay_api_Tuner_B, sdrplay_api_Overload_Detected);
+    assert(health()["ackFailures"].GetUint64() == 1);
+    assert(overloadAcks == 5);
+    failAt.clear(); receiver.stop();
+    d = health();
+    assert(!d["monitoring"].GetBool() && d["overload"]["B"]["active"].GetBool());
+    assert(blah2_rspduo_health_json_v1(nullptr) == nullptr);
+  }
   for (uint32_t rate : {2000000u, 1000000u, 500000u, 250000u, 125000u, 62500u}) {
     for (int agc : {0, 5, 50, 100}) {
       reset(); multipleDevices = true; stopAfterGain = true;
@@ -297,6 +345,11 @@ int main() {
     bool failed = false;
     try { receiver.process(nullptr, nullptr); } catch (const std::exception&) { failed = true; }
     assert(failed && callbackContext == &receiver);
+    if (removeOnInit) {
+      rapidjson::Document health;
+      health.Parse(receiver.health_json().c_str());
+      assert(!health["monitoring"].GetBool());
+    }
     const auto incomplete = receipt(receiver);
     assert(std::strcmp(incomplete["status"].GetString(),
       stage == std::string("removed") ? "accepted" : "pending") == 0);
@@ -355,6 +408,11 @@ int main() {
       scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset ||
       scenario == CallbackScenario::ConcurrentPairHandoff;
     assert(failed != matched);
+    if (failed) {
+      rapidjson::Document health;
+      health.Parse(receiver.health_json().c_str());
+      assert(!health["monitoring"].GetBool());
+    }
     if (matched) {
       const auto a = reference.get_data(), b = surveillance.get_data();
       const unsigned expected = scenario == CallbackScenario::ConcurrentPairHandoff ? 6 :

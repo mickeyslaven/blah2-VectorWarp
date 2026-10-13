@@ -120,6 +120,43 @@ function rspStartup(payload, outer, errors) {
       hardwareVersion: selected.hardwareVersion, tuner: 'Both', mode: 'Dual_Tuner'} : null,
     sdk: {version: sdk.version, stages: Object.fromEntries(RSP_STAGES.map(stage => [stage, stages[stage]]))}};
 }
+function rspHealth(payload, outer, errors) {
+  const name = 'receiverHealth';
+  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (outer.input !== 'live' || outer.receiver !== 'RspDuo' || !object(payload)) {
+    errors.push(`${name} requires a live RspDuo object`); return null;
+  }
+  if (payload.schema !== 1 || payload.receiver !== 'RspDuo' ||
+      typeof payload.monitoring !== 'boolean' || !object(payload.overload)) {
+    errors.push(`${name} has an invalid schema`); return null;
+  }
+  if (outer.state === 'stopped' && payload.monitoring)
+    errors.push(`${name}.monitoring must be false after stop`);
+  const overload = {};
+  for (const tuner of ['A', 'B']) {
+    const source = payload.overload[tuner];
+    const field = `${name}.overload.${tuner}`;
+    if (!object(source)) {
+      errors.push(`${field} must be an object`); continue;
+    }
+    if (typeof source.active !== 'boolean') errors.push(`${field}.active must be boolean`);
+    const detectedCount = count(source.detectedCount, `${field}.detectedCount`, errors);
+    const correctedCount = count(source.correctedCount, `${field}.correctedCount`, errors);
+    const lastDetectedAt = count(source.lastDetectedAt, `${field}.lastDetectedAt`, errors);
+    const lastCorrectedAt = count(source.lastCorrectedAt, `${field}.lastCorrectedAt`, errors);
+    if (correctedCount > detectedCount) errors.push(`${field}.correctedCount exceeds detectedCount`);
+    if (detectedCount - correctedCount !== (source.active ? 1 : 0))
+      errors.push(`${field}.active disagrees with overload counts`);
+    if ((detectedCount === 0) !== (lastDetectedAt === 0))
+      errors.push(`${field}.lastDetectedAt disagrees with detectedCount`);
+    if ((correctedCount === 0) !== (lastCorrectedAt === 0))
+      errors.push(`${field}.lastCorrectedAt disagrees with correctedCount`);
+    overload[tuner] = {active: source.active, detectedCount, correctedCount,
+      lastDetectedAt, lastCorrectedAt};
+  }
+  return {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring, overload,
+    ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
+}
 function status(payload) {
   const errors = [];
   if (!payload || typeof payload !== 'object' || Array.isArray(payload))
@@ -155,6 +192,8 @@ function status(payload) {
     errors.push('positionSamples exceeds totalSamples');
   if (payload.receiverStartup !== undefined)
     value.receiverStartup = rspStartup(payload.receiverStartup, value, errors);
+  if (payload.receiverHealth !== undefined)
+    value.receiverHealth = rspHealth(payload.receiverHealth, value, errors);
   return errors.length ? {valid: false, errors} : {valid: true, value};
 }
 

@@ -76,4 +76,14 @@ const char* blah2_rspduo_startup_receipt_json_v1(const Source* source) noexcept 
     return receipt.c_str();
   } catch (...) { return nullptr; }
 }
+
+extern "C" __attribute__((visibility("default")))
+const char* blah2_rspduo_health_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string health;
+    health = static_cast<const RspDuo*>(source)->health_json();
+    return health.c_str();
+  } catch (...) { return nullptr; }
+}
 #endif

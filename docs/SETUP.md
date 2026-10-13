@@ -97,6 +97,25 @@ service before capture. Startup failures appear in the interface.
 The adapter applies both tuners' settings through SDRplay API 3.15 and checks
 return codes. It does not independently read back RF tuning or prove coherence.
 
+The shared live-page header and **Settings → Capture → RSPduo overload check**
+show SDRplay overload reports for **A (reference)** and **B (surveillance)** on
+Linux, Raspberry Pi and macOS. Active overload is a warning to review gain.
+Recovered events remain visible, with detection/recovery counts and last event
+times in Settings, even when a short event ends between browser polls. “Recently
+recovered” means the SDK reported recovery within the last minute. Counts cover
+one receiver capture run and reset when capture starts again. These are SDK
+overload events, not proof of continuous ADC clipping; “No overload reported”
+does not guarantee RF quality. Acknowledgement failures are shown separately
+because overload reports may be incomplete.
+
+If overload repeats, increase the affected channel's gain reduction when AGC is
+off, or choose a higher LNA state to reduce RF gain. With AGC on, try a more
+negative AGC target. Choose **Save & Restart**, then check both channels again.
+Overload warnings do not change gain automatically. Stale status, stopped receivers,
+replay and unavailable telemetry are shown as unknown or unavailable. If an
+older installed RSPduo module has no telemetry, rebuild SDRplay support using
+the receiver software check in Settings.
+
 ## USRP / B210
 
 Use a build containing the USRP adapter and install UHD 4.1 or newer. Select
