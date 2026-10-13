@@ -74,4 +74,61 @@ for (const receiverStartup of [
   {...startup, selected: null}
 ]) assert.equal(status({...live, receiverStartup}).valid, false);
 assert.equal(status({...replay, receiverStartup: startup}).valid, false);
+const idleTuner = {active: false, detectedCount: 0, correctedCount: 0,
+  lastDetectedAt: 0, lastCorrectedAt: 0};
+const health = {schema: 1, receiver: 'RspDuo', monitoring: false,
+  overload: {A: {...idleTuner}, B: {...idleTuner}}, ackFailures: 0};
+const healthyLive = {...live, receiverHealth: health};
+assert.deepEqual(status(healthyLive).value.receiverHealth, health);
+assert.equal(Object.hasOwn(status(live).value, 'receiverHealth'), false,
+  'Older processors must omit health rather than invent a healthy reading');
+const onset = {...idleTuner, active: true, detectedCount: 1, lastDetectedAt: 1720000000000};
+const corrected = {...onset, active: false, correctedCount: 1, lastCorrectedAt: 1720000001000};
+const activeHealth = {...health, monitoring: true, overload: {A: onset, B: corrected}, ackFailures: 2};
+assert.deepEqual(status({...live, receiverHealth: activeHealth}).value.receiverHealth, activeHealth);
+for (const state of ['stopped', 'error']) {
+  const stopped = {...live, state, error: state === 'error' ? 'Receiver disconnected' : '',
+    receiverHealth: {...activeHealth, monitoring: false}};
+  assert.equal(status(stopped).valid, true, 'Stopped receiver preserves the last observed overload episode');
+}
+assert.equal(status({...live, state: 'stopped', receiverHealth: activeHealth}).valid, false);
+// Wall time can move backwards between actual transitions. Counts, not time
+// ordering, establish the overload episode state.
+assert.equal(status({...live, receiverHealth: {...health, overload: {
+  A: {...corrected, lastCorrectedAt: corrected.lastDetectedAt - 1000}, B: idleTuner}}}).valid, true);
+for (const receiverHealth of [
+  null, [], false, 'healthy', {}, {...health, schema: 2}, {...health, receiver: 'Kraken'},
+  {...health, monitoring: 1}, {...health, overload: []}, {...health, overload: {A: idleTuner}},
+  {...health, overload: {A: idleTuner, B: null}}, {...health, ackFailures: undefined}
+]) assert.equal(status({...live, receiverHealth}).valid, false, JSON.stringify(receiverHealth));
+for (const field of ['detectedCount', 'correctedCount', 'lastDetectedAt', 'lastCorrectedAt']) {
+  for (const invalid of [undefined, null, -1, 0.5, '0', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(status({...live, receiverHealth: {...health, overload: {
+      A: {...idleTuner, [field]: invalid}, B: idleTuner}}}).valid, false, `${field}: ${invalid}`);
+  }
+}
+for (const ackFailures of [-1, 0.5, '0', null, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])
+  assert.equal(status({...live, receiverHealth: {...health, ackFailures}}).valid, false);
+for (const A of [
+  {...idleTuner, active: 0}, {...idleTuner, active: true},
+  {...onset, active: false}, {...onset, detectedCount: 2},
+  {...corrected, correctedCount: 2}, {...corrected, active: true},
+  {...onset, lastDetectedAt: 0}, {...corrected, lastCorrectedAt: 0},
+  {...idleTuner, lastDetectedAt: 1720000000000}, {...idleTuner, lastCorrectedAt: 1720000000000}
+]) assert.equal(status({...live, receiverHealth: {...health, overload: {A, B: idleTuner}}}).valid, false);
+const maximum = {...corrected, detectedCount: Number.MAX_SAFE_INTEGER, correctedCount: Number.MAX_SAFE_INTEGER};
+assert.equal(status({...live, receiverHealth: {...health, ackFailures: Number.MAX_SAFE_INTEGER,
+  overload: {A: maximum, B: idleTuner}}}).valid, true);
+for (const outer of [replay, {...live, receiver: 'Kraken', receiverStartup: undefined}])
+  assert.equal(status({...outer, receiverHealth: health}).valid, false);
+const untrusted = {...health, message: '<img src=x onerror=alert(1)>',
+  overload: {A: {...idleTuner, message: 'injected'}, B: {...idleTuner}, C: {...idleTuner}}};
+const sanitized = status({...live, receiverHealth: untrusted}).value.receiverHealth;
+assert.deepEqual(sanitized, health, 'Only allowlisted receiver health fields reach browser status');
+assert.notEqual(sanitized, untrusted);
+assert.notEqual(sanitized.overload.A, untrusted.overload.A);
+assert.equal(fresh(null, 6000), false);
+assert.equal(fresh({receivedAt: NaN}, 6000), false);
+assert.equal(fresh({receivedAt: 1000}, 6000), true);
+assert.equal(fresh({receivedAt: 1000}, 6001), false);
 console.log('Processor status validation and freshness tests passed.');

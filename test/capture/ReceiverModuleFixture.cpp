@@ -35,9 +35,11 @@ int main(int argc, char** argv) {
       source = blah2::ReceiverSource(instance,
         blah2::ReceiverSourceDeleter{std::move(library.handle), api->destroy});
     } else source = blah2::load_receiver(mode == "unknown" ? "../../Usrp" :
-      mode == "rspduo-legacy" ? "RspDuo" : "Usrp", config);
+      (mode == "rspduo-legacy" || mode == "rspduo-health") ? "RspDuo" : "Usrp", config);
     assert(source);
     assert(blah2::receiver_startup_receipt(source).empty()); // Pre-receipt module.
+    if (mode == "rspduo-health") assert(blah2::receiver_health(source) == "{\"fixtureHealth\":true}");
+    else assert(blah2::receiver_health(source).empty()); // Pre-health module is supported.
     IqData first(32), second(32);
     source->start();
     source->process(&first, &second);

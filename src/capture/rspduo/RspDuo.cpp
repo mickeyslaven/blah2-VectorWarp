@@ -150,6 +150,7 @@ void RspDuo::start()
     startupStages.settingsValidated = true;
   }
   run_fg = true;
+  stopRequested = false;
   deviceRemoved = false;
   callbackFault = false;
   callbackFaultReason = nullptr;
@@ -173,6 +174,8 @@ void RspDuo::start()
 
 void RspDuo::stop()
 {
+  stopRequested = true;
+  overloadHealth.monitoring(false);
   run_fg = false;
   std::lock_guard<std::mutex> lock(lifecycleMutex);
   uninitialise_device();
@@ -256,6 +259,7 @@ void RspDuo::signal_callback_fault(const char* discontinuity) noexcept
   callbackFaultReason.compare_exchange_strong(expected,
     discontinuity ? discontinuity : "unspecified callback failure");
   callbackFault.store(true, std::memory_order_relaxed);
+  overloadHealth.monitoring(false);
   run_fg = false;
 }
 
@@ -699,7 +703,6 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
   sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params,
   void *cbContext)
 {
-  (void)params;
   (void)cbContext;
   const bool tunerA = tuner == sdrplay_api_Tuner_A;
   switch (eventId) {
@@ -708,6 +711,15 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
     break;
   case sdrplay_api_PowerOverloadChange: {
     (tunerA ? overloadEventsA : overloadEventsB).fetch_add(1, std::memory_order_relaxed);
+    if (params && (tunerA || tuner == sdrplay_api_Tuner_B)) {
+      const auto change = params->powerOverloadParams.powerOverloadChangeType;
+      if (change == sdrplay_api_Overload_Detected || change == sdrplay_api_Overload_Corrected) {
+        const auto at = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count();
+        if (at > 0) overloadHealth.event(tunerA ? 0 : 1,
+          change == sdrplay_api_Overload_Detected, static_cast<uint64_t>(at));
+      }
+    }
     const auto begin = std::chrono::steady_clock::now();
     const auto beginNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
       begin.time_since_epoch()).count();
@@ -719,8 +731,10 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
     ackStartNs.store(0, std::memory_order_release);
     ackLastStatus.store(static_cast<int>(status), std::memory_order_relaxed);
     ackCount.fetch_add(1, std::memory_order_relaxed);
-    if (status != sdrplay_api_Success)
+    if (status != sdrplay_api_Success) {
       ackErrorCount.fetch_add(1, std::memory_order_relaxed);
+      overloadHealth.ackFailed();
+    }
     const auto durationUs = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now() - begin).count();
     auto previous = ackMaxUs.load(std::memory_order_relaxed);
@@ -731,6 +745,7 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
   case sdrplay_api_DeviceRemoved:
     std::cerr << "[RspDuo] Device removed" << std::endl;
     deviceRemoved = true;
+    overloadHealth.monitoring(false);
     run_fg = false;
     break;
   default:
@@ -741,8 +756,10 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
 
 void RspDuo::initialise_device()
 {
+  overloadHealth.reset();
   require_api(sdrplay_api_Init(chosenDevice->dev, &cbFns, this), "Initialize dual-tuner streaming");
   deviceInitialized = true;
+  overloadHealth.monitoring(!deviceRemoved.load() && !callbackFault.load() && !stopRequested.load());
   { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.init = true; }
 }
 
@@ -753,6 +770,7 @@ void RspDuo::uninitialise_device()
 
 void RspDuo::cleanup_api() noexcept
 {
+  overloadHealth.monitoring(false);
   auto report = [](sdrplay_api_ErrT result, const char* operation) {
     if (result != sdrplay_api_Success)
       std::cerr << "[RspDuo] Cleanup " << operation << ": " << sdrplay_api_GetErrorString(result) << '\n';
@@ -763,6 +781,30 @@ void RspDuo::cleanup_api() noexcept
   if (apiOpened) { report(sdrplay_api_Close(), "close"); apiOpened = false; }
   chosenDevice = nullptr;
   deviceParams = nullptr;
+}
+
+std::string RspDuo::health_json() const
+{
+  auto health = overloadHealth.snapshot();
+  // Init completion and a concurrent failure/stop can overlap. Never let an
+  // earlier monitoring=true snapshot override the current lifecycle flags.
+  health.monitoring = health.monitoring && !deviceRemoved.load() &&
+    !callbackFault.load() && !stopRequested.load();
+  std::ostringstream out;
+  out.imbue(std::locale::classic());
+  out << std::boolalpha << "{\"schema\":1,\"receiver\":\"RspDuo\",\"monitoring\":"
+      << health.monitoring << ",\"overload\":{";
+  for (unsigned i = 0; i < health.channels.size(); ++i) {
+    const auto& c = health.channels[i];
+    if (i) out << ',';
+    out << '"' << (i == 0 ? 'A' : 'B') << "\":{\"active\":" << c.active
+        << ",\"detectedCount\":" << c.detectedCount
+        << ",\"correctedCount\":" << c.correctedCount
+        << ",\"lastDetectedAt\":" << c.lastDetectedAt
+        << ",\"lastCorrectedAt\":" << c.lastCorrectedAt << '}';
+  }
+  out << "},\"ackFailures\":" << health.ackFailures << '}';
+  return out.str();
 }
 
 std::string RspDuo::startup_receipt_json() const

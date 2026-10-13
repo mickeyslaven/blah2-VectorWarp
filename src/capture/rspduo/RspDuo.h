@@ -24,6 +24,7 @@
 #include "capture/PairedCpiSource.h"
 #include "data/IqData.h"
 #include "SdkSampleClock.h"
+#include "OverloadStatus.h"
 
 #include <stdint.h>
 #include <atomic>
@@ -62,6 +63,7 @@ private:
   // Diagnostic counters only; no per-event I/O on the SDK event thread.
   std::atomic<uint64_t> gainEventsA{0}, gainEventsB{0};
   std::atomic<uint64_t> overloadEventsA{0}, overloadEventsB{0};
+  RspDuoOverloadStatus overloadHealth;
   std::atomic<uint64_t> ackCount{0}, ackErrorCount{0}, ackMaxUs{0};
   std::atomic<uint64_t> ackStartNs{0};
   std::atomic<int> ackTuner{-1}, ackLastStatus{0};
@@ -237,7 +239,7 @@ public:
   /// @param buffer1 Pointer to reference buffer.
   /// @param buffer2 Pointer to surveillance buffer.
   /// @return Void.
-  void process(IqData *buffer1, IqData *buffer2);
+  void process(IqData *buffer1, IqData *buffer2) override;
 
   /// @brief Get file name from path.
   /// @return String of file name based on current time.
@@ -245,14 +247,15 @@ public:
 
   /// @brief Call methods to start capture.
   /// @return Void.
-  void start();
+  void start() override;
 
   /// @brief Call methods to gracefully stop capture.
   /// @return Void.
-  void stop();
+  void stop() override;
 
   /// SDK call acceptance only; the API offers no independent tuner readback.
   std::string startup_receipt_json() const;
+  std::string health_json() const;
 
 
 };

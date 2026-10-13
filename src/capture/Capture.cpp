@@ -230,6 +230,14 @@ std::string Capture::status_json() const {
       copied.CopyFrom(receipt, a);
       document.AddMember("receiverStartup", copied, a);
     }
+    const auto healthJson = blah2::receiver_health(device);
+    rapidjson::Document health;
+    health.Parse(healthJson.c_str());
+    if (!health.HasParseError() && health.IsObject()) {
+      rapidjson::Value copied;
+      copied.CopyFrom(health, a);
+      document.AddMember("receiverHealth", copied, a);
+    }
   }
   rapidjson::StringBuffer buffer; rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   document.Accept(writer); return buffer.GetString();

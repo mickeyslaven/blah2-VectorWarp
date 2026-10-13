@@ -131,6 +131,12 @@ std::string receiver_startup_receipt(const ReceiverSource& source) {
   return value ? std::string(value) : std::string();
 }
 
+std::string receiver_health(const ReceiverSource& source) {
+  if (!source || !source.get_deleter().health) return {};
+  const char* value = source.get_deleter().health(source.get());
+  return value ? std::string(value) : std::string();
+}
+
 ReceiverSource load_receiver(const std::string& receiver,
     const Blah2ReceiverConfig& config) {
   if (config.abi != BLAH2_RECEIVER_ABI || config.size != sizeof(config) ||
@@ -146,14 +152,19 @@ ReceiverSource load_receiver(const std::string& receiver,
         (error[0] ? error.data() : "unspecified error"));
     }
     const char* (*startupReceipt)(const Source*) noexcept = nullptr;
+    const char* (*health)(const Source*) noexcept = nullptr;
     if (receiver == "RspDuo") {
       dlerror();
       startupReceipt = reinterpret_cast<decltype(startupReceipt)>(
         dlsym(loaded.library.get(), "blah2_rspduo_startup_receipt_json_v1"));
       if (dlerror()) startupReceipt = nullptr; // Older matching modules have no receipt.
+      dlerror();
+      health = reinterpret_cast<decltype(health)>(
+        dlsym(loaded.library.get(), "blah2_rspduo_health_json_v1"));
+      if (dlerror()) health = nullptr; // Older adapters remain usable without telemetry.
     }
     return ReceiverSource(source, ReceiverSourceDeleter{
-      std::move(loaded.library), loaded.api->destroy, startupReceipt});
+      std::move(loaded.library), loaded.api->destroy, startupReceipt, health});
   }
   throw std::invalid_argument("Unknown receiver type; no receiver was opened");
 }

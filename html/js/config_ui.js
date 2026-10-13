@@ -1380,6 +1380,12 @@ function renderEditor() {
         startup.className = 'upstream-status receiver-startup';
         panel.appendChild(startup);
         renderReceiverStartup(null, startup);
+        const health = document.createElement('section');
+        health.id = 'receiver-health';
+        health.className = 'upstream-status receiver-health';
+        health.textContent = 'RSPduo overload status unavailable.';
+        panel.appendChild(health);
+        renderReceiverOverload(null, health);
       }
       panel.appendChild(renderReceiverSetup());
       if (upstream) panel.appendChild(upstream);
@@ -1391,6 +1397,11 @@ function renderEditor() {
   displayFieldErrors(validationErrors);
   displayValidationNotices();
   updateDirtyState();
+}
+
+function renderReceiverOverload(status, target = document.getElementById('receiver-health')) {
+  if (typeof renderReceiverHealth === 'function')
+    renderReceiverHealth(status, target, true);
 }
 
 function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
@@ -1883,12 +1894,14 @@ async function renderConfiguration() {
 }
 
 async function refreshConfigDiagnostics() {
-  if (document.hidden || restartInProgress) return;
+  if (document.hidden) return;
+  if (restartInProgress) { renderReceiverOverload(null); return; }
   const target = document.getElementById('config-diagnostics');
   if (!target) return;
   try {
     const status = await readRadarState();
     renderReceiverStartup(status);
+    renderReceiverOverload(status);
     const acceleration = document.getElementById('acceleration-status');
     if (acceleration) {
       acceleration.textContent = `Delay–Doppler: ${accelerationSummary(status.acceleration, status.radar)}. ` +
@@ -1916,6 +1929,7 @@ async function refreshConfigDiagnostics() {
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
   } catch (_) {
     renderReceiverStartup(null);
+    renderReceiverOverload(null);
     target.textContent = 'Cannot read service status. Check the connection to VectorWarp.';
   }
 }

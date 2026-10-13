@@ -24,7 +24,7 @@ REQUIRED = {'src/capture/ReceiverFactory.cpp', 'src/capture/ReceiverModule.h',
             'src/capture/kraken/HeimdallFrame.h', 'src/data/IqData.h',
             'src/capture/rspduo/RspDuo.cpp', 'src/capture/rspduo/RspDuo.h',
             'src/capture/rspduo/SampleSequence.h', 'src/capture/rspduo/SdkSampleClock.h',
-            'src/capture/rspduo/UsbMode.h', 'generated/ReceiverCohort.h', 'LICENSE'}
+            'src/capture/rspduo/OverloadStatus.h', 'src/capture/rspduo/UsbMode.h', 'generated/ReceiverCohort.h', 'LICENSE'}
 
 class Refused(Exception): pass
 def require(ok, message):
