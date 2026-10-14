@@ -32,5 +32,6 @@ foreach(name IN ITEMS Acceleration AccelerationFallback)
 endforeach()
 add_test(NAME cpuFallback COMMAND testAccelerationFallback)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
+  # Shared CPU regressions include resident wire/IPC/JSON/diagnostics with GPU=OFF.
   include(${PROJECT_ROOT}/cmake/GpuProcessTests.cmake)
 endif()

@@ -1,4 +1,5 @@
 #include "GpuProcess.h"
+#include "GpuResidentBackend.h"
 #include "GpuDriverStatus.h"
 #include "MacGpuCompatibility.h"
 #include <dlfcn.h>
@@ -6,6 +7,24 @@
 #include <stdexcept>
 
 int main(int argc, char** argv) {
+  if(argc==2&&std::string(argv[1])=="--resident-v5"){
+#ifdef __linux__
+    void* module=nullptr;
+    const int result=blah2::resident::runWorker([&](const blah2::resident::Config& config,const blah2::resident::Mapping& mapping){
+      if(module)throw std::runtime_error("Resident module already loaded");
+      module=dlopen(blah2::gpuSiblingPath("blah2-gpu-resident-vulkan.so").c_str(),RTLD_NOW|RTLD_LOCAL);
+      if(!module)throw std::runtime_error("Resident ABI5 module or its Vulkan loader is unavailable; no CPU fallback");
+      const auto create=reinterpret_cast<blah2::resident::Create>(dlsym(module,"blah2_gpu_create_resident"));
+      if(!create)throw std::runtime_error("Resident worker/module ABI5 cohort mismatch");
+      return std::unique_ptr<blah2::resident::Backend>(create(blah2::resident::moduleAbi,&config,&mapping));
+    });
+    if(module)dlclose(module);
+    return result;
+#else
+    std::cerr<<"Resident GPU mode is not supported by this platform cohort\n";
+    return 2;
+#endif
+  }
   if (argc == 2 && std::string(argv[1]) == "--driver-status") {
     // Enumeration only: no logical device, FFT plan, IQ, or persistent cache.
     // The caller must bound this separate process, just like processing workers.
@@ -28,7 +47,8 @@ int main(int argc, char** argv) {
     std::cout << response << '\n';
     return code;
   }
-  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status]\n"; return 2; }
+  if (argc != 1) { std::cerr << "Usage: blah2-gpu-worker [--driver-status | --resident-v5]\n";
+  return 2; }
   void* module = nullptr;
   const int result = blah2::runGpuWorker([&](const blah2::GpuGeometry& geometry,
       const std::string& device) -> std::unique_ptr<blah2::GpuBackend> {

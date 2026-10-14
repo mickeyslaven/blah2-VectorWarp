@@ -107,6 +107,47 @@ add_test(NAME gpuDriverDiagnostics COMMAND ${Python3_EXECUTABLE}
   ${PROJECT_ROOT}/test/gpu/test_driver_status.py $<TARGET_FILE:testGpuDriverWorker>)
 set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)
 
+
+# CPU-only ABI5 and result-publication regressions; no device/module is loaded.
+add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
+target_compile_features(testGpuResidentWire PRIVATE cxx_std_17)
+target_include_directories(testGpuResidentWire PRIVATE
+  ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+add_test(NAME residentWireCpuBoundary COMMAND testGpuResidentWire)
+set_tests_properties(residentWireCpuBoundary PROPERTIES TIMEOUT 10)
+
+# Compile these four exact sources directly: the CPU double deliberately owns
+# gpuSiblingPath, so linking blah2GpuProcess would duplicate that definition.
+add_executable(testGpuResidentProcess ${PROJECT_ROOT}/test/gpu/TestGpuResidentProcess.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProcess.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProof.cpp)
+target_compile_features(testGpuResidentProcess PRIVATE cxx_std_17)
+target_include_directories(testGpuResidentProcess PRIVATE
+  ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+target_link_libraries(testGpuResidentProcess PRIVATE Threads::Threads)
+add_test(NAME residentProcessCpuBoundary COMMAND testGpuResidentProcess)
+set_tests_properties(residentProcessCpuBoundary PROPERTIES TIMEOUT 10)
+
+add_executable(testGpuResultJson ${PROJECT_ROOT}/test/gpu/TestGpuResultJson.cpp
+  ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
+  ${PROJECT_ROOT}/src/data/Detection.cpp ${PROJECT_ROOT}/src/data/Track.cpp)
+target_compile_features(testGpuResultJson PRIVATE cxx_std_17)
+target_include_directories(testGpuResultJson PRIVATE
+  ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+target_include_directories(testGpuResultJson SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
+target_link_libraries(testGpuResultJson PRIVATE blah2RapidJson
+  ${ARMADILLO_LIBRARIES} Threads::Threads)
+add_test(NAME gpuResultJsonCpuCompatibility COMMAND testGpuResultJson)
+set_tests_properties(gpuResultJsonCpuCompatibility PROPERTIES TIMEOUT 10)
+
+add_executable(testFrameDiagnostics ${PROJECT_ROOT}/test/gpu/TestFrameDiagnostics.cpp)
+target_compile_features(testFrameDiagnostics PRIVATE cxx_std_17)
+target_include_directories(testFrameDiagnostics PRIVATE ${PROJECT_ROOT})
+add_test(NAME residentFrameDiagnosticsCpuContract COMMAND testFrameDiagnostics)
+set_tests_properties(residentFrameDiagnosticsCpuContract PROPERTIES TIMEOUT 10)
+
 option(BLAH2_TEST_PHYSICAL_GPU "Run synthetic qualification on a real GPU (no CPU substitution)" OFF)
 if(BLAH2_TEST_PHYSICAL_GPU)
   if(NOT TARGET blah2GpuWorker)

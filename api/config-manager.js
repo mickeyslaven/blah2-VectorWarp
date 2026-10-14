@@ -496,6 +496,14 @@ function validateConfig(config, baseline = null) {
   if (processConfig.performance !== undefined) {
     const performance = requireObject(processConfig.performance,
       'process.performance');
+    if (performance.acceleration === 'gpu-resident') {
+      if (tracker.enable && tracker.gpu_capacity === undefined)
+        errors.push('process.tracker.gpu_capacity is required for gpu-resident tracking');
+      if (tracker.enable && !detection.enable)
+        errors.push('gpu-resident tracking requires process.detection.enable');
+      if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
+        errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
+    }
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});

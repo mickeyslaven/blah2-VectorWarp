@@ -11,6 +11,7 @@
 #include "data/Track.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
+#include "process/ambiguity/GpuResidentCoordinator.h"
 #ifdef VECTORWARP_MIXED_AUTO
 #include "process/mixed/MixedProcess.h"
 #include "process/mixed/MixedAutoPolicy.h"
@@ -383,6 +384,11 @@ try
       tree["process"]["performance"].has_child("acceleration"))
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
+  const bool residentMode=accelerationMode=="gpu-resident";
+#ifndef VECTORWARP_RESIDENT_GPU
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI5 GPU route");
+#endif
+
 #ifdef VECTORWARP_MIXED_AUTO
   const blah2::mixed::Shape mixedShape{fs,nSamples,
     uint32_t(surveillanceChannels.size()),ambiguity.front()->get_n_doppler_bins(),
@@ -414,9 +420,9 @@ try
 #endif
   blah2::Acceleration acceleration(
 #ifdef VECTORWARP_MIXED_AUTO
-    mixedAuto ? "cpu" : accelerationMode,
+    residentMode ? "cpu" : (mixedAuto ? "cpu" : accelerationMode),
 #else
-    accelerationMode,
+    residentMode ? "cpu" : accelerationMode,
 #endif
     {ambiguity.front()->get_nfft(), ambiguity.front()->get_n_doppler_bins(),
      ambiguity.front()->get_n_delay_bins(), uint32_t(ambiguity.size()), delayMin,
@@ -508,6 +514,38 @@ try
     isTracker = false;
   }
 
+  // Resident mode is explicit and first admits the reviewed all-capture identity
+  // route. Existing CPU/AUTO/FIR and other-platform routes keep their behavior.
+  blah2::resident::Config residentConfig;
+  std::unique_ptr<blah2::resident::Coordinator> resident;
+  uint64_t residentLogical=0,residentConsumed=0;
+  if(residentMode){
+    if(!arrayReference||!isClutter||pairedQueueRequested||surveillanceChannels.size()!=captureChannelCount||!gpuDevice||std::string(gpuDevice)=="auto")
+      throw std::invalid_argument("Resident GPU requires array reference, clutter, identity all-capture surveillance and an explicit GPU device");
+    residentConfig.geometry={ambiguity.front()->get_nfft(),ambiguity.front()->get_n_doppler_bins(),ambiguity.front()->get_n_delay_bins(),uint32_t(surveillanceChannels.size()),delayMin,nSamples,uint32_t(clutterBins),delayMinClutter};
+    residentConfig.correlation=ambiguity.front()->get_n_corr();
+    residentConfig.sampleRate=fs;
+    residentConfig.middle=ambiguity.front()->get_doppler_middle();
+    residentConfig.epoch=1;
+    residentConfig.device=gpuDevice;
+    residentConfig.surveillanceChannels=surveillanceChannels;
+    residentConfig.delayAxis.assign(ambiguity.front()->result()->delay.begin(),ambiguity.front()->result()->delay.end());
+    residentConfig.dopplerAxis.assign(ambiguity.front()->result()->doppler.begin(),ambiguity.front()->result()->doppler.end());
+    residentConfig.reference={referenceChannels,referenceConfig.analysisSamples,referenceConfig.analysisInterval,referenceConfig.powerIterations,referenceConfig.covarianceSmoothing,referenceConfig.diagonalLoading,spectrumBandwidth,double(fc)};
+    const double spectrumResolution=double(fs)/nSamples;
+    const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
+    residentConfig.spectrumBins=1+(nSamples-1)/decimation;
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,pfa,minDoppler,1/tCpi};
+    if(isTracker){
+      uint32_t capacity=0;
+      if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");
+      tree["process"]["tracker"]["gpu_capacity"] >> capacity;
+      residentConfig.tracker={true,capacity,m,n,nDelete,ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
+    }
+    residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference);
+    resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
+  }
+
   // set up output data
   bool saveMap, saveDetection;
   tree["save"]["map"] >> saveMap;
@@ -558,6 +596,7 @@ try
           (pairedCpiQueue && capture->pairedCpiQueueActive.load());
         const bool usePairedQueue = pairedQueueWasActive;
         const bool pairedDirectFrame = usePairedQueue && directPairedIq;
+        const auto residentWholeStart=std::chrono::steady_clock::now();
         bool ready = false;
         uint64_t captureStartUs = 0;
         std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
@@ -649,6 +688,11 @@ try
             referenceSynthesizer = ArrayReferenceSynthesizer(referenceConfig);
             reportedReferenceUpdate = 0;
             replayProcessedFrames = 0;
+            if(resident){
+              if(residentConfig.epoch==UINT64_MAX)throw std::overflow_error("Resident configuration epoch exhausted");
+              resident.reset();++residentConfig.epoch;residentLogical=residentConsumed=0;
+              resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
+            }
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
               maxAcc, rangeRes, lambda);
@@ -657,6 +701,18 @@ try
           // later rejects it. UI publication timestamps remain wall-clock.
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
+          const bool residentOracle=resident&&resident->qualifying();
+          if(resident){
+            if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
+            const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:time[0]/1000;
+            resident->begin(captureData,{++residentLogical,++residentConsumed,signalTime});
+          }
+          // This block is the unchanged CPU route, or its bounded startup oracle.
+          // Accepted resident frames cannot enter CPU computational stages.
+          #ifdef VECTORWARP_MIXED_AUTO
+          bool mixedCandidateReady=false,mixedPublished=false;
+          #endif
+          if(!resident||residentOracle){
           if (!arrayReference && !pairedDirectFrame)
             referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
           timing_helper(timing_name, timing_time, time, "extract_buffer");
@@ -690,6 +746,7 @@ try
               reportedReferenceUpdate = metrics.updates;
             }
           }
+          if(resident)resident->checkReference(*referenceData,referenceSynthesizer.get_metrics());
           // Synthesis is the last reader of the captured channels. Transfer
           // complete sample blocks to conditioning instead of copying a CPI.
           if (!pairedDirectFrame)
@@ -706,7 +763,7 @@ try
 
 #ifdef VECTORWARP_MIXED_AUTO
           std::vector<std::complex<double>> mixedMap, mixedTail;
-          bool mixedCandidateReady = false;
+          mixedCandidateReady = false;
           if (mixedAuto && mixedWorker && !mixedPolicy.disabled()) {
             const uint64_t backlog = captureBacklogSamples.empty() ? 0 :
               *std::max_element(captureBacklogSamples.begin(), captureBacklogSamples.end());
@@ -732,7 +789,7 @@ try
               }
             }
           }
-          bool mixedPublished = mixedChoice == blah2::mixed::Choice::mixed &&
+          mixedPublished = mixedChoice == blah2::mixed::Choice::mixed &&
             mixedCandidateReady;
 #endif
           
@@ -776,6 +833,7 @@ try
               });
             if (!success)
             {
+              if(resident)throw std::runtime_error("Resident startup CPU clutter oracle rejected the CPI");
               time.clear();
               timing_name.clear();
               timing_time.clear();
@@ -784,6 +842,7 @@ try
             timing_helper(timing_name, timing_time, time, "clutter_filter");
           }
           
+          if(resident)resident->checkFiltered(surveillancePointers);
           // Produce one map per surveillance channel, then combine their power.
           std::vector<Map<std::complex<double>> *> channelMaps(
             surveillanceData.size());
@@ -848,6 +907,7 @@ try
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
           }
+          if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.
           map = mapFusion.process(channelMaps);
@@ -872,12 +932,21 @@ try
             timing_helper(timing_name, timing_time, time, "tracker");
           }
 
+          } // legacy computation or explicitly labeled startup oracle
+          blah2::resident::Coordinator::Publication residentPublication;
+          if(resident){
+            resident->receivePrepared();
+            residentPublication=resident->format(time[0]/1000);
+            resident->commit();
+            timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
+          }
+
           // output IqData meta data
-          jsonIqData = referenceData->to_json(time[0]/1000);
+          jsonIqData = resident ? std::move(residentPublication.spectrum) : referenceData->to_json(time[0]/1000);
           socket_iqdata->sendData(jsonIqData);
 
           // output map data
-          mapJson = map->to_json_km(time[0]/1000, fs);
+          mapJson = resident ? std::move(residentPublication.map) : map->to_json_km(time[0]/1000, fs);
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
@@ -887,7 +956,7 @@ try
           // output detection data
           if (isDetection)
           {
-            detectionJson = detection->to_json_km(time[0]/1000, fs);
+            detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
           }
           if (saveDetection && isDetection)
@@ -898,7 +967,7 @@ try
           // output tracker data
           if (isTracker)
           {
-            jsonTracker = track->to_json(time[0]/1000);
+            jsonTracker = resident ? std::move(residentPublication.tracks) : track->to_json(time[0]/1000);
             socket_track->sendData(jsonTracker);
           }
 
@@ -939,29 +1008,28 @@ try
 
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
-          timing->set_capture_queues(std::move(captureBacklogSamples),
-            std::move(captureDroppedSamples));
+          timing->set_capture_queues(captureBacklogSamples,captureDroppedSamples);
           timing->set_acceleration(
 #ifdef VECTORWARP_MIXED_AUTO
             mixedAuto ? mixedStatus :
 #endif
-            acceleration.status());
+            resident ? resident->status() : acceleration.status());
           if (isClutter)
             timing->set_clutter_acceleration(
 #ifdef VECTORWARP_MIXED_AUTO
               mixedAuto ? mixedStatus :
 #endif
-              acceleration.clutterStatus(),
+              resident ? resident->status() : acceleration.clutterStatus(),
 #ifdef VECTORWARP_MIXED_AUTO
               mixedAuto ? mixedCandidateReady :
 #endif
-              acceleration.clutterTiming().gpuExecuted,
+              resident ? true : acceleration.clutterTiming().gpuExecuted,
 #ifdef VECTORWARP_MIXED_AUTO
               // Mixed frames execute CPU correlation/solve/FIR/range work
               // inside the child, even when no parent CPU oracle runs.
               mixedAuto ? true :
 #endif
-              acceleration.clutterTiming().cpuExecuted);
+              resident ? residentOracle : acceleration.clutterTiming().cpuExecuted);
           else {
             blah2::AccelerationStatus disabled;
             disabled.requested = accelerationMode;
@@ -977,6 +1045,21 @@ try
           // output CPI timestamp for updating data
           std::string t0_string = std::to_string(time[0]/1000);
           socket_timestamp->sendData(t0_string);
+          if(resident){
+            // sendData is a completed local TCP write, not a browser/application
+            // acknowledgement. Any exception stops; there is no blind replay.
+            resident->published();
+            const auto residentWholeEnd=std::chrono::steady_clock::now();
+            const double wholeMs=std::chrono::duration<double,std::milli>(residentWholeEnd-residentWholeStart).count();
+            std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<time[0]/1000
+              <<" startup_cpu_oracle="<<residentOracle<<" whole_ms="<<wholeMs
+              <<" whole_start_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeStart.time_since_epoch()).count()
+              <<" whole_end_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeEnd.time_since_epoch()).count()<<" includes_fifo=1 includes_pack_ipc=1 includes_json=1 includes_all_socket_writes=1 backlog=";
+            for(size_t i=0;i<captureBacklogSamples.size();++i)std::cout<<(i?",":"")<<captureBacklogSamples[i];
+            std::cout<<" drops=";
+            for(size_t i=0;i<captureDroppedSamples.size();++i)std::cout<<(i?",":"")<<captureDroppedSamples[i];
+            std::cout<<'\n';
+          }
           time.clear();
 
         }
@@ -987,9 +1070,11 @@ try
         }
       }
     } catch (const std::exception& error) {
+      if(resident)resident->stop();
       capture->processing_error(error.what());
       capture->request_input_stop();
     } catch (...) {
+      if(resident)resident->stop();
       capture->processing_error("Unknown processing failure");
       capture->request_input_stop();
     }

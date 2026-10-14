@@ -108,7 +108,7 @@ case "$DISTRO" in
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
-for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-mixed-worker \
+for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
@@ -250,6 +250,7 @@ if [[ $FORMAT == deb ]]; then
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-mixed-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-vulkan.so"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-resident-vulkan.so"
     "$STAGE/opt/vectorwarp/current/bin/libblah2-capture-core.so.1"
     "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-usrp.so"
     "$STAGE/opt/vectorwarp/current/bin/blah2-receiver-hackrf.so"

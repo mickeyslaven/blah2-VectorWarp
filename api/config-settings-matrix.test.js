@@ -115,6 +115,11 @@ try {
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
   persistGroup('rsp-profile-edit', rspBase, rsp, ['capture.fs','capture.device.type','capture.device.serial']);
+  // Explicit resident capacity is optional in legacy files but must persist
+  // as a coherent resident-mode edit without changing unrelated settings.
+  const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
+  resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
+  persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration', 'process.tracker.gpu_capacity']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);
