@@ -8,6 +8,18 @@ set_property(CACHE BLAH2_GPU PROPERTY STRINGS AUTO ON OFF)
 set(VKFFT_ROOT "" CACHE PATH "VkFFT 1.3.4 source directory")
 add_library(blah2GpuProcess STATIC ${PROJECT_ROOT}/src/process/ambiguity/GpuProcess.cpp)
 target_compile_features(blah2GpuProcess PUBLIC cxx_std_17)
+# The resident protocol is adjacent to ABI4 and uses canonical FP64 input.
+add_library(blah2GpuResidentProcess STATIC
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProof.cpp
+  ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProcess.cpp)
+target_compile_features(blah2GpuResidentProcess PUBLIC cxx_std_17)
+target_include_directories(blah2GpuResidentProcess PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(blah2GpuResidentProcess PUBLIC blah2GpuProcess Threads::Threads)
+if(TARGET blah2)
+  target_link_libraries(blah2 PRIVATE blah2GpuResidentProcess)
+endif()
+
 target_link_libraries(blah2GpuProcess PUBLIC Threads::Threads)
 if(TARGET blah2)
   target_link_libraries(blah2 PRIVATE blah2GpuProcess)
@@ -72,7 +84,7 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
       endif()
     endif()
     add_executable(blah2GpuWorker ${BLAH2_GPU_WORKER_SOURCES})
-    target_link_libraries(blah2GpuWorker PRIVATE blah2GpuProcess ${CMAKE_DL_LIBS})
+    target_link_libraries(blah2GpuWorker PRIVATE blah2GpuProcess blah2GpuResidentProcess ${CMAKE_DL_LIBS})
     if(APPLE)
       # Metal enumeration is isolated to the worker; never link it to blah2.
       target_link_libraries(blah2GpuWorker PRIVATE ${BLAH2_METAL_FRAMEWORK} ${BLAH2_FOUNDATION_FRAMEWORK})
@@ -83,6 +95,30 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
       add_dependencies(blah2 blah2GpuWorker)
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_library(blah2GpuResidentVulkan MODULE
+        ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentModule.cpp
+        ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
+      target_compile_features(blah2GpuResidentVulkan PRIVATE cxx_std_17)
+      target_compile_definitions(blah2GpuResidentVulkan PRIVATE VKFFT_BACKEND=0)
+      target_include_directories(blah2GpuResidentVulkan PRIVATE
+        ${PROJECT_ROOT}/src/process/ambiguity ${PROJECT_ROOT}/src)
+      target_include_directories(blah2GpuResidentVulkan SYSTEM PRIVATE
+        ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+      target_link_libraries(blah2GpuResidentVulkan PRIVATE Vulkan::Vulkan
+        glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits
+        Threads::Threads ${CMAKE_DL_LIBS})
+      target_compile_options(blah2GpuResidentVulkan PRIVATE -Wno-missing-field-initializers)
+      set_property(TARGET blah2GpuResidentVulkan APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-z,defs")
+      if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(blah2GpuResidentVulkan PRIVATE -Wno-return-type-c-linkage)
+      endif()
+      set_target_properties(blah2GpuResidentVulkan PROPERTIES PREFIX ""
+        OUTPUT_NAME "blah2-gpu-resident-vulkan" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+      add_dependencies(blah2GpuWorker blah2GpuResidentVulkan)
+      if(TARGET blah2)
+        target_compile_definitions(blah2 PRIVATE VECTORWARP_RESIDENT_GPU=1)
+        add_dependencies(blah2 blah2GpuResidentVulkan)
+      endif()
       # The qualified mixed CPI runs in its own bounded worker. A stuck V3D
       # fence can then be killed without blocking capture or CPU recovery.
       add_executable(blah2MixedWorker

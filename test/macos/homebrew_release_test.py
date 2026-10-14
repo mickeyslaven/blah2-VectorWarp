@@ -27,7 +27,7 @@ class HomebrewReleaseTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def write_archive(self, extra=None):
+    def write_archive(self, extra=None, extra_data=b"blocked\n"):
         prefix = f"blah2-VectorWarp-{COMMIT}"
         with tarfile.open(self.archive, "w:gz") as archive:
             for name in ("vectorwarp.rb.in", "vectorwarp-heimdall.rb.in"):
@@ -41,8 +41,8 @@ class HomebrewReleaseTest(unittest.TestCase):
             archive.addfile(member, BytesIO(data))
             if extra:
                 member = tarfile.TarInfo(f"{prefix}/{extra}")
-                member.size = 8
-                archive.addfile(member, BytesIO(b"blocked\n"))
+                member.size = len(extra_data)
+                archive.addfile(member, BytesIO(extra_data))
 
     def command(self, *extra, check=True):
         return subprocess.run([sys.executable, str(SCRIPT), "--source-archive", str(self.archive),
@@ -66,6 +66,18 @@ class HomebrewReleaseTest(unittest.TestCase):
         manifest = (output / "homebrew-release.json").read_text()
         self.assertIn(COMMIT, manifest)
         self.assertIn(checksum, manifest)
+
+    def test_public_core_header_is_allowed_without_admitting_private_or_binary_paths(self):
+        header = ROOT / "core/GpuReferenceSpectrum.private.h"
+        self.write_archive("core/GpuReferenceSpectrum.private.h", header.read_bytes())
+        output = self.root / "public-core"
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+        for forbidden in ("private/core/secret.h", "core/../private/secret.h", "core/candidate.so"):
+            with self.subTest(path=forbidden):
+                self.write_archive(forbidden)
+                result = self.command("--output-tap-dir", str(self.root / "forbidden"), check=False)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_rejects_unpinned_urls_private_members_and_bad_revision(self):
         for bad_url in ("file:///tmp/source.tar.gz", URL.replace("https://", "http://"),

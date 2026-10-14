@@ -2,14 +2,17 @@
 
 For macOS, see [Vulkan/MoltenVK support and M2 validation](MACOS_GPU.md) and
 [Homebrew installation](MACOS_HOMEBREW.md). The driver and package instructions
-on this page describe Linux; CPU fallback remains available on both platforms.
+on this page describe Linux. Legacy modes retain CPU fallback on both platforms;
+the explicit resident mode described below is Linux-only.
 
 The delay–Doppler processor can use a Vulkan GPU. The implementation targets AMD,
 Intel and NVIDIA Vulkan drivers; it does not require CUDA or ROCm. Physical
 verification is limited to the devices and driver versions in
 [GPU hardware tests](GPU_HARDWARE_TESTS.md), not every GPU in those families.
-Capture, reference synthesis, the FP64 clutter coefficient solves and linear
-baseline, detection and tracking remain on the CPU.
+In the legacy `auto`/`gpu` routes, capture, reference synthesis, the FP64 clutter
+coefficient solves and linear baseline, detection and tracking remain on the CPU.
+The explicit `gpu-resident` route moves the computational stages to the GPU;
+capture, startup validation and result formatting remain host work.
 
 The selection details below describe the generic Vulkan path. On the qualified
 Raspberry Pi 4B Bookworm geometry, AUTO also has an isolated whole-CPI
@@ -43,10 +46,29 @@ Settings → Processing → Acceleration provides:
 - **GPU**: use the GPU after accuracy checks, even if the CPU is faster. Reported
   initialization, capacity, invalid-output and device errors still fall back to CPU.
 
-The file setting is `process.performance.acceleration`: `auto`, `cpu` or `gpu`.
+The file setting is `process.performance.acceleration`: `auto`, `cpu`, `gpu`, or
+`gpu-resident`. The first three modes retain the behavior described above.
+
+`gpu-resident` selects the Linux resident pipeline for array-reference synthesis,
+spectrum, clutter cancellation, ambiguity, fusion, detection and tracking. It
+requires native `shaderFloat64`, an explicit `BLAH2_GPU_DEVICE`, array reference,
+clutter, and all capture
+channels in their original surveillance order. It performs eight labeled CPU
+correctness checks at startup; qualified frames use GPU computations. A device,
+accuracy, capacity, or worker error stops this strict route. It does not switch
+to CPU DSP.
+
+When tracking is enabled, set `process.tracker.gpu_capacity` explicitly. This is
+a storage capacity, independent of the wrapping track ID. No default is inferred.
+The processor checks the complete allocation against its existing device/shared
+memory limits before starting. A full tracker rejects the frame without dropping
+tracks or shrinking the input workload. Numeric configuration validity alone
+does not establish memory fit or real-time performance.
+
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.
 
+The following qualification and recovery rules describe the legacy modes.
 Startup qualification is per processor instance, selected device and geometry:
 GPU results must agree with the CPU's complex-valued map before detection sees
 them. After qualification, accepted GPU frames do not repeat the full CPU
@@ -63,11 +85,13 @@ renderers such as lavapipe are not treated as GPUs.
 
 ## Clutter precision and capacity
 
-The generic Vulkan clutter path keeps its initial coefficients and linear
+The legacy `auto`/`gpu` Vulkan clutter path keeps its initial coefficients and linear
 clutter estimate in FP64 on the CPU. It then uses GPU correlation and filtering
 for one residual correction, with coefficient solves still on the CPU. This
 reduces rounding error when cancelling strong clutter. Existing accuracy checks
-and CPU fallback remain in force; GPU double-precision shaders are not required.
+and CPU fallback remain in force in those legacy modes; GPU double-precision
+shaders are not required for them. The explicit resident route instead performs
+its FP64 baseline and coefficient solves on the GPU and stops on failure.
 
 The reference transform and matrix factorization are reused across channel
 batches within a frame and refreshed for the next frame. If all clutter channels
@@ -82,7 +106,7 @@ recorded-IQ replay from 230.457 ms/CPI in regular blah2 to 63.638 ms/CPI in
 VectorWarp: 72.4% less processing time. VectorWarp CPU averaged 180.855 ms/CPI.
 This fixed-range comparison used the same 527 MHz, 2.4 MS/s recording,
 delays −10…245 (256 bins; 30.604 km maximum
-excess path), and clutter −10…200 for both engines. It accelerates clutter
+excess path), and clutter −10…200 for both engines. These legacy-mode measurements accelerate clutter
 FFT/filtering and delay–Doppler work; the small FP64 coefficient solve and
 other pipeline stages remain CPU work. The
 [GPU benchmark report](GPU_BENCHMARK_20260911.md) has the comparison, accuracy
@@ -97,10 +121,11 @@ from the original-blah2 comparison. CPU-only processing also improved: the
 ## Drivers and older hardware
 
 Use a working Vulkan driver for the processing host. The application requests
-Vulkan 1.0 and uses single-precision compute; it does not require ray tracing,
-tensor cores, double-precision shaders or a modern RDNA-only instruction set.
-Device limits and allocation failures are checked. Large configurations can use
-CPU fallback on cards with limited memory.
+Vulkan 1.0. Legacy modes use single-precision GPU compute and do not require
+ray tracing, tensor cores, double-precision shaders or a modern RDNA-only
+instruction set. The Linux resident route requires native double-precision
+shader support. Device limits and allocation failures are checked; legacy modes
+can use CPU fallback on cards with limited memory, while resident mode stops.
 
 On Linux, Mesa RADV supports AMD GCN and RDNA hardware. Some early GCN systems
 need a different kernel-driver configuration before RADV can expose their GPU;

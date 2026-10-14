@@ -69,8 +69,10 @@ struct Layout {
       if (total > (512ULL << 20) || prefix > SIZE_MAX)
         throw std::runtime_error("GPU FIR shared-memory budget exceeded; using CPU");
       reference = surveillance = output = 0;
-      firReference = firOutput = size_t(prefix); firWeights = g.firTaps;
-      firOffset = 0; bytes = size_t(total);
+      firReference = firOutput = size_t(prefix);
+      firWeights = g.firTaps;
+      firOffset = 0;
+      bytes = size_t(total);
 #ifdef __APPLE__
       // Darwin reports POSIX shared-memory lengths rounded to a VM page. Use the
       // same explicit size in both processes so the exact fstat check stays useful.
@@ -103,7 +105,10 @@ struct Layout {
     const uint64_t total = totalElements * sizeof(Complex);
     if (total > (512ULL << 20))
       throw std::runtime_error("GPU shared-memory budget exceeded; using CPU");
-    reference = r; surveillance = s; output = o; bytes = total;
+    reference = r;
+    surveillance = s;
+    output = o;
+    bytes = total;
 #ifdef __APPLE__
     // Darwin reports POSIX shared-memory lengths rounded to a VM page. Use the
     // same explicit size in both processes so the exact fstat check stays useful.
@@ -190,10 +195,14 @@ class Process final : public GpuBackend, public GpuFrameBackend,
   bool clutterSupported_ = false, firSupported_ = false, firActive_ = false,
     firFinalSubmitted_ = false;
   void stop() noexcept {
-    if (socket_ >= 0) { close(socket_); socket_ = -1; }
-    reap(process_); process_ = -1;
-    if (shared_) { munmap(shared_, layout_.bytes); shared_ = nullptr; }
-    if (memory_ >= 0) { close(memory_); memory_ = -1; }
+    if (socket_ >= 0) { close(socket_);
+    socket_ = -1; }
+    reap(process_);
+    process_ = -1;
+    if (shared_) { munmap(shared_, layout_.bytes);
+    shared_ = nullptr; }
+    if (memory_ >= 0) { close(memory_);
+    memory_ = -1; }
   }
 public:
   Process(GpuGeometry geometry, const std::string& device, GpuProcessOptions options)
@@ -238,7 +247,8 @@ public:
         std::snprintf(name, sizeof(name), "/vw-gpu-%08x%08x", arc4random(), arc4random());
         memory_ = shm_open(name, O_RDWR | O_CREAT | O_EXCL, 0600);
         if (memory_ >= 0 && shm_unlink(name)) {
-          close(memory_); memory_ = -1;
+          close(memory_);
+          memory_ = -1;
           throw std::runtime_error("Cannot unlink GPU shared memory; using CPU");
         }
         if (memory_ < 0 && errno != EEXIST) break;
@@ -295,14 +305,21 @@ public:
         nullptr,
 #endif
         argv, environ);
-      if (error) { process_ = -1; throw std::runtime_error("GPU worker is unavailable; using CPU"); }
-      close(childSocket); childSocket = -1;
-      close(childMemory); childMemory = -1;
-      posix_spawn_file_actions_destroy(&actions); actionsReady = false;
+      if (error) { process_ = -1;
+      throw std::runtime_error("GPU worker is unavailable; using CPU"); }
+      close(childSocket);
+      childSocket = -1;
+      close(childMemory);
+      childMemory = -1;
+      posix_spawn_file_actions_destroy(&actions);
+      actionsReady = false;
 #ifdef __APPLE__
-      posix_spawnattr_destroy(&attributes); attributesReady = false;
+      posix_spawnattr_destroy(&attributes);
+      attributesReady = false;
 #endif
-      Message init; init.operation = initialize; init.geometry = geometry;
+      Message init;
+      init.operation = initialize;
+      init.geometry = geometry;
       std::snprintf(init.id, sizeof(init.id), "%s", device.c_str());
       sendMessage(socket_, init);
       const auto response = receiveMessage(socket_, options_.startupMs, "startup");
@@ -319,7 +336,8 @@ public:
       if (actionsReady) posix_spawn_file_actions_destroy(&actions);
       if (childSocket >= 0) close(childSocket);
       if (childMemory >= 0) close(childMemory);
-      stop(); throw;
+      stop();
+      throw;
     }
   }
   ~Process() override { stop(); }
@@ -352,18 +370,26 @@ public:
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     if (firActive_) throw std::logic_error("GPU FIR frame is already active");
     try {
-      Message request; request.operation = firReference;
-      request.sequence = ++sequence_; sendMessage(socket_, request);
-      firActive_ = true; firFinalSubmitted_ = false;
-    } catch (...) { stop(); throw; }
+      Message request;
+      request.operation = firReference;
+      request.sequence = ++sequence_;
+      sendMessage(socket_, request);
+      firActive_ = true;
+      firFinalSubmitted_ = false;
+    } catch (...) { stop();
+    throw; }
   }
   void submitFirWeights() override {
     if (!firActive_ || firFinalSubmitted_)
       throw std::logic_error("GPU FIR reference was not submitted exactly once");
     try {
-      Message request; request.operation = firFinal; request.sequence = sequence_;
-      sendMessage(socket_, request); firFinalSubmitted_ = true;
-    } catch (...) { stop(); throw; }
+      Message request;
+      request.operation = firFinal;
+      request.sequence = sequence_;
+      sendMessage(socket_, request);
+      firFinalSubmitted_ = true;
+    } catch (...) { stop();
+    throw; }
   }
   void finishFir() override {
     if (!firActive_ || !firFinalSubmitted_)
@@ -373,8 +399,10 @@ public:
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong FIR frame; using CPU");
-      firActive_ = false; firFinalSubmitted_ = false;
-    } catch (...) { stop(); throw; }
+      firActive_ = false;
+      firFinalSubmitted_ = false;
+    } catch (...) { stop();
+    throw; }
   }
   GpuClutterBuffers clutterBuffers() override {
     if (!clutterSupported_ || !layout_.clutterReference)
@@ -393,13 +421,16 @@ public:
     if (socket_ < 0 || !shared_)
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     try {
-      Message request; request.operation = frame; request.sequence = ++sequence_;
+      Message request;
+      request.operation = frame;
+      request.sequence = ++sequence_;
       sendMessage(socket_, request);
       const auto response = receiveMessage(socket_, options_.frameMs, "frame execution");
       if (response.operation == failure) throw std::runtime_error(response.reason);
       if (response.operation != ready || response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong frame; using CPU");
-    } catch (...) { stop(); throw; }
+    } catch (...) { stop();
+    throw; }
   }
   bool processClutterFrame() override {
     if (!clutterSupported_ || !layout_.clutterReference)
@@ -407,7 +438,9 @@ public:
     if (socket_ < 0 || !shared_)
       throw std::runtime_error("GPU worker is no longer available; using CPU");
     try {
-      Message request; request.operation = clutterFrame; request.sequence = ++sequence_;
+      Message request;
+      request.operation = clutterFrame;
+      request.sequence = ++sequence_;
       sendMessage(socket_, request);
       const auto response = receiveMessage(socket_, options_.frameMs, "clutter execution");
       if (response.operation == failure) throw std::runtime_error(response.reason);
@@ -415,7 +448,8 @@ public:
           response.sequence != sequence_)
         throw std::runtime_error("GPU worker returned the wrong clutter frame; using CPU");
       return response.operation == ready;
-    } catch (...) { stop(); throw; }
+    } catch (...) { stop();
+    throw; }
   }
   void process(const std::vector<Complex>& reference, const std::vector<Complex>& surveillance,
       std::vector<Complex>& output) override {
@@ -430,7 +464,8 @@ public:
       processFrame();
       output.assign(shared_ + layout_.reference + layout_.surveillance,
         shared_ + layout_.reference + layout_.surveillance + layout_.output);
-    } catch (...) { if (socket_ >= 0) stop(); throw; }
+    } catch (...) { if (socket_ >= 0) stop();
+    throw; }
   }
 };
 }
@@ -459,8 +494,10 @@ std::unique_ptr<GpuBackend> createGpuFirProcess(uint32_t samples, uint32_t taps,
     const std::string& device, const GpuProcessOptions& options) {
   GpuGeometry geometry{};
   geometry.kind = GpuWorkKind::fir;
-  geometry.firSamples = samples; geometry.firTaps = taps;
-  geometry.firFft = 2048; geometry.firPercent = 50;
+  geometry.firSamples = samples;
+  geometry.firTaps = taps;
+  geometry.firFft = 2048;
+  geometry.firPercent = 50;
   return std::make_unique<Process>(geometry, device, options);
 }
 int runGpuWorker(const GpuFactory& factory) {
@@ -475,7 +512,8 @@ int runGpuWorker(const GpuFactory& factory) {
   EV_SET(&change, parent, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
   if (fcntl(watcher, F_SETFD, FD_CLOEXEC) ||
       kevent(watcher, &change, 1, nullptr, 0, nullptr) < 0 || getppid() != parent) {
-    close(watcher); return 1;
+    close(watcher);
+    return 1;
   }
   try {
     std::thread([watcher] {
@@ -486,12 +524,14 @@ int runGpuWorker(const GpuFactory& factory) {
       // Failure of the lifetime guard is fail-closed as well.
       _exit(1);
     }).detach();
-  } catch (...) { close(watcher); return 1; }
+  } catch (...) { close(watcher);
+  return 1; }
 #else
   if (parent == 1 || prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) return 1;
   prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
 #endif
-  const rlimit noCore{0, 0}; setrlimit(RLIMIT_CORE, &noCore);
+  const rlimit noCore{0, 0};
+  setrlimit(RLIMIT_CORE, &noCore);
   void* mapping = MAP_FAILED;
   size_t bytes = 0;
   try {
@@ -517,7 +557,9 @@ int runGpuWorker(const GpuFactory& factory) {
     auto* buffers = dynamic_cast<GpuBufferBackend*>(backend.get());
     auto* clutter = dynamic_cast<GpuClutterBufferBackend*>(backend.get());
     auto* fir = dynamic_cast<GpuFirBufferBackend*>(backend.get());
-    Message response; response.operation = ready; response.memoryBytes = device.memoryBytes;
+    Message response;
+    response.operation = ready;
+    response.memoryBytes = device.memoryBytes;
     if (clutter && layout.clutterReference) response.capabilities |= clutterCapability;
     if (fir && layout.firReference) response.capabilities |= firCapability;
     std::snprintf(response.id, sizeof(response.id), "%s", device.id.c_str());
@@ -541,7 +583,8 @@ int runGpuWorker(const GpuFactory& factory) {
           throw std::runtime_error("Invalid GPU worker FIR reference request");
         const auto* start = shared + layout.firOffset;
         fir->submitFirReferenceBuffers(start, layout.firReference);
-        firSequence = request.sequence; firActive = true;
+        firSequence = request.sequence;
+        firActive = true;
         continue; // Deliberately no acknowledgement: CPU correlation overlaps.
       }
       if (request.operation == firFinal) {
@@ -552,9 +595,12 @@ int runGpuWorker(const GpuFactory& factory) {
         fir->processFirWeightsBuffers(start + layout.firReference,
           layout.firWeights, start + layout.firReference + layout.firWeights,
           layout.firOutput);
-        sequence = firSequence; firActive = false;
-        response.operation = ready; response.sequence = sequence;
-        sendMessage(3, response); continue;
+        sequence = firSequence;
+        firActive = false;
+        response.operation = ready;
+        response.sequence = sequence;
+        sendMessage(3, response);
+        continue;
       }
       if (firActive || (request.operation != frame && request.operation != clutterFrame) ||
           request.sequence != ++sequence)
@@ -583,11 +629,14 @@ int runGpuWorker(const GpuFactory& factory) {
         std::memcpy(writable + layout.reference + layout.surveillance,
           output.data(), layout.output * sizeof(Complex));
       }
-      response.sequence = sequence; sendMessage(3, response);
+      response.sequence = sequence;
+      sendMessage(3, response);
     }
-    munmap(mapping, bytes); return 0;
+    munmap(mapping, bytes);
+    return 0;
   } catch (const std::exception& error) {
-    Message response; response.operation = failure;
+    Message response;
+    response.operation = failure;
     std::snprintf(response.reason, sizeof(response.reason), "%s", error.what());
     try { sendMessage(3, response); } catch (...) {}
     if (mapping != MAP_FAILED) munmap(mapping, bytes);
