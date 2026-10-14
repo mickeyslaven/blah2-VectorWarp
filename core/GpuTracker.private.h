@@ -1,5 +1,6 @@
 #pragma once
 // Private GPU tracker: no host tracking arithmetic or production wire/main path.
+#include "GpuTrackerAdmission.private.h"
 struct TrackerConfig {
  bool enabled=false;
  uint32_t capacity=0,m=0,n=0,nDelete=0;
@@ -147,8 +148,11 @@ void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19
 const char* unmatchedPrefixBody=R"glsl(
 void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u)return;uint count=0u;
  for(uint tile=0u;tile<(m[19]+127u)/128u;++tile){uint at=m[7]+m[4]+tile,amount=s[at];s[at]=count;count+=amount;}
- m[21]=count;uint high=0u,low=0u;umulExtended(count,m[38],high,low);
- uint required=low+m[20];if(high!=0u||required<low||required>m[3]){reject(307u);return;}
+ // Preserve existing tracks and admit only complete acceleration-hypothesis sets.
+ // A detection burst must not invalidate the radar frame when capacity is full.
+ uint admitted=min(count,(m[3]-m[20])/m[38]);
+ m[21]=count;uint low=admitted*m[38];
+ uint required=low+m[20];
  m[22]=low;m[23]=required;m[24]=32u+2056u*required;m[25]=(src(8u)+low)%65535u;
 }
 )glsl";
@@ -323,9 +327,12 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
-  else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
+  if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
+   if(s[22]!=admission.initiatedTracks||s[23]!=admission.totalTracks)
+    throw std::runtime_error("GPU tracker bounded initiation coverage mismatch");}
  }
  void validateOutputs(TrackerOutputs out)const{
   if(!out.checkpoint||out.wordCapacity!=admission_.bankWords||!out.result)throw std::invalid_argument("GPU tracker output dimensions changed");
@@ -348,6 +355,8 @@ class Stage {
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
   <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
+  if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
+   context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched<<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
   context_.diagnostics.stream()<<" cpu_predict_calls=0 cpu_associate_calls=0 cpu_history_calls=0 cpu_initiate_calls=0\n";
  }
