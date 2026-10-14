@@ -4,8 +4,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
+const {spawnSync} = require('child_process');
 const {createReceiverJournal} = require('./receiver-journal');
-const {checkReceiverStart} = require('./receiver-start-check');
+const {checkReceiverStart, RECEIVER_START_BLOCKED_EXIT_STATUS} = require('./receiver-start-check');
 const {createKrakenControlClient} = require('./receiver-sync');
 
 async function main() {
@@ -74,6 +75,12 @@ async function main() {
     assert.strictEqual(commands, 0, 'Startup readback must never retune a receiver');
     document.config.capture.replay.state = true;
     assert.strictEqual((await checkReceiverStart(filename, options)).state, 'replay');
+    const blocked = spawnSync(process.execPath,
+      [path.join(__dirname, 'receiver-start-check.js'), path.join(directory, 'missing.yml')],
+      {encoding: 'utf8'});
+    assert.strictEqual(blocked.status, RECEIVER_START_BLOCKED_EXIT_STATUS,
+      'A receiver readiness block must not trigger the processor crash restart policy');
+    assert.match(blocked.stderr, /Receiver startup blocked:/);
     console.log('PASS durable receiver journal and read-only startup interlock');
   } finally {
     if (suite) await new Promise(resolve => suite.close(resolve));
