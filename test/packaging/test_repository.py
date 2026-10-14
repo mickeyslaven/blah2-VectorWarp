@@ -55,6 +55,41 @@ class HomepageTests(unittest.TestCase):
         return dict(version="1.2.3", source_commit="a" * 40,
                     signing_fingerprint="A" * 40, packages=entries)
 
+    def test_package_managers_are_primary_and_manual_routes_are_collapsed(self):
+        page = repository.repository_homepage(self.release_manifest())
+        primary = page[page.index('<h3>1. Install for your OS</h3>'):page.index('<h3>2. Configure and start radar</h3>')]
+        for label in ('APT · recommended', 'DNF · recommended', 'Homebrew · recommended'):
+            self.assertIn(label, primary)
+        self.assertNotIn('<details', primary)
+        self.assertNotIn('Download DEB', primary)
+        self.assertNotIn('Download RPM', primary)
+        self.assertNotIn('Download signed PKG', primary)
+        self.assertIn('brew trust mickeyslaven/vectorwarp', primary)
+        self.assertIn("repository's pinned signing", primary)
+        manual = page[page.index('<details id="package-downloads">'):page.index('<details id="install-pi">')]
+        self.assertIn('SHA256SUMS.asc', manual)
+        self.assertIn('checksum alone does not authenticate', manual)
+        self.assertEqual(len({link for link in re.findall(r'href="([^"]+)"', manual)
+                              if link.endswith(('.deb', '.rpm'))}), 11)
+        self.assertNotRegex(page, r'<details[^>]*\bopen(?:[ =>])')
+        self.assertLess(page.index('id="install-macos"'), page.index('id="package-downloads"'))
+        self.assertLess(page.index('id="package-downloads"'), page.index('id="install-pi"'))
+
+    def test_install_guide_puts_linux_and_homebrew_before_manual_options(self):
+        guide = (ROOT / 'docs/INSTALL.md').read_text()
+        primary, manual = guide.split('## Manual install options', 1)
+        for command in ('sudo apt install -y vectorwarp', 'sudo dnf install -y vectorwarp',
+                        'brew trust mickeyslaven/vectorwarp', 'brew install vectorwarp'):
+            self.assertIn(command, primary)
+        for section in ('### Manual package installation', '### macOS standalone installer',
+                        '## Pi 4B Bookworm Lite', '## Build from source'):
+            self.assertIn(section, manual)
+            self.assertNotIn(section, primary)
+        self.assertEqual(manual.count('<details>'), 4)
+        self.assertEqual(manual.count('</details>'), 4)
+        self.assertIn('fresh-card boot', manual.lower())
+        self.assertIn('verify the repository', primary)
+
     def test_downloads_use_exact_release_assets_and_all_os_rows(self):
         manifest = self.release_manifest()
         page = repository.repository_homepage(manifest)

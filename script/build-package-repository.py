@@ -150,54 +150,35 @@ Open the companion manifest to keep Wi-Fi and SSH customization available.</p>''
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp</h2>
 <h3>1. Install for your OS</h3>
-<nav class="install-choices" aria-label="Choose an installation path">
-<a href="#install-pi"><strong>Raspberry Pi 4</strong><span>Flash a card and set up in your browser</span></a>
-<a href="#install-linux"><strong>Linux PC or server</strong><span>Install a package for your existing OS</span></a>
-<a href="#install-macos"><strong>macOS</strong><span>Use the app installer or Homebrew</span></a>
+<p><strong>Recommended: install from your terminal with APT, DNF or Homebrew.</strong>
+Your package manager selects the right package and handles dependencies and updates.
+You do not need to choose an individual download.</p>
+<nav class="install-choices" aria-label="Recommended installation methods">
+<a href="#install-linux"><strong>Ubuntu, Debian &amp; DragonOS</strong><span>APT · recommended for these Linux systems</span></a>
+<a href="#install-fedora"><strong>Fedora 44</strong><span>DNF · recommended for Fedora</span></a>
+<a href="#install-macos"><strong>macOS</strong><span>Homebrew · recommended for Mac</span></a>
 </nav>
-<h4 id="install-pi">Raspberry Pi 4 image</h4>
-{pi_download}
-<p>The Pi route includes Raspberry Pi OS Lite 64-bit Bookworm and VectorWarp.
-Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_GUIDE.md">Pi image download and flashing guide</a>
-for the current image and its validation status. The first target is Pi 4B with 8 GB RAM;
-use a 32 GB or larger microSD card. Pi 5 is future work.</p>
-<ol>
-<li>Open the image's <code>.rpi-imager-manifest</code> in Raspberry Pi Imager,
-then select the microSD card.</li>
-<li>Before writing, choose your hostname, username, password or SSH key, locale,
-Wi-Fi network and country, and enable SSH. Ethernet users can omit Wi-Fi.
-Use the manifest so Imager offers customization; a bare custom image can hide it.</li>
-<li>Write and verify, boot the Pi, then open <code>http://&lt;hostname&gt;.local:3000/</code>
-from another device. Use the router's assigned IP if the name does not resolve.</li>
-<li>Review your receiver, transmitter frequency and site in Settings. For RSPduo,
-install your licensed SDRplay API over SSH, then choose <strong>Build SDRplay support</strong>.
-Choose <strong>Save &amp; Restart</strong> when setup is complete.</li>
-</ol>
-<p>The image has no factory login or Wi-Fi credentials. Radar remains stopped
-until setup. Do not run the Linux installer below on a freshly flashed image.</p>
-<h4 id="install-linux">Linux packages</h4>
-<p>Keep your existing 64-bit operating system. Select its matching version in the
-<a href="#package-downloads">package table</a>; DragonOS follows its Ubuntu base.
-Copy one command below. It installs prerequisites, adds the signed repository,
-installs VectorWarp and opens the web interface. Enter your administrator password if prompted.</p>
-<p><strong>Ubuntu, Debian and compatible DragonOS</strong></p>
+<p>Linux: keep your existing supported 64-bit OS. The installer selects its matching
+signed repository, including the Ubuntu base used by DragonOS. Each command
+installs prerequisites, configures the repository, installs VectorWarp and opens
+the web interface. Enter your administrator password if prompted.</p>
+<h4 id="install-linux">Ubuntu, Debian and compatible DragonOS — APT</h4>
 <pre><code>{escape(apt_install)}</code></pre>
-<p><strong>Fedora 44</strong></p>
+<h4 id="install-fedora">Fedora 44 — DNF</h4>
 <pre><code>{escape(fedora_install)}</code></pre>
-<h4 id="install-macos">macOS</h4>
-<p>{macos_guidance} The <a href="#package-downloads">download table</a> lists a PKG
-only when it is present in this release. Apple Silicon is tested on M2; Intel
-remains experimental. Follow the
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_STANDALONE.md">standalone app guide</a>
-or use Homebrew with Xcode Command Line Tools:</p>
+<p>The Linux commands download over HTTPS and verify the repository's pinned signing
+key. The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>
+is available to read separately. See <a href="#package-downloads">supported OS versions and manual downloads</a>
+if you need a specific package.</p>
+<h4 id="install-macos">macOS — Homebrew</h4>
+<p>With Homebrew and Xcode Command Line Tools installed, run:</p>
 <pre><code>brew tap mickeyslaven/vectorwarp
 brew trust mickeyslaven/vectorwarp
 brew install vectorwarp
 vectorwarp</code></pre>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_HOMEBREW.md">Homebrew setup and updates</a>
-· <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Advanced: build from source</a></p>
-<p>The <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/script/install-release.sh">installer source</a>
-is available to read separately.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/MACOS_HOMEBREW.md">Homebrew setup and updates</a>.
+Apple Silicon is tested on M2; Intel remains experimental.
+A signed PKG, when available, is an <a href="#package-downloads">optional manual download</a>.</p>
 <h3>2. Configure and start radar</h3>
 <p>{startup_guidance}</p>
 <p>Open <code>http://localhost:3000</code> on the installed machine, or
@@ -224,8 +205,9 @@ Append <code>start</code>, <code>stop</code>, <code>restart</code>, or
 <p>For macOS Homebrew: <code>brew upgrade vectorwarp vectorwarp-heimdall</code>.
 For a standalone PKG, use the next release's PKG through the normal Installer flow.</p>
 <p>{upgrade_guidance}</p>
-<h3 id="package-downloads">Direct downloads</h3>
-<p>For Linux, prefer the installer above for automatic updates. For a manual installation,
+<h3>Other installation options</h3>
+<details id="package-downloads"><summary>Manual downloads: DEB, RPM and macOS PKG</summary>
+<p>Prefer APT/DNF or Homebrew above for routine installs and updates. For a manual installation,
 choose the package matching your OS version and architecture. Install Linux packages with
 <code>sudo apt install ./matching.deb</code> on Ubuntu, Debian, or DragonOS, or
 <code>sudo dnf install ./matching.rpm</code> on Fedora, so dependencies resolve.
@@ -257,6 +239,32 @@ gpg --dearmor --output vectorwarp-release-keyring.gpg vectorwarp-archive-key.asc
 checksum pass. A checksum alone does not authenticate a download.</p></details>
 <p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v{version}">Release notes and all assets</a>
 · <a href="repository-manifest.json">Package manifest</a></p>
+</details>
+<details id="install-pi"><summary>Raspberry Pi 4 preview image — optional card-flashing route</summary>
+{pi_download}
+<p>The Pi route includes Raspberry Pi OS Lite 64-bit Bookworm and VectorWarp.
+Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_GUIDE.md">Pi image download and flashing guide</a>
+for the current image and its validation status. The first target is Pi 4B with 8 GB RAM;
+use a 32 GB or larger microSD card. Pi 5 is future work.</p>
+<ol>
+<li>Open the image's <code>.rpi-imager-manifest</code> in Raspberry Pi Imager,
+then select the microSD card.</li>
+<li>Before writing, choose your hostname, username, password or SSH key, locale,
+Wi-Fi network and country, and enable SSH. Ethernet users can omit Wi-Fi.
+Use the manifest so Imager offers customization; a bare custom image can hide it.</li>
+<li>Write and verify, boot the Pi, then open <code>http://&lt;hostname&gt;.local:3000/</code>
+from another device. Use the router's assigned IP if the name does not resolve.</li>
+<li>Review your receiver, transmitter frequency and site in Settings. For RSPduo,
+install your licensed SDRplay API over SSH, then choose <strong>Build SDRplay support</strong>.
+Choose <strong>Save &amp; Restart</strong> when setup is complete.</li>
+</ol>
+<p>The image has no factory login or Wi-Fi credentials. Radar remains stopped
+until setup. Do not run the Linux installer on a freshly flashed image.</p>
+</details>
+<details><summary>Build from source — development and other systems</summary>
+<p>Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">source installation guide</a>
+for development or systems outside the package targets. Most supported installations
+should use APT, DNF or Homebrew above.</p></details>
 </section>'''
 
 
@@ -284,7 +292,7 @@ th:first-child{padding-left:0}td:last-child{font-weight:700;color:#873200}
 .scope{font-size:.85rem;color:#59544b}.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr));gap:1rem}
 pre{max-width:100%;overflow-x:auto;padding:1rem;background:#f3f0eb;border-radius:.4rem;font-size:.85rem;line-height:1.5}
 code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer;font-weight:650}details{margin-top:1rem}
-.install-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:.8rem;margin:1.2rem 0 2rem}.install-choices a{display:flex;flex-direction:column;gap:.3rem;padding:1rem;border:1px solid #d8c8b7;border-radius:.5rem;text-decoration:none}.install-choices span{font-size:.88rem;color:#59544b}html{scroll-behavior:smooth}h4[id]{scroll-margin-top:1rem}
+.install-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,14rem),1fr));gap:.8rem;margin:1.2rem 0 2rem}.install-choices a{display:flex;flex-direction:column;gap:.3rem;padding:1rem;border:1px solid #d8c8b7;border-radius:.5rem;text-decoration:none}.install-choices span{font-size:.88rem;color:#59544b}html{scroll-behavior:smooth}h4[id],details[id]{scroll-margin-top:1rem}
 .features h3{font-size:1rem;margin:0}.features p{margin:.3rem 0 0}footer{font-size:.85rem;color:#59544b}
 @media(max-width:40rem){main,header,footer{padding:1rem}.panel{padding:1rem}}
 </style></head><body>
@@ -296,7 +304,7 @@ code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer
 <p>Native passive radar for Linux and macOS with multicore processing, optional GPU acceleration,
 and browser controls for live displays, settings, recording and replay.</p>
 <p class="scope">Apple Silicon macOS is tested on M2; Intel Mac support remains experimental.
-The download table lists only packages present in the verified release.</p>
+Install with APT or DNF on Linux, or Homebrew on macOS. Manual downloads are optional.</p>
 <div class="actions"><a class="button" href="#install">Get started</a>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp">Explore the project</a></div>
 </section>
