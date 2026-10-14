@@ -26,8 +26,10 @@ void spectrumCases(){
 void mapCases(){
  constexpr uint32_t fs=2000000;
  for(bool zero:{true,false}){Map<std::complex<double>>cpu(3,3);cpu.delay={-1,0,1};cpu.doppler={-10,0,10};std::vector<double>km,doppler(cpu.doppler.begin(),cpu.doppler.end()),display;
-  for(size_t r=0;r<3;++r)for(size_t c=0;c<3;++c)cpu.data[r][c]=zero?std::complex<double>{0,0}:std::complex<double>{double(r+c+1),double(int(r)-int(c))};cpu.set_metrics();
-  for(int d:cpu.delay)km.push_back(1.0*d*(Constants::c/double(fs))/1000);for(const auto&row:cpu.data)for(const auto z:row)display.push_back(10*std::log10(std::max(1e-30,std::abs(z)))-cpu.noisePower);
+  for(size_t r=0;r<3;++r){for(size_t c=0;c<3;++c){cpu.data[r][c]=zero?std::complex<double>{0,0}:std::complex<double>{double(r+c+1),double(int(r)-int(c))};}}
+  cpu.set_metrics();
+  for(int d:cpu.delay){km.push_back(1.0*d*(Constants::c/double(fs))/1000);}
+  for(const auto&row:cpu.data)for(const auto z:row)display.push_back(10*std::log10(std::max(1e-30,std::abs(z)))-cpu.noisePower);
   MapView v{7,3,3,cpu.noisePower,cpu.maxPower,view(km),view(doppler),view(display)};same(map(v),cpu.to_json_km(7,fs));
   v.display.count-=1;rejects([&]{map(v);});
  }
@@ -39,7 +41,7 @@ void mapCases(){
 void detectionCases(){
  constexpr uint32_t fs=2000000;
  for(const std::vector<double>&d:std::vector<std::vector<double>>{{},{-1,0,.5,2}}){std::vector<double>f(d.size()),s(d.size()),km;for(size_t i=0;i<d.size();++i){f[i]=double(i)*-.125;s[i]=3.14159+i;km.push_back(1.0*d[i]*(Constants::c/double(fs))/1000);}Detection cpu(d,f,s);same(detections({0,view(km),view(f),view(s)}),cpu.to_json_km(0,fs));}
- Detection big({1.125},{1e19},{-1e20});const std::vector<double>km{1.125*(Constants::c/double(fs))/1000},f{1e19},s{-1e20};same(detections({4294967297,view(km),view(f),view(s)}),big.to_json_km(4294967297,fs));
+ Detection big(1.125,1e19,-1e20);const std::vector<double>km{1.125*(Constants::c/double(fs))/1000},f{1e19},s{-1e20};same(detections({4294967297,view(km),view(f),view(s)}),big.to_json_km(4294967297,fs));
  rejects([&]{detections({0,view(km),{},view(s)});});const std::vector<double>nan{std::numeric_limits<double>::quiet_NaN()};rejects([&]{detections({0,view(nan),view(f),view(s)});});
  struct Record {double delay,doppler,snr,delayKm;};const std::vector<Record>records{{1.125,1e19,-1e20,km[0]}};same(detectionRecords(UINT64_C(4294967297),View<Record>{records.data(),records.size()}),big.to_json_km(UINT64_C(4294967297),fs));
  std::cout<<"PASS serializer-detection empty=1 order=1 legacy_km=1 scientific_roundtrip=1\n";

@@ -27,7 +27,8 @@ struct CpuEvidenceDouble {
  }
  void ready(const Packet&p){using namespace blah2::resident;const uint64_t call=readyCalls++;common(Section::readyEvidence,p,Phase::referenceReady);Writer w{m.bytes(Section::readyEvidence)};
   const uint32_t status[]={0,1,64,4,c.reference.powerIterations,64,64,2,64,64,1,4,4,0,0,0};
-  for(size_t i=0;i<16;++i)w.u32(1408+4*i,status[i]);w.u32(1476,64);w.u32(1480,63);w.u64(1536,15);for(size_t i=0;i<4;++i)w.f64(1552+8*i,1);
+  for(size_t i=0;i<16;++i){w.u32(1408+4*i,status[i]);}
+  w.u32(1476,64);w.u32(1480,63);w.u64(1536,15);for(size_t i=0;i<4;++i)w.f64(1552+8*i,1);
   const uint32_t shape[]={64,2,2,1,64,10,12,64,1,0,64,1,64,2,9,7};for(size_t i=0;i<16;++i)w.u32(1600+4*i,shape[i]);
   Writer r{m.bytes(Section::referenceCheckpoint)};r.zero();r.u32(0,1);r.u32(4,256);r.u64(8,c.epoch);r.u64(16,p.frame.logicalId);
   r.u64(24,64);r.u64(32,2);r.u64(40,call);r.u64(48,call+1);r.u64(56,2);r.f64(64,1);r.f64(192,1);r.f64(208,1);
@@ -49,7 +50,8 @@ struct CpuEvidenceDouble {
  }
  void control(const Packet&p,Phase phase){Writer w{m.bytes(Section::controlEvidence)};w.zero();w.u32(0,1);w.u32(4,512);w.u32(8,uint32_t(phase));
   w.u64(16,p.session[0]);w.u64(24,p.session[1]);const uint64_t fields[]={p.requestId,p.frame.logicalId,p.epoch,p.frame.consumedSequence,p.tracker.transaction,p.tracker.generation,p.tracker.consumedSequence,p.tracker.epoch};
-  for(size_t i=0;i<8;++i)w.u64(32+8*i,fields[i]);uint64_t mask=32;uint32_t capture=0;const bool duplicate=p.op==Op::commit&&p.phase==Phase::committed;
+  for(size_t i=0;i<8;++i){w.u64(32+8*i,fields[i]);}
+  uint64_t mask=32;uint32_t capture=0;const bool duplicate=p.op==Op::commit&&p.phase==Phase::committed;
   if(p.op==Op::initialize){mask|=2;capture=1;}else if(p.op==Op::restore){mask|=13;capture=1;}else if(p.op==Op::commit&&!duplicate){mask|=25;capture=1;}else if(duplicate)capture=2;
   w.u64(96,mask);w.u64(104,++event);if(mask&1){w.u32(128+12,c.tracker.capacity);w.u32(128+232,1);if(p.op==Op::commit){w.u64(128+32,p.tracker.transaction);w.u64(128+40,p.tracker.generation);w.u64(128+48,p.tracker.consumedSequence);w.u64(128+56,p.tracker.epoch);}}
   w.u64(416,p.op==Op::quit?0:4096);w.u64(424,4096);w.u64(432,1<<20);w.u64(440,p.op==Op::quit?0:1);w.u32(456,2);w.u32(460,duplicate);w.u32(468,p.op==Op::commit?1:0);w.u32(472,p.op==Op::commit?c.stages():0);w.u32(476,capture);
