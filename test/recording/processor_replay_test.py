@@ -234,6 +234,17 @@ def wait_for(predicate, deadline):
     return False
 
 
+def loop_progress_observed(statuses):
+    """Periodic snapshots can miss playing; completed loop count is durable."""
+    return any(isinstance(item, dict)
+               and item.get("input") == "replay"
+               and item.get("state") in ("playing", "draining")
+               and item.get("error") == ""
+               and type(item.get("loops")) is int
+               and item["loops"] >= 2
+               for item in statuses)
+
+
 def first_json(payload, name):
     try:
         value, _ = json.JSONDecoder().raw_decode(bytes(payload).decode().lstrip())
@@ -317,8 +328,7 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                 ok = wait_for(lambda: any(item.get("state") == "complete" for item in status.snapshot()), deadline)
                 expectation = "complete"
             elif kind == "loop":
-                ok = wait_for(lambda: any(item.get("state") == "playing" and item.get("loops", 0) >= 2
-                                          for item in status.snapshot()), deadline)
+                ok = wait_for(lambda: loop_progress_observed(status.snapshot()), deadline)
                 expectation = "loop >= 2"
             else:
                 ok = wait_for(lambda: any(item.get("state") == "error" and item.get("error")
@@ -350,8 +360,10 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
             if "Setting up device" in output:
                 raise AssertionError(f"{receiver}/{channels} attempted hardware setup: {output}")
             if kind in ("complete", "loop"):
-                required_state = "playing" if kind == "loop" else "complete"
-                if not any(item.get("state") == required_state for item in states):
+                required_state = "loop >= 2" if kind == "loop" else "complete"
+                progress_observed = (loop_progress_observed(states) if kind == "loop" else
+                                     any(item.get("state") == "complete" for item in states))
+                if not progress_observed:
                     raise AssertionError(f"{receiver}/{channels} never reported {required_state}")
                 assert_processor_outputs(sinks)
             return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
