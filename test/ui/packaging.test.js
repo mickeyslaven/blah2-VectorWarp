@@ -126,6 +126,12 @@ assert.match(packageScript, /install-native\.sh.*--artifact.*--destdir/s);
 assert.match(packageScript, /visudo -cf/);
 assert.match(packageScript, /v24\.21\.0/);
 assert.match(packageScript, /Node runtime architecture mismatch/);
+assert.match(packageScript,
+  /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
+  'Binary packages must bind the receiver readiness condition to their private Node runtime.');
+assert.doesNotMatch(packageScript,
+  /ExecStartPre=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
+  'Packaging must not restore the retired restart-looping receiver pre-check.');
 assert.match(packageScript, /bin\/blah2-gpu-vulkan\.so/);
 assert.match(packageScript, /RPM incorrectly depends on system Node/);
 assert.match(packageScript, /api\/node_modules\/\.bin/);
