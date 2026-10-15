@@ -483,7 +483,7 @@ class HomepageTests(unittest.TestCase):
 
     def test_repository_refresh_workflow_selects_only_latest_stable_release(self):
         workflow = (ROOT / '.github/workflows/publish-package-repository.yml').read_text()
-        self.assertRegex(workflow, r'(?m)^  push:\n    branches: \[main\]$')
+        self.assertNotRegex(workflow, r'(?m)^  push:\n')
         self.assertRegex(workflow, r'(?m)^  release:\n    types: \[published\]$')
         self.assertRegex(workflow, r'(?m)^  schedule:\n')
         self.assertNotIn('pull_request:', workflow)
@@ -491,8 +491,7 @@ class HomepageTests(unittest.TestCase):
         self.assertIn('environment: release-signing', workflow)
         self.assertRegex(workflow, r'uses: actions/checkout@[^\n]+\n        with:\n          ref: main')
         self.assertIn('case "$GITHUB_EVENT_NAME" in', workflow)
-        self.assertIn('push)', workflow)
-        self.assertIn('[[ $GITHUB_REF == refs/heads/main ]]', workflow)
+        self.assertNotIn('push)', workflow)
 
         releases = [
             {'tagName': 'v2.4.5', 'isDraft': False, 'isPrerelease': False},
@@ -501,8 +500,8 @@ class HomepageTests(unittest.TestCase):
             {'tagName': 'v9.9.9', 'isDraft': False, 'isPrerelease': True},
             {'tagName': 'v2.4.7', 'isDraft': True, 'isPrerelease': False},
         ]
-        for event, event_tag, input_tag in (('release', 'v2.4.6', ''), ('push', '', ''),
-                                            ('schedule', '', ''), ('workflow_dispatch', '', 'v2.4.6')):
+        for event, event_tag, input_tag in (('release', 'v2.4.6', ''), ('schedule', '', ''),
+                                            ('workflow_dispatch', '', 'v2.4.6')):
             with self.subTest(event=event):
                 result, output = self._select_release_tag(event, releases, event_tag, input_tag)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -511,15 +510,12 @@ class HomepageTests(unittest.TestCase):
                 ('release', 'v2.4.5', '', releases),
                 ('release', 'v2.4.7', '', releases),
                 ('workflow_dispatch', '', 'v2.4.5', releases),
+                ('push', '', '', releases),
                 ('pull_request', '', '', releases),
                 ('schedule', '', '', [])):
             with self.subTest(event=event, tag=event_tag or input_tag):
                 result, _ = self._select_release_tag(event, fixture, event_tag, input_tag)
                 self.assertNotEqual(result.returncode, 0)
-        result, _ = self._select_release_tag('push', releases, ref='refs/heads/untrusted')
-        self.assertNotEqual(result.returncode, 0)
-
-
 class PublicDeploymentTests(unittest.TestCase):
     """Execute the actual post-deploy shell with offline HTTP fixtures."""
 
