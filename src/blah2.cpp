@@ -868,7 +868,8 @@ try
               std::cout << "\n";
               reportedReferenceUpdate = metrics.updates;
             }
-            coherentMapFusion->calibrate(metrics.weights);
+            if (coherentMapFusion)
+              coherentMapFusion->calibrate(metrics.weights);
           }
           if(resident)resident->checkReference(*referenceData,referenceSynthesizer.get_metrics());
           // Synthesis is the last reader of the captured channels. Transfer
