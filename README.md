@@ -4,7 +4,7 @@
 
 > **THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!**
 
-VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native installation on Linux and macOS. Set up your radar, watch it run, and record or replay signals from the same interface.
+VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, coherent multi-channel array processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native installation on Linux and macOS. Set up your radar, watch it run, and record or replay signals from the same interface.
 
 [Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
 
@@ -38,13 +38,18 @@ start; VectorWarp does not distribute the vendor software.
 - **Save & Restart:** apply settings and follow restart progress, with an error message if startup fails.
 - **Recoverable configuration:** backups and file-change checks help protect your settings, including when you also edit the config file directly.
 - **Kraken configuration checks:** compare the receiver's reported frequency, sample rate, and channel count with VectorWarp's settings.
+- **Coherent Kraken arrays:** use 2–8 synchronized inputs, synthesize the broadcast reference from several elements, and keep every selected channel available for surveillance.
+- **Calibrated 360-degree beam banks:** combine coherent surveillance maps with measured per-channel phase and gain instead of relying only on ideal antenna geometry.
+- **Weak-echo controls:** optionally integrate two CPIs, calibrate the effective number of beam trials, search limited inter-CPI motion, or apply a bounded direct-path null.
+- **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
+- **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
 - **Delay ellipses on a map:** see the possible locations associated with a measured delay, without presenting it as an exact aircraft position.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.
 - **Local or remote aircraft feeds:** discover a local decoder or connect to a tar1090 server on another machine.
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.
-- **Processing fixes:** corrected detection SNR, track association, spectrum scaling, and invalid-data handling, with regression tests.
+- **Processing fixes:** corrected detection SNR, track association, spectrum scaling, incomplete multi-CPI startup output, and invalid-data handling, with regression tests.
 - **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel source-level CI support remains experimental.
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)

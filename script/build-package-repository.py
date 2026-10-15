@@ -273,8 +273,8 @@ def repository_homepage(manifest=None):
     return '''<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="VectorWarp: more channels, wider Doppler and GPU-accelerated passive radar with browser controls.">
-<title>VectorWarp — more channels, wider Doppler, faster radar</title>
+<meta name="description" content="VectorWarp: coherent arrays, wider Doppler and GPU-accelerated passive radar with browser controls.">
+<title>VectorWarp — coherent arrays, wider Doppler, faster radar</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#faf8f5;color:#24221f;font:17px/1.6 system-ui,sans-serif}
 main,header,footer{max-width:68rem;margin:auto;padding:1.4rem}
@@ -299,10 +299,11 @@ code{overflow-wrap:anywhere}pre code{overflow-wrap:normal}summary{cursor:pointer
 <header><span class="brand" aria-hidden="true">VW</span> VectorWarp</header>
 <main>
 <section class="hero">
-<h1>More channels. Wider Doppler. Faster radar.</h1>
+<h1>Coherent arrays. Wider Doppler. Faster radar.</h1>
 <p><strong>THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!</strong></p>
-<p>Native passive radar for Linux and macOS with multicore processing, optional GPU acceleration,
-and browser controls for live displays, settings, recording and replay.</p>
+<p>Native passive radar for Linux and macOS with coherent multi-channel processing,
+optional GPU acceleration, and browser controls for live displays, settings,
+recording and replay.</p>
 <p class="scope">Apple Silicon macOS is tested on M2; Intel Mac support remains experimental.
 Install with APT or DNF on Linux, or Homebrew on macOS. Manual downloads are optional.</p>
 <div class="actions"><a class="button" href="#install">Get started</a>
@@ -334,6 +335,18 @@ or a matched upstream ratio.</p>
 <h2>More radar per frame</h2>
 <p>VectorWarp also completes wider and five-channel configurations where regular
 blah2 has no equivalent mode or cannot safely represent the requested geometry.</p>
+<h2>Coherent multi-channel processing</h2>
+<p>Kraken arrays can use 2–8 synchronized inputs, synthesize the broadcast reference
+from several elements, and keep every selected element available for surveillance.
+The calibrated coherent beam bank uses measured per-channel phase and gain to scan
+the full horizon; noncoherent fusion remains available for compatibility.</p>
+<p>Optional weak-echo controls include two-CPI power integration, calibrated effective
+beam trials, a bounded direct-path null, limited inter-CPI motion search, and
+bearing-consistent track association. These controls are independent and default
+to the established behavior until explicitly enabled.</p>
+<p class="scope">Beam index is association evidence, not a unique aircraft bearing.
+Array processing does not guarantee more antenna gain than a directional antenna,
+and every live configuration must still meet its CPI deadline.</p>
 <p class="scope">Physical NVIDIA, AMD and Intel GPU checks compare complex maps to a
 CPU reference. Results are tolerance-validated, not bit-exact or a guarantee for every host.</p>
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/GPU_BENCHMARK_20260911.md">Full configurations, timing distributions and methodology →</a>
@@ -371,6 +384,10 @@ time). It still missed the 200 ms deadline; the driver was not installed system-
 <div class="features">
 <div><h3>Live radar and maps</h3><p>Delay–Doppler, delay ellipses, spectrum and fullscreen displays.</p></div>
 <div><h3>Browser settings</h3><p>Clear controls, validation and Save &amp; Restart.</p></div>
+<div><h3>Coherent arrays</h3><p>Multi-element reference synthesis and calibrated 360-degree surveillance beams.</p></div>
+<div><h3>GPU-resident pipeline</h3><p>Clutter, ambiguity, fusion, detection and bounded tracking with CPU fallback.</p></div>
+<div><h3>Weak-echo integration</h3><p>Optional two-CPI integration and conservative spatial trial controls.</p></div>
+<div><h3>Receiver checks</h3><p>Validated settings, receiver readback, health reporting and recoverable saves.</p></div>
 <div><h3>Built-in ADS-B</h3><p>Use a local decoder or a remote tar1090 feed.</p></div>
 <div><h3>Record and replay</h3><p>Capture IQ and return to the same recording for another look.</p></div>
 </div>
