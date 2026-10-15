@@ -49,7 +49,8 @@ enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1,
 struct FusionConfig {
  FusionMode mode=FusionMode::noncoherent;
  uint32_t beams=0;
- double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0,directPathAzimuthRad=0;
+ double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0,directPathAzimuthRad=0,
+  directPathNullDb=0;
 };
 struct DetectorConfig {
  bool enabled=false,interpolateDelay=true,interpolateDoppler=true;
@@ -57,6 +58,7 @@ struct DetectorConfig {
  uint32_t centroidDelay=0,centroidDoppler=0;
  double pfa=0,minDoppler=0,centroidDopplerResolution=0;
  uint32_t integrationCpis=1;
+ uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
 struct TrackerConfig {
  bool enabled=false;

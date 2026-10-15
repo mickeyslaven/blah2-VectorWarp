@@ -50,17 +50,18 @@ void validateConfig(const Config& c){
   require(f.beams>=4&&f.beams<=360&&std::isfinite(f.frequencyHz)&&f.frequencyHz>0&&
    std::isfinite(f.radiusM)&&f.radiusM>0&&std::isfinite(f.element0Rad)&&
    std::isfinite(f.elementStepRad)&&f.elementStepRad!=0&&
-   std::isfinite(f.directPathAzimuthRad)&&r.channels==c.surveillanceChannels,
+   std::isfinite(f.directPathAzimuthRad)&&std::isfinite(f.directPathNullDb)&&
+   f.directPathNullDb>=0&&f.directPathNullDb<=40&&r.channels==c.surveillanceChannels,
    "Resident coherent fusion configuration invalid");
  else require(!f.beams&&f.frequencyHz==0&&f.radiusM==0&&f.element0Rad==0&&
-  f.elementStepRad==0&&f.directPathAzimuthRad==0,
+  f.elementStepRad==0&&f.directPathAzimuthRad==0&&f.directPathNullDb==0,
   "Resident noncoherent fusion configuration invalid");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
  const auto& d=c.detector;
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
- if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&d.integrationCpis>=1&&d.integrationCpis<=2,"Resident detector bounds invalid");
+ if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&d.integrationCpis>=1&&d.integrationCpis<=2&&d.integrationMotionBins<=1&&(d.integrationCpis==2||!d.integrationMotionBins)&&(d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationCpis==2&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
  if(t.enabled){require(t.capacity&&t.capacity<=(UINT32_MAX-32)/2056&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0,"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
@@ -240,12 +241,14 @@ const auto&t=c.tracker;
  w.f64(480,c.fusion.elementStepRad);
  w.f64(488,c.fusion.directPathAzimuthRad);
  w.u32(496,d.integrationCpis);
+ w.u32(500,d.integrationMotionBins);
+ w.u32(504,d.integrationBeamTolerance);
+ w.u32(508,uint32_t(std::llround(c.fusion.directPathNullDb*1000.0)));
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==512,"Resident config size differs");
 Reader r{b};
 require(r.u32(0)==1&&r.u32(4)==512,"Resident config schema differs");
 r.zeros(308,4);
-r.zeros(500,12);
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -256,6 +259,7 @@ c.fusion.radiusM=r.f64(464);
 c.fusion.element0Rad=r.f64(472);
 c.fusion.elementStepRad=r.f64(480);
 c.fusion.directPathAzimuthRad=r.f64(488);
+c.fusion.directPathNullDb=double(r.u32(508))/1000.0;
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
 g.channels=narrow(r.u64(32));
@@ -299,6 +303,8 @@ ref.centreHz=r.f64(160);
  d.interpolateDelay=boolean(280);
  d.interpolateDoppler=boolean(284);
  d.integrationCpis=r.u32(496);
+ d.integrationMotionBins=r.u32(500);
+ d.integrationBeamTolerance=r.u32(504);
  auto&t=c.tracker;
  t.enabled=boolean(288);
  t.capacity=r.u32(292);

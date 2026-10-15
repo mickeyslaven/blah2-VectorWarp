@@ -7,6 +7,7 @@ struct PostprocessConfig {
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
  uint32_t integrationCpis=1;
+ uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -68,7 +69,9 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED non-unit delay axis");
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
- if(c.integrationCpis<1||c.integrationCpis>2||
+ if(c.integrationCpis<1||c.integrationCpis>2||c.integrationMotionBins>1||
+    (c.integrationCpis!=2&&c.integrationMotionBins)||
+    (c.integrationBeamTolerance!=UINT32_MAX&&(!c.beamCount||c.integrationCpis!=2||c.integrationBeamTolerance>c.beamCount/2))||
     (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
     !std::isfinite(c.minDoppler)||c.minDoppler<0||!std::isfinite(c.centroidDopplerResolution)||c.centroidDopplerResolution<=0||
@@ -84,7 +87,10 @@ layout(local_size_x=128) in;
 layout(binding=0) buffer Metadata { uint m[]; };
 layout(binding=1) readonly buffer Fused { dvec2 fused[]; };
 layout(binding=2) buffer Scratch { uint s[]; };
-layout(binding=3) buffer Integration { double history[]; };
+layout(binding=3) readonly buffer Integration { double history[]; };
+layout(binding=4) writeonly buffer CurrentPower { double currentPower[]; };
+layout(binding=5) readonly buffer BeamHistory { uint historyBeam[]; };
+layout(binding=6) writeonly buffer CurrentBeam { uint currentBeam[]; };
 layout(push_constant) uniform P { uint count; uint a; uint b; uint c; int d; } p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;}
 bool finiteD(double x){return !isnan(x)&&!isinf(x);}
@@ -113,11 +119,29 @@ double positiveLog10(double x){
 )glsl";
 const char* levelsBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
- if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;}
- if(!finiteD(value.x)||!finiteD(value.y)||value.x<0.0LF||value.y!=0.0LF){reject(201u);return;}
- precise double current=value.x*value.x;double prior=history[i];
- precise double power=m[49]!=0u?(m[74]==2u&&finiteD(prior)?0.5LF*(current+prior):current):0.0LF;
- history[i]=current;
+ if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
+ uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
+  (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;m[29]=m[76];m[30]=m[77];m[31]=m[75];}
+ if(value.x<0.0LF||!validBeam){reject(201u);return;}
+ precise double current=value.x*value.x;currentPower[i]=current;currentBeam[i]=beam;
+ double prior=history[i];
+ bool historyReady=m[74]==2u&&finiteD(history[0]);
+ if(historyReady&&m[76]!=0u){
+  uint row=i/m[33],column=i%m[33];prior=-1.0LF;
+  for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+   int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
+   uint at=uint(rr)*m[33]+uint(cc);double candidate=history[at];if(!finiteD(candidate))continue;
+   if(m[77]!=0xffffffffu&&m[75]!=0u){uint other=historyBeam[at],delta=beam>other?beam-other:other-beam;
+    delta=min(delta,m[75]-delta);if(delta>m[77])continue;}
+   if(candidate>prior)prior=candidate;
+  }
+ }
+ if(historyReady&&m[76]==0u&&m[77]!=0xffffffffu&&m[75]!=0u){
+  uint other=historyBeam[i],delta=beam>other?beam-other:other-beam;delta=min(delta,m[75]-delta);
+  if(delta>m[77])prior=packDouble2x32(uvec2(0u,0x7ff80000u));
+ }
+ precise double power=m[49]!=0u?(historyReady&&finiteD(prior)?0.5LF*(current+prior):current):0.0LF;
  double amplitude=sqrt(max(power,0.0LF));
  double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
@@ -149,7 +173,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
  if(p.a==0u||p.a==2u){
   // Qualifier-only mode2 preserves unusable-neighbor semantics without running
   // the whole-frame finite-map admission. Production always uses mode0 here.
-  if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||fused[i].y!=0.0LF||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
+  if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
   precise double snr=0.0LF;if(fused[i].x>0.0LF)snr=10.0LF*positiveLog10(fused[i].x)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
  else {precise double value=readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}
@@ -281,6 +305,7 @@ class Stage {
  Buffer& staging_;
  std::unique_ptr<Buffer> metadata_;
  std::unique_ptr<Buffer> integration_;
+ std::unique_ptr<Buffer> currentPower_,beamHistory_,currentBeam_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t expectedTrainingAdds_=0;
@@ -349,6 +374,9 @@ public:
   words[72]=uint32_t(config.epoch);
   words[73]=uint32_t(config.epoch>>32);
   words[74]=config.integrationCpis;
+  words[75]=config.beamCount;
+  words[76]=config.integrationMotionBins;
+  words[77]=config.integrationBeamTolerance;
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);
@@ -403,8 +431,16 @@ public:
   auto* history=static_cast<double*>(integration_->mapped);
   std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
   integration_->flush(0,integration_->bytes);
+  currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  beamHistory_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*4,
+   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  currentBeam_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*4,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  std::fill_n(static_cast<uint32_t*>(beamHistory_->mapped),layout_.cells,UINT32_MAX);
+  beamHistory_->flush(0,beamHistory_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get()}));
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),beamHistory_.get(),currentBeam_.get()}));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
@@ -413,6 +449,11 @@ public:
   barrier(command);
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
+  barrier(command);
+  VkBufferCopy powerCopy{0,0,integration_->bytes};
+  vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);
+  VkBufferCopy beamCopy{0,0,beamHistory_->bytes};
+  vkCmdCopyBuffer(command,currentBeam_->handle,beamHistory_->handle,1,&beamCopy);
   barrier(command);
   kernels_[1]->append(command,{1,0,0,0,0});
   barrier(command);
@@ -441,7 +482,7 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis)throw std::runtime_error("GPU postprocess configuration echo mismatch");
+  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=config_.integrationMotionBins||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   if(config_.detection){if(s[cfarCells]!=layout_.cells||s[trainingAdds]!=expectedTrainingAdds_||s[cfarAccepted]>layout_.cells||
@@ -543,7 +584,7 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" integration_cpis="<<s[27]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
+  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }

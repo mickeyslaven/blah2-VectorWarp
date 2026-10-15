@@ -186,7 +186,9 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(post[26]==kinds&&post[23]==passes*((cells+127)/128)&&post[24]==post[23]&&post[25]==passes*cells&&post[16]==((kinds&2)?post[6]:0)&&post[17]==((kinds&4)?post[8]:0),"Resident stable compaction coverage differs");}else{for(size_t i=4;i<=17;++i)require(!post[i],"Disabled detector status nonzero");
  for(size_t i=23;i<=26;++i)require(!post[i],"Disabled compaction status nonzero");}
  require(post[28]<=1&&(c.detector.integrationCpis==2||!post[28]),"Resident postprocess integration readiness differs");
- for(size_t i=29;i<32;++i)require(!post[i],"Resident postprocess reserved status nonzero");
+ require(post[29]==c.detector.integrationMotionBins&&post[30]==c.detector.integrationBeamTolerance&&
+  post[31]==(c.fusion.mode==FusionMode::noncoherent?0:c.fusion.beams),
+  "Resident postprocess spatial integration echo differs");
  if(c.tracker.enabled){const auto& t=b.trackerStatus;
  auto pair=[&](size_t i){return uint64_t(t[i])|(uint64_t(t[i+1])<<32);};
  require(!t[0]&&t[1]<=1&&t[3]==c.tracker.capacity&&t[4]==cells&&pair(8)==p.tracker.transaction&&pair(10)==p.tracker.generation&&pair(12)==p.tracker.consumedSequence&&pair(14)==c.epoch&&pair(16)==p.frame.signalTimestampMs&&pair(52)==p.tracker.generation&&t[19]==post[11],"Resident tracker generation proof differs");

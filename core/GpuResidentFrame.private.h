@@ -26,7 +26,7 @@ struct ResidentFrameConfig {
   struct Fusion {
     uint32_t mode = 0, beams = 0;
     double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0,
-      directPathAzimuthRad = 0;
+      directPathAzimuthRad = 0, directPathNullDb = 0;
   } fusion;
   // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
   // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
@@ -190,6 +190,7 @@ void main(){
   if(any(isnan(values[c]))||any(isinf(values[c])))atomicCompSwap(s[0],0u,5u);
  }
  precise float best=-1.0;
+ uint bestBeam=0u;
  for(uint b=0u;b<uint(p.beams);++b){
   vec2 sum=vec2(0.0);
   for(uint c=0u;c<p.channels;++c){
@@ -198,12 +199,13 @@ void main(){
              weight.x*value.y+weight.y*value.x);
   }
   precise float power=sum.x*sum.x+sum.y*sum.y;
-  if(power>best)best=power;
+  if(power>best){best=power;bestBeam=b;}
  }
  precise double result=double(sqrt(best));
  if(isnan(result)||isinf(result))atomicCompSwap(s[0],0u,6u);
  // Keep the same real-amplitude interface as noncoherent fusion.
- fused[i]=dvec2(result,0.0LF);
+ // Preserve the winning spatial hypothesis for optional cross-CPI gating.
+ fused[i]=dvec2(result,double(bestBeam));
  if((i&127u)==0u){uint covered=min(128u,p.count-i);atomicAdd(s[6],covered*p.channels);atomicAdd(s[7],covered);}
 })glsl";
 struct Commands {
@@ -246,10 +248,12 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
     (config.fusion.beams<4||config.fusion.beams>360||!std::isfinite(config.fusion.frequencyHz)||
      config.fusion.frequencyHz<=0||!std::isfinite(config.fusion.radiusM)||config.fusion.radiusM<=0||
      !std::isfinite(config.fusion.element0Rad)||!std::isfinite(config.fusion.elementStepRad)||
-     config.fusion.elementStepRad==0)) ||
+     config.fusion.elementStepRad==0||!std::isfinite(config.fusion.directPathAzimuthRad)||
+     !std::isfinite(config.fusion.directPathNullDb)||config.fusion.directPathNullDb<0||
+     config.fusion.directPathNullDb>40)) ||
     (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
      config.fusion.element0Rad||config.fusion.elementStepRad||
-     config.fusion.directPathAzimuthRad)))
+     config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb)))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
@@ -489,6 +493,7 @@ class ResidentFramePipeline {
       channelScale[channel]=std::clamp(median/noise[channel],.5,2.0);
    }
    auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
+   const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    for(uint32_t beam=0;beam<config.fusion.beams;++beam){
     const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
     std::array<std::complex<double>,8> steering{},combined{};
@@ -498,6 +503,14 @@ class ResidentFramePipeline {
       (std::cos(elementAngle-beamAngle)-
        std::cos(elementAngle-config.fusion.directPathAzimuthRad));
      steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);
+    }
+    if(nullFraction>0){
+     std::complex<double> projection{};
+     for(uint32_t channel=0;channel<channels;++channel)
+      projection+=std::conj(checkpoint.weights[channel])*steering[channel];
+     projection*=nullFraction/norm;
+     for(uint32_t channel=0;channel<channels;++channel)
+      steering[channel]-=projection*checkpoint.weights[channel];
     }
     if(whiten){
      double combinedNorm=0;

@@ -89,3 +89,33 @@ TEST_CASE("coherent beam bank removes receiver chain phase")
   const auto result = fusion.process(maps);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
 }
+
+TEST_CASE("coherent beam bank applies a calibrated soft direct-path null")
+{
+  CoherentBeamBank::Config baseline;
+  baseline.frequencyHz = 539000000;
+  baseline.beams = 12;
+  baseline.directPathAzimuthRad = 0;
+  const double radius = .193548;
+  const double waveNumber = 2 * PI * baseline.frequencyHz / C;
+  std::vector<std::complex<double>> direct;
+  std::vector<Map<std::complex<double>>> storage;
+  std::vector<Map<std::complex<double>>*> maps;
+  for (int channel = 0; channel < 5; ++channel)
+  {
+    const double angle = -2 * PI * channel / 5;
+    baseline.positionsM.push_back({radius * std::cos(angle), radius * std::sin(angle), 0});
+    const double phase = -waveNumber * baseline.positionsM.back()[0];
+    direct.push_back(std::polar(1.0 / std::sqrt(5.0), phase));
+    storage.emplace_back(1, 1);
+    storage.back().data[0][0] = std::polar(1.0, phase);
+  }
+  for (auto& map : storage) maps.push_back(&map);
+  CoherentBeamBank unnulled(baseline);
+  unnulled.calibrate(direct);
+  baseline.directPathNullDb = 20;
+  CoherentBeamBank nulled(baseline);
+  nulled.calibrate(direct);
+  REQUIRE(std::abs(nulled.process(maps)->data[0][0]) ==
+    Catch::Approx(std::abs(unnulled.process(maps)->data[0][0]) * .1).epsilon(1e-11));
+}

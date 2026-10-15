@@ -281,6 +281,8 @@ try
 
   std::string surveillanceFusionMode = "noncoherent";
   uint32_t coherentBeamCount = 12;
+  double effectiveBeamTrials = 0;
+  double directPathNullDb = 0;
   std::vector<std::array<double, 3>> coherentPositions;
   double directPathAzimuthRad = 0;
   if (tree["process"].has_child("surveillance_fusion"))
@@ -288,12 +290,24 @@ try
     auto fusion = tree["process"]["surveillance_fusion"];
     if (fusion.has_child("mode")) fusion["mode"] >> surveillanceFusionMode;
     if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
+    if (fusion.has_child("effective_beam_trials"))
+      fusion["effective_beam_trials"] >> effectiveBeamTrials;
+    if (fusion.has_child("direct_path_null_db"))
+      fusion["direct_path_null_db"] >> directPathNullDb;
   }
   if (surveillanceFusionMode != "noncoherent" &&
       surveillanceFusionMode != "coherent_beam_bank" &&
       surveillanceFusionMode != "noise_whitened_beam_bank")
     throw std::invalid_argument("Unknown surveillance-fusion mode");
   const bool coherentFusion = surveillanceFusionMode != "noncoherent";
+  if (!effectiveBeamTrials) effectiveBeamTrials = coherentBeamCount;
+  if (!std::isfinite(effectiveBeamTrials) || effectiveBeamTrials < 1 ||
+      effectiveBeamTrials > coherentBeamCount)
+    throw std::invalid_argument("Effective beam trials must be from 1 through the beam count");
+  if (!std::isfinite(directPathNullDb) || directPathNullDb < 0 || directPathNullDb > 40)
+    throw std::invalid_argument("Direct-path null depth must be from 0 through 40 dB");
+  if (!coherentFusion && (effectiveBeamTrials != coherentBeamCount || directPathNullDb != 0))
+    throw std::invalid_argument("Beam trial/null controls require coherent surveillance fusion");
   if (coherentFusion)
   {
     if (type != "Kraken" || !tree["capture"]["device"].has_child("array_geometry") ||
@@ -556,11 +570,13 @@ try
   {
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        directPathAzimuthRad});
+        directPathAzimuthRad, directPathNullDb});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
     std::cout << " direct_path_azimuth_deg=" <<
       directPathAzimuthRad * 180.0 / std::acos(-1.0);
+    std::cout << " effective_beam_trials=" << effectiveBeamTrials
+      << " direct_path_null_db=" << directPathNullDb;
     std::cout << "\n";
   }
   else
@@ -571,6 +587,8 @@ try
   int8_t nGuard, nTrain;
   int8_t minDelay;
   uint32_t integrationCpis = 1;
+  uint32_t integrationMotionBins = 0;
+  uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
   tree["process"]["detection"]["nTrain"] >> nTrain;
@@ -578,18 +596,29 @@ try
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
   if (tree["process"]["detection"].has_child("integration_cpis"))
     tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
+  if (tree["process"]["detection"].has_child("integration_motion_bins"))
+    tree["process"]["detection"]["integration_motion_bins"] >> integrationMotionBins;
+  if (tree["process"]["detection"].has_child("integration_beam_tolerance"))
+    tree["process"]["detection"]["integration_beam_tolerance"] >> integrationBeamTolerance;
   if (integrationCpis < 1 || integrationCpis > 2)
     throw std::invalid_argument("Detection integration_cpis must be 1 or 2");
   if (integrationCpis > 1 && !residentMode)
     throw std::invalid_argument("Multi-CPI detection requires gpu-resident acceleration");
+  if (integrationMotionBins > 1 || (integrationMotionBins && integrationCpis != 2))
+    throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
+  if (integrationBeamTolerance != UINT32_MAX &&
+      (!coherentFusion || integrationCpis != 2 || integrationBeamTolerance > coherentBeamCount / 2))
+    throw std::invalid_argument("Detection integration_beam_tolerance requires coherent two-CPI fusion and at most half the beam count");
   // A beam bank reports the maximum of several trials per cell. Apply a
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
+  const double motionTrials = integrationMotionBins ? 9.0 : 1.0;
   const double detectorPfa = coherentFusion
-    ? pfa / coherentBeamCount : pfa;
+    ? pfa / (effectiveBeamTrials * motionTrials) : pfa / motionTrials;
   if (coherentFusion)
     std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
-      << " effective_pfa=" << detectorPfa << "\n";
+      << " effective_pfa=" << detectorPfa << " effective_beam_trials="
+      << effectiveBeamTrials << " motion_trials=" << motionTrials << "\n";
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
@@ -666,12 +695,13 @@ try
         ? blah2::resident::FusionMode::noiseWhitenedRegularPolygon
         : blah2::resident::FusionMode::coherentRegularPolygon;
       residentConfig.fusion={fusionMode,
-        coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad};
+        coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
+        directPathNullDb};
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
-    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,integrationCpis};
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,integrationCpis,integrationMotionBins,integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");

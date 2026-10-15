@@ -18,6 +18,7 @@ public:
     uint32_t beams = 12;
     std::vector<std::array<double, 3>> positionsM;
     double directPathAzimuthRad = 0;
+    double directPathNullDb = 0;
   };
 
   explicit CoherentBeamBank(const Config& config);
@@ -30,6 +31,7 @@ public:
 private:
   double waveNumber_ = 0;
   double directPathAzimuthRad_ = 0;
+  double directPathNullDb_ = 0;
   std::vector<std::array<double, 3>> positionsM_;
   std::vector<std::vector<std::complex<double>>> weights_;
 };

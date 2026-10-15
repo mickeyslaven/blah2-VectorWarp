@@ -36,7 +36,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.middle=c.middle;
  v.fusion={uint32_t(c.fusion.mode),c.fusion.beams,c.fusion.frequencyHz,
   c.fusion.radiusM,c.fusion.element0Rad,c.fusion.elementStepRad,
-  c.fusion.directPathAzimuthRad};
+  c.fusion.directPathAzimuthRad,c.fusion.directPathNullDb};
  v.stages=c.stages();
  const auto& r=c.reference;
  v.reference={ReferenceMode::capturedArray,r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};
@@ -55,6 +55,9 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.interpolateDelay=d.interpolateDelay;
  p.interpolateDoppler=d.interpolateDoppler;
  p.integrationCpis=d.integrationCpis;
+ p.integrationMotionBins=d.integrationMotionBins;
+ p.integrationBeamTolerance=d.integrationBeamTolerance;
+ p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  p.delayAxis=c.delayAxis;
  p.dopplerAxis=c.dopplerAxis;
  p.epoch=c.epoch;

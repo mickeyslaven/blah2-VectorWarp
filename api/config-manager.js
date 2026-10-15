@@ -470,6 +470,13 @@ function validateConfig(config, baseline = null) {
   if (detection.integration_cpis !== undefined)
     number(detection.integration_cpis, 'process.detection.integration_cpis',
       {integer: true, min: 1, max: 2});
+  if (detection.integration_motion_bins !== undefined)
+    number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
+      {integer: true, min: 0, max: 1});
+  if (detection.integration_beam_tolerance !== undefined)
+    number(detection.integration_beam_tolerance,
+      'process.detection.integration_beam_tolerance',
+      {integer: true, min: 0, max: 180});
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -541,6 +548,16 @@ function validateConfig(config, baseline = null) {
     if (fusion.beams !== undefined)
       number(fusion.beams, 'process.surveillance_fusion.beams',
         {integer: true, min: 4, max: 360});
+    if (fusion.effective_beam_trials !== undefined) {
+      number(fusion.effective_beam_trials,
+        'process.surveillance_fusion.effective_beam_trials', {min: 1, max: 360});
+      if (Number.isFinite(fusion.beams) &&
+          fusion.effective_beam_trials > fusion.beams)
+        errors.push('effective_beam_trials cannot exceed surveillance_fusion.beams');
+    }
+    if (fusion.direct_path_null_db !== undefined)
+      number(fusion.direct_path_null_db,
+        'process.surveillance_fusion.direct_path_null_db', {min: 0, max: 40});
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
       if (device.type !== 'Kraken')
@@ -569,6 +586,18 @@ function validateConfig(config, baseline = null) {
       if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
         errors.push('coherent fusion requires x_axis_bearing_deg_true');
     }
+  }
+  if ((detection.integration_motion_bins ?? 0) > 0 &&
+      (detection.integration_cpis ?? 1) !== 2)
+    errors.push('integration_motion_bins requires integration_cpis: 2');
+  if (detection.integration_beam_tolerance !== undefined) {
+    const fusion = processConfig.surveillance_fusion;
+    if ((detection.integration_cpis ?? 1) !== 2 ||
+        !fusion || fusion.mode === 'noncoherent')
+      errors.push('integration_beam_tolerance requires coherent two-CPI fusion');
+    else if (Number.isFinite(fusion.beams) &&
+        detection.integration_beam_tolerance > Math.floor(fusion.beams / 2))
+      errors.push('integration_beam_tolerance cannot exceed half the beam count');
   }
 
   string(network.ip, 'network.ip');

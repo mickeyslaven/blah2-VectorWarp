@@ -13,6 +13,7 @@ constexpr double TWO_PI = 6.283185307179586476925286766559;
 CoherentBeamBank::CoherentBeamBank(const Config& config)
   : waveNumber_(TWO_PI * config.frequencyHz / SPEED_OF_LIGHT),
     directPathAzimuthRad_(config.directPathAzimuthRad),
+    directPathNullDb_(config.directPathNullDb),
     positionsM_(config.positionsM)
 {
   if (!std::isfinite(config.frequencyHz) || config.frequencyHz <= 0)
@@ -23,6 +24,9 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
     throw std::invalid_argument("Coherent fusion requires antenna positions");
   if (!std::isfinite(config.directPathAzimuthRad))
     throw std::invalid_argument("Coherent fusion direct-path azimuth must be finite");
+  if (!std::isfinite(config.directPathNullDb) || config.directPathNullDb < 0 ||
+      config.directPathNullDb > 40)
+    throw std::invalid_argument("Coherent fusion direct-path null must be from 0 through 40 dB");
 
   const double normalization = 1.0 / std::sqrt(double(config.positionsM.size()));
   weights_.resize(config.beams);
@@ -61,20 +65,27 @@ void CoherentBeamBank::calibrate(
   const double scale = 1.0 / std::sqrt(norm);
   const double directX = std::cos(directPathAzimuthRad_);
   const double directY = std::sin(directPathAzimuthRad_);
+  const double nullFraction = 1.0 - std::pow(10.0, -directPathNullDb_ / 20.0);
   for (std::size_t beam = 0; beam < weights_.size(); ++beam)
   {
     const double azimuth = TWO_PI * double(beam) / double(weights_.size());
     const double targetX = std::cos(azimuth);
     const double targetY = std::sin(azimuth);
+    std::vector<std::complex<double>> steering(positionsM_.size());
+    std::complex<double> projection{0, 0};
     for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
     {
       const auto& position = positionsM_[channel];
       const double relativePhase = waveNumber_ *
         (position[0] * (targetX - directX) +
          position[1] * (targetY - directY));
-      weights_[beam][channel] = scale * std::conj(directPathWeights[channel]) *
-        std::polar(1.0, relativePhase);
+      steering[channel] = directPathWeights[channel] * std::polar(1.0, -relativePhase);
+      projection += std::conj(directPathWeights[channel]) * steering[channel];
     }
+    projection *= nullFraction / norm;
+    for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
+      weights_[beam][channel] = scale *
+        std::conj(steering[channel] - projection * directPathWeights[channel]);
   }
 }
 

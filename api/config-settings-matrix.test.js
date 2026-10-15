@@ -112,8 +112,13 @@ try {
   Object.assign(kraken.network.ports, {api: 3100, map: 3101, detection: 3102, track: 3103, timestamp: 3104, timing: 3105, iqdata: 3106});
   persistGroup('kraken-coherent-edit', krakenBase, kraken, ['capture.device.channel_count','capture.device.reference_channel','capture.device.surveillance_channels','process.reference_synthesis.mode','process.reference_synthesis.channels','process.performance.acceleration','process.performance.surveillance_workers','process.performance.fft_threads','network.ports.api','network.ports.map','network.ports.detection','network.ports.track','network.ports.timestamp','network.ports.timing','network.ports.iqdata']);
   const fusion = clone(krakenBase);
-  fusion.process.performance.acceleration = 'auto';
+  fusion.process.performance.acceleration = 'gpu-resident';
+  fusion.process.tracker.gpu_capacity = 128;
   fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.process.surveillance_fusion.effective_beam_trials = 6;
+  fusion.process.detection.integration_cpis = 2;
+  fusion.process.detection.integration_motion_bins = 1;
+  fusion.process.detection.integration_beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
     mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
@@ -126,7 +131,12 @@ try {
     }))
   };
   persistGroup('kraken-coherent-fusion', krakenBase, fusion,
-    ['process.surveillance_fusion.mode']);
+    ['process.performance.acceleration', 'process.tracker.gpu_capacity',
+      'process.surveillance_fusion.mode',
+      'process.surveillance_fusion.effective_beam_trials',
+      'process.detection.integration_cpis',
+      'process.detection.integration_motion_bins',
+      'process.detection.integration_beam_tolerance']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
