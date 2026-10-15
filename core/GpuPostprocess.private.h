@@ -159,13 +159,13 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
 const char* cfarBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=0u;s[m[40]+i]=0u;
  uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
- if(m[74]==2u&&m[28]==0u)return;
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
  uint at=m[46]+8u*column,n=m[at+4u];if(n==0u)return;
  precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
  for(uint j=m[at+2u];j<m[at+3u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
  atomicAdd(m[5],n);train=train/double(n);precise double threshold=readD(at+6u)*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
+ if(m[74]==2u&&m[28]==0u)return;
  if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=1u;atomicAdd(m[6],1u);
   uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
 }
