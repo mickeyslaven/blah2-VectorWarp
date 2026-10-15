@@ -287,6 +287,7 @@ class ResidentFramePipeline {
  std::unique_ptr<Plan> referencePlan_,rangePlan_,dopplerPlan_;
  std::unique_ptr<Kernel> multiply_,gather_;
  struct Workspace {
+  const ResidentFrameConfig& config;
   std::unique_ptr<ClutterPipeline> clutter;
   std::unique_ptr<Buffer> canonical,fused,status,fusionWeights;
   // Stage descriptors/plans die before the canonical and borrowed native storage.
@@ -296,7 +297,7 @@ class ResidentFramePipeline {
   std::unique_ptr<gpu_native::Timestamps> timestamps;
   gpu_resident::Commands commands; // Destroy commands before anything they reference.
   const uint32_t capacity;
-  Workspace(ResidentFramePipeline& owner,uint32_t channels):commands(owner.context_),capacity(channels){
+  Workspace(ResidentFramePipeline& owner,uint32_t channels):config(owner.config_),commands(owner.context_),capacity(channels){
    auto& context=owner.context_;
    const auto& config=owner.config_;
    auto g=config.geometry;
