@@ -28,29 +28,54 @@ struct Properties { std::vector<Type> types; std::vector<Heap> heaps; };
 // comparison also rejects oversized requests without overflowing a counter.
 class AllocationBudget {
   Properties properties_;
-  uint64_t limit_, used_ = 0, peak_ = 0;
+  uint64_t limit_, deviceLimit_, used_ = 0, peak_ = 0;
+  uint64_t deviceUsed_ = 0, devicePeak_ = 0;
+  bool separateHostHeaps_ = false;
   std::vector<uint64_t> heapUsed_;
 public:
-  AllocationBudget(uint64_t limit, Properties properties)
-    : properties_(std::move(properties)), limit_(limit),
-      heapUsed_(properties_.heaps.size()) {}
+  AllocationBudget(uint64_t limit, Properties properties,
+      bool separateHostHeaps = false)
+    : properties_(std::move(properties)), limit_(limit), deviceLimit_(limit),
+      separateHostHeaps_(separateHostHeaps), heapUsed_(properties_.heaps.size()) {
+    // A discrete GPU can expose staging and mapped tracker buffers from a
+    // separate system-memory heap. Keep the conservative aggregate device
+    // ceiling, but do not charge those host allocations against VRAM as well
+    // as their own per-heap allowance.
+    if (separateHostHeaps_) {
+      for (const auto& heap : properties_.heaps) if (!heap.device) {
+        const uint64_t allowance = heapBudget(heap.bytes);
+        limit_ = allowance > std::numeric_limits<uint64_t>::max() - limit_ ?
+          std::numeric_limits<uint64_t>::max() : limit_ + allowance;
+      }
+    }
+  }
   bool reserve(uint32_t type, uint64_t bytes) {
     if (type >= properties_.types.size() || !bytes || bytes > limit_ - used_)
       return false;
     const auto heap = properties_.types[type].heap;
     if (heap >= heapUsed_.size()) return false;
+    if (separateHostHeaps_ && properties_.heaps[heap].device &&
+        bytes > deviceLimit_ - deviceUsed_) return false;
     const auto heapLimit = heapBudget(properties_.heaps[heap].bytes);
     if (bytes > heapLimit - heapUsed_[heap]) return false;
     heapUsed_[heap] += bytes; used_ += bytes; peak_ = std::max(peak_, used_);
+    if (properties_.heaps[heap].device) {
+      deviceUsed_ += bytes;
+      devicePeak_ = std::max(devicePeak_, deviceUsed_);
+    }
     return true;
   }
   void release(uint32_t type, uint64_t bytes) {
     const auto heap = properties_.types.at(type).heap;
+    if (properties_.heaps.at(heap).device) deviceUsed_ -= bytes;
     heapUsed_.at(heap) -= bytes; used_ -= bytes;
   }
   uint64_t used() const { return used_; }
   uint64_t peak() const { return peak_; }
   uint64_t limit() const { return limit_; }
+  uint64_t deviceUsed() const { return deviceUsed_; }
+  uint64_t devicePeak() const { return devicePeak_; }
+  uint64_t deviceLimit() const { return deviceLimit_; }
 };
 
 inline uint32_t chooseType(uint32_t compatible, uint32_t required,

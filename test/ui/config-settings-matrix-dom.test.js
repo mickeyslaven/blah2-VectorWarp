@@ -137,6 +137,7 @@ async function saveAndAssert(label, expected) {
     setScalar('process.detection.minDelay', 6);
     setScalar('process.detection.minDoppler', 20);
     setScalar('process.detection.nCentroid', 7);
+    setScalar('process.detection.integration_cpis', 1);
     setScalar('process.tracker.enable', false);
     setScalar('process.tracker.enable', true);
     setScalar('process.tracker.initiate.M', 2);
@@ -177,7 +178,8 @@ async function saveAndAssert(label, expected) {
       'process.clutter.delayMin': -8, 'process.clutter.delayMax': 390, 'process.detection.enable': false,
       'process.detection.pfa': .00002, 'process.detection.nGuard': 3, 'process.detection.nTrain': 8,
       'process.detection.minDelay': 6, 'process.detection.minDoppler': 20,
-      'process.detection.nCentroid': 7, 'process.tracker.enable': true,
+      'process.detection.nCentroid': 7, 'process.detection.integration_cpis': 1,
+      'process.tracker.enable': true,
       'process.tracker.initiate.M': 2, 'process.tracker.initiate.N': 4,
       'process.tracker.initiate.maxAcc': 12, 'process.tracker.delete': 11, 'truth.adsb.enabled': true,
       'truth.adsb.tar1090': 'https://adsb.example/tar1090', 'truth.adsb.poll_interval': 2,
@@ -271,7 +273,8 @@ async function saveAndAssert(label, expected) {
       'process.ambiguity.dopplerMax', 'process.clutter.enable', 'process.clutter.delayMin',
       'process.clutter.delayMax', 'process.detection.enable', 'process.detection.pfa',
       'process.detection.nGuard', 'process.detection.nTrain', 'process.detection.minDelay',
-      'process.detection.minDoppler', 'process.detection.nCentroid', 'process.tracker.enable',
+      'process.detection.minDoppler', 'process.detection.nCentroid',
+      'process.detection.integration_cpis', 'process.tracker.enable',
       'process.tracker.initiate.M', 'process.tracker.initiate.N', 'process.tracker.initiate.maxAcc',
       'process.tracker.delete', 'truth.adsb.enabled', 'truth.adsb.tar1090', 'truth.adsb.poll_interval',
       'truth.adsb.smoothing_window', 'truth.adsb.max_position_age', 'save.map', 'save.detection',

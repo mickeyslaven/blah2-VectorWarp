@@ -205,7 +205,7 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 # Node. Binary release packages instead use the verified private runtime.
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service"
-sed -i 's|ExecStartPre=/usr/bin/node |ExecStartPre=/opt/vectorwarp/runtime/node/bin/node |' \
+sed -i 's|ExecCondition=/usr/bin/node |ExecCondition=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service"
 sed -i 's|^/usr/bin/node /opt/vectorwarp/|/opt/vectorwarp/runtime/node/bin/node /opt/vectorwarp/|' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
@@ -213,7 +213,7 @@ sed -i 's|  /usr/bin/node /opt/vectorwarp/|  /opt/vectorwarp/runtime/node/bin/no
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
 grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API unit to private Node'
-grep -q '^ExecStartPre=/opt/vectorwarp/runtime/node/bin/node ' \
+grep -q '^ExecCondition=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service" || die 'could not bind receiver startup check to private Node'
 grep -q '^/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart" || die 'could not bind restart helper to private Node'

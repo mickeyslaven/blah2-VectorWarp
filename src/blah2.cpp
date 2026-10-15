@@ -22,6 +22,7 @@
 #include "process/utility/FftwThreads.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
+#include "process/fusion/CoherentBeamBank.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -50,6 +51,9 @@
 #include <stdexcept>
 #include <future>
 #include <limits>
+#include <array>
+#include <cmath>
+#include <numeric>
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
@@ -275,6 +279,96 @@ try
     if (channel >= captureChannelCount)
       throw std::invalid_argument("Invalid array-reference channel");
 
+  std::string surveillanceFusionMode = "noncoherent";
+  uint32_t coherentBeamCount = 12;
+  double effectiveBeamTrials = 0;
+  double directPathNullDb = 0;
+  std::vector<std::array<double, 3>> coherentPositions;
+  double directPathAzimuthRad = 0;
+  if (tree["process"].has_child("surveillance_fusion"))
+  {
+    auto fusion = tree["process"]["surveillance_fusion"];
+    if (fusion.has_child("mode")) fusion["mode"] >> surveillanceFusionMode;
+    if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
+    if (fusion.has_child("effective_beam_trials"))
+      fusion["effective_beam_trials"] >> effectiveBeamTrials;
+    if (fusion.has_child("direct_path_null_db"))
+      fusion["direct_path_null_db"] >> directPathNullDb;
+  }
+  if (surveillanceFusionMode != "noncoherent" &&
+      surveillanceFusionMode != "coherent_beam_bank" &&
+      surveillanceFusionMode != "noise_whitened_beam_bank")
+    throw std::invalid_argument("Unknown surveillance-fusion mode");
+  const bool coherentFusion = surveillanceFusionMode != "noncoherent";
+  if (!effectiveBeamTrials) effectiveBeamTrials = coherentBeamCount;
+  if (!std::isfinite(effectiveBeamTrials) || effectiveBeamTrials < 1 ||
+      effectiveBeamTrials > coherentBeamCount)
+    throw std::invalid_argument("Effective beam trials must be from 1 through the beam count");
+  if (!std::isfinite(directPathNullDb) || directPathNullDb < 0 || directPathNullDb > 40)
+    throw std::invalid_argument("Direct-path null depth must be from 0 through 40 dB");
+  if (!coherentFusion && (effectiveBeamTrials != coherentBeamCount || directPathNullDb != 0))
+    throw std::invalid_argument("Beam trial/null controls require coherent surveillance fusion");
+  if (coherentFusion)
+  {
+    if (type != "Kraken" || !tree["capture"]["device"].has_child("array_geometry") ||
+        !tree["capture"]["device"]["array_geometry"].has_child("elements"))
+      throw std::invalid_argument("Coherent surveillance fusion requires Kraken array geometry");
+    std::vector<std::array<double, 3>> positions(captureChannelCount);
+    std::vector<bool> found(captureChannelCount, false);
+    for (auto element : tree["capture"]["device"]["array_geometry"]["elements"].children())
+    {
+      uint32_t channel = std::numeric_limits<uint32_t>::max();
+      if (!element.has_child("daq_channel") || !element.has_child("position")) continue;
+      element["daq_channel"] >> channel;
+      if (channel >= captureChannelCount) continue;
+      std::array<double, 3> position{};
+      std::size_t coordinate = 0;
+      for (auto value : element["position"].children())
+      {
+        if (coordinate >= position.size()) break;
+        value >> position[coordinate++];
+      }
+      if (coordinate == position.size())
+      {
+        positions[channel] = position;
+        found[channel] = true;
+      }
+    }
+    for (uint32_t channel : surveillanceChannels)
+    {
+      if (!found[channel])
+        throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
+      coherentPositions.push_back(positions[channel]);
+    }
+    {
+      if (!arrayReference || referenceChannels != surveillanceChannels)
+        throw std::invalid_argument("Coherent fusion requires the array reference to use every surveillance channel in the same order");
+      auto geometry = tree["capture"]["device"]["array_geometry"];
+      if (!geometry.has_child("x_axis_bearing_deg_true") ||
+          !tree["location"].has_child("rx") ||
+          !tree["location"].has_child("tx"))
+        throw std::invalid_argument("Coherent fusion requires array orientation and receiver/transmitter locations");
+      double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
+        txLatDeg = 0, txLonDeg = 0;
+      geometry["x_axis_bearing_deg_true"] >> xAxisBearingDeg;
+      tree["location"]["rx"]["latitude"] >> rxLatDeg;
+      tree["location"]["rx"]["longitude"] >> rxLonDeg;
+      tree["location"]["tx"]["latitude"] >> txLatDeg;
+      tree["location"]["tx"]["longitude"] >> txLonDeg;
+      const double radians = std::acos(-1.0) / 180.0;
+      const double rxLat = rxLatDeg * radians, txLat = txLatDeg * radians;
+      const double dLon = (txLonDeg - rxLonDeg) * radians;
+      const double trueBearing = std::atan2(std::sin(dLon) * std::cos(txLat),
+        std::cos(rxLat) * std::sin(txLat) - std::sin(rxLat) *
+        std::cos(txLat) * std::cos(dLon));
+      directPathAzimuthRad = std::remainder(xAxisBearingDeg * radians -
+        trueBearing, 2 * std::acos(-1.0));
+      if (!std::isfinite(directPathAzimuthRad) ||
+          (rxLatDeg == txLatDeg && rxLonDeg == txLonDeg))
+        throw std::invalid_argument("Coherent fusion has invalid receiver/transmitter geometry");
+    }
+  }
+
   // Each surveillance path owns its processing state and working buffers.
   // Zero selects automatic sizing; omitted values retain legacy behavior.
   uint32_t configuredWorkers = 1;
@@ -385,6 +479,8 @@ try
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
   const bool residentMode=accelerationMode=="gpu-resident";
+  if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
+    throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
   if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI5 GPU route");
 #endif
@@ -469,17 +565,61 @@ try
   uint64_t reportedReferenceUpdate = 0;
   uint64_t replayProcessedFrames = 0;
   Noncoherent mapFusion;
+  std::unique_ptr<CoherentBeamBank> coherentMapFusion;
+  if (coherentFusion)
+  {
+    coherentMapFusion = std::make_unique<CoherentBeamBank>(
+      CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
+        directPathAzimuthRad, directPathNullDb});
+    std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
+      << coherentBeamCount << " channels=" << coherentPositions.size();
+    std::cout << " direct_path_azimuth_deg=" <<
+      directPathAzimuthRad * 180.0 / std::acos(-1.0);
+    std::cout << " effective_beam_trials=" << effectiveBeamTrials
+      << " direct_path_null_db=" << directPathNullDb;
+    std::cout << "\n";
+  }
+  else
+    std::cout << "[SurveillanceFusion] mode=noncoherent\n";
 
   // set up process detection
   double pfa, minDoppler;
   int8_t nGuard, nTrain;
   int8_t minDelay;
+  uint32_t integrationCpis = 1;
+  uint32_t integrationMotionBins = 0;
+  uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
   tree["process"]["detection"]["nTrain"] >> nTrain;
   tree["process"]["detection"]["minDelay"] >> minDelay;
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
-  CfarDetector1D *cfarDetector1D = new CfarDetector1D(pfa, nGuard, nTrain, minDelay, minDoppler);
+  if (tree["process"]["detection"].has_child("integration_cpis"))
+    tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
+  if (tree["process"]["detection"].has_child("integration_motion_bins"))
+    tree["process"]["detection"]["integration_motion_bins"] >> integrationMotionBins;
+  if (tree["process"]["tracker"].has_child("beam_tolerance"))
+    tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
+  if (integrationCpis < 1 || integrationCpis > 2)
+    throw std::invalid_argument("Detection integration_cpis must be 1 or 2");
+  if (integrationCpis > 1 && !residentMode)
+    throw std::invalid_argument("Multi-CPI detection requires gpu-resident acceleration");
+  if (integrationMotionBins > 1 || (integrationMotionBins && integrationCpis != 2))
+    throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
+  if (integrationBeamTolerance != UINT32_MAX &&
+      (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
+    throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
+  // A beam bank reports the maximum of several trials per cell. Apply a
+  // Bonferroni correction so its configured false-alarm probability retains
+  // the same upper bound as the single noncoherent statistic.
+  const double motionTrials = integrationMotionBins ? 9.0 : 1.0;
+  const double detectorPfa = coherentFusion
+    ? pfa / (effectiveBeamTrials * motionTrials) : pfa / motionTrials;
+  if (coherentFusion)
+    std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
+      << " effective_pfa=" << detectorPfa << " effective_beam_trials="
+      << effectiveBeamTrials << " motion_trials=" << motionTrials << "\n";
+  CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
   // set up process centroid
@@ -509,6 +649,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if (integrationBeamTolerance != UINT32_MAX && !isTracker)
+    throw std::invalid_argument("Tracker beam_tolerance requires tracking to be enabled");
   if (!isDetection)
   {
     isTracker = false;
@@ -532,10 +674,36 @@ try
     residentConfig.delayAxis.assign(ambiguity.front()->result()->delay.begin(),ambiguity.front()->result()->delay.end());
     residentConfig.dopplerAxis.assign(ambiguity.front()->result()->doppler.begin(),ambiguity.front()->result()->doppler.end());
     residentConfig.reference={referenceChannels,referenceConfig.analysisSamples,referenceConfig.analysisInterval,referenceConfig.powerIterations,referenceConfig.covarianceSmoothing,referenceConfig.diagonalLoading,spectrumBandwidth,double(fc)};
+    if(coherentFusion){
+      std::string shape;
+      auto geometry=tree["capture"]["device"]["array_geometry"];
+      if(geometry.has_child("shape"))geometry["shape"]>>shape;
+      if(shape!="regular_polygon"||coherentPositions.size()<3)
+        throw std::invalid_argument("Resident coherent fusion requires regular-polygon geometry");
+      double centreX=0,centreY=0;
+      for(const auto& position:coherentPositions){centreX+=position[0];centreY+=position[1];}
+      centreX/=coherentPositions.size();centreY/=coherentPositions.size();
+      std::vector<double> angles,radii;
+      for(const auto& position:coherentPositions){const double x=position[0]-centreX,y=position[1]-centreY;
+        angles.push_back(std::atan2(y,x));radii.push_back(std::hypot(x,y));}
+      const double radius=std::accumulate(radii.begin(),radii.end(),0.0)/radii.size();
+      const double step=std::remainder(angles[1]-angles[0],2*std::acos(-1.0));
+      const double tolerance=std::max(.001,radius*.05);
+      for(size_t channel=0;channel<radii.size();++channel)
+        if(std::abs(radii[channel]-radius)>tolerance||
+           std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
+          throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
+      const auto fusionMode=surveillanceFusionMode == "noise_whitened_beam_bank"
+        ? blah2::resident::FusionMode::noiseWhitenedRegularPolygon
+        : blah2::resident::FusionMode::coherentRegularPolygon;
+      residentConfig.fusion={fusionMode,
+        coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
+        directPathNullDb};
+    }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
-    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,pfa,minDoppler,1/tCpi};
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,integrationCpis,integrationMotionBins,integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");
@@ -745,6 +913,8 @@ try
               std::cout << "\n";
               reportedReferenceUpdate = metrics.updates;
             }
+            if (coherentMapFusion)
+              coherentMapFusion->calibrate(metrics.weights);
           }
           if(resident)resident->checkReference(*referenceData,referenceSynthesizer.get_metrics());
           // Synthesis is the last reader of the captured channels. Transfer
@@ -910,7 +1080,8 @@ try
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.
-          map = mapFusion.process(channelMaps);
+          map = coherentMapFusion ? coherentMapFusion->process(channelMaps) :
+            mapFusion.process(channelMaps);
           map->set_metrics();
           timing_helper(timing_name, timing_time, time, "ambiguity_processing");
           

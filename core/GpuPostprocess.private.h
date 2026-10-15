@@ -6,6 +6,8 @@ struct PostprocessConfig {
  int32_t guard=0,train=0,minDelay=0;
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
+ uint32_t integrationCpis=1;
+ uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -67,10 +69,13 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED non-unit delay axis");
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
- if(c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
+ if(c.integrationCpis<1||c.integrationCpis>2||c.integrationMotionBins>1||
+    (c.integrationCpis!=2&&c.integrationMotionBins)||
+    (c.integrationBeamTolerance!=UINT32_MAX&&(!c.beamCount||c.integrationBeamTolerance>c.beamCount/2))||
+    (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
     !std::isfinite(c.minDoppler)||c.minDoppler<0||!std::isfinite(c.centroidDopplerResolution)||c.centroidDopplerResolution<=0||
-    !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution)))
+    !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution))))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED detector configuration");
  if(c.detection&&uint64_t(l.cells)*uint32_t(2*c.train)>UINT32_MAX)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED counter capacity");
@@ -82,6 +87,8 @@ layout(local_size_x=128) in;
 layout(binding=0) buffer Metadata { uint m[]; };
 layout(binding=1) readonly buffer Fused { dvec2 fused[]; };
 layout(binding=2) buffer Scratch { uint s[]; };
+layout(binding=3) readonly buffer Integration { double history[]; };
+layout(binding=4) writeonly buffer CurrentPower { double currentPower[]; };
 layout(push_constant) uniform P { uint count; uint a; uint b; uint c; int d; } p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;}
 bool finiteD(double x){return !isnan(x)&&!isinf(x);}
@@ -109,10 +116,26 @@ double positiveLog10(double x){
 }
 )glsl";
 const char* levelsBody=R"glsl(
-void main(){uint i=indexOf();if(i>=m[34])return;if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];}dvec2 value=fused[i];
- if(!finiteD(value.x)||!finiteD(value.y)||value.x<0.0LF||value.y!=0.0LF){reject(201u);return;}
- double level=value.x<=1e-30LF?-300.0LF:10.0LF*positiveLog10(value.x);
- precise double power=m[49]!=0u?value.x*value.x:0.0LF;
+void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
+ if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
+ uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
+  (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;m[29]=m[76];m[30]=m[77];m[31]=m[75];}
+ if(value.x<0.0LF||!validBeam){reject(201u);return;}
+ precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
+ double prior=history[i];
+ bool historyReady=m[74]==2u&&finiteD(history[0]);
+ if(historyReady&&m[76]!=0u){
+  uint row=i/m[33],column=i%m[33];prior=-1.0LF;
+  for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+   int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
+   uint at=uint(rr)*m[33]+uint(cc);double candidate=history[at];if(!finiteD(candidate))continue;
+   if(candidate>prior)prior=candidate;
+  }
+ }
+ precise double power=m[49]!=0u?(historyReady&&finiteD(prior)&&prior>=0.0LF?0.5LF*(current+prior):current):0.0LF;
+ double amplitude=sqrt(max(power,0.0LF));
+ double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
  writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,power);atomicAdd(m[1],1u);
 }
@@ -142,7 +165,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
  if(p.a==0u||p.a==2u){
   // Qualifier-only mode2 preserves unusable-neighbor semantics without running
   // the whole-frame finite-map admission. Production always uses mode0 here.
-  if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||fused[i].y!=0.0LF||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
+  if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
   precise double snr=0.0LF;if(fused[i].x>0.0LF)snr=10.0LF*positiveLog10(fused[i].x)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
  else {precise double value=readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}
@@ -150,7 +173,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
 }
 )glsl";
 const char* cfarBody=R"glsl(
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=0u;s[m[40]+i]=0u;
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=s[m[39]+i]&0xffffff00u;s[m[40]+i]=0u;
  uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
  uint at=m[46]+8u*column,n=m[at+4u];if(n==0u)return;
@@ -158,7 +181,8 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=0u;s[m[40]+
  for(uint j=m[at+2u];j<m[at+3u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
  atomicAdd(m[5],n);train=train/double(n);precise double threshold=readD(at+6u)*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
- if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=1u;atomicAdd(m[6],1u);
+ if(m[74]==2u&&m[28]==0u)return;
+ if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=s[m[39]+i]|1u;atomicAdd(m[6],1u);
   uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
 }
 )glsl";
@@ -166,7 +190,7 @@ const char* centroidBody=R"glsl(
 bool finiteRecord(uint at){return finiteD(readS(at))&&finiteD(readS(at+2u))&&finiteD(readS(at+4u));}
 void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u)return;
  // p.a=1 is a direct-record qualifier binding; production always uses zero.
- if(p.a==0u&&s[m[39]+i]==0u)return;s[m[40]+i]=0u;uint record=m[42]+6u*i;
+ if(p.a==0u&&(s[m[39]+i]&1u)==0u)return;s[m[40]+i]=0u;uint record=m[42]+6u*i;
  if(!finiteRecord(record))return;atomicAdd(m[7],1u);double centreSnr=readS(record+4u);bool retain=true;
  if(p.a==0u){uint row=i/m[33],column=i%m[33],rb=m[47]+2u*row,cb=m[48]+2u*column;
   for(uint r=m[rb];r<m[rb+1u]&&retain;++r)for(uint c=m[cb];c<m[cb+1u];++c){
@@ -272,6 +296,8 @@ class Stage {
  Buffer& scratch_;
  Buffer& staging_;
  std::unique_ptr<Buffer> metadata_;
+ std::unique_ptr<Buffer> integration_;
+ std::unique_ptr<Buffer> currentPower_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t expectedTrainingAdds_=0;
@@ -339,6 +365,10 @@ public:
   words[60]=fs;
   words[72]=uint32_t(config.epoch);
   words[73]=uint32_t(config.epoch>>32);
+  words[74]=config.integrationCpis;
+  words[75]=config.beamCount;
+  words[76]=config.integrationMotionBins;
+  words[77]=config.integrationBeamTolerance;
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);
@@ -352,7 +382,17 @@ public:
     words[at+2]=uint32_t(rb);
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
-    const double alpha=count?count*(std::pow(config.pfa,-1.0/count)-1):0;
+    double alpha=count?count*(std::pow(config.pfa,-1.0/count)-1):0;
+    if(count&&config.integrationCpis==2){
+     const auto survival=[&](double candidate){
+      const double ratio=count/(count+candidate);
+      return std::pow(ratio,2.0*count)*(1.0+2.0*count*candidate/(count+candidate));};
+     double low=0,high=1;
+     while(survival(high)>config.pfa&&high<1e12)high*=2;
+     for(unsigned iteration=0;iteration<96;++iteration){const double middle=(low+high)*.5;
+      if(survival(middle)>config.pfa)low=middle;else high=middle;}
+     alpha=high;
+    }
     if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
     putD(words.data(),at+6,alpha);
     if(config.delayAxis[j]>=config.minDelay)for(uint32_t r=0;r<rows;++r)if(std::abs(config.dopplerAxis[r])>=config.minDoppler)expectedTrainingAdds_+=uint32_t(count);
@@ -378,8 +418,15 @@ public:
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
+  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
+   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  auto* history=static_cast<double*>(integration_->mapped);
+  std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
+  integration_->flush(0,integration_->bytes);
+  currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_}));
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get()}));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
@@ -388,6 +435,9 @@ public:
   barrier(command);
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
+  barrier(command);
+  VkBufferCopy powerCopy{0,0,integration_->bytes};
+  vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);
   barrier(command);
   kernels_[1]->append(command,{1,0,0,0,0});
   barrier(command);
@@ -416,7 +466,7 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_)throw std::runtime_error("GPU postprocess configuration echo mismatch");
+  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=config_.integrationMotionBins||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   if(config_.detection){if(s[cfarCells]!=layout_.cells||s[trainingAdds]!=expectedTrainingAdds_||s[cfarAccepted]>layout_.cells||
@@ -460,6 +510,7 @@ public:
   add(scratch_.mapped,size_t(scratch_.bytes),1);
   add(staging_.mapped,size_t(staging_.bytes),1);
   add(metadata_->mapped,size_t(metadata_->bytes),1);
+  add(integration_->mapped,size_t(integration_->bytes),1);
   for(size_t i=0;i<ranges.size();++i)for(size_t j=0;j<i;++j)if(ranges[i].first<ranges[j].second&&ranges[j].first<ranges[i].second)
    throw std::invalid_argument("GPU postprocess host buffers overlap");
  }
@@ -470,7 +521,8 @@ public:
   if(s[detectionCount])copy(uint64_t(layout_.records)*4,out.detections,uint64_t(s[detectionCount])*32);
   if(out.levels)copy(uint64_t(layout_.levels)*4,out.levels,uint64_t(layout_.cells)*8);
   if(out.unflooredSnr)copy(uint64_t(layout_.snr)*4,out.unflooredSnr,uint64_t(layout_.cells)*8);
-  if(out.decisionFlags)copy(uint64_t(layout_.flags)*4,out.decisionFlags,uint64_t(layout_.cells)*4);
+  if(out.decisionFlags){copy(uint64_t(layout_.flags)*4,out.decisionFlags,uint64_t(layout_.cells)*4);
+   for(size_t i=0;i<out.decisionFlagCount;++i)out.decisionFlags[i]&=7u;}
   if(out.detectionCells&&s[detectionCount])copy(uint64_t(layout_.indices)*4,out.detectionCells,uint64_t(s[detectionCount])*4);
   if(out.cfar)copyDiagnostic(1,out.cfar,s[cfarAccepted]);
   if(out.centroid)copyDiagnostic(2,out.centroid,s[centroidKept]);
@@ -517,7 +569,7 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
+  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }

@@ -148,6 +148,12 @@ target_include_directories(testFrameDiagnostics PRIVATE ${PROJECT_ROOT})
 add_test(NAME residentFrameDiagnosticsCpuContract COMMAND testFrameDiagnostics)
 set_tests_properties(residentFrameDiagnosticsCpuContract PROPERTIES TIMEOUT 10)
 
+add_executable(testGpuTrackerAdmission ${PROJECT_ROOT}/test/gpu/TestGpuTrackerAdmission.cpp)
+target_compile_features(testGpuTrackerAdmission PRIVATE cxx_std_17)
+target_include_directories(testGpuTrackerAdmission PRIVATE ${PROJECT_ROOT})
+add_test(NAME gpuTrackerCapacityAdmission COMMAND testGpuTrackerAdmission)
+set_tests_properties(gpuTrackerCapacityAdmission PROPERTIES TIMEOUT 10)
+
 option(BLAH2_TEST_PHYSICAL_GPU "Run synthetic qualification on a real GPU (no CPU substitution)" OFF)
 if(BLAH2_TEST_PHYSICAL_GPU)
   if(NOT TARGET blah2GpuWorker)

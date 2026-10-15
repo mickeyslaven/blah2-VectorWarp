@@ -255,6 +255,14 @@ int main() {
       check(!budget.reserve(0, UINT64_MAX) && !budget.reserve(99, 1) &&
         !budget.reserve(0, 0) && budget.used() == 25,
         "Invalid Vulkan allocation changed the budget");
+      AllocationBudget discrete(40, {{{deviceLocal, 0}, {hostVisible, 1},
+        {deviceLocal | hostVisible, 0}}, {{100, true}, {200, false}}}, true);
+      check(discrete.reserve(0, 20) && discrete.reserve(1, 40) &&
+        discrete.used() == 60 && discrete.deviceUsed() == 20 &&
+        discrete.limit() == 90 && discrete.deviceLimit() == 40 &&
+        !discrete.reserve(1, 11) && discrete.reserve(2, 5) &&
+        !discrete.reserve(2, 1),
+        "Separate host heap was charged against the device allocation ceiling");
       check(heapBudget(2ULL << 30) == (512ULL << 20) &&
         heapBudget(64ULL << 30) == (2ULL << 30),
         "GPU allocation allowance did not scale with device capacity");

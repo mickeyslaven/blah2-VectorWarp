@@ -467,6 +467,12 @@ function validateConfig(config, baseline = null) {
   number(detection.minDelay, 'process.detection.minDelay',
     {integer: true, min: -128, max: 127});
   number(detection.minDoppler, 'process.detection.minDoppler', {min: 0});
+  if (detection.integration_cpis !== undefined)
+    number(detection.integration_cpis, 'process.detection.integration_cpis',
+      {integer: true, min: 1, max: 2});
+  if (detection.integration_motion_bins !== undefined)
+    number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
+      {integer: true, min: 0, max: 1});
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -492,6 +498,9 @@ function validateConfig(config, baseline = null) {
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
   number(tracker.delete, 'process.tracker.delete',
     {integer: true, min: 1, max: 255});
+  if (tracker.beam_tolerance !== undefined)
+    number(tracker.beam_tolerance, 'process.tracker.beam_tolerance',
+      {integer: true, min: 0, max: 180});
   string(tracker.smooth, 'process.tracker.smooth');
   if (processConfig.performance !== undefined) {
     const performance = requireObject(processConfig.performance,
@@ -504,6 +513,9 @@ function validateConfig(config, baseline = null) {
       if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
         errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
     }
+    if ((detection.integration_cpis ?? 1) > 1 &&
+        performance.acceleration !== 'gpu-resident')
+      errors.push('multi-CPI detection requires gpu-resident acceleration');
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});
@@ -526,6 +538,64 @@ function validateConfig(config, baseline = null) {
       'process.reference_synthesis.diagonal_loading', {min: 0});
     if (synthesis.power_iterations > 100)
       advise('process.reference_synthesis.power_iterations', 'May slow updates. Try 12 iterations.');
+  }
+  if (processConfig.surveillance_fusion !== undefined) {
+    const fusion = requireObject(processConfig.surveillance_fusion,
+      'process.surveillance_fusion');
+    if (!['noncoherent', 'coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
+      errors.push('process.surveillance_fusion.mode is not supported');
+    if (fusion.beams !== undefined)
+      number(fusion.beams, 'process.surveillance_fusion.beams',
+        {integer: true, min: 4, max: 360});
+    if (fusion.effective_beam_trials !== undefined) {
+      number(fusion.effective_beam_trials,
+        'process.surveillance_fusion.effective_beam_trials', {min: 1, max: 360});
+      if (Number.isFinite(fusion.beams) &&
+          fusion.effective_beam_trials > fusion.beams)
+        errors.push('effective_beam_trials cannot exceed surveillance_fusion.beams');
+    }
+    if (fusion.direct_path_null_db !== undefined)
+      number(fusion.direct_path_null_db,
+        'process.surveillance_fusion.direct_path_null_db', {min: 0, max: 40});
+    if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
+      const label = fusion.mode;
+      if (device.type !== 'Kraken')
+        errors.push(`${label} surveillance fusion requires a Kraken receiver`);
+      if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
+        errors.push(`${label} surveillance fusion requires capture.device.array_geometry.elements`);
+      const geometryChannels = new Set((device.array_geometry?.elements || [])
+        .filter(isObject).filter(element => Array.isArray(element.position) &&
+          element.position.length === 3 && element.position.every(Number.isFinite))
+        .map(element => element.daq_channel));
+      if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
+        errors.push(`${label} geometry must include every surveillance channel`);
+      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+          device.array_geometry?.shape !== 'regular_polygon')
+        errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
+      if (fusion.mode === 'noise_whitened_beam_bank' &&
+          processConfig.performance?.acceleration !== 'gpu-resident')
+        errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
+      const reference = processConfig.reference_synthesis;
+      const surveillance = device.surveillance_channels || [];
+      if (reference?.mode !== 'array_eigenbeam' ||
+          !Array.isArray(reference.channels) ||
+          reference.channels.length !== surveillance.length ||
+          reference.channels.some((channel, index) => channel !== surveillance[index]))
+        errors.push('coherent fusion requires array_eigenbeam reference channels to match surveillance channels');
+      if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
+        errors.push('coherent fusion requires x_axis_bearing_deg_true');
+    }
+  }
+  if ((detection.integration_motion_bins ?? 0) > 0 &&
+      (detection.integration_cpis ?? 1) !== 2)
+    errors.push('integration_motion_bins requires integration_cpis: 2');
+  if (tracker.beam_tolerance !== undefined) {
+    const fusion = processConfig.surveillance_fusion;
+    if (!tracker.enable || !fusion || fusion.mode === 'noncoherent')
+      errors.push('tracker beam_tolerance requires coherent tracking');
+    else if (Number.isFinite(fusion.beams) &&
+        tracker.beam_tolerance > Math.floor(fusion.beams / 2))
+      errors.push('tracker beam_tolerance cannot exceed half the beam count');
   }
 
   string(network.ip, 'network.ip');

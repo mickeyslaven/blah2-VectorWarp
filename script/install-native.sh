@@ -268,6 +268,11 @@ run cp -a "$ARTIFACT" "$release"
 # to the newly copied, root-owned release code; saved configuration is untouched.
 run chmod -R go-w "$release"
 if [[ -z $DESTDIR && $EUID -eq 0 ]]; then run chown -R root:root "$release"; fi
+# A copied executable inherits the staging tree's generic label on enforcing
+# SELinux hosts. Label the complete immutable release before current can name it.
+if [[ -z $DESTDIR ]] && command -v restorecon >/dev/null 2>&1; then
+  run restorecon -RF "$release"
+fi
 run ln -sfn "releases/$build_id" "$target_prefix/current.next"
 run mv -Tf "$target_prefix/current.next" "$target_prefix/current"
 

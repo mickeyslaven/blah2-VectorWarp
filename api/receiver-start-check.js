@@ -4,6 +4,10 @@ const {readConfig} = require('./config-store');
 const {createReceiverJournal} = require('./receiver-journal');
 const {createKrakenControlClient} = require('./receiver-sync');
 
+// EX_CONFIG: startup is intentionally blocked until receiver state/configuration
+// changes.  The systemd unit treats this differently from a processor crash.
+const RECEIVER_START_BLOCKED_EXIT_STATUS = 78;
+
 async function checkReceiverStart(filename, options = {}) {
   const read = options.readConfig || readConfig;
   const document = read(filename);
@@ -31,7 +35,8 @@ if (require.main === module) {
   checkReceiverStart(process.argv[2]).then(result => {
     console.log(`Receiver startup: ${result.state}`);
   }).catch(error => {
-    console.error(`Receiver startup blocked: ${error.message}`); process.exitCode = 1;
+    console.error(`Receiver startup blocked: ${error.message}`);
+    process.exitCode = RECEIVER_START_BLOCKED_EXIT_STATUS;
   });
 }
-module.exports = {checkReceiverStart};
+module.exports = {checkReceiverStart, RECEIVER_START_BLOCKED_EXIT_STATUS};

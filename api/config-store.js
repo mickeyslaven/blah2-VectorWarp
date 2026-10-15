@@ -20,7 +20,8 @@ function setupDefaults() {
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
       clutter: {enable: true, delayMin: -10, delayMax: 400},
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
-        minDelay: 5, minDoppler: 15, nCentroid: 6},
+        minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
+        integration_motion_bins: 0},
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10}, delete: 10, smooth: 'none'}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,

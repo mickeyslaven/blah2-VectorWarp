@@ -54,6 +54,20 @@ process:
     power_iterations: 12
     covariance_smoothing: 0.8
     diagonal_loading: 0.001
+  # Existing behavior remains the default. coherent_beam_bank removes the
+  # measured per-channel complex response using the array eigenbeam and the
+  # configured array orientation plus receiver/transmitter locations.
+  # noise_whitened_beam_bank additionally suppresses the measured residual
+  # channel covariance and is available only with gpu-resident acceleration.
+  surveillance_fusion:
+    mode: "noncoherent"
+    beams: 12
+    # Optional. Defaults to beams (the conservative Bonferroni correction).
+    # Lower only after measuring correlated beam-bank trials on the live array.
+    effective_beam_trials: 12
+    # Optional soft spatial null toward the configured transmitter bearing.
+    # Zero preserves the calibrated coherent beam bank.
+    direct_path_null_db: 0
   detection:
     enable: true
     pfa: 0.00001
@@ -62,6 +76,10 @@ process:
     minDelay: 5
     minDoppler: 15
     nCentroid: 6
+    # Optional GPU-resident noncoherent power integration; 1 preserves legacy behavior.
+    integration_cpis: 1
+    # Optional 2-CPI local trajectory bank. Zero preserves same-cell integration.
+    integration_motion_bins: 0
   tracker:
     enable: true
     initiate:
@@ -70,6 +88,9 @@ process:
       maxAcc: 10
     delete: 10
     smooth: "none"
+    # Optional maximum circular winning-beam change for track association.
+    # Omit to preserve delay/Doppler-only association.
+    # beam_tolerance: 1
 
 network:
   ip: 0.0.0.0

@@ -220,7 +220,8 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
 }
 struct CheckpointBinding {uint32_t capacity=0;
-uint64_t epoch=0,generation=0,consumedSequence=0;};
+uint64_t epoch=0,generation=0,consumedSequence=0;
+uint32_t beamCount=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -269,7 +270,7 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   finite(f);
   finite(realPair(w,at+4));
   stateName(w[at+6]);
-  require(w[at+7]==0,"GPU history reserved word nonzero");
+  require(w[at+7]<=binding.beamCount,"GPU history beam metadata invalid");
   h.d.push_back(d);
   h.f.push_back(f);
   h.s.push_back(w[at+6]);}

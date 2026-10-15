@@ -57,6 +57,10 @@ class HomepageTests(unittest.TestCase):
 
     def test_package_managers_are_primary_and_manual_routes_are_collapsed(self):
         page = repository.repository_homepage(self.release_manifest())
+        for capability in ('Coherent multi-channel processing', 'calibrated coherent beam bank',
+                           'two-CPI power integration', 'bearing-consistent track association',
+                           'GPU-resident pipeline', 'bounded tracking'):
+            self.assertIn(capability, page)
         primary = page[page.index('<h3>1. Install for your OS</h3>'):page.index('<h3>2. Configure and start radar</h3>')]
         for label in ('APT · recommended', 'DNF · recommended', 'Homebrew · recommended'):
             self.assertIn(label, primary)

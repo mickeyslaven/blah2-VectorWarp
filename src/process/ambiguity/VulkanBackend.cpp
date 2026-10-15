@@ -46,8 +46,9 @@ struct DeviceAllocations {
   struct Entry { uint32_t type; uint64_t bytes; };
   blah2::gpu_memory::AllocationBudget budget;
   std::unordered_map<VkDeviceMemory, Entry> allocations;
-  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties)
-    : budget(limit, std::move(properties)) {}
+  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties,
+      bool separateHostHeaps = false)
+    : budget(limit, std::move(properties), separateHostHeaps) {}
 };
 std::mutex allocationsMutex;
 std::unordered_map<VkDevice, DeviceAllocations> deviceAllocations;
@@ -64,7 +65,9 @@ static VkResult budgetAllocateMemory(VkDevice device, const VkMemoryAllocateInfo
     if (std::getenv("BLAH2_GPU_DIAGNOSTICS"))
       std::cerr << "GPU allocation budget rejected bytes=" << info->allocationSize
         << " type=" << info->memoryTypeIndex << " used=" << state.budget.used()
-        << " limit=" << state.budget.limit() << '\n';
+        << " limit=" << state.budget.limit()
+        << " device_used=" << state.budget.deviceUsed()
+        << " device_limit=" << state.budget.deviceLimit() << '\n';
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
   const VkResult result = vkAllocateMemory(device, info, callbacks, memory);
@@ -257,7 +260,7 @@ struct Context {
         std::lock_guard<std::mutex> lock(allocationsMutex);
         deviceAllocations.try_emplace(device,
           gpu_memory::heapBudget(candidate.info.memoryBytes),
-          memoryProperties(candidate.physical));
+          memoryProperties(candidate.physical), true);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);

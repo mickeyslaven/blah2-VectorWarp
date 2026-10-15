@@ -29,6 +29,47 @@ sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74
 assert.equal(validateConfig(sixChannel).valid, true);
 
 const clone = value => JSON.parse(JSON.stringify(value));
+const coherentFusion = load('config-kraken.yml');
+coherentFusion.process.surveillance_fusion = {mode: 'coherent_beam_bank', beams: 12};
+coherentFusion.capture.device.array_geometry = {
+  shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+  mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+  x_axis_bearing_deg_true: 0,
+  bearing_channels: [...coherentFusion.capture.device.surveillance_channels], elements:
+  coherentFusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
+    id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
+    position: [Math.cos(2 * Math.PI * index / 5) * .193548,
+      Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+  }))};
+assert.equal(validateConfig(coherentFusion).valid, true,
+  'coherent beam-bank fusion accepts complete Kraken geometry');
+const whitenedFusion = clone(coherentFusion);
+whitenedFusion.process.performance.acceleration = 'gpu-resident';
+whitenedFusion.process.tracker.gpu_capacity = 1024;
+whitenedFusion.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
+assert.equal(validateConfig(whitenedFusion).valid, true,
+  'noise-whitened beam-bank fusion accepts resident Kraken geometry');
+const nonresidentWhitenedFusion = clone(whitenedFusion);
+nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,
+  'noise-whitened beam-bank fusion requires resident acceleration');
+const mismatchedCalibration = clone(coherentFusion);
+mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
+assert.equal(validateConfig(mismatchedCalibration).valid, false,
+  'coherent fusion rejects reference/surveillance channel mismatch');
+const legacyCalibratedName = clone(coherentFusion);
+legacyCalibratedName.process.surveillance_fusion.mode = 'calibrated_coherent_beam_bank';
+assert.equal(validateConfig(legacyCalibratedName).valid, false,
+  'removed calibrated mode name cannot select a second coherent path');
+const missingFusionElement = clone(coherentFusion);
+missingFusionElement.capture.device.array_geometry.elements.pop();
+assert.equal(validateConfig(missingFusionElement).valid, false,
+  'coherent beam-bank fusion requires every surveillance element');
+for (const beams of [3, 361, 12.5]) {
+  const invalid = clone(coherentFusion);
+  invalid.process.surveillance_fusion.beams = beams;
+  assert.equal(validateConfig(invalid).valid, false, `reject coherent beam count ${beams}`);
+}
 // Sample-rate limits belong to the receiver, not to the shared DSP pipeline.
 // USRP and dual HackRF can request 6 MS/s; Kraken and coherent RSPduo cannot.
 for (const [name, accepted] of [['config-usrp.yml', true],

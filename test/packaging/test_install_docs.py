@@ -189,6 +189,9 @@ exit 0
         self.assertNotIn("before starting vectorwarp-processor.service", result.stdout)
         native = (ROOT / "script/install-native.sh").read_text()
         self.assertIn("vectorwarp help lists all commands", native)
+        self.assertLess(native.index('restorecon -RF "$release"'),
+                        native.index('ln -sfn "releases/$build_id"'),
+                        "SELinux labels must be restored before current names the release")
         self.assertNotIn("systemctl enable --now vectorwarp-api.service vectorwarp-processor.service", native)
         release = (ROOT / "script/install-release.sh").read_text()
         self.assertNotIn("still needs the coordinated refresh", release)

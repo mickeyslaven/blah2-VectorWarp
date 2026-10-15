@@ -88,7 +88,7 @@ public:
  if(config().detector.enabled)result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
- result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14)});}return result;}
+ result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams});}return result;}
  void commit(){wire::require(prepared_.preparedEvidence.data,"Resident commit missing prepared frame");
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle missing before commit");
  sessionCall([&]{session_->commit(prepared_.trackerToken);});}

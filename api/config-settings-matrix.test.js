@@ -111,6 +111,32 @@ try {
   kraken.process.performance = {...kraken.process.performance, acceleration: 'cpu', surveillance_workers: 2, fft_threads: 2};
   Object.assign(kraken.network.ports, {api: 3100, map: 3101, detection: 3102, track: 3103, timestamp: 3104, timing: 3105, iqdata: 3106});
   persistGroup('kraken-coherent-edit', krakenBase, kraken, ['capture.device.channel_count','capture.device.reference_channel','capture.device.surveillance_channels','process.reference_synthesis.mode','process.reference_synthesis.channels','process.performance.acceleration','process.performance.surveillance_workers','process.performance.fft_threads','network.ports.api','network.ports.map','network.ports.detection','network.ports.track','network.ports.timestamp','network.ports.timing','network.ports.iqdata']);
+  const fusion = clone(krakenBase);
+  fusion.process.performance.acceleration = 'gpu-resident';
+  fusion.process.tracker.gpu_capacity = 128;
+  fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.process.surveillance_fusion.effective_beam_trials = 6;
+  fusion.process.detection.integration_cpis = 2;
+  fusion.process.detection.integration_motion_bins = 1;
+  fusion.process.tracker.beam_tolerance = 1;
+  fusion.capture.device.array_geometry = {
+    shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+    mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+    x_axis_bearing_deg_true: 0,
+    bearing_channels: [...fusion.capture.device.surveillance_channels],
+    elements: fusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
+      id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
+      position: [Math.cos(2 * Math.PI * index / 5) * .193548,
+        Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+    }))
+  };
+  persistGroup('kraken-coherent-fusion', krakenBase, fusion,
+    ['process.performance.acceleration', 'process.tracker.gpu_capacity',
+      'process.surveillance_fusion.mode',
+      'process.surveillance_fusion.effective_beam_trials',
+      'process.detection.integration_cpis',
+      'process.detection.integration_motion_bins',
+      'process.tracker.beam_tolerance']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
@@ -119,7 +145,9 @@ try {
   // as a coherent resident-mode edit without changing unrelated settings.
   const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
   resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
-  persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration', 'process.tracker.gpu_capacity']);
+  resident.process.detection.integration_cpis = 2;
+  persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
+    'process.tracker.gpu_capacity', 'process.detection.integration_cpis']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

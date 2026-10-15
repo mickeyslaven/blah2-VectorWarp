@@ -17,6 +17,11 @@ struct ReferenceCheckpoint {
  uint32_t weightCount=0;
  std::array<std::complex<double>,8> weights{};
  double coherentFraction=0,coherentGainDb=0,scale=0;
+ // Internal live-state evidence only. It is deliberately not part of the
+ // durable 256-byte checkpoint; restored workers use matched weights until
+ // the next scheduled covariance analysis.
+ bool covarianceValid=false;
+ std::array<std::complex<double>,64> covariance{};
 };
 struct ReferenceOutputs {
  ReferenceCheckpoint* checkpoint=nullptr;
@@ -324,6 +329,8 @@ class Stage {
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  CommandOwner commitCommand_,probeCommand_; // Freed before kernels/borrowed storage.
  std::vector<double> frequencies_;
+ bool covarianceValid_=false;
+ std::array<std::complex<double>,64> covarianceCache_{};
  void submit(VkCommandBuffer command){VkSubmitInfo s{VK_STRUCTURE_TYPE_SUBMIT_INFO};
  s.commandBufferCount=1;
  s.pCommandBuffers=&command;
@@ -350,6 +357,8 @@ class Stage {
   cp.coherentFraction=getD(m,at+40);
   cp.coherentGainDb=getD(m,at+42);
   cp.scale=getD(m,at+44);
+  cp.covarianceValid=covarianceValid_;
+  cp.covariance=covarianceCache_;
   return cp;
  }
 public:
@@ -464,7 +473,15 @@ public:
    throw std::runtime_error("GPU reference/spectrum coverage mismatch");
   return s;
  }
- ReferenceCheckpoint commit(){checkStatus();
+ ReferenceCheckpoint commit(){const auto status=checkStatus();
+  if(status[analyzed]){
+   metadata_->invalidate(0,metadata_->bytes);
+   const auto* m=static_cast<const uint32_t*>(metadata_->mapped);
+   const uint32_t count=uint32_t(config_.referenceChannels.size());
+   for(uint32_t i=0;i<count*count;++i)
+    std::memcpy(static_cast<void*>(&covarianceCache_[i]),m+covariance+4*i,16);
+   covarianceValid_=true;
+  }
  submit(commitCommand_.command);
  checkStatus(true);
  return decode(committed);}
@@ -488,6 +505,7 @@ public:
   putD(words.data(),44,cp.scale);
   std::memcpy(static_cast<uint32_t*>(metadata_->mapped)+committed,words.data(),sizeof(words));
   metadata_->flush(committed*4,sizeof(words));
+  covarianceValid_=false;
  }
  void reset(){ReferenceCheckpoint cp;
  cp.config=config_;

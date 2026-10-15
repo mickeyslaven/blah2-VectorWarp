@@ -41,6 +41,9 @@ process:
     minDelay: 5
     minDoppler: 15
     nCentroid: 6
+    # Optional GPU-resident noncoherent power integration; 1 preserves legacy behavior.
+    integration_cpis: 1
+    integration_motion_bins: 0
   tracker:
     enable: false
     initiate:

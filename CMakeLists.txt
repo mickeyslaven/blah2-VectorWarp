@@ -131,6 +131,7 @@ add_executable(blah2
   src/process/clutter/WienerHopf.cpp
   src/process/conditioning/ArrayReferenceSynthesizer.cpp
   src/process/fusion/Noncoherent.cpp
+  src/process/fusion/CoherentBeamBank.cpp
   src/process/detection/CfarDetector1D.cpp
   src/process/detection/Centroid.cpp
   src/process/detection/Interpolate.cpp
@@ -315,9 +316,11 @@ add_executable(testKrakenMultiChannel
   test/unit/capture/kraken/TestHeimdallFrame.cpp
   test/unit/process/conditioning/TestArrayReferenceSynthesizer.cpp
   test/unit/process/fusion/TestNoncoherent.cpp
+  test/unit/process/fusion/TestCoherentBeamBank.cpp
   src/capture/kraken/HeimdallFrame.cpp
   src/process/conditioning/ArrayReferenceSynthesizer.cpp
   src/process/fusion/Noncoherent.cpp
+  src/process/fusion/CoherentBeamBank.cpp
   src/data/IqData.cpp
   src/data/Map.cpp
 )
