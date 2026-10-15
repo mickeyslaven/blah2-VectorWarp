@@ -80,7 +80,9 @@ static VkResult budgetAllocateMemory(VkDevice device, const VkMemoryAllocateInfo
     if (std::getenv("BLAH2_GPU_DIAGNOSTICS"))
       std::cerr << "GPU allocation budget rejected bytes=" << info->allocationSize
         << " type=" << info->memoryTypeIndex << " used=" << state.budget.used()
-        << " limit=" << state.budget.limit() << '\n';
+        << " limit=" << state.budget.limit()
+        << " device_used=" << state.budget.deviceUsed()
+        << " device_limit=" << state.budget.deviceLimit() << '\n';
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
   const VkResult result = vkAllocateMemory(device, info, callbacks, memory);
@@ -324,7 +326,7 @@ struct Context {
         std::lock_guard<std::mutex> lock(allocationsMutex);
         deviceAllocations.try_emplace(device,
           gpu_memory::heapBudget(candidate.info.memoryBytes),
-          memoryProperties(candidate.physical));
+          memoryProperties(candidate.physical), true);
       }
       startupTrace("vkCreateDevice complete");
       vkGetDeviceQueue(device, candidate.queue, 0, &queue);
