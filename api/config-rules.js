@@ -46,6 +46,8 @@ const rules = {
   'process.reference_synthesis.covariance_smoothing': {...numeric(0), exclusiveMax: 1},
   'process.reference_synthesis.diagonal_loading': numeric(0),
   'process.reference_synthesis.mode': {type: 'string', choices: ['array_eigenbeam', 'dedicated']},
+  'process.surveillance_fusion.mode': {type: 'string', choices: ['noncoherent', 'coherent_beam_bank'], optional: true},
+  'process.surveillance_fusion.beams': {...integer(4, 360), optional: true},
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},

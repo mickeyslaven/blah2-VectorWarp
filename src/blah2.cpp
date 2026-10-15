@@ -22,6 +22,7 @@
 #include "process/utility/FftwThreads.h"
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
+#include "process/fusion/CoherentBeamBank.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -50,6 +51,7 @@
 #include <stdexcept>
 #include <future>
 #include <limits>
+#include <array>
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
@@ -275,6 +277,52 @@ try
     if (channel >= captureChannelCount)
       throw std::invalid_argument("Invalid array-reference channel");
 
+  std::string surveillanceFusionMode = "noncoherent";
+  uint32_t coherentBeamCount = 12;
+  std::vector<std::array<double, 3>> coherentPositions;
+  if (tree["process"].has_child("surveillance_fusion"))
+  {
+    auto fusion = tree["process"]["surveillance_fusion"];
+    if (fusion.has_child("mode")) fusion["mode"] >> surveillanceFusionMode;
+    if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
+  }
+  if (surveillanceFusionMode != "noncoherent" &&
+      surveillanceFusionMode != "coherent_beam_bank")
+    throw std::invalid_argument("Unknown surveillance-fusion mode");
+  if (surveillanceFusionMode == "coherent_beam_bank")
+  {
+    if (type != "Kraken" || !tree["capture"]["device"].has_child("array_geometry") ||
+        !tree["capture"]["device"]["array_geometry"].has_child("elements"))
+      throw std::invalid_argument("Coherent surveillance fusion requires Kraken array geometry");
+    std::vector<std::array<double, 3>> positions(captureChannelCount);
+    std::vector<bool> found(captureChannelCount, false);
+    for (auto element : tree["capture"]["device"]["array_geometry"]["elements"].children())
+    {
+      uint32_t channel = std::numeric_limits<uint32_t>::max();
+      if (!element.has_child("daq_channel") || !element.has_child("position")) continue;
+      element["daq_channel"] >> channel;
+      if (channel >= captureChannelCount) continue;
+      std::array<double, 3> position{};
+      std::size_t coordinate = 0;
+      for (auto value : element["position"].children())
+      {
+        if (coordinate >= position.size()) break;
+        value >> position[coordinate++];
+      }
+      if (coordinate == position.size())
+      {
+        positions[channel] = position;
+        found[channel] = true;
+      }
+    }
+    for (uint32_t channel : surveillanceChannels)
+    {
+      if (!found[channel])
+        throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
+      coherentPositions.push_back(positions[channel]);
+    }
+  }
+
   // Each surveillance path owns its processing state and working buffers.
   // Zero selects automatic sizing; omitted values retain legacy behavior.
   uint32_t configuredWorkers = 1;
@@ -469,6 +517,16 @@ try
   uint64_t reportedReferenceUpdate = 0;
   uint64_t replayProcessedFrames = 0;
   Noncoherent mapFusion;
+  std::unique_ptr<CoherentBeamBank> coherentMapFusion;
+  if (surveillanceFusionMode == "coherent_beam_bank")
+  {
+    coherentMapFusion = std::make_unique<CoherentBeamBank>(
+      CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions});
+    std::cout << "[SurveillanceFusion] mode=coherent_beam_bank beams="
+      << coherentBeamCount << " channels=" << coherentPositions.size() << "\n";
+  }
+  else
+    std::cout << "[SurveillanceFusion] mode=noncoherent\n";
 
   // set up process detection
   double pfa, minDoppler;
@@ -910,7 +968,8 @@ try
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.
-          map = mapFusion.process(channelMaps);
+          map = coherentMapFusion ? coherentMapFusion->process(channelMaps) :
+            mapFusion.process(channelMaps);
           map->set_metrics();
           timing_helper(timing_name, timing_time, time, "ambiguity_processing");
           

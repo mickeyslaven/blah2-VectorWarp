@@ -527,6 +527,27 @@ function validateConfig(config, baseline = null) {
     if (synthesis.power_iterations > 100)
       advise('process.reference_synthesis.power_iterations', 'May slow updates. Try 12 iterations.');
   }
+  if (processConfig.surveillance_fusion !== undefined) {
+    const fusion = requireObject(processConfig.surveillance_fusion,
+      'process.surveillance_fusion');
+    if (!['noncoherent', 'coherent_beam_bank'].includes(fusion.mode))
+      errors.push('process.surveillance_fusion.mode must be noncoherent or coherent_beam_bank');
+    if (fusion.beams !== undefined)
+      number(fusion.beams, 'process.surveillance_fusion.beams',
+        {integer: true, min: 4, max: 360});
+    if (fusion.mode === 'coherent_beam_bank') {
+      if (device.type !== 'Kraken')
+        errors.push('coherent_beam_bank surveillance fusion requires a Kraken receiver');
+      if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
+        errors.push('coherent_beam_bank surveillance fusion requires capture.device.array_geometry.elements');
+      const geometryChannels = new Set((device.array_geometry?.elements || [])
+        .filter(isObject).filter(element => Array.isArray(element.position) &&
+          element.position.length === 3 && element.position.every(Number.isFinite))
+        .map(element => element.daq_channel));
+      if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
+        errors.push('coherent_beam_bank geometry must include every surveillance channel');
+    }
+  }
 
   string(network.ip, 'network.ip');
   if (typeof network.ip === 'string' && net.isIP(network.ip) !== 4)

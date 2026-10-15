@@ -111,6 +111,22 @@ try {
   kraken.process.performance = {...kraken.process.performance, acceleration: 'cpu', surveillance_workers: 2, fft_threads: 2};
   Object.assign(kraken.network.ports, {api: 3100, map: 3101, detection: 3102, track: 3103, timestamp: 3104, timing: 3105, iqdata: 3106});
   persistGroup('kraken-coherent-edit', krakenBase, kraken, ['capture.device.channel_count','capture.device.reference_channel','capture.device.surveillance_channels','process.reference_synthesis.mode','process.reference_synthesis.channels','process.performance.acceleration','process.performance.surveillance_workers','process.performance.fft_threads','network.ports.api','network.ports.map','network.ports.detection','network.ports.track','network.ports.timestamp','network.ports.timing','network.ports.iqdata']);
+  const fusion = clone(krakenBase);
+  fusion.process.performance.acceleration = 'auto';
+  fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.capture.device.array_geometry = {
+    shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+    mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+    x_axis_bearing_deg_true: 0,
+    bearing_channels: [...fusion.capture.device.surveillance_channels],
+    elements: fusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
+      id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
+      position: [Math.cos(2 * Math.PI * index / 5) * .193548,
+        Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+    }))
+  };
+  persistGroup('kraken-coherent-fusion', krakenBase, fusion,
+    ['process.surveillance_fusion.mode']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
