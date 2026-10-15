@@ -112,7 +112,8 @@ double positiveLog10(double x){
 }
 )glsl";
 const char* levelsBody=R"glsl(
-void main(){uint i=indexOf();if(i>=m[34])return;if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];}dvec2 value=fused[i];
+void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;}
  if(!finiteD(value.x)||!finiteD(value.y)||value.x<0.0LF||value.y!=0.0LF){reject(201u);return;}
  precise double current=value.x*value.x;double prior=history[i];
  precise double power=m[49]!=0u?(m[74]==2u&&finiteD(prior)?0.5LF*(current+prior):current):0.0LF;
@@ -158,6 +159,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
 const char* cfarBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=0u;s[m[40]+i]=0u;
  uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
+ if(m[74]==2u&&m[28]==0u)return;
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
  uint at=m[46]+8u*column,n=m[at+4u];if(n==0u)return;
  precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
