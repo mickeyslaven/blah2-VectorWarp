@@ -48,3 +48,40 @@ TEST_CASE("coherent beam bank rejects mismatched map geometry")
   Map<std::complex<double>> only(1, 1);
   REQUIRE_THROWS_AS(fusion.process({&only}), std::invalid_argument);
 }
+
+TEST_CASE("calibrated coherent beam bank removes receiver chain phase")
+{
+  CoherentBeamBank::Config config;
+  config.frequencyHz = 539000000;
+  config.beams = 8;
+  config.calibrated = true;
+  config.directPathAzimuthRad = 0;
+  const double radius = .193548;
+  for (int channel = 0; channel < 5; ++channel)
+  {
+    const double angle = -2 * PI * channel / 5;
+    config.positionsM.push_back({radius * std::cos(angle), radius * std::sin(angle), 0});
+  }
+  const double waveNumber = 2 * PI * config.frequencyHz / C;
+  const double targetAzimuth = 2 * PI * 2 / config.beams;
+  const std::array<double, 5> chainPhase{{0, .7, -1.1, 2.0, -.4}};
+  std::vector<std::complex<double>> direct;
+  std::vector<Map<std::complex<double>>> storage;
+  std::vector<Map<std::complex<double>>*> maps;
+  for (std::size_t channel = 0; channel < config.positionsM.size(); ++channel)
+  {
+    const auto& position = config.positionsM[channel];
+    const double directPhase = -waveNumber * position[0] + chainPhase[channel];
+    direct.push_back(std::polar(1.0 / std::sqrt(5.0), directPhase));
+    storage.emplace_back(1, 1);
+    const double targetPhase = -waveNumber * (position[0] * std::cos(targetAzimuth) +
+      position[1] * std::sin(targetAzimuth)) + chainPhase[channel];
+    storage.back().data[0][0] = std::polar(1.0, targetPhase);
+  }
+  for (auto& map : storage) maps.push_back(&map);
+
+  CoherentBeamBank fusion(config);
+  fusion.calibrate(direct);
+  const auto result = fusion.process(maps);
+  REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
+}

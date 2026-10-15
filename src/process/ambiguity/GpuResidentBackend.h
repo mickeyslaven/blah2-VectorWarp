@@ -44,11 +44,13 @@ struct ReferenceConfig {
  uint32_t analysisSamples=32768,analysisInterval=10,powerIterations=12;
  double covarianceSmoothing=.8,diagonalLoading=.001,bandwidthHz=2000,centreHz=0;
 };
-enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1};
+enum class FusionMode:uint32_t {
+ noncoherent=0,coherentRegularPolygon=1,calibratedCoherentRegularPolygon=2
+};
 struct FusionConfig {
  FusionMode mode=FusionMode::noncoherent;
  uint32_t beams=0;
- double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0;
+ double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0,directPathAzimuthRad=0;
 };
 struct DetectorConfig {
  bool enabled=false,interpolateDelay=true,interpolateDoppler=true;

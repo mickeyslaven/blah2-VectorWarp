@@ -11,6 +11,10 @@ constexpr double TWO_PI = 6.283185307179586476925286766559;
 }
 
 CoherentBeamBank::CoherentBeamBank(const Config& config)
+  : calibrated_(config.calibrated),
+    waveNumber_(TWO_PI * config.frequencyHz / SPEED_OF_LIGHT),
+    directPathAzimuthRad_(config.directPathAzimuthRad),
+    positionsM_(config.positionsM)
 {
   if (!std::isfinite(config.frequencyHz) || config.frequencyHz <= 0)
     throw std::invalid_argument("Coherent fusion requires a positive RF frequency");
@@ -18,8 +22,9 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
     throw std::invalid_argument("Coherent fusion beam count must be from 4 through 360");
   if (config.positionsM.empty())
     throw std::invalid_argument("Coherent fusion requires antenna positions");
+  if (!std::isfinite(config.directPathAzimuthRad))
+    throw std::invalid_argument("Coherent fusion direct-path azimuth must be finite");
 
-  const double waveNumber = TWO_PI * config.frequencyHz / SPEED_OF_LIGHT;
   const double normalization = 1.0 / std::sqrt(double(config.positionsM.size()));
   weights_.resize(config.beams);
   for (uint32_t beam = 0; beam < config.beams; ++beam)
@@ -34,8 +39,43 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
       for (double coordinate : position)
         if (!std::isfinite(coordinate))
           throw std::invalid_argument("Coherent fusion antenna positions must be finite");
-      const double phase = waveNumber * (position[0] * ux + position[1] * uy);
+      const double phase = waveNumber_ * (position[0] * ux + position[1] * uy);
       weights.push_back(normalization * std::polar(1.0, phase));
+    }
+  }
+}
+
+void CoherentBeamBank::calibrate(
+  const std::vector<std::complex<double>>& directPathWeights)
+{
+  if (!calibrated_) return;
+  if (directPathWeights.size() != positionsM_.size())
+    throw std::invalid_argument("Coherent calibration channel count does not match antenna geometry");
+  double norm = 0;
+  for (const auto weight : directPathWeights)
+  {
+    if (!std::isfinite(weight.real()) || !std::isfinite(weight.imag()))
+      throw std::invalid_argument("Coherent calibration weights must be finite");
+    norm += std::norm(weight);
+  }
+  if (!(norm > 0) || !std::isfinite(norm))
+    throw std::invalid_argument("Coherent calibration weights have zero norm");
+  const double scale = 1.0 / std::sqrt(norm);
+  const double directX = std::cos(directPathAzimuthRad_);
+  const double directY = std::sin(directPathAzimuthRad_);
+  for (std::size_t beam = 0; beam < weights_.size(); ++beam)
+  {
+    const double azimuth = TWO_PI * double(beam) / double(weights_.size());
+    const double targetX = std::cos(azimuth);
+    const double targetY = std::sin(azimuth);
+    for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
+    {
+      const auto& position = positionsM_[channel];
+      const double relativePhase = waveNumber_ *
+        (position[0] * (targetX - directX) +
+         position[1] * (targetY - directY));
+      weights_[beam][channel] = scale * std::conj(directPathWeights[channel]) *
+        std::polar(1.0, relativePhase);
     }
   }
 }

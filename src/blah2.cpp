@@ -282,6 +282,7 @@ try
   std::string surveillanceFusionMode = "noncoherent";
   uint32_t coherentBeamCount = 12;
   std::vector<std::array<double, 3>> coherentPositions;
+  double directPathAzimuthRad = 0;
   if (tree["process"].has_child("surveillance_fusion"))
   {
     auto fusion = tree["process"]["surveillance_fusion"];
@@ -289,9 +290,13 @@ try
     if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
   }
   if (surveillanceFusionMode != "noncoherent" &&
-      surveillanceFusionMode != "coherent_beam_bank")
+      surveillanceFusionMode != "coherent_beam_bank" &&
+      surveillanceFusionMode != "calibrated_coherent_beam_bank")
     throw std::invalid_argument("Unknown surveillance-fusion mode");
-  if (surveillanceFusionMode == "coherent_beam_bank")
+  const bool coherentFusion = surveillanceFusionMode != "noncoherent";
+  const bool calibratedCoherentFusion =
+    surveillanceFusionMode == "calibrated_coherent_beam_bank";
+  if (coherentFusion)
   {
     if (type != "Kraken" || !tree["capture"]["device"].has_child("array_geometry") ||
         !tree["capture"]["device"]["array_geometry"].has_child("elements"))
@@ -322,6 +327,34 @@ try
       if (!found[channel])
         throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
       coherentPositions.push_back(positions[channel]);
+    }
+    if (calibratedCoherentFusion)
+    {
+      if (!arrayReference || referenceChannels != surveillanceChannels)
+        throw std::invalid_argument("Calibrated coherent fusion requires the array reference to use every surveillance channel in the same order");
+      auto geometry = tree["capture"]["device"]["array_geometry"];
+      if (!geometry.has_child("x_axis_bearing_deg_true") ||
+          !tree.has_child("location") || !tree["location"].has_child("rx") ||
+          !tree["location"].has_child("tx"))
+        throw std::invalid_argument("Calibrated coherent fusion requires array orientation and receiver/transmitter locations");
+      double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
+        txLatDeg = 0, txLonDeg = 0;
+      geometry["x_axis_bearing_deg_true"] >> xAxisBearingDeg;
+      tree["location"]["rx"]["latitude"] >> rxLatDeg;
+      tree["location"]["rx"]["longitude"] >> rxLonDeg;
+      tree["location"]["tx"]["latitude"] >> txLatDeg;
+      tree["location"]["tx"]["longitude"] >> txLonDeg;
+      const double radians = std::acos(-1.0) / 180.0;
+      const double rxLat = rxLatDeg * radians, txLat = txLatDeg * radians;
+      const double dLon = (txLonDeg - rxLonDeg) * radians;
+      const double trueBearing = std::atan2(std::sin(dLon) * std::cos(txLat),
+        std::cos(rxLat) * std::sin(txLat) - std::sin(rxLat) *
+        std::cos(txLat) * std::cos(dLon));
+      directPathAzimuthRad = std::remainder(xAxisBearingDeg * radians -
+        trueBearing, 2 * std::acos(-1.0));
+      if (!std::isfinite(directPathAzimuthRad) ||
+          (rxLatDeg == txLatDeg && rxLonDeg == txLonDeg))
+        throw std::invalid_argument("Calibrated coherent fusion has invalid receiver/transmitter geometry");
     }
   }
 
@@ -520,12 +553,17 @@ try
   uint64_t replayProcessedFrames = 0;
   Noncoherent mapFusion;
   std::unique_ptr<CoherentBeamBank> coherentMapFusion;
-  if (surveillanceFusionMode == "coherent_beam_bank")
+  if (coherentFusion)
   {
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
-      CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions});
-    std::cout << "[SurveillanceFusion] mode=coherent_beam_bank beams="
-      << coherentBeamCount << " channels=" << coherentPositions.size() << "\n";
+      CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
+        calibratedCoherentFusion, directPathAzimuthRad});
+    std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
+      << coherentBeamCount << " channels=" << coherentPositions.size();
+    if (calibratedCoherentFusion)
+      std::cout << " direct_path_azimuth_deg=" <<
+        directPathAzimuthRad * 180.0 / std::acos(-1.0);
+    std::cout << "\n";
   }
   else
     std::cout << "[SurveillanceFusion] mode=noncoherent\n";
@@ -542,9 +580,9 @@ try
   // A beam bank reports the maximum of several trials per cell. Apply a
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
-  const double detectorPfa = surveillanceFusionMode == "coherent_beam_bank"
+  const double detectorPfa = coherentFusion
     ? pfa / coherentBeamCount : pfa;
-  if (surveillanceFusionMode == "coherent_beam_bank")
+  if (coherentFusion)
     std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
       << " effective_pfa=" << detectorPfa << "\n";
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
@@ -600,7 +638,7 @@ try
     residentConfig.delayAxis.assign(ambiguity.front()->result()->delay.begin(),ambiguity.front()->result()->delay.end());
     residentConfig.dopplerAxis.assign(ambiguity.front()->result()->doppler.begin(),ambiguity.front()->result()->doppler.end());
     residentConfig.reference={referenceChannels,referenceConfig.analysisSamples,referenceConfig.analysisInterval,referenceConfig.powerIterations,referenceConfig.covarianceSmoothing,referenceConfig.diagonalLoading,spectrumBandwidth,double(fc)};
-    if(surveillanceFusionMode=="coherent_beam_bank"){
+    if(coherentFusion){
       std::string shape;
       auto geometry=tree["capture"]["device"]["array_geometry"];
       if(geometry.has_child("shape"))geometry["shape"]>>shape;
@@ -619,8 +657,10 @@ try
         if(std::abs(radii[channel]-radius)>tolerance||
            std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
           throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
-      residentConfig.fusion={blah2::resident::FusionMode::coherentRegularPolygon,
-        coherentBeamCount,double(fc),radius,angles[0],step};
+      residentConfig.fusion={calibratedCoherentFusion ?
+          blah2::resident::FusionMode::calibratedCoherentRegularPolygon :
+          blah2::resident::FusionMode::coherentRegularPolygon,
+        coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad};
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
@@ -835,6 +875,8 @@ try
               std::cout << "\n";
               reportedReferenceUpdate = metrics.updates;
             }
+            if (calibratedCoherentFusion)
+              coherentMapFusion->calibrate(metrics.weights);
           }
           if(resident)resident->checkReference(*referenceData,referenceSynthesizer.get_metrics());
           // Synthesis is the last reader of the captured channels. Transfer

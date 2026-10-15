@@ -43,15 +43,23 @@ void validateConfig(const Config& c){
  for(size_t i=0;i<r.channels.size();++i)require(r.channels[i]<g.channels&&(!i||r.channels[i]>r.channels[i-1]),"Resident reference channel order invalid");
  require(std::isfinite(r.covarianceSmoothing)&&r.covarianceSmoothing>=0&&r.covarianceSmoothing<1&&std::isfinite(r.diagonalLoading)&&r.diagonalLoading>=0&&std::isfinite(r.bandwidthHz)&&r.bandwidthHz>0&&std::isfinite(r.centreHz),"Resident reference numbers invalid");
  const auto& f=c.fusion;
- require(f.mode==FusionMode::noncoherent||f.mode==FusionMode::coherentRegularPolygon,
+ require(f.mode==FusionMode::noncoherent||f.mode==FusionMode::coherentRegularPolygon||
+  f.mode==FusionMode::calibratedCoherentRegularPolygon,
   "Resident fusion mode invalid");
- if(f.mode==FusionMode::coherentRegularPolygon)
+ if(f.mode!=FusionMode::noncoherent)
   require(f.beams>=4&&f.beams<=360&&std::isfinite(f.frequencyHz)&&f.frequencyHz>0&&
    std::isfinite(f.radiusM)&&f.radiusM>0&&std::isfinite(f.element0Rad)&&
-   std::isfinite(f.elementStepRad)&&f.elementStepRad!=0,
+   std::isfinite(f.elementStepRad)&&f.elementStepRad!=0&&
+   std::isfinite(f.directPathAzimuthRad)&&
+   (f.mode!=FusionMode::calibratedCoherentRegularPolygon||
+    r.channels==c.surveillanceChannels),
    "Resident coherent fusion configuration invalid");
  else require(!f.beams&&f.frequencyHz==0&&f.radiusM==0&&f.element0Rad==0&&
-  f.elementStepRad==0,"Resident noncoherent fusion configuration invalid");
+  f.elementStepRad==0&&f.directPathAzimuthRad==0,
+  "Resident noncoherent fusion configuration invalid");
+ if(f.mode==FusionMode::coherentRegularPolygon)
+  require(f.directPathAzimuthRad==0,
+   "Resident fixed coherent fusion has calibration geometry");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
@@ -235,12 +243,13 @@ const auto&t=c.tracker;
  w.f64(464,c.fusion.radiusM);
  w.f64(472,c.fusion.element0Rad);
  w.f64(480,c.fusion.elementStepRad);
+ w.f64(488,c.fusion.directPathAzimuthRad);
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==512,"Resident config size differs");
 Reader r{b};
 require(r.u32(0)==1&&r.u32(4)==512,"Resident config schema differs");
 r.zeros(308,4);
-r.zeros(488,24);
+r.zeros(496,16);
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -250,6 +259,7 @@ c.fusion.frequencyHz=r.f64(360);
 c.fusion.radiusM=r.f64(464);
 c.fusion.element0Rad=r.f64(472);
 c.fusion.elementStepRad=r.f64(480);
+c.fusion.directPathAzimuthRad=r.f64(488);
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
 g.channels=narrow(r.u64(32));

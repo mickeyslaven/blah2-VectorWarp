@@ -35,7 +35,8 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.sampleRate=c.sampleRate;
  v.middle=c.middle;
  v.fusion={uint32_t(c.fusion.mode),c.fusion.beams,c.fusion.frequencyHz,
-  c.fusion.radiusM,c.fusion.element0Rad,c.fusion.elementStepRad};
+  c.fusion.radiusM,c.fusion.element0Rad,c.fusion.elementStepRad,
+  c.fusion.directPathAzimuthRad};
  v.stages=c.stages();
  const auto& r=c.reference;
  v.reference={ReferenceMode::capturedArray,r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};

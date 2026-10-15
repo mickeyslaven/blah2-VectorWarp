@@ -61,6 +61,15 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
+ auto calibrated=coherent;
+ calibrated.fusion.mode=FusionMode::calibratedCoherentRegularPolygon;
+ calibrated.fusion.directPathAzimuthRad=-.75;
+ const auto calibratedBytes=encodeConfig(calibrated);
+ const auto calibratedDecoded=decodeConfig(bytes(calibratedBytes),bytes(d),bytes(f));
+ check(encodeConfig(calibratedDecoded)==calibratedBytes&&
+  calibratedDecoded.fusion.mode==FusionMode::calibratedCoherentRegularPolygon&&
+  calibratedDecoded.fusion.directPathAzimuthRad==-.75,
+  "Calibrated coherent resident fusion configuration did not round trip");
  auto mutate=[&](const std::function<void(Config&)>&change){auto v=c;change(v);reject([&]{validateConfig(v);},"Invalid config admitted");};
  mutate([](auto&v){v.surveillanceChannels={1,0};});mutate([](auto&v){v.delayAxis[1]=1;});
  mutate([](auto&v){v.dopplerAxis[1]=v.dopplerAxis[0];});mutate([](auto&v){v.reference.channels={1,0};});

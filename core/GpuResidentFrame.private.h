@@ -25,7 +25,8 @@ struct ResidentFrameConfig {
   double middle = 0;
   struct Fusion {
     uint32_t mode = 0, beams = 0;
-    double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0;
+    double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0,
+      directPathAzimuthRad = 0;
   } fusion;
   // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
   // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
@@ -235,13 +236,15 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
     config.clutterBatchLimit>g.channels || config.stages!=expectedStages || config.middle!=0 || !std::isfinite(config.sampleRate) || !(config.sampleRate>0))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED stage mask or nonzero middle");
- if(config.fusion.mode>1 || (config.fusion.mode==1 &&
+ if(config.fusion.mode>2 || (config.fusion.mode!=0 &&
     (config.fusion.beams<4||config.fusion.beams>360||!std::isfinite(config.fusion.frequencyHz)||
      config.fusion.frequencyHz<=0||!std::isfinite(config.fusion.radiusM)||config.fusion.radiusM<=0||
      !std::isfinite(config.fusion.element0Rad)||!std::isfinite(config.fusion.elementStepRad)||
      config.fusion.elementStepRad==0)) ||
     (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
-     config.fusion.element0Rad||config.fusion.elementStepRad)))
+     config.fusion.element0Rad||config.fusion.elementStepRad||
+     config.fusion.directPathAzimuthRad)) ||
+    (config.fusion.mode==1&&config.fusion.directPathAzimuthRad!=0))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
@@ -322,7 +325,7 @@ class ResidentFramePipeline {
      std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),status.get()});
    surveillancePack=std::make_unique<Kernel>(context,gpu_resident::surveillancePackSource,
      std::vector<Buffer*>{canonical.get(),owner.surveillance_.get(),status.get()});
-   if(config.fusion.mode==1){
+   if(config.fusion.mode!=0){
     const uint64_t weightCount=uint64_t(config.fusion.beams)*config.geometry.channels;
     fusionWeights=std::make_unique<Buffer>(context,weightCount*sizeof(std::complex<float>),host,preferred);
     auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
@@ -410,7 +413,7 @@ class ResidentFramePipeline {
    timestamps->end(command,3);
    timestamps->begin(command,4);
    fusion->append(command,{full.doppler*full.delays,full.doppler,full.delays,full.channels,
-    int32_t(config.fusion.mode==1?config.fusion.beams:0)});
+    int32_t(config.fusion.mode!=0?config.fusion.beams:0)});
    barrier(command);
    VkBufferCopy mapCopy{0,0,owner.doppler_->bytes};
    vkCmdCopyBuffer(command,owner.doppler_->handle,owner.output_->handle,1,&mapCopy);
@@ -421,6 +424,36 @@ class ResidentFramePipeline {
    if(postprocessStage)postprocessStage->append(command);
    gpu_resident::hostRead(command);
    check(vkEndCommandBuffer(command),"resident ambiguity recording");
+  }
+  void calibrateFusion(const ReferenceCheckpoint& checkpoint){
+   if(config.fusion.mode!=2)return;
+   if(checkpoint.weightCount!=config.geometry.channels)
+    throw std::runtime_error("Calibrated coherent fusion reference weight count changed");
+   double norm=0;
+   for(uint32_t channel=0;channel<config.geometry.channels;++channel){
+    const auto weight=checkpoint.weights[channel];
+    if(!std::isfinite(weight.real())||!std::isfinite(weight.imag()))
+     throw std::runtime_error("Calibrated coherent fusion received nonfinite reference weights");
+    norm+=std::norm(weight);
+   }
+   if(!(norm>0)||!std::isfinite(norm))
+    throw std::runtime_error("Calibrated coherent fusion received zero-norm reference weights");
+   const double scale=1.0/std::sqrt(norm);
+   const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
+   auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
+   for(uint32_t beam=0;beam<config.fusion.beams;++beam){
+    const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
+    for(uint32_t channel=0;channel<config.geometry.channels;++channel){
+     const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
+     const double relativePhase=waveNumber*config.fusion.radiusM*
+      (std::cos(elementAngle-beamAngle)-
+       std::cos(elementAngle-config.fusion.directPathAzimuthRad));
+     target[uint64_t(beam)*config.geometry.channels+channel]=
+      std::complex<float>(scale*std::conj(checkpoint.weights[channel])*
+       std::polar(1.0,relativePhase));
+    }
+   }
+   fusionWeights->flush(0,fusionWeights->bytes);
   }
  };
  std::unique_ptr<Workspace> work_; // Released before full ambiguity/context.
@@ -648,7 +681,7 @@ public:
  // prepared frame, nor attempts to revive a route with an unknown device failure.
  void restoreReferenceCheckpoint(const ReferenceCheckpoint& cp){
   requireCaptured(true);
-  try{work_->referenceStage->restore(cp);}
+  try{work_->referenceStage->restore(cp);work_->calibrateFusion(cp);}
   catch(const std::invalid_argument&){throw;}catch(...){fail();
   throw;}
  }
@@ -699,6 +732,7 @@ public:
    {gpu_host::Scope timer(context_.hostTiming,"captured.commit");
    committing=true;
    *out.checkpoint=work_->referenceStage->commit();
+   work_->calibrateFusion(*out.checkpoint);
    prepared_=true;}
    {gpu_host::Scope timer(context_.hostTiming,"captured.query_log");
    work_->referenceStage->log(generation_);

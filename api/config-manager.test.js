@@ -43,6 +43,16 @@ coherentFusion.capture.device.array_geometry = {
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const calibratedFusion = clone(coherentFusion);
+calibratedFusion.process.surveillance_fusion.mode = 'calibrated_coherent_beam_bank';
+calibratedFusion.location.rx = {name: 'RX', latitude: 40, longitude: -80, altitude: 0};
+calibratedFusion.location.tx = {name: 'TX', latitude: 40.1, longitude: -79.9, altitude: 0};
+assert.equal(validateConfig(calibratedFusion).valid, true,
+  'calibrated coherent fusion accepts matched eigenbeam channels and surveyed geometry');
+const mismatchedCalibration = clone(calibratedFusion);
+mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
+assert.equal(validateConfig(mismatchedCalibration).valid, false,
+  'calibrated coherent fusion rejects reference/surveillance channel mismatch');
 const missingFusionElement = clone(coherentFusion);
 missingFusionElement.capture.device.array_geometry.elements.pop();
 assert.equal(validateConfig(missingFusionElement).valid, false,

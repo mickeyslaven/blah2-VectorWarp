@@ -54,8 +54,10 @@ process:
     power_iterations: 12
     covariance_smoothing: 0.8
     diagonal_loading: 0.001
-  # Existing behavior remains the default. To test coherent spatial gain with
-  # configured array_geometry, select coherent_beam_bank and a 360-degree bank.
+  # Existing behavior remains the default. coherent_beam_bank uses ideal array
+  # geometry. calibrated_coherent_beam_bank additionally removes the measured
+  # per-channel complex response using the array eigenbeam and the configured
+  # array orientation plus receiver/transmitter locations.
   surveillance_fusion:
     mode: "noncoherent"
     beams: 12
