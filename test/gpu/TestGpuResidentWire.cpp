@@ -52,24 +52,16 @@ void configCases(){
  for(size_t i=0;i<c.dopplerAxis.size();++i)wire::Writer{{f.data(),f.size()}}.f64(i*8,c.dopplerAxis[i]);
  const auto decoded=decodeConfig(bytes(canonical),bytes(d),bytes(f));
  check(encodeConfig(decoded)==canonical&&decoded.delayAxis==c.delayAxis&&decoded.dopplerAxis==c.dopplerAxis,"Config/axes did not preserve canonical values");
- auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172};
+ auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172,-.75};
  const auto coherentBytes=encodeConfig(coherent);
  const auto coherentDecoded=decodeConfig(bytes(coherentBytes),bytes(d),bytes(f));
  check(encodeConfig(coherentDecoded)==coherentBytes&&
   coherentDecoded.fusion.mode==FusionMode::coherentRegularPolygon&&
-  coherentDecoded.fusion.beams==12&&coherentDecoded.fusion.frequencyHz==539000000,
+  coherentDecoded.fusion.beams==12&&coherentDecoded.fusion.frequencyHz==539000000&&
+  coherentDecoded.fusion.directPathAzimuthRad==-.75,
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
- auto calibrated=coherent;
- calibrated.fusion.mode=FusionMode::calibratedCoherentRegularPolygon;
- calibrated.fusion.directPathAzimuthRad=-.75;
- const auto calibratedBytes=encodeConfig(calibrated);
- const auto calibratedDecoded=decodeConfig(bytes(calibratedBytes),bytes(d),bytes(f));
- check(encodeConfig(calibratedDecoded)==calibratedBytes&&
-  calibratedDecoded.fusion.mode==FusionMode::calibratedCoherentRegularPolygon&&
-  calibratedDecoded.fusion.directPathAzimuthRad==-.75,
-  "Calibrated coherent resident fusion configuration did not round trip");
  auto mutate=[&](const std::function<void(Config&)>&change){auto v=c;change(v);reject([&]{validateConfig(v);},"Invalid config admitted");};
  mutate([](auto&v){v.surveillanceChannels={1,0};});mutate([](auto&v){v.delayAxis[1]=1;});
  mutate([](auto&v){v.dopplerAxis[1]=v.dopplerAxis[0];});mutate([](auto&v){v.reference.channels={1,0};});

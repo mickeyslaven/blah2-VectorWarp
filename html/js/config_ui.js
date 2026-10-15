@@ -67,7 +67,7 @@ const CONFIG_META = {
   'process.reference_synthesis.covariance_smoothing': ['Reference smoothing', 'Weight given to the previous estimate, from 0 to 1.'],
   'process.reference_synthesis.diagonal_loading': ['Reference stability', 'Small value that keeps the reference solver stable.'],
   'process.surveillance_fusion': ['Surveillance fusion', 'Combine the ambiguity maps from coherent receiver channels.'],
-  'process.surveillance_fusion.mode': ['Fusion mode', 'Keep RMS power fusion or scan a coherent 360-degree beam bank.'],
+  'process.surveillance_fusion.mode': ['Fusion mode', 'Keep RMS power fusion or scan a calibrated coherent 360-degree beam bank.'],
   'process.surveillance_fusion.beams': ['Coherent beams', 'Number of evenly spaced azimuth beams used around the full horizon.'],
   'process.detection': ['Detection', 'Find targets in the radar map'],
   'process.detection.enable': ['Detect targets', 'Create detections from the radar map.'],

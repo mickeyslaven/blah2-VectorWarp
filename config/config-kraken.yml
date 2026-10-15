@@ -54,10 +54,9 @@ process:
     power_iterations: 12
     covariance_smoothing: 0.8
     diagonal_loading: 0.001
-  # Existing behavior remains the default. coherent_beam_bank uses ideal array
-  # geometry. calibrated_coherent_beam_bank additionally removes the measured
-  # per-channel complex response using the array eigenbeam and the configured
-  # array orientation plus receiver/transmitter locations.
+  # Existing behavior remains the default. coherent_beam_bank removes the
+  # measured per-channel complex response using the array eigenbeam and the
+  # configured array orientation plus receiver/transmitter locations.
   surveillance_fusion:
     mode: "noncoherent"
     beams: 12

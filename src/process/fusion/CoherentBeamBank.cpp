@@ -11,8 +11,7 @@ constexpr double TWO_PI = 6.283185307179586476925286766559;
 }
 
 CoherentBeamBank::CoherentBeamBank(const Config& config)
-  : calibrated_(config.calibrated),
-    waveNumber_(TWO_PI * config.frequencyHz / SPEED_OF_LIGHT),
+  : waveNumber_(TWO_PI * config.frequencyHz / SPEED_OF_LIGHT),
     directPathAzimuthRad_(config.directPathAzimuthRad),
     positionsM_(config.positionsM)
 {
@@ -48,7 +47,6 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
 void CoherentBeamBank::calibrate(
   const std::vector<std::complex<double>>& directPathWeights)
 {
-  if (!calibrated_) return;
   if (directPathWeights.size() != positionsM_.size())
     throw std::invalid_argument("Coherent calibration channel count does not match antenna geometry");
   double norm = 0;

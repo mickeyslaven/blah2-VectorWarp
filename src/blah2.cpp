@@ -290,12 +290,9 @@ try
     if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
   }
   if (surveillanceFusionMode != "noncoherent" &&
-      surveillanceFusionMode != "coherent_beam_bank" &&
-      surveillanceFusionMode != "calibrated_coherent_beam_bank")
+      surveillanceFusionMode != "coherent_beam_bank")
     throw std::invalid_argument("Unknown surveillance-fusion mode");
   const bool coherentFusion = surveillanceFusionMode != "noncoherent";
-  const bool calibratedCoherentFusion =
-    surveillanceFusionMode == "calibrated_coherent_beam_bank";
   if (coherentFusion)
   {
     if (type != "Kraken" || !tree["capture"]["device"].has_child("array_geometry") ||
@@ -328,15 +325,14 @@ try
         throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
       coherentPositions.push_back(positions[channel]);
     }
-    if (calibratedCoherentFusion)
     {
       if (!arrayReference || referenceChannels != surveillanceChannels)
-        throw std::invalid_argument("Calibrated coherent fusion requires the array reference to use every surveillance channel in the same order");
+        throw std::invalid_argument("Coherent fusion requires the array reference to use every surveillance channel in the same order");
       auto geometry = tree["capture"]["device"]["array_geometry"];
       if (!geometry.has_child("x_axis_bearing_deg_true") ||
           !tree["location"].has_child("rx") ||
           !tree["location"].has_child("tx"))
-        throw std::invalid_argument("Calibrated coherent fusion requires array orientation and receiver/transmitter locations");
+        throw std::invalid_argument("Coherent fusion requires array orientation and receiver/transmitter locations");
       double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
         txLatDeg = 0, txLonDeg = 0;
       geometry["x_axis_bearing_deg_true"] >> xAxisBearingDeg;
@@ -354,7 +350,7 @@ try
         trueBearing, 2 * std::acos(-1.0));
       if (!std::isfinite(directPathAzimuthRad) ||
           (rxLatDeg == txLatDeg && rxLonDeg == txLonDeg))
-        throw std::invalid_argument("Calibrated coherent fusion has invalid receiver/transmitter geometry");
+        throw std::invalid_argument("Coherent fusion has invalid receiver/transmitter geometry");
     }
   }
 
@@ -557,12 +553,11 @@ try
   {
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        calibratedCoherentFusion, directPathAzimuthRad});
+        directPathAzimuthRad});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
-    if (calibratedCoherentFusion)
-      std::cout << " direct_path_azimuth_deg=" <<
-        directPathAzimuthRad * 180.0 / std::acos(-1.0);
+    std::cout << " direct_path_azimuth_deg=" <<
+      directPathAzimuthRad * 180.0 / std::acos(-1.0);
     std::cout << "\n";
   }
   else
@@ -657,9 +652,7 @@ try
         if(std::abs(radii[channel]-radius)>tolerance||
            std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
           throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
-      residentConfig.fusion={calibratedCoherentFusion ?
-          blah2::resident::FusionMode::calibratedCoherentRegularPolygon :
-          blah2::resident::FusionMode::coherentRegularPolygon,
+      residentConfig.fusion={blah2::resident::FusionMode::coherentRegularPolygon,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad};
     }
     const double spectrumResolution=double(fs)/nSamples;
@@ -875,8 +868,7 @@ try
               std::cout << "\n";
               reportedReferenceUpdate = metrics.updates;
             }
-            if (calibratedCoherentFusion)
-              coherentMapFusion->calibrate(metrics.weights);
+            coherentMapFusion->calibrate(metrics.weights);
           }
           if(resident)resident->checkReference(*referenceData,referenceSynthesizer.get_metrics());
           // Synthesis is the last reader of the captured channels. Transfer

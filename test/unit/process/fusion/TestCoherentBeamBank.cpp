@@ -36,6 +36,11 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
   for (auto& map : storage) maps.push_back(&map);
 
   CoherentBeamBank fusion(config);
+  std::vector<std::complex<double>> direct;
+  for (const auto& position : config.positionsM)
+    direct.push_back(std::polar(1.0 / std::sqrt(5.0),
+      -waveNumber * position[0]));
+  fusion.calibrate(direct);
   const auto result = fusion.process(maps);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
   REQUIRE(result->data[0][0].imag() == 0.0);
@@ -49,12 +54,11 @@ TEST_CASE("coherent beam bank rejects mismatched map geometry")
   REQUIRE_THROWS_AS(fusion.process({&only}), std::invalid_argument);
 }
 
-TEST_CASE("calibrated coherent beam bank removes receiver chain phase")
+TEST_CASE("coherent beam bank removes receiver chain phase")
 {
   CoherentBeamBank::Config config;
   config.frequencyHz = 539000000;
   config.beams = 8;
-  config.calibrated = true;
   config.directPathAzimuthRad = 0;
   const double radius = .193548;
   for (int channel = 0; channel < 5; ++channel)

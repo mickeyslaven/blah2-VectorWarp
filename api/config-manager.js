@@ -530,13 +530,12 @@ function validateConfig(config, baseline = null) {
   if (processConfig.surveillance_fusion !== undefined) {
     const fusion = requireObject(processConfig.surveillance_fusion,
       'process.surveillance_fusion');
-    const coherentModes = ['coherent_beam_bank', 'calibrated_coherent_beam_bank'];
-    if (!['noncoherent', ...coherentModes].includes(fusion.mode))
+    if (!['noncoherent', 'coherent_beam_bank'].includes(fusion.mode))
       errors.push('process.surveillance_fusion.mode is not supported');
     if (fusion.beams !== undefined)
       number(fusion.beams, 'process.surveillance_fusion.beams',
         {integer: true, min: 4, max: 360});
-    if (coherentModes.includes(fusion.mode)) {
+    if (fusion.mode === 'coherent_beam_bank') {
       if (device.type !== 'Kraken')
         errors.push('coherent_beam_bank surveillance fusion requires a Kraken receiver');
       if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
@@ -550,17 +549,15 @@ function validateConfig(config, baseline = null) {
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
           device.array_geometry?.shape !== 'regular_polygon')
         errors.push('gpu-resident coherent_beam_bank fusion requires regular_polygon geometry');
-      if (fusion.mode === 'calibrated_coherent_beam_bank') {
-        const reference = processConfig.reference_synthesis;
-        const surveillance = device.surveillance_channels || [];
-        if (reference?.mode !== 'array_eigenbeam' ||
-            !Array.isArray(reference.channels) ||
-            reference.channels.length !== surveillance.length ||
-            reference.channels.some((channel, index) => channel !== surveillance[index]))
-          errors.push('calibrated coherent fusion requires array_eigenbeam reference channels to match surveillance channels');
-        if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
-          errors.push('calibrated coherent fusion requires x_axis_bearing_deg_true');
-      }
+      const reference = processConfig.reference_synthesis;
+      const surveillance = device.surveillance_channels || [];
+      if (reference?.mode !== 'array_eigenbeam' ||
+          !Array.isArray(reference.channels) ||
+          reference.channels.length !== surveillance.length ||
+          reference.channels.some((channel, index) => channel !== surveillance[index]))
+        errors.push('coherent fusion requires array_eigenbeam reference channels to match surveillance channels');
+      if (!Number.isFinite(device.array_geometry?.x_axis_bearing_deg_true))
+        errors.push('coherent fusion requires x_axis_bearing_deg_true');
     }
   }
 

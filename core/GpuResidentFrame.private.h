@@ -236,15 +236,14 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
     config.clutterBatchLimit>g.channels || config.stages!=expectedStages || config.middle!=0 || !std::isfinite(config.sampleRate) || !(config.sampleRate>0))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED stage mask or nonzero middle");
- if(config.fusion.mode>2 || (config.fusion.mode!=0 &&
+ if(config.fusion.mode>1 || (config.fusion.mode!=0 &&
     (config.fusion.beams<4||config.fusion.beams>360||!std::isfinite(config.fusion.frequencyHz)||
      config.fusion.frequencyHz<=0||!std::isfinite(config.fusion.radiusM)||config.fusion.radiusM<=0||
      !std::isfinite(config.fusion.element0Rad)||!std::isfinite(config.fusion.elementStepRad)||
      config.fusion.elementStepRad==0)) ||
     (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
      config.fusion.element0Rad||config.fusion.elementStepRad||
-     config.fusion.directPathAzimuthRad)) ||
-    (config.fusion.mode==1&&config.fusion.directPathAzimuthRad!=0))
+     config.fusion.directPathAzimuthRad)))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
@@ -427,18 +426,18 @@ class ResidentFramePipeline {
    check(vkEndCommandBuffer(command),"resident ambiguity recording");
   }
   void calibrateFusion(const ReferenceCheckpoint& checkpoint){
-   if(config.fusion.mode!=2)return;
+   if(config.fusion.mode!=1)return;
    if(checkpoint.weightCount!=config.geometry.channels)
-    throw std::runtime_error("Calibrated coherent fusion reference weight count changed");
+    throw std::runtime_error("Coherent fusion reference weight count changed");
    double norm=0;
    for(uint32_t channel=0;channel<config.geometry.channels;++channel){
     const auto weight=checkpoint.weights[channel];
     if(!std::isfinite(weight.real())||!std::isfinite(weight.imag()))
-     throw std::runtime_error("Calibrated coherent fusion received nonfinite reference weights");
+     throw std::runtime_error("Coherent fusion received nonfinite reference weights");
     norm+=std::norm(weight);
    }
    if(!(norm>0)||!std::isfinite(norm))
-    throw std::runtime_error("Calibrated coherent fusion received zero-norm reference weights");
+    throw std::runtime_error("Coherent fusion received zero-norm reference weights");
    const double scale=1.0/std::sqrt(norm);
    const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
    auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
