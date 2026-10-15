@@ -472,7 +472,15 @@ class ResidentFramePipeline {
     const double floor=std::max(referenceLoading,.05*residualTrace/channels);
     for(uint32_t channel=0;channel<channels;++channel)
      ordered[channel]=noise[channel]=std::max(noise[channel],floor);
-    std::sort(ordered.begin(),ordered.begin()+channels);
+    for(uint32_t channel=1;channel<channels;++channel){
+     const double value=ordered[channel];
+     uint32_t position=channel;
+     while(position&&ordered[position-1]>value){
+      ordered[position]=ordered[position-1];
+      --position;
+     }
+     ordered[position]=value;
+    }
     const double median=ordered[channels/2];
     if(std::isfinite(median)&&median>0)
      for(uint32_t channel=0;channel<channels;++channel)
