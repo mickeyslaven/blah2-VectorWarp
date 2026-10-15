@@ -181,20 +181,26 @@ void main(){
  if(i>=p.count)return;
  uint row=i/p.delays, col=i%p.delays;
  uint shifted=(row+p.doppler/2u+1u)%p.doppler;
- precise double best=-1.0LF;
+ // Doppler maps and steering weights are FP32. Cache each channel value once
+ // per cell and keep the short beamformer dot products in their native
+ // precision; the old loop reloaded and promoted every value for every beam.
+ vec2 values[8];
+ for(uint c=0u;c<p.channels;++c){
+  values[c]=maps[c*p.count+col*p.doppler+shifted];
+  if(any(isnan(values[c]))||any(isinf(values[c])))atomicCompSwap(s[0],0u,5u);
+ }
+ precise float best=-1.0;
  for(uint b=0u;b<uint(p.beams);++b){
-  dvec2 sum=dvec2(0.0LF);
+  vec2 sum=vec2(0.0);
   for(uint c=0u;c<p.channels;++c){
-   dvec2 value=dvec2(maps[c*p.count+col*p.doppler+shifted]);
-   dvec2 weight=dvec2(weights[b*p.channels+c]);
-   if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,5u);
-   sum+=dvec2(weight.x*value.x-weight.y*value.y,
-              weight.x*value.y+weight.y*value.x);
+   vec2 value=values[c],weight=weights[b*p.channels+c];
+   sum+=vec2(weight.x*value.x-weight.y*value.y,
+             weight.x*value.y+weight.y*value.x);
   }
-  precise double power=sum.x*sum.x+sum.y*sum.y;
+  precise float power=sum.x*sum.x+sum.y*sum.y;
   if(power>best)best=power;
  }
- precise double result=sqrt(best);
+ precise double result=double(sqrt(best));
  if(isnan(result)||isinf(result))atomicCompSwap(s[0],0u,6u);
  // Keep the same real-amplitude interface as noncoherent fusion.
  fused[i]=dvec2(result,0.0LF);
