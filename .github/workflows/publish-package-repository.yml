@@ -1,8 +1,10 @@
 name: Publish verified package repository
 
 on:
-  push:
-    branches: [main]
+  # Do not deploy on a main push immediately before a release. GitHub Pages
+  # identifies deployments by commit SHA, so the later release deployment for
+  # that same SHA can otherwise be accepted without replacing the older package
+  # repository. Release publication and explicit/scheduled refreshes are enough.
   release:
     types: [published]
   schedule:
@@ -43,10 +45,6 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             release) tag=$EVENT_TAG ;;
             schedule) tag="v$latest" ;;
-            push)
-              [[ $GITHUB_REF == refs/heads/main ]] || {
-                echo 'Automatic refresh requires the protected main branch.' >&2; exit 1; }
-              tag="v$latest" ;;
             workflow_dispatch) tag=$INPUT_TAG ;;
             *) echo 'Unsupported repository publication event.' >&2; exit 1 ;;
           esac
