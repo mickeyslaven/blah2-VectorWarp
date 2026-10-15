@@ -58,6 +58,7 @@ void trackCases(){
  constexpr size_t base=32;real(base,500);real(base+2,-500);real(base+4,1);real(base+6,0);pair(base+8,501);bank[base+12]=0;bank[base+13]=246u|(255u<<8)|(146u<<16)|(100u<<24);bank[base+14]=2;bank[base+15]=0;
  for(uint32_t value=246;value<=500;++value){const size_t at=base+16+8*(value%255);real(at,value);real(at+2,-double(value));real(at+4,1);bank[at+6]=value==500?2:1;}
  auto raw=[&]{return View<uint32_t>{bank.data(),bank.size()};};same(trackerCheckpoint(UINT64_MAX,raw(),binding),cpu.to_json(UINT64_MAX));
+ auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%255)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%255)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%255)+7]=0;
  rejects([&]{auto wrong=binding;++wrong.generation;trackerCheckpoint(0,raw(),wrong);});rejects([&]{auto v=raw();--v.count;trackerCheckpoint(0,v,binding);});
  bank[base+15]=1;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+15]=0;bank[base+13]^=1u<<16;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+13]^=1u<<16;
  pair(20,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(20,1);
