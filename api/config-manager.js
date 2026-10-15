@@ -546,6 +546,9 @@ function validateConfig(config, baseline = null) {
         .map(element => element.daq_channel));
       if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
         errors.push('coherent_beam_bank geometry must include every surveillance channel');
+      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+          device.array_geometry?.shape !== 'regular_polygon')
+        errors.push('gpu-resident coherent_beam_bank fusion requires regular_polygon geometry');
     }
   }
 

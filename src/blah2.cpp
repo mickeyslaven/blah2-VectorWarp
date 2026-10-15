@@ -52,6 +52,8 @@
 #include <future>
 #include <limits>
 #include <array>
+#include <cmath>
+#include <numeric>
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
@@ -590,6 +592,28 @@ try
     residentConfig.delayAxis.assign(ambiguity.front()->result()->delay.begin(),ambiguity.front()->result()->delay.end());
     residentConfig.dopplerAxis.assign(ambiguity.front()->result()->doppler.begin(),ambiguity.front()->result()->doppler.end());
     residentConfig.reference={referenceChannels,referenceConfig.analysisSamples,referenceConfig.analysisInterval,referenceConfig.powerIterations,referenceConfig.covarianceSmoothing,referenceConfig.diagonalLoading,spectrumBandwidth,double(fc)};
+    if(surveillanceFusionMode=="coherent_beam_bank"){
+      std::string shape;
+      auto geometry=tree["capture"]["device"]["array_geometry"];
+      if(geometry.has_child("shape"))geometry["shape"]>>shape;
+      if(shape!="regular_polygon"||coherentPositions.size()<3)
+        throw std::invalid_argument("Resident coherent fusion requires regular-polygon geometry");
+      double centreX=0,centreY=0;
+      for(const auto& position:coherentPositions){centreX+=position[0];centreY+=position[1];}
+      centreX/=coherentPositions.size();centreY/=coherentPositions.size();
+      std::vector<double> angles,radii;
+      for(const auto& position:coherentPositions){const double x=position[0]-centreX,y=position[1]-centreY;
+        angles.push_back(std::atan2(y,x));radii.push_back(std::hypot(x,y));}
+      const double radius=std::accumulate(radii.begin(),radii.end(),0.0)/radii.size();
+      const double step=std::remainder(angles[1]-angles[0],2*std::acos(-1.0));
+      const double tolerance=std::max(.001,radius*.05);
+      for(size_t channel=0;channel<radii.size();++channel)
+        if(std::abs(radii[channel]-radius)>tolerance||
+           std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
+          throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
+      residentConfig.fusion={blah2::resident::FusionMode::coherentRegularPolygon,
+        coherentBeamCount,double(fc),radius,angles[0],step};
+    }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;

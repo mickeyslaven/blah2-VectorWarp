@@ -23,6 +23,10 @@ struct ResidentFrameConfig {
   uint32_t correlation = 0;
   double sampleRate = 0;
   double middle = 0;
+  struct Fusion {
+    uint32_t mode = 0, beams = 0;
+    double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0;
+  } fusion;
   // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
   // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
   // Display/detection/tracker are explicit; main/worker routing remains unsupported.
@@ -38,7 +42,7 @@ struct ResidentFrameOutputs {
   // Original unshifted layout: channel, delay, Doppler (FP32 diagnostic maps).
   std::complex<float>* maps = nullptr;
   size_t mapCount = 0;
-  // Published row-major shifted Doppler, delay; real FP64 RMS fusion.
+  // Published row-major shifted Doppler, delay; FP64 configured fusion.
   std::complex<double>* fused = nullptr;
   size_t fusedCount = 0;
   // Optional diagnostics; candidates are invalid whenever finishRadar is false.
@@ -163,6 +167,36 @@ void main(){
  fused[i]=dvec2(result,0.0LF);
  if((i&127u)==0u){uint covered=min(128u,p.count-i);atomicAdd(s[6],covered*p.channels);atomicAdd(s[7],covered);}
 })glsl";
+const char* coherentFusionSource=R"glsl(#version 450
+#extension GL_ARB_gpu_shader_fp64 : require
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Doppler { vec2 maps[]; };
+layout(binding=1) writeonly buffer Fused { dvec2 fused[]; };
+layout(binding=2) buffer Status { uint s[]; };
+layout(binding=3) readonly buffer Weights { vec2 weights[]; };
+layout(push_constant) uniform P { uint count; uint doppler; uint delays; uint channels; int beams; } p;
+void main(){
+ uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
+ if(i>=p.count)return;
+ uint row=i/p.delays, col=i%p.delays;
+ uint shifted=(row+p.doppler/2u+1u)%p.doppler;
+ precise double best=-1.0LF; dvec2 selected=dvec2(0.0LF);
+ for(uint b=0u;b<uint(p.beams);++b){
+  dvec2 sum=dvec2(0.0LF);
+  for(uint c=0u;c<p.channels;++c){
+   dvec2 value=dvec2(maps[c*p.count+col*p.doppler+shifted]);
+   dvec2 weight=dvec2(weights[b*p.channels+c]);
+   if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,5u);
+   sum+=dvec2(weight.x*value.x-weight.y*value.y,
+              weight.x*value.y+weight.y*value.x);
+  }
+  precise double power=sum.x*sum.x+sum.y*sum.y;
+  if(power>best){best=power;selected=sum;}
+ }
+ if(any(isnan(selected))||any(isinf(selected)))atomicCompSwap(s[0],0u,6u);
+ fused[i]=selected;
+ if((i&127u)==0u){uint covered=min(128u,p.count-i);atomicAdd(s[6],covered*p.channels);atomicAdd(s[7],covered);}
+})glsl";
 struct Commands {
  Context& context;
  std::vector<VkCommandBuffer> handles;
@@ -199,6 +233,14 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
     config.clutterBatchLimit>g.channels || config.stages!=expectedStages || config.middle!=0 || !std::isfinite(config.sampleRate) || !(config.sampleRate>0))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED stage mask or nonzero middle");
+ if(config.fusion.mode>1 || (config.fusion.mode==1 &&
+    (config.fusion.beams<4||config.fusion.beams>360||!std::isfinite(config.fusion.frequencyHz)||
+     config.fusion.frequencyHz<=0||!std::isfinite(config.fusion.radiusM)||config.fusion.radiusM<=0||
+     !std::isfinite(config.fusion.element0Rad)||!std::isfinite(config.fusion.elementStepRad)||
+     config.fusion.elementStepRad==0)) ||
+    (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
+     config.fusion.element0Rad||config.fusion.elementStepRad)))
+  throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
     !g.channels || g.channels>8 || !g.clutterSamples || g.clutterSamples>INT32_MAX ||
@@ -241,7 +283,7 @@ class ResidentFramePipeline {
  std::unique_ptr<Kernel> multiply_,gather_;
  struct Workspace {
   std::unique_ptr<ClutterPipeline> clutter;
-  std::unique_ptr<Buffer> canonical,fused,status;
+  std::unique_ptr<Buffer> canonical,fused,status,fusionWeights;
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
@@ -278,7 +320,25 @@ class ResidentFramePipeline {
      std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),status.get()});
    surveillancePack=std::make_unique<Kernel>(context,gpu_resident::surveillancePackSource,
      std::vector<Buffer*>{canonical.get(),owner.surveillance_.get(),status.get()});
-   fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
+   if(config.fusion.mode==1){
+    const uint64_t weightCount=uint64_t(config.fusion.beams)*config.geometry.channels;
+    fusionWeights=std::make_unique<Buffer>(context,weightCount*sizeof(std::complex<float>),host,preferred);
+    auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
+    const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
+    const double normalization=1.0/std::sqrt(double(config.geometry.channels));
+    for(uint32_t beam=0;beam<config.fusion.beams;++beam){
+     const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
+     for(uint32_t channel=0;channel<config.geometry.channels;++channel){
+      const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
+      const double phase=waveNumber*config.fusion.radiusM*std::cos(elementAngle-beamAngle);
+      target[uint64_t(beam)*config.geometry.channels+channel]=
+       std::complex<float>(normalization*std::cos(phase),normalization*std::sin(phase));
+     }
+    }
+    fusionWeights->flush(0,fusionWeights->bytes);
+    fusion=std::make_unique<Kernel>(context,gpu_resident::coherentFusionSource,
+      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
+   }else fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
@@ -347,7 +407,8 @@ class ResidentFramePipeline {
    barrier(command);
    timestamps->end(command,3);
    timestamps->begin(command,4);
-   fusion->append(command,{full.doppler*full.delays,full.doppler,full.delays,full.channels,0});
+   fusion->append(command,{full.doppler*full.delays,full.doppler,full.delays,full.channels,
+    int32_t(config.fusion.mode==1?config.fusion.beams:0)});
    barrier(command);
    VkBufferCopy mapCopy{0,0,owner.doppler_->bytes};
    vkCmdCopyBuffer(command,owner.doppler_->handle,owner.output_->handle,1,&mapCopy);

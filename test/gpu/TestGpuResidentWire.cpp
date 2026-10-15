@@ -52,6 +52,15 @@ void configCases(){
  for(size_t i=0;i<c.dopplerAxis.size();++i)wire::Writer{{f.data(),f.size()}}.f64(i*8,c.dopplerAxis[i]);
  const auto decoded=decodeConfig(bytes(canonical),bytes(d),bytes(f));
  check(encodeConfig(decoded)==canonical&&decoded.delayAxis==c.delayAxis&&decoded.dopplerAxis==c.dopplerAxis,"Config/axes did not preserve canonical values");
+ auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172};
+ const auto coherentBytes=encodeConfig(coherent);
+ const auto coherentDecoded=decodeConfig(bytes(coherentBytes),bytes(d),bytes(f));
+ check(encodeConfig(coherentDecoded)==coherentBytes&&
+  coherentDecoded.fusion.mode==FusionMode::coherentRegularPolygon&&
+  coherentDecoded.fusion.beams==12&&coherentDecoded.fusion.frequencyHz==539000000,
+  "Coherent resident fusion configuration did not round trip");
+ check(wire::configHash(coherent)!=wire::configHash(c),
+  "Coherent resident fusion is not bound to config identity");
  auto mutate=[&](const std::function<void(Config&)>&change){auto v=c;change(v);reject([&]{validateConfig(v);},"Invalid config admitted");};
  mutate([](auto&v){v.surveillanceChannels={1,0};});mutate([](auto&v){v.delayAxis[1]=1;});
  mutate([](auto&v){v.dopplerAxis[1]=v.dopplerAxis[0];});mutate([](auto&v){v.reference.channels={1,0};});
@@ -64,6 +73,7 @@ void configCases(){
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.presence&=~bit(Section::canonical);});mutate([](auto&v){v.presence|=uint64_t(1)<<63;});
  mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
+ mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
  for(size_t at:{size_t(20),size_t(132),size_t(308),size_t(360),size_t(464),size_t(176)}){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }

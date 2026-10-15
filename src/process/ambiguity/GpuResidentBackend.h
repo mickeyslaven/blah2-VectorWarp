@@ -44,6 +44,12 @@ struct ReferenceConfig {
  uint32_t analysisSamples=32768,analysisInterval=10,powerIterations=12;
  double covarianceSmoothing=.8,diagonalLoading=.001,bandwidthHz=2000,centreHz=0;
 };
+enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1};
+struct FusionConfig {
+ FusionMode mode=FusionMode::noncoherent;
+ uint32_t beams=0;
+ double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0;
+};
 struct DetectorConfig {
  bool enabled=false,interpolateDelay=true,interpolateDoppler=true;
  int32_t guard=0,train=0,minDelay=0;
@@ -64,6 +70,7 @@ struct Config {
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  ReferenceConfig reference;
+ FusionConfig fusion;
  DetectorConfig detector;
  TrackerConfig tracker;
  std::string device;
