@@ -125,7 +125,7 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;m[29]=m[76];m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;currentBeam[i]=beam;
- double prior=history[i];
+ double prior=history[i];bool integrationMatch=true;
  bool historyReady=m[74]==2u&&finiteD(history[0]);
  if(historyReady&&m[76]!=0u){
   uint row=i/m[33],column=i%m[33];prior=-1.0LF;
@@ -136,12 +136,13 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
     delta=min(delta,m[75]-delta);if(delta>m[77])continue;}
    if(candidate>prior)prior=candidate;
   }
+  integrationMatch=prior>=0.0LF;
  }
  if(historyReady&&m[76]==0u&&m[77]!=0xffffffffu&&m[75]!=0u){
   uint other=historyBeam[i],delta=beam>other?beam-other:other-beam;delta=min(delta,m[75]-delta);
-  if(delta>m[77])prior=packDouble2x32(uvec2(0u,0x7ff80000u));
+  if(delta>m[77])integrationMatch=false;
  }
- precise double power=m[49]!=0u?(historyReady&&finiteD(prior)?0.5LF*(current+prior):current):0.0LF;
+ precise double power=m[49]!=0u?(historyReady?(integrationMatch&&finiteD(prior)?0.5LF*(current+prior):0.0LF):current):0.0LF;
  double amplitude=sqrt(max(power,0.0LF));
  double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
