@@ -539,7 +539,15 @@ try
   tree["process"]["detection"]["nTrain"] >> nTrain;
   tree["process"]["detection"]["minDelay"] >> minDelay;
   tree["process"]["detection"]["minDoppler"] >> minDoppler;
-  CfarDetector1D *cfarDetector1D = new CfarDetector1D(pfa, nGuard, nTrain, minDelay, minDoppler);
+  // A beam bank reports the maximum of several trials per cell. Apply a
+  // Bonferroni correction so its configured false-alarm probability retains
+  // the same upper bound as the single noncoherent statistic.
+  const double detectorPfa = surveillanceFusionMode == "coherent_beam_bank"
+    ? pfa / coherentBeamCount : pfa;
+  if (surveillanceFusionMode == "coherent_beam_bank")
+    std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
+      << " effective_pfa=" << detectorPfa << "\n";
+  CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
   // set up process centroid
@@ -617,7 +625,7 @@ try
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
-    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,pfa,minDoppler,1/tCpi};
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi};
     if(isTracker){
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");
