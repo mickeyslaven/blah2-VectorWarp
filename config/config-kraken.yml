@@ -80,9 +80,6 @@ process:
     integration_cpis: 1
     # Optional 2-CPI local trajectory bank. Zero preserves same-cell integration.
     integration_motion_bins: 0
-    # Optional maximum circular winning-beam change between integrated CPIs.
-    # Omit to disable the bearing-consistency gate.
-    # integration_beam_tolerance: 1
   tracker:
     enable: true
     initiate:
@@ -91,6 +88,9 @@ process:
       maxAcc: 10
     delete: 10
     smooth: "none"
+    # Optional maximum circular winning-beam change for track association.
+    # Omit to preserve delay/Doppler-only association.
+    # beam_tolerance: 1
 
 network:
   ip: 0.0.0.0

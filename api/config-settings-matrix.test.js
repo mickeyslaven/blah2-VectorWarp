@@ -118,7 +118,7 @@ try {
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
-  fusion.process.detection.integration_beam_tolerance = 1;
+  fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
     mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
@@ -136,7 +136,7 @@ try {
       'process.surveillance_fusion.effective_beam_trials',
       'process.detection.integration_cpis',
       'process.detection.integration_motion_bins',
-      'process.detection.integration_beam_tolerance']);
+      'process.tracker.beam_tolerance']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};

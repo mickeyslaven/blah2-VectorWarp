@@ -72,6 +72,14 @@ double checkedD(uint at){return packDouble2x32(uvec2(checkedWord(at),checkedWord
 void writeM(uint at,double value){uvec2 q=unpackDouble2x32(value);m[at]=q.x;m[at+1]=q.y;}
 uint record(uint i){return 32u+2056u*i;}
 uint work(uint i){return 64u+12u*i;}
+uint detectionBeam(uint i){uint cell=s[post[41]+i];return s[post[39]+cell]>>8u;}
+uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u;
+ return length==0u?0u:src(r+16u+8u*((head+length-1u)%255u)+7u);}
+bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolerance=post[77];
+ if(tolerance==0xffffffffu||beams==0u||trackBeam==0u||detection==0u)return true;
+ uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
+ return min(delta,beams-delta)<=tolerance;
+}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
  put(0u,1u);put(1u,8224u);put(2u,m[3]);put(3u,255u);put(4u,count);
@@ -99,7 +107,8 @@ void main(){if(indexOf()!=0u)return;m[52]=m[10];m[53]=m[11];
 const char* predictBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
  if(i<m[19]){s[m[6]+i]=0u;uint at=m[5]+8u*i;
-  if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u)))reject(303u);atomicAdd(m[57],1u);}
+  uint cell=s[post[41]+i],beam=cell<m[4]?s[post[39]+cell]>>8u:0xffffffffu;
+  if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u))||cell>=m[4]||beam>post[75])reject(303u);atomicAdd(m[57],1u);}
  if(i>=m[18])return;uint r=record(i),w=work(i);double delay=sourceD(r),doppler=sourceD(r+2u),acc=sourceD(r+6u),time=md(50u);
  precise double delayPredict=delay-md(46u)*(doppler*time+0.5LF*acc*time*time)/md(44u);
  precise double dopplerPredict=doppler+(acc*time);
@@ -110,12 +119,12 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
 const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
- for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i);double dp=md(w),vp=md(w+2u),cpi=md(42u);
+ for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r);double dp=md(w),vp=md(w+2u),cpi=md(42u);
   precise double lowDelay=dp-1.0LF,highDelay=dp+1.0LF,lowDoppler=vp-1.0LF*(1.0LF/cpi),highDoppler=vp+1.0LF*(1.0LF/cpi);
   bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler);if(m[19]>0u&&!validGate)reject(305u);
   double best=packDouble2x32(uvec2(0u,0x7ff00000u));uint match=0xffffffffu;
   for(uint j=lane;j<m[19];j+=128u){uint at=m[5]+8u*j;double delay=sd(at),doppler=sd(at+2u);
-   if(validGate&&s[m[6]+j]==0u&&delay>lowDelay&&delay<highDelay&&doppler>lowDoppler&&doppler<highDoppler){
+   if(validGate&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))&&delay>lowDelay&&delay<highDelay&&doppler>lowDoppler&&doppler<highDoppler){
     precise double deltaDelay=delay-dp,deltaDoppler=(doppler-vp)*cpi;
     precise double distance=deltaDelay*deltaDelay+deltaDoppler*deltaDoppler;
     if(!finiteD(distance))reject(305u);else if(distance<best){best=distance;match=j;}
@@ -170,8 +179,10 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  if(lane!=0u)return;uint ringBits=src(source+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,slot;
  if(length<255u){slot=(head+length)%255u;length++;}else{slot=head;head=(head+1u)%255u;}
  uint at=target+16u+8u*slot,match=m[w+4u],state=m[w+6u];
+ uint previousNewest=source+16u+8u*((head+length-2u)%255u);
+ uint beam=match==0xffffffffu?src(previousNewest+7u):detectionBeam(match);
  for(uint k=0u;k<6u;++k){uint value=match==0xffffffffu?(k<4u?m[w+k]:0u):s[m[5]+8u*match+k];put(target+k,value);put(at+k,value);}
- put(at+6u,state);put(at+7u,0u);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
+ put(at+6u,state);put(at+7u,beam);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
  uvec2 associated=plusOne(pairS(source+8u)),inactive=match==0xffffffffu?plusOne(pairS(source+10u)):uvec2(0u);
  put(target+8u,associated.x);put(target+9u,associated.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
  uint display=min(length,100u),start=(head+length-display)%255u;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
@@ -186,7 +197,7 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  uint detection=s[m[7]+i/m[38]],hypothesis=i%m[38];precise double acc=md(48u)*double(int(hypothesis)-int(m[37]));
  if(!finiteD(acc)){reject(308u);return;}for(uint k=0u;k<6u;++k){uint value=s[m[5]+8u*detection+k];put(target+k,value);put(target+16u+k,value);}
  uvec2 bits=unpackDouble2x32(acc);put(target+6u,bits.x);put(target+7u,bits.y);put(target+8u,1u);put(target+12u,(src(8u)+i)%65535u);
- put(target+13u,(1u<<8u)|(1u<<24u));put(target+15u,0xffffffffu);atomicAdd(m[30],1u);atomicAdd(m[31],1u);
+ put(target+13u,(1u<<8u)|(1u<<24u));put(target+15u,0xffffffffu);put(target+23u,detectionBeam(detection));atomicAdd(m[30],1u);atomicAdd(m[31],1u);
 }
 )glsl";
 const char* finalizeBody=R"glsl(
@@ -215,7 +226,7 @@ void main(){uint i=indexOf();if(m[0]!=0u)return;uint count=checkedWord(4u);
  if(checkedWord(newest+6u)!=state)reject(315u);
  for(uint j=0u;j<255u;++j){uint at=r+16u+8u*j;
   if(length<255u&&j>=length){for(uint k=0u;k<8u;++k)if(checkedWord(at+k)!=0u)reject(316u);}
-  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);if(checkedWord(at+6u)>3u||checkedWord(at+7u)!=0u)reject(316u);}}
+  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);if(checkedWord(at+6u)>3u||checkedWord(at+7u)>post[75])reject(316u);}}
  atomicAdd(m[54],1u);atomicAdd(m[60u+state],1u);if(state!=0u)atomicAdd(m[59],1u);
 }
 )glsl";

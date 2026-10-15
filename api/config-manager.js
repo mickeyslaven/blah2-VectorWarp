@@ -473,10 +473,6 @@ function validateConfig(config, baseline = null) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
-  if (detection.integration_beam_tolerance !== undefined)
-    number(detection.integration_beam_tolerance,
-      'process.detection.integration_beam_tolerance',
-      {integer: true, min: 0, max: 180});
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -502,6 +498,9 @@ function validateConfig(config, baseline = null) {
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
   number(tracker.delete, 'process.tracker.delete',
     {integer: true, min: 1, max: 255});
+  if (tracker.beam_tolerance !== undefined)
+    number(tracker.beam_tolerance, 'process.tracker.beam_tolerance',
+      {integer: true, min: 0, max: 180});
   string(tracker.smooth, 'process.tracker.smooth');
   if (processConfig.performance !== undefined) {
     const performance = requireObject(processConfig.performance,
@@ -590,14 +589,13 @@ function validateConfig(config, baseline = null) {
   if ((detection.integration_motion_bins ?? 0) > 0 &&
       (detection.integration_cpis ?? 1) !== 2)
     errors.push('integration_motion_bins requires integration_cpis: 2');
-  if (detection.integration_beam_tolerance !== undefined) {
+  if (tracker.beam_tolerance !== undefined) {
     const fusion = processConfig.surveillance_fusion;
-    if ((detection.integration_cpis ?? 1) !== 2 ||
-        !fusion || fusion.mode === 'noncoherent')
-      errors.push('integration_beam_tolerance requires coherent two-CPI fusion');
+    if (!tracker.enable || !fusion || fusion.mode === 'noncoherent')
+      errors.push('tracker beam_tolerance requires coherent tracking');
     else if (Number.isFinite(fusion.beams) &&
-        detection.integration_beam_tolerance > Math.floor(fusion.beams / 2))
-      errors.push('integration_beam_tolerance cannot exceed half the beam count');
+        tracker.beam_tolerance > Math.floor(fusion.beams / 2))
+      errors.push('tracker beam_tolerance cannot exceed half the beam count');
   }
 
   string(network.ip, 'network.ip');

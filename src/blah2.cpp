@@ -598,8 +598,8 @@ try
     tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
   if (tree["process"]["detection"].has_child("integration_motion_bins"))
     tree["process"]["detection"]["integration_motion_bins"] >> integrationMotionBins;
-  if (tree["process"]["detection"].has_child("integration_beam_tolerance"))
-    tree["process"]["detection"]["integration_beam_tolerance"] >> integrationBeamTolerance;
+  if (tree["process"]["tracker"].has_child("beam_tolerance"))
+    tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
   if (integrationCpis < 1 || integrationCpis > 2)
     throw std::invalid_argument("Detection integration_cpis must be 1 or 2");
   if (integrationCpis > 1 && !residentMode)
@@ -607,8 +607,8 @@ try
   if (integrationMotionBins > 1 || (integrationMotionBins && integrationCpis != 2))
     throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
   if (integrationBeamTolerance != UINT32_MAX &&
-      (!coherentFusion || integrationCpis != 2 || integrationBeamTolerance > coherentBeamCount / 2))
-    throw std::invalid_argument("Detection integration_beam_tolerance requires coherent two-CPI fusion and at most half the beam count");
+      (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
+    throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
   // A beam bank reports the maximum of several trials per cell. Apply a
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
@@ -649,6 +649,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if (integrationBeamTolerance != UINT32_MAX && !isTracker)
+    throw std::invalid_argument("Tracker beam_tolerance requires tracking to be enabled");
   if (!isDetection)
   {
     isTracker = false;
