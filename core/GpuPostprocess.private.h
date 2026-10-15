@@ -182,7 +182,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=s[m[39]+i]&
  atomicAdd(m[5],n);train=train/double(n);precise double threshold=readD(at+6u)*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
  if(m[74]==2u&&m[28]==0u)return;
- if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=1u;atomicAdd(m[6],1u);
+ if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=s[m[39]+i]|1u;atomicAdd(m[6],1u);
   uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
 }
 )glsl";
@@ -190,7 +190,7 @@ const char* centroidBody=R"glsl(
 bool finiteRecord(uint at){return finiteD(readS(at))&&finiteD(readS(at+2u))&&finiteD(readS(at+4u));}
 void main(){uint i=indexOf();if(i>=p.count||m[0]!=0u)return;
  // p.a=1 is a direct-record qualifier binding; production always uses zero.
- if(p.a==0u&&s[m[39]+i]==0u)return;s[m[40]+i]=0u;uint record=m[42]+6u*i;
+ if(p.a==0u&&(s[m[39]+i]&1u)==0u)return;s[m[40]+i]=0u;uint record=m[42]+6u*i;
  if(!finiteRecord(record))return;atomicAdd(m[7],1u);double centreSnr=readS(record+4u);bool retain=true;
  if(p.a==0u){uint row=i/m[33],column=i%m[33],rb=m[47]+2u*row,cb=m[48]+2u*column;
   for(uint r=m[rb];r<m[rb+1u]&&retain;++r)for(uint c=m[cb];c<m[cb+1u];++c){
