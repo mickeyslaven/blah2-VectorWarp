@@ -352,7 +352,9 @@ struct Context {
       std::lock_guard<std::mutex> lock(allocationsMutex);
       const auto found = deviceAllocations.find(device);
       if (found != deviceAllocations.end()) {
-        if(releaseEvidence)*releaseEvidence={true,found->second.budget.used(),found->second.budget.peak(),found->second.budget.limit(),found->second.allocations.size()};
+        if(releaseEvidence)*releaseEvidence={true,found->second.budget.deviceUsed(),
+          found->second.budget.devicePeak(),found->second.budget.deviceLimit(),
+          found->second.allocations.size()};
         if (std::getenv("BLAH2_GPU_DIAGNOSTICS"))
           std::cerr << "GPU allocation budget peak=" << found->second.budget.peak()
             << " limit=" << found->second.budget.limit()

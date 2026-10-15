@@ -284,7 +284,8 @@ class ResidentModule final:public resident::Backend {
   AllocationExit state=exit_;
   if(pipeline_){std::lock_guard<std::mutex>lock(allocationsMutex);
   const auto& a=deviceAllocations.at(pipeline_->context_.device);
-  state={true,a.budget.used(),a.budget.peak(),a.budget.limit(),a.allocations.size()};}rw::require(state.valid&&state.used<=state.peak&&state.peak<=state.limit,"Resident control allocator evidence invalid");
+  state={true,a.budget.deviceUsed(),a.budget.devicePeak(),a.budget.deviceLimit(),
+   a.allocations.size()};}rw::require(state.valid&&state.used<=state.peak&&state.peak<=state.limit,"Resident control allocator evidence invalid");
   w.u64(416,state.used);
   w.u64(424,state.peak);
   w.u64(432,state.limit);
