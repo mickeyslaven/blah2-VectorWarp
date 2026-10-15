@@ -180,7 +180,7 @@ void main(){
  if(i>=p.count)return;
  uint row=i/p.delays, col=i%p.delays;
  uint shifted=(row+p.doppler/2u+1u)%p.doppler;
- precise double best=-1.0LF; dvec2 selected=dvec2(0.0LF);
+ precise double best=-1.0LF;
  for(uint b=0u;b<uint(p.beams);++b){
   dvec2 sum=dvec2(0.0LF);
   for(uint c=0u;c<p.channels;++c){
@@ -191,10 +191,12 @@ void main(){
               weight.x*value.y+weight.y*value.x);
   }
   precise double power=sum.x*sum.x+sum.y*sum.y;
-  if(power>best){best=power;selected=sum;}
+  if(power>best)best=power;
  }
- if(any(isnan(selected))||any(isinf(selected)))atomicCompSwap(s[0],0u,6u);
- fused[i]=selected;
+ precise double result=sqrt(best);
+ if(isnan(result)||isinf(result))atomicCompSwap(s[0],0u,6u);
+ // Keep the same real-amplitude interface as noncoherent fusion.
+ fused[i]=dvec2(result,0.0LF);
  if((i&127u)==0u){uint covered=min(128u,p.count-i);atomicAdd(s[6],covered*p.channels);atomicAdd(s[7],covered);}
 })glsl";
 struct Commands {

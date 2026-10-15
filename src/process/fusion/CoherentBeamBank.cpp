@@ -58,7 +58,6 @@ std::unique_ptr<Map<std::complex<double>>> CoherentBeamBank::process(
     for (uint32_t column = 0; column < columns; ++column)
     {
       double bestPower = -1;
-      std::complex<double> best{0, 0};
       for (const auto& weights : weights_)
       {
         std::complex<double> beamValue{0, 0};
@@ -66,12 +65,11 @@ std::unique_ptr<Map<std::complex<double>>> CoherentBeamBank::process(
           beamValue += weights[channel] * maps[channel]->data[row][column];
         const double power = std::norm(beamValue);
         if (power > bestPower)
-        {
           bestPower = power;
-          best = beamValue;
-        }
       }
-      fused->data[row][column] = best;
+      // Match the existing noncoherent fusion contract: downstream stages
+      // consume a real, nonnegative amplitude rather than a complex sample.
+      fused->data[row][column] = {std::sqrt(bestPower), 0};
     }
   return fused;
 }

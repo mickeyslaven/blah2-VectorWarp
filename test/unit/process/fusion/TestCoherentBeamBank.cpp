@@ -38,6 +38,7 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
   CoherentBeamBank fusion(config);
   const auto result = fusion.process(maps);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
+  REQUIRE(result->data[0][0].imag() == 0.0);
 }
 
 TEST_CASE("coherent beam bank rejects mismatched map geometry")
