@@ -467,6 +467,9 @@ function validateConfig(config, baseline = null) {
   number(detection.minDelay, 'process.detection.minDelay',
     {integer: true, min: -128, max: 127});
   number(detection.minDoppler, 'process.detection.minDoppler', {min: 0});
+  if (detection.integration_cpis !== undefined)
+    number(detection.integration_cpis, 'process.detection.integration_cpis',
+      {integer: true, min: 1, max: 2});
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -504,6 +507,9 @@ function validateConfig(config, baseline = null) {
       if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
         errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
     }
+    if ((detection.integration_cpis ?? 1) > 1 &&
+        performance.acceleration !== 'gpu-resident')
+      errors.push('multi-CPI detection requires gpu-resident acceleration');
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});

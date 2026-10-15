@@ -56,6 +56,7 @@ struct DetectorConfig {
  int32_t guard=0,train=0,minDelay=0;
  uint32_t centroidDelay=0,centroidDoppler=0;
  double pfa=0,minDoppler=0,centroidDopplerResolution=0;
+ uint32_t integrationCpis=1;
 };
 struct TrackerConfig {
  bool enabled=false;

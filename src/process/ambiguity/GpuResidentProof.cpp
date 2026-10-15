@@ -180,11 +180,11 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(!x.residentStatus[0]&&x.residentStatus[3]==next*g.clutterSamples&&x.residentStatus[4]==next*g.clutterSamples&&x.residentStatus[5]==next*c.correlation*g.doppler,"Resident batch packing coverage differs");}const uint64_t cells=uint64_t(g.doppler)*g.delays;
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
  const auto& post=b.postprocessStatus;
- require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays,"Resident postprocess coverage differs");
+ require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays&&post[27]==c.detector.integrationCpis,"Resident postprocess coverage differs");
  if(c.detector.enabled){require(post[4]==cells&&post[6]<=cells&&post[7]==post[6]&&post[8]<=post[7]&&post[9]==post[8]&&post[10]<=post[9]&&post[11]==post[9]-post[10]&&post[12]==cells&&post[13]==post[11],"Resident postprocess decision coverage differs");
  const uint32_t kinds=1u|((p.diagnosticPresence&bit(Section::cfar))?2u:0u)|((p.diagnosticPresence&bit(Section::centroid))?4u:0u),passes=1u+((kinds>>1)&1u)+((kinds>>2)&1u);
  require(post[26]==kinds&&post[23]==passes*((cells+127)/128)&&post[24]==post[23]&&post[25]==passes*cells&&post[16]==((kinds&2)?post[6]:0)&&post[17]==((kinds&4)?post[8]:0),"Resident stable compaction coverage differs");}else{for(size_t i=4;i<=17;++i)require(!post[i],"Disabled detector status nonzero");
- for(size_t i=23;i<=26;++i)require(!post[i],"Disabled compaction status nonzero");}for(size_t i=27;i<32;++i)require(!post[i],"Resident postprocess reserved status nonzero");
+ for(size_t i=23;i<=26;++i)require(!post[i],"Disabled compaction status nonzero");}for(size_t i=28;i<32;++i)require(!post[i],"Resident postprocess reserved status nonzero");
  if(c.tracker.enabled){const auto& t=b.trackerStatus;
  auto pair=[&](size_t i){return uint64_t(t[i])|(uint64_t(t[i+1])<<32);};
  require(!t[0]&&t[1]<=1&&t[3]==c.tracker.capacity&&t[4]==cells&&pair(8)==p.tracker.transaction&&pair(10)==p.tracker.generation&&pair(12)==p.tracker.consumedSequence&&pair(14)==c.epoch&&pair(16)==p.frame.signalTimestampMs&&pair(52)==p.tracker.generation&&t[19]==post[11],"Resident tracker generation proof differs");

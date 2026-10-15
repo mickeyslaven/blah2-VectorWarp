@@ -54,6 +54,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.centroidDoppler=uint16_t(d.centroidDoppler);
  p.interpolateDelay=d.interpolateDelay;
  p.interpolateDoppler=d.interpolateDoppler;
+ p.integrationCpis=d.integrationCpis;
  p.delayAxis=c.delayAxis;
  p.dopplerAxis=c.dopplerAxis;
  p.epoch=c.epoch;

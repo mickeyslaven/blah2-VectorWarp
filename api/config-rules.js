@@ -30,6 +30,7 @@ const rules = {
   'process.detection.nCentroid': integer(0, 65535),
   'process.detection.minDelay': integer(-128, 127),
   'process.detection.minDoppler': numeric(0),
+  'process.detection.integration_cpis': {...integer(1, 2), optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),

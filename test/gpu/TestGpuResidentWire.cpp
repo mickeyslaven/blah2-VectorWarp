@@ -19,7 +19,7 @@ Config config(){
  const double resolution=1.0/(63.0/128000);c.dopplerAxis={-3*resolution,-2*resolution,-resolution,0,resolution,2*resolution,3*resolution};c.spectrumBins=64;
  c.reference.channels={0,1};c.reference.analysisSamples=64;
  c.detector.enabled=true;c.detector.guard=1;c.detector.train=2;
- c.detector.pfa=.001;c.detector.centroidDopplerResolution=2;
+ c.detector.pfa=.001;c.detector.centroidDopplerResolution=2;c.detector.integrationCpis=2;
  c.tracker.enabled=true;c.tracker.capacity=4;c.tracker.m=2;c.tracker.n=3;c.tracker.nDelete=2;
  c.tracker.cpi=63.0/128000;c.tracker.maxAccInit=0;c.tracker.rangeRes=1;c.tracker.lambda=1;
  c.device="4098:27039:1";c.presence=wire::mandatoryPresence(c);
@@ -62,6 +62,7 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
+ check(decoded.detector.integrationCpis==2,"Multi-CPI detector configuration did not round trip");
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -79,10 +80,11 @@ void configCases(){
  mutate([](auto&v){v.spectrumBins=63;});mutate([](auto&v){v.tracker.cpi=.5;});
  mutate([](auto&v){v.tracker.capacity=0;});mutate([](auto&v){v.tracker.n=256;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
+ mutate([](auto&v){v.detector.integrationCpis=3;});
  mutate([](auto&v){v.presence&=~bit(Section::canonical);});mutate([](auto&v){v.presence|=uint64_t(1)<<63;});
  mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
- for(size_t at:{size_t(20),size_t(132),size_t(308),size_t(360),size_t(464),size_t(176)}){
+ for(size_t at:{size_t(20),size_t(132),size_t(308),size_t(360),size_t(464),size_t(500),size_t(176)}){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }
  auto b=canonical;wire::Writer{{b.data(),b.size()}}.u32(232,2);reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Nonbinary feature accepted");

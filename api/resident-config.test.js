@@ -28,6 +28,12 @@ function resident() {
 }
 const c = resident();const before = JSON.stringify(c);valid(c);
 assert.equal(JSON.stringify(c), before, 'Validation rewrote the selected workload or capacity');
+const integrated = resident();integrated.process.detection.integration_cpis = 2;valid(integrated);
+for (const mode of ['auto', 'cpu', 'gpu']) {
+  const candidate = load();candidate.process.performance.acceleration = mode;
+  candidate.process.detection.integration_cpis = 2;
+  invalid(candidate, 'multi-CPI detection requires gpu-resident acceleration');
+}
 const missing = resident();delete missing.process.tracker.gpu_capacity;
 invalid(missing, 'process.tracker.gpu_capacity');
 for (const value of [0, -1, 1.5, 4294967296, '128', NaN, Infinity]) {

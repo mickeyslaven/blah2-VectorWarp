@@ -6,6 +6,7 @@ struct PostprocessConfig {
  int32_t guard=0,train=0,minDelay=0;
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
+ uint32_t integrationCpis=1;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -67,10 +68,11 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED non-unit delay axis");
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
- if(c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
+ if(c.integrationCpis<1||c.integrationCpis>2||
+    (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
     !std::isfinite(c.minDoppler)||c.minDoppler<0||!std::isfinite(c.centroidDopplerResolution)||c.centroidDopplerResolution<=0||
-    !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution)))
+    !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution))))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED detector configuration");
  if(c.detection&&uint64_t(l.cells)*uint32_t(2*c.train)>UINT32_MAX)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED counter capacity");
@@ -82,6 +84,7 @@ layout(local_size_x=128) in;
 layout(binding=0) buffer Metadata { uint m[]; };
 layout(binding=1) readonly buffer Fused { dvec2 fused[]; };
 layout(binding=2) buffer Scratch { uint s[]; };
+layout(binding=3) buffer Integration { double history[]; };
 layout(push_constant) uniform P { uint count; uint a; uint b; uint c; int d; } p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;}
 bool finiteD(double x){return !isnan(x)&&!isinf(x);}
@@ -109,10 +112,13 @@ double positiveLog10(double x){
 }
 )glsl";
 const char* levelsBody=R"glsl(
-void main(){uint i=indexOf();if(i>=m[34])return;if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];}dvec2 value=fused[i];
+void main(){uint i=indexOf();if(i>=m[34])return;if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];}dvec2 value=fused[i];
  if(!finiteD(value.x)||!finiteD(value.y)||value.x<0.0LF||value.y!=0.0LF){reject(201u);return;}
- double level=value.x<=1e-30LF?-300.0LF:10.0LF*positiveLog10(value.x);
- precise double power=m[49]!=0u?value.x*value.x:0.0LF;
+ precise double current=value.x*value.x;double prior=history[i];
+ precise double power=m[49]!=0u?(m[74]==2u&&finiteD(prior)?0.5LF*(current+prior):current):0.0LF;
+ history[i]=current;
+ double amplitude=sqrt(max(power,0.0LF));
+ double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
  writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,power);atomicAdd(m[1],1u);
 }
@@ -272,6 +278,7 @@ class Stage {
  Buffer& scratch_;
  Buffer& staging_;
  std::unique_ptr<Buffer> metadata_;
+ std::unique_ptr<Buffer> integration_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t expectedTrainingAdds_=0;
@@ -339,6 +346,7 @@ public:
   words[60]=fs;
   words[72]=uint32_t(config.epoch);
   words[73]=uint32_t(config.epoch>>32);
+  words[74]=config.integrationCpis;
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);
@@ -352,7 +360,17 @@ public:
     words[at+2]=uint32_t(rb);
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
-    const double alpha=count?count*(std::pow(config.pfa,-1.0/count)-1):0;
+    double alpha=count?count*(std::pow(config.pfa,-1.0/count)-1):0;
+    if(count&&config.integrationCpis==2){
+     const auto survival=[&](double candidate){
+      const double ratio=count/(count+candidate);
+      return std::pow(ratio,2.0*count)*(1.0+2.0*count*candidate/(count+candidate));};
+     double low=0,high=1;
+     while(survival(high)>config.pfa&&high<1e12)high*=2;
+     for(unsigned iteration=0;iteration<96;++iteration){const double middle=(low+high)*.5;
+      if(survival(middle)>config.pfa)low=middle;else high=middle;}
+     alpha=high;
+    }
     if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
     putD(words.data(),at+6,alpha);
     if(config.delayAxis[j]>=config.minDelay)for(uint32_t r=0;r<rows;++r)if(std::abs(config.dopplerAxis[r])>=config.minDoppler)expectedTrainingAdds_+=uint32_t(count);
@@ -378,8 +396,13 @@ public:
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
+  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
+   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  auto* history=static_cast<double*>(integration_->mapped);
+  std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
+  integration_->flush(0,integration_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_}));
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get()}));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
@@ -416,7 +439,7 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_)throw std::runtime_error("GPU postprocess configuration echo mismatch");
+  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   if(config_.detection){if(s[cfarCells]!=layout_.cells||s[trainingAdds]!=expectedTrainingAdds_||s[cfarAccepted]>layout_.cells||
@@ -460,6 +483,7 @@ public:
   add(scratch_.mapped,size_t(scratch_.bytes),1);
   add(staging_.mapped,size_t(staging_.bytes),1);
   add(metadata_->mapped,size_t(metadata_->bytes),1);
+  add(integration_->mapped,size_t(integration_->bytes),1);
   for(size_t i=0;i<ranges.size();++i)for(size_t j=0;j<i;++j)if(ranges[i].first<ranges[j].second&&ranges[j].first<ranges[i].second)
    throw std::invalid_argument("GPU postprocess host buffers overlap");
  }
@@ -517,7 +541,7 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
+  <<" integration_cpis="<<s[27]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }
