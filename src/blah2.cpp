@@ -334,7 +334,7 @@ try
         throw std::invalid_argument("Calibrated coherent fusion requires the array reference to use every surveillance channel in the same order");
       auto geometry = tree["capture"]["device"]["array_geometry"];
       if (!geometry.has_child("x_axis_bearing_deg_true") ||
-          !tree.has_child("location") || !tree["location"].has_child("rx") ||
+          !tree["location"].has_child("rx") ||
           !tree["location"].has_child("tx"))
         throw std::invalid_argument("Calibrated coherent fusion requires array orientation and receiver/transmitter locations");
       double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
