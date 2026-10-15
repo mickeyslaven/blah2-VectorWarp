@@ -43,6 +43,16 @@ coherentFusion.capture.device.array_geometry = {
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const whitenedFusion = clone(coherentFusion);
+whitenedFusion.process.performance.acceleration = 'gpu-resident';
+whitenedFusion.process.tracker.gpu_capacity = 1024;
+whitenedFusion.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
+assert.equal(validateConfig(whitenedFusion).valid, true,
+  'noise-whitened beam-bank fusion accepts resident Kraken geometry');
+const nonresidentWhitenedFusion = clone(whitenedFusion);
+nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,
+  'noise-whitened beam-bank fusion requires resident acceleration');
 const mismatchedCalibration = clone(coherentFusion);
 mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
 assert.equal(validateConfig(mismatchedCalibration).valid, false,

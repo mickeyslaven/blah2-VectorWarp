@@ -44,7 +44,8 @@ struct ReferenceConfig {
  uint32_t analysisSamples=32768,analysisInterval=10,powerIterations=12;
  double covarianceSmoothing=.8,diagonalLoading=.001,bandwidthHz=2000,centreHz=0;
 };
-enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1};
+enum class FusionMode:uint32_t {noncoherent=0,coherentRegularPolygon=1,
+ noiseWhitenedRegularPolygon=2};
 struct FusionConfig {
  FusionMode mode=FusionMode::noncoherent;
  uint32_t beams=0;

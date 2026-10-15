@@ -530,25 +530,29 @@ function validateConfig(config, baseline = null) {
   if (processConfig.surveillance_fusion !== undefined) {
     const fusion = requireObject(processConfig.surveillance_fusion,
       'process.surveillance_fusion');
-    if (!['noncoherent', 'coherent_beam_bank'].includes(fusion.mode))
+    if (!['noncoherent', 'coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
       errors.push('process.surveillance_fusion.mode is not supported');
     if (fusion.beams !== undefined)
       number(fusion.beams, 'process.surveillance_fusion.beams',
         {integer: true, min: 4, max: 360});
-    if (fusion.mode === 'coherent_beam_bank') {
+    if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
+      const label = fusion.mode;
       if (device.type !== 'Kraken')
-        errors.push('coherent_beam_bank surveillance fusion requires a Kraken receiver');
+        errors.push(`${label} surveillance fusion requires a Kraken receiver`);
       if (!isObject(device.array_geometry) || !Array.isArray(device.array_geometry.elements))
-        errors.push('coherent_beam_bank surveillance fusion requires capture.device.array_geometry.elements');
+        errors.push(`${label} surveillance fusion requires capture.device.array_geometry.elements`);
       const geometryChannels = new Set((device.array_geometry?.elements || [])
         .filter(isObject).filter(element => Array.isArray(element.position) &&
           element.position.length === 3 && element.position.every(Number.isFinite))
         .map(element => element.daq_channel));
       if ((device.surveillance_channels || []).some(channel => !geometryChannels.has(channel)))
-        errors.push('coherent_beam_bank geometry must include every surveillance channel');
+        errors.push(`${label} geometry must include every surveillance channel`);
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
           device.array_geometry?.shape !== 'regular_polygon')
-        errors.push('gpu-resident coherent_beam_bank fusion requires regular_polygon geometry');
+        errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
+      if (fusion.mode === 'noise_whitened_beam_bank' &&
+          processConfig.performance?.acceleration !== 'gpu-resident')
+        errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
       const reference = processConfig.reference_synthesis;
       const surveillance = device.surveillance_channels || [];
       if (reference?.mode !== 'array_eigenbeam' ||

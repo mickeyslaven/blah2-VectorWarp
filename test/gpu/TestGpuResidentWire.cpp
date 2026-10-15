@@ -62,6 +62,13 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
+ auto whitened=coherent;
+ whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
+ const auto whitenedBytes=encodeConfig(whitened);
+ const auto whitenedDecoded=decodeConfig(bytes(whitenedBytes),bytes(d),bytes(f));
+ check(encodeConfig(whitenedDecoded)==whitenedBytes&&
+  whitenedDecoded.fusion.mode==FusionMode::noiseWhitenedRegularPolygon,
+  "Noise-whitened resident fusion configuration did not round trip");
  auto mutate=[&](const std::function<void(Config&)>&change){auto v=c;change(v);reject([&]{validateConfig(v);},"Invalid config admitted");};
  mutate([](auto&v){v.surveillanceChannels={1,0};});mutate([](auto&v){v.delayAxis[1]=1;});
  mutate([](auto&v){v.dopplerAxis[1]=v.dopplerAxis[0];});mutate([](auto&v){v.reference.channels={1,0};});

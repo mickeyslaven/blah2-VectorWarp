@@ -242,7 +242,7 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
     config.clutterBatchLimit>g.channels || config.stages!=expectedStages || config.middle!=0 || !std::isfinite(config.sampleRate) || !(config.sampleRate>0))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED stage mask or nonzero middle");
- if(config.fusion.mode>1 || (config.fusion.mode!=0 &&
+ if(config.fusion.mode>2 || (config.fusion.mode!=0 &&
     (config.fusion.beams<4||config.fusion.beams>360||!std::isfinite(config.fusion.frequencyHz)||
      config.fusion.frequencyHz<=0||!std::isfinite(config.fusion.radiusM)||config.fusion.radiusM<=0||
      !std::isfinite(config.fusion.element0Rad)||!std::isfinite(config.fusion.elementStepRad)||
@@ -432,7 +432,7 @@ class ResidentFramePipeline {
    check(vkEndCommandBuffer(command),"resident ambiguity recording");
   }
   void calibrateFusion(const ReferenceCheckpoint& checkpoint){
-   if(config.fusion.mode!=1)return;
+   if(config.fusion.mode==0)return;
    if(checkpoint.weightCount!=config.geometry.channels)
     throw std::runtime_error("Coherent fusion reference weight count changed");
    double norm=0;
@@ -446,17 +446,97 @@ class ResidentFramePipeline {
     throw std::runtime_error("Coherent fusion received zero-norm reference weights");
    const double scale=1.0/std::sqrt(norm);
    const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
+   const uint32_t channels=config.geometry.channels;
+   std::array<std::complex<double>,64> lower{};
+   bool whiten=config.fusion.mode==2&&checkpoint.covarianceValid;
+   if(whiten){
+    auto residual=checkpoint.covariance;
+    double loadedTrace=0;
+    for(uint32_t c=0;c<channels;++c)loadedTrace+=residual[c*channels+c].real();
+    const double rawTrace=loadedTrace/(1.0+checkpoint.config.diagonalLoading);
+    const double referenceLoading=checkpoint.config.diagonalLoading*rawTrace/channels;
+    std::complex<double> rayleigh{};
+    for(uint32_t left=0;left<channels;++left)
+     for(uint32_t right=0;right<channels;++right)
+      rayleigh+=std::conj(checkpoint.weights[left])*residual[left*channels+right]*
+       checkpoint.weights[right];
+    const double principal=std::max(0.0,rayleigh.real()-referenceLoading);
+    double residualTrace=0;
+    for(uint32_t left=0;left<channels;++left)
+     for(uint32_t right=0;right<channels;++right){
+      residual[left*channels+right]-=principal*checkpoint.weights[left]*
+       std::conj(checkpoint.weights[right]);
+      if(left==right)residualTrace+=residual[left*channels+right].real();
+     }
+    // Five percent of the remaining mean power limits supergain and makes the
+    // inverse robust to finite covariance samples and a slightly smoothed
+    // principal eigenvector. The reference-stage loading remains a floor.
+    const double whiteningLoading=std::max(referenceLoading,
+     .05*std::max(0.0,residualTrace)/channels);
+    for(uint32_t left=0;left<channels;++left){
+     for(uint32_t right=0;right<left;++right){
+      const auto value=.5*(residual[left*channels+right]+
+       std::conj(residual[right*channels+left]));
+      residual[left*channels+right]=value;
+      residual[right*channels+left]=std::conj(value);
+     }
+     residual[left*channels+left]={residual[left*channels+left].real()+whiteningLoading,0};
+    }
+    // Hermitian Cholesky factorization. Failure is nonfatal: retain the known
+    // calibrated matched beam for this update instead of interrupting radar.
+    for(uint32_t row=0;row<channels&&whiten;++row)
+     for(uint32_t column=0;column<=row&&whiten;++column){
+      auto value=residual[row*channels+column];
+      for(uint32_t k=0;k<column;++k)
+       value-=lower[row*channels+k]*std::conj(lower[column*channels+k]);
+      if(row==column){
+       const double diagonal=value.real();
+       if(!std::isfinite(diagonal)||diagonal<=std::max(1e-30,loadedTrace*1e-12))
+        whiten=false;
+       else lower[row*channels+column]={std::sqrt(diagonal),0};
+      }else{
+       lower[row*channels+column]=value/lower[column*channels+column].real();
+       if(!std::isfinite(lower[row*channels+column].real())||
+          !std::isfinite(lower[row*channels+column].imag()))whiten=false;
+      }
+     }
+   }
    auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
    for(uint32_t beam=0;beam<config.fusion.beams;++beam){
     const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
-    for(uint32_t channel=0;channel<config.geometry.channels;++channel){
+    std::array<std::complex<double>,8> steering{},combined{};
+    for(uint32_t channel=0;channel<channels;++channel){
      const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
      const double relativePhase=waveNumber*config.fusion.radiusM*
       (std::cos(elementAngle-beamAngle)-
        std::cos(elementAngle-config.fusion.directPathAzimuthRad));
+     steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);
+    }
+    if(whiten){
+     std::array<std::complex<double>,8> intermediate{};
+     for(uint32_t row=0;row<channels;++row){
+      auto value=steering[row];
+      for(uint32_t k=0;k<row;++k)value-=lower[row*channels+k]*intermediate[k];
+      intermediate[row]=value/lower[row*channels+row].real();
+     }
+     for(uint32_t reverse=0;reverse<channels;++reverse){
+      const uint32_t row=channels-1-reverse;
+      auto value=intermediate[row];
+      for(uint32_t k=row+1;k<channels;++k)
+       value-=std::conj(lower[k*channels+row])*combined[k];
+      combined[row]=value/lower[row*channels+row].real();
+     }
+     double combinedNorm=0;
+     for(uint32_t channel=0;channel<channels;++channel)combinedNorm+=std::norm(combined[channel]);
+     if(!(combinedNorm>0)||!std::isfinite(combinedNorm))
+      throw std::runtime_error("Noise-whitened fusion produced invalid weights");
+     const double combinedScale=1.0/std::sqrt(combinedNorm);
+     for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
+    }else for(uint32_t channel=0;channel<channels;++channel)
+     combined[channel]=scale*steering[channel];
+    for(uint32_t channel=0;channel<channels;++channel){
      target[uint64_t(beam)*config.geometry.channels+channel]=
-      std::complex<float>(scale*std::conj(checkpoint.weights[channel])*
-       std::polar(1.0,relativePhase));
+      std::complex<float>(std::conj(combined[channel]));
     }
    }
    fusionWeights->flush(0,fusionWeights->bytes);

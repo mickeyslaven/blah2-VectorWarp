@@ -57,6 +57,8 @@ process:
   # Existing behavior remains the default. coherent_beam_bank removes the
   # measured per-channel complex response using the array eigenbeam and the
   # configured array orientation plus receiver/transmitter locations.
+  # noise_whitened_beam_bank additionally suppresses the measured residual
+  # channel covariance and is available only with gpu-resident acceleration.
   surveillance_fusion:
     mode: "noncoherent"
     beams: 12

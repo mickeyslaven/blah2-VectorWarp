@@ -290,7 +290,8 @@ try
     if (fusion.has_child("beams")) fusion["beams"] >> coherentBeamCount;
   }
   if (surveillanceFusionMode != "noncoherent" &&
-      surveillanceFusionMode != "coherent_beam_bank")
+      surveillanceFusionMode != "coherent_beam_bank" &&
+      surveillanceFusionMode != "noise_whitened_beam_bank")
     throw std::invalid_argument("Unknown surveillance-fusion mode");
   const bool coherentFusion = surveillanceFusionMode != "noncoherent";
   if (coherentFusion)
@@ -464,6 +465,8 @@ try
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
   const bool residentMode=accelerationMode=="gpu-resident";
+  if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
+    throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
   if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI5 GPU route");
 #endif
@@ -652,7 +655,10 @@ try
         if(std::abs(radii[channel]-radius)>tolerance||
            std::abs(std::remainder(angles[channel]-angles[0]-channel*step,2*std::acos(-1.0)))>.0873)
           throw std::invalid_argument("Resident coherent fusion geometry/order is not a regular polygon");
-      residentConfig.fusion={blah2::resident::FusionMode::coherentRegularPolygon,
+      const auto fusionMode=surveillanceFusionMode == "noise_whitened_beam_bank"
+        ? blah2::resident::FusionMode::noiseWhitenedRegularPolygon
+        : blah2::resident::FusionMode::coherentRegularPolygon;
+      residentConfig.fusion={fusionMode,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad};
     }
     const double spectrumResolution=double(fs)/nSamples;

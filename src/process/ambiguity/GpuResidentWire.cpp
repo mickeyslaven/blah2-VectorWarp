@@ -43,7 +43,8 @@ void validateConfig(const Config& c){
  for(size_t i=0;i<r.channels.size();++i)require(r.channels[i]<g.channels&&(!i||r.channels[i]>r.channels[i-1]),"Resident reference channel order invalid");
  require(std::isfinite(r.covarianceSmoothing)&&r.covarianceSmoothing>=0&&r.covarianceSmoothing<1&&std::isfinite(r.diagonalLoading)&&r.diagonalLoading>=0&&std::isfinite(r.bandwidthHz)&&r.bandwidthHz>0&&std::isfinite(r.centreHz),"Resident reference numbers invalid");
  const auto& f=c.fusion;
- require(f.mode==FusionMode::noncoherent||f.mode==FusionMode::coherentRegularPolygon,
+ require(f.mode==FusionMode::noncoherent||f.mode==FusionMode::coherentRegularPolygon||
+  f.mode==FusionMode::noiseWhitenedRegularPolygon,
   "Resident fusion mode invalid");
  if(f.mode!=FusionMode::noncoherent)
   require(f.beams>=4&&f.beams<=360&&std::isfinite(f.frequencyHz)&&f.frequencyHz>0&&
