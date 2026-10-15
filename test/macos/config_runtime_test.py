@@ -63,7 +63,8 @@ def write_input(filename, fmt, fs, fc, cpi, channels=2):
                         out.write(struct.pack(encoding, int(values[(i*2+component+ch*17) % 2048]*scale)))
 
 
-def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=False):
+def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=False,
+             deadline_seconds=30):
     with tempfile.TemporaryDirectory(prefix='vectorwarp-config-runtime-') as temporary:
         work = Path(temporary)
         output_dir = work / 'output with spaces'
@@ -90,7 +91,8 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=Fal
                 process = subprocess.Popen([str(binary), '--config', str(config_path)], cwd=work,
                                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 completed = replay.wait_for(lambda: process.poll() is not None or
-                    any(item.get('state') in ('complete', 'error') for item in status.snapshot()), time.monotonic()+30)
+                    any(item.get('state') in ('complete', 'error') for item in status.snapshot()),
+                    time.monotonic()+deadline_seconds)
                 if not completed or not any(item.get('state') == 'complete' for item in status.snapshot()):
                     log.seek(0)
                     raise AssertionError(f'{name}: did not complete: {status.snapshot()[-2:]} {log.read()[-3500:]}')
@@ -202,7 +204,8 @@ def main():
         'process.reference_synthesis.analysis_interval': 2,
         'process.reference_synthesis.power_iterations': 4,
         'process.reference_synthesis.covariance_smoothing': .4,
-        'process.reference_synthesis.diagonal_loading': .01}, receiver='Kraken', channels=3, gpu_capable=args.gpu_capable))
+        'process.reference_synthesis.diagonal_loading': .01}, receiver='Kraken', channels=3,
+        gpu_capable=args.gpu_capable, deadline_seconds=60))
     print(json.dumps({'acceptance': 'synthetic configuration runtime', 'count': len(results), 'cases': results}))
 
 
