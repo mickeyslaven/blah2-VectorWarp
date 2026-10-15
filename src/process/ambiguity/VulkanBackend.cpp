@@ -46,8 +46,9 @@ struct DeviceAllocations {
   struct Entry { uint32_t type; uint64_t bytes; };
   blah2::gpu_memory::AllocationBudget budget;
   std::unordered_map<VkDeviceMemory, Entry> allocations;
-  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties)
-    : budget(limit, std::move(properties)) {}
+  DeviceAllocations(uint64_t limit, blah2::gpu_memory::Properties properties,
+      bool separateHostHeaps = false)
+    : budget(limit, std::move(properties), separateHostHeaps) {}
 };
 std::mutex allocationsMutex;
 std::unordered_map<VkDevice, DeviceAllocations> deviceAllocations;
