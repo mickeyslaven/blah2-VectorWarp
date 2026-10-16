@@ -67,9 +67,9 @@ void reaped(){
  for(;;){int status=0;errno=0;const pid_t p=waitpid(-1,&status,WNOHANG);check(p<=0,"Fixture had to reap a leaked worker");if(p==-1&&errno==ECHILD)return;check(std::chrono::steady_clock::now()<deadline,"Worker remained after bounded cleanup");std::this_thread::sleep_for(std::chrono::milliseconds(1));}
 }
 std::unique_ptr<Session> session(const std::string&exe,const char*mode){setenv("VECTORWARP_TEST_RESIDENT_MODE",mode,1);blah2::GpuProcessOptions o;o.executable=exe;o.startupMs=std::strcmp(mode,"init-timeout")==0?200:2000;o.frameMs=std::strcmp(mode,"frame-timeout")==0?200:2000;return createProcess(configuration(),o);}
-OutputViews prepared(Session&s,uint64_t id){auto input=s.input();std::fill_n(input.data,input.size,std::complex<double>{2,3});s.begin({id,id+100,1000+id});const auto ready=s.receiveReferenceReady();std::array<uint8_t,256> saved{};std::copy_n(ready.referenceCheckpoint.data,saved.size(),saved.data());auto v=s.receivePrepared();check(std::memcmp(saved.data(),v.referenceCheckpoint.data,256)==0,"Prepared mutated acknowledged reference bytes");return v;}
+OutputViews prepared(Session&s,uint64_t id,uint64_t diagnostics=0){auto input=s.input();std::fill_n(input.data,input.size,std::complex<double>{2,3});s.begin({id,id+100,1000+id},diagnostics);const auto ready=s.receiveReferenceReady();std::array<uint8_t,256> saved{};std::copy_n(ready.referenceCheckpoint.data,saved.size(),saved.data());auto v=s.receivePrepared();check(std::memcmp(saved.data(),v.referenceCheckpoint.data,256)==0,"Prepared mutated acknowledged reference bytes");return v;}
 void normal(const std::string&exe){
- ++cases;auto s=session(exe,"normal");auto v=prepared(*s,UINT64_C(0x100000001));
+ ++cases;auto s=session(exe,"normal");auto v=prepared(*s,UINT64_C(0x100000001),bit(Section::filtered));
  {const auto cp=referenceState(v.referenceCheckpoint);check(cp.frames==0&&cp.updates==1,"First Ready source counters changed");}
  reject([&]{s->input();},"Input writable while frame owned");reject([&]{s->published();},"Publication allowed before commit");
  auto wrong=v.trackerToken;++wrong.transaction;reject([&]{s->commit(wrong);},"Wrong transaction accepted");check(s->phase()==Phase::prepared,"Rejected local token changed transaction");
