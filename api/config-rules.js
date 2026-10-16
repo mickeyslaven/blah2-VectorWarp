@@ -35,6 +35,8 @@ const rules = {
   'process.detection.track_before_detect.enable': {type: 'boolean', optional: true},
   'process.detection.track_before_detect.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
   'process.detection.track_before_detect.motion_bins': {...integer(0, 1), optional: true},
+  'process.bearing.enable': {type: 'boolean', optional: true},
+  'process.bearing.min_consistent': {...integer(2, 100), optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
@@ -67,9 +69,10 @@ for (const group of ['ambiguity', 'clutter']) {
     ['dopplerMin', 'dopplerMax'] : [])])
     rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
 }
-for (const name of ['api','map','detection','track','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
-    {readOnly: 'Reserved; no configuration-control listener uses this port.'} : {})};
+    {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
+    name === 'bearing' ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

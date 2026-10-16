@@ -79,9 +79,13 @@ uint historyCapacity(){return max(m[40],100u);}
 uint recordWords(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
 uint work(uint i){return 64u+12u*i;}
-uint detectionBeam(uint i){uint cell=s[post[41]+i];return s[post[39]+cell]>>8u;}
+uint detectionSpatial(uint i){uint cell=s[post[41]+i],flags=s[post[39]+cell];
+ uint coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
+ return coarse|(fine<<9u)|(quality<<20u);}
+uint coarseBeam(uint spatial){return spatial&511u;}
+uint detectionBeam(uint i){return coarseBeam(detectionSpatial(i));}
 uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
- return length==0u?0u:src(r+16u+8u*((head+length-1u)%h)+7u);}
+ return length==0u?0u:coarseBeam(src(r+16u+8u*((head+length-1u)%h)+7u));}
 bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolerance=post[77];
  if(tolerance==0xffffffffu||beams==0u||trackBeam==0u||detection==0u)return true;
  uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
@@ -117,7 +121,7 @@ void main(){if(indexOf()!=0u)return;m[52]=m[10];m[53]=m[11];
 const char* predictBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
  if(i<m[19]){s[m[6]+i]=0u;uint at=m[5]+8u*i;
-  uint cell=s[post[41]+i],beam=cell<m[4]?s[post[39]+cell]>>8u:0xffffffffu;
+  uint cell=s[post[41]+i],beam=cell<m[4]?((s[post[39]+cell]>>8u)&511u):0xffffffffu;
   if(!finiteD(sd(at))||!finiteD(sd(at+2u))||!finiteD(sd(at+4u))||cell>=m[4]||beam>post[75])reject(303u);atomicAdd(m[57],1u);}
  if(i>=m[18])return;uint r=record(i),w=work(i);double delay=sourceD(r),doppler=sourceD(r+2u),acc=sourceD(r+6u),time=md(50u);
  precise double delayPredict=delay-md(46u)*(doppler*time+0.5LF*acc*time*time)/md(44u);
@@ -204,7 +208,7 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  if(length<h){slot=(head+length)%h;length++;}else{slot=head;head=(head+1u)%h;}
  uint at=target+16u+8u*slot,match=m[w+4u],state=m[w+6u];
  uint previousNewest=source+16u+8u*((head+length-2u)%h);
- uint beam=match==0xffffffffu?src(previousNewest+7u):detectionBeam(match);
+ uint beam=match==0xffffffffu?src(previousNewest+7u):detectionSpatial(match);
  for(uint k=0u;k<6u;++k){uint value=match==0xffffffffu?(k<4u?m[w+k]:0u):s[m[5]+8u*match+k];put(target+k,value);put(at+k,value);}
  put(at+6u,state);put(at+7u,beam);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
  uvec2 associated=plusOne(pairS(source+8u)),inactive=match==0xffffffffu?plusOne(pairS(source+10u)):uvec2(0u);
@@ -222,7 +226,7 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  precise double acc=adaptiveGate()?0.0LF:md(48u)*double(int(hypothesis)-int(m[37]));
  if(!finiteD(acc)){reject(308u);return;}for(uint k=0u;k<6u;++k){uint value=s[m[5]+8u*detection+k];put(target+k,value);put(target+16u+k,value);}
  uvec2 bits=unpackDouble2x32(acc);put(target+6u,bits.x);put(target+7u,bits.y);put(target+8u,1u);put(target+12u,(src(8u)+i)%65535u);
- put(target+13u,(1u<<8u)|(1u<<24u));put(target+15u,0xffffffffu);put(target+23u,detectionBeam(detection));atomicAdd(m[30],1u);atomicAdd(m[31],1u);
+ put(target+13u,(1u<<8u)|(1u<<24u));put(target+15u,0xffffffffu);put(target+23u,detectionSpatial(detection));atomicAdd(m[30],1u);atomicAdd(m[31],1u);
 }
 )glsl";
 const char* finalizeBody=R"glsl(
@@ -251,7 +255,8 @@ void main(){uint i=indexOf();if(m[0]!=0u)return;uint count=checkedWord(4u);
  if(checkedWord(newest+6u)!=state)reject(315u);
  for(uint j=0u;j<h;++j){uint at=r+16u+8u*j;
   if(length<h&&j>=length){for(uint k=0u;k<8u;++k)if(checkedWord(at+k)!=0u)reject(316u);}
-  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);if(checkedWord(at+6u)>3u||checkedWord(at+7u)>post[75])reject(316u);}}
+  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);uint spatial=checkedWord(at+7u),coarse=spatial&511u,fine=(spatial>>9u)&2047u;
+   if(checkedWord(at+6u)>3u||coarse>post[75]||fine>post[75]*4u||(coarse==0u&&fine!=0u))reject(316u);}}
  atomicAdd(m[54],1u);atomicAdd(m[60u+state],1u);if(state!=0u)atomicAdd(m[59],1u);
 }
 )glsl";

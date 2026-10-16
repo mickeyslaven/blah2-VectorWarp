@@ -45,7 +45,9 @@ start; VectorWarp does not distribute the vendor software.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
 - **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
-- **Delay ellipses on a map:** see the possible locations associated with a measured delay, without presenting it as an exact aircraft position.
+- **Bearing-aware bistatic mapping:** an opt-in GPU-resident path retains the 4× refined coherent-beam winner, peak separation, and temporal consistency for each track. A separate API intersects radar-only azimuth candidates with the measured delay ellipse and publishes uncertainty corridors; unresolved or multi-lobe results remain candidates rather than falsely precise aircraft positions. The legacy tracker and Retina feeds are unchanged, and ADS-B is validation-only.
+
+See [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md) for the data contract, uncertainty rules, configuration gate, and geolocation math.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.
 - **Local or remote aircraft feeds:** discover a local decoder or connect to a tar1090 server on another machine.
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.

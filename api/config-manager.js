@@ -628,6 +628,24 @@ function validateConfig(config, baseline = null) {
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
   }
+  if (processConfig.bearing !== undefined) {
+    const bearing = requireObject(processConfig.bearing, 'process.bearing');
+    boolean(bearing.enable, 'process.bearing.enable');
+    if (bearing.min_consistent !== undefined)
+      number(bearing.min_consistent, 'process.bearing.min_consistent', {integer: true, min: 2, max: 100});
+    if (bearing.enable) {
+      const fusion = processConfig.surveillance_fusion;
+      if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||
+          processConfig.performance?.acceleration !== 'gpu-resident')
+        errors.push('bearing output requires GPU-resident coherent tracking');
+      if (!Number.isInteger(ports.bearing) || ports.bearing < 1 || ports.bearing > 65535)
+        errors.push('network.ports.bearing is required when bearing output is enabled');
+      const geometry = device.array_geometry;
+      if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
+          geometry?.orientation_confirmed !== true)
+        errors.push('bearing output requires confirmed mapping, geometry, and orientation');
+    }
+  }
 
   string(network.ip, 'network.ip');
   if (typeof network.ip === 'string' && net.isIP(network.ip) !== 4)

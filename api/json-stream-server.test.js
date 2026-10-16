@@ -72,6 +72,23 @@ async function send(port, chunks) {
   try {
     const source = path.join(__dirname, '..', 'config', 'config-kraken.yml');
     const config = yaml.load(fs.readFileSync(source, 'utf8'));
+    config.process.performance.acceleration = 'gpu-resident';
+    config.process.tracker.gpu_capacity = 128;
+    config.process.surveillance_fusion.mode = 'coherent_beam_bank';
+    config.process.bearing.enable = true;
+    config.capture.device.array_geometry = {
+      shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+      mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true,
+      x_axis_bearing_deg_true: 80, bearing_channels: [0, 1, 2, 3, 4],
+      elements: Array.from({length: 5}, (_, daq_channel) => ({id: `element-${daq_channel}`,
+        daq_channel, receiver_serial: String(1000 + daq_channel),
+        position: [.193548 * Math.cos(2 * Math.PI * daq_channel / 5),
+          .193548 * Math.sin(2 * Math.PI * daq_channel / 5), 0]}))
+    };
+    config.location.rx = {name: 'Receiver', latitude: 40.442030432817,
+      longitude: -80.056697229925, altitude: 0};
+    config.location.tx = {name: 'Illuminator', latitude: 40.49388889,
+      longitude: -80.01888889, altitude: 0};
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });
     config.network.ip = '127.0.0.1';
@@ -85,7 +102,7 @@ async function send(port, chunks) {
 
     const routes = [
       ['map', '/api/map'], ['detection', '/api/detection'], ['track', '/api/tracker'],
-      ['timing', '/api/timing'], ['iqdata', '/api/iqdata']
+      ['bearing', '/api/bearing'], ['timing', '/api/timing'], ['iqdata', '/api/iqdata']
     ];
     for (const [name, route] of routes) {
       const first = JSON.stringify({stream: name, message: `fragmented 🙂 ${name}`});
@@ -105,6 +122,14 @@ async function send(port, chunks) {
       assert.equal(response.body, second, `${name} must retain the final coalesced frame`);
       if (liveSocket) await close(liveSocket);
     }
+    const bearingFrame = {timestamp: 9, method: 'coherent_beam_bank', data: [{id: '0001',
+      state: 'ACTIVE', delay: 80, doppler: 20, bearing_deg_true: 90,
+      uncertainty_deg: 10, resolved: true, candidates: [{bearing_deg_true: 90, support: 1}]}]};
+    await send(config.network.ports.bearing, [Buffer.from(JSON.stringify(bearingFrame))]);
+    const locations = await waitFor(apiPort, '/api/locations', value => {
+      try { return JSON.parse(value.body).data?.[0]?.location; } catch (_) { return false; }
+    });
+    assert.equal(JSON.parse(locations.body).data[0].id, '0001');
 
     // A partial frame belongs only to its original socket and cannot contaminate
     // the next processor connection.

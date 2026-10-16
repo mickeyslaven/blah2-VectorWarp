@@ -50,6 +50,9 @@ process:
       acceleration_model: hypothesis_bank
     delete: 10
     smooth: "none"
+  bearing:
+    enable: false
+    min_consistent: 3
 
 network:
   ip: 0.0.0.0
@@ -58,6 +61,7 @@ network:
     map: 3001
     detection: 3002
     track: 3003
+    bearing: 3004
     timestamp: 4000
     timing: 4001
     iqdata: 4002

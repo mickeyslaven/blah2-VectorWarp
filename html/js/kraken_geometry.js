@@ -102,7 +102,9 @@
     content.className = 'config-fields';
     section.appendChild(content);
     const note = text => { const p = document.createElement('p'); p.textContent = text; content.appendChild(p); return p; };
-    note('Saved layout only; measurements are unverified. Bearing is unavailable. Not sent to Suite.');
+    note(config.process?.bearing?.enable === true ?
+      'Bearing output is enabled. Confirmations are operator attestations; live results still carry uncertainty and ambiguity.' :
+      'Saved layout only; measurements are unverified. Bearing output is disabled. Not sent to Suite.');
     const geometry = device.array_geometry;
     const button = (text, action) => {
       const b = document.createElement('button'); b.type = 'button'; b.textContent = text;

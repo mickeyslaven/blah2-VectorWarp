@@ -60,6 +60,15 @@ void trackCases(){
  for(uint32_t value=401;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);real(at,value);real(at+2,-double(value));real(at+4,1);bank[at+6]=value==500?2:1;}
  auto raw=[&]{return View<uint32_t>{bank.data(),bank.size()};};same(trackerCheckpoint(UINT64_MAX,raw(),binding),cpu.to_json(UINT64_MAX));
  auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%historyCapacity)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%historyCapacity)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%historyCapacity)+7]=0;
+ const uint32_t packedSpatial=12u|(48u<<9u)|(4u<<20u);
+ bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
+ rapidjson::Document bearing;bearing.Parse(bearingCheckpoint(7,raw(),spatial,{true,12,4,2,80}).c_str());
+ check(!bearing.HasParseError()&&bearing["data"].Size()==1&&
+  bearing["data"][0]["current_bearing_deg_true"].GetDouble()==87.5&&
+  bearing["data"][0]["peak_separation_db"].GetUint()==4,
+  "Fine bearing publication differs");
+ same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));
+ bank[base+16+8*(500%historyCapacity)+7]=0;
  rejects([&]{auto wrong=binding;++wrong.generation;trackerCheckpoint(0,raw(),wrong);});rejects([&]{auto v=raw();--v.count;trackerCheckpoint(0,v,binding);});
  bank[base+15]=1;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+15]=0;bank[base+13]^=1u<<16;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+13]^=1u<<16;
  pair(20,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(20,1);

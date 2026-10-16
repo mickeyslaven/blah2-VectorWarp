@@ -1,8 +1,7 @@
 'use strict';
 
-// Pure configuration contract. Nothing in this module computes DoA or feeds a
-// bearing to detection/tracking. Reported receiver counts are observations,
-// never evidence of physical geometry or wiring. No bearing path is implemented.
+// Configuration contract for the opt-in bearing publisher. Reported receiver
+// counts remain observations, never evidence of physical geometry or wiring.
 const C = 299792458;
 const ARRAY_CONTRACT = Object.freeze({
   channelCount: Object.freeze({min: 2, max: 8}),
@@ -360,8 +359,9 @@ function evaluateKrakenArray(config, liveStatus = null) {
         'Reported Heimdall channel count differs from channel_count; compatible acquisition is unconfirmed.',
         {configured: count, reported: reportedCount});
   }
-  issue('bearing-unimplemented', 'warning',
-    'Geometry is metadata only. Selected-channel bearing processing and Suite coordinate conversion are not implemented.');
+  const bearingImplemented = config?.process?.bearing?.enable === true;
+  if (!bearingImplemented) issue('bearing-disabled', 'warning',
+    'Bearing publication is disabled; geometry remains available for coherent fusion.');
   issue('physical-agreement-unverified', 'warning',
     'Operator attestations and status counts do not verify physical geometry, cable wiring, or current serial order.');
   base.verification.daqElementMapping.state = geometry.mapping_confirmed === true ?
@@ -385,7 +385,13 @@ function evaluateKrakenArray(config, liveStatus = null) {
     surveillance: surveillance.includes(element.daq_channel),
     bearing: bearingChannels.includes(element.daq_channel)
   }));
-  return {...base, valid, state: valid ? 'configured-unverified' : 'invalid', mapping};
+  const relativeBearingEligible = valid && bearingImplemented &&
+    geometry.mapping_confirmed === true && geometry.geometry_confirmed === true;
+  const worldBearingEligible = relativeBearingEligible &&
+    geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
+  return {...base, valid, state: valid ? 'configured-unverified' : 'invalid', mapping,
+    bearingImplemented, relativeBearingEligible, worldBearingEligible,
+    trackerAllowed: worldBearingEligible};
 }
 
 module.exports = {ARRAY_CONTRACT, evaluateKrakenArray,

@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <array>
+#include <algorithm>
 #include <vector>
 namespace blah2::gpu_result_json {
 template<class T> struct View {const T* data=nullptr;
@@ -222,6 +223,9 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
 struct CheckpointBinding {uint32_t capacity=0;
 uint64_t epoch=0,generation=0,consumedSequence=0;
 uint32_t beamCount=0;};
+struct BearingConfig {bool enabled=false;
+ uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
+ double xAxisBearingDegTrue=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -273,7 +277,9 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   finite(f);
   finite(realPair(w,at+4));
   stateName(w[at+6]);
-  require(w[at+7]<=binding.beamCount,"GPU history beam metadata invalid");
+  const uint32_t spatial=w[at+7],coarse=spatial&511u,fineBeam=(spatial>>9u)&2047u;
+  require(coarse<=binding.beamCount&&fineBeam<=binding.beamCount*4u&&
+    !(coarse==0&&fineBeam!=0),"GPU history beam metadata invalid");
   h.d.push_back(d);
   h.f.push_back(f);
   h.s.push_back(w[at+6]);}
@@ -282,5 +288,78 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  }
  require(observed==counts&&ordinal==published,"GPU tracker record/header counts differ");
  return tracks({timestamp,total,counts[0],counts[1],counts[2],counts[3],{rows.data(),rows.size()}});
+}
+inline double normalizeDegrees(double value){value=std::fmod(value,360.0);
+ return value<0?value+360.0:value;}
+// A separate, opt-in publication keeps the legacy tracker JSON byte-for-byte
+// stable. Bearings are temporal beam-bank estimates, never ADS-B-derived.
+inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
+ const CheckpointBinding&binding,const BearingConfig&config){
+ shape(bank);
+ require(config.enabled&&config.beamCount==binding.beamCount&&config.beamCount>=4&&
+  config.refinementFactor==4&&config.minConsistent>=2&&config.minConsistent<=100&&
+  std::isfinite(config.xAxisBearingDegTrue),"Invalid bearing publication config");
+ require(bank.count>=32,"Short GPU tracker header");
+ const auto*w=bank.data;
+ const uint32_t historyCapacity=w[3],recordBytes=w[1];
+ require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
+  recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ const size_t recordWords=recordBytes/4;
+ const uint64_t total=wordPair(w,4);
+ require(total<=binding.capacity&&bank.count==32+recordWords*size_t(total)&&
+  wordPair(w,10)==binding.epoch&&wordPair(w,12)==binding.generation&&
+  wordPair(w,14)==binding.consumedSequence,"GPU bearing checkpoint binding differs");
+ rapidjson::StringBuffer b;Writer out(b);out.SetMaxDecimalPlaces(3);
+ out.StartObject();out.Key("timestamp");out.Uint64(timestamp);
+ out.Key("method");out.String("coherent_beam_bank");
+ out.Key("frame");out.String("clockwise_from_true_north");
+ out.Key("coarse_beams");out.Uint(config.beamCount);
+ out.Key("fine_beams");out.Uint(config.beamCount*config.refinementFactor);
+ out.Key("data");out.StartArray();
+ constexpr char hex[]="0123456789ABCDEF";
+ const double step=360.0/double(config.beamCount*config.refinementFactor),radians=std::acos(-1.0)/180.0;
+ for(size_t i=0;i<size_t(total);++i){const size_t base=32+recordWords*i;
+  const uint32_t state=w[base+14];if(state==0)continue;
+  const uint32_t packed=w[base+13],head=packed&255u,length=(packed>>8u)&255u,
+   start=(packed>>16u)&255u,display=packed>>24u;
+  require(state<=3&&head<historyCapacity&&length&&display&&display<=length&&
+   start<historyCapacity,"GPU bearing history metadata invalid");
+  std::vector<uint32_t> histogram(config.beamCount*config.refinementFactor,0);
+  double x=0,y=0;uint32_t count=0,current=0,currentQuality=0;
+  for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
+   const uint32_t spatial=w[at+7],coarse=spatial&511u,fineBeam=(spatial>>9u)&2047u,q=(spatial>>20u)&15u;
+   require(coarse<=config.beamCount&&fineBeam<=histogram.size()&&!(coarse==0&&fineBeam!=0),
+    "GPU bearing spatial metadata invalid");
+   const uint32_t historyState=w[at+6];stateName(historyState);
+   if(!fineBeam||(historyState!=1u&&historyState!=2u))continue;
+   const double local=double(fineBeam-1)*step;
+   x+=std::cos(local*radians);y+=std::sin(local*radians);histogram[fineBeam-1]++;count++;
+   current=fineBeam;currentQuality=q;
+  }
+  if(!count||!current)continue;
+  const double concentration=std::hypot(x,y)/count;
+  const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
+  const double uncertainty=std::max(step/2.0,std::min(180.0,
+   std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians));
+  std::vector<uint32_t> peaks(histogram.size());for(uint32_t k=0;k<peaks.size();++k)peaks[k]=k;
+  std::stable_sort(peaks.begin(),peaks.end(),[&](uint32_t a,uint32_t c){return histogram[a]>histogram[c];});
+  char id[5]={hex[(w[base+12]>>12)&15],hex[(w[base+12]>>8)&15],hex[(w[base+12]>>4)&15],hex[w[base+12]&15],0};
+  out.StartObject();out.Key("id");out.String(id);out.Key("state");out.String(stateName(state));
+  out.Key("delay");out.Double(realPair(w,base));out.Key("doppler");out.Double(realPair(w,base+2));
+  out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-meanLocal));
+  out.Key("current_bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(current-1)*step));
+  out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
+  out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(currentQuality);
+  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&currentQuality>=1);
+  out.Key("candidates");out.StartArray();uint32_t emitted=0;
+  for(uint32_t bin:peaks){if(!histogram[bin])break;if(emitted&&histogram[bin]*4<count)break;
+   bool separated=true;for(uint32_t prior=0;prior<emitted;++prior){const uint32_t other=peaks[prior],delta=bin>other?bin-other:other-bin;
+    if(std::min<uint32_t>(delta,histogram.size()-delta)<=1){separated=false;break;}}
+   if(!separated)continue;
+   out.StartObject();out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(bin)*step));
+   out.Key("support");out.Double(double(histogram[bin])/count);out.EndObject();if(++emitted==3)break;}
+  out.EndArray();out.EndObject();
+ }
+ out.EndArray();out.EndObject();return {b.GetString(),b.GetSize()};
 }
 } // namespace blah2::gpu_result_json

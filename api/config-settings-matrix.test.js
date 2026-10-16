@@ -141,6 +141,13 @@ try {
       'process.detection.track_before_detect.max_cpis',
       'process.detection.track_before_detect.motion_bins',
       'process.tracker.beam_tolerance']);
+  const bearing = clone(fusion);
+  Object.assign(bearing.capture.device.array_geometry, {
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
+  });
+  bearing.process.bearing.enable = true;
+  persistGroup('kraken-bearing-output', fusion, bearing,
+    ['process.bearing.enable']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};

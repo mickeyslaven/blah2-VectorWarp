@@ -1,13 +1,19 @@
 # Kraken array geometry and channel-mapping acceptance
 
-Status: design/audit contract plus a pure, non-integrated validator in
-`api/kraken-array.js`, hardened after the independent Astra review. The module
-records geometry only: `bearingImplemented`, `relativeBearingEligible`, and
-`worldBearingEligible` are always false. Any future array-derived bearing remains experimental.
-It must not be used by the tracker, detector, reference synthesizer, or any
-model input. ADS-B remains display/evaluation truth only.
+Status: the original geometry audit remains the safety contract, while the
+standard processor now has an explicit, disabled-by-default bearing publisher.
+`bearingImplemented`, `relativeBearingEligible`, and `worldBearingEligible`
+can become true only when that feature is enabled and mapping, geometry, and
+true-north orientation are operator-confirmed. See `BEARING_GEOLOCATION.md` for
+the separate output contract. Operator attestations do not prove physical
+wiring or accuracy, and ADS-B remains display/evaluation truth only.
 
 ## Verified current behavior
+
+The evidence below records the original metadata-only acceptance at the named
+historical commits. The later opt-in publisher does not weaken those geometry
+or truth-boundary requirements; it adds the separately tested path described in
+`BEARING_GEOLOCATION.md`.
 
 This audit used VectorWarp commit `130d0e14345b4f7c903a21f1bdf4d2ae891e5320`,
 the local KrakenSDR Suite V2 source at

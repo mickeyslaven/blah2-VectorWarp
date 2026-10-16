@@ -418,6 +418,11 @@
       currentTrackStates.has(String(track.state || '').toUpperCase())).slice(0, 12);
     const hiddenCoastingTracks = array(tracker?.data).filter(track =>
       String(track?.state || '').toUpperCase() === 'COASTING').length;
+    let bearingLocations = null;
+    if (config?.process?.bearing?.enable === true) {
+      try { bearingLocations = await apiJson('/api/locations'); }
+      catch (_) { bearingLocations = {enabled: true, available: false, data: []}; }
+    }
 
     let aircraft = [];
     let aircraftError = null;
@@ -444,6 +449,29 @@
       };
     };
     const traces = tracks.map(item => ellipseTrace(item));
+    const bearingRows = array(bearingLocations?.data).filter(item =>
+      currentTrackStates.has(String(item.state || '').toUpperCase()));
+    for (const item of bearingRows) {
+      if (array(item.uncertainty_corridor).length > 1) traces.push({
+        type: 'scattermapbox', mode: 'lines', name: `Bearing uncertainty ${item.id}`,
+        lat: item.uncertainty_corridor.map(point => point.latitude),
+        lon: item.uncertainty_corridor.map(point => point.longitude),
+        line: {color: 'rgba(247,199,95,.75)', width: 7},
+        hovertemplate: `Track ${escapeHtml(item.id)}<br>Bearing uncertainty ±${number(item.uncertainty_deg, 1)}°<extra></extra>`
+      });
+      if (item.location) traces.push({
+        type: 'scattermapbox', mode: 'markers', name: `Bearing fix ${item.id}`,
+        lat: [item.location.latitude], lon: [item.location.longitude],
+        marker: {size: 14, color: '#f7c75f', symbol: 'diamond'},
+        hovertemplate: `Track ${escapeHtml(item.id)}<br>${number(item.bearing_deg_true, 1)}° true<br>±${number(item.uncertainty_deg, 1)}°<br>${number(item.excess_path_km, 2)} km excess path<extra></extra>`
+      });
+      if (!item.location && item.candidates?.length) traces.push({
+        type: 'scattermapbox', mode: 'markers', name: `Bearing candidates ${item.id}`,
+        lat: item.candidates.map(point => point.latitude), lon: item.candidates.map(point => point.longitude),
+        marker: {size: 10, color: 'rgba(247,199,95,.55)', symbol: 'circle-open'},
+        hovertemplate: `Unresolved track ${escapeHtml(item.id)}<br>Candidate only<extra></extra>`
+      });
+    }
     traces.push({
       type: 'scattermapbox', mode: 'markers', name: 'Radar sites',
       lat: [receiver.latitude, transmitter.latitude], lon: [receiver.longitude, transmitter.longitude],
@@ -473,8 +501,9 @@
         zoom: Math.max(4, Math.min(12, 13 - Math.log2(spanKm)))
       };
     }
-    document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Radar tracks')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show radar tracks. Green markers show ADS-B.</div>`;
+    const resolvedBearings = bearingRows.filter(item => item.location).length;
+    document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Radar tracks')}${card(resolvedBearings, 'Bearing fixes')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B')}`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show delay-only tracks. Gold corridors and diamonds are radar-only bearing estimates; open gold candidates remain unresolved. Green ADS-B markers are validation overlays and never select a radar fix.</div>`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},

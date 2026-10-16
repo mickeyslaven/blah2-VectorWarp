@@ -78,8 +78,8 @@ public:
  signal+=std::norm(expected);
  peak=std::max(peak,std::norm(expected));
  maxError=std::max(maxError,delta);}wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
- struct Publication {std::string spectrum,map,detections,tracks;};
- Publication format(uint64_t timestamp){const auto& v=receivePrepared();
+ struct Publication {std::string spectrum,map,detections,tracks,bearing;};
+ Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={}){const auto& v=receivePrepared();
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");
  namespace json=gpu_result_json;
  Publication result;
@@ -88,7 +88,9 @@ public:
  if(config().detector.enabled)result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
- result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams});}return result;}
+ const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams};
+ result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding);
+ if(bearing.enabled)result.bearing=json::bearingCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding,bearing);}return result;}
  void commit(){wire::require(prepared_.preparedEvidence.data,"Resident commit missing prepared frame");
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle missing before commit");
  sessionCall([&]{session_->commit(prepared_.trackerToken);});}

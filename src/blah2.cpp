@@ -60,6 +60,7 @@ volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
+std::unique_ptr<Socket> socket_bearing;
 std::unique_ptr<Socket> socket_timestamp;
 std::unique_ptr<Socket> socket_timing;
 std::unique_ptr<Socket> socket_iqdata;
@@ -185,12 +186,24 @@ try
 
   // set up socket
   sleep(2);
+  bool bearingEnabled=false;uint32_t bearingMinConsistent=3;
+  if(tree["process"].has_child("bearing")){
+    auto bearing=tree["process"]["bearing"];
+    if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
+    if(bearing.has_child("min_consistent"))bearing["min_consistent"]>>bearingMinConsistent;
+  }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
+  uint16_t port_bearing=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
   tree["network"]["ports"]["track"] >> port_track;
+  if(bearingEnabled){
+    if(!tree["network"]["ports"].has_child("bearing"))
+      throw std::invalid_argument("Bearing output requires network.ports.bearing");
+    tree["network"]["ports"]["bearing"]>>port_bearing;
+  }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
   tree["network"]["ports"]["iqdata"] >> port_iqdata;
@@ -200,6 +213,7 @@ try
     socket_map = std::make_unique<Socket>(ip, port_map);
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
+    if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
     socket_timing = std::make_unique<Socket>(ip, port_timing);
     socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
@@ -285,7 +299,7 @@ try
   double effectiveBeamTrials = 0;
   double directPathNullDb = 0;
   std::vector<std::array<double, 3>> coherentPositions;
-  double directPathAzimuthRad = 0;
+  double directPathAzimuthRad = 0,xAxisBearingDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
   {
     auto fusion = tree["process"]["surveillance_fusion"];
@@ -349,7 +363,7 @@ try
           !tree["location"].has_child("rx") ||
           !tree["location"].has_child("tx"))
         throw std::invalid_argument("Coherent fusion requires array orientation and receiver/transmitter locations");
-      double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
+      double rxLatDeg = 0, rxLonDeg = 0,
         txLatDeg = 0, txLonDeg = 0;
       geometry["x_axis_bearing_deg_true"] >> xAxisBearingDeg;
       tree["location"]["rx"]["latitude"] >> rxLatDeg;
@@ -619,6 +633,10 @@ try
     throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
   if (trackBeforeDetect && (!residentMode || !coherentFusion))
     throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
+  if(bearingEnabled&&(!residentMode||!coherentFusion))
+    throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
+  if(bearingMinConsistent<2||bearingMinConsistent>100)
+    throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
       trackBeforeDetectMotionBins > 1))
     throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
@@ -683,6 +701,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if(bearingEnabled&&!isTracker)
+    throw std::invalid_argument("Bearing output requires tracking to be enabled");
   if (integrationBeamTolerance != UINT32_MAX && !isTracker)
     throw std::invalid_argument("Tracker beam_tolerance requires tracking to be enabled");
   if (!isDetection)
@@ -1146,7 +1166,8 @@ try
           blah2::resident::Coordinator::Publication residentPublication;
           if(resident){
             resident->receivePrepared();
-            residentPublication=resident->format(time[0]/1000);
+            residentPublication=resident->format(time[0]/1000,
+              {bearingEnabled,coherentBeamCount,4,bearingMinConsistent,xAxisBearingDeg});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
@@ -1179,6 +1200,7 @@ try
           {
             jsonTracker = resident ? std::move(residentPublication.tracks) : track->to_json(time[0]/1000);
             socket_track->sendData(jsonTracker);
+            if(bearingEnabled)socket_bearing->sendData(residentPublication.bearing);
           }
 
           // output radar data timer
