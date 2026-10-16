@@ -62,9 +62,11 @@ void trackCases(){
  auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%historyCapacity)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%historyCapacity)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%historyCapacity)+7]=0;
  const uint32_t packedSpatial=12u|(48u<<9u)|(4u<<20u);
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
- rapidjson::Document bearing;bearing.Parse(bearingCheckpoint(7,raw(),spatial,{true,12,4,2,80}).c_str());
+ rapidjson::Document bearing;bearing.Parse(bearingCheckpoint(7,raw(),spatial,{true,12,4,2,80,30}).c_str());
  check(!bearing.HasParseError()&&bearing["data"].Size()==1&&
   bearing["data"][0]["current_bearing_deg_true"].GetDouble()==87.5&&
+  bearing["aperture_uncertainty_floor_deg"].GetDouble()==30&&
+  bearing["data"][0]["uncertainty_deg"].GetDouble()==30&&
   bearing["data"][0]["peak_separation_db"].GetUint()==4,
   "Fine bearing publication differs");
  same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));

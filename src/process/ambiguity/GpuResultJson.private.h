@@ -225,7 +225,7 @@ uint64_t epoch=0,generation=0,consumedSequence=0;
 uint32_t beamCount=0;};
 struct BearingConfig {bool enabled=false;
  uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
- double xAxisBearingDegTrue=0;};
+ double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -298,7 +298,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  shape(bank);
  require(config.enabled&&config.beamCount==binding.beamCount&&config.beamCount>=4&&
   config.refinementFactor==4&&config.minConsistent>=2&&config.minConsistent<=100&&
-  std::isfinite(config.xAxisBearingDegTrue),"Invalid bearing publication config");
+  std::isfinite(config.xAxisBearingDegTrue)&&std::isfinite(config.minimumUncertaintyDeg)&&
+  config.minimumUncertaintyDeg>=0&&config.minimumUncertaintyDeg<=180,
+  "Invalid bearing publication config");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
  const uint32_t historyCapacity=w[3],recordBytes=w[1];
@@ -315,6 +317,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  out.Key("frame");out.String("clockwise_from_true_north");
  out.Key("coarse_beams");out.Uint(config.beamCount);
  out.Key("fine_beams");out.Uint(config.beamCount*config.refinementFactor);
+ out.Key("aperture_uncertainty_floor_deg");out.Double(config.minimumUncertaintyDeg);
  out.Key("data");out.StartArray();
  constexpr char hex[]="0123456789ABCDEF";
  const double step=360.0/double(config.beamCount*config.refinementFactor),radians=std::acos(-1.0)/180.0;
@@ -339,8 +342,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   if(!count||!current)continue;
   const double concentration=std::hypot(x,y)/count;
   const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
-  const double uncertainty=std::max(step/2.0,std::min(180.0,
-   std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians));
+  const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,
+   std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(
+   std::max(concentration,1e-12))))/radians)});
   std::vector<uint32_t> peaks(histogram.size());for(uint32_t k=0;k<peaks.size();++k)peaks[k]=k;
   std::stable_sort(peaks.begin(),peaks.end(),[&](uint32_t a,uint32_t c){return histogram[a]>histogram[c];});
   char id[5]={hex[(w[base+12]>>12)&15],hex[(w[base+12]>>8)&15],hex[(w[base+12]>>4)&15],hex[w[base+12]&15],0};

@@ -299,7 +299,7 @@ try
   double effectiveBeamTrials = 0;
   double directPathNullDb = 0;
   std::vector<std::array<double, 3>> coherentPositions;
-  double directPathAzimuthRad = 0,xAxisBearingDeg = 0;
+  double directPathAzimuthRad = 0,xAxisBearingDeg = 0,bearingUncertaintyFloorDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
   {
     auto fusion = tree["process"]["surveillance_fusion"];
@@ -355,6 +355,22 @@ try
         throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
       coherentPositions.push_back(positions[channel]);
     }
+    double apertureM = 0;
+    for (size_t a = 0; a < coherentPositions.size(); ++a)
+      for (size_t b = a + 1; b < coherentPositions.size(); ++b)
+      {
+        const double dx = coherentPositions[a][0] - coherentPositions[b][0];
+        const double dy = coherentPositions[a][1] - coherentPositions[b][1];
+        const double dz = coherentPositions[a][2] - coherentPositions[b][2];
+        apertureM = std::max(apertureM, std::sqrt(dx * dx + dy * dy + dz * dz));
+      }
+    if (!(apertureM > 0) || !std::isfinite(apertureM))
+      throw std::invalid_argument("Coherent fusion has invalid array aperture");
+    // Fine scan spacing interpolates the beam maximum; it does not defeat the
+    // physical aperture limit. Publish at least the half-power half-width.
+    const double wavelengthM = 299792458.0 / double(fc);
+    bearingUncertaintyFloorDeg = std::min(90.0,
+      0.443 * wavelengthM / apertureM * 180.0 / std::acos(-1.0));
     {
       if (!arrayReference || referenceChannels != surveillanceChannels)
         throw std::invalid_argument("Coherent fusion requires the array reference to use every surveillance channel in the same order");
@@ -1167,7 +1183,8 @@ try
           if(resident){
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
-              {bearingEnabled,coherentBeamCount,4,bearingMinConsistent,xAxisBearingDeg});
+              {bearingEnabled,coherentBeamCount,4,bearingMinConsistent,xAxisBearingDeg,
+               bearingUncertaintyFloorDeg});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }

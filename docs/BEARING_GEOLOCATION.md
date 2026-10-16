@@ -34,9 +34,11 @@ r = rho (2 d + rho) / (2 (d + rho - d cos(theta)))
 ```
 
 Resolved results include a point and an uncertainty corridor obtained from the
-bearing limits. Unresolved results include candidate points only. The map keeps
-the full delay ellipse visible to distinguish delay-only evidence from a
-bearing-constrained estimate.
+bearing limits. Uncertainty is never allowed below an aperture-derived
+half-power half-width: the 4x fine scan locates a beam maximum but is not treated
+as the array's physical angular resolution. Unresolved results include candidate
+points only. The map keeps the full delay ellipse visible to distinguish
+delay-only evidence from a bearing-constrained estimate.
 
 ADS-B is not an inference input. It may be displayed after the radar result for
 validation, but cannot select a lobe, improve consistency, resolve a point, or
