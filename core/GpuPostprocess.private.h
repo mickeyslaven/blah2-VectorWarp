@@ -152,21 +152,27 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 )glsl";
 const char* tbdBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
- uint row=i/m[33],column=i%m[33],available=m[79]+1u;double selected=0.0LF;
- for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;double best=0.0LF;
-  if(available>=length){
-   for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
-    precise double sum=0.0LF;bool valid=true;
-    for(uint age=0u;age<length;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
-     if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33])){valid=false;break;}
-     uint slot=(m[79]+m[74]-(age%m[74]))%m[74];double value=history[slot*m[34]+uint(rr)*m[33]+uint(cc)];
-     if(!finiteD(value)||value<0.0LF){valid=false;break;}sum+=value;}
-    if(valid)best=max(best,sum/double(length));
-   }
-   if(!finiteD(best)){reject(208u);return;}
-   tbdBanks[bank*m[34]+i]=best;selected=max(selected,best);
-  }else tbdBanks[bank*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));
+ uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]);
+ double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
+ // Every longer bank contains the shorter bank's prefix.  Accumulate each
+ // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
+ // history cells per motion hypothesis.
+ for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+  precise double sum=0.0LF;
+  for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
+   if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
+   uint slot=(m[79]+m[74]-(age%m[74]))%m[74];double value=history[slot*m[34]+uint(rr)*m[33]+uint(cc)];
+   if(!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
+   if(length==2u)best2=max(best2,sum/2.0LF);
+   else if(length==4u)best4=max(best4,sum/4.0LF);
+   else if(length==8u)best8=max(best8,sum/8.0LF);
+  }
  }
+ for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
+  double best=bank==0u?best2:(bank==1u?best4:best8);
+  if(available>=length){if(!finiteD(best)){reject(208u);return;}
+   tbdBanks[bank*m[34]+i]=best;selected=max(selected,best);}
+  else tbdBanks[bank*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));}
  if(available<2u)selected=currentPower[i];
  double amplitude=sqrt(max(selected,0.0LF));double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(selected)){reject(209u);return;}
