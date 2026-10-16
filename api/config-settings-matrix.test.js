@@ -145,9 +145,11 @@ try {
   // as a coherent resident-mode edit without changing unrelated settings.
   const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
   resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
+  resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.detection.integration_cpis = 2;
   persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
-    'process.tracker.gpu_capacity', 'process.detection.integration_cpis']);
+    'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+    'process.detection.integration_cpis']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

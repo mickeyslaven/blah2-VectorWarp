@@ -62,7 +62,9 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.dopplerAxis=c.dopplerAxis;
  p.epoch=c.epoch;
  const auto&t=c.tracker;
- v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,t.cpi,t.maxAccInit,t.rangeRes,t.lambda,c.epoch};
+ v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,
+  t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
+  t.cpi,t.maxAccInit,t.rangeRes,t.lambda,c.epoch};
  return v;
 }
 class ResidentModule final:public resident::Backend {

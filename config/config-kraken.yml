@@ -86,6 +86,7 @@ process:
       M: 3
       N: 5
       maxAcc: 10
+      acceleration_model: hypothesis_bank
     delete: 10
     smooth: "none"
     # Optional maximum circular winning-beam change for track association.

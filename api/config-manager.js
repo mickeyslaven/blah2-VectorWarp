@@ -493,6 +493,9 @@ function validateConfig(config, baseline = null) {
     errors.push('process.tracker.initiate.M cannot exceed process.tracker.initiate.N');
   const maxAcc = number(initiate.maxAcc,
     'process.tracker.initiate.maxAcc', {min: 0, max: INT32_MAX});
+  if (initiate.acceleration_model !== undefined)
+    oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
+      ['hypothesis_bank', 'adaptive_gate']);
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
@@ -513,6 +516,9 @@ function validateConfig(config, baseline = null) {
       if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
         errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
     }
+    if (initiate.acceleration_model === 'adaptive_gate' &&
+        performance.acceleration !== 'gpu-resident')
+      errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');

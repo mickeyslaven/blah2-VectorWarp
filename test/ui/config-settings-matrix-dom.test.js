@@ -276,6 +276,7 @@ async function saveAndAssert(label, expected) {
       'process.detection.minDoppler', 'process.detection.nCentroid',
       'process.detection.integration_cpis', 'process.tracker.enable',
       'process.tracker.initiate.M', 'process.tracker.initiate.N', 'process.tracker.initiate.maxAcc',
+      'process.tracker.initiate.acceleration_model',
       'process.tracker.delete', 'truth.adsb.enabled', 'truth.adsb.tar1090', 'truth.adsb.poll_interval',
       'truth.adsb.smoothing_window', 'truth.adsb.max_position_age', 'save.map', 'save.detection',
       'save.path', 'network.ip', 'network.ports.api', 'network.ports.map', 'network.ports.detection',

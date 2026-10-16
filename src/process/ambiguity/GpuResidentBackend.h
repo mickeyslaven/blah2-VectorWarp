@@ -60,9 +60,11 @@ struct DetectorConfig {
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
+enum class TrackerInitiationMode:uint32_t {hypothesisBank=0,adaptiveGate=1};
 struct TrackerConfig {
  bool enabled=false;
  uint32_t capacity=0,m=0,n=0,nDelete=0;
+ TrackerInitiationMode initiationMode=TrackerInitiationMode::hypothesisBank;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
 };
 struct Config {

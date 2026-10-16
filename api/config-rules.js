@@ -35,6 +35,7 @@ const rules = {
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
+  'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
   'process.tracker.delete': integer(1, 255),
   // Storage count only; runtime checked admission enforces the GPU/shared caps.
   'process.tracker.gpu_capacity': {...integer(1, 4294967295), optional: true},

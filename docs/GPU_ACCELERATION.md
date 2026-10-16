@@ -65,6 +65,19 @@ memory limits before starting. A full tracker rejects the frame without dropping
 tracks or shrinking the input workload. Numeric configuration validity alone
 does not establish memory fit or real-time performance.
 
+GPU-resident tracking also supports two acceleration initiation models:
+
+- `hypothesis_bank` preserves the original behavior and creates one tentative
+  track for every discrete acceleration hypothesis.
+- `adaptive_gate` creates one tentative track per unmatched detection. Until
+  its first association, the delay/Doppler gate covers the same configured
+  acceleration envelope; the first match then supplies the measured
+  acceleration. This reduces tentative tracker memory and association work
+  without reducing `maxAcc`.
+
+The compatibility default is `hypothesis_bank`. Select `adaptive_gate` under
+`process.tracker.initiate.acceleration_model` only with `gpu-resident`.
+
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.
 

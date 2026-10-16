@@ -630,11 +630,15 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth;
+  std::string smooth,trackerAccelerationModel="hypothesis_bank";
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
+  if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
+    tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
+  if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
+    throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
   rangeRes = (double)Constants::c/fs;
   lambda = (double)Constants::c/fc;
   Tracker *tracker = new Tracker(m, n, nDelete,
@@ -708,7 +712,9 @@ try
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
-      residentConfig.tracker={true,capacity,m,n,nDelete,ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
+      residentConfig.tracker={true,capacity,m,n,nDelete,
+        trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);

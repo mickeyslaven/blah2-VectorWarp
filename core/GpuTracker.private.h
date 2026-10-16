@@ -4,6 +4,7 @@
 struct TrackerConfig {
  bool enabled=false;
  uint32_t capacity=0,m=0,n=0,nDelete=0;
+ bool adaptiveGate=false;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
  uint64_t epoch=0;
 };
@@ -31,7 +32,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  const double bins=std::floor(c.maxAccInit/a.resolution);
  if(!std::isfinite(bins)||bins<0||bins>65535)throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED acceleration hypotheses");
  a.nAcc=uint32_t(bins);
- a.hypotheses=2*a.nAcc+1;
+ a.hypotheses=c.adaptiveGate?1:2*a.nAcc+1;
  if(!std::isfinite(a.resolution*double(a.nAcc))||!std::isfinite(1/c.cpi))throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED derived configuration");
  a.bankWords=headerWords+recordWords*c.capacity;
  a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity)*4;
@@ -41,7 +42,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
 }
 inline bool sameToken(const TrackerToken& a,const TrackerToken& b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 inline bool sameDouble(double a,double b){return std::memcmp(&a,&b,sizeof(a))==0;}
-inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda);}
+inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda);}
 const char* common=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -80,6 +81,8 @@ bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolera
  uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
  return min(delta,beams-delta)<=tolerance;
 }
+bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
+uint hypothesisCount(){return m[38]&0x7fffffffu;}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
  put(0u,1u);put(1u,8224u);put(2u,m[3]);put(3u,255u);put(4u,count);
@@ -119,8 +122,11 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
 const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
- for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r);double dp=md(w),vp=md(w+2u),cpi=md(42u);
-  precise double lowDelay=dp-1.0LF,highDelay=dp+1.0LF,lowDoppler=vp-1.0LF*(1.0LF/cpi),highDoppler=vp+1.0LF*(1.0LF/cpi);
+ for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
+  precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi;
+  if(adaptiveGate()&&state==0u&&src(r+8u)==1u&&src(r+9u)==0u){precise double span=md(48u)*double(m[37]),time=md(50u);
+   delayMargin+=md(46u)*0.5LF*span*time*time/md(44u);dopplerMargin+=span*time;}
+  precise double lowDelay=dp-delayMargin,highDelay=dp+delayMargin,lowDoppler=vp-dopplerMargin,highDoppler=vp+dopplerMargin;
   bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler);if(m[19]>0u&&!validGate)reject(305u);
   double best=packDouble2x32(uvec2(0u,0x7ff00000u));uint match=0xffffffffu;
   for(uint j=lane;j<m[19];j+=128u){uint at=m[5]+8u*j;double delay=sd(at),doppler=sd(at+2u);
@@ -135,7 +141,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     if(distances[other]<distances[lane]||(distances[other]==distances[lane]&&identities[other]<identities[lane])){
      distances[lane]=distances[other];identities[lane]=identities[other];}}
    barrier();}
-  if(lane==0u){match=identities[0];uint state=src(r+14u);double acc=sourceD(r+6u);bool alive=true;
+  if(lane==0u){match=identities[0];double acc=sourceD(r+6u);bool alive=true;
    if(match!=0xffffffffu){precise double updated=(sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
@@ -159,8 +165,8 @@ void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u)return;uint count=0u;
  for(uint tile=0u;tile<(m[19]+127u)/128u;++tile){uint at=m[7]+m[4]+tile,amount=s[at];s[at]=count;count+=amount;}
  // Preserve existing tracks and admit only complete acceleration-hypothesis sets.
  // A detection burst must not invalidate the radar frame when capacity is full.
- uint admitted=min(count,(m[3]-m[20])/m[38]);
- m[21]=count;uint low=admitted*m[38];
+ uint hypotheses=hypothesisCount(),admitted=min(count,(m[3]-m[20])/hypotheses);
+ m[21]=count;uint low=admitted*hypotheses;
  uint required=low+m[20];
  m[22]=low;m[23]=required;m[24]=32u+2056u*required;m[25]=(src(8u)+low)%65535u;
 }
@@ -194,7 +200,8 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
 const char* initiateBody=R"glsl(
 void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||i>=m[22])return;uint target=record(m[20]+i);
  for(uint k=lane;k<2056u;k+=128u)put(target+k,0u);memoryBarrierBuffer();barrier();if(lane!=0u)return;
- uint detection=s[m[7]+i/m[38]],hypothesis=i%m[38];precise double acc=md(48u)*double(int(hypothesis)-int(m[37]));
+ uint hypotheses=hypothesisCount(),detection=s[m[7]+i/hypotheses],hypothesis=i%hypotheses;
+ precise double acc=adaptiveGate()?0.0LF:md(48u)*double(int(hypothesis)-int(m[37]));
  if(!finiteD(acc)){reject(308u);return;}for(uint k=0u;k<6u;++k){uint value=s[m[5]+8u*detection+k];put(target+k,value);put(target+16u+k,value);}
  uvec2 bits=unpackDouble2x32(acc);put(target+6u,bits.x);put(target+7u,bits.y);put(target+8u,1u);put(target+12u,(src(8u)+i)%65535u);
  put(target+13u,(1u<<8u)|(1u<<24u));put(target+15u,0xffffffffu);put(target+23u,detectionBeam(detection));atomicAdd(m[30],1u);atomicAdd(m[31],1u);
@@ -298,7 +305,7 @@ class Stage {
   put64(s.data(),14,config_.epoch);
   put64(s.data(),16,timestamp);
   s[37]=admission_.nAcc;
-  s[38]=admission_.hypotheses;
+  s[38]=admission_.hypotheses|(config_.adaptiveGate?0x80000000u:0u);
   s[39]=config_.m;
   s[40]=config_.n;
   s[41]=config_.nDelete;
@@ -364,7 +371,7 @@ class Stage {
   *out.result={token,words,noOp};
  }
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
-  <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
+  <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
   <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
    context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched<<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}

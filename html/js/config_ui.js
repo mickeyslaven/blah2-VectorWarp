@@ -87,6 +87,7 @@ const CONFIG_META = {
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
   'process.tracker.initiate.maxAcc': ['Maximum Doppler acceleration', 'Largest Doppler change allowed when starting a track, in Hz/s.'],
+  'process.tracker.initiate.acceleration_model': ['Acceleration initiation', 'Use the legacy acceleration hypothesis bank, or one adaptive tentative track covering the same initial motion envelope.'],
   'process.tracker.delete': ['Missed frames before deletion', 'Consecutive misses allowed before a track is removed'],
   'process.tracker.smooth': ['Track smoothing', 'Reserved setting; not used by this processor.'],
   'process.tracker.gpu_capacity': ['GPU track capacity', 'Maximum simultaneous tracks retained in GPU memory.'],
