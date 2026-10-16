@@ -43,6 +43,7 @@ process:
       M: 3
       N: 5
       maxAcc: 10
+      acceleration_model: hypothesis_bank
     delete: 10
     smooth: "none"
 
