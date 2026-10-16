@@ -47,6 +47,11 @@ ADS-B is not an inference input. It may be displayed after the radar result for
 validation, but cannot select a lobe, improve consistency, resolve a point, or
 change geometry acceptance.
 
+`min_peak_separation_db` is the minimum temporal-median power margin between
+the winning lobe and the strongest aperture-separated alternative. The default
+3 dB requires the winning lobe to carry at least twice the alternative's power;
+weaker margins remain useful candidate bearings but are not labelled resolved.
+
 ## Configuration
 
 Bearing is disabled by default. Enabling it requires GPU-resident coherent
@@ -58,6 +63,7 @@ process:
   bearing:
     enable: true
     min_consistent: 3
+    min_peak_separation_db: 3
 network:
   ports:
     bearing: 3004

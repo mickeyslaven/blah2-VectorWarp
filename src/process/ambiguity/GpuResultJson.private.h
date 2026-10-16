@@ -225,7 +225,8 @@ uint64_t epoch=0,generation=0,consumedSequence=0;
 uint32_t beamCount=0;};
 struct BearingConfig {bool enabled=false;
  uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
- double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;};
+ double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;
+ uint32_t minPeakSeparationDb=3;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -299,7 +300,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  require(config.enabled&&config.beamCount==binding.beamCount&&config.beamCount>=4&&
   config.refinementFactor==4&&config.minConsistent>=2&&config.minConsistent<=100&&
   std::isfinite(config.xAxisBearingDegTrue)&&std::isfinite(config.minimumUncertaintyDeg)&&
-  config.minimumUncertaintyDeg>=0&&config.minimumUncertaintyDeg<=180,
+  config.minimumUncertaintyDeg>=0&&config.minimumUncertaintyDeg<=180&&
+  config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15,
   "Invalid bearing publication config");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
@@ -318,6 +320,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  out.Key("coarse_beams");out.Uint(config.beamCount);
  out.Key("fine_beams");out.Uint(config.beamCount*config.refinementFactor);
  out.Key("aperture_uncertainty_floor_deg");out.Double(config.minimumUncertaintyDeg);
+ out.Key("min_peak_separation_db");out.Uint(config.minPeakSeparationDb);
  out.Key("data");out.StartArray();
  constexpr char hex[]="0123456789ABCDEF";
  const double step=360.0/double(config.beamCount*config.refinementFactor),radians=std::acos(-1.0)/180.0;
@@ -359,7 +362,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
   out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
   out.Key("current_peak_separation_db");out.Uint(currentQuality);
-  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&temporalQuality>=1);
+  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
+   temporalQuality>=config.minPeakSeparationDb);
   out.Key("candidates");out.StartArray();uint32_t emitted=0;
   for(uint32_t bin:peaks){if(!histogram[bin])break;if(emitted&&histogram[bin]*4<count)break;
    bool separated=true;for(uint32_t prior=0;prior<emitted;++prior){const uint32_t other=peaks[prior],delta=bin>other?bin-other:other-bin;

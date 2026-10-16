@@ -81,6 +81,9 @@ void trackCases(){
   temporal["data"][0]["current_peak_separation_db"].GetUint()==6&&
   temporal["data"][0]["resolved"].GetBool()&&temporal["data"][0]["candidates"].Size()==1,
   "Temporal independent-lobe bearing confidence differs");
+ rapidjson::Document strict;strict.Parse(bearingCheckpoint(9,raw(),spatial,{true,12,4,2,80,30,5}).c_str());
+ check(!strict.HasParseError()&&strict["min_peak_separation_db"].GetUint()==5&&
+  !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");
  bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
  same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));

@@ -101,6 +101,8 @@ process:
   bearing:
     enable: false
     min_consistent: 3
+    # Require a decisive independent-lobe power margin before resolving a bearing.
+    min_peak_separation_db: 3
 
 network:
   ip: 0.0.0.0

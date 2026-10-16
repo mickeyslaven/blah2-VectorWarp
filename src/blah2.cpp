@@ -186,11 +186,13 @@ try
 
   // set up socket
   sleep(2);
-  bool bearingEnabled=false;uint32_t bearingMinConsistent=3;
+  bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
   if(tree["process"].has_child("bearing")){
     auto bearing=tree["process"]["bearing"];
     if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
     if(bearing.has_child("min_consistent"))bearing["min_consistent"]>>bearingMinConsistent;
+    if(bearing.has_child("min_peak_separation_db"))
+      bearing["min_peak_separation_db"]>>bearingMinPeakSeparationDb;
   }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
@@ -653,6 +655,8 @@ try
     throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
   if(bearingMinConsistent<2||bearingMinConsistent>100)
     throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
+  if(bearingMinPeakSeparationDb<1||bearingMinPeakSeparationDb>15)
+    throw std::invalid_argument("Bearing min_peak_separation_db must be from 1 through 15");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
       trackBeforeDetectMotionBins > 1))
     throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
@@ -1184,7 +1188,7 @@ try
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
               {bearingEnabled,coherentBeamCount,4,bearingMinConsistent,xAxisBearingDeg,
-               bearingUncertaintyFloorDeg});
+               bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }

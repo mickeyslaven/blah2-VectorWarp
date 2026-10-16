@@ -55,6 +55,7 @@ process:
   bearing:
     enable: false
     min_consistent: 3
+    min_peak_separation_db: 3
 
 network:
   ip: 0.0.0.0
