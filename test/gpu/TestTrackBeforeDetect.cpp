@@ -18,9 +18,14 @@ bool close(double left, double right, double tolerance = 1e-10) {
 int main() try {
   using namespace track_before_detect;
   check(bankCount(4) == 2 && bankCount(8) == 3, "Unexpected multi-timescale bank count");
+  check(detectorPassCount(4) == 3 && detectorPassCount(8) == 4,
+    "Conventional detector pass is not retained");
   check(bankLength(0) == 2 && bankLength(1) == 4 && bankLength(2) == 8,
     "Unexpected multi-timescale bank lengths");
   check(trialCount(8, 1) == 27, "Motion-path trial correction changed");
+  check(close(passPfa(.001, 8, 1, 0), .001) &&
+      close(passPfa(.001, 8, 1, 1), .001 / 27),
+    "Conventional and motion-bank PFA separation changed");
   const uint32_t training = 12;
   const double alphaOne = 7.0;
   check(close(survival(alphaOne, training, 1),

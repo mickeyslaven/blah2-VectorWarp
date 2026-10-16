@@ -631,12 +631,18 @@ try
   const double motionTrials = trackBeforeDetect
     ? track_before_detect::trialCount(trackBeforeDetectCpis, trackBeforeDetectMotionBins)
     : (integrationMotionBins ? 9.0 : 1.0);
+  // TBD adds its motion-bank correction inside the resident detector while
+  // retaining the proven two-CPI baseline at this beam-corrected PFA.
   const double detectorPfa = coherentFusion
-    ? pfa / (effectiveBeamTrials * motionTrials) : pfa / motionTrials;
+    ? pfa / (effectiveBeamTrials * (trackBeforeDetect ? 1.0 : motionTrials))
+    : pfa / (trackBeforeDetect ? 1.0 : motionTrials);
   if (coherentFusion)
     std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
       << " effective_pfa=" << detectorPfa << " effective_beam_trials="
-      << effectiveBeamTrials << " motion_trials=" << motionTrials << "\n";
+      << effectiveBeamTrials << " motion_trials=" << motionTrials;
+  if (coherentFusion && trackBeforeDetect)
+    std::cout << " tbd_effective_pfa=" << detectorPfa / motionTrials;
+  if (coherentFusion) std::cout << "\n";
   if (trackBeforeDetect)
     std::cout << "[TrackBeforeDetect] enabled=1 banks="
       << track_before_detect::bankCount(trackBeforeDetectCpis)

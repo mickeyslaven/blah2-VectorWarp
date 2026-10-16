@@ -182,7 +182,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
  const auto& post=b.postprocessStatus;
  require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays&&post[27]==c.detector.integrationCpis,"Resident postprocess coverage differs");
- if(c.detector.enabled){const uint32_t detectorPasses=c.detector.integrationCpis>2?(c.detector.integrationCpis==8?3u:2u):1u;
+ if(c.detector.enabled){const uint32_t detectorPasses=c.detector.integrationCpis>2?(c.detector.integrationCpis==8?4u:3u):1u;
  require(post[4]==cells*detectorPasses&&post[6]<=cells&&post[7]==post[6]&&post[8]<=post[7]&&post[9]==post[8]&&post[10]<=post[9]&&post[11]==post[9]-post[10]&&post[12]==cells&&post[13]==post[11]&&post[15]==(c.detector.integrationCpis>2?post[6]:0),"Resident postprocess decision coverage differs");
  const uint32_t kinds=1u|((p.diagnosticPresence&bit(Section::cfar))?2u:0u)|((p.diagnosticPresence&bit(Section::centroid))?4u:0u),passes=1u+((kinds>>1)&1u)+((kinds>>2)&1u);
  require(post[26]==kinds&&post[23]==passes*((cells+127)/128)&&post[24]==post[23]&&post[25]==passes*cells&&post[16]==((kinds&2)?post[6]:0)&&post[17]==((kinds&4)?post[8]:0),"Resident stable compaction coverage differs");}else{for(size_t i=4;i<=17;++i)require(!post[i],"Disabled detector status nonzero");

@@ -9,6 +9,7 @@ inline uint32_t bankCount(uint32_t maximum) {
   if (!validMaximum(maximum)) throw std::invalid_argument("Track-before-detect maximum must be 4 or 8 CPIs");
   return maximum == 4 ? 2u : 3u;
 }
+inline uint32_t detectorPassCount(uint32_t maximum) { return 1u + bankCount(maximum); }
 inline uint32_t bankLength(uint32_t bank) {
   if (bank >= 3) throw std::invalid_argument("Track-before-detect bank index invalid");
   return 2u << bank;
@@ -16,6 +17,14 @@ inline uint32_t bankLength(uint32_t bank) {
 inline double trialCount(uint32_t maximum, uint32_t motionBins) {
   const double width = double(2u * motionBins + 1u);
   return double(bankCount(maximum)) * width * width;
+}
+inline double passPfa(double baselinePfa, uint32_t maximum,
+    uint32_t motionBins, uint32_t pass) {
+  if (!pass || pass >= detectorPassCount(maximum)) {
+    if (!pass) return baselinePfa;
+    throw std::invalid_argument("Track-before-detect pass index invalid");
+  }
+  return baselinePfa / trialCount(maximum, motionBins);
 }
 
 // Cell averaging CFAR with an L-CPI noncoherent sum has a Gamma(L) CUT and a

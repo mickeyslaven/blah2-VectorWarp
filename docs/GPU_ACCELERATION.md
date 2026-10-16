@@ -107,11 +107,13 @@ process:
 ```
 
 This path keeps the ordinary detector available as the default. When enabled,
-it retains fused power maps on the GPU, searches constant-velocity paths at
-2-, 4-, and optionally 8-CPI timescales, and unions candidates from the banks.
-Each bank uses its exact Gamma-distribution cell-averaging CFAR threshold. The
-configured PFA is corrected for the enabled time/motion trials in addition to
-the coherent beam-bank correction. Only qualified candidates are then revisited
+it retains the conventional two-CPI same-cell detector, keeps fused power maps
+on the GPU, searches constant-velocity paths at 2-, 4-, and optionally 8-CPI
+timescales, and unions candidates from every pass. The conventional pass keeps
+its beam-corrected PFA so enabling weak-target search cannot simply replace the
+known detector. Each motion bank uses its exact Gamma-distribution cell-averaging
+CFAR threshold and an additional correction for the enabled time/motion trials.
+Only qualified candidates are then revisited
 against the five current complex per-channel maps with a four-times-finer
 coherent beam bank, so full-resolution spatial refinement does not multiply the
 whole-map workload.

@@ -82,7 +82,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
     !std::isfinite(c.minDoppler)||c.minDoppler<0||!std::isfinite(c.centroidDopplerResolution)||c.centroidDopplerResolution<=0||
     !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution))))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED detector configuration");
- const uint32_t detectorPasses=c.integrationCpis>2?track_before_detect::bankCount(c.integrationCpis):1u;
+ const uint32_t detectorPasses=c.integrationCpis>2?track_before_detect::detectorPassCount(c.integrationCpis):1u;
  if(c.detection&&uint64_t(l.cells)*uint32_t(2*c.train)*detectorPasses>UINT32_MAX)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED counter capacity");
  return l;
@@ -154,6 +154,10 @@ const char* tbdBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]);
  double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
+ if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
+  double baseline=0.5LF*(currentPower[i]+history[priorSlot*m[34]+i]);
+  if(!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=baseline;
+ }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
  // Every longer bank contains the shorter bank's prefix.  Accumulate each
  // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
  // history cells per motion hypothesis.
@@ -171,8 +175,8 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
   double best=bank==0u?best2:(bank==1u?best4:best8);
   if(available>=length){if(!finiteD(best)){reject(208u);return;}
-   tbdBanks[bank*m[34]+i]=best;selected=max(selected,best);}
-  else tbdBanks[bank*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));}
+   tbdBanks[(bank+1u)*m[34]+i]=best;selected=max(selected,best);}
+  else tbdBanks[(bank+1u)*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));}
  if(available<2u)selected=currentPower[i];
  double amplitude=sqrt(max(selected,0.0LF));double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(selected)){reject(209u);return;}
@@ -402,6 +406,7 @@ public:
   :context_(context),config_(config),rows_(rows),columns_(columns),layout_(validate(config,rows,columns,fs)),fused_(fused),scratch_(scratch),staging_(staging){
   const bool tbd=config.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config.integrationCpis):0;
+  const uint32_t detectorPasses=tbd?track_before_detect::detectorPassCount(config.integrationCpis):1u;
   if(tbd&&(!channelMaps||!refinementWeights||!channels||refinementBeams!=config.beamCount*4u))
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED track-before-detect refinement binding");
   if(fused.bytes<uint64_t(layout_.cells)*16||scratch.bytes<layout_.bytes||staging.bytes<8||!staging.mapped||staging.bytes%8||
@@ -457,12 +462,12 @@ public:
     words[at+2]=uint32_t(rb);
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
-    const uint32_t alphaBanks=tbd?banks:1u;
-    for(uint32_t bank=0;bank<alphaBanks;++bank){const uint32_t cpis=tbd?track_before_detect::bankLength(bank):config.integrationCpis;
-     const double alpha=count?(cpis==1?count*(std::pow(config.pfa,-1.0/count)-1):
-      track_before_detect::cfarAlpha(config.pfa,uint32_t(count),cpis)):0;
+    for(uint32_t pass=0;pass<detectorPasses;++pass){const uint32_t cpis=tbd?(pass?track_before_detect::bankLength(pass-1u):2u):config.integrationCpis;
+     const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,config.integrationMotionBins,pass):config.pfa;
+     const double alpha=count?(cpis==1?count*(std::pow(pfaForPass,-1.0/count)-1):
+      track_before_detect::cfarAlpha(pfaForPass,uint32_t(count),cpis)):0;
      if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
-     putD(words.data(),at+6+2*bank,alpha);
+     putD(words.data(),at+6+2*pass,alpha);
     }
     if(config.delayAxis[j]>=config.minDelay)for(uint32_t r=0;r<rows;++r)if(std::abs(config.dopplerAxis[r])>=config.minDoppler)expectedTrainingAdds_+=uint32_t(count);
     const double low=double(config.delayAxis[j])-double(config.centroidDelay),high=double(config.delayAxis[j])+double(config.centroidDelay);
@@ -494,7 +499,7 @@ public:
   integration_->flush(0,integration_->bytes);
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*banks*8,
+  if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(banks+1u)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   Buffer* bankBinding=tbd?tbdBanks_.get():currentPower_.get();
@@ -521,7 +526,7 @@ public:
   barrier(command);}timestamps_->end(command,0);
   if(config_.detection){
    timestamps_->begin(command,1);
-   if(tbd)for(uint32_t bank=0;bank<banks;++bank){kernels_[3]->append(command,{layout_.cells,bank+1u,bank==0u?1u:0u,0,0});barrier(command);}
+   if(tbd)for(uint32_t pass=0;pass<=banks;++pass){kernels_[3]->append(command,{layout_.cells,pass+1u,pass==0u?1u:0u,0,0});barrier(command);}
    else {kernels_[3]->append(command,{layout_.cells,0,1,0,0});barrier(command);}
    if(tbd){kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
    timestamps_->end(command,1);
@@ -550,8 +555,8 @@ public:
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   const bool tbd=config_.integrationCpis>2;
-  const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):1u;
-  if(config_.detection){if(s[cfarCells]!=layout_.cells*banks||s[trainingAdds]!=expectedTrainingAdds_*banks||s[cfarAccepted]>layout_.cells||
+  const uint32_t detectorPasses=tbd?track_before_detect::detectorPassCount(config_.integrationCpis):1u;
+  if(config_.detection){if(s[cfarCells]!=layout_.cells*detectorPasses||s[trainingAdds]!=expectedTrainingAdds_*detectorPasses||s[cfarAccepted]>layout_.cells||
     s[centroidExamined]!=s[cfarAccepted]||s[centroidKept]>s[centroidExamined]||s[interpolationExamined]!=s[centroidKept]||
     s[interpolationRejected]>s[interpolationExamined]||s[detectionCount]!=s[interpolationExamined]-s[interpolationRejected]||
     s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||(tbd&&s[refinedCandidates]!=s[cfarAccepted]))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
