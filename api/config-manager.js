@@ -227,7 +227,9 @@ function validateConfig(config, baseline = null) {
     const assessment = evaluateKrakenArray(root);
     arrayGeometry = assessment;
     advise('capture.device.array_geometry', assessment.valid ?
-      'Layout record complete; physical agreement unverified. Bearing unavailable.' :
+      assessment.worldBearingEligible ?
+        'Bearing output eligible from operator-confirmed geometry; physical agreement remains unverified.' :
+        'Layout record complete; physical agreement unverified. Bearing output is disabled or ineligible.' :
       'Layout record incomplete or needs review. Passive radar may still be configured; bearing is unavailable.');
   }
   boolean(replay.state, 'capture.replay.state');
