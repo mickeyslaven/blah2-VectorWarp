@@ -172,12 +172,13 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(b.nativeGeneration==p.frame.logicalId&&b.residentGeneration==p.frame.logicalId&&b.batchCapacity==a.batchCapacity&&b.batchCount==(g.channels+b.batchCapacity-1)/b.batchCapacity,"Resident prepared batch identity differs");
  const uint32_t hop=1024-g.clutterBins+1,blocks=1+(g.clutterSamples-1)/hop;
  require(b.nativeShape==std::array<uint32_t,6>{g.clutterSamples,g.clutterBins,1024,hop,blocks,b.batchCapacity}&&!b.nativeReferenceStatus[0]&&b.nativeReferenceStatus[4]==blocks&&b.nativeReferenceStatus[12]==1,"Resident native reference coverage differs");
+ const bool diagnosticResidual=p.diagnosticPresence&(bit(Section::filtered)|bit(Section::tail));
  uint32_t next=0;
  for(uint32_t i=0;i<b.batchCount;++i){const auto& x=b.batches[i];
  const auto active=std::min(b.batchCapacity,g.channels-next);
  require(x.generation==p.frame.logicalId&&x.first==next&&x.active==active&&x.capacity==b.batchCapacity&&!x.nativeStatus[0]&&x.nativeStatus[5]==active*blocks&&x.nativeStatus[6]==active*g.clutterSamples&&x.nativeStatus[7]==active*g.clutterSamples&&x.nativeStatus[8]==2*active&&x.nativeStatus[9]==active&&x.nativeStatus[10]==active*g.clutterSamples&&x.nativeStatus[11]==active,"Resident native batch coverage differs");
  next+=active;
- require(!x.residentStatus[0]&&x.residentStatus[3]==next*g.clutterSamples&&x.residentStatus[4]==next*g.clutterSamples&&x.residentStatus[5]==next*c.correlation*g.doppler,"Resident batch packing coverage differs");}const uint64_t cells=uint64_t(g.doppler)*g.delays;
+ require(!x.residentStatus[0]&&x.residentStatus[3]==next*g.clutterSamples&&x.residentStatus[4]==next*(diagnosticResidual?g.clutterSamples:c.correlation*g.doppler)&&x.residentStatus[5]==next*c.correlation*g.doppler,"Resident batch packing coverage differs");}const uint64_t cells=uint64_t(g.doppler)*g.delays;
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
  const auto& post=b.postprocessStatus;
  require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays&&post[27]==c.detector.integrationCpis,"Resident postprocess coverage differs");
