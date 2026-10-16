@@ -44,6 +44,10 @@ process:
     # Optional GPU-resident noncoherent power integration; 1 preserves legacy behavior.
     integration_cpis: 1
     integration_motion_bins: 0
+    track_before_detect:
+      enable: false
+      max_cpis: 8
+      motion_bins: 1
   tracker:
     enable: false
     initiate:

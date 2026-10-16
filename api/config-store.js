@@ -21,7 +21,8 @@ function setupDefaults() {
       clutter: {enable: true, delayMin: -10, delayMax: 400},
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
-        integration_motion_bins: 0},
+        integration_motion_bins: 0,
+        track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
         acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'}
     },

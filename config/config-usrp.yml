@@ -37,6 +37,10 @@ process:
     nCentroid: 6
     integration_cpis: 1
     integration_motion_bins: 0
+    track_before_detect:
+      enable: false
+      max_cpis: 8
+      motion_bins: 1
   tracker:
     enable: true
     initiate:

@@ -64,6 +64,14 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
+ auto tbd=coherent;tbd.detector.integrationCpis=8;tbd.detector.integrationMotionBins=1;
+ const auto tbdBytes=encodeConfig(tbd);
+ const auto tbdDecoded=decodeConfig(bytes(tbdBytes),bytes(d),bytes(f));
+ check(encodeConfig(tbdDecoded)==tbdBytes&&tbdDecoded.detector.integrationCpis==8&&
+  tbdDecoded.detector.integrationMotionBins==1,
+  "Track-before-detect configuration did not round trip");
+ check(wire::configHash(tbd)!=wire::configHash(coherent),
+  "Track-before-detect is not bound to config identity");
  check(decoded.detector.integrationCpis==2,"Multi-CPI detector configuration did not round trip");
  auto adaptive=c;adaptive.tracker.initiationMode=TrackerInitiationMode::adaptiveGate;
  const auto adaptiveBytes=encodeConfig(adaptive);
@@ -91,6 +99,8 @@ void configCases(){
  mutate([](auto&v){v.tracker.initiationMode=TrackerInitiationMode(2);});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.detector.integrationCpis=3;});
+ mutate([](auto&v){v.detector.integrationCpis=6;});
+ mutate([](auto&v){v.detector.integrationCpis=8;});
  mutate([](auto&v){v.detector.integrationMotionBins=2;});
  mutate([](auto&v){v.detector.integrationCpis=1;v.detector.integrationMotionBins=1;});
  mutate([](auto&v){v.detector.integrationBeamTolerance=0;});

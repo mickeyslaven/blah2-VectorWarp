@@ -61,7 +61,10 @@ void validateConfig(const Config& c){
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
  const auto& d=c.detector;
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
- if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&d.integrationCpis>=1&&d.integrationCpis<=2&&d.integrationMotionBins<=1&&(d.integrationCpis==2||!d.integrationMotionBins)&&(d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
+ if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&
+  (d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&d.integrationMotionBins<=1&&
+  (d.integrationCpis==2||d.integrationCpis>2||!d.integrationMotionBins)&&(d.integrationCpis<=2||f.mode!=FusionMode::noncoherent)&&
+  (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
  require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0,"Resident tracker configuration invalid");

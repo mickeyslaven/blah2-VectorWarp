@@ -80,6 +80,11 @@ process:
     integration_cpis: 1
     # Optional 2-CPI local trajectory bank. Zero preserves same-cell integration.
     integration_motion_bins: 0
+    # Optional GPU motion-path detector. Disabled preserves the detector above.
+    track_before_detect:
+      enable: false
+      max_cpis: 8
+      motion_bins: 1
   tracker:
     enable: true
     initiate:

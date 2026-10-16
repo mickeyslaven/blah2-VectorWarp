@@ -473,6 +473,22 @@ function validateConfig(config, baseline = null) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
+  let trackBeforeDetect = null;
+  if (detection.track_before_detect !== undefined) {
+    trackBeforeDetect = requireObject(detection.track_before_detect,
+      'process.detection.track_before_detect');
+    boolean(trackBeforeDetect.enable,
+      'process.detection.track_before_detect.enable');
+    number(trackBeforeDetect.max_cpis,
+      'process.detection.track_before_detect.max_cpis',
+      {integer: true, min: 4, max: 8});
+    if (Number.isInteger(trackBeforeDetect.max_cpis) &&
+        ![4, 8].includes(trackBeforeDetect.max_cpis))
+      errors.push('process.detection.track_before_detect.max_cpis must be 4 or 8');
+    number(trackBeforeDetect.motion_bins,
+      'process.detection.track_before_detect.motion_bins',
+      {integer: true, min: 0, max: 1});
+  }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -522,6 +538,8 @@ function validateConfig(config, baseline = null) {
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');
+    if (trackBeforeDetect?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('track-before-detect requires gpu-resident acceleration');
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});
@@ -595,6 +613,13 @@ function validateConfig(config, baseline = null) {
   if ((detection.integration_motion_bins ?? 0) > 0 &&
       (detection.integration_cpis ?? 1) !== 2)
     errors.push('integration_motion_bins requires integration_cpis: 2');
+  if (trackBeforeDetect?.enable) {
+    const fusion = processConfig.surveillance_fusion;
+    if (!detection.enable)
+      errors.push('track-before-detect requires process.detection.enable');
+    if (!fusion || fusion.mode === 'noncoherent')
+      errors.push('track-before-detect candidate refinement requires coherent surveillance fusion');
+  }
   if (tracker.beam_tolerance !== undefined) {
     const fusion = processConfig.surveillance_fusion;
     if (!tracker.enable || !fusion || fusion.mode === 'noncoherent')

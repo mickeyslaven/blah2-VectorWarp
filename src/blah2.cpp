@@ -31,6 +31,7 @@
 #include "process/utility/Socket.h"
 #include "process/utility/ProcessingThreads.h"
 #include "data/meta/Constants.h"
+#include "../core/TrackBeforeDetect.private.h"
 
 #include "data/Yaml.h"
 #include <c4/format.hpp> // needed for the examples below
@@ -588,6 +589,9 @@ try
   int8_t minDelay;
   uint32_t integrationCpis = 1;
   uint32_t integrationMotionBins = 0;
+  bool trackBeforeDetect = false;
+  uint32_t trackBeforeDetectCpis = 8;
+  uint32_t trackBeforeDetectMotionBins = 1;
   uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
@@ -598,6 +602,13 @@ try
     tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
   if (tree["process"]["detection"].has_child("integration_motion_bins"))
     tree["process"]["detection"]["integration_motion_bins"] >> integrationMotionBins;
+  if (tree["process"]["detection"].has_child("track_before_detect"))
+  {
+    auto node = tree["process"]["detection"]["track_before_detect"];
+    if (node.has_child("enable")) node["enable"] >> trackBeforeDetect;
+    if (node.has_child("max_cpis")) node["max_cpis"] >> trackBeforeDetectCpis;
+    if (node.has_child("motion_bins")) node["motion_bins"] >> trackBeforeDetectMotionBins;
+  }
   if (tree["process"]["tracker"].has_child("beam_tolerance"))
     tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
   if (integrationCpis < 1 || integrationCpis > 2)
@@ -606,19 +617,32 @@ try
     throw std::invalid_argument("Multi-CPI detection requires gpu-resident acceleration");
   if (integrationMotionBins > 1 || (integrationMotionBins && integrationCpis != 2))
     throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
+  if (trackBeforeDetect && (!residentMode || !coherentFusion))
+    throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
+  if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
+      trackBeforeDetectMotionBins > 1))
+    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
   if (integrationBeamTolerance != UINT32_MAX &&
       (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
     throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
   // A beam bank reports the maximum of several trials per cell. Apply a
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
-  const double motionTrials = integrationMotionBins ? 9.0 : 1.0;
+  const double motionTrials = trackBeforeDetect
+    ? track_before_detect::trialCount(trackBeforeDetectCpis, trackBeforeDetectMotionBins)
+    : (integrationMotionBins ? 9.0 : 1.0);
   const double detectorPfa = coherentFusion
     ? pfa / (effectiveBeamTrials * motionTrials) : pfa / motionTrials;
   if (coherentFusion)
     std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
       << " effective_pfa=" << detectorPfa << " effective_beam_trials="
       << effectiveBeamTrials << " motion_trials=" << motionTrials << "\n";
+  if (trackBeforeDetect)
+    std::cout << "[TrackBeforeDetect] enabled=1 banks="
+      << track_before_detect::bankCount(trackBeforeDetectCpis)
+      << " max_cpis=" << trackBeforeDetectCpis
+      << " motion_bins=" << trackBeforeDetectMotionBins
+      << " coherent_refinement_factor=4\n";
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
@@ -707,7 +731,10 @@ try
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
-    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,integrationCpis,integrationMotionBins,integrationBeamTolerance};
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,
+      trackBeforeDetect?trackBeforeDetectCpis:integrationCpis,
+      trackBeforeDetect?trackBeforeDetectMotionBins:integrationMotionBins,
+      integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");

@@ -40,7 +40,7 @@ start; VectorWarp does not distribute the vendor software.
 - **Kraken configuration checks:** compare the receiver's reported frequency, sample rate, and channel count with VectorWarp's settings.
 - **Coherent Kraken arrays:** use 2–8 synchronized inputs, synthesize the broadcast reference from several elements, and keep every selected channel available for surveillance.
 - **Calibrated 360-degree beam banks:** combine coherent surveillance maps with measured per-channel phase and gain instead of relying only on ideal antenna geometry.
-- **Weak-echo controls:** optionally integrate two CPIs, calibrate the effective number of beam trials, search limited inter-CPI motion, or apply a bounded direct-path null.
+- **Weak-echo controls:** optionally integrate two CPIs or use GPU-resident track-before-detect banks over 2/4/8 CPIs, with limited motion search, exact multi-CPI CFAR thresholds, calibrated beam/motion trials, candidate-only fine coherent beam refinement, and a bounded direct-path null.
 - **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
 - **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.

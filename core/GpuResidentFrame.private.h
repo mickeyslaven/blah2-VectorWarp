@@ -326,7 +326,7 @@ class ResidentFramePipeline {
  struct Workspace {
   const ResidentFrameConfig& config;
   std::unique_ptr<ClutterPipeline> clutter;
-  std::unique_ptr<Buffer> canonical,fused,status,fusionWeights;
+  std::unique_ptr<Buffer> canonical,fused,status,fusionWeights,refinementWeights;
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
@@ -350,8 +350,6 @@ class ResidentFramePipeline {
    fused=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*16,host,preferred);
    status=std::make_unique<Buffer>(context,gpu_resident::words*4,host,preferred);
    if(referenceStage)referenceStage->bind(*canonical);
-   if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
-    config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_);
    Buffer* referenceInput=referenceStage?&referenceStage->referenceBuffer():canonical.get();
    referenceCast=std::make_unique<Kernel>(context,gpu_resident::referenceSource,
      std::vector<Buffer*>{referenceInput,&clutter->residentReference(),status.get()});
@@ -368,23 +366,31 @@ class ResidentFramePipeline {
    if(config.fusion.mode!=0){
     const uint64_t weightCount=uint64_t(config.fusion.beams)*config.geometry.channels;
     fusionWeights=std::make_unique<Buffer>(context,weightCount*sizeof(std::complex<float>),host,preferred);
-    auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
     const double waveNumber=6.283185307179586476925286766559*config.fusion.frequencyHz/299792458.0;
     const double normalization=1.0/std::sqrt(double(config.geometry.channels));
-    for(uint32_t beam=0;beam<config.fusion.beams;++beam){
-     const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
+    const auto initializeWeights=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
+    for(uint32_t beam=0;beam<beams;++beam){
+     const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
      for(uint32_t channel=0;channel<config.geometry.channels;++channel){
       const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
       const double phase=waveNumber*config.fusion.radiusM*std::cos(elementAngle-beamAngle);
       target[uint64_t(beam)*config.geometry.channels+channel]=
        std::complex<float>(normalization*std::cos(phase),normalization*std::sin(phase));
      }
+    }buffer.flush(0,buffer.bytes);};
+    initializeWeights(*fusionWeights,config.fusion.beams);
+    if(config.postprocess.integrationCpis>2){
+     refinementWeights=std::make_unique<Buffer>(context,weightCount*4u*sizeof(std::complex<float>),host,preferred);
+     initializeWeights(*refinementWeights,config.fusion.beams*4u);
     }
-    fusionWeights->flush(0,fusionWeights->bytes);
     fusion=std::make_unique<Kernel>(context,gpu_resident::coherentFusionSource,
       std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
    }else fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
+   if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
+    config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_,
+    config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
+    refinementWeights.get(),config.geometry.channels,refinementWeights?config.fusion.beams*4u:0u);
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
    commands.allocate(2+3*batches);
@@ -533,10 +539,10 @@ class ResidentFramePipeline {
       // calibration error. Full covariance MVDR created deep real-echo nulls.
       channelScale[channel]=std::clamp(median/noise[channel],.5,2.0);
    }
-   auto* target=static_cast<std::complex<float>*>(fusionWeights->mapped);
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
-   for(uint32_t beam=0;beam<config.fusion.beams;++beam){
-    const double beamAngle=6.283185307179586476925286766559*double(beam)/config.fusion.beams;
+   const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
+   for(uint32_t beam=0;beam<beams;++beam){
+    const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
     std::array<std::complex<double>,8> steering{},combined{};
     for(uint32_t channel=0;channel<channels;++channel){
      const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
@@ -570,7 +576,9 @@ class ResidentFramePipeline {
       std::complex<float>(std::conj(combined[channel]));
     }
    }
-   fusionWeights->flush(0,fusionWeights->bytes);
+   buffer.flush(0,buffer.bytes);};
+   calibrate(*fusionWeights,config.fusion.beams);
+   if(refinementWeights)calibrate(*refinementWeights,config.fusion.beams*4u);
   }
  };
  std::unique_ptr<Workspace> work_; // Released before full ambiguity/context.

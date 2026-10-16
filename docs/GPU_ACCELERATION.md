@@ -87,6 +87,43 @@ use about 60% less tracker-bank memory and copy bandwidth.
 The compatibility default is `hypothesis_bank`. Select `adaptive_gate` under
 `process.tracker.initiate.acceleration_model` only with `gpu-resident`.
 
+### Weak-target integration and track before detect
+
+The compatibility detector remains unchanged when these settings are omitted or
+disabled. `process.detection.integration_cpis: 2` averages the current and prior
+power maps. Its optional `integration_motion_bins: 1` searches one delay and one
+Doppler cell of inter-CPI motion.
+
+For weaker echoes on coherent arrays, the Linux `gpu-resident` route also offers
+an explicit track-before-detect path:
+
+```yaml
+process:
+  detection:
+    track_before_detect:
+      enable: true
+      max_cpis: 8       # 4 enables 2/4 banks; 8 enables 2/4/8 banks
+      motion_bins: 1    # search -1, 0, +1 cell per CPI on both axes
+```
+
+This path keeps the ordinary detector available as the default. When enabled,
+it retains fused power maps on the GPU, searches constant-velocity paths at
+2-, 4-, and optionally 8-CPI timescales, and unions candidates from the banks.
+Each bank uses its exact Gamma-distribution cell-averaging CFAR threshold. The
+configured PFA is corrected for the enabled time/motion trials in addition to
+the coherent beam-bank correction. Only qualified candidates are then revisited
+against the five current complex per-channel maps with a four-times-finer
+coherent beam bank, so full-resolution spatial refinement does not multiply the
+whole-map workload.
+
+Temporal accumulation is noncoherent power integration; the candidate refinement
+is coherent across antennas. This makes the feature tolerant of unknown echo
+phase between CPIs while still recovering spatial array gain. A 4-CPI bank adds
+up to two seconds and an 8-CPI bank up to four seconds of history at 500 ms CPI,
+so it is intended for weak-target initiation rather than lower-latency display.
+Track-before-detect requires coherent surveillance fusion and `gpu-resident`.
+The browser Settings page validates those dependencies before restart.
+
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.
 

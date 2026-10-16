@@ -1,4 +1,5 @@
 #pragma once
+#include "TrackBeforeDetect.private.h"
 // Private stateless real-fused-map seam. Host work is setup/control/byte copies.
 struct PostprocessConfig {
  bool enabled=false,detection=false,tracker=false;
@@ -39,7 +40,9 @@ struct PostprocessOutputs {
 namespace gpu_postprocess {
 enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarCells=4,
  trainingAdds=5,cfarAccepted=6,centroidExamined=7,centroidKept=8,interpolationExamined=9,
- interpolationRejected=10,detectionCount=11,compactCells=12,recordCells=13,diagnosticCount=14,cfarDiagnosticRecords=16,centroidDiagnosticRecords=17,compactTileCounts=23,compactPrefixTiles=24,compactScatterCells=25,compactKinds=26,statusWords=32};
+ interpolationRejected=10,detectionCount=11,compactCells=12,recordCells=13,diagnosticCount=14,
+ refinedCandidates=15,cfarDiagnosticRecords=16,centroidDiagnosticRecords=17,
+ compactTileCounts=23,compactPrefixTiles=24,compactScatterCells=25,compactKinds=26,statusWords=32};
 struct Layout {
  uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,records=0;
  uint64_t bytes=0;
@@ -69,15 +72,18 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED non-unit delay axis");
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
- if(c.integrationCpis<1||c.integrationCpis>2||c.integrationMotionBins>1||
-    (c.integrationCpis!=2&&c.integrationMotionBins)||
+ const bool tbd=c.integrationCpis>2;
+ if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
+    c.integrationMotionBins>1||(!tbd&&c.integrationCpis!=2&&c.integrationMotionBins)||
+    (tbd&&(!c.detection||!c.beamCount))||
     (c.integrationBeamTolerance!=UINT32_MAX&&(!c.beamCount||c.integrationBeamTolerance>c.beamCount/2))||
     (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
     !std::isfinite(c.minDoppler)||c.minDoppler<0||!std::isfinite(c.centroidDopplerResolution)||c.centroidDopplerResolution<=0||
     !std::isfinite(double(c.centroidDoppler)*c.centroidDopplerResolution))))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED detector configuration");
- if(c.detection&&uint64_t(l.cells)*uint32_t(2*c.train)>UINT32_MAX)
+ const uint32_t detectorPasses=c.integrationCpis>2?track_before_detect::bankCount(c.integrationCpis):1u;
+ if(c.detection&&uint64_t(l.cells)*uint32_t(2*c.train)*detectorPasses>UINT32_MAX)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED counter capacity");
  return l;
 }
@@ -87,8 +93,11 @@ layout(local_size_x=128) in;
 layout(binding=0) buffer Metadata { uint m[]; };
 layout(binding=1) readonly buffer Fused { dvec2 fused[]; };
 layout(binding=2) buffer Scratch { uint s[]; };
-layout(binding=3) readonly buffer Integration { double history[]; };
-layout(binding=4) writeonly buffer CurrentPower { double currentPower[]; };
+layout(binding=3) buffer Integration { double history[]; };
+layout(binding=4) buffer CurrentPower { double currentPower[]; };
+layout(binding=5) buffer TbdBanks { double tbdBanks[]; };
+layout(binding=6) readonly buffer ChannelMaps { vec2 channelMaps[]; };
+layout(binding=7) readonly buffer RefineWeights { vec2 refineWeights[]; };
 layout(push_constant) uniform P { uint count; uint a; uint b; uint c; int d; } p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;}
 bool finiteD(double x){return !isnan(x)&&!isinf(x);}
@@ -120,9 +129,10 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
  uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
   (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
- if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[74]==2u&&finiteD(history[i])?1u:0u;m[29]=m[76];m[30]=m[77];m[31]=m[75];}
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76];m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
+ if(m[78]!=0u)history[(m[79]%m[74])*m[34]+i]=current;
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
  if(historyReady&&m[76]!=0u){
@@ -139,6 +149,32 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(!finiteD(level)||!finiteD(power)){reject(202u);return;}
  writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,power);atomicAdd(m[1],1u);
 }
+)glsl";
+const char* tbdBody=R"glsl(
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
+ uint row=i/m[33],column=i%m[33],available=m[79]+1u;double selected=0.0LF;
+ for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;double best=0.0LF;
+  if(available>=length){
+   for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+    precise double sum=0.0LF;bool valid=true;
+    for(uint age=0u;age<length;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
+     if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33])){valid=false;break;}
+     uint slot=(m[79]+m[74]-(age%m[74]))%m[74];double value=history[slot*m[34]+uint(rr)*m[33]+uint(cc)];
+     if(!finiteD(value)||value<0.0LF){valid=false;break;}sum+=value;}
+    if(valid)best=max(best,sum/double(length));
+   }
+   if(!finiteD(best)){reject(208u);return;}
+   tbdBanks[bank*m[34]+i]=best;selected=max(selected,best);
+  }else tbdBanks[bank*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));
+ }
+ if(available<2u)selected=currentPower[i];
+ double amplitude=sqrt(max(selected,0.0LF));double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
+ if(!finiteD(level)||!finiteD(selected)){reject(209u);return;}
+ writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,selected);
+}
+)glsl";
+const char* advanceBody=R"glsl(
+void main(){if(indexOf()==0u&&m[78]!=0u&&m[0]==0u)m[79]=min(m[79]+1u,0xfffffffeu);}
 )glsl";
 const char* metricsBody=R"glsl(
 shared double metricTile[128];
@@ -163,27 +199,46 @@ void main(){
 const char* displayBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u);
  if(p.a==0u||p.a==2u){
-  // Qualifier-only mode2 preserves unusable-neighbor semantics without running
-  // the whole-frame finite-map admission. Production always uses mode0 here.
+ // Qualifier-only mode2 preserves unusable-neighbor semantics without running
+ // the whole-frame finite-map admission. Production always uses mode0 here.
   if(p.a==2u&&(!(fused[i].x>0.0LF)||!finiteD(fused[i].x)||!finiteD(fused[i].y)||!finiteD(noise))){writeS(m[38]+2u*i,packDouble2x32(uvec2(0u,0x7ff80000u)));return;}
-  precise double snr=0.0LF;if(fused[i].x>0.0LF)snr=10.0LF*positiveLog10(fused[i].x)-noise;
+  // levels is the current amplitude map on the legacy path and the strongest
+  // motion-integrated bank on the TBD path.  Using it here keeps centroiding
+  // and interpolation on the same surface that CFAR actually qualified.
+  precise double snr=readS(m[36]+2u*i)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
  else {precise double value=readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}
   writeS(m[37]+2u*i,value);atomicAdd(m[3],1u);}
 }
 )glsl";
 const char* cfarBody=R"glsl(
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;s[m[39]+i]=s[m[39]+i]&0xffffff00u;s[m[40]+i]=0u;
+double detectorPower(uint i){return p.a==0u?readS(m[37]+2u*i):tbdBanks[(p.a-1u)*m[34]+i];}
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;if(p.b!=0u){s[m[39]+i]=s[m[39]+i]&0xffffff00u;s[m[40]+i]=0u;}
  uint row=i/m[33],column=i%m[33];atomicAdd(m[4],1u);
  if(abs(dopplerAt(row))<readD(52u)||delayAt(column)<double(int(m[51])))return;
- uint at=m[46]+8u*column,n=m[at+4u];if(n==0u)return;
- precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
- for(uint j=m[at+2u];j<m[at+3u];++j)train=train+readS(m[37]+2u*(row*m[33]+j));
- atomicAdd(m[5],n);train=train/double(n);precise double threshold=readD(at+6u)*train;
+ uint at=m[46]+m[84]*column,n=m[at+4u];if(n==0u)return;atomicAdd(m[5],n);double cut=detectorPower(i);if(!finiteD(cut))return;
+ precise double train=0.0LF;for(uint j=m[at];j<m[at+1u];++j)train=train+detectorPower(row*m[33]+j);
+ for(uint j=m[at+2u];j<m[at+3u];++j)train=train+detectorPower(row*m[33]+j);
+ train=train/double(n);uint alphaIndex=p.a==0u?0u:p.a-1u;precise double threshold=readD(at+6u+2u*alphaIndex)*train;
  if(!finiteD(train)||!finiteD(threshold)){reject(205u);return;}
- if(m[74]==2u&&m[28]==0u)return;
- if(readS(m[37]+2u*i)>threshold){s[m[39]+i]=s[m[39]+i]|1u;atomicAdd(m[6],1u);
+ if(p.a==0u&&m[74]==2u&&m[28]==0u)return;
+ if(cut>threshold){uint previous=atomicOr(s[m[39]+i],1u);if((previous&1u)==0u)atomicAdd(m[6],1u);
   uint record=m[42]+6u*i;writeS(record,delayAt(column));writeS(record+2u,dopplerAt(row));writeS(record+4u,readS(m[38]+2u*i));}
+}
+)glsl";
+const char* refineBody=R"glsl(
+void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
+ uint row=i/m[33],column=i%m[33],coarse=(s[m[39]+i]>>8u)-1u,factor=m[81],channels=m[82],fine=m[83];
+ uint shifted=(row+m[32]/2u+1u)%m[32],centre=coarse*factor,bestBeam=centre;float best=-1.0;
+ for(int offset=-int(factor/2u);offset<=int(factor/2u);++offset){int raw=int(centre)+offset;while(raw<0)raw+=int(fine);uint beam=uint(raw)%fine;vec2 sum=vec2(0.0);
+  for(uint channel=0u;channel<channels;++channel){vec2 value=channelMaps[channel*m[34]+column*m[32]+shifted],weight=refineWeights[beam*channels+channel];
+   sum+=vec2(weight.x*value.x-weight.y*value.y,weight.x*value.y+weight.y*value.x);}
+  float power=sum.x*sum.x+sum.y*sum.y;if(power>best){best=power;bestBeam=beam;}
+ }
+ double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
+ if(refined>base&&base>0.0LF){double gain=20.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
+  if(!finiteD(snr)){reject(210u);return;}writeS(record+4u,snr);writeS(m[38]+2u*i,readS(m[38]+2u*i)+gain);}
+ uint nearest=((bestBeam+factor/2u)/factor)%m[75];s[m[39]+i]=(s[m[39]+i]&255u)|((nearest+1u)<<8u);atomicAdd(m[15],1u);
 }
 )glsl";
 const char* centroidBody=R"glsl(
@@ -272,7 +327,7 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
 }
 )glsl";
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
- const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody}};
+ const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies)result.emplace_back(b.first,std::string(common)+b.second);
  return result;
@@ -298,6 +353,7 @@ class Stage {
  std::unique_ptr<Buffer> metadata_;
  std::unique_ptr<Buffer> integration_;
  std::unique_ptr<Buffer> currentPower_;
+ std::unique_ptr<Buffer> tbdBanks_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t expectedTrainingAdds_=0;
@@ -335,12 +391,18 @@ class Stage {
 public:
  const auto& evidenceStatus()const{return evidenceStatus_;}
  const gpu_native::Timestamps& evidenceTimes()const{return *timestamps_;}
- Stage(Context& context,const PostprocessConfig& config,uint32_t rows,uint32_t columns,uint32_t fs,Buffer& fused,Buffer& scratch,Buffer& staging)
+ Stage(Context& context,const PostprocessConfig& config,uint32_t rows,uint32_t columns,uint32_t fs,Buffer& fused,Buffer& scratch,Buffer& staging,
+  Buffer* channelMaps=nullptr,Buffer* refinementWeights=nullptr,uint32_t channels=0,uint32_t refinementBeams=0)
   :context_(context),config_(config),rows_(rows),columns_(columns),layout_(validate(config,rows,columns,fs)),fused_(fused),scratch_(scratch),staging_(staging){
+  const bool tbd=config.integrationCpis>2;
+  const uint32_t banks=tbd?track_before_detect::bankCount(config.integrationCpis):0;
+  if(tbd&&(!channelMaps||!refinementWeights||!channels||refinementBeams!=config.beamCount*4u))
+   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED track-before-detect refinement binding");
   if(fused.bytes<uint64_t(layout_.cells)*16||scratch.bytes<layout_.bytes||staging.bytes<8||!staging.mapped||staging.bytes%8||
      fused.handle==scratch.handle||fused.handle==staging.handle||scratch.handle==staging.handle)
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED scratch/staging binding");
-  const uint32_t doppler=96,delay=doppler+2*rows,windows=(delay+columns+1)&~1u,rowBounds=windows+8*columns,colBounds=rowBounds+2*rows;
+  const uint32_t doppler=96,delay=doppler+2*rows,windows=(delay+columns+1)&~1u,windowWords=tbd?14u:8u,
+   rowBounds=windows+windowWords*columns,colBounds=rowBounds+2*rows;
   std::vector<uint32_t> words(colBounds+2*columns,0);
   words[32]=rows;
   words[33]=columns;
@@ -369,32 +431,33 @@ public:
   words[75]=config.beamCount;
   words[76]=config.integrationMotionBins;
   words[77]=config.integrationBeamTolerance;
+  words[78]=tbd?1u:0u;
+  words[79]=0;
+  words[80]=banks;
+  words[81]=tbd?4u:0u;
+  words[82]=channels;
+  words[83]=refinementBeams;
+  words[84]=windowWords;
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);
   for(uint32_t j=0;j<columns;++j)words[delay+j]=uint32_t(config.delayAxis[j]);
   if(config.detection){
    for(uint32_t j=0;j<columns;++j){const int column=int(j),n=int(columns);
-   uint32_t at=windows+8*j;
+   uint32_t at=windows+windowWords*j;
     const int lb=std::max(0,column-config.guard-config.train),le=std::max(0,column-config.guard),rb=std::min(n,column+config.guard+1),re=std::min(n,column+config.guard+config.train+1),count=le-lb+re-rb;
     words[at]=uint32_t(lb);
     words[at+1]=uint32_t(le);
     words[at+2]=uint32_t(rb);
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
-    double alpha=count?count*(std::pow(config.pfa,-1.0/count)-1):0;
-    if(count&&config.integrationCpis==2){
-     const auto survival=[&](double candidate){
-      const double ratio=count/(count+candidate);
-      return std::pow(ratio,2.0*count)*(1.0+2.0*count*candidate/(count+candidate));};
-     double low=0,high=1;
-     while(survival(high)>config.pfa&&high<1e12)high*=2;
-     for(unsigned iteration=0;iteration<96;++iteration){const double middle=(low+high)*.5;
-      if(survival(middle)>config.pfa)low=middle;else high=middle;}
-     alpha=high;
+    const uint32_t alphaBanks=tbd?banks:1u;
+    for(uint32_t bank=0;bank<alphaBanks;++bank){const uint32_t cpis=tbd?track_before_detect::bankLength(bank):config.integrationCpis;
+     const double alpha=count?(cpis==1?count*(std::pow(config.pfa,-1.0/count)-1):
+      track_before_detect::cfarAlpha(config.pfa,uint32_t(count),cpis)):0;
+     if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
+     putD(words.data(),at+6+2*bank,alpha);
     }
-    if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
-    putD(words.data(),at+6,alpha);
     if(config.delayAxis[j]>=config.minDelay)for(uint32_t r=0;r<rows;++r)if(std::abs(config.dopplerAxis[r])>=config.minDoppler)expectedTrainingAdds_+=uint32_t(count);
     const double low=double(config.delayAxis[j])-double(config.centroidDelay),high=double(config.delayAxis[j])+double(config.centroidDelay);
     uint32_t first=0,last=0;
@@ -418,36 +481,46 @@ public:
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
-  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
+  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8,
    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   auto* history=static_cast<double*>(integration_->mapped);
-  std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
+  std::fill(history,history+layout_.cells*(tbd?config.integrationCpis:1u),std::numeric_limits<double>::quiet_NaN());
   integration_->flush(0,integration_->bytes);
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*banks*8,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get()}));
+  Buffer* bankBinding=tbd?tbdBanks_.get():currentPower_.get();
+  Buffer* mapBinding=tbd?channelMaps:&fused_;
+  Buffer* weightBinding=tbd?refinementWeights:currentPower_.get();
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding}));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
  void append(VkCommandBuffer command){
+  const bool tbd=config_.integrationCpis>2;
+  const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;
   vkCmdFillBuffer(command,metadata_->handle,0,statusWords*4,0);
   barrier(command);
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);
-  VkBufferCopy powerCopy{0,0,integration_->bytes};
-  vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);
-  barrier(command);
+  if(tbd){kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+  else {VkBufferCopy powerCopy{0,0,integration_->bytes};
+   vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}
   kernels_[1]->append(command,{1,0,0,0,0});
   barrier(command);
   if(config_.detection){kernels_[2]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);}timestamps_->end(command,0);
   if(config_.detection){
-   for(uint32_t stage=1;stage<=3;++stage){timestamps_->begin(command,stage);
-   kernels_[stage+2]->append(command,{layout_.cells,0,0,0,0});
-   barrier(command);
-   timestamps_->end(command,stage);}
+   timestamps_->begin(command,1);
+   if(tbd)for(uint32_t bank=0;bank<banks;++bank){kernels_[3]->append(command,{layout_.cells,bank+1u,bank==0u?1u:0u,0,0});barrier(command);}
+   else {kernels_[3]->append(command,{layout_.cells,0,1,0,0});barrier(command);}
+   if(tbd){kernels_[12]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+   timestamps_->end(command,1);
+   for(uint32_t stage=2;stage<=3;++stage){timestamps_->begin(command,stage);
+    kernels_[stage+2]->append(command,{layout_.cells,0,0,0,0});barrier(command);timestamps_->end(command,stage);}
    timestamps_->begin(command,4);
    appendStableCompaction(command,kernels_,layout_.cells,0);
    kernels_[7]->append(command,{layout_.cells,0,0,0,0});
@@ -458,6 +531,7 @@ public:
   kernels_[2]->append(command,{layout_.cells,1,0,0,0});
   barrier(command);
   timestamps_->end(command,5);
+  if(tbd){kernels_[11]->append(command,{1,0,0,0,0});barrier(command);}
   hostRead(command);
  }
  std::array<uint32_t,statusWords> checkStatus(){
@@ -469,10 +543,12 @@ public:
   if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=config_.integrationMotionBins||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
-  if(config_.detection){if(s[cfarCells]!=layout_.cells||s[trainingAdds]!=expectedTrainingAdds_||s[cfarAccepted]>layout_.cells||
+  const bool tbd=config_.integrationCpis>2;
+  const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):1u;
+  if(config_.detection){if(s[cfarCells]!=layout_.cells*banks||s[trainingAdds]!=expectedTrainingAdds_*banks||s[cfarAccepted]>layout_.cells||
     s[centroidExamined]!=s[cfarAccepted]||s[centroidKept]>s[centroidExamined]||s[interpolationExamined]!=s[centroidKept]||
     s[interpolationRejected]>s[interpolationExamined]||s[detectionCount]!=s[interpolationExamined]-s[interpolationRejected]||
-    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount])throw std::runtime_error("GPU postprocess detection coverage mismatch");}
+    s[compactCells]!=layout_.cells||s[recordCells]!=s[detectionCount]||(tbd&&s[refinedCandidates]!=s[cfarAccepted]))throw std::runtime_error("GPU postprocess detection coverage mismatch");}
   else for(uint32_t i=cfarCells;i<=centroidDiagnosticRecords;++i)if(s[i])throw std::runtime_error("Disabled GPU detection executed work");
   const uint32_t kinds=s[compactKinds],passes=(kinds&1u)+((kinds>>1u)&1u)+((kinds>>2u)&1u);
   if((config_.detection?(!(kinds&1u)||(kinds&~7u)):(kinds!=0u))||
@@ -569,7 +645,9 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
+  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
+  <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
+  <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";
  }
