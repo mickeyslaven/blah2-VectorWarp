@@ -109,6 +109,14 @@ void configCases(){
 }
 void mappingCases(){
  auto c=config();const auto l=makeLayout(c,4096);check(l.count==29&&l.bytes%4096==0&&l.bytes<=sharedLimit,"Layout shape invalid");
+ check(trackerHistoryCapacity(c.tracker)==100&&trackerRecordWords(c.tracker)==816&&
+  l.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*3264,
+  "Short confirmation window did not use compact tracker history");
+ auto longHistory=c;longHistory.tracker.n=255;longHistory.tracker.m=2;
+ const auto longLayout=makeLayout(longHistory,4096);
+ check(trackerHistoryCapacity(longHistory.tracker)==255&&trackerRecordWords(longHistory.tracker)==2056&&
+  longLayout.at(Section::tracker0).capacityBytes==128+uint64_t(c.tracker.capacity)*8224,
+  "Maximum confirmation window did not retain the full tracker history");
  check(l.at(Section::readyEvidence).capacityBytes==4096&&l.at(Section::preparedEvidence).capacityBytes==61888&&l.at(Section::controlEvidence).capacityBytes==512,"Evidence maximum capacity missing");
  uint64_t end=1280;for(uint32_t i=0;i<l.count;++i){auto d=l.sections[i];check(!d.capacityBytes||d.offset%64==0,"Misaligned section");check(!d.capacityBytes||d.offset>=end,"Overlapping section");if(d.capacityBytes)end=d.offset+d.capacityBytes;}
  std::vector<uint8_t>data(size_t(l.bytes));Mapping map{data.data(),data.size(),l};const Nonce nonce{7,8};initializeMapping(map,c,nonce);validateMapping(map,c,nonce);
@@ -129,9 +137,10 @@ void outputCases(){
  Packet p;p.epoch=c.epoch;p.mappedBytes=l.bytes;p.presence=c.presence;p.diagnosticPresence=c.presence&diagnosticMask;p.frame={UINT64_C(0x100000002),17,1000};p.phase=Phase::referenceReady;
  auto ready=views(map,c,p);check(ready.spectrum.size==64&&ready.display.size==0&&ready.trackerCheckpoint.size==0,"Ready exposed later-phase outputs");
  p.phase=Phase::prepared;p.tracker={c.epoch,3,p.frame.logicalId,p.frame.consumedSequence};wire::Writer m{map.bytes(Section::metrics)};
- m.u32(0,1);m.u32(4,128);m.u64(8,p.frame.logicalId);m.u64(16,p.frame.consumedSequence);m.f64(24,-5);m.f64(32,20);m.u64(40,3);m.u64(48,2);m.u64(56,1);m.u64(64,32+2056);m.u32(72,1);m.u32(76,0);m.u32(80,c.stages());m.u32(84,c.stages());
- wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,1);bank.u32(4,8224);bank.u32(8,c.tracker.capacity);bank.u32(12,255);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
- auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==2088&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
+ const uint32_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
+ m.u32(0,1);m.u32(4,128);m.u64(8,p.frame.logicalId);m.u64(16,p.frame.consumedSequence);m.f64(24,-5);m.f64(32,20);m.u64(40,3);m.u64(48,2);m.u64(56,1);m.u64(64,trackerHeaderWords+recordWords);m.u32(72,1);m.u32(76,0);m.u32(80,c.stages());m.u32(84,c.stages());
+ wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,1);bank.u32(4,recordWords*4);bank.u32(8,c.tracker.capacity);bank.u32(12,history);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
+ auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==trackerHeaderWords+recordWords&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
  auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Unrequested optional diagnostics exposed or mandatory results removed");
  auto bad=[&](size_t at,uint64_t value){const auto before=wire::Reader{map.read(Section::metrics)}.u64(at);m.u64(at,value);reject([&]{views(map,c,p);},"Invalid output metadata accepted");m.u64(at,before);};
  bad(8,p.frame.logicalId-1);bad(16,18);bad(40,25);bad(48,4);bad(56,3);bad(64,33);bad(72,2);bad(88,1);

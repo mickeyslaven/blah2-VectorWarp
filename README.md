@@ -43,7 +43,7 @@ start; VectorWarp does not distribute the vendor software.
 - **Weak-echo controls:** optionally integrate two CPIs, calibrate the effective number of beam trials, search limited inter-CPI motion, or apply a bounded direct-path null.
 - **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
-- **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, preserving the configured motion envelope while freeing capacity for more detections.
+- **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
 - **Delay ellipses on a map:** see the possible locations associated with a measured delay, without presenting it as an exact aircraft position.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.

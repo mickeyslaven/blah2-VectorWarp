@@ -234,9 +234,12 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  shape(bank);
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
- require(binding.capacity&&w[0]==1&&w[1]==8224&&w[2]==binding.capacity&&w[3]==255,"GPU tracker schema/capacity differs");
+ const uint32_t recordBytes=w[1],historyCapacity=w[3];
+ require(binding.capacity&&w[0]==1&&historyCapacity>=100&&historyCapacity<=255&&
+  recordBytes==(16+8*historyCapacity)*4&&w[2]==binding.capacity,"GPU tracker schema/capacity differs");
+ const size_t recordWords=recordBytes/4;
  const uint64_t total=wordPair(w,4),published=wordPair(w,24);
- require(total<=binding.capacity&&total<=(SIZE_MAX-32)/2056&&bank.count==32+2056*size_t(total),"GPU tracker valid prefix differs");
+ require(total<=binding.capacity&&total<=(SIZE_MAX-32)/recordWords&&bank.count==32+recordWords*size_t(total),"GPU tracker valid prefix differs");
  require(w[8]<65535&&w[9]==0&&wordPair(w,10)==binding.epoch&&wordPair(w,12)==binding.generation&&wordPair(w,14)==binding.consumedSequence,"GPU tracker checkpoint binding differs");
  for(size_t i=26;i<32;++i)require(w[i]==0,"GPU tracker reserved header nonzero");
  const std::array<uint64_t,4>counts{wordPair(w,16),wordPair(w,18),wordPair(w,20),wordPair(w,22)};
@@ -247,11 +250,11 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
  std::vector<Storage>history(size_t(published),Storage{});
  std::array<uint64_t,4>observed{};
  size_t ordinal=0;
- for(size_t i=0;i<size_t(total);++i){const size_t base=32+2056*i;
+ for(size_t i=0;i<size_t(total);++i){const size_t base=32+recordWords*i;
  const uint32_t state=w[base+14],packed=w[base+13],head=packed&255,length=(packed>>8)&255,start=(packed>>16)&255,display=packed>>24;
-  require(state<4&&w[base+12]<65535&&head<255&&length&&start<255&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
+  require(state<4&&w[base+12]<65535&&head<historyCapacity&&length&&length<=historyCapacity&&start<historyCapacity&&display&&display<=100&&display<=length,"GPU tracker record metadata invalid");
   // Validate the supplied slice, but copy start/display directly below.
-  require(display==(length>=100?100:length)&&start==(head+length-display)%255&&(length==255||head==0),"GPU tracker display metadata inconsistent");
+  require(display==(length>=100?100:length)&&start==(head+length-display)%historyCapacity&&(length==historyCapacity||head==0),"GPU tracker display metadata inconsistent");
   ++observed[state];
   finite(realPair(w,base));
   finite(realPair(w,base+2));
@@ -264,7 +267,7 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   h.d.reserve(display);
   h.f.reserve(display);
   h.s.reserve(display);
-  for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%255);
+  for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
   const double d=realPair(w,at),f=realPair(w,at+2);
   finite(d);
   finite(f);

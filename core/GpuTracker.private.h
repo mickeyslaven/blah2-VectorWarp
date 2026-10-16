@@ -17,16 +17,20 @@ struct TrackerOutputs {uint32_t* checkpoint=nullptr;
 size_t wordCapacity=0;
 TrackerResult* result=nullptr;};
 namespace gpu_tracker {
-constexpr uint32_t headerWords=32,recordWords=2056,historyCount=255,statusWords=64,workWords=12;
-struct Admission {uint32_t bankWords=0,nAcc=0,hypotheses=0;
+constexpr uint32_t headerWords=32,displayHistory=100,statusWords=64,workWords=12;
+struct Admission {uint32_t bankWords=0,recordWords=0,historyCount=0,nAcc=0,hypotheses=0;
 uint64_t stageBytes=0,totalBytes=0;
 double resolution=0;};
 inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!c.enabled||!c.capacity||!cells||cells>UINT32_MAX/24||!c.m||c.m>c.n||c.n>255||!std::isfinite(c.cpi)||c.cpi<=0||
     !std::isfinite(c.maxAccInit)||c.maxAccInit<0||!std::isfinite(c.rangeRes)||c.rangeRes<=0||!std::isfinite(c.lambda)||c.lambda<=0||
-    c.capacity>(UINT32_MAX-headerWords)/recordWords||c.capacity>(UINT32_MAX-127)/128)
+    c.capacity>(UINT32_MAX-127)/128)
   throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED configuration or index capacity");
  Admission a;
+ a.historyCount=std::max(displayHistory,c.n);
+ a.recordWords=16+8*a.historyCount;
+ if(c.capacity>(UINT32_MAX-headerWords)/a.recordWords)
+  throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED record index capacity");
  a.resolution=1/(c.cpi*c.cpi);
  if(!std::isfinite(a.resolution)||a.resolution<=0)throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED acceleration resolution");
  const double bins=std::floor(c.maxAccInit/a.resolution);
@@ -34,7 +38,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  a.nAcc=uint32_t(bins);
  a.hypotheses=c.adaptiveGate?1:2*a.nAcc+1;
  if(!std::isfinite(a.resolution*double(a.nAcc))||!std::isfinite(1/c.cpi))throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED derived configuration");
- a.bankWords=headerWords+recordWords*c.capacity;
+ a.bankWords=headerWords+a.recordWords*c.capacity;
  a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity)*4;
  a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes;
  if(uint64_t(a.bankWords)*4>SIZE_MAX||a.stageBytes>SIZE_MAX){throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED host byte capacity");}
@@ -71,11 +75,13 @@ double sd(uint at){return packDouble2x32(uvec2(s[at],s[at+1]));}
 double sourceD(uint at){return packDouble2x32(uvec2(src(at),src(at+1)));}
 double checkedD(uint at){return packDouble2x32(uvec2(checkedWord(at),checkedWord(at+1)));}
 void writeM(uint at,double value){uvec2 q=unpackDouble2x32(value);m[at]=q.x;m[at+1]=q.y;}
-uint record(uint i){return 32u+2056u*i;}
+uint historyCapacity(){return max(m[40],100u);}
+uint recordWords(){return 16u+8u*historyCapacity();}
+uint record(uint i){return 32u+recordWords()*i;}
 uint work(uint i){return 64u+12u*i;}
 uint detectionBeam(uint i){uint cell=s[post[41]+i];return s[post[39]+cell]>>8u;}
-uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u;
- return length==0u?0u:src(r+16u+8u*((head+length-1u)%255u)+7u);}
+uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
+ return length==0u?0u:src(r+16u+8u*((head+length-1u)%h)+7u);}
 bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolerance=post[77];
  if(tolerance==0xffffffffu||beams==0u||trackBeam==0u||detection==0u)return true;
  uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
@@ -85,7 +91,7 @@ bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
 uint hypothesisCount(){return m[38]&0x7fffffffu;}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
- put(0u,1u);put(1u,8224u);put(2u,m[3]);put(3u,255u);put(4u,count);
+ put(0u,1u);put(1u,recordWords()*4u);put(2u,m[3]);put(3u,historyCapacity());put(4u,count);
  put(6u,m[16]);put(7u,m[17]);put(8u,nextID);put(10u,m[14]);put(11u,m[15]);
  put(12u,m[10]);put(13u,m[11]);put(14u,m[12]);put(15u,m[13]);
 }
@@ -93,7 +99,8 @@ void header(uint count,uint nextID){
 const char* initializeBody=R"glsl(
 void main(){if(indexOf()!=0u)return;
  for(uint k=0u;k<32u;++k){a[k]=0u;b[k]=0u;}
- a[0]=1u;b[0]=1u;a[1]=8224u;b[1]=8224u;a[2]=m[3];b[2]=m[3];a[3]=255u;b[3]=255u;
+ uint words=recordWords(),history=historyCapacity();
+ a[0]=1u;b[0]=1u;a[1]=words*4u;b[1]=words*4u;a[2]=m[3];b[2]=m[3];a[3]=history;b[3]=history;
  a[10]=m[14];b[10]=m[14];a[11]=m[15];b[11]=m[15];
 }
 )glsl";
@@ -101,7 +108,7 @@ const char* admitBody=R"glsl(
 void main(){if(indexOf()!=0u)return;m[52]=m[10];m[53]=m[11];
  uint count=src(4u),detections=post[11];
  if(post[0]!=0u||src(5u)!=0u||count>m[3]||detections>m[4]||src(8u)>=65535u){reject(301u);return;}
- m[18]=count;m[19]=detections;m[24]=32u+2056u*count;
+ m[18]=count;m[19]=detections;m[24]=32u+recordWords()*count;
  if(count>0u&&!greater64(pairM(16u),pairS(6u))){m[2]=1u;return;}
  m[2]=2u;precise double elapsed=count>0u?double64(subtract64(pairM(16u),pairS(6u)))/1000.0LF:0.0LF;
  if(!finiteD(elapsed)||(count>0u&&!(elapsed>0.0LF))){reject(302u);return;}writeM(50u,elapsed);
@@ -123,15 +130,26 @@ const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
  for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
-  precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi;
-  if(adaptiveGate()&&state==0u&&src(r+8u)==1u&&src(r+9u)==0u){precise double span=md(48u)*double(m[37]),time=md(50u);
-   delayMargin+=md(46u)*0.5LF*span*time*time/md(44u);dopplerMargin+=span*time;}
+  bool adaptiveFirst=adaptiveGate()&&state==0u&&src(r+8u)==1u&&src(r+9u)==0u;
+  precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),q=0.0LF;
+  if(adaptiveFirst){span=md(48u)*double(m[37]);q=md(46u)*0.5LF*time*time/md(44u);
+   delayMargin+=q*span;dopplerMargin+=span*time;}
   precise double lowDelay=dp-delayMargin,highDelay=dp+delayMargin,lowDoppler=vp-dopplerMargin,highDoppler=vp+dopplerMargin;
-  bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler);if(m[19]>0u&&!validGate)reject(305u);
+  bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler)&&
+   (!adaptiveFirst||(time>0.0LF&&q>0.0LF&&finiteD(span)));if(m[19]>0u&&!validGate)reject(305u);
   double best=packDouble2x32(uvec2(0u,0x7ff00000u));uint match=0xffffffffu;
   for(uint j=lane;j<m[19];j+=128u){uint at=m[5]+8u*j;double delay=sd(at),doppler=sd(at+2u);
-   if(validGate&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))&&delay>lowDelay&&delay<highDelay&&doppler>lowDoppler&&doppler<highDoppler){
+   bool compatible=validGate&&delay>lowDelay&&delay<highDelay&&doppler>lowDoppler&&doppler<highDoppler;
+   precise double fitAcc=0.0LF;
+   if(compatible&&adaptiveFirst){precise double dd=delay-dp,dv=doppler-vp,unitDoppler=1.0LF/cpi;
+    precise double accelerationLow=max(-span,max((dv-unitDoppler)/time,(-1.0LF-dd)/q));
+    precise double accelerationHigh=min(span,min((dv+unitDoppler)/time,(1.0LF-dd)/q));
+    compatible=finiteD(accelerationLow)&&finiteD(accelerationHigh)&&accelerationLow<accelerationHigh;
+    if(compatible){precise double denominator=q*q+time*time*cpi*cpi;
+     fitAcc=clamp((time*cpi*cpi*dv-q*dd)/denominator,accelerationLow,accelerationHigh);}}
+   if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))){
     precise double deltaDelay=delay-dp,deltaDoppler=(doppler-vp)*cpi;
+    if(adaptiveFirst){deltaDelay+=q*fitAcc;deltaDoppler=(doppler-vp-fitAcc*time)*cpi;}
     precise double distance=deltaDelay*deltaDelay+deltaDoppler*deltaDoppler;
     if(!finiteD(distance))reject(305u);else if(distance<best){best=distance;match=j;}
    }}
@@ -163,12 +181,12 @@ void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19
 const char* unmatchedPrefixBody=R"glsl(
 void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u)return;uint count=0u;
  for(uint tile=0u;tile<(m[19]+127u)/128u;++tile){uint at=m[7]+m[4]+tile,amount=s[at];s[at]=count;count+=amount;}
- // Preserve existing tracks and admit only complete acceleration-hypothesis sets.
+ // Preserve existing tracks and admit only complete initiation sets.
  // A detection burst must not invalidate the radar frame when capacity is full.
  uint hypotheses=hypothesisCount(),admitted=min(count,(m[3]-m[20])/hypotheses);
  m[21]=count;uint low=admitted*hypotheses;
  uint required=low+m[20];
- m[22]=low;m[23]=required;m[24]=32u+2056u*required;m[25]=(src(8u)+low)%65535u;
+ m[22]=low;m[23]=required;m[24]=32u+recordWords()*required;m[25]=(src(8u)+low)%65535u;
 }
 )glsl";
 const char* unmatchedScatterBody=R"glsl(
@@ -181,25 +199,25 @@ void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19
 )glsl";
 const char* historyBody=R"glsl(
 void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||i>=m[18])return;uint w=work(i);if(m[w+7u]==0u)return;
- uint source=record(i),target=record(m[w+5u]);for(uint k=lane;k<2056u;k+=128u)put(target+k,src(source+k));memoryBarrierBuffer();barrier();
- if(lane!=0u)return;uint ringBits=src(source+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,slot;
- if(length<255u){slot=(head+length)%255u;length++;}else{slot=head;head=(head+1u)%255u;}
+ uint source=record(i),target=record(m[w+5u]);for(uint k=lane;k<recordWords();k+=128u)put(target+k,src(source+k));memoryBarrierBuffer();barrier();
+ if(lane!=0u)return;uint ringBits=src(source+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,slot,h=historyCapacity();
+ if(length<h){slot=(head+length)%h;length++;}else{slot=head;head=(head+1u)%h;}
  uint at=target+16u+8u*slot,match=m[w+4u],state=m[w+6u];
- uint previousNewest=source+16u+8u*((head+length-2u)%255u);
+ uint previousNewest=source+16u+8u*((head+length-2u)%h);
  uint beam=match==0xffffffffu?src(previousNewest+7u):detectionBeam(match);
  for(uint k=0u;k<6u;++k){uint value=match==0xffffffffu?(k<4u?m[w+k]:0u):s[m[5]+8u*match+k];put(target+k,value);put(at+k,value);}
  put(at+6u,state);put(at+7u,beam);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
  uvec2 associated=plusOne(pairS(source+8u)),inactive=match==0xffffffffu?plusOne(pairS(source+10u)):uvec2(0u);
  put(target+8u,associated.x);put(target+9u,associated.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
- uint display=min(length,100u),start=(head+length-display)%255u;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
- if(match!=0xffffffffu&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%255u)+6u);if(value==1u||value==2u)count++;}
+ uint display=min(length,100u),start=(head+length-display)%h;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
+ if(match!=0xffffffffu&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
   if(count>=m[39]){state=2u;put(at+6u,state);}}
  put(target+14u,state);put(target+15u,0xffffffffu);atomicAdd(m[31],1u);
 }
 )glsl";
 const char* initiateBody=R"glsl(
 void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||i>=m[22])return;uint target=record(m[20]+i);
- for(uint k=lane;k<2056u;k+=128u)put(target+k,0u);memoryBarrierBuffer();barrier();if(lane!=0u)return;
+ for(uint k=lane;k<recordWords();k+=128u)put(target+k,0u);memoryBarrierBuffer();barrier();if(lane!=0u)return;
  uint hypotheses=hypothesisCount(),detection=s[m[7]+i/hypotheses],hypothesis=i%hypotheses;
  precise double acc=adaptiveGate()?0.0LF:md(48u)*double(int(hypothesis)-int(m[37]));
  if(!finiteD(acc)){reject(308u);return;}for(uint k=0u;k<6u;++k){uint value=s[m[5]+8u*detection+k];put(target+k,value);put(target+16u+k,value);}
@@ -217,22 +235,22 @@ void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u)return;header(m[23],m[25]);uint
 const char* validateBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u)return;uint count=checkedWord(4u);
  if(count>m[3]||checkedWord(5u)!=0u){reject(310u);return;}
- if(i==0u){if(checkedWord(0u)!=1u||checkedWord(1u)!=8224u||checkedWord(2u)!=m[3]||checkedWord(3u)!=255u||
-    checkedWord(8u)>=65535u||checkedWord(9u)!=0u||checkedWord(10u)!=m[14]||checkedWord(11u)!=m[15]||m[24]!=32u+2056u*count)reject(311u);
+ if(i==0u){if(checkedWord(0u)!=1u||checkedWord(1u)!=recordWords()*4u||checkedWord(2u)!=m[3]||checkedWord(3u)!=historyCapacity()||
+    checkedWord(8u)>=65535u||checkedWord(9u)!=0u||checkedWord(10u)!=m[14]||checkedWord(11u)!=m[15]||m[24]!=32u+recordWords()*count)reject(311u);
   for(uint k=26u;k<32u;++k)if(checkedWord(k)!=0u)reject(311u);
   if(m[2]==2u&&(checkedWord(6u)!=m[16]||checkedWord(7u)!=m[17]||checkedWord(12u)!=m[10]||checkedWord(13u)!=m[11]||checkedWord(14u)!=m[12]||checkedWord(15u)!=m[13]))reject(311u);
  }
- if(i>=count)return;uint r=record(i),ringBits=checkedWord(r+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,start=(ringBits>>16u)&255u,display=ringBits>>24u,state=checkedWord(r+14u);
- if(checkedWord(r+12u)>=65535u||head>=255u||length==0u||length>255u||(length<255u&&head!=0u)||
-    display!=min(length,100u)||start!=(head+length-display)%255u||state>3u){reject(312u);return;}
+ if(i>=count)return;uint r=record(i),ringBits=checkedWord(r+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,start=(ringBits>>16u)&255u,display=ringBits>>24u,state=checkedWord(r+14u),h=historyCapacity();
+ if(checkedWord(r+12u)>=65535u||head>=h||length==0u||length>h||(length<h&&head!=0u)||
+    display!=min(length,100u)||start!=(head+length-display)%h||state>3u){reject(312u);return;}
  uvec2 inactive=uvec2(checkedWord(r+10u),checkedWord(r+11u));
  if(greater64(inactive,uvec2(m[41],0u))||((state==1u||state==2u)&&any(notEqual(inactive,uvec2(0u))))||(state==3u&&all(equal(inactive,uvec2(0u))))){reject(313u);return;}
  for(uint k=0u;k<8u;k+=2u)if(!finiteD(checkedD(r+k)))reject(314u);
- uint newest=r+16u+8u*((head+length-1u)%255u);
+ uint newest=r+16u+8u*((head+length-1u)%h);
  for(uint k=0u;k<6u;++k)if(checkedWord(r+k)!=checkedWord(newest+k))reject(315u);
  if(checkedWord(newest+6u)!=state)reject(315u);
- for(uint j=0u;j<255u;++j){uint at=r+16u+8u*j;
-  if(length<255u&&j>=length){for(uint k=0u;k<8u;++k)if(checkedWord(at+k)!=0u)reject(316u);}
+ for(uint j=0u;j<h;++j){uint at=r+16u+8u*j;
+  if(length<h&&j>=length){for(uint k=0u;k<8u;++k)if(checkedWord(at+k)!=0u)reject(316u);}
   else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);if(checkedWord(at+6u)>3u||checkedWord(at+7u)>post[75])reject(316u);}}
  atomicAdd(m[54],1u);atomicAdd(m[60u+state],1u);if(state!=0u)atomicAdd(m[59],1u);
 }
@@ -341,7 +359,7 @@ class Stage {
      s[14]!=uint32_t(config_.epoch)||s[15]!=uint32_t(config_.epoch>>32)||s[52]!=uint32_t(token.generation)||s[53]!=uint32_t(token.generation>>32))throw std::runtime_error("GPU tracker transaction echo mismatch");
  }
  void checkCoverage(const std::array<uint32_t,statusWords>& s)const{
-  if(s[1]!=active_||s[24]<headerWords||s[24]>admission_.bankWords||s[54]>config_.capacity||s[24]!=headerWords+recordWords*s[54]||
+  if(s[1]!=active_||s[24]<headerWords||s[24]>admission_.bankWords||s[54]>config_.capacity||s[24]!=headerWords+admission_.recordWords*s[54]||
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
@@ -402,7 +420,7 @@ public:
   for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_}));
   setup({},0);
   commands([&](VkCommandBuffer command){timestamps_->begin(command,6);append(command,0,1);timestamps_->end(command,6);});
-  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history=255 record_bytes=8224 bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
+  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
  }
  bool pending()const{return pending_;}
  TrackerToken preparedToken()const{healthy();
@@ -473,7 +491,7 @@ public:
  try{banks_[active_]->invalidate(0,headerWords*4);
  const auto* words=static_cast<const uint32_t*>(banks_[active_]->mapped);
   if(words[5]||words[4]>config_.capacity){throw std::runtime_error("GPU tracker committed count invalid");}
-   copyBank(active_,headerWords+recordWords*words[4],out,lastCommitted_?lastToken_:TrackerToken{},false);
+   copyBank(active_,headerWords+admission_.recordWords*words[4],out,lastCommitted_?lastToken_:TrackerToken{},false);
   }catch(...){poisoned_=true;
   throw;}}
  void restore(const TrackerConfig& envelope,const uint32_t* checkpoint,size_t words){healthy();
@@ -487,7 +505,7 @@ public:
    const uintptr_t at=reinterpret_cast<uintptr_t>(buffer->mapped);
    if(buffer->bytes>UINTPTR_MAX-at||(first<at+buffer->bytes&&at<first+bytes))
     throw std::invalid_argument("GPU tracker checkpoint aliases device storage");}
-  if(checkpoint[5]||checkpoint[4]>config_.capacity||words!=headerWords+recordWords*checkpoint[4])throw std::invalid_argument("GPU tracker checkpoint count invalid");
+  if(checkpoint[5]||checkpoint[4]>config_.capacity||words!=headerWords+admission_.recordWords*checkpoint[4])throw std::invalid_argument("GPU tracker checkpoint count invalid");
   if(serial_==UINT64_MAX)throw std::overflow_error("GPU tracker transaction exhausted");
   try{setup({},0,3);
   static_cast<uint32_t*>(metadata_->mapped)[24]=uint32_t(words);

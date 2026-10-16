@@ -53,7 +53,7 @@ public:
   if(mode_=="frame-timeout")std::this_thread::sleep_for(std::chrono::seconds(5));
   token_={c_.epoch,17,p.frame.logicalId,p.frame.consumedSequence};auto bytes=m_.bytes(Section::metrics);wire::Writer w{bytes};w.zero();
   w.u32(0,1);w.u32(4,128);w.u64(8,p.frame.logicalId);w.u64(16,p.frame.consumedSequence);w.u64(64,32);w.u32(72,1);w.u32(80,c_.stages());w.u32(84,c_.stages());
-  auto bank=m_.bytes(Section::tracker1);wire::Writer t{bank};t.zero();t.u32(0,1);t.u32(4,8224);t.u32(8,c_.tracker.capacity);t.u32(12,255);t.u64(40,c_.epoch);t.u64(48,p.frame.logicalId);t.u64(56,p.frame.consumedSequence);proof_.prepared(p);return true;
+  auto bank=m_.bytes(Section::tracker1);wire::Writer t{bank};t.zero();t.u32(0,1);t.u32(4,trackerRecordWords(c_.tracker)*4);t.u32(8,c_.tracker.capacity);t.u32(12,trackerHistoryCapacity(c_.tracker));t.u64(40,c_.epoch);t.u64(48,p.frame.logicalId);t.u64(56,p.frame.consumedSequence);proof_.prepared(p);return true;
  }
  Token preparedToken()const override{return token_;}
  void commit(const Packet&p)override{if(mode_=="commit-exit")_exit(8);proof_.control(p,Phase::committed);}

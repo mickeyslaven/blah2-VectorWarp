@@ -422,7 +422,8 @@ public:
  reference_=cp;
   if(config_.tracker.enabled){const auto slot=p.restoreTrackerSlot?Section::tracker1:Section::tracker0;
   rw::Reader t{map_.read(slot)};
-  const uint64_t tracks=t.u64(16),words=rw::add(32,rw::mul(tracks,2056));
+  const uint64_t tracks=t.u64(16),words=rw::add(resident::trackerHeaderWords,
+   rw::mul(tracks,resident::trackerRecordWords(config_.tracker)));
   rw::require(tracks<=config_.tracker.capacity&&words<=count<uint32_t>(slot)&&t.u64(48)==p.tracker.generation,"Resident tracker restore packet differs");
   pipeline_->restoreTracker(private_.tracker,pointer<uint32_t>(slot),size_t(words));
   committedSlot_=p.restoreTrackerSlot;}

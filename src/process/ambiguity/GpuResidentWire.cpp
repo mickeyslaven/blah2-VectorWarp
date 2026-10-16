@@ -63,7 +63,8 @@ void validateConfig(const Config& c){
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
  if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&d.integrationCpis>=1&&d.integrationCpis<=2&&d.integrationMotionBins<=1&&(d.integrationCpis==2||!d.integrationMotionBins)&&(d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
- if(t.enabled){require(t.capacity&&t.capacity<=(UINT32_MAX-32)/2056&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0,"Resident tracker configuration invalid");
+ if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
+ require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0,"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
  require(std::memcmp(&actual,&t.cpi,8)==0,"Resident tracker CPI must be actual CPI");}
  else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0,"Disabled resident tracker has configuration");
@@ -85,6 +86,7 @@ Layout l;
 uint64_t at=1280;
 const auto&g=c.geometry;
 const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g.channels,t=c.tracker.capacity,tail=n-mul(c.correlation,g.doppler);
+ const uint64_t trackerRecordBytes=uint64_t(trackerRecordWords(c.tracker))*4;
  auto put=[&](Section id,uint32_t type,uint32_t width,uint64_t bytes,uint32_t access){if(!(c.presence&bit(id)))return;
  require(l.count<32,"Resident descriptor count overflow");
  uint64_t offset=bytes?align(at,64):0;
@@ -102,8 +104,8 @@ const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g
  put(Section::spectrumDb,5,8,mul(k,8),2);
  put(Section::frequencies,5,8,mul(k,8),3);
  put(Section::referenceCheckpoint,1,1,256,4);
- put(Section::tracker0,2,4,add(128,mul(t,8224)),4);
- put(Section::tracker1,2,4,add(128,mul(t,8224)),4);
+ put(Section::tracker0,2,4,add(128,mul(t,trackerRecordBytes)),4);
+ put(Section::tracker1,2,4,add(128,mul(t,trackerRecordBytes)),4);
  put(Section::detections,7,32,mul(m,32),2);
  put(Section::filtered,6,16,mul(mul(n,s),16),2);
  put(Section::tail,6,16,mul(mul(tail,s),16),2);
@@ -436,11 +438,12 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  if(c.tracker.enabled){v.trackerToken=p.tracker;
  v.trackerCheckpoint=sectionView<uint32_t>(map,visible,v.trackerSlot?Section::tracker1:Section::tracker0);
  const uint64_t words=r.u64(64);
- require(words>=32&&words<=v.trackerCheckpoint.size&&(words-32)%2056==0,"Resident checkpoint used length invalid");
+ const uint64_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
+ require(words>=trackerHeaderWords&&words<=v.trackerCheckpoint.size&&(words-trackerHeaderWords)%recordWords==0,"Resident checkpoint used length invalid");
  v.trackerCheckpoint.size=size_t(words);
  const auto* bank=v.trackerCheckpoint.data;
  Reader br{{reinterpret_cast<const uint8_t*>(bank),size_t(words*4)}};
- require(br.u32(0)==1&&br.u32(4)==8224&&br.u32(8)==c.tracker.capacity&&br.u32(12)==255&&br.u64(16)<=c.tracker.capacity&&words==32+2056*br.u64(16)&&br.u64(40)==c.epoch,"Resident tracker checkpoint envelope differs");
+ require(br.u32(0)==1&&br.u32(4)==recordWords*4&&br.u32(8)==c.tracker.capacity&&br.u32(12)==history&&br.u64(16)<=c.tracker.capacity&&words==trackerHeaderWords+recordWords*br.u64(16)&&br.u64(40)==c.epoch,"Resident tracker checkpoint envelope differs");
  if(!v.trackerNoOp)require(br.u64(48)==p.frame.logicalId&&br.u64(56)==p.frame.consumedSequence,"Resident tracker checkpoint frame differs");
  require(p.tracker.epoch==c.epoch&&p.tracker.generation==p.frame.logicalId&&p.tracker.consumedSequence==p.frame.consumedSequence&&p.tracker.transaction,"Resident prepared token invalid");}else require(!r.u64(64)&&!v.trackerSlot&&!v.trackerNoOp&&same(p.tracker,{}),"Disabled tracker produced checkpoint/token");
  return v;}

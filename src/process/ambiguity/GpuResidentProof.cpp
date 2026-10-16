@@ -193,7 +193,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  if(c.tracker.enabled){const auto& t=b.trackerStatus;
  auto pair=[&](size_t i){return uint64_t(t[i])|(uint64_t(t[i+1])<<32);};
  require(!t[0]&&t[1]<=1&&t[3]==c.tracker.capacity&&t[4]==cells&&pair(8)==p.tracker.transaction&&pair(10)==p.tracker.generation&&pair(12)==p.tracker.consumedSequence&&pair(14)==c.epoch&&pair(16)==p.frame.signalTimestampMs&&pair(52)==p.tracker.generation&&t[19]==post[11],"Resident tracker generation proof differs");
- require(t[54]<=c.tracker.capacity&&t[24]==32+2056*t[54]&&uint64_t(t[33])+t[34]+t[35]+t[36]==t[54]&&t[32]==t[34]+t[35]+t[36]&&!t[58],"Resident tracker prepared snapshot differs");
+ require(t[54]<=c.tracker.capacity&&t[24]==trackerHeaderWords+trackerRecordWords(c.tracker)*t[54]&&uint64_t(t[33])+t[34]+t[35]+t[36]==t[54]&&t[32]==t[34]+t[35]+t[36]&&!t[58],"Resident tracker prepared snapshot differs");
  if(t[2]==1){for(size_t i=26;i<=31;++i)require(!t[i],"Resident no-op tracker performed work");
  require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[28]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");}if(!c.tracker.enabled)preparedReader.zeros(evidence::prepared::trackerPreparedStatus,256);
  const uint64_t expectedTimes=135ULL|(c.detector.enabled?(15ULL<<3):0)|(c.tracker.enabled?(63ULL<<8):0);

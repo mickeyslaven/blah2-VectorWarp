@@ -1,6 +1,7 @@
 #pragma once
 #include "GpuBackend.h"
 #include "GpuProcess.h"
+#include <algorithm>
 #include <array>
 #include <complex>
 #include <cstddef>
@@ -67,6 +68,13 @@ struct TrackerConfig {
  TrackerInitiationMode initiationMode=TrackerInitiationMode::hypothesisBank;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
 };
+constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
+inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){
+ return std::max(trackerDisplayHistory,t.n);
+}
+inline uint32_t trackerRecordWords(const TrackerConfig& t){
+ return 16+8*trackerHistoryCapacity(t);
+}
 struct Config {
  GpuGeometry geometry{};
  uint32_t correlation=0,spectrumBins=0;

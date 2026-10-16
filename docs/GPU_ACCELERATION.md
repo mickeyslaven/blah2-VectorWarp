@@ -61,19 +61,28 @@ to CPU DSP.
 When tracking is enabled, set `process.tracker.gpu_capacity` explicitly. This is
 a storage capacity, independent of the wrapping track ID. No default is inferred.
 The processor checks the complete allocation against its existing device/shared
-memory limits before starting. A full tracker rejects the frame without dropping
-tracks or shrinking the input workload. Numeric configuration validity alone
-does not establish memory fit or real-time performance.
+memory limits before starting. Existing tracks are never evicted to admit a
+burst; if configured storage is exhausted, unmatched initiations are counted in
+`dropped_capacity_detections`. Numeric configuration validity alone does not
+establish memory fit or real-time performance.
 
 GPU-resident tracking also supports two acceleration initiation models:
 
 - `hypothesis_bank` preserves the original behavior and creates one tentative
   track for every discrete acceleration hypothesis.
 - `adaptive_gate` creates one tentative track per unmatched detection. Until
-  its first association, the delay/Doppler gate covers the same configured
-  acceleration envelope; the first match then supplies the measured
-  acceleration. This reduces tentative tracker memory and association work
-  without reducing `maxAcc`.
+  its first association, it solves the joint delay/Doppler acceleration
+  interval continuously. Every candidate accepted by the discrete hypothesis
+  bank remains eligible, while incompatible corners of a simply widened box
+  are rejected. The first match then supplies the measured acceleration. This
+  reduces tentative tracker count and association work without reducing
+  `maxAcc`.
+
+GPU-resident checkpoints also size each track's circular history to
+`max(100, N)` instead of always reserving 255 entries. The public 100-point
+trail and every supported M-of-N confirmation window are unchanged. With the
+usual `N: 5`, each record falls from 8,224 to 3,264 bytes, so larger capacities
+use about 60% less tracker-bank memory and copy bandwidth.
 
 The compatibility default is `hypothesis_bank`. Select `adaptive_gate` under
 `process.tracker.initiate.acceleration_model` only with `gpu-resident`.
