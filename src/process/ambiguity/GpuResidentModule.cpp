@@ -58,6 +58,13 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.integrationMotionBins=d.integrationMotionBins;
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
+ if(p.beamCount){
+  const double pi=std::acos(-1.0),elements=double(c.surveillanceChannels.size());
+  const double aperture=2*c.fusion.radiusM*std::sin(pi*std::floor(elements/2)/elements);
+  const double halfWidth=std::min(90.0,.443*(299792458.0/c.fusion.frequencyHz)/aperture*180.0/pi);
+  const double fineStep=360.0/double(p.beamCount*4u);
+  p.bearingExclusionBins=std::max(1u,uint32_t(std::floor(halfWidth/fineStep)));
+ }
  p.delayAxis=c.delayAxis;
  p.dopplerAxis=c.dopplerAxis;
  p.epoch=c.epoch;

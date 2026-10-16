@@ -9,6 +9,7 @@ struct PostprocessConfig {
  bool interpolateDelay=true,interpolateDoppler=true;
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
+ uint32_t bearingExclusionBins=0;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -241,18 +242,30 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;if(p.b!=0u){s[m[39]+i]
 )glsl";
 const char* refineBody=R"glsl(
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
- uint row=i/m[33],column=i%m[33],coarse=((s[m[39]+i]>>8u)&511u)-1u,factor=m[81],channels=m[82],fine=m[83];
- uint shifted=(row+m[32]/2u+1u)%m[32],centre=coarse*factor,bestBeam=centre;float best=-1.0,second=-1.0;
- for(int offset=-int(factor/2u);offset<=int(factor/2u);++offset){int raw=int(centre)+offset;while(raw<0)raw+=int(fine);uint beam=uint(raw)%fine;vec2 sum=vec2(0.0);
+ uint row=i/m[33],column=i%m[33],factor=m[81],channels=m[82],fine=m[83];
+ uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u;float best=-1.0,second=-1.0;
+ // Search the complete fine ring.  The old local five-beam search compared
+ // adjacent oversampled points from the same broad main lobe and therefore
+ // quantized every otherwise useful confidence margin to zero.
+ for(uint beam=0u;beam<fine;++beam){vec2 sum=vec2(0.0);
   for(uint channel=0u;channel<channels;++channel){vec2 value=channelMaps[channel*m[34]+column*m[32]+shifted],weight=refineWeights[beam*channels+channel];
    sum+=vec2(weight.x*value.x-weight.y*value.y,weight.x*value.y+weight.y*value.x);}
-  float power=sum.x*sum.x+sum.y*sum.y;if(power>best){second=best;best=power;bestBeam=beam;}else if(power>second)second=power;
+  float power=sum.x*sum.x+sum.y*sum.y;if(power>best){best=power;bestBeam=beam;}
+ }
+ // Confidence compares the winner with the strongest angularly independent
+ // alternative, never a neighbouring interpolation point inside the array's
+ // aperture-limited main lobe.
+ for(uint beam=0u;beam<fine;++beam){uint delta=beam>bestBeam?beam-bestBeam:bestBeam-beam;
+  if(min(delta,fine-delta)<=m[85])continue;vec2 sum=vec2(0.0);
+  for(uint channel=0u;channel<channels;++channel){vec2 value=channelMaps[channel*m[34]+column*m[32]+shifted],weight=refineWeights[beam*channels+channel];
+   sum+=vec2(weight.x*value.x-weight.y*value.y,weight.x*value.y+weight.y*value.x);}
+  float power=sum.x*sum.x+sum.y*sum.y;if(power>second)second=power;
  }
  double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
  if(refined>base&&base>0.0LF){double gain=20.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
   if(!finiteD(snr)){reject(210u);return;}writeS(record+4u,snr);writeS(m[38]+2u*i,readS(m[38]+2u*i)+gain);}
  uint nearest=((bestBeam+factor/2u)/factor)%m[75];float margin=second>0.0?10.0*log(best/second)/log(10.0):15.0;
- uint quality=uint(clamp(floor(margin+0.5),0.0,15.0));
+ uint quality=uint(clamp(floor(margin),0.0,15.0));
  // Low byte remains detector state. Retain both the association-compatible
  // coarse beam and the 4x refined winner plus a bounded peak-separation hint.
  s[m[39]+i]=(s[m[39]+i]&255u)|((nearest+1u)<<8u)|((bestBeam+1u)<<17u)|(quality<<28u);atomicAdd(m[15],1u);
@@ -456,6 +469,7 @@ public:
   words[82]=channels;
   words[83]=refinementBeams;
   words[84]=windowWords;
+  words[85]=config.bearingExclusionBins;
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);
@@ -665,6 +679,7 @@ public:
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
   <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
+  <<" bearing_exclusion_bins="<<config_.bearingExclusionBins
   <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);
   context_.diagnostics.stream()<<" cpu_map_calls=0 cpu_cfar_calls=0 cpu_centroid_calls=0 cpu_interpolation_calls=0 cpu_conversion_calls=0\n";

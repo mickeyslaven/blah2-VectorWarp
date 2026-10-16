@@ -329,6 +329,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    start<historyCapacity,"GPU bearing history metadata invalid");
   std::vector<uint32_t> histogram(config.beamCount*config.refinementFactor,0);
   double x=0,y=0;uint32_t count=0,current=0,currentQuality=0;
+  std::array<uint32_t,16> qualityHistogram{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t spatial=w[at+7],coarse=spatial&511u,fineBeam=(spatial>>9u)&2047u,q=(spatial>>20u)&15u;
    require(coarse<=config.beamCount&&fineBeam<=histogram.size()&&!(coarse==0&&fineBeam!=0),
@@ -337,7 +338,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    if(!fineBeam||(historyState!=1u&&historyState!=2u))continue;
    const double local=double(fineBeam-1)*step;
    x+=std::cos(local*radians);y+=std::sin(local*radians);histogram[fineBeam-1]++;count++;
-   current=fineBeam;currentQuality=q;
+   current=fineBeam;currentQuality=q;qualityHistogram[q]++;
   }
   if(!count||!current)continue;
   const double concentration=std::hypot(x,y)/count;
@@ -345,6 +346,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,
    std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(
    std::max(concentration,1e-12))))/radians)});
+  uint32_t temporalQuality=0,qualitySeen=0;const uint32_t qualityMiddle=(count-1)/2;
+  for(;temporalQuality<qualityHistogram.size();++temporalQuality){qualitySeen+=qualityHistogram[temporalQuality];if(qualitySeen>qualityMiddle)break;}
+  const uint32_t separationBins=std::max(1u,uint32_t(std::floor(config.minimumUncertaintyDeg/step)));
   std::vector<uint32_t> peaks(histogram.size());for(uint32_t k=0;k<peaks.size();++k)peaks[k]=k;
   std::stable_sort(peaks.begin(),peaks.end(),[&](uint32_t a,uint32_t c){return histogram[a]>histogram[c];});
   char id[5]={hex[(w[base+12]>>12)&15],hex[(w[base+12]>>8)&15],hex[(w[base+12]>>4)&15],hex[w[base+12]&15],0};
@@ -353,12 +357,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-meanLocal));
   out.Key("current_bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(current-1)*step));
   out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
-  out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(currentQuality);
-  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&currentQuality>=1);
+  out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
+  out.Key("current_peak_separation_db");out.Uint(currentQuality);
+  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&temporalQuality>=1);
   out.Key("candidates");out.StartArray();uint32_t emitted=0;
   for(uint32_t bin:peaks){if(!histogram[bin])break;if(emitted&&histogram[bin]*4<count)break;
    bool separated=true;for(uint32_t prior=0;prior<emitted;++prior){const uint32_t other=peaks[prior],delta=bin>other?bin-other:other-bin;
-    if(std::min<uint32_t>(delta,histogram.size()-delta)<=1){separated=false;break;}}
+    if(std::min<uint32_t>(delta,histogram.size()-delta)<=separationBins){separated=false;break;}}
    if(!separated)continue;
    out.StartObject();out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(bin)*step));
    out.Key("support");out.Double(double(histogram[bin])/count);out.EndObject();if(++emitted==3)break;}

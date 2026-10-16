@@ -8,10 +8,13 @@ Retina payloads are unchanged. Bearing has its own TCP stream and API endpoints.
 
 For every accepted delay/Doppler cell, the coherent bank retains the winning
 coarse beam used by tracker association and the winning beam from the existing
-4× candidate refinement. It also records a bounded best-versus-second-best
-power margin. Each tracker history observation carries those values, so bearing
-publication uses temporal evidence without re-running the ambiguity map or
-adding a second per-CPI DSP pass.
+4× candidate refinement. Candidate cells scan the complete fine-beam ring and
+compare the winner with the strongest alternative outside the aperture-limited
+main lobe. This avoids treating adjacent interpolation points as independent
+directions. Each tracker history observation carries the bounded margin, so
+bearing publication uses its temporal median rather than allowing one noisy
+frame to resolve or suppress an otherwise consistent track. The additional
+work is candidate-only; it does not add another whole-map DSP pass.
 
 The publisher reports the circular temporal mean in true-north coordinates,
 the current fine-beam bearing, peak separation, circular concentration, sample
