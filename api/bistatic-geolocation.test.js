@@ -15,5 +15,12 @@ const result = locationsFromBearing({timestamp: 1, data: [{id: 'A001', delay: 80
   candidates: [{bearing_deg_true: 90, support: .8}]}]}, config);
 assert.equal(result.data.length, 1);
 assert.ok(result.data[0].location && result.data[0].uncertainty_corridor.length === 3);
+assert.deepEqual(result.data[0].estimate, result.data[0].location);
+const unresolved = locationsFromBearing({timestamp: 2, data: [{id: 'A002', delay: 80,
+  state: 'COASTING', bearing_deg_true: 135, uncertainty_deg: 40, resolved: false,
+  candidates: [{bearing_deg_true: 90, support: .55}]}]}, config);
+assert.equal(unresolved.data[0].location, null);
+assert.ok(unresolved.data[0].estimate);
+assert.equal(unresolved.data[0].uncertainty_corridor.length, 0);
 assert.equal(locationsFromBearing({data: []}, {...config, process: {bearing: {enable: false}}}).enabled, false);
-console.log('Bistatic bearing geolocation: formula, candidates, uncertainty, and disabled path passed.');
+console.log('Bistatic bearing geolocation: strict fixes, diagnostic estimates, candidates, uncertainty, and disabled path passed.');

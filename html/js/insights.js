@@ -449,8 +449,11 @@
       };
     };
     const traces = tracks.map(item => ellipseTrace(item));
-    const bearingRows = array(bearingLocations?.data).filter(item =>
-      currentTrackStates.has(String(item.state || '').toUpperCase()));
+    // The map is also a bearing diagnostic: show every tracker state and every
+    // finite estimate. Resolution remains a separate strict signal used by
+    // downstream consumers.
+    const bearingRows = array(bearingLocations?.data).filter(item => item &&
+      (item.location || item.estimate || array(item.candidates).length));
     for (const item of bearingRows) {
       if (array(item.uncertainty_corridor).length > 1) traces.push({
         type: 'scattermapbox', mode: 'lines', name: `Bearing uncertainty ${item.id}`,
@@ -466,6 +469,12 @@
         // use native circle layers so live updates do not fail in Mapbox GL.
         marker: {size: 14, color: '#f7c75f', opacity: .95},
         hovertemplate: `Track ${escapeHtml(item.id)}<br>${number(item.bearing_deg_true, 1)}° true<br>±${number(item.uncertainty_deg, 1)}°<br>${number(item.excess_path_km, 2)} km excess path<extra></extra>`
+      });
+      if (!item.location && item.estimate) traces.push({
+        type: 'scattermapbox', mode: 'markers', name: `Unresolved estimate ${item.id}`,
+        lat: [item.estimate.latitude], lon: [item.estimate.longitude],
+        marker: {size: 12, color: '#b99cff', opacity: .58},
+        hovertemplate: `Track ${escapeHtml(item.id)}<br>${escapeHtml(humanize(item.state || 'unknown'))}<br>${number(item.bearing_deg_true, 1)}° true · unresolved<br>±${number(item.uncertainty_deg, 1)}°<br>Peak separation ${number(item.peak_separation_db, 1)} dB<br>Temporal consistency ${number(item.temporal_consistency, 2)}<br>Diagnostic estimate only<extra></extra>`
       });
       if (!item.location && item.candidates?.length) traces.push({
         type: 'scattermapbox', mode: 'markers', name: `Bearing candidates ${item.id}`,
@@ -504,8 +513,9 @@
       };
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
-    document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Radar tracks')}${card(resolvedBearings, 'Bearing fixes')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show delay-only tracks. Bright gold fixes and corridors are resolved radar-only bearing estimates; translucent gold points remain unresolved candidates. Green ADS-B markers are validation overlays and never select a radar fix.</div>`;
+    const unresolvedBearings = bearingRows.length - resolvedBearings;
+    document.getElementById('view-summary').innerHTML = `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenCoastingTracks, 'Coasting shown')}${card(aircraft.length, 'ADS-B')}`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes; all tracker states, including coasting, are shown for diagnosis. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},

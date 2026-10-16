@@ -51,11 +51,15 @@ function locationsFromBearing(frame, config) {
       const point = locate(rx, tx, excessPathM, candidate.bearing_deg_true);
       return point ? {...point, bearing_deg_true: candidate.bearing_deg_true, support: candidate.support} : null;
     }).filter(Boolean);
-    const point = track.resolved ? locate(rx, tx, excessPathM, track.bearing_deg_true) : null;
+    // Keep `location` as the strict, downstream-safe fix contract, while also
+    // exposing the best estimate for diagnostic displays even when confidence
+    // is insufficient to resolve the bearing.
+    const estimate = locate(rx, tx, excessPathM, track.bearing_deg_true);
+    const point = track.resolved ? estimate : null;
     const uncertainty = finite(track.uncertainty_deg) ? Math.min(180, Math.max(0, track.uncertainty_deg)) : 180;
     const corridor = point ? [locate(rx, tx, excessPathM, normalize(track.bearing_deg_true - uncertainty)),
       point, locate(rx, tx, excessPathM, normalize(track.bearing_deg_true + uncertainty))].filter(Boolean) : [];
-    return {...track, excess_path_km: excessPathM / 1000, location: point,
+    return {...track, excess_path_km: excessPathM / 1000, estimate, location: point,
       uncertainty_corridor: corridor, candidates};
   });
   return {enabled: true, available: true, timestamp: frame?.timestamp ?? null,

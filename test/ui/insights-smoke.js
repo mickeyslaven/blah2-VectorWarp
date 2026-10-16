@@ -61,11 +61,21 @@ const portable = {
   '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 5, cpi_data_ms: 500, cpi_hop_ms: 500, capture_backlog_ms: 0, ambiguity_processing: 20, detector: 1, cpi: 30}
 };
 const rich = {
-  '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
+  '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
   '/api/detection': {timestamp: Date.now(), delay: [1.25], doppler: [42], snr: [18]},
   '/api/tracker': {timestamp: Date.now(), n: 1, nTentative: 0, nAssociated: 1, nActive: 0, nCoasting: 0, data: [{id: 'T1', state: 'ASSOCIATED', delay: 10, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', 'ASSOCIATED']}]},
   '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 50, cpi_data_ms: 200, cpi_hop_ms: 100, capture_backlog_ms: 4, reference_synthesis: 4, ambiguity_processing: 20, detector: 1, tracker: .1, cpi: 35},
   '/api/adsb': {now: Date.now() / 1000, aircraft: [{hex: 'abc123', flight: 'TEST1', lat: 40.05, lon: -80.1, alt_geom: 5000, seen_pos: 1}]},
+  '/api/locations': {enabled: true, available: true, data: [
+    {id: 'T1', state: 'ASSOCIATED', bearing_deg_true: 112, uncertainty_deg: 8,
+      peak_separation_db: 5, temporal_consistency: .9, excess_path_km: 1.2,
+      resolved: true, location: {latitude: 40.03, longitude: -80.04}, estimate: {latitude: 40.03, longitude: -80.04},
+      uncertainty_corridor: [{latitude: 40.02, longitude: -80.03}, {latitude: 40.03, longitude: -80.04}, {latitude: 40.04, longitude: -80.05}], candidates: []},
+    {id: 'T2', state: 'COASTING', bearing_deg_true: 177, uncertainty_deg: 46,
+      peak_separation_db: 1.2, temporal_consistency: .35, excess_path_km: 2.1,
+      resolved: false, location: null, estimate: {latitude: 39.98, longitude: -80.01}, uncertainty_corridor: [],
+      candidates: [{latitude: 40.01, longitude: -80.06, bearing_deg_true: 130, support: .51}]}
+  ]},
   '/api/dd': {abc123: {flight: 'TEST1', delay: 1.3, doppler: 40, timestamp: Date.now() / 1000}}
 };
 
@@ -104,6 +114,12 @@ setTimeout(() => {
       !lastPlot?.traces?.some(trace => trace.name === 'ADS-B' &&
         Number(trace.marker?.size) >= 24))
     errors.push('ADS-B plane symbols were not rendered');
+  if (view === 'locations' && mode === 'rich' &&
+      !lastPlot?.traces?.some(trace => trace.name === 'Unresolved estimate T2'))
+    errors.push('unresolved coasting bearing estimate was not rendered');
+  if (view === 'locations' && mode === 'rich' &&
+      (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
+    errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
   if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
