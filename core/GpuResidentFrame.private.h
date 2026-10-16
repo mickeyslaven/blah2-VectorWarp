@@ -144,6 +144,34 @@ void main(){
  surv[uint(p.first)*p.count+i]=value;
  if((i&127u)==0u)atomicAdd(s[5],live(min(i+128u,p.count))-live(i));
 })glsl";
+const char* subtractPackSource=R"glsl(#version 450
+#extension GL_ARB_gpu_shader_fp64 : require
+layout(local_size_x=128) in;
+layout(binding=0) readonly buffer Canonical { dvec2 raw[]; };
+layout(binding=1) readonly buffer Estimate { vec2 estimate[]; };
+layout(binding=2) writeonly buffer Surveillance { vec2 surv[]; };
+layout(binding=3) buffer Status { uint s[]; };
+layout(push_constant) uniform P { uint count; uint range; uint correlation; uint samples; int first; } p;
+// Steady-state fusion of the old subtract and ambiguity-pack dispatches.  The
+// canonical capture is host-visible staging on discrete GPUs, so writing the
+// complete FP64 residual there and immediately reading it back wastes PCIe
+// bandwidth.  Qualification still uses the original two-dispatch route.
+uint live(uint at){return (at/p.range)*p.correlation+min(at%p.range,p.correlation);}
+void main(){
+ uint i=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;
+ if(i>=p.count)return;
+ uint encoded=uint(p.first),channel=encoded&65535u,slot=encoded>>16;
+ uint r=i%p.range; vec2 packed=vec2(0);
+ if(r<p.correlation){
+  uint at=(i/p.range)*p.correlation+r;
+  precise dvec2 value=raw[channel*p.samples+at]-dvec2(estimate[slot*p.samples+at]);
+  if(any(isnan(value))||any(isinf(value)))atomicCompSwap(s[0],0u,3u);
+  packed=vec2(value);
+ }
+ surv[channel*p.count+i]=packed;
+ if((i&127u)==0u){uint covered=live(min(i+128u,p.count))-live(i);
+  atomicAdd(s[4],covered);atomicAdd(s[5],covered);}
+})glsl";
 const char* fusionSource=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -302,7 +330,7 @@ class ResidentFramePipeline {
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
-  std::unique_ptr<Kernel> referenceCast,referencePack,surveillanceCast,subtract,surveillancePack,fusion;
+  std::unique_ptr<Kernel> referenceCast,referencePack,surveillanceCast,subtract,surveillancePack,subtractPack,fusion;
   std::unique_ptr<gpu_native::Timestamps> timestamps;
   gpu_resident::Commands commands; // Destroy commands before anything they reference.
   const uint32_t capacity;
@@ -335,6 +363,8 @@ class ResidentFramePipeline {
      std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),status.get()});
    surveillancePack=std::make_unique<Kernel>(context,gpu_resident::surveillancePackSource,
      std::vector<Buffer*>{canonical.get(),owner.surveillance_.get(),status.get()});
+   subtractPack=std::make_unique<Kernel>(context,gpu_resident::subtractPackSource,
+     std::vector<Buffer*>{canonical.get(),&clutter->residentEstimate(),owner.surveillance_.get(),status.get()});
    if(config.fusion.mode!=0){
     const uint64_t weightCount=uint64_t(config.fusion.beams)*config.geometry.channels;
     fusionWeights=std::make_unique<Buffer>(context,weightCount*sizeof(std::complex<float>),host,preferred);
@@ -357,7 +387,7 @@ class ResidentFramePipeline {
      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
-   commands.allocate(2+2*batches);
+   commands.allocate(2+3*batches);
    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
    auto command=commands.handles[0];
    check(vkBeginCommandBuffer(command,&begin),"resident reference recording");
@@ -377,7 +407,7 @@ class ResidentFramePipeline {
    check(vkEndCommandBuffer(command),"resident reference recording");
    for(uint32_t batch=0,first=0;first<config.geometry.channels;++batch,first+=channels){
     const uint32_t active=std::min(channels,config.geometry.channels-first);
-    command=commands.handles[2+2*batch];
+    command=commands.handles[2+3*batch];
     check(vkBeginCommandBuffer(command,&begin),"resident input recording");
     gpu_resident::hostWrite(command);
     barrier(command);
@@ -387,7 +417,7 @@ class ResidentFramePipeline {
     timestamps->end(command,1);
     gpu_resident::hostRead(command);
     check(vkEndCommandBuffer(command),"resident input recording");
-    command=commands.handles[3+2*batch];
+    command=commands.handles[3+3*batch];
     check(vkBeginCommandBuffer(command,&begin),"resident subtraction recording");
     barrier(command);
     timestamps->begin(command,2);
@@ -400,6 +430,17 @@ class ResidentFramePipeline {
     timestamps->end(command,2);
     gpu_resident::hostRead(command);
     check(vkEndCommandBuffer(command),"resident subtraction recording");
+    command=commands.handles[4+3*batch];
+    check(vkBeginCommandBuffer(command,&begin),"resident fused subtraction recording");
+    barrier(command);
+    timestamps->begin(command,2);
+    for(uint32_t c=first;c<first+active;++c)
+     subtractPack->append(command,{g.range*g.doppler,g.range,config.correlation,n,
+      int32_t(c|((c-first)<<16))});
+    barrier(command);
+    timestamps->end(command,2);
+    gpu_resident::hostRead(command);
+    check(vkEndCommandBuffer(command),"resident fused subtraction recording");
    }
    command=commands.handles[1];
    check(vkBeginCommandBuffer(command,&begin),"resident ambiguity recording");
@@ -893,7 +934,7 @@ private:
     std::array<uint32_t,gpu_resident::words> s{};
     double packMs=0;
     {gpu_host::Scope timer(context_.hostTiming,"radar.pack",first);
-    submit(work_->commands.handles[2+2*batch],"resident surveillance packing");
+    submit(work_->commands.handles[2+3*batch],"resident surveillance packing");
     s=status();
      if(s[gpu_resident::surveillanceSamples]!=uint64_t(n)*(first+active))throw std::runtime_error("Resident input coverage mismatch");
      packMs=work_->timestamps->milliseconds(1);}
@@ -908,10 +949,13 @@ private:
      context_.diagnostics.flush();
      return false;
     }
+    const bool diagnosticResidual=out.filtered||out.tail;
     {gpu_host::Scope timer(context_.hostTiming,"radar.subtract_pack",first);
-    submit(work_->commands.handles[3+2*batch],"resident subtraction and ambiguity packing");
+    submit(work_->commands.handles[(diagnosticResidual?3:4)+3*batch],diagnosticResidual?
+     "resident subtraction and ambiguity packing":"resident fused subtraction and ambiguity packing");
     s=status();}
-    if(s[gpu_resident::subtractedSamples]!=uint64_t(n)*(first+active) || s[gpu_resident::surveillanceLive]!=uint64_t(live)*(first+active))
+    const uint64_t expectedSubtracted=uint64_t(diagnosticResidual?n:live)*(first+active);
+    if(s[gpu_resident::subtractedSamples]!=expectedSubtracted || s[gpu_resident::surveillanceLive]!=uint64_t(live)*(first+active))
      throw std::runtime_error("Resident filtered coverage mismatch");
     if(out.filtered || out.tail){
      gpu_host::Scope timer(context_.hostTiming,"radar.filtered_tail_copy",first);
@@ -925,6 +969,7 @@ private:
     context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_RESIDENT_BATCH frame="<<generation_<<" first="<<first<<" active="<<active
      <<" device_cast_total="<<s[3]<<" device_subtract_total="<<s[4]<<" device_packed_live_total="<<s[5]
      <<" gpu_pack_ms="<<packMs<<" gpu_subtract_pack_ms="<<work_->timestamps->milliseconds(2)
+     <<" fused_subtract_pack="<<(diagnosticResidual?0:1)
      <<" cpu_cast_calls=0 cpu_subtract_calls=0 cpu_ambiguity_pack_calls=0\n";
      if(batch>=batchEvidence_.size()){throw std::runtime_error("Resident batch evidence overflow");}
       batchEvidence_[batch]={s,packMs,work_->timestamps->observed(2)};}

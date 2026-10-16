@@ -46,7 +46,9 @@ struct CpuEvidenceDouble {
   w.u32(1728+12,4);w.u32(1728+16,21);w.u64(1728+208,p.frame.logicalId);w.u64(1984,16383);for(size_t i=0;i<14;++i)w.f64(2000+8*i,1);
   const size_t a=2112;w.u64(a,p.frame.logicalId);w.u32(a+12,2);w.u32(a+16,2);
   const uint32_t native[]={0,0,0,0,0,2,128,128,4,2,128,2,0,0,0,0};for(size_t i=0;i<16;++i)w.u32(a+24+4*i,native[i]);
-  w.u32(a+88+12,128);w.u32(a+88+16,128);w.u32(a+88+20,126);for(size_t i=0;i<9;++i)w.f64(a+152+8*i,1);
+  w.u32(a+88+12,128);w.u32(a+88+16,
+   p.diagnosticPresence&(bit(Section::filtered)|bit(Section::tail))?128:126);
+  w.u32(a+88+20,126);for(size_t i=0;i<9;++i)w.f64(a+152+8*i,1);
   w.f64(a+224,1);w.f64(a+232,1);w.f64(a+240,1);
   const size_t h=4160;w.u32(h,1);w.u32(h+4,128);w.u64(h+8,p.frame.logicalId);w.u64(h+24,10000);w.u64(h+40,10000);
   w.u32(h+52,2048);w.u32(h+60,128);w.u32(h+68,1);w.u32(h+72,5);w.f64(h+80,.01);
