@@ -462,13 +462,15 @@
       if (item.location) traces.push({
         type: 'scattermapbox', mode: 'markers', name: `Bearing fix ${item.id}`,
         lat: [item.location.latitude], lon: [item.location.longitude],
-        marker: {size: 14, color: '#f7c75f', symbol: 'diamond'},
+        // Plotly's bundled open-street-map style has no sprite/glyph source;
+        // use native circle layers so live updates do not fail in Mapbox GL.
+        marker: {size: 14, color: '#f7c75f', opacity: .95},
         hovertemplate: `Track ${escapeHtml(item.id)}<br>${number(item.bearing_deg_true, 1)}° true<br>±${number(item.uncertainty_deg, 1)}°<br>${number(item.excess_path_km, 2)} km excess path<extra></extra>`
       });
       if (!item.location && item.candidates?.length) traces.push({
         type: 'scattermapbox', mode: 'markers', name: `Bearing candidates ${item.id}`,
         lat: item.candidates.map(point => point.latitude), lon: item.candidates.map(point => point.longitude),
-        marker: {size: 10, color: 'rgba(247,199,95,.55)', symbol: 'circle-open'},
+        marker: {size: 10, color: 'rgba(247,199,95,.55)', opacity: .65},
         hovertemplate: `Unresolved track ${escapeHtml(item.id)}<br>Candidate only<extra></extra>`
       });
     }
@@ -503,7 +505,7 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     document.getElementById('view-summary').innerHTML = `${card(tracks.length, 'Radar tracks')}${card(resolvedBearings, 'Bearing fixes')}${card(rawDetections.length, 'Unconfirmed returns hidden')}${card(hiddenCoastingTracks, 'Coasting tracks hidden')}${card(aircraft.length, 'ADS-B')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show delay-only tracks. Gold corridors and diamonds are radar-only bearing estimates; open gold candidates remain unresolved. Green ADS-B markers are validation overlays and never select a radar fix.</div>`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show delay-only tracks. Bright gold fixes and corridors are resolved radar-only bearing estimates; translucent gold points remain unresolved candidates. Green ADS-B markers are validation overlays and never select a radar fix.</div>`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
