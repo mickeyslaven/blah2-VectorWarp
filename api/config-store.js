@@ -22,7 +22,8 @@ function setupDefaults() {
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
         integration_motion_bins: 0},
-      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10}, delete: 10, smooth: 'none'}
+      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
+        acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
       track: 3003, timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
