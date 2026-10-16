@@ -118,6 +118,10 @@ against the five current complex per-channel maps with a four-times-finer
 coherent beam bank, so full-resolution spatial refinement does not multiply the
 whole-map workload.
 
+The delay-Doppler display remains a clean current-CPI ambiguity map.  Motion-
+integrated TBD hypotheses stay internal to detection and tracking; they are not
+painted onto the public map as diagonal path energy.
+
 Temporal accumulation is noncoherent power integration; the candidate refinement
 is coherent across antennas. This makes the feature tolerant of unknown echo
 phase between CPIs while still recovering spatial array gain. A 4-CPI bank adds
