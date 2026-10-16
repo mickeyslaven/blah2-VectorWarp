@@ -188,28 +188,22 @@ void main(){if(indexOf()==0u&&m[78]!=0u&&m[0]==0u)m[79]=min(m[79]+1u,0xfffffffeu
 )glsl";
 const char* metricsBody=R"glsl(
 shared double metricTile[128];
-shared double rawMetricTile[128];
 void main(){
  // One workgroup prefetches; lane zero preserves the original row-major sum.
  if(gl_WorkGroupID.x!=0u||gl_WorkGroupID.y!=0u||gl_WorkGroupID.z!=0u||m[0]!=0u)return;
- uint lane=gl_LocalInvocationID.x;precise double total=0.0LF,rawTotal=0.0LF;double maximum=0.0LF,rawMaximum=0.0LF;
+ uint lane=gl_LocalInvocationID.x;precise double total=0.0LF;double maximum=0.0LF;
+ if(lane==0u)maximum=readS(m[36]);
  for(uint first=0u;first<m[34];first+=128u){
   uint count=min(128u,m[34]-first);
   metricTile[lane]=lane<count?readS(m[36]+2u*(first+lane)):0.0LF;
-  if(lane<count){double amplitude=sqrt(max(currentPower[first+lane],0.0LF));
-   rawMetricTile[lane]=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);}
-  else rawMetricTile[lane]=0.0LF;
   barrier();
-  if(lane==0u){for(uint j=0u;j<count;++j){double value=metricTile[j],rawValue=rawMetricTile[j];
-    total=total+value;rawTotal=rawTotal+rawValue;
-    if(first+j==0u||maximum<value)maximum=value;if(first+j==0u||rawMaximum<rawValue)rawMaximum=rawValue;}}
+  if(lane==0u){for(uint j=0u;j<count;++j){double value=metricTile[j];total=total+value;maximum=maximum<value?value:maximum;}}
   barrier();
  }
  if(lane!=0u)return;
- precise double cells=double(m[32])*double(m[33]);precise double noise=total/cells,peak=maximum-noise;
- precise double rawNoise=rawTotal/cells,rawPeak=rawMaximum-rawNoise;
- if(!finiteD(total)||!finiteD(noise)||!finiteD(peak)||!finiteD(rawTotal)||!finiteD(rawNoise)||!finiteD(rawPeak)){reject(203u);return;}
- writeD(64u,noise);writeD(66u,peak);writeD(86u,rawNoise);writeD(88u,rawPeak);m[2]=m[34];
+ precise double noise=total/(double(m[32])*double(m[33]));precise double peak=maximum-noise;
+ if(!finiteD(total)||!finiteD(noise)||!finiteD(peak)){reject(203u);return;}
+ writeD(64u,noise);writeD(66u,peak);m[2]=m[34];
 }
 )glsl";
 const char* displayBody=R"glsl(
@@ -223,7 +217,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;double noise=readD(64u
   // and interpolation on the same surface that CFAR actually qualified.
   precise double snr=readS(m[36]+2u*i)-noise;
   if(!finiteD(snr)){reject(204u);return;}writeS(m[38]+2u*i,snr);}
- else {if(m[78]!=0u){noise=readD(86u);double amplitude=sqrt(max(currentPower[i],0.0LF));
+ else {if(m[78]!=0u){double amplitude=sqrt(max(currentPower[i],0.0LF));
    precise double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
    precise double value=level-noise;if(!finiteD(value)){reject(204u);return;}writeS(m[37]+2u*i,value);}
   else {precise double value=readS(m[36]+2u*i)-noise;if(!finiteD(value)){reject(204u);return;}writeS(m[37]+2u*i,value);}
@@ -627,11 +621,8 @@ public:
   if(out.cfar)copyDiagnostic(1,out.cfar,s[cfarAccepted]);
   if(out.centroid)copyDiagnostic(2,out.centroid,s[centroidKept]);
   const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
-  // The public map is the clean current-CPI surface.  TBD's integrated
-  // metrics remain private to detection so moving-path hypotheses never
-  // appear as X-shaped map energy or distort the public color scale.
-  out.metrics->noisePower=getD(words,config_.integrationCpis>2?86:64);
-  out.metrics->maxPower=getD(words,config_.integrationCpis>2?88:66);
+  out.metrics->noisePower=getD(words,64);
+  out.metrics->maxPower=getD(words,66);
   out.metrics->cfarCount=s[cfarAccepted];
   out.metrics->centroidCount=s[centroidKept];
   out.metrics->detectionCount=s[detectionCount];
