@@ -2,6 +2,7 @@
 #include "GpuReferenceSpectrum.private.h"
 #include "GpuPostprocess.private.h"
 #include "GpuTracker.private.h"
+#include "process/ambiguity/BearingSteering.h"
 // Private direct-call arithmetic seam. Included after ClutterPipeline, inside
 // blah2's private namespace. No main/worker ABI or production route is changed.
 // Host work is immutable input/output byte copies, status checks and submission.
@@ -567,7 +568,8 @@ class ResidentFramePipeline {
    }
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
-   const bool measured=&buffer==refinementWeights.get()&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool bearingRefinement=&buffer==refinementWeights.get();
+   const bool measured=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
    const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
    const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
    for(uint32_t beam=0;beam<beams;++beam){
@@ -577,11 +579,15 @@ class ResidentFramePipeline {
      if(measured){const auto numerator=config.postprocess.bearingManifoldResponses[uint64_t(beam)*channels+channel];
       const auto denominator=config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
       steering[channel]=checkpoint.weights[channel]*std::complex<double>(numerator/denominator);
-     }else{const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
+     }else{const uint32_t physical=bearingRefinement?
+       blah2::bearing_steering::physicalElement(channel,config.postprocess.bearingChannelMapping):channel;
+      const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
       const double relativePhase=waveNumber*config.fusion.radiusM*
        (std::cos(elementAngle-beamAngle)-
         std::cos(elementAngle-config.fusion.directPathAzimuthRad));
-      steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
+      steering[channel]=bearingRefinement?
+       std::conj(blah2::bearing_steering::mapCoefficient(checkpoint.weights[channel],relativePhase)):
+       checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
     }
     if(nullFraction>0){
      std::complex<double> projection{};

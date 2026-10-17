@@ -31,8 +31,9 @@ function setupDefaults() {
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
         manifold_recorder: {enabled: 'auto',
           path: calibrationPath,
-          min_snr_db: 6, min_elevation_deg: 0, max_delay_error_km: 3,
-          max_doppler_error_hz: 12, max_file_mb: 64, max_files: 4}}
+          min_snr_db: 6, min_elevation_deg: 0, max_elevation_deg: 15,
+          max_delay_error_km: .25, max_doppler_error_hz: 5,
+          max_truth_age_s: 3, max_file_mb: 64, max_files: 4}}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
       track: 3003, bearing: 3004, manifold: 3005,

@@ -65,10 +65,24 @@ function interpolate(left, right, fraction) {
 }
 
 function fitManifold(rawSamples, {beams = 60, minSamples = 20,
-  minCoverage = .5, maxGapDeg = 90} = {}) {
+  minCoverage = .5, maxGapDeg = 90, maxElevationDeg = 15,
+  maxDelayErrorKm = .25, maxDopplerErrorHz = 5, maxTruthAgeS = 3} = {}) {
   if (!Number.isInteger(beams) || beams < 4 || beams > 127 || !Number.isInteger(minSamples) || minSamples < 2)
     throw new Error('Invalid manifold fit settings');
-  const samples = rawSamples.map(validateSample);
+  const validated = rawSamples.map(validateSample);
+  const rejected = {elevation: 0, delay: 0, doppler: 0, stale_truth: 0};
+  const samples = validated.filter(sample => {
+    if (sample.truth.elevation_deg > maxElevationDeg) { ++rejected.elevation; return false; }
+    if (finite(sample.match?.delay_error_km) &&
+        Math.abs(sample.match.delay_error_km) > maxDelayErrorKm) { ++rejected.delay; return false; }
+    if (finite(sample.match?.doppler_error_hz) &&
+        Math.abs(sample.match.doppler_error_hz) > maxDopplerErrorHz) { ++rejected.doppler; return false; }
+    if (finite(sample.radar_timestamp_ms) && finite(sample.truth.position_timestamp_s) &&
+        Math.abs(sample.radar_timestamp_ms / 1000 - sample.truth.position_timestamp_s) > maxTruthAgeS) {
+      ++rejected.stale_truth; return false;
+    }
+    return true;
+  });
   if (!samples.length) throw new Error('No manifold samples were supplied');
   const frequency = samples[0].frequency_hz, channels = samples[0].channels;
   const fingerprint = samples[0].config_fingerprint;
@@ -136,7 +150,9 @@ function fitManifold(rawSamples, {beams = 60, minSamples = 20,
     .filter(finite);
   return {schema: 'vectorwarp-bearing-manifold-v1', frequency_hz: frequency,
     responses, calibration: {method: 'adsb_supervised_complex_projective_mean-v1',
-      config_fingerprint: fingerprint, beams, channels, input_samples: samples.length,
+      config_fingerprint: fingerprint, beams, channels,
+      input_samples: samples.length, supplied_samples: validated.length,
+      rejected_samples: rejected,
       direct_path_local_azimuth_deg: samples[0].direct_path_local_azimuth_deg,
       direct_path_bin: directBin,
       required_samples_per_observed_bin: minSamples, observed_bins: observed.length,

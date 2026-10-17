@@ -58,7 +58,9 @@ function automaticallyEligible(config) {
 class ManifoldRecorder {
   constructor(config, adsbSource, {fileSystem = fs} = {}) {
     this.config = config;
-    this.options = config.process?.bearing?.manifold_recorder || {};
+    this.options = {...(config.process?.bearing?.manifold_recorder || {})};
+    if (!finite(this.options.max_truth_age_s)) this.options.max_truth_age_s = 3;
+    if (!finite(this.options.max_elevation_deg)) this.options.max_elevation_deg = 15;
     this.adsbSource = adsbSource;
     this.fs = fileSystem;
     this.latest = null;
@@ -67,12 +69,19 @@ class ManifoldRecorder {
     this.state = {enabled: this.options.enabled === true || this.options.enabled === 'on' ||
       (automatic && automaticallyEligible(config)),
       automatic, frames: 0, samples: 0,
-      unmatched: 0, lastWriteAt: null, error: null, path: this.options.path || null};
+      unmatched: 0, staleTruth: 0, elevationRejected: 0, ambiguous: 0,
+      lastWriteAt: null, error: null, path: this.options.path || null};
     const fingerprint = {
       frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
       surveillance_channels: config.capture?.device?.surveillance_channels,
       array_geometry: config.capture?.device?.array_geometry,
-      receiver: config.location?.rx, transmitter: config.location?.tx
+      receiver: config.location?.rx, transmitter: config.location?.tx,
+      recorder_selection_v2: {min_snr_db: this.options.min_snr_db,
+        min_elevation_deg: this.options.min_elevation_deg,
+        max_elevation_deg: this.options.max_elevation_deg,
+        max_delay_error_km: this.options.max_delay_error_km,
+        max_doppler_error_hz: this.options.max_doppler_error_hz,
+        max_truth_age_s: this.options.max_truth_age_s}
     };
     this.fingerprint = crypto.createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex');
     this.sitePrepared = false;
@@ -168,7 +177,7 @@ class ManifoldRecorder {
     const [raw, delayDoppler] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
     const aircraftByHex = new Map((raw.aircraft || []).map(item => [item.hex, item]));
-    const candidates = [];
+    const candidatesByEvidence = new Map();
     const transmitter = this.config.location?.tx;
     const direct = azimuthElevation(this.config.location?.rx, {lat: transmitter?.latitude,
       lon: transmitter?.longitude, alt_geom: finite(transmitter?.altitude) ? transmitter.altitude / .3048 : NaN});
@@ -176,7 +185,17 @@ class ManifoldRecorder {
     for (const [icao, truth] of Object.entries(delayDoppler || {})) {
       const aircraft = aircraftByHex.get(icao);
       const direction = azimuthElevation(this.config.location?.rx, aircraft);
-      if (!aircraft || !direction || direction.elevationDeg < this.options.min_elevation_deg) continue;
+      if (!aircraft || !direction) continue;
+      if (!finite(truth.timestamp) ||
+          Math.abs(frame.timestamp / 1000 - truth.timestamp) > this.options.max_truth_age_s) {
+        ++this.state.staleTruth;
+        continue;
+      }
+      if (direction.elevationDeg < this.options.min_elevation_deg ||
+          direction.elevationDeg > this.options.max_elevation_deg) {
+        ++this.state.elevationRejected;
+        continue;
+      }
       for (let index = 0; index < frame.data.length; ++index) {
         const evidence = frame.data[index];
         if (evidence.snr_db < this.options.min_snr_db) continue;
@@ -184,9 +203,23 @@ class ManifoldRecorder {
         const dopplerError = evidence.doppler_hz - truth.doppler;
         const score = (delayError / this.options.max_delay_error_km) ** 2 +
           (dopplerError / this.options.max_doppler_error_hz) ** 2;
-        if (score <= 1) candidates.push({score, index, icao, truth, aircraft,
-          direction, delayError, dopplerError});
+        if (score <= 1) {
+          const candidate = {score, index, icao, truth, aircraft,
+            direction, delayError, dopplerError};
+          if (!candidatesByEvidence.has(index)) candidatesByEvidence.set(index, []);
+          candidatesByEvidence.get(index).push(candidate);
+        }
       }
+    }
+    const candidates = [];
+    for (const alternatives of candidatesByEvidence.values()) {
+      alternatives.sort((a, b) => a.score - b.score);
+      if (alternatives.length > 1 &&
+          alternatives[1].score <= alternatives[0].score * 1.15 + .05) {
+        ++this.state.ambiguous;
+        continue;
+      }
+      candidates.push(alternatives[0]);
     }
     candidates.sort((a, b) => a.score - b.score);
     const usedEvidence = new Set(), usedAircraft = new Set(), records = [];

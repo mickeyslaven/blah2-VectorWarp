@@ -695,8 +695,13 @@ function validateConfig(config, baseline = null) {
         errors.push('process.bearing.manifold_recorder.path must be absolute');
       number(recorder.min_snr_db, 'process.bearing.manifold_recorder.min_snr_db', {min: -100, max: 100});
       number(recorder.min_elevation_deg, 'process.bearing.manifold_recorder.min_elevation_deg', {min: -10, max: 90});
+      number(recorder.max_elevation_deg, 'process.bearing.manifold_recorder.max_elevation_deg', {min: 0, max: 90});
+      if (Number.isFinite(recorder.min_elevation_deg) && Number.isFinite(recorder.max_elevation_deg) &&
+          recorder.max_elevation_deg < recorder.min_elevation_deg)
+        errors.push('process.bearing.manifold_recorder.max_elevation_deg must not be below min_elevation_deg');
       number(recorder.max_delay_error_km, 'process.bearing.manifold_recorder.max_delay_error_km', {min: .01, max: 50});
       number(recorder.max_doppler_error_hz, 'process.bearing.manifold_recorder.max_doppler_error_hz', {min: .1, max: 500});
+      number(recorder.max_truth_age_s, 'process.bearing.manifold_recorder.max_truth_age_s', {min: .1, max: 60});
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
       if (recorder.enabled === true || recorder.enabled === 'on') {

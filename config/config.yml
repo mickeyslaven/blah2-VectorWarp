@@ -66,8 +66,10 @@ process:
       path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
       min_snr_db: 6
       min_elevation_deg: 0
-      max_delay_error_km: 3
-      max_doppler_error_hz: 12
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
       max_file_mb: 64
       max_files: 4
 

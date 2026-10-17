@@ -122,6 +122,12 @@ polygon element index. It must be a complete permutation. It affects only the
 bearing refinement manifold, making suspected cable/order mappings safe to
 compare while the established detection and Retina paths remain fixed.
 
+The recorder rejects stale ADS-B truth, ambiguous delay/Doppler assignments,
+and elevations above `max_elevation_deg`. A planar azimuth manifold cannot fold
+near-overhead arrivals into the same steering row without biasing every bearing;
+those samples remain available to the radar and tracker but are excluded from
+site calibration.
+
 `manifold_file` replaces only the bearing refinement steering vectors; the
 established detection beam bank remains unchanged. It is a strict JSON file:
 
@@ -165,8 +171,10 @@ process:
       path: /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
       min_snr_db: 6
       min_elevation_deg: 0
-      max_delay_error_km: 3
-      max_doppler_error_hz: 12
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
       max_file_mb: 64
       max_files: 4
 network:

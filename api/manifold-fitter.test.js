@@ -10,7 +10,7 @@ for (let bin = 0; bin < 12; ++bin) for (let sample = 0; sample < 5; ++sample) {
   samples.push({schema: 'vectorwarp-manifold-sample-v1', frequency_hz: 539000000,
     channels: 3, config_fingerprint: 'one-site',
     direct_path_local_azimuth_deg: 0,
-    truth: {local_azimuth_deg: bin * 30, elevation_deg: 12 + sample},
+    truth: {local_azimuth_deg: bin * 30, elevation_deg: 5 + sample},
     detection: {snr_db: 12}, response: phases.map(phase => [Math.cos(phase), Math.sin(phase)]),
     reference_weights: [common, common + 1.1, common].map(phase => [Math.cos(phase), Math.sin(phase)])});
 }
@@ -21,6 +21,12 @@ assert.ok(result.responses.every(row => row.length === 3));
 assert.equal(result.calibration.observed_bins, 12);
 assert.equal(result.calibration.interpolated_bins, 0);
 assert.ok(result.calibration.holdout_median_correlation > .99);
+const contaminated = {...samples[0], truth: {...samples[0].truth, elevation_deg: 45}};
+const filtered = fitManifold([...samples, contaminated],
+  {beams: 12, minSamples: 3, minCoverage: 1, maxGapDeg: 45});
+assert.equal(filtered.calibration.supplied_samples, 61);
+assert.equal(filtered.calibration.input_samples, 60);
+assert.equal(filtered.calibration.rejected_samples.elevation, 1);
 assert.throws(() => fitManifold([...samples, {...samples[0], config_fingerprint: 'other'}],
   {beams: 12, minSamples: 3}), /different frequencies, channel layouts, or site configurations/);
 console.log('Manifold fitter: common-phase removal, bin fitting, holdout validation, and config isolation passed.');

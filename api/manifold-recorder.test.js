@@ -14,13 +14,14 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   location: {rx: {latitude: 40, longitude: -80, altitude: 300},
     tx: {latitude: 40.1, longitude: -80, altitude: 400}},
   process: {bearing: {manifold_recorder: {enabled: true, path: filename,
-    min_snr_db: 5, min_elevation_deg: -10, max_delay_error_km: 2,
-    max_doppler_error_hz: 10, max_file_mb: 1, max_files: 2}}}};
+    min_snr_db: 5, min_elevation_deg: -10, max_elevation_deg: 30,
+    max_delay_error_km: 2, max_doppler_error_hz: 10, max_truth_age_s: 3,
+    max_file_mb: 1, max_files: 2}}}};
   const source = {get: async kind => kind === 'aircraft' ? {aircraft: [{hex: 'abc123',
     flight: 'TEST1 ', lat: 40, lon: -79.9, alt_geom: 10000}]} :
     {abc123: {timestamp: 100, delay: 10, doppler: 20}}};
   const recorder = new ManifoldRecorder(config, source);
-  const frame = validateEvidence({schema: 'vectorwarp-manifold-evidence-v1', timestamp: 10,
+  const frame = validateEvidence({schema: 'vectorwarp-manifold-evidence-v1', timestamp: 100000,
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
     reference_weights: [[1, 0], [0, 1]], data: [{cell: 5, delay_km: 10.5,
       doppler_hz: 18, snr_db: 9, response: [[1, 2], [3, 4]]}]});
@@ -34,6 +35,10 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   assert.ok(Number.isFinite(rows[0].direct_path_local_azimuth_deg));
   assert.deepEqual(rows[0].response, [[1, 2], [3, 4]]);
   assert.equal(recorder.status().samples, 1);
+  const stale = JSON.parse(JSON.stringify(frame)); stale.timestamp = 110000;
+  await recorder.record(stale);
+  assert.equal(recorder.status().samples, 1, 'stale ADS-B truth must not label a manifold sample');
+  assert.ok(recorder.status().staleTruth > 0);
   const automaticConfig = JSON.parse(JSON.stringify(config));
   automaticConfig.process.bearing.manifold_recorder.enabled = 'auto';
   Object.assign(automaticConfig.capture.device, {type: 'Kraken'});
