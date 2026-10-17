@@ -40,11 +40,14 @@ start; VectorWarp does not distribute the vendor software.
 - **Kraken configuration checks:** compare the receiver's reported frequency, sample rate, and channel count with VectorWarp's settings.
 - **Coherent Kraken arrays:** use 2–8 synchronized inputs, synthesize the broadcast reference from several elements, and keep every selected channel available for surveillance.
 - **Calibrated 360-degree beam banks:** combine coherent surveillance maps with measured per-channel phase and gain instead of relying only on ideal antenna geometry.
-- **Weak-echo controls:** optionally integrate two CPIs, calibrate the effective number of beam trials, search limited inter-CPI motion, or apply a bounded direct-path null.
+- **Weak-echo controls:** optionally integrate two CPIs or use GPU-resident track-before-detect banks over 2/4/8 CPIs, with limited motion search, exact multi-CPI CFAR thresholds, calibrated beam/motion trials, candidate-only fine coherent beam refinement, and a bounded direct-path null.
 - **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
+- **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
-- **Delay ellipses on a map:** see the possible locations associated with a measured delay, without presenting it as an exact aircraft position.
+- **Bearing-aware bistatic mapping:** an opt-in GPU-resident path can use the calibrated coherent scan or local complex-covariance MVDR scoring, retains three independent lobes and their relative powers per CPI, and follows those hypotheses over track history. A bearing-only channel permutation makes cable/element mapping testable without changing detection. A separate API intersects radar-only azimuth candidates with the measured delay ellipse and publishes uncertainty corridors; unresolved results remain candidates rather than falsely precise aircraft positions. The legacy tracker and Retina feeds are unchanged, and ADS-B is validation-only.
+
+See [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md) for the data contract, uncertainty rules, configuration gate, and geolocation math.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.
 - **Local or remote aircraft feeds:** discover a local decoder or connect to a tar1090 server on another machine.
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.

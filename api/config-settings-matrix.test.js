@@ -118,6 +118,7 @@ try {
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
+  fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0};
   fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
@@ -136,7 +137,25 @@ try {
       'process.surveillance_fusion.effective_beam_trials',
       'process.detection.integration_cpis',
       'process.detection.integration_motion_bins',
+      'process.detection.track_before_detect.enable',
+      'process.detection.track_before_detect.max_cpis',
+      'process.detection.track_before_detect.motion_bins',
       'process.tracker.beam_tolerance']);
+  const bearing = clone(fusion);
+  Object.assign(bearing.capture.device.array_geometry, {
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
+  });
+  bearing.process.bearing.enable = true;
+  bearing.process.bearing.method = 'covariance_mvdr';
+  bearing.process.bearing.scan_beams = 60;
+  bearing.process.bearing.guard_radius = 2;
+  bearing.process.bearing.training_radius = 4;
+  bearing.process.bearing.diagonal_loading = .02;
+  bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
+  persistGroup('kraken-bearing-output', fusion, bearing,
+    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.scan_beams',
+      'process.bearing.guard_radius', 'process.bearing.training_radius',
+      'process.bearing.diagonal_loading', 'process.bearing.channel_mapping']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
@@ -145,9 +164,11 @@ try {
   // as a coherent resident-mode edit without changing unrelated settings.
   const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
   resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
+  resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.detection.integration_cpis = 2;
   persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
-    'process.tracker.gpu_capacity', 'process.detection.integration_cpis']);
+    'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+    'process.detection.integration_cpis']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

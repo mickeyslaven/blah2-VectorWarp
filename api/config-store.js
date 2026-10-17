@@ -21,11 +21,14 @@ function setupDefaults() {
       clutter: {enable: true, delayMin: -10, delayMax: 400},
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
-        integration_motion_bins: 0},
-      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10}, delete: 10, smooth: 'none'}
+        integration_motion_bins: 0,
+        track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
+      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
+        acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'},
+      bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
-      track: 3003, timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
+      track: 3003, bearing: 3004, timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1, smoothing_window: 10, max_position_age: 30},
       ais: {enabled: false, ip: '0.0.0.0', port: 30001}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},

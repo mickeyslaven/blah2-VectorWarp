@@ -180,7 +180,7 @@ public:
   require(!(first<base+map_.size&&base<first+size),"Resident restore source aliases Session mapping; take a checkpoint copy first");};
   independent(reference.data,reference.size,1);
   independent(tracker.data,tracker.size,4);
-  guarded([&]{auto r=map_.bytes(Section::referenceCheckpoint);std::memcpy(r.data,reference.data,256);auto p=request(Op::restore);p.frame={};p.tracker={};p.restoreTrackerSlot=0;p.diagnosticPresence=0;if(config_.tracker.enabled){auto b=map_.bytes(Section::tracker0);require(tracker.data&&tracker.size>=32&&tracker.size<=b.size/4&&(tracker.size-32)%2056==0,"Resident restore checkpoint shape");wire::Reader bank{{reinterpret_cast<const uint8_t*>(tracker.data),tracker.size*4}};require(bank.u64(16)<=config_.tracker.capacity&&tracker.size==32+2056*bank.u64(16),"Resident restore checkpoint count differs");std::memset(b.data,0,b.size);std::memcpy(b.data,tracker.data,tracker.size*4);p.tracker.generation=bank.u64(48);}else require(!tracker.data&&!tracker.size,"Disabled tracker restore input");deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);transport::sendPacket(child_->fd(),p);response(p,Op::restored,Phase::idle);phase_=Phase::idle;haveFrame_=false;lastLogical_=lastConsumed_=0;token_={};});}
+  guarded([&]{auto r=map_.bytes(Section::referenceCheckpoint);std::memcpy(r.data,reference.data,256);auto p=request(Op::restore);p.frame={};p.tracker={};p.restoreTrackerSlot=0;p.diagnosticPresence=0;if(config_.tracker.enabled){const size_t recordWords=trackerRecordWords(config_.tracker);auto b=map_.bytes(Section::tracker0);require(tracker.data&&tracker.size>=trackerHeaderWords&&tracker.size<=b.size/4&&(tracker.size-trackerHeaderWords)%recordWords==0,"Resident restore checkpoint shape");wire::Reader bank{{reinterpret_cast<const uint8_t*>(tracker.data),tracker.size*4}};require(bank.u64(16)<=config_.tracker.capacity&&tracker.size==trackerHeaderWords+recordWords*bank.u64(16),"Resident restore checkpoint count differs");std::memset(b.data,0,b.size);std::memcpy(b.data,tracker.data,tracker.size*4);p.tracker.generation=bank.u64(48);}else require(!tracker.data&&!tracker.size,"Disabled tracker restore input");deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);transport::sendPacket(child_->fd(),p);response(p,Op::restored,Phase::idle);phase_=Phase::idle;haveFrame_=false;lastLogical_=lastConsumed_=0;token_={};});}
  void stop()noexcept override{phase_=Phase::poisoned;
  if(child_)child_->stop();
  child_.reset();
@@ -204,7 +204,7 @@ int runWorker(Factory create){
   // size and fixed setup prefix have been checked. The complete table is then
   // compared with the locally derived layout, including all unused bytes.
   struct stat info{};
-  require(fstat(4,&info)==0&&info.st_size>=1792&&uint64_t(info.st_size)<=sharedLimit,"Resident shared descriptor size invalid");
+  require(fstat(4,&info)==0&&info.st_size>=1280+configBytes&&uint64_t(info.st_size)<=sharedLimit,"Resident shared descriptor size invalid");
 #ifndef __APPLE__
   const int seals=fcntl(4,F_GET_SEALS);
   require(seals>=0&&(seals&(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL))==(F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL),"Resident memory descriptor is not size sealed");
@@ -214,12 +214,12 @@ int runWorker(Factory create){
   require(address!=MAP_FAILED,"Resident worker mapping failed");
   close(4);
   auto* data=static_cast<uint8_t*>(address);
-  wire::Reader prefix{{data,bytes}},setup{{data+1280,512}};
+  wire::Reader prefix{{data,bytes}},setup{{data+1280,configBytes}};
   const uint64_t delays=setup.u64(64),doppler=setup.u64(56);
   require(delays&&delays<=65535&&doppler&&doppler<=65535,"Resident setup axis bounds invalid");
-  const uint64_t delayOffset=1792,dopplerOffset=wire::align(wire::add(delayOffset,wire::mul(delays,4)),64);
+  const uint64_t delayOffset=wire::align(1280+configBytes,64),dopplerOffset=wire::align(wire::add(delayOffset,wire::mul(delays,4)),64);
   require(dopplerOffset<=bytes&&wire::mul(doppler,8)<=bytes-dopplerOffset,"Resident setup axes outside sealed mapping");
-  Config config=decodeConfig({data+1280,512},{data+delayOffset,size_t(delays*4)},{data+dopplerOffset,size_t(doppler*8)});
+  Config config=decodeConfig({data+1280,configBytes},{data+delayOffset,size_t(delays*4)},{data+dopplerOffset,size_t(doppler*8)});
   const Nonce nonce{prefix.u64(32),prefix.u64(40)};
   require(nonce[0]||nonce[1],"Resident mapping nonce zero");
   map={data,bytes,makeLayout(config,pageSize())};

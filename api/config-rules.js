@@ -32,9 +32,23 @@ const rules = {
   'process.detection.minDoppler': numeric(0),
   'process.detection.integration_cpis': {...integer(1, 2), optional: true},
   'process.detection.integration_motion_bins': {...integer(0, 1), optional: true},
+  'process.detection.track_before_detect.enable': {type: 'boolean', optional: true},
+  'process.detection.track_before_detect.max_cpis': {...integer(4, 8), choices: [4,8], optional: true},
+  'process.detection.track_before_detect.motion_bins': {...integer(0, 1), optional: true},
+  'process.bearing.enable': {type: 'boolean', optional: true},
+  'process.bearing.min_consistent': {...integer(2, 100), optional: true},
+  'process.bearing.min_peak_separation_db': {...numeric(1, 15), optional: true},
+  'process.bearing.method': {type: 'string', choices: ['coherent_beam_bank', 'covariance_mvdr'], optional: true},
+  'process.bearing.scan_beams': {...integer(4, 127), optional: true},
+  'process.bearing.candidate_peaks': {...integer(3, 3), optional: true, readOnly: 'Fixed at three independent lobes.'},
+  'process.bearing.guard_radius': {...integer(0, 3), optional: true},
+  'process.bearing.training_radius': {...integer(1, 6), optional: true},
+  'process.bearing.diagonal_loading': {...numeric(), exclusiveMin: 0, max: 1, optional: true},
+  'process.bearing.channel_mapping': {type: 'array', optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
+  'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
   'process.tracker.delete': integer(1, 255),
   // Storage count only; runtime checked admission enforces the GPU/shared caps.
   'process.tracker.gpu_capacity': {...integer(1, 4294967295), optional: true},
@@ -63,9 +77,10 @@ for (const group of ['ambiguity', 'clutter']) {
     ['dopplerMin', 'dopplerMax'] : [])])
     rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
 }
-for (const name of ['api','map','detection','track','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
-    {readOnly: 'Reserved; no configuration-control listener uses this port.'} : {})};
+    {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
+    name === 'bearing' ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

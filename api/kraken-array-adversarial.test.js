@@ -143,7 +143,7 @@ check('right-handed cardinal conversion is consistent for +x=east and +y=north',
   assert.deepEqual([0, 90, 180, 270].map(angle => localAzimuthToTrueBearing(angle, 90)), [90, 0, 270, 180]);
   assert.deepEqual([0, 90, 180, 270].map(angle => localAzimuthToTrueBearing(angle, 0)), [0, 270, 180, 90]);
 });
-check('a fully populated healthy status and asserted survey still cannot enable unimplemented bearing', () => {
+check('a fully populated healthy status and asserted survey cannot enable a disabled bearing path', () => {
   const cfg = config(); const result = evaluateKrakenArray(cfg, observed(cfg));
   assert.equal(result.valid, true);
   assert.equal(result.bearingImplemented, false);

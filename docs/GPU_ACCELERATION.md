@@ -61,9 +61,74 @@ to CPU DSP.
 When tracking is enabled, set `process.tracker.gpu_capacity` explicitly. This is
 a storage capacity, independent of the wrapping track ID. No default is inferred.
 The processor checks the complete allocation against its existing device/shared
-memory limits before starting. A full tracker rejects the frame without dropping
-tracks or shrinking the input workload. Numeric configuration validity alone
-does not establish memory fit or real-time performance.
+memory limits before starting. Existing tracks are never evicted to admit a
+burst; if configured storage is exhausted, unmatched initiations are counted in
+`dropped_capacity_detections`. Numeric configuration validity alone does not
+establish memory fit or real-time performance.
+
+GPU-resident tracking also supports two acceleration initiation models:
+
+- `hypothesis_bank` preserves the original behavior and creates one tentative
+  track for every discrete acceleration hypothesis.
+- `adaptive_gate` creates one tentative track per unmatched detection. Until
+  its first association, it solves the joint delay/Doppler acceleration
+  interval continuously. Every candidate accepted by the discrete hypothesis
+  bank remains eligible, while incompatible corners of a simply widened box
+  are rejected. The first match then supplies the measured acceleration. This
+  reduces tentative tracker count and association work without reducing
+  `maxAcc`.
+
+GPU-resident checkpoints also size each track's circular history to
+`max(100, N)` instead of always reserving 255 entries. The public 100-point
+trail and every supported M-of-N confirmation window are unchanged. With the
+usual `N: 5`, each record falls from 8,224 to 3,264 bytes, so larger capacities
+use about 60% less tracker-bank memory and copy bandwidth.
+
+The compatibility default is `hypothesis_bank`. Select `adaptive_gate` under
+`process.tracker.initiate.acceleration_model` only with `gpu-resident`.
+
+### Weak-target integration and track before detect
+
+The compatibility detector remains unchanged when these settings are omitted or
+disabled. `process.detection.integration_cpis: 2` averages the current and prior
+power maps. Its optional `integration_motion_bins: 1` searches one delay and one
+Doppler cell of inter-CPI motion.
+
+For weaker echoes on coherent arrays, the Linux `gpu-resident` route also offers
+an explicit track-before-detect path:
+
+```yaml
+process:
+  detection:
+    track_before_detect:
+      enable: true
+      max_cpis: 8       # 4 enables 2/4 banks; 8 enables 2/4/8 banks
+      motion_bins: 1    # search -1, 0, +1 cell per CPI on both axes
+```
+
+This path keeps the ordinary detector available as the default. When enabled,
+it retains the conventional two-CPI same-cell detector, keeps fused power maps
+on the GPU, searches constant-velocity paths at 2-, 4-, and optionally 8-CPI
+timescales, and unions candidates from every pass. The conventional pass keeps
+its beam-corrected PFA so enabling weak-target search cannot simply replace the
+known detector. Each motion bank uses its exact Gamma-distribution cell-averaging
+CFAR threshold and an additional correction for the enabled time/motion trials.
+Only qualified candidates are then revisited
+against the five current complex per-channel maps with a four-times-finer
+coherent beam bank, so full-resolution spatial refinement does not multiply the
+whole-map workload.
+
+The delay-Doppler display remains a clean current-CPI ambiguity map.  Motion-
+integrated TBD hypotheses stay internal to detection and tracking; they are not
+painted onto the public map as diagonal path energy.
+
+Temporal accumulation is noncoherent power integration; the candidate refinement
+is coherent across antennas. This makes the feature tolerant of unknown echo
+phase between CPIs while still recovering spatial array gain. A 4-CPI bank adds
+up to two seconds and an 8-CPI bank up to four seconds of history at 500 ms CPI,
+so it is intended for weak-target initiation rather than lower-latency display.
+Track-before-detect requires coherent surveillance fusion and `gpu-resident`.
+The browser Settings page validates those dependencies before restart.
 
 Omitting it selects `auto`. Settings shows the backend reported by the running
 processor, not the computer displaying the browser.

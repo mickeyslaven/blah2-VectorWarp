@@ -29,6 +29,29 @@ function resident() {
 const c = resident();const before = JSON.stringify(c);valid(c);
 assert.equal(JSON.stringify(c), before, 'Validation rewrote the selected workload or capacity');
 const integrated = resident();integrated.process.detection.integration_cpis = 2;valid(integrated);
+const tbd = resident();
+tbd.process.surveillance_fusion.mode = 'coherent_beam_bank';
+tbd.capture.device.array_geometry = {
+  shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
+  mapping_confirmed: false, geometry_confirmed: false, orientation_confirmed: false,
+  x_axis_bearing_deg_true: 0,
+  bearing_channels: [...tbd.capture.device.surveillance_channels],
+  elements: tbd.capture.device.surveillance_channels.map((daq_channel, index) => ({
+    id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
+    position: [Math.cos(2 * Math.PI * index / 5) * .193548,
+      Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+  }))
+};
+tbd.process.detection.track_before_detect = {enable: true, max_cpis: 8, motion_bins: 1};
+valid(tbd);
+for (const value of [3, 5, 6, 7, 9]) {
+  const candidate = structuredClone(tbd);
+  candidate.process.detection.track_before_detect.max_cpis = value;
+  invalid(candidate, 'max_cpis');
+}
+const noCoherentTbd = resident();
+noCoherentTbd.process.detection.track_before_detect.enable = true;
+invalid(noCoherentTbd, 'coherent surveillance fusion');
 for (const mode of ['auto', 'cpu', 'gpu']) {
   const candidate = load();candidate.process.performance.acceleration = mode;
   candidate.process.detection.integration_cpis = 2;

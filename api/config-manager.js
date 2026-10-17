@@ -227,7 +227,9 @@ function validateConfig(config, baseline = null) {
     const assessment = evaluateKrakenArray(root);
     arrayGeometry = assessment;
     advise('capture.device.array_geometry', assessment.valid ?
-      'Layout record complete; physical agreement unverified. Bearing unavailable.' :
+      assessment.worldBearingEligible ?
+        'Bearing output eligible from operator-confirmed geometry; physical agreement remains unverified.' :
+        'Layout record complete; physical agreement unverified. Bearing output is disabled or ineligible.' :
       'Layout record incomplete or needs review. Passive radar may still be configured; bearing is unavailable.');
   }
   boolean(replay.state, 'capture.replay.state');
@@ -473,6 +475,22 @@ function validateConfig(config, baseline = null) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
+  let trackBeforeDetect = null;
+  if (detection.track_before_detect !== undefined) {
+    trackBeforeDetect = requireObject(detection.track_before_detect,
+      'process.detection.track_before_detect');
+    boolean(trackBeforeDetect.enable,
+      'process.detection.track_before_detect.enable');
+    number(trackBeforeDetect.max_cpis,
+      'process.detection.track_before_detect.max_cpis',
+      {integer: true, min: 4, max: 8});
+    if (Number.isInteger(trackBeforeDetect.max_cpis) &&
+        ![4, 8].includes(trackBeforeDetect.max_cpis))
+      errors.push('process.detection.track_before_detect.max_cpis must be 4 or 8');
+    number(trackBeforeDetect.motion_bins,
+      'process.detection.track_before_detect.motion_bins',
+      {integer: true, min: 0, max: 1});
+  }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
       2 * detection.nGuard + 2 >= delayBins)
@@ -493,6 +511,9 @@ function validateConfig(config, baseline = null) {
     errors.push('process.tracker.initiate.M cannot exceed process.tracker.initiate.N');
   const maxAcc = number(initiate.maxAcc,
     'process.tracker.initiate.maxAcc', {min: 0, max: INT32_MAX});
+  if (initiate.acceleration_model !== undefined)
+    oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
+      ['hypothesis_bank', 'adaptive_gate']);
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
@@ -513,9 +534,14 @@ function validateConfig(config, baseline = null) {
       if (!clutter.enable || processConfig.reference_synthesis?.mode !== 'array_eigenbeam')
         errors.push('gpu-resident requires clutter and array_eigenbeam reference synthesis');
     }
+    if (initiate.acceleration_model === 'adaptive_gate' &&
+        performance.acceleration !== 'gpu-resident')
+      errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');
+    if (trackBeforeDetect?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('track-before-detect requires gpu-resident acceleration');
     if (performance.surveillance_workers !== undefined) number(performance.surveillance_workers,
       'process.performance.surveillance_workers',
       {integer: true, min: 0, max: KRAKEN_MAX_CHANNELS});
@@ -589,6 +615,13 @@ function validateConfig(config, baseline = null) {
   if ((detection.integration_motion_bins ?? 0) > 0 &&
       (detection.integration_cpis ?? 1) !== 2)
     errors.push('integration_motion_bins requires integration_cpis: 2');
+  if (trackBeforeDetect?.enable) {
+    const fusion = processConfig.surveillance_fusion;
+    if (!detection.enable)
+      errors.push('track-before-detect requires process.detection.enable');
+    if (!fusion || fusion.mode === 'noncoherent')
+      errors.push('track-before-detect candidate refinement requires coherent surveillance fusion');
+  }
   if (tracker.beam_tolerance !== undefined) {
     const fusion = processConfig.surveillance_fusion;
     if (!tracker.enable || !fusion || fusion.mode === 'noncoherent')
@@ -596,6 +629,52 @@ function validateConfig(config, baseline = null) {
     else if (Number.isFinite(fusion.beams) &&
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
+  }
+  if (processConfig.bearing !== undefined) {
+    const bearing = requireObject(processConfig.bearing, 'process.bearing');
+    boolean(bearing.enable, 'process.bearing.enable');
+    if (bearing.min_consistent !== undefined)
+      number(bearing.min_consistent, 'process.bearing.min_consistent', {integer: true, min: 2, max: 100});
+    if (bearing.min_peak_separation_db !== undefined)
+      number(bearing.min_peak_separation_db, 'process.bearing.min_peak_separation_db', {min: 1, max: 15});
+    if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
+      errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
+    if (bearing.scan_beams !== undefined)
+      number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
+    if (bearing.candidate_peaks !== undefined)
+      number(bearing.candidate_peaks, 'process.bearing.candidate_peaks', {integer: true, min: 3, max: 3});
+    if (bearing.guard_radius !== undefined)
+      number(bearing.guard_radius, 'process.bearing.guard_radius', {integer: true, min: 0, max: 3});
+    if (bearing.training_radius !== undefined)
+      number(bearing.training_radius, 'process.bearing.training_radius', {integer: true, min: 1, max: 6});
+    if (bearing.diagonal_loading !== undefined)
+      number(bearing.diagonal_loading, 'process.bearing.diagonal_loading', {exclusiveMin: 0, max: 1});
+    if (bearing.channel_mapping !== undefined && (!Array.isArray(bearing.channel_mapping) ||
+        bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
+        new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))
+      errors.push('process.bearing.channel_mapping must be a unique array of channel indices');
+    if (bearing.enable) {
+      const fusion = processConfig.surveillance_fusion;
+      if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||
+          processConfig.performance?.acceleration !== 'gpu-resident')
+        errors.push('bearing output requires GPU-resident coherent tracking');
+      if (!Number.isInteger(ports.bearing) || ports.bearing < 1 || ports.bearing > 65535)
+        errors.push('network.ports.bearing is required when bearing output is enabled');
+      const beams = processConfig.surveillance_fusion?.beams;
+      if (bearing.scan_beams !== undefined && Number.isInteger(beams) &&
+          (bearing.scan_beams < beams || bearing.scan_beams % beams !== 0))
+        errors.push('process.bearing.scan_beams must be a multiple of the surveillance beam count');
+      if (bearing.guard_radius !== undefined && bearing.training_radius !== undefined &&
+          bearing.training_radius <= bearing.guard_radius)
+        errors.push('process.bearing.training_radius must exceed guard_radius');
+      if (bearing.channel_mapping !== undefined &&
+          bearing.channel_mapping.length !== device.surveillance_channels?.length)
+        errors.push('process.bearing.channel_mapping must include every surveillance channel once');
+      const geometry = device.array_geometry;
+      if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
+          geometry?.orientation_confirmed !== true)
+        errors.push('bearing output requires confirmed mapping, geometry, and orientation');
+    }
   }
 
   string(network.ip, 'network.ip');

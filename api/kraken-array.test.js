@@ -46,6 +46,13 @@ assert.equal(cross.verification.receiverSerials.state, 'operator-metadata',
   'Suite status cannot elevate serial/config echoes to verified wiring');
 assert.equal(localAzimuthToTrueBearing(90, 30), 300,
   'Local CCW azimuth is converted to clockwise-from-true-north bearing');
+const bearingEnabled = baseConfig();
+bearingEnabled.process.bearing = {enable: true, min_consistent: 3};
+const bearingResult = evaluateKrakenArray(bearingEnabled);
+assert.equal(bearingResult.bearingImplemented, true);
+assert.equal(bearingResult.relativeBearingEligible, true);
+assert.equal(bearingResult.worldBearingEligible, true);
+assert.equal(bearingResult.trackerAllowed, true);
 
 const unknown = baseConfig();
 delete unknown.capture.device.array_geometry;

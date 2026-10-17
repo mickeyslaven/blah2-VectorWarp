@@ -202,7 +202,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
       upstream = status; await window.refreshUpstreamStatus();
       const section = doc.querySelector('.kraken-geometry');
       assert.ok(section.textContent.includes('measurements are unverified'));
-      assert.ok(section.textContent.includes('Bearing is unavailable'));
+      assert.ok(section.textContent.includes('Bearing output is disabled'));
       assert.equal(section.querySelector('.good, .verified'), null);
     }
     const original = current();

@@ -154,7 +154,15 @@ target_include_directories(testGpuTrackerAdmission PRIVATE ${PROJECT_ROOT})
 add_test(NAME gpuTrackerCapacityAdmission COMMAND testGpuTrackerAdmission)
 set_tests_properties(gpuTrackerCapacityAdmission PROPERTIES TIMEOUT 10)
 
+add_executable(testTrackBeforeDetect ${PROJECT_ROOT}/test/gpu/TestTrackBeforeDetect.cpp)
+target_compile_features(testTrackBeforeDetect PRIVATE cxx_std_17)
+target_include_directories(testTrackBeforeDetect PRIVATE ${PROJECT_ROOT})
+add_test(NAME trackBeforeDetectMath COMMAND testTrackBeforeDetect)
+set_tests_properties(trackBeforeDetectMath PROPERTIES TIMEOUT 10)
+
 option(BLAH2_TEST_PHYSICAL_GPU "Run synthetic qualification on a real GPU (no CPU substitution)" OFF)
+set(BLAH2_TEST_GPU_DEVICE "" CACHE STRING
+  "Exact Vulkan device id for resident physical tests")
 if(BLAH2_TEST_PHYSICAL_GPU)
   if(NOT TARGET blah2GpuWorker)
     message(FATAL_ERROR "Physical GPU tests require BLAH2_GPU=ON and its dependencies")
@@ -165,11 +173,30 @@ if(BLAH2_TEST_PHYSICAL_GPU)
   endif()
   add_dependencies(testVulkanSmall blah2GpuWorker)
   add_dependencies(testAcceleration blah2GpuWorker)
+  if(TARGET blah2GpuResidentVulkan)
+    add_executable(testGpuResidentTbdPhysical
+      ${PROJECT_ROOT}/test/gpu/TestGpuResidentTbdPhysical.cpp)
+    target_compile_features(testGpuResidentTbdPhysical PRIVATE cxx_std_17)
+    target_include_directories(testGpuResidentTbdPhysical PRIVATE
+      ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+    target_link_libraries(testGpuResidentTbdPhysical PRIVATE
+      blah2GpuProcess blah2GpuResidentProcess Threads::Threads)
+    add_dependencies(testGpuResidentTbdPhysical blah2GpuWorker blah2GpuResidentVulkan)
+  endif()
   add_test(NAME gpuPhysicalDirectDft COMMAND testVulkanSmall)
   add_test(NAME gpuPhysicalNumerics COMMAND testAcceleration auto --matrix)
   add_test(NAME gpuPhysicalClutter COMMAND testClutterAcceleration auto)
   add_test(NAME gpuPhysicalCapacity COMMAND testAcceleration --limits)
+  if(BLAH2_TEST_GPU_DEVICE AND TARGET testGpuResidentTbdPhysical)
+    add_test(NAME gpuPhysicalResidentTbd COMMAND testGpuResidentTbdPhysical
+      $<TARGET_FILE:blah2GpuWorker> ${BLAH2_TEST_GPU_DEVICE})
+  endif()
   add_test(NAME gpuPhysicalEndurance COMMAND testAcceleration auto --endurance)
-  set_tests_properties(gpuPhysicalDirectDft gpuPhysicalNumerics gpuPhysicalClutter
-    gpuPhysicalCapacity gpuPhysicalEndurance PROPERTIES TIMEOUT 240 RUN_SERIAL TRUE LABELS physical-gpu)
+  set(physicalGpuTests gpuPhysicalDirectDft gpuPhysicalNumerics gpuPhysicalClutter
+    gpuPhysicalCapacity gpuPhysicalEndurance)
+  if(BLAH2_TEST_GPU_DEVICE AND TARGET testGpuResidentTbdPhysical)
+    list(APPEND physicalGpuTests gpuPhysicalResidentTbd)
+  endif()
+  set_tests_properties(${physicalGpuTests} PROPERTIES
+    TIMEOUT 240 RUN_SERIAL TRUE LABELS physical-gpu)
 endif()

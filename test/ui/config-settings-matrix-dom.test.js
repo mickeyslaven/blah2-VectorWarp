@@ -143,6 +143,7 @@ async function saveAndAssert(label, expected) {
     setScalar('process.tracker.initiate.M', 2);
     setScalar('process.tracker.initiate.N', 4);
     setScalar('process.tracker.initiate.maxAcc', 12);
+    change(control('process.tracker.initiate.acceleration_model'), 'hypothesis_bank');
     setScalar('process.tracker.delete', 11);
     setScalar('truth.adsb.enabled', true);
     const adsb = field('truth.adsb.tar1090');
@@ -181,7 +182,9 @@ async function saveAndAssert(label, expected) {
       'process.detection.nCentroid': 7, 'process.detection.integration_cpis': 1,
       'process.tracker.enable': true,
       'process.tracker.initiate.M': 2, 'process.tracker.initiate.N': 4,
-      'process.tracker.initiate.maxAcc': 12, 'process.tracker.delete': 11, 'truth.adsb.enabled': true,
+      'process.tracker.initiate.maxAcc': 12,
+      'process.tracker.initiate.acceleration_model': 'hypothesis_bank',
+      'process.tracker.delete': 11, 'truth.adsb.enabled': true,
       'truth.adsb.tar1090': 'https://adsb.example/tar1090', 'truth.adsb.poll_interval': 2,
       'truth.adsb.smoothing_window': 12, 'truth.adsb.max_position_age': 40, 'save.map': true,
       'save.detection': true, 'save.path': '/tmp/vectorwarp-matrix/', 'network.ip': '127.0.0.1',
@@ -276,6 +279,7 @@ async function saveAndAssert(label, expected) {
       'process.detection.minDoppler', 'process.detection.nCentroid',
       'process.detection.integration_cpis', 'process.tracker.enable',
       'process.tracker.initiate.M', 'process.tracker.initiate.N', 'process.tracker.initiate.maxAcc',
+      'process.tracker.initiate.acceleration_model',
       'process.tracker.delete', 'truth.adsb.enabled', 'truth.adsb.tar1090', 'truth.adsb.poll_interval',
       'truth.adsb.smoothing_window', 'truth.adsb.max_position_age', 'save.map', 'save.detection',
       'save.path', 'network.ip', 'network.ports.api', 'network.ports.map', 'network.ports.detection',

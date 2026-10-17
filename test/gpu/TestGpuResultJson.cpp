@@ -51,14 +51,52 @@ void trackCases(){
  std::vector<double>d,f;std::vector<uint32_t>state;for(int i=401;i<=500;++i){d.push_back(i);f.push_back(-i);state.push_back(i==500?2u:1u);}PublishedTrack row{0,2,500,-500,0,501,{view(d),view(f),{state.data(),state.size()}}};same(tracks({UINT64_MAX,1,0,0,1,0,{&row,1}}),cpu.to_json(UINT64_MAX));
  rapidjson::Document doc;doc.Parse(tracks({0,1,0,0,1,0,{&row,1}}).c_str());const auto&data=doc["data"][0];check(data["n"].GetUint64()==501&&data["associated_delay"].Size()==100&&data["associated_doppler"].Size()==100&&data["associated_state"].Size()==100&&data["associated_delay"][0].GetDouble()==401&&data["associated_delay"][99].GetDouble()==500&&std::string(data["associated_state"][99].GetString())=="ACTIVE","Original100-history assertions");
 
- // Fixed raw-bank layout from the frozen GPU tracker API. CPU Track above is
- // the independent JSON oracle; supplied metadata selects the ring slice.
- std::vector<uint32_t>bank(32+2056,0);auto pair=[&](size_t at,uint64_t v){bank[at]=uint32_t(v);bank[at+1]=uint32_t(v>>32);};auto real=[&](size_t at,double v){uint64_t bits;std::memcpy(&bits,&v,8);pair(at,bits);};
- const CheckpointBinding binding{1,9,UINT64_C(4294967299),44};bank[0]=1;bank[1]=8224;bank[2]=1;bank[3]=255;pair(4,1);pair(6,500);bank[8]=1;pair(10,9);pair(12,binding.generation);pair(14,44);pair(20,1);pair(24,1);
- constexpr size_t base=32;real(base,500);real(base+2,-500);real(base+4,1);real(base+6,0);pair(base+8,501);bank[base+12]=0;bank[base+13]=246u|(255u<<8)|(146u<<16)|(100u<<24);bank[base+14]=2;bank[base+15]=0;
- for(uint32_t value=246;value<=500;++value){const size_t at=base+16+8*(value%255);real(at,value);real(at+2,-double(value));real(at+4,1);bank[at+6]=value==500?2:1;}
+ // The compact raw-bank layout retains exactly the 100 public trail points
+ // when N is smaller; the lifetime association count remains independent.
+ constexpr size_t historyCapacity=100,recordWords=16+8*historyCapacity;
+ std::vector<uint32_t>bank(32+recordWords,0);auto pair=[&](size_t at,uint64_t v){bank[at]=uint32_t(v);bank[at+1]=uint32_t(v>>32);};auto real=[&](size_t at,double v){uint64_t bits;std::memcpy(&bits,&v,8);pair(at,bits);};
+ const CheckpointBinding binding{1,9,UINT64_C(4294967299),44};bank[0]=1;bank[1]=recordWords*4;bank[2]=1;bank[3]=historyCapacity;pair(4,1);pair(6,500);bank[8]=1;pair(10,9);pair(12,binding.generation);pair(14,44);pair(20,1);pair(24,1);
+ constexpr size_t base=32;real(base,500);real(base+2,-500);real(base+4,1);real(base+6,0);pair(base+8,501);bank[base+12]=0;bank[base+13]=1u|(100u<<8)|(1u<<16)|(100u<<24);bank[base+14]=2;bank[base+15]=0;
+ for(uint32_t value=401;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);real(at,value);real(at+2,-double(value));real(at+4,1);bank[at+6]=value==500?2:1;}
  auto raw=[&]{return View<uint32_t>{bank.data(),bank.size()};};same(trackerCheckpoint(UINT64_MAX,raw(),binding),cpu.to_json(UINT64_MAX));
- auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%255)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%255)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%255)+7]=0;
+ auto spatial=binding;spatial.beamCount=12;bank[base+16+8*(500%historyCapacity)+7]=12;same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));bank[base+16+8*(500%historyCapacity)+7]=13;rejects([&]{trackerCheckpoint(0,raw(),spatial);});bank[base+16+8*(500%historyCapacity)+7]=0;
+ const uint32_t packedSpatial=12u|(48u<<9u)|(4u<<20u);
+ bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
+ rapidjson::Document bearing;bearing.Parse(bearingCheckpoint(7,raw(),spatial,{true,12,4,2,80,30}).c_str());
+ check(!bearing.HasParseError()&&bearing["data"].Size()==1&&
+  bearing["data"][0]["current_bearing_deg_true"].GetDouble()==87.5&&
+  bearing["aperture_uncertainty_floor_deg"].GetDouble()==30&&
+  bearing["data"][0]["uncertainty_deg"].GetDouble()==30&&
+  bearing["data"][0]["peak_separation_db"].GetUint()==4&&
+  bearing["data"][0]["current_peak_separation_db"].GetUint()==4,
+  "Fine bearing publication differs");
+ // Adjacent fine winners belong to one aperture-limited lobe. Confidence is
+ // the temporal median, not whichever quality happened to arrive last.
+ bank[base+16+8*(498%historyCapacity)+7]=12u|(48u<<9u)|(2u<<20u);
+ bank[base+16+8*(499%historyCapacity)+7]=12u|(1u<<9u)|(4u<<20u);
+ bank[base+16+8*(500%historyCapacity)+7]=12u|(2u<<9u)|(6u<<20u);
+ rapidjson::Document temporal;temporal.Parse(bearingCheckpoint(8,raw(),spatial,{true,12,4,2,80,30}).c_str());
+ check(!temporal.HasParseError()&&temporal["data"][0]["consistent_samples"].GetUint()==3&&
+  temporal["data"][0]["peak_separation_db"].GetUint()==4&&
+  temporal["data"][0]["current_peak_separation_db"].GetUint()==6&&
+  temporal["data"][0]["resolved"].GetBool()&&temporal["data"][0]["candidates"].Size()==1,
+  "Temporal independent-lobe bearing confidence differs");
+ rapidjson::Document strict;strict.Parse(bearingCheckpoint(9,raw(),spatial,{true,12,4,2,80,30,5}).c_str());
+ check(!strict.HasParseError()&&strict["min_peak_separation_db"].GetUint()==5&&
+  !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");
+ auto multi=spatial;multi.scanBeamCount=60;auto packed=[](uint32_t a,uint32_t b,uint32_t c,uint32_t rb,uint32_t rc){return 0x80000000u|a|(b<<7u)|(c<<14u)|(rb<<21u)|(rc<<26u);};
+ bank[base+16+8*(498%historyCapacity)+7]=packed(10,30,50,25,10);
+ bank[base+16+8*(499%historyCapacity)+7]=packed(11,30,50,25,10);
+ bank[base+16+8*(500%historyCapacity)+7]=packed(10,30,50,25,10);
+ rapidjson::Document adaptive;adaptive.Parse(bearingCheckpoint(10,raw(),multi,{true,12,5,2,80,30,3,1,60}).c_str());
+ check(!adaptive.HasParseError()&&std::string(adaptive["method"].GetString())=="covariance_mvdr"&&
+  adaptive["fine_beams"].GetUint()==60&&adaptive["data"][0]["consistent_samples"].GetUint()==3&&
+  adaptive["data"][0]["candidates"].Size()==3&&!adaptive["data"][0]["resolved"].GetBool(),
+  "Adaptive multi-lobe bearing publication differs");
+ bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
+ bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
+ same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));
+ bank[base+16+8*(500%historyCapacity)+7]=0;
  rejects([&]{auto wrong=binding;++wrong.generation;trackerCheckpoint(0,raw(),wrong);});rejects([&]{auto v=raw();--v.count;trackerCheckpoint(0,v,binding);});
  bank[base+15]=1;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+15]=0;bank[base+13]^=1u<<16;rejects([&]{trackerCheckpoint(0,raw(),binding);});bank[base+13]^=1u<<16;
  pair(20,0);rejects([&]{trackerCheckpoint(0,raw(),binding);});pair(20,1);

@@ -182,18 +182,19 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(next==g.channels&&!b.residentStatus[0]&&b.residentStatus[6]==cells*g.channels&&b.residentStatus[7]==cells,"Resident map coverage differs");
  const auto& post=b.postprocessStatus;
  require(!post[0]&&post[1]==cells&&post[2]==cells&&post[3]==cells&&post[18]==uint32_t(c.epoch)&&post[19]==uint32_t(c.epoch>>32)&&post[20]==uint32_t(c.detector.enabled)&&post[21]==g.doppler&&post[22]==g.delays&&post[27]==c.detector.integrationCpis,"Resident postprocess coverage differs");
- if(c.detector.enabled){require(post[4]==cells&&post[6]<=cells&&post[7]==post[6]&&post[8]<=post[7]&&post[9]==post[8]&&post[10]<=post[9]&&post[11]==post[9]-post[10]&&post[12]==cells&&post[13]==post[11],"Resident postprocess decision coverage differs");
+ if(c.detector.enabled){const uint32_t detectorPasses=c.detector.integrationCpis>2?(c.detector.integrationCpis==8?4u:3u):1u;
+ require(post[4]==cells*detectorPasses&&post[6]<=cells&&post[7]==post[6]&&post[8]<=post[7]&&post[9]==post[8]&&post[10]<=post[9]&&post[11]==post[9]-post[10]&&post[12]==cells&&post[13]==post[11]&&post[15]==(c.detector.integrationCpis>2?post[6]:0),"Resident postprocess decision coverage differs");
  const uint32_t kinds=1u|((p.diagnosticPresence&bit(Section::cfar))?2u:0u)|((p.diagnosticPresence&bit(Section::centroid))?4u:0u),passes=1u+((kinds>>1)&1u)+((kinds>>2)&1u);
  require(post[26]==kinds&&post[23]==passes*((cells+127)/128)&&post[24]==post[23]&&post[25]==passes*cells&&post[16]==((kinds&2)?post[6]:0)&&post[17]==((kinds&4)?post[8]:0),"Resident stable compaction coverage differs");}else{for(size_t i=4;i<=17;++i)require(!post[i],"Disabled detector status nonzero");
  for(size_t i=23;i<=26;++i)require(!post[i],"Disabled compaction status nonzero");}
- require(post[28]<=1&&(c.detector.integrationCpis==2||!post[28]),"Resident postprocess integration readiness differs");
+ require(post[28]<=1&&(c.detector.integrationCpis>=2||!post[28]),"Resident postprocess integration readiness differs");
  require(post[29]==c.detector.integrationMotionBins&&post[30]==c.detector.integrationBeamTolerance&&
   post[31]==(c.fusion.mode==FusionMode::noncoherent?0:c.fusion.beams),
   "Resident postprocess spatial integration echo differs");
  if(c.tracker.enabled){const auto& t=b.trackerStatus;
  auto pair=[&](size_t i){return uint64_t(t[i])|(uint64_t(t[i+1])<<32);};
  require(!t[0]&&t[1]<=1&&t[3]==c.tracker.capacity&&t[4]==cells&&pair(8)==p.tracker.transaction&&pair(10)==p.tracker.generation&&pair(12)==p.tracker.consumedSequence&&pair(14)==c.epoch&&pair(16)==p.frame.signalTimestampMs&&pair(52)==p.tracker.generation&&t[19]==post[11],"Resident tracker generation proof differs");
- require(t[54]<=c.tracker.capacity&&t[24]==32+2056*t[54]&&uint64_t(t[33])+t[34]+t[35]+t[36]==t[54]&&t[32]==t[34]+t[35]+t[36]&&!t[58],"Resident tracker prepared snapshot differs");
+ require(t[54]<=c.tracker.capacity&&t[24]==trackerHeaderWords+trackerRecordWords(c.tracker)*t[54]&&uint64_t(t[33])+t[34]+t[35]+t[36]==t[54]&&t[32]==t[34]+t[35]+t[36]&&!t[58],"Resident tracker prepared snapshot differs");
  if(t[2]==1){for(size_t i=26;i<=31;++i)require(!t[i],"Resident no-op tracker performed work");
  require(!t[55]&&!t[56]&&!t[57]&&t[54]==t[18],"Resident no-op tracker coverage differs");}else require(t[2]==2&&t[26]==t[18]&&t[27]+t[28]==t[18]&&t[29]<=t[28]&&t[20]==t[18]-t[29]&&t[55]==t[18]&&t[57]==t[19]&&t[56]==(t[19]+127)/128&&t[30]==t[22]&&t[31]==t[23]&&t[23]==t[20]+t[22]&&t[54]==t[23],"Resident tracker executed-work coverage differs");}if(!c.tracker.enabled)preparedReader.zeros(evidence::prepared::trackerPreparedStatus,256);
  const uint64_t expectedTimes=135ULL|(c.detector.enabled?(15ULL<<3):0)|(c.tracker.enabled?(63ULL<<8):0);

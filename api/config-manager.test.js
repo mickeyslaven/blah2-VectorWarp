@@ -53,6 +53,14 @@ const nonresidentWhitenedFusion = clone(whitenedFusion);
 nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,
   'noise-whitened beam-bank fusion requires resident acceleration');
+const adaptiveTracker = clone(whitenedFusion);
+adaptiveTracker.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+assert.equal(validateConfig(adaptiveTracker).valid, true,
+  'adaptive tracker initiation accepts resident acceleration');
+const nonresidentAdaptiveTracker = clone(adaptiveTracker);
+nonresidentAdaptiveTracker.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, false,
+  'adaptive tracker initiation requires resident acceleration');
 const mismatchedCalibration = clone(coherentFusion);
 mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
 assert.equal(validateConfig(mismatchedCalibration).valid, false,
@@ -285,6 +293,9 @@ for (const [key, value] of [
   ['process.ambiguity.delayMax', 65524], ['process.clutter.delayMax', 2147483647],
   ['process.tracker.initiate.M', 256], ['process.tracker.initiate.N', 1],
   ['process.tracker.initiate.maxAcc', 1e9], ['network.ip', 'http://localhost'],
+  ['process.tracker.initiate.acceleration_model', 'unbounded'],
+  ['process.bearing.min_peak_separation_db', .99],
+  ['process.bearing.min_peak_separation_db', 15.01],
   ['truth.adsb.tar1090', 'file:///etc/passwd'], ['save.path', '/tmp/no-slash'],
   ['capture.replay.format', 'unsupported'], ['process.reference_synthesis.diagonal_loading', -1]
 ]) {

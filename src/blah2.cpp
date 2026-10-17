@@ -31,6 +31,7 @@
 #include "process/utility/Socket.h"
 #include "process/utility/ProcessingThreads.h"
 #include "data/meta/Constants.h"
+#include "../core/TrackBeforeDetect.private.h"
 
 #include "data/Yaml.h"
 #include <c4/format.hpp> // needed for the examples below
@@ -59,6 +60,7 @@ volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
+std::unique_ptr<Socket> socket_bearing;
 std::unique_ptr<Socket> socket_timestamp;
 std::unique_ptr<Socket> socket_timing;
 std::unique_ptr<Socket> socket_iqdata;
@@ -184,12 +186,37 @@ try
 
   // set up socket
   sleep(2);
+  bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
+  std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
+    bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
+  double bearingDiagonalLoading=.01;std::vector<uint32_t>bearingChannelMapping;
+  if(tree["process"].has_child("bearing")){
+    auto bearing=tree["process"]["bearing"];
+    if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
+    if(bearing.has_child("min_consistent"))bearing["min_consistent"]>>bearingMinConsistent;
+    if(bearing.has_child("min_peak_separation_db"))
+      bearing["min_peak_separation_db"]>>bearingMinPeakSeparationDb;
+    if(bearing.has_child("method"))bearing["method"]>>bearingMethod;
+    if(bearing.has_child("scan_beams"))bearing["scan_beams"]>>bearingScanBeams;
+    if(bearing.has_child("candidate_peaks"))bearing["candidate_peaks"]>>bearingCandidatePeaks;
+    if(bearing.has_child("guard_radius"))bearing["guard_radius"]>>bearingGuardRadius;
+    if(bearing.has_child("training_radius"))bearing["training_radius"]>>bearingTrainingRadius;
+    if(bearing.has_child("diagonal_loading"))bearing["diagonal_loading"]>>bearingDiagonalLoading;
+    if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
+      uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
+  }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
+  uint16_t port_bearing=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
   tree["network"]["ports"]["track"] >> port_track;
+  if(bearingEnabled){
+    if(!tree["network"]["ports"].has_child("bearing"))
+      throw std::invalid_argument("Bearing output requires network.ports.bearing");
+    tree["network"]["ports"]["bearing"]>>port_bearing;
+  }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
   tree["network"]["ports"]["iqdata"] >> port_iqdata;
@@ -199,6 +226,7 @@ try
     socket_map = std::make_unique<Socket>(ip, port_map);
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
+    if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
     socket_timing = std::make_unique<Socket>(ip, port_timing);
     socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
@@ -284,7 +312,7 @@ try
   double effectiveBeamTrials = 0;
   double directPathNullDb = 0;
   std::vector<std::array<double, 3>> coherentPositions;
-  double directPathAzimuthRad = 0;
+  double directPathAzimuthRad = 0,xAxisBearingDeg = 0,bearingUncertaintyFloorDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
   {
     auto fusion = tree["process"]["surveillance_fusion"];
@@ -340,6 +368,22 @@ try
         throw std::invalid_argument("Coherent surveillance fusion geometry is missing a surveillance channel");
       coherentPositions.push_back(positions[channel]);
     }
+    double apertureM = 0;
+    for (size_t a = 0; a < coherentPositions.size(); ++a)
+      for (size_t b = a + 1; b < coherentPositions.size(); ++b)
+      {
+        const double dx = coherentPositions[a][0] - coherentPositions[b][0];
+        const double dy = coherentPositions[a][1] - coherentPositions[b][1];
+        const double dz = coherentPositions[a][2] - coherentPositions[b][2];
+        apertureM = std::max(apertureM, std::sqrt(dx * dx + dy * dy + dz * dz));
+      }
+    if (!(apertureM > 0) || !std::isfinite(apertureM))
+      throw std::invalid_argument("Coherent fusion has invalid array aperture");
+    // Fine scan spacing interpolates the beam maximum; it does not defeat the
+    // physical aperture limit. Publish at least the half-power half-width.
+    const double wavelengthM = 299792458.0 / double(fc);
+    bearingUncertaintyFloorDeg = std::min(90.0,
+      0.443 * wavelengthM / apertureM * 180.0 / std::acos(-1.0));
     {
       if (!arrayReference || referenceChannels != surveillanceChannels)
         throw std::invalid_argument("Coherent fusion requires the array reference to use every surveillance channel in the same order");
@@ -348,7 +392,7 @@ try
           !tree["location"].has_child("rx") ||
           !tree["location"].has_child("tx"))
         throw std::invalid_argument("Coherent fusion requires array orientation and receiver/transmitter locations");
-      double xAxisBearingDeg = 0, rxLatDeg = 0, rxLonDeg = 0,
+      double rxLatDeg = 0, rxLonDeg = 0,
         txLatDeg = 0, txLonDeg = 0;
       geometry["x_axis_bearing_deg_true"] >> xAxisBearingDeg;
       tree["location"]["rx"]["latitude"] >> rxLatDeg;
@@ -482,7 +526,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI5 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI6 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -588,6 +632,9 @@ try
   int8_t minDelay;
   uint32_t integrationCpis = 1;
   uint32_t integrationMotionBins = 0;
+  bool trackBeforeDetect = false;
+  uint32_t trackBeforeDetectCpis = 8;
+  uint32_t trackBeforeDetectMotionBins = 1;
   uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
@@ -598,6 +645,13 @@ try
     tree["process"]["detection"]["integration_cpis"] >> integrationCpis;
   if (tree["process"]["detection"].has_child("integration_motion_bins"))
     tree["process"]["detection"]["integration_motion_bins"] >> integrationMotionBins;
+  if (tree["process"]["detection"].has_child("track_before_detect"))
+  {
+    auto node = tree["process"]["detection"]["track_before_detect"];
+    if (node.has_child("enable")) node["enable"] >> trackBeforeDetect;
+    if (node.has_child("max_cpis")) node["max_cpis"] >> trackBeforeDetectCpis;
+    if (node.has_child("motion_bins")) node["motion_bins"] >> trackBeforeDetectMotionBins;
+  }
   if (tree["process"]["tracker"].has_child("beam_tolerance"))
     tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
   if (integrationCpis < 1 || integrationCpis > 2)
@@ -606,19 +660,58 @@ try
     throw std::invalid_argument("Multi-CPI detection requires gpu-resident acceleration");
   if (integrationMotionBins > 1 || (integrationMotionBins && integrationCpis != 2))
     throw std::invalid_argument("Detection integration_motion_bins requires two-CPI integration and must be 0 or 1");
+  if (trackBeforeDetect && (!residentMode || !coherentFusion))
+    throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
+  if(bearingEnabled&&(!residentMode||!coherentFusion))
+    throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
+  if(bearingEnabled&&!trackBeforeDetect)
+    throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
+  if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
+    throw std::invalid_argument("Bearing method must be coherent_beam_bank or covariance_mvdr");
+  if(!bearingScanBeams)bearingScanBeams=coherentBeamCount*4u;
+  if(bearingEnabled&&(bearingScanBeams<coherentBeamCount||bearingScanBeams>127||
+      bearingScanBeams%coherentBeamCount))
+    throw std::invalid_argument("Bearing scan_beams must be a beam-count multiple from the beam count through 127");
+  if(bearingCandidatePeaks!=3||bearingGuardRadius>3||bearingTrainingRadius<=bearingGuardRadius||
+      bearingTrainingRadius>6||!std::isfinite(bearingDiagonalLoading)||
+      bearingDiagonalLoading<=0||bearingDiagonalLoading>1)
+    throw std::invalid_argument("Invalid bearing covariance/candidate configuration");
+  if(bearingMinConsistent<2||bearingMinConsistent>100)
+    throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
+  if(bearingMinPeakSeparationDb<1||bearingMinPeakSeparationDb>15)
+    throw std::invalid_argument("Bearing min_peak_separation_db must be from 1 through 15");
+  if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
+      trackBeforeDetectMotionBins > 1))
+    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
   if (integrationBeamTolerance != UINT32_MAX &&
       (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
     throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
   // A beam bank reports the maximum of several trials per cell. Apply a
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
-  const double motionTrials = integrationMotionBins ? 9.0 : 1.0;
+  const double motionTrials = trackBeforeDetect
+    ? track_before_detect::trialCount(trackBeforeDetectCpis, trackBeforeDetectMotionBins)
+    : (integrationMotionBins ? 9.0 : 1.0);
+  // TBD adds its motion-bank correction inside the resident detector while
+  // retaining the proven two-CPI baseline at this beam-corrected PFA.
   const double detectorPfa = coherentFusion
-    ? pfa / (effectiveBeamTrials * motionTrials) : pfa / motionTrials;
+    ? pfa / (effectiveBeamTrials * (trackBeforeDetect ? 1.0 : motionTrials))
+    : pfa / (trackBeforeDetect ? 1.0 : motionTrials);
   if (coherentFusion)
     std::cout << "[SurveillanceFusion] configured_pfa=" << pfa
       << " effective_pfa=" << detectorPfa << " effective_beam_trials="
-      << effectiveBeamTrials << " motion_trials=" << motionTrials << "\n";
+      << effectiveBeamTrials << " motion_trials=" << motionTrials;
+  if (coherentFusion && trackBeforeDetect)
+    std::cout << " tbd_effective_pfa=" << detectorPfa / motionTrials;
+  if (coherentFusion) std::cout << "\n";
+  if (trackBeforeDetect)
+    std::cout << "[TrackBeforeDetect] enabled=1 banks="
+      << track_before_detect::bankCount(trackBeforeDetectCpis)
+      << " max_cpis=" << trackBeforeDetectCpis
+      << " motion_bins=" << trackBeforeDetectMotionBins
+      << " coherent_refinement_factor="
+      << (bearingEnabled ? bearingScanBeams / coherentBeamCount : 0u)
+      << " bearing_method=" << (bearingEnabled ? bearingMethod : "disabled") << "\n";
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
@@ -630,11 +723,15 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth;
+  std::string smooth,trackerAccelerationModel="hypothesis_bank";
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
+  if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
+    tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
+  if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
+    throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
   rangeRes = (double)Constants::c/fs;
   lambda = (double)Constants::c/fc;
   Tracker *tracker = new Tracker(m, n, nDelete,
@@ -649,6 +746,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if(bearingEnabled&&!isTracker)
+    throw std::invalid_argument("Bearing output requires tracking to be enabled");
   if (integrationBeamTolerance != UINT32_MAX && !isTracker)
     throw std::invalid_argument("Tracker beam_tolerance requires tracking to be enabled");
   if (!isDetection)
@@ -699,16 +798,24 @@ try
       residentConfig.fusion={fusionMode,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
         directPathNullDb};
+      if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
+       residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
+        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping};}
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
-    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,integrationCpis,integrationMotionBins,integrationBeamTolerance};
+    residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,
+      trackBeforeDetect?trackBeforeDetectCpis:integrationCpis,
+      trackBeforeDetect?trackBeforeDetectMotionBins:integrationMotionBins,
+      integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;
       if(!tree["process"]["tracker"].has_child("gpu_capacity"))throw std::invalid_argument("Resident tracker requires an explicit gpu_capacity; capacity is never inferred or shrunk");
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
-      residentConfig.tracker={true,capacity,m,n,nDelete,ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
+      residentConfig.tracker={true,capacity,m,n,nDelete,
+        trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
@@ -1107,7 +1214,10 @@ try
           blah2::resident::Coordinator::Publication residentPublication;
           if(resident){
             resident->receivePrepared();
-            residentPublication=resident->format(time[0]/1000);
+            residentPublication=resident->format(time[0]/1000,
+              {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
+               bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
+               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
@@ -1140,6 +1250,7 @@ try
           {
             jsonTracker = resident ? std::move(residentPublication.tracks) : track->to_json(time[0]/1000);
             socket_track->sendData(jsonTracker);
+            if(bearingEnabled)socket_bearing->sendData(residentPublication.bearing);
           }
 
           // output radar data timer
