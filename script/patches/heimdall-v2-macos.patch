@@ -1,8 +1,8 @@
 diff --git a/heimdall_v2/CMakeLists.txt b/heimdall_v2/CMakeLists.txt
-index 8c20233..bfd2e5b 100644
+index a8a92e2..22d113e 100644
 --- a/heimdall_v2/CMakeLists.txt
 +++ b/heimdall_v2/CMakeLists.txt
-@@ -10,12 +10,20 @@ find_package(PkgConfig REQUIRED)
+@@ -10,10 +10,17 @@ find_package(PkgConfig REQUIRED)
  find_package(Threads REQUIRED)
  
  # Find Eigen3
@@ -14,18 +14,23 @@ index 8c20233..bfd2e5b 100644
 +if(NOT APPLE)
 +    pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
 +endif()
- pkg_check_modules(FFTW3F REQUIRED fftw3f)
 +if(APPLE)
 +    # Managed macOS loads the companion's private dynamic fork; do not link
 +    # the Linux static archive or let a system librtlsdr override it.
 +    pkg_check_modules(RTLSDR REQUIRED librtlsdr)
 +endif()
  
+ # FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
+ # FFTW 2026-10-17) - no system FFT library
+@@ -30,6 +37,7 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+     target_compile_options(pffft PRIVATE -march=native)
+ endif()
+ 
 +if(NOT APPLE)
  # KrakenSDR librtlsdr fork, linked STATICALLY so a distro librtlsdr0 (earlier
  # in the loader's search path than /usr/local/lib) can never shadow it - see
  # the Makefile. Built by ../install.sh or by `make` in this directory.
-@@ -25,6 +33,7 @@ if(NOT EXISTS "${RTLSDR_STATIC_LIB}")
+@@ -39,6 +47,7 @@ if(NOT EXISTS "${RTLSDR_STATIC_LIB}")
      message(FATAL_ERROR "KrakenSDR librtlsdr fork not built (${RTLSDR_STATIC_LIB}). "
                          "Run ../install.sh, or `make ../librtlsdr/build/src/librtlsdr.a` in heimdall_v2.")
  endif()
@@ -33,12 +38,11 @@ index 8c20233..bfd2e5b 100644
  
  # Check for uWebSockets
  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets")
-@@ -95,9 +104,13 @@ target_include_directories(heimdall PRIVATE
+@@ -109,8 +118,12 @@ target_include_directories(heimdall PRIVATE
      ${CMAKE_CURRENT_SOURCE_DIR}/external
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/src
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/src
 -    ${RTLSDR_DIR}/include
-     ${FFTW3F_INCLUDE_DIRS}
  )
 +if(APPLE)
 +    target_include_directories(heimdall PRIVATE ${RTLSDR_INCLUDE_DIRS})
@@ -48,7 +52,7 @@ index 8c20233..bfd2e5b 100644
  
  # Add Eigen3 include directories
  target_include_directories(heimdall PRIVATE ${EIGEN3_INCLUDE_DIR})
-@@ -128,23 +141,35 @@ endif()
+@@ -140,23 +153,32 @@ endif()
  file(GLOB USOCKETS_OBJS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/*.o")
  
  # Link libraries
@@ -56,7 +60,7 @@ index 8c20233..bfd2e5b 100644
 -    ${RTLSDR_STATIC_LIB}
 -    ${LIBUSB_LIBRARIES}
 +target_link_libraries(heimdall PRIVATE
-     ${FFTW3F_LIBRARIES}
+     pffft
      ${USOCKETS_OBJS}
      Threads::Threads
      Eigen3::Eigen
@@ -66,6 +70,10 @@ index 8c20233..bfd2e5b 100644
 -    crypto
  )
  
+-# Link directories
+-target_link_directories(heimdall PRIVATE
+-    ${LIBUSB_LIBRARY_DIRS}
+-)
 +if(APPLE)
 +    target_compile_definitions(heimdall PRIVATE HEIMDALL_DARWIN_LOCAL_ONLY=1)
 +    set_target_properties(heimdall PROPERTIES BUILD_RPATH "@loader_path/../lib/kraken" INSTALL_RPATH "@loader_path/../lib/kraken")
@@ -77,20 +85,31 @@ index 8c20233..bfd2e5b 100644
 +        message(FATAL_ERROR "Private Kraken librtlsdr dylib not found in ${RTLSDR_LIBRARY_DIRS}")
 +    endif()
 +    target_link_libraries(heimdall PRIVATE ${HEIMDALL_PRIVATE_RTLSDR})
++    set(HEIMDALL_RTLSDR_STATUS "private Kraken librtlsdr dylib (${HEIMDALL_PRIVATE_RTLSDR})")
 +else()
 +    target_link_libraries(heimdall PRIVATE ${RTLSDR_STATIC_LIB} PkgConfig::LIBUSB)
 +    target_link_libraries(heimdall PRIVATE ssl crypto)
++    set(HEIMDALL_RTLSDR_STATUS "KrakenSDR fork, static (${RTLSDR_STATIC_LIB})")
 +endif()
-+
- # Link directories
- target_link_directories(heimdall PRIVATE
--    ${LIBUSB_LIBRARY_DIRS}
-     ${FFTW3F_LIBRARY_DIRS}
-+    ${LIBUSB_LIBRARY_DIRS}
- )
  
  # Installation
-@@ -185,4 +210,4 @@ message(STATUS "FFTW3: ${FFTW3F_VERSION}")
+ install(TARGETS heimdall DESTINATION bin)
+@@ -181,7 +203,7 @@ add_custom_target(status
+     COMMAND ${CMAKE_COMMAND} -E echo "=== Build Status ==="
+     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 found: ${EIGEN3_FOUND}"
+     COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 version: ${EIGEN3_VERSION}"
+-    COMMAND ${CMAKE_COMMAND} -E echo "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})"
++    COMMAND ${CMAKE_COMMAND} -E echo "RTL-SDR: ${HEIMDALL_RTLSDR_STATUS}"
+     COMMAND ${CMAKE_COMMAND} -E echo "FFT: pffft (vendored, external/pffft)"
+     COMMENT "Checking build status..."
+ )
+@@ -191,9 +213,9 @@ message(STATUS "")
+ message(STATUS "=== Heimdall Configuration ===")
+ message(STATUS "C++ Standard: C++20")
+ message(STATUS "Eigen3: ${EIGEN3_VERSION} (${EIGEN3_INCLUDE_DIR})")
+-message(STATUS "RTL-SDR: KrakenSDR fork, static (${RTLSDR_STATIC_LIB})")
++message(STATUS "RTL-SDR: ${HEIMDALL_RTLSDR_STATUS}")
+ message(STATUS "FFT: pffft (vendored, external/pffft)")
  message(STATUS "Architecture: ${CMAKE_SYSTEM_PROCESSOR}")
  message(STATUS "Phase Calibration: Eigenvalue Decomposition")
  message(STATUS "==============================")
@@ -2503,7 +2522,7 @@ index 33b22e1..c9e5461 100644
 \ No newline at end of file
 +}
 diff --git a/heimdall_v2/src/sdr/sdr_pipeline.cpp b/heimdall_v2/src/sdr/sdr_pipeline.cpp
-index f0fb9e0..3e9b62e 100644
+index 16de89d..903d25c 100644
 --- a/heimdall_v2/src/sdr/sdr_pipeline.cpp
 +++ b/heimdall_v2/src/sdr/sdr_pipeline.cpp
 @@ -6,17 +6,18 @@

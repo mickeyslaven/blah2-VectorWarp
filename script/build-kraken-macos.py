@@ -67,7 +67,7 @@ def main():
     if not brew:
         brew = subprocess.check_output(['brew', '--prefix'], text=True).strip()
     brew = Path(brew)
-    for dependency in ('eigen', 'fftw', 'libusb'):
+    for dependency in ('eigen', 'libusb'):
         if not (brew / 'opt' / dependency).is_dir():
             parser.error(f'Install the build dependency: brew install {dependency}')
     base = args.build_dir.resolve()
@@ -133,6 +133,10 @@ def main():
             path = trees[name] / filename
             if path.is_file():
                 shutil.copy2(path, destination / 'share/heimdall/licenses' / (name + '-' + filename))
+    pffft_license = native / 'external/pffft/LICENSE.txt'
+    if not pffft_license.is_file():
+        raise ValueError('Pinned Suite is missing the statically linked pffft license')
+    shutil.copy2(pffft_license, destination / 'share/heimdall/licenses/pffft-LICENSE.txt')
     receipt = dict(schema=1, sources=sources, patchSha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
                    driverPatchSha256=hashlib.sha256(driver_patch.read_bytes()).hexdigest(),
                    hardwareTested=False, suiteLicense='No repository-wide license file supplied by this pinned upstream revision.')

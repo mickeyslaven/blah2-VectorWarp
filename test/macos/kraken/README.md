@@ -37,7 +37,8 @@ python3 test/macos/kraken/native_simulation_test.py \
 ```
 
 Linux requires a C++ compiler, CMake, make, pkg-config, binutils, patch, Python,
-and development headers/libraries for Eigen, FFTW, libusb, zlib and OpenSSL.
+and development headers/libraries for Eigen, libusb, zlib and OpenSSL. The
+current pinned Suite vendors pffft for Heimdall's correlation FFTs.
 The builder does not install system packages or execute the production receiver.
 It rejects ambient loader injection variables. Its dependency downloads are
 immutable archives checked against `config/kraken-macos-sources.json`.

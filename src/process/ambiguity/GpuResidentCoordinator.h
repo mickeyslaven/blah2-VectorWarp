@@ -70,14 +70,15 @@ public:
  wire::require(cpu.size()==g.channels&&out.maps.size==cells*g.channels,"Resident map oracle shape differs");
  for(size_t c=0;c<cpu.size();++c){const auto& data=cpu[c]->result()->data;
  double error=0,signal=0,peak=0,maxError=0;
- for(uint32_t d=0;d<g.doppler;++d)for(uint32_t r=0;r<g.delays;++r){const auto expected=data[d][r];
+ for(uint32_t d=0;d<g.doppler;++d){for(uint32_t r=0;r<g.delays;++r){const auto expected=data[d][r];
  const std::complex<double> actual=out.maps.data[c*cells+size_t(r)*g.doppler+(d+g.doppler/2+1)%g.doppler];
  wire::require(finite(expected)&&finite(actual),"Resident composed map nonfinite");
  const double delta=std::norm(actual-expected);
  error+=delta;
  signal+=std::norm(expected);
  peak=std::max(peak,std::norm(expected));
- maxError=std::max(maxError,delta);}wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
+ maxError=std::max(maxError,delta);}}
+ wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
  struct Publication {std::string spectrum,map,detections,tracks,bearing;};
  Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={}){const auto& v=receivePrepared();
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");

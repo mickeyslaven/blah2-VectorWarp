@@ -1,5 +1,10 @@
 # macOS verification and remaining hardware coverage
 
+The [17 October Suite review](KRAKEN_SUITE_UPDATE_2026_10_17.md) advances the
+software pin to `3a95e19f7f81` and passes current Apple Silicon native and full
+simulated pipeline checks. It adds no physical-hardware claim; the physical
+results below remain tied to their recorded earlier revisions.
+
 The [October 2026 Kraken Suite update](KRAKEN_SUITE_UPDATE_2026_10.md) uses
 upstream `f648514df41d` and the reviewed companion patches. Revision
 `50548a3554d4`, including the AUTO command-sequence change, passed all 24 hosted
