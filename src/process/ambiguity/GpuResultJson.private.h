@@ -226,7 +226,8 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  View<Record> detectionsView,View<uint32_t> cells,
  View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights,
  uint64_t referenceFrames,uint64_t referenceUpdates,double coherentFraction,double coherentGainDb,double referenceScale,
- uint32_t bearingMethod,uint32_t bearingScanBeams,uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
+ uint32_t bearingMethod,uint32_t bearingReferenceAnchor,uint32_t bearingScanBeams,
+ uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
  double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping){
  shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
  require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
@@ -238,7 +239,8 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(std::isfinite(coherentFraction)&&coherentFraction>=0&&
   std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
   "Invalid reference diagnostic state");
- require(bearingMethod<=1&&bearingScanBeams>=4&&bearingScanBeams<=127&&bearingChannelMapping.count==channels,
+ require(bearingMethod<=1&&bearingReferenceAnchor<=1&&bearingScanBeams>=4&&
+  bearingScanBeams<=127&&bearingChannelMapping.count==channels,
   "Invalid manifold replay configuration");
  std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
   require(bearingChannelMapping.data[i]<channels&&!used[bearingChannelMapping.data[i]],
@@ -253,6 +255,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
  w.Key("bearing_replay");w.StartObject();w.Key("method");
  w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
+ w.Key("reference_anchor");w.String(bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
  w.Key("scan_beams");w.Uint(bearingScanBeams);
  w.Key("guard_radius");w.Uint(bearingGuardRadius);w.Key("training_radius");w.Uint(bearingTrainingRadius);
  w.Key("diagonal_loading");w.Double(bearingDiagonalLoading);w.Key("channel_mapping");w.StartArray();

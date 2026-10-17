@@ -570,15 +570,32 @@ class ResidentFramePipeline {
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
    const bool bearingRefinement=&buffer==refinementWeights.get();
    const bool measured=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool fixedSite=bearingRefinement&&
+    config.postprocess.bearingReferenceAnchor==1;
    const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
    const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
+   std::array<std::complex<double>,8> referenceAnchor{};double referenceAnchorNorm=0;
+   for(uint32_t channel=0;channel<channels;++channel){
+    if(!fixedSite)referenceAnchor[channel]=checkpoint.weights[channel];
+    else if(measured)referenceAnchor[channel]=
+     config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
+    else{const uint32_t physical=blah2::bearing_steering::physicalElement(
+      channel,config.postprocess.bearingChannelMapping);
+     const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
+     referenceAnchor[channel]=std::polar(1.0,waveNumber*config.fusion.radiusM*
+      std::cos(elementAngle-config.fusion.directPathAzimuthRad));}
+    referenceAnchorNorm+=std::norm(referenceAnchor[channel]);
+   }
+   if(!(referenceAnchorNorm>0)||!std::isfinite(referenceAnchorNorm))
+    throw std::runtime_error("Bearing reference anchor has zero norm");
    for(uint32_t beam=0;beam<beams;++beam){
     const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
     std::array<std::complex<double>,8> steering{},combined{};
     for(uint32_t channel=0;channel<channels;++channel){
      if(measured){const auto numerator=config.postprocess.bearingManifoldResponses[uint64_t(beam)*channels+channel];
       const auto denominator=config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
-      steering[channel]=checkpoint.weights[channel]*std::complex<double>(numerator/denominator);
+      steering[channel]=fixedSite?std::complex<double>(numerator):
+       checkpoint.weights[channel]*std::complex<double>(numerator/denominator);
      }else{const uint32_t physical=bearingRefinement?
        blah2::bearing_steering::physicalElement(channel,config.postprocess.bearingChannelMapping):channel;
       const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
@@ -586,16 +603,16 @@ class ResidentFramePipeline {
        (std::cos(elementAngle-beamAngle)-
         std::cos(elementAngle-config.fusion.directPathAzimuthRad));
       steering[channel]=bearingRefinement?
-       std::conj(blah2::bearing_steering::mapCoefficient(checkpoint.weights[channel],relativePhase)):
+       std::conj(blah2::bearing_steering::mapCoefficient(referenceAnchor[channel],relativePhase)):
        checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
     }
     if(nullFraction>0){
      std::complex<double> projection{};
      for(uint32_t channel=0;channel<channels;++channel)
-      projection+=std::conj(checkpoint.weights[channel])*steering[channel];
-     projection*=nullFraction/norm;
+      projection+=std::conj(referenceAnchor[channel])*steering[channel];
+     projection*=nullFraction/referenceAnchorNorm;
      for(uint32_t channel=0;channel<channels;++channel)
-      steering[channel]-=projection*checkpoint.weights[channel];
+      steering[channel]-=projection*referenceAnchor[channel];
     }
     if(whiten){
      double combinedNorm=0;

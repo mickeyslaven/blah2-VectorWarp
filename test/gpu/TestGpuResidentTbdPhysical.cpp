@@ -49,7 +49,8 @@ Config configuration(const char* device) {
   c.tracker.cpi = 63.0 / c.sampleRate;
   c.tracker.rangeRes = 299792458.0 / c.sampleRate;
   c.tracker.lambda = 299792458.0 / c.fusion.frequencyHz;
-  c.bearing = {true, BearingMethod::covarianceMvdr, 60, 3, 1, 3, .01,
+  c.bearing = {true, BearingMethod::covarianceMvdr, BearingReferenceAnchor::fixedSite,
+    60, 3, 1, 3, .01,
     {0, 1, 2, 3, 4}};
   for (uint32_t beam = 0; beam < c.bearing.scanBeams; ++beam)
     for (uint32_t channel = 0; channel < g.channels; ++channel)

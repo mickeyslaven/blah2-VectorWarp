@@ -82,7 +82,13 @@ function weights(sample, config, mapping, beams) {
   const direct = sample.direct_path_local_azimuth_deg * Math.PI / 180;
   const wave = 2 * Math.PI * frequency / 299792458;
   const reference = sample.reference_weights;
-  const norm = reference.reduce((sum, value) => sum + magnitude2(value), 0);
+  const fixedSite = sample.bearing_replay?.reference_anchor === 'fixed_site';
+  const anchor = positions.map((_, channel) => {
+    if (!fixedSite) return reference[channel];
+    const position = positions[mapping[channel]];
+    return polar(wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
+  });
+  const norm = anchor.reduce((sum, value) => sum + magnitude2(value), 0);
   if (!(norm > 0)) throw new Error('Reference weights have zero norm');
   const output = [];
   const nullFraction = 1 - 10 ** (-(config.process?.surveillance_fusion?.direct_path_null_db || 0) / 20);
@@ -93,13 +99,13 @@ function weights(sample, config, mapping, beams) {
       const position = positions[mapping[channel]];
       const relative = wave * (position[0] * (Math.cos(angle) - Math.cos(direct)) +
         position[1] * (Math.sin(angle) - Math.sin(direct)));
-      steering.push(multiply(reference[channel], polar(relative)));
+      steering.push(multiply(anchor[channel], polar(relative)));
     }
     if (nullFraction > 0) {
       const projection = scale(steering.reduce((sum, value, channel) =>
-        add(sum, multiply(conjugate(reference[channel]), value)), [0, 0]), nullFraction / norm);
+        add(sum, multiply(conjugate(anchor[channel]), value)), [0, 0]), nullFraction / norm);
       for (let channel = 0; channel < channels; ++channel)
-        steering[channel] = subtract(steering[channel], multiply(projection, reference[channel]));
+        steering[channel] = subtract(steering[channel], multiply(projection, anchor[channel]));
     }
     output.push(steering.map(value => scale(conjugate(value), 1 / Math.sqrt(norm))));
   }
@@ -189,6 +195,7 @@ function evaluateBearing(samples, config) {
   const evidenceReady = valid.length >= 100 && identities.size >= 5 && sectors >= 4;
   return {available: true, shadow_only: true, auto_apply: false,
     method: valid[valid.length - 1].bearing_replay.method,
+    reference_anchor: valid[valid.length - 1].bearing_replay.reference_anchor || 'live_eigenbeam',
     samples: valid.length, aircraft: identities.size, sectors,
     evidence_ready: evidenceReady,
     best: best && {id: best.id, mapping: best.mapping, median_error_deg: best.median_error_deg,

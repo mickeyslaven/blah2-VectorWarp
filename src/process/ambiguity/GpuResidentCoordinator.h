@@ -95,7 +95,8 @@ public:
     {v.detectionCells.data,v.detectionCells.size},{v.maps.data,v.maps.size},
     {reference.weights.data(),reference.weightCount},reference.frames,reference.updates,
     reference.coherentFraction,reference.coherentGainDb,reference.scale,
-    uint32_t(config().bearing.method),config().bearing.scanBeams,
+    uint32_t(config().bearing.method),uint32_t(config().bearing.referenceAnchor),
+    config().bearing.scanBeams,
     config().bearing.guardRadius,config().bearing.trainingRadius,config().bearing.diagonalLoading,
     {config().bearing.channelMapping.data(),config().bearing.channelMapping.size()});}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;

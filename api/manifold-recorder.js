@@ -46,6 +46,8 @@ function validateEvidence(frame) {
   if (frame.schema === 'vectorwarp-manifold-evidence-v2') {
     const replay = frame.bearing_replay;
     if (!replay || !['coherent_beam_bank', 'covariance_mvdr'].includes(replay.method) ||
+        (replay.reference_anchor !== undefined &&
+         !['live_eigenbeam', 'fixed_site'].includes(replay.reference_anchor)) ||
         !Number.isInteger(replay.scan_beams) || replay.scan_beams < 4 || replay.scan_beams > 127 ||
         !Array.isArray(replay.channel_mapping) || replay.channel_mapping.length !== frame.channels ||
         new Set(replay.channel_mapping).size !== frame.channels ||
@@ -104,6 +106,7 @@ class ManifoldRecorder {
       array_geometry: config.capture?.device?.array_geometry,
       receiver: config.location?.rx, transmitter: config.location?.tx,
       bearing_replay_v1: {method: config.process?.bearing?.method,
+        reference_anchor: config.process?.bearing?.reference_anchor,
         scan_beams: config.process?.bearing?.scan_beams,
         guard_radius: config.process?.bearing?.guard_radius,
         training_radius: config.process?.bearing?.training_radius,

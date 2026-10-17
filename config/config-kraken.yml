@@ -103,6 +103,9 @@ process:
     # The legacy coherent path remains the default. covariance_mvdr uses a
     # local complex covariance ring and retains three independent lobes/CPI.
     method: coherent_beam_bank
+    # Bearing refinement normally follows the live eigenbeam. fixed_site uses
+    # the configured/manifold direct-path response as an absolute phase anchor.
+    reference_anchor: live_eigenbeam
     scan_beams: 48
     candidate_peaks: 3
     guard_radius: 1

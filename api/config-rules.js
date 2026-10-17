@@ -39,6 +39,7 @@ const rules = {
   'process.bearing.min_consistent': {...integer(2, 100), optional: true},
   'process.bearing.min_peak_separation_db': {...numeric(1, 15), optional: true},
   'process.bearing.method': {type: 'string', choices: ['coherent_beam_bank', 'covariance_mvdr'], optional: true},
+  'process.bearing.reference_anchor': {type: 'string', choices: ['live_eigenbeam', 'fixed_site'], optional: true},
   'process.bearing.scan_beams': {...integer(4, 127), optional: true},
   'process.bearing.candidate_peaks': {...integer(3, 3), optional: true, readOnly: 'Fixed at three independent lobes.'},
   'process.bearing.guard_radius': {...integer(0, 3), optional: true},

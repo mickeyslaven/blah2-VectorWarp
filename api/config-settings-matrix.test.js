@@ -147,6 +147,7 @@ try {
   });
   bearing.process.bearing.enable = true;
   bearing.process.bearing.method = 'covariance_mvdr';
+  bearing.process.bearing.reference_anchor = 'fixed_site';
   bearing.process.bearing.scan_beams = 60;
   bearing.process.bearing.guard_radius = 2;
   bearing.process.bearing.training_radius = 4;
@@ -158,7 +159,8 @@ try {
   bearing.truth.adsb.enabled = true;
   bearing.network.ports.bearing = 3014;
   persistGroup('kraken-bearing-output', fusion, bearing,
-    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.scan_beams',
+    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.reference_anchor',
+      'process.bearing.scan_beams',
       'process.bearing.guard_radius', 'process.bearing.training_radius',
       'process.bearing.diagonal_loading', 'process.bearing.max_rate_deg_s',
       'process.bearing.manifold_file', 'process.bearing.channel_mapping',

@@ -10,7 +10,7 @@ struct PostprocessConfig {
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
  uint32_t bearingExclusionBins=0;
- uint32_t bearingMethod=0,bearingScanBeams=0,bearingCandidatePeaks=3;
+ uint32_t bearingMethod=0,bearingReferenceAnchor=0,bearingScanBeams=0,bearingCandidatePeaks=3;
  uint32_t bearingGuardRadius=1,bearingTrainingRadius=3;
  float bearingDiagonalLoading=.01f;
  std::vector<uint32_t> bearingChannelMapping;

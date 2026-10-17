@@ -191,7 +191,7 @@ try
   sleep(2);
   bool bearingEnabled=false,manifoldRecorderEnabled=false;
   uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
-  std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
+  std::string bearingMethod="coherent_beam_bank",bearingReferenceAnchor="live_eigenbeam";uint32_t bearingScanBeams=0,
     bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
   double bearingDiagonalLoading=.01,bearingMaxRateDegPerSecond=0;std::vector<uint32_t>bearingChannelMapping;
   std::string bearingManifoldFile;
@@ -202,6 +202,7 @@ try
     if(bearing.has_child("min_peak_separation_db"))
       bearing["min_peak_separation_db"]>>bearingMinPeakSeparationDb;
     if(bearing.has_child("method"))bearing["method"]>>bearingMethod;
+    if(bearing.has_child("reference_anchor"))bearing["reference_anchor"]>>bearingReferenceAnchor;
     if(bearing.has_child("scan_beams"))bearing["scan_beams"]>>bearingScanBeams;
     if(bearing.has_child("candidate_peaks"))bearing["candidate_peaks"]>>bearingCandidatePeaks;
     if(bearing.has_child("guard_radius"))bearing["guard_radius"]>>bearingGuardRadius;
@@ -566,7 +567,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI6 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI7 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -710,6 +711,8 @@ try
     throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
   if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
     throw std::invalid_argument("Bearing method must be coherent_beam_bank or covariance_mvdr");
+  if(bearingReferenceAnchor!="live_eigenbeam"&&bearingReferenceAnchor!="fixed_site")
+    throw std::invalid_argument("Bearing reference_anchor must be live_eigenbeam or fixed_site");
   if(!bearingScanBeams)bearingScanBeams=coherentBeamCount*4u;
   if(bearingEnabled&&(bearingScanBeams<coherentBeamCount||bearingScanBeams>127||
       bearingScanBeams%coherentBeamCount))
@@ -858,6 +861,7 @@ try
        std::vector<std::complex<float>> manifold;
        if(!bearingManifoldFile.empty())manifold=blah2::bearing_manifold::load(bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size())).responses;
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
+        bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:blah2::resident::BearingReferenceAnchor::liveEigenbeam,
         bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping,manifold};}
     }
     const double spectrumResolution=double(fs)/nSamples;

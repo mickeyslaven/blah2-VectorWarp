@@ -668,6 +668,9 @@ function validateConfig(config, baseline = null) {
       number(bearing.min_peak_separation_db, 'process.bearing.min_peak_separation_db', {min: 1, max: 15});
     if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
       errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
+    if (bearing.reference_anchor !== undefined &&
+        !['live_eigenbeam', 'fixed_site'].includes(bearing.reference_anchor))
+      errors.push('process.bearing.reference_anchor must be live_eigenbeam or fixed_site');
     if (bearing.scan_beams !== undefined)
       number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
     if (bearing.candidate_peaks !== undefined)

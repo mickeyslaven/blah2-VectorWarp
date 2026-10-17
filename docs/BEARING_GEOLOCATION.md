@@ -97,6 +97,7 @@ process:
   bearing:
     enable: true
     method: covariance_mvdr       # coherent_beam_bank remains the default
+    reference_anchor: live_eigenbeam # fixed_site rejects live anchor wander
     scan_beams: 60                # surveillance-beam multiple, at most 127
     candidate_peaks: 3
     guard_radius: 1
@@ -121,6 +122,15 @@ array geometry, or reference synthesis invalidates those confirmations.
 polygon element index. It must be a complete permutation. It affects only the
 bearing refinement manifold, making suspected cable/order mappings safe to
 compare while the established detection and Retina paths remain fixed.
+
+`reference_anchor` controls only the fine bearing refinement bank. The default,
+`live_eigenbeam`, preserves the adaptive reference response. `fixed_site` uses
+the measured manifold response at the configured direct-path angle, or the
+ideal array response when no measured manifold is loaded. It does not alter
+reference synthesis, clutter cancellation, detection maps, tracking, or Retina
+publication. At 2.4 MSPS a delay sample spans about 125 m one-way, so ordinary
+roof multipath cannot be isolated by selecting an earlier delay sample; an
+absolute site/manifold response is the appropriate constraint.
 
 The recorder rejects stale ADS-B truth, ambiguous delay/Doppler assignments,
 and elevations above `max_elevation_deg`. A planar azimuth manifold cannot fold

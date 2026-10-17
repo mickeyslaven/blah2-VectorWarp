@@ -60,6 +60,8 @@ void validateConfig(const Config& c){
  const auto& b=c.bearing;
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
+ require(b.referenceAnchor==BearingReferenceAnchor::liveEigenbeam||
+  b.referenceAnchor==BearingReferenceAnchor::fixedSite,"Resident bearing reference anchor invalid");
  if(b.enabled){
   require(f.mode!=FusionMode::noncoherent&&d.enabled&&c.tracker.enabled&&
    b.scanBeams>=f.beams&&b.scanBeams<=127&&b.scanBeams%f.beams==0&&
@@ -283,6 +285,7 @@ const auto&t=c.tracker;
  w.u32(544,uint32_t(c.bearing.channelMapping.size()));
  for(size_t i=0;i<c.bearing.channelMapping.size();++i)w.u32(548+4*i,c.bearing.channelMapping[i]);
  w.u32(580,uint32_t(c.bearing.manifoldResponses.size()));
+ w.u32(600,uint32_t(c.bearing.referenceAnchor));
  for(size_t i=0;i<c.bearing.manifoldResponses.size();++i){w.f32(640+8*i,c.bearing.manifoldResponses[i].real());w.f32(644+8*i,c.bearing.manifoldResponses[i].imag());}
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
@@ -303,6 +306,7 @@ auto& bearing=c.bearing;
 bearing.enabled=r.u32(512)!=0;
 require(r.u32(512)<=1,"Resident bearing boolean invalid");
 bearing.method=BearingMethod(r.u32(516));
+ bearing.referenceAnchor=BearingReferenceAnchor(r.u32(600));
 bearing.scanBeams=r.u32(520);
 bearing.candidatePeaks=r.u32(524);
 bearing.guardRadius=r.u32(528);
@@ -313,7 +317,7 @@ require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
-r.zeros(600,40);bearing.manifoldResponses.reserve(manifoldCount);
+r.zeros(604,36);bearing.manifoldResponses.reserve(manifoldCount);
 for(uint32_t i=0;i<manifoldCount;++i)bearing.manifoldResponses.emplace_back(r.f32(640+8*i),r.f32(644+8*i));
 r.zeros(640+8*manifoldCount,configBytes-(640+8*manifoldCount));
 auto&g=c.geometry;

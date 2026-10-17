@@ -72,11 +72,14 @@ void configCases(){
   "Track-before-detect configuration did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
- auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,60,3,1,3,.01,{1,0}};
+ auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,
+  BearingReferenceAnchor::fixedSite,60,3,1,3,.01,{1,0}};
  const auto bearingBytes=encodeConfig(bearing);
  const auto bearingDecoded=decodeConfig(bytes(bearingBytes),bytes(d),bytes(f));
  check(encodeConfig(bearingDecoded)==bearingBytes&&bearingDecoded.bearing.enabled&&
-  bearingDecoded.bearing.method==BearingMethod::covarianceMvdr&&bearingDecoded.bearing.scanBeams==60&&
+  bearingDecoded.bearing.method==BearingMethod::covarianceMvdr&&
+  bearingDecoded.bearing.referenceAnchor==BearingReferenceAnchor::fixedSite&&
+  bearingDecoded.bearing.scanBeams==60&&
   bearingDecoded.bearing.channelMapping==std::vector<uint32_t>({1,0}),
   "Adaptive bearing configuration did not round trip");
  check(wire::configHash(bearing)!=wire::configHash(tbd),

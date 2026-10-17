@@ -70,6 +70,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   const adaptive = validateEvidence({schema: 'vectorwarp-manifold-evidence-v2', timestamp: 100000,
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
     reference_weights: [[1, 0], [0, 1]], bearing_replay: {method: 'covariance_mvdr',
+      reference_anchor: 'fixed_site',
       scan_beams: 60, guard_radius: 0, training_radius: 1, diagonal_loading: .01,
       channel_mapping: [0, 1]},
     reference_state: {frames: 20, updates: 2, coherent_fraction: .8,
@@ -88,6 +89,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   await adaptiveRecorder.record(adaptive);
   const adaptiveRow = JSON.parse(fs.readFileSync(adaptiveFile, 'utf8').trim());
   assert.equal(adaptiveRow.bearing_replay.method, 'covariance_mvdr');
+  assert.equal(adaptiveRow.bearing_replay.reference_anchor, 'fixed_site');
   assert.deepEqual(adaptiveRow.covariance, adaptive.data[0].covariance);
   assert.equal(adaptiveRow.reference_state.updates, 2);
   const referenceFile = `${adaptiveFile}.reference.jsonl`;

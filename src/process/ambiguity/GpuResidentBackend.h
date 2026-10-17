@@ -13,8 +13,8 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=6;
-constexpr uint32_t protocol=0x42475207,packetBytes=160,configBytes=8768;
+constexpr unsigned moduleAbi=7;
+constexpr uint32_t protocol=0x42475208,packetBytes=160,configBytes=8768;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -62,9 +62,11 @@ struct DetectorConfig {
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
 enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
+enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1};
 struct BearingConfig {
  bool enabled=false;
  BearingMethod method=BearingMethod::coherentBeamBank;
+ BearingReferenceAnchor referenceAnchor=BearingReferenceAnchor::liveEigenbeam;
  uint32_t scanBeams=0,candidatePeaks=3,guardRadius=1,trainingRadius=3;
  double diagonalLoading=.01;
  // Bearing-only logical-channel to physical-element permutation. Detection

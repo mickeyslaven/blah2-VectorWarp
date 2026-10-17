@@ -19,6 +19,7 @@ for (let aircraft = 0; aircraft < 5; ++aircraft) for (let index = 0; index < 20;
   const beam = (aircraft * 11 + index * 2) % beams;
   const seed = {frequency_hz: 539000000, channels, reference_weights: reference,
     direct_path_local_azimuth_deg: 51, bearing_replay: {method: 'covariance_mvdr',
+      reference_anchor: 'fixed_site',
       scan_beams: beams, guard_radius: 1, training_radius: 3, diagonal_loading: .01,
       channel_mapping: [0, 1, 2, 3, 4]}};
   const bank = steeringWeights(seed, config, desired.mapping, beams);
@@ -33,6 +34,7 @@ const result = evaluateBearing(samples, config);
 assert.equal(result.available, true);
 assert.equal(result.evidence_ready, true);
 assert.equal(result.samples, 100);
+assert.equal(result.reference_anchor, 'fixed_site');
 assert.deepEqual(result.best.mapping, desired.mapping);
 assert.ok(result.best.median_error_deg < 1e-6);
 assert.equal(result.auto_apply, false);
