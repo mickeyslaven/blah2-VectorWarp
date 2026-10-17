@@ -74,6 +74,7 @@ const CONFIG_META = {
   'process.bearing': ['Bearing output', 'Publish radar-only azimuth candidates and bistatic locations on a separate opt-in interface.'],
   'process.bearing.enable': ['Enable bearing output', 'Needs GPU coherent tracking plus confirmed mapping, geometry, and true-north orientation.'],
   'process.bearing.method': ['Bearing estimator', 'Use the calibrated beam bank or local covariance MVDR candidate scoring.'],
+  'process.bearing.reference_anchor': ['Bearing reference anchor', 'Follow the live eigenbeam or hold bearing refinement to the surveyed site response.'],
   'process.bearing.scan_beams': ['Bearing scan beams', 'Fine azimuth bins around 360 degrees; must be a surveillance-beam multiple.'],
   'process.bearing.candidate_peaks': ['Bearing candidates', 'Independent bearing lobes retained per detection; currently fixed at three.'],
   'process.bearing.guard_radius': ['Covariance guard radius', 'Target-neighborhood cells excluded from the local covariance estimate.'],
