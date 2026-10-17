@@ -97,7 +97,7 @@ const CONFIG_META = {
   'process.detection.enable': ['Detect targets', 'Create detections from the radar map.'],
   'process.detection.pfa': ['False-alarm probability', 'Lower values reduce false detections but may miss weak targets.'],
   'process.detection.nGuard': ['Guard cells per side', 'Nearby cells excluded from the noise estimate.'],
-  'process.detection.nTrain': ['Noise cells per side', 'Nearby cells used to measure background noise.'],
+  'process.detection.nTrain': ['Training cells per side', 'CFAR background cells on each side. More cells reduce threshold loss but cost more.'],
   'process.detection.minDelay': ['Minimum detection delay bin', 'Ignore detections below this delay sample'],
   'process.detection.minDoppler': ['Minimum absolute Doppler', 'Ignore detections closer to zero Doppler than this many Hz'],
   'process.detection.nCentroid': ['Position window', 'Cells used to refine each detection position.'],
