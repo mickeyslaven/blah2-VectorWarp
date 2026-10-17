@@ -134,26 +134,26 @@ const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
  for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
-  bool adaptiveFirst=adaptiveGate()&&state==0u&&src(r+8u)==1u&&src(r+9u)==0u;
-  precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),q=0.0LF;
-  if(adaptiveFirst){span=md(48u)*double(m[37]);q=md(46u)*0.5LF*time*time/md(44u);
-   delayMargin+=q*span;dopplerMargin+=span*time;}
+  bool adaptiveTentative=adaptiveGate()&&state==0u;
+  precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
+  if(adaptiveTentative){gateTime=time*double(src(r+10u)+1u);span=md(48u)*double(m[37]);
+   q=md(46u)*0.5LF*gateTime*gateTime/md(44u);delayMargin+=q*span;dopplerMargin+=span*gateTime;}
   precise double lowDelay=dp-delayMargin,highDelay=dp+delayMargin,lowDoppler=vp-dopplerMargin,highDoppler=vp+dopplerMargin;
   bool validGate=finiteD(lowDelay)&&finiteD(highDelay)&&finiteD(lowDoppler)&&finiteD(highDoppler)&&
-   (!adaptiveFirst||(time>0.0LF&&q>0.0LF&&finiteD(span)));if(m[19]>0u&&!validGate)reject(305u);
+   (!adaptiveTentative||(gateTime>0.0LF&&q>0.0LF&&finiteD(span)));if(m[19]>0u&&!validGate)reject(305u);
   double best=packDouble2x32(uvec2(0u,0x7ff00000u));uint match=0xffffffffu;
   for(uint j=lane;j<m[19];j+=128u){uint at=m[5]+8u*j;double delay=sd(at),doppler=sd(at+2u);
    bool compatible=validGate&&delay>lowDelay&&delay<highDelay&&doppler>lowDoppler&&doppler<highDoppler;
    precise double fitAcc=0.0LF;
-   if(compatible&&adaptiveFirst){precise double dd=delay-dp,dv=doppler-vp,unitDoppler=1.0LF/cpi;
-    precise double accelerationLow=max(-span,max((dv-unitDoppler)/time,(-1.0LF-dd)/q));
-    precise double accelerationHigh=min(span,min((dv+unitDoppler)/time,(1.0LF-dd)/q));
+   if(compatible&&adaptiveTentative){precise double dd=delay-dp,dv=doppler-vp,unitDoppler=1.0LF/cpi;
+    precise double accelerationLow=max(-span,max((dv-unitDoppler)/gateTime,(-1.0LF-dd)/q));
+    precise double accelerationHigh=min(span,min((dv+unitDoppler)/gateTime,(1.0LF-dd)/q));
     compatible=finiteD(accelerationLow)&&finiteD(accelerationHigh)&&accelerationLow<accelerationHigh;
-    if(compatible){precise double denominator=q*q+time*time*cpi*cpi;
-     fitAcc=clamp((time*cpi*cpi*dv-q*dd)/denominator,accelerationLow,accelerationHigh);}}
+    if(compatible){precise double denominator=q*q+gateTime*gateTime*cpi*cpi;
+     fitAcc=clamp((gateTime*cpi*cpi*dv-q*dd)/denominator,accelerationLow,accelerationHigh);}}
    if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))){
     precise double deltaDelay=delay-dp,deltaDoppler=(doppler-vp)*cpi;
-    if(adaptiveFirst){deltaDelay+=q*fitAcc;deltaDoppler=(doppler-vp-fitAcc*time)*cpi;}
+    if(adaptiveTentative){deltaDelay+=q*fitAcc;deltaDoppler=(doppler-vp-fitAcc*gateTime)*cpi;}
     precise double distance=deltaDelay*deltaDelay+deltaDoppler*deltaDoppler;
     if(!finiteD(distance))reject(305u);else if(distance<best){best=distance;match=j;}
    }}
@@ -164,7 +164,9 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
      distances[lane]=distances[other];identities[lane]=identities[other];}}
    barrier();}
   if(lane==0u){match=identities[0];double acc=sourceD(r+6u);bool alive=true;
-   if(match!=0xffffffffu){precise double updated=(sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
+   if(match!=0xffffffffu){precise double updated=adaptiveTentative&&src(r+10u)>0u?
+     sourceD(r+6u)+(sd(m[5]+8u*match+2u)-md(w+2u))/gateTime:
+     (sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;

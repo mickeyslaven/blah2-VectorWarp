@@ -635,6 +635,8 @@ function validateConfig(config, baseline = null) {
     boolean(bearing.enable, 'process.bearing.enable');
     if (bearing.min_consistent !== undefined)
       number(bearing.min_consistent, 'process.bearing.min_consistent', {integer: true, min: 2, max: 100});
+    if (bearing.min_peak_separation_db !== undefined)
+      number(bearing.min_peak_separation_db, 'process.bearing.min_peak_separation_db', {min: 1, max: 15});
     if (bearing.enable) {
       const fusion = processConfig.surveillance_fusion;
       if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||

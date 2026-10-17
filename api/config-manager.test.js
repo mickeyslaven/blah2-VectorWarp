@@ -294,6 +294,8 @@ for (const [key, value] of [
   ['process.tracker.initiate.M', 256], ['process.tracker.initiate.N', 1],
   ['process.tracker.initiate.maxAcc', 1e9], ['network.ip', 'http://localhost'],
   ['process.tracker.initiate.acceleration_model', 'unbounded'],
+  ['process.bearing.min_peak_separation_db', .99],
+  ['process.bearing.min_peak_separation_db', 15.01],
   ['truth.adsb.tar1090', 'file:///etc/passwd'], ['save.path', '/tmp/no-slash'],
   ['capture.replay.format', 'unsupported'], ['process.reference_synthesis.diagonal_loading', -1]
 ]) {

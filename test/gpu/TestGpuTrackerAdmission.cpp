@@ -13,6 +13,10 @@ static bool adaptiveCompatible(double delayDelta,double dopplerDelta,double span
  return std::isfinite(low)&&std::isfinite(high)&&low<high;
 }
 
+static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
+ return frameElapsed*double(inactiveFrames+1);
+}
+
 int main()try{
  using gpu_tracker::boundInitiations;
  auto a=boundInitiations(1024,1005,33,5);
@@ -32,6 +36,14 @@ int main()try{
  require(!adaptiveCompatible(1+delayScale*.5*span*elapsed*elapsed-.01,
   span*elapsed+dopplerMargin-.01,span,elapsed,delayScale,dopplerMargin),
   "adaptive gate accepted an incompatible delay/Doppler corner");
+ constexpr unsigned missed=3;
+ const double gap=adaptiveElapsed(elapsed,missed),weakAcceleration=4;
+ const double delayedDelay=-delayScale*.5*weakAcceleration*gap*gap;
+ const double delayedDoppler=weakAcceleration*gap;
+ require(!adaptiveCompatible(delayedDelay,delayedDoppler,span,elapsed,delayScale,dopplerMargin),
+  "single-CPI gate unexpectedly retained the delayed weak target");
+ require(adaptiveCompatible(delayedDelay,delayedDoppler,span,gap,delayScale,dopplerMargin),
+  "adaptive gate did not retain a weak target across missed CPIs");
  a=boundInitiations(4,4,9,1);
  require(a.admittedDetections==0&&a.droppedDetections==9&&a.totalTracks==4,"full tracker did not preserve committed tracks");
  a=boundInitiations(10,2,3,2);
@@ -40,6 +52,6 @@ int main()try{
  require(rejected,"invalid retained count was accepted");
  rejected=false;try{boundInitiations(3,0,1,0);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"zero hypotheses were accepted");
- std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1\n";
+ std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1\n";
  return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL gpu-tracker-admission: "<<e.what()<<'\n';return 1;}

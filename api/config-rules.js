@@ -37,6 +37,7 @@ const rules = {
   'process.detection.track_before_detect.motion_bins': {...integer(0, 1), optional: true},
   'process.bearing.enable': {type: 'boolean', optional: true},
   'process.bearing.min_consistent': {...integer(2, 100), optional: true},
+  'process.bearing.min_peak_separation_db': {...numeric(1, 15), optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
