@@ -115,7 +115,8 @@ bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  if(cell>=m[4]||post[33]==0u)return false;uint bin=cell%post[33];
  uint packed=clutterPersistence[4u+bin],streak=packed&65535u;
  uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
- uint effective=packed==0u||age>=streak?0u:streak-age;
+ uint missed=age>0u?age-1u:0u;
+ uint effective=packed==0u||missed>=streak?0u:streak-missed;
  return effective<clutterPersistence[1];}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
@@ -236,7 +237,8 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  // it by delay bin so row jitter cannot continually reset site learning.
  uint index=4u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
  while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)return;
-  uint age=(current-last)&65535u,decayed=prior==0u||age>=streak?0u:streak-age;
+  uint age=(current-last)&65535u,missed=age>0u?age-1u:0u;
+  uint decayed=prior==0u||missed>=streak?0u:streak-missed;
   uint next=(current<<16u)|min(65535u,decayed+1u);
   uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}
 }
@@ -494,7 +496,7 @@ public:
   commands([&](VkCommandBuffer command){
     timestamps_->begin(command,0);append(command,1,1);append(command,2,std::max(cells_,config_.capacity));timestamps_->end(command,0);
     timestamps_->begin(command,1);append(command,3,1);timestamps_->end(command,1);
-    timestamps_->begin(command,2);append(command,4,cells_);append(command,13,cells_);append(command,5,1);append(command,6,cells_);timestamps_->end(command,2);
+    timestamps_->begin(command,2);append(command,13,cells_);append(command,4,cells_);append(command,5,1);append(command,6,cells_);timestamps_->end(command,2);
     timestamps_->begin(command,3);append(command,7,128*config_.capacity);append(command,8,128*config_.capacity);append(command,9,1);timestamps_->end(command,3);
     timestamps_->begin(command,4);append(command,10,config_.capacity);timestamps_->end(command,4);
     timestamps_->begin(command,5);append(command,11,1);timestamps_->end(command,5);});
