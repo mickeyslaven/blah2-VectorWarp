@@ -62,6 +62,13 @@ void detectionCases(){
   evidence["reference_state"]["coherent_gain_db"].GetDouble()==6.1&&
   evidence["data"][0]["covariance"].Size()==2&&evidence["bearing_replay"]["channel_mapping"].Size()==2,
   "Sparse manifold evidence serialization differs");
+ // The initial analysis is update one while the completed-frame counter is
+ // still zero. Those counters have different meanings and no ordering rule.
+ auto initial=manifoldEvidence(5,539e6,2.4e6,3,2,2,
+  View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
+  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},0,1,.8,6.1,1.2,1,60,0,1,.01,
+  {mapping.data(),mapping.size()});
+ check(!initial.empty(),"Initial reference update rejected");
  Map<std::complex<double>>map0(3,2),map1(3,2);map0.delay={0,1};map1.delay=map0.delay;
  map0.doppler={-20,0,20};map1.doppler=map0.doppler;map0.data[2][1]={5,6};map1.data[2][1]={7,8};
  Detection cpuEvidence(1.2,18,9);std::vector<Map<std::complex<double>>*>cpuMaps{&map0,&map1};

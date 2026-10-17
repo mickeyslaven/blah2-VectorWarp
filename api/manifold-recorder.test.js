@@ -77,6 +77,10 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
     data: [{cell: 5, delay_km: 10.5, doppler_hz: 18, snr_db: 9,
       response: [[1, 2], [3, 4]], covariance_samples: 8,
       covariance: [[[2, 0], [.5, .25]], [[.5, -.25], [3, 0]]]}]});
+  const firstUpdate = JSON.parse(JSON.stringify(adaptive));
+  firstUpdate.reference_state.frames = 0; firstUpdate.reference_state.updates = 1;
+  assert.doesNotThrow(() => validateEvidence(firstUpdate),
+    'The first analysis update precedes the first completed frame counter');
   const adaptiveFile = path.join(directory, 'adaptive.jsonl');
   const adaptiveConfig = JSON.parse(JSON.stringify(config));
   adaptiveConfig.process.bearing.manifold_recorder.path = adaptiveFile;

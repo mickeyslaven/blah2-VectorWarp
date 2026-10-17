@@ -38,7 +38,7 @@ function validateEvidence(frame) {
   if (frame.reference_state !== undefined) {
     const state = frame.reference_state;
     if (!Number.isSafeInteger(state?.frames) || state.frames < 0 ||
-        !Number.isSafeInteger(state.updates) || state.updates < 0 || state.updates > state.frames ||
+        !Number.isSafeInteger(state.updates) || state.updates < 0 ||
         !finite(state.coherent_fraction) || state.coherent_fraction < 0 ||
         !finite(state.coherent_gain_db) || !finite(state.scale) || state.scale < 0)
       throw new Error('Invalid reference diagnostic state');

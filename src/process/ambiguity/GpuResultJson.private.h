@@ -235,7 +235,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(count<=SIZE_MAX/channels&&detectionsView.count==cells.count&&
   channelMaps.count==size_t(count)*channels&&referenceWeights.count<=8,
   "Manifold evidence shape differs");
- require(referenceUpdates<=referenceFrames&&std::isfinite(coherentFraction)&&coherentFraction>=0&&
+ require(std::isfinite(coherentFraction)&&coherentFraction>=0&&
   std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
   "Invalid reference diagnostic state");
  require(bearingMethod<=1&&bearingScanBeams>=4&&bearingScanBeams<=127&&bearingChannelMapping.count==channels,
