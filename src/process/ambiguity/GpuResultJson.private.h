@@ -341,13 +341,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   require(state<=3&&head<historyCapacity&&length&&display&&display<=length&&
    start<historyCapacity,"GPU bearing history metadata invalid");
   std::vector<double> histogram(scanBeams,0);
-  struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};};
+  struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};uint32_t sample=0;};
   std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0;
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t historyState=w[at+6];stateName(historyState);
    if(historyState!=1u&&historyState!=2u)continue;
-   const uint32_t spatial=w[at+7];Lobes frame;
+   const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
     require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
@@ -372,8 +372,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    constexpr double impossible=-1e100;std::vector<std::array<double,3>>score(frames.size());
    std::vector<std::array<uint8_t,3>>previous(frames.size());
    for(uint32_t k=0;k<3;++k)score[0][k]=frames[0].bin[k]?std::log(std::max(frames[0].weight[k],1e-6)):impossible;
-   const double allowed=std::max(step,config.maxBearingRateDegPerSecond*config.cpiSeconds);
    for(size_t frame=1;frame<frames.size();++frame)for(uint32_t k=0;k<3;++k){score[frame][k]=impossible;if(!frames[frame].bin[k])continue;
+    const double elapsed=config.cpiSeconds*double(frames[frame].sample-frames[frame-1].sample);
+    const double allowed=std::max(step,config.maxBearingRateDegPerSecond*elapsed);
     const uint32_t right=frames[frame].bin[k]-1;for(uint32_t p=0;p<3;++p){if(score[frame-1][p]<=impossible/2||!frames[frame-1].bin[p])continue;
      const uint32_t left=frames[frame-1].bin[p]-1,raw=left>right?left-right:right-left;const double delta=double(std::min(raw,scanBeams-raw))*step;
      if(delta>allowed)continue;
@@ -386,7 +387,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   double x=0,y=0,selectedWeight=0,totalWeight=0,bearingRate=0;uint32_t rateSamples=0;
   for(size_t frameIndex=0;frameIndex<frames.size();++frameIndex){const auto&frame=frames[frameIndex];const uint32_t choice=selected[frameIndex];
    const double angle=double(frame.bin[choice]-1)*step,weight=frame.weight[choice];x+=weight*std::cos(angle*radians);y+=weight*std::sin(angle*radians);selectedWeight+=weight;
-   if(hypothesisTracking&&frameIndex){double delta=angle-double(frames[frameIndex-1].bin[selected[frameIndex-1]]-1)*step;delta=std::remainder(delta,360.0);bearingRate+=delta/config.cpiSeconds;++rateSamples;}
+   if(hypothesisTracking&&frameIndex){double delta=angle-double(frames[frameIndex-1].bin[selected[frameIndex-1]]-1)*step;delta=std::remainder(delta,360.0);
+    const double elapsed=config.cpiSeconds*double(frame.sample-frames[frameIndex-1].sample);bearingRate+=delta/elapsed;++rateSamples;}
    for(double weight:frame.weight)totalWeight+=weight;}
   current=frames.back().bin[selected.back()];if(rateSamples)bearingRate/=rateSamples;
   const double concentration=selectedWeight?std::hypot(x,y)/selectedWeight:0;
