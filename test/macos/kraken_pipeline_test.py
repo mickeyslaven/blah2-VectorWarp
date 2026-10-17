@@ -39,21 +39,24 @@ def main():
     simulation = module('native_simulation', ROOT / 'test/macos/kraken/native_simulation_test.py')
     native = simulation.prepare(args, work)
     lifecycle = module('lifecycle', app / 'script/vectorwarp-macos.py')
-    sockets = [socket.socket() for _ in range(12)]
+    config = json.loads(subprocess.check_output([shutil.which('node'), '-e',
+        'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
+        str(app / 'config/config-kraken.yml')], cwd=app / 'api', text=True))
+    api_port_count = len(config['network']['ports'])
+    sockets = [socket.socket() for _ in range(api_port_count + 4)]
     for sock in sockets:
         sock.bind(('127.0.0.1', 0))
     ports = [sock.getsockname()[1] for sock in sockets]
     for sock in sockets:
         sock.close()
-    config = json.loads(subprocess.check_output([shutil.which('node'), '-e',
-        'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
-        str(app / 'config/config-kraken.yml')], cwd=app / 'api', text=True))
     for index, name in enumerate(config['network']['ports']):
         config['network']['ports'][name] = ports[index]
     api_port = config['network']['ports']['api']
     config['network']['ip'] = '127.0.0.1'
     config['capture']['fc'] = 123500000
-    config['capture']['device']['heimdall'].update(host='127.0.0.1', port=ports[8], control_port=ports[9], gain=40)
+    receiver_ports = ports[api_port_count:]
+    config['capture']['device']['heimdall'].update(host='127.0.0.1',
+        port=receiver_ports[0], control_port=receiver_ports[1], gain=40)
     config['capture']['device']['surveillance_channels'] = [1, 2, 3, 4]
     config['process']['reference_synthesis'].update(mode='dedicated', channels=[0])
     config['process']['performance'].update(acceleration='cpu', surveillance_workers=1, fft_threads=1)
@@ -76,8 +79,8 @@ def main():
     env.update(VECTORWARP_MACOS_ROOT=str(app), VECTORWARP_MACOS_STATE=str(state),
         VECTORWARP_MACOS_CONFIG=str(filename), VECTORWARP_MACOS_PROCESSOR=str(args.binary.resolve(strict=True)),
         VECTORWARP_MACOS_NODE=shutil.which('node'), VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=str(native),
-        VECTORWARP_MACOS_HEIMDALL_HTML=str(html), VECTORWARP_MACOS_HEIMDALL_WEB_PORT=str(ports[10]),
-        VECTORWARP_MACOS_HEIMDALL_RTL_PORT=str(ports[11]), VECTORWARP_KRAKEN_SIM_ROOT=str(sdk),
+        VECTORWARP_MACOS_HEIMDALL_HTML=str(html), VECTORWARP_MACOS_HEIMDALL_WEB_PORT=str(receiver_ports[2]),
+        VECTORWARP_MACOS_HEIMDALL_RTL_PORT=str(receiver_ports[3]), VECTORWARP_KRAKEN_SIM_ROOT=str(sdk),
         VECTORWARP_KRAKEN_SIM_COUNT='5', HEIMDALL_VERBOSE_LOG='1')
     launcher = app / 'script/vectorwarp-macos'
     def run(action, check=True):
