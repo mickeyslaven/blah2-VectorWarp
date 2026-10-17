@@ -83,7 +83,7 @@ uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell]
  if((direction&0x80000000u)!=0u)return direction;
  uint flags=s[post[39]+cell],coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
  return coarse|(fine<<9u)|(quality<<20u);}
-uint coarseBeam(uint spatial){if((spatial&0x80000000u)!=0u){uint fine=spatial&127u;if(!fine)return 0u;
+uint coarseBeam(uint spatial){if((spatial&0x80000000u)!=0u){uint fine=spatial&127u;if(fine==0u)return 0u;
   return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}return spatial&511u;}
 uint detectionBeam(uint i){return coarseBeam(detectionSpatial(i));}
 uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
