@@ -66,9 +66,24 @@ async function disabledDoesNothing() {
   assert.equal(forwarder.status().enabled, false);
 }
 
+async function rejectsIncompleteFrames() {
+  const socket = new Socket();
+  const source = {get: async () => assert.fail('Invalid frames must not query ADS-B')};
+  const forwarder = new TrackerForwarder(config, source, {connect: () => socket});
+  socket.emit('connect');
+  forwarder.accept({delay: [], doppler: [], snr: []});
+  forwarder.accept({timestamp: 1, delay: [], doppler: []});
+  await tick();
+  assert.equal(socket.writes.length, 0);
+  assert.equal(forwarder.status().frames, 2);
+  assert.equal(forwarder.status().invalid, 2);
+  forwarder.close();
+}
+
 (async () => {
   await forwardsAnnotatedDelimitedFrames();
   await keepsOnlyNewestFrameWhileTruthIsSlow();
   await disabledDoesNothing();
+  await rejectsIncompleteFrames();
   console.log('tracker-forward tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

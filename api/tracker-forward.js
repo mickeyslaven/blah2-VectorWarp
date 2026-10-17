@@ -28,7 +28,7 @@ class TrackerForwarder {
     this.queued = null;
     this.closed = false;
     this.counters = {frames: 0, forwarded: 0, overwritten: 0, matches: 0,
-      unmatched: 0, connectAttempts: 0};
+      unmatched: 0, invalid: 0, connectAttempts: 0};
     this.lastForwardAt = null;
     this.error = null;
     if (this.enabled) this.open();
@@ -71,6 +71,11 @@ class TrackerForwarder {
   accept(frame) {
     if (!this.enabled) return;
     this.counters.frames += 1;
+    if (!frame || !finite(frame.timestamp) || !Array.isArray(frame.delay) ||
+        !Array.isArray(frame.doppler) || !Array.isArray(frame.snr)) {
+      this.counters.invalid += 1;
+      return;
+    }
     if (this.queued) this.counters.overwritten += 1;
     this.queued = frame;
     this.drain();

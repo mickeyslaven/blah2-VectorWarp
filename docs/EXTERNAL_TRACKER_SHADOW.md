@@ -33,3 +33,5 @@ Inspect `/api/tracker-forward` for connection state, frames received and sent,
 pending-frame overwrites, ADS-B matches, the most recent send time, and errors.
 An increasing `overwritten` count means the shadow consumer or ADS-B lookup is
 not keeping pace; it does not imply a dropped radar CPI.
+Incomplete detection-stream messages are rejected and counted as `invalid`
+instead of being allowed to terminate a strict external consumer.
