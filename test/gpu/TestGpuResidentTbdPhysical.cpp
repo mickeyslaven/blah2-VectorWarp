@@ -40,6 +40,7 @@ Config configuration(const char* device) {
   c.detector.centroidDopplerResolution = resolution;
   c.detector.integrationCpis = 8;
   c.detector.integrationMotionBins = 1;
+  c.detector.integrationBeamTolerance = 1;
   c.device = device;
   c.presence = wire::mandatoryPresence(c);
   return c;
