@@ -725,6 +725,7 @@ public:
   <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
   <<" joint_angle_tbd="<<(config_.integrationCpis>2&&config_.integrationBeamTolerance!=UINT32_MAX)
+  <<" bearing_manifold="<<(config_.bearingManifoldResponses.empty()?"ideal":"measured")
   <<" bearing_exclusion_bins="<<config_.bearingExclusionBins
   <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);

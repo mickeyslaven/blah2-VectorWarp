@@ -106,8 +106,9 @@ function locationsFromBearing(frame, config, hypothesisTracker = null) {
     // exposing the best estimate for diagnostic displays even when confidence
     // is insufficient to resolve the bearing.
     const selected = hypothesisTracker?.select(track.id, Number(frame?.timestamp), candidates);
-    const estimate = selected || locate(rx, tx, excessPathM, track.bearing_deg_true);
-    const point = track.resolved ? estimate : null;
+    const currentEstimate = locate(rx, tx, excessPathM, track.bearing_deg_true);
+    const estimate = selected || currentEstimate;
+    const point = track.resolved ? currentEstimate : null;
     const uncertainty = finite(track.uncertainty_deg) ? Math.min(180, Math.max(0, track.uncertainty_deg)) : 180;
     const corridor = point ? [locate(rx, tx, excessPathM, normalize(track.bearing_deg_true - uncertainty)),
       point, locate(rx, tx, excessPathM, normalize(track.bearing_deg_true + uncertainty))].filter(Boolean) : [];
