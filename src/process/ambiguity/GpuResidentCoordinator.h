@@ -93,7 +93,9 @@ public:
     config().sampleRate,config().geometry.doppler,config().geometry.delays,
     config().geometry.channels,json::View<DetectionRecord>{v.detections.data,v.detections.size},
     {v.detectionCells.data,v.detectionCells.size},{v.maps.data,v.maps.size},
-    {reference.weights.data(),reference.weightCount},uint32_t(config().bearing.method),config().bearing.scanBeams,
+    {reference.weights.data(),reference.weightCount},reference.frames,reference.updates,
+    reference.coherentFraction,reference.coherentGainDb,reference.scale,
+    uint32_t(config().bearing.method),config().bearing.scanBeams,
     config().bearing.guardRadius,config().bearing.trainingRadius,config().bearing.diagonalLoading,
     {config().bearing.channelMapping.data(),config().bearing.channelMapping.size()});}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;

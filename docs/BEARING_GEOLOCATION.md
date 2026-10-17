@@ -187,6 +187,18 @@ Recorder health and counts are available at
 radar: the API keeps at most the newest evidence frame while matching or writing.
 Full ambiguity maps are never copied or stored.
 
+The recorder also writes `<path>.reference.jsonl` whenever the array-eigenbeam
+reference analysis advances. This bounded shadow log stores the coherent
+fraction/gain and each channel's complex principal-eigenvector response relative
+to channel 0 (or the strongest channel if channel 0 is unusable), together with
+the maximum phase and amplitude step since the preceding update. It does not
+alter calibration, bearing, detection, tracking, or Retina output. Use it to
+distinguish time-varying interchannel drift from a stable installed-site
+manifold: stable reference phase with repeatable wrong lobes points to mounting
+or multipath, while phase motion correlated with bearing errors supports a
+future, separately qualified correction. Site fingerprint changes archive this
+log and begin a clean collection alongside the manifold samples.
+
 When covariance MVDR is active, each accepted sample also stores the small
 per-target loaded spatial covariance used by the live scorer. This is bounded by
 eight channels and the already accepted sparse detections; it does not retain a

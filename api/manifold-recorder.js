@@ -35,6 +35,14 @@ function validateEvidence(frame) {
       frame.reference_weights.some(value => !Array.isArray(value) || value.length !== 2 ||
         !value.every(finite)) || !Array.isArray(frame.data) || frame.data.length > 65536)
     throw new Error('Invalid manifold evidence frame');
+  if (frame.reference_state !== undefined) {
+    const state = frame.reference_state;
+    if (!Number.isSafeInteger(state?.frames) || state.frames < 0 ||
+        !Number.isSafeInteger(state.updates) || state.updates < 0 || state.updates > state.frames ||
+        !finite(state.coherent_fraction) || state.coherent_fraction < 0 ||
+        !finite(state.coherent_gain_db) || !finite(state.scale) || state.scale < 0)
+      throw new Error('Invalid reference diagnostic state');
+  }
   if (frame.schema === 'vectorwarp-manifold-evidence-v2') {
     const replay = frame.bearing_replay;
     if (!replay || !['coherent_beam_bank', 'covariance_mvdr'].includes(replay.method) ||
@@ -86,7 +94,10 @@ class ManifoldRecorder {
       (automatic && automaticallyEligible(config)),
       automatic, frames: 0, samples: 0,
       unmatched: 0, staleTruth: 0, elevationRejected: 0, ambiguous: 0,
-      lastWriteAt: null, error: null, path: this.options.path || null};
+      lastWriteAt: null, error: null, path: this.options.path || null,
+      referencePath: this.options.path ? `${this.options.path}.reference.jsonl` : null,
+      referenceUpdates: 0, referenceSamples: 0, lastReferenceAt: null,
+      maxReferencePhaseStepDeg: null, maxReferenceAmplitudeStepDb: null};
     const fingerprint = {
       frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
       surveillance_channels: config.capture?.device?.surveillance_channels,
@@ -108,6 +119,8 @@ class ManifoldRecorder {
     };
     this.fingerprint = crypto.createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex');
     this.sitePrepared = false;
+    this.lastReferenceUpdate = null;
+    this.lastRelativeReference = null;
   }
 
   status() { return {...this.state, queued: this.latest !== null, active: this.running}; }
@@ -132,8 +145,7 @@ class ManifoldRecorder {
     } finally { this.running = false; }
   }
 
-  async rotate(bytes) {
-    const filename = this.options.path;
+  async rotate(bytes, filename = this.options.path) {
     const limit = this.options.max_file_mb * 1024 * 1024;
     let size = 0;
     try { size = (await this.fs.promises.stat(filename)).size; }
@@ -152,6 +164,24 @@ class ManifoldRecorder {
     }
   }
 
+  async archiveSiteFile(filename) {
+    if (this.options.max_files === 1) {
+      try { await this.fs.promises.unlink(filename); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+      return;
+    }
+    for (let i = this.options.max_files - 2; i >= 1; --i) {
+      try { await this.fs.promises.rename(`${filename}.site-previous.${i}`,
+        `${filename}.site-previous.${i + 1}`); }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    try { await this.fs.promises.rename(`${filename}.site-previous`,
+      `${filename}.site-previous.1`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    try { await this.fs.promises.rename(filename, `${filename}.site-previous`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+
   async prepareSite() {
     if (this.sitePrepared) return;
     const filename = this.options.path, metadata = `${filename}.site.json`;
@@ -167,21 +197,8 @@ class ManifoldRecorder {
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     if (prior?.fingerprint && prior.fingerprint !== this.fingerprint) {
-      if (this.options.max_files === 1) {
-        try { await this.fs.promises.unlink(filename); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-      } else {
-        for (let i = this.options.max_files - 2; i >= 1; --i) {
-          try { await this.fs.promises.rename(`${filename}.site-previous.${i}`,
-            `${filename}.site-previous.${i + 1}`); }
-          catch (error) { if (error.code !== 'ENOENT') throw error; }
-        }
-        try { await this.fs.promises.rename(`${filename}.site-previous`,
-          `${filename}.site-previous.1`); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-        try { await this.fs.promises.rename(filename, `${filename}.site-previous`); }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-      }
+      await this.archiveSiteFile(filename);
+      await this.archiveSiteFile(this.state.referencePath);
       this.state.siteResetAt = Date.now();
     }
     await this.fs.promises.mkdir(path.dirname(filename), {recursive: true});
@@ -193,9 +210,60 @@ class ManifoldRecorder {
     this.sitePrepared = true;
   }
 
+  relativeReference(weights) {
+    let anchor = 0;
+    const magnitudes = weights.map(value => Math.hypot(value[0], value[1]));
+    if (!(magnitudes[anchor] > 1e-12)) anchor = magnitudes.indexOf(Math.max(...magnitudes));
+    if (anchor < 0 || !(magnitudes[anchor] > 1e-12)) return null;
+    const [ar, ai] = weights[anchor], denominator = ar * ar + ai * ai;
+    return {anchor_channel: anchor, channels: weights.map(([real, imaginary]) => {
+      const ratioReal = (real * ar + imaginary * ai) / denominator;
+      const ratioImag = (imaginary * ar - real * ai) / denominator;
+      return {amplitude_db: 20 * Math.log10(Math.max(1e-15, Math.hypot(ratioReal, ratioImag))),
+        phase_deg: degrees(Math.atan2(ratioImag, ratioReal))};
+    })};
+  }
+
+  async recordReference(frame) {
+    const state = frame.reference_state;
+    if (!state || state.updates === this.lastReferenceUpdate) return;
+    const relative = this.relativeReference(frame.reference_weights);
+    if (!relative) return;
+    let maxPhaseStep = null, maxAmplitudeStep = null;
+    if (this.lastRelativeReference?.anchor_channel === relative.anchor_channel) {
+      maxPhaseStep = 0; maxAmplitudeStep = 0;
+      for (let index = 0; index < relative.channels.length; ++index) {
+        const current = relative.channels[index], prior = this.lastRelativeReference.channels[index];
+        const phase = Math.abs(((current.phase_deg - prior.phase_deg + 540) % 360) - 180);
+        maxPhaseStep = Math.max(maxPhaseStep, phase);
+        maxAmplitudeStep = Math.max(maxAmplitudeStep,
+          Math.abs(current.amplitude_db - prior.amplitude_db));
+      }
+    }
+    const record = {schema: 'vectorwarp-reference-drift-v1',
+      recorded_at: new Date().toISOString(), radar_timestamp_ms: frame.timestamp,
+      frequency_hz: frame.frequency_hz, sample_rate_hz: frame.sample_rate_hz,
+      config_fingerprint: this.fingerprint, reference_state: state,
+      relative_eigenvector: relative,
+      change_from_previous: {max_phase_step_deg: maxPhaseStep,
+        max_amplitude_step_db: maxAmplitudeStep}};
+    const payload = JSON.stringify(record) + '\n';
+    await this.fs.promises.mkdir(path.dirname(this.state.referencePath), {recursive: true});
+    await this.rotate(Buffer.byteLength(payload), this.state.referencePath);
+    await this.fs.promises.appendFile(this.state.referencePath, payload, {mode: 0o600});
+    this.lastReferenceUpdate = state.updates;
+    this.lastRelativeReference = relative;
+    ++this.state.referenceSamples;
+    this.state.referenceUpdates = state.updates;
+    this.state.lastReferenceAt = Date.now();
+    this.state.maxReferencePhaseStepDeg = maxPhaseStep;
+    this.state.maxReferenceAmplitudeStepDb = maxAmplitudeStep;
+  }
+
   async record(frame) {
     await this.prepareSite();
     ++this.state.frames;
+    await this.recordReference(frame);
     if (!frame.data.length) return;
     const [raw, delayDoppler] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
@@ -267,6 +335,7 @@ class ManifoldRecorder {
           doppler_hz: evidence.doppler_hz, snr_db: evidence.snr_db},
         direct_path_local_azimuth_deg: normalize(orientation - direct.bearingDeg),
         response: evidence.response, reference_weights: frame.reference_weights,
+        ...(frame.reference_state ? {reference_state: frame.reference_state} : {}),
         ...(frame.bearing_replay ? {bearing_replay: frame.bearing_replay} : {}),
         ...(evidence.covariance ? {covariance: evidence.covariance,
           covariance_samples: evidence.covariance_samples} : {})});

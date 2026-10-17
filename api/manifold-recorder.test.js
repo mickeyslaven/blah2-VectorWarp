@@ -72,6 +72,8 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
     reference_weights: [[1, 0], [0, 1]], bearing_replay: {method: 'covariance_mvdr',
       scan_beams: 60, guard_radius: 0, training_radius: 1, diagonal_loading: .01,
       channel_mapping: [0, 1]},
+    reference_state: {frames: 20, updates: 2, coherent_fraction: .8,
+      coherent_gain_db: 5.5, scale: 1.2},
     data: [{cell: 5, delay_km: 10.5, doppler_hz: 18, snr_db: 9,
       response: [[1, 2], [3, 4]], covariance_samples: 8,
       covariance: [[[2, 0], [.5, .25]], [[.5, -.25], [3, 0]]]}]});
@@ -83,6 +85,20 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   const adaptiveRow = JSON.parse(fs.readFileSync(adaptiveFile, 'utf8').trim());
   assert.equal(adaptiveRow.bearing_replay.method, 'covariance_mvdr');
   assert.deepEqual(adaptiveRow.covariance, adaptive.data[0].covariance);
+  assert.equal(adaptiveRow.reference_state.updates, 2);
+  const referenceFile = `${adaptiveFile}.reference.jsonl`;
+  let referenceRows = fs.readFileSync(referenceFile, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(referenceRows.length, 1);
+  assert.equal(referenceRows[0].relative_eigenvector.anchor_channel, 0);
+  assert.equal(referenceRows[0].relative_eigenvector.channels[1].phase_deg, 90);
+  const moved = JSON.parse(JSON.stringify(adaptive));
+  moved.timestamp += 5000; moved.reference_state.frames += 10; moved.reference_state.updates += 1;
+  moved.reference_weights[1] = [Math.SQRT1_2, Math.SQRT1_2];
+  await adaptiveRecorder.record(moved);
+  referenceRows = fs.readFileSync(referenceFile, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(referenceRows.length, 2);
+  assert.ok(Math.abs(referenceRows[1].change_from_previous.max_phase_step_deg - 45) < 1e-9);
+  assert.equal(adaptiveRecorder.status().referenceSamples, 2);
   fs.rmSync(directory, {recursive: true});
   console.log('Manifold recorder: automatic eligibility, site reset, sparse matching, and portable labelled JSONL passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

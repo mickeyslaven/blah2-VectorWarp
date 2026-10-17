@@ -53,11 +53,13 @@ void detectionCases(){
  const std::vector<uint32_t>mapping{0,1};
  rapidjson::Document evidence;evidence.Parse(manifoldEvidence(5,539e6,2.4e6,3,2,2,
   View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
-  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},1,60,0,1,.01,
+  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},20,2,.8,6.1,1.2,1,60,0,1,.01,
   {mapping.data(),mapping.size()}).c_str());
  check(!evidence.HasParseError()&&std::string(evidence["schema"].GetString())=="vectorwarp-manifold-evidence-v2"&&
   evidence["data"].Size()==1&&evidence["data"][0]["response"][0][0].GetDouble()==1&&
   evidence["data"][0]["response"][1][1].GetDouble()==4&&evidence["reference_weights"].Size()==2&&
+  evidence["reference_state"]["updates"].GetUint64()==2&&
+  evidence["reference_state"]["coherent_gain_db"].GetDouble()==6.1&&
   evidence["data"][0]["covariance"].Size()==2&&evidence["bearing_replay"]["channel_mapping"].Size()==2,
   "Sparse manifold evidence serialization differs");
  Map<std::complex<double>>map0(3,2),map1(3,2);map0.delay={0,1};map1.delay=map0.delay;

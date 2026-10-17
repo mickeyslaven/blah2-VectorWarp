@@ -225,6 +225,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
  View<Record> detectionsView,View<uint32_t> cells,
  View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights,
+ uint64_t referenceFrames,uint64_t referenceUpdates,double coherentFraction,double coherentGainDb,double referenceScale,
  uint32_t bearingMethod,uint32_t bearingScanBeams,uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
  double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping){
  shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
@@ -234,6 +235,9 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(count<=SIZE_MAX/channels&&detectionsView.count==cells.count&&
   channelMaps.count==size_t(count)*channels&&referenceWeights.count<=8,
   "Manifold evidence shape differs");
+ require(referenceUpdates<=referenceFrames&&std::isfinite(coherentFraction)&&coherentFraction>=0&&
+  std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
+  "Invalid reference diagnostic state");
  require(bearingMethod<=1&&bearingScanBeams>=4&&bearingScanBeams<=127&&bearingChannelMapping.count==channels,
   "Invalid manifold replay configuration");
  std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
@@ -257,7 +261,10 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  w.Key("reference_weights");w.StartArray();
  for(size_t i=0;i<referenceWeights.count;++i){const auto value=referenceWeights.data[i];
   finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
- w.EndArray();w.Key("data");w.StartArray();
+ w.EndArray();w.Key("reference_state");w.StartObject();
+ w.Key("frames");w.Uint64(referenceFrames);w.Key("updates");w.Uint64(referenceUpdates);
+ w.Key("coherent_fraction");w.Double(coherentFraction);w.Key("coherent_gain_db");w.Double(coherentGainDb);
+ w.Key("scale");w.Double(referenceScale);w.EndObject();w.Key("data");w.StartArray();
  for(size_t i=0;i<detectionsView.count;++i){const auto& detection=detectionsView.data[i];
   finite(detection.delay);finite(detection.delayKm);finite(detection.doppler);finite(detection.snr);
   const uint32_t cell=cells.data[i];require(cell<count,"Manifold evidence cell out of range");
