@@ -11,10 +11,10 @@
 #include <string>
 #include <vector>
 
-// Adjacent, explicitly admitted ABI; never reinterpret an ABI4 object/mapping.
+// Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=5;
-constexpr uint32_t protocol=0x42475205,packetBytes=160,configBytes=512;
+constexpr unsigned moduleAbi=6;
+constexpr uint32_t protocol=0x42475206,packetBytes=160,configBytes=640;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -61,6 +61,16 @@ struct DetectorConfig {
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
+enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
+struct BearingConfig {
+ bool enabled=false;
+ BearingMethod method=BearingMethod::coherentBeamBank;
+ uint32_t scanBeams=0,candidatePeaks=3,guardRadius=1,trainingRadius=3;
+ double diagonalLoading=.01;
+ // Bearing-only logical-channel to physical-element permutation. Detection
+ // fusion keeps its established path and is therefore unaffected.
+ std::vector<uint32_t> channelMapping;
+};
 enum class TrackerInitiationMode:uint32_t {hypothesisBank=0,adaptiveGate=1};
 struct TrackerConfig {
  bool enabled=false;
@@ -85,6 +95,7 @@ struct Config {
  std::vector<double> dopplerAxis;
  ReferenceConfig reference;
  FusionConfig fusion;
+ BearingConfig bearing;
  DetectorConfig detector;
  TrackerConfig tracker;
  std::string device;

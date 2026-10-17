@@ -84,6 +84,15 @@ void trackCases(){
  rapidjson::Document strict;strict.Parse(bearingCheckpoint(9,raw(),spatial,{true,12,4,2,80,30,5}).c_str());
  check(!strict.HasParseError()&&strict["min_peak_separation_db"].GetUint()==5&&
   !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");
+ auto multi=spatial;multi.scanBeamCount=60;auto packed=[](uint32_t a,uint32_t b,uint32_t c,uint32_t rb,uint32_t rc){return 0x80000000u|a|(b<<7u)|(c<<14u)|(rb<<21u)|(rc<<26u);};
+ bank[base+16+8*(498%historyCapacity)+7]=packed(10,30,50,25,10);
+ bank[base+16+8*(499%historyCapacity)+7]=packed(11,30,50,25,10);
+ bank[base+16+8*(500%historyCapacity)+7]=packed(10,30,50,25,10);
+ rapidjson::Document adaptive;adaptive.Parse(bearingCheckpoint(10,raw(),multi,{true,12,5,2,80,30,3,1,60}).c_str());
+ check(!adaptive.HasParseError()&&std::string(adaptive["method"].GetString())=="covariance_mvdr"&&
+  adaptive["fine_beams"].GetUint()==60&&adaptive["data"][0]["consistent_samples"].GetUint()==3&&
+  adaptive["data"][0]["candidates"].Size()==3&&!adaptive["data"][0]["resolved"].GetBool(),
+  "Adaptive multi-lobe bearing publication differs");
  bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
  same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));

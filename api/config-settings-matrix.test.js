@@ -146,8 +146,16 @@ try {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
   });
   bearing.process.bearing.enable = true;
+  bearing.process.bearing.method = 'covariance_mvdr';
+  bearing.process.bearing.scan_beams = 60;
+  bearing.process.bearing.guard_radius = 2;
+  bearing.process.bearing.training_radius = 4;
+  bearing.process.bearing.diagonal_loading = .02;
+  bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
   persistGroup('kraken-bearing-output', fusion, bearing,
-    ['process.bearing.enable']);
+    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.scan_beams',
+      'process.bearing.guard_radius', 'process.bearing.training_radius',
+      'process.bearing.diagonal_loading', 'process.bearing.channel_mapping']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};

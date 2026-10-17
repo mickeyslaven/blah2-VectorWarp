@@ -10,6 +10,10 @@ struct PostprocessConfig {
  uint32_t integrationCpis=1;
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
  uint32_t bearingExclusionBins=0;
+ uint32_t bearingMethod=0,bearingScanBeams=0,bearingCandidatePeaks=3;
+ uint32_t bearingGuardRadius=1,bearingTrainingRadius=3;
+ float bearingDiagonalLoading=.01f;
+ std::vector<uint32_t> bearingChannelMapping;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -45,7 +49,7 @@ enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarC
  refinedCandidates=15,cfarDiagnosticRecords=16,centroidDiagnosticRecords=17,
  compactTileCounts=23,compactPrefixTiles=24,compactScatterCells=25,compactKinds=26,statusWords=32};
 struct Layout {
- uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,records=0;
+ uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,direction=0,records=0;
  uint64_t bytes=0;
 };
 inline Layout layout(uint32_t rows,uint32_t columns){
@@ -60,7 +64,8 @@ inline Layout layout(uint32_t rows,uint32_t columns){
  l.keep=uint32_t(7*count);
  l.indices=uint32_t(8*count);
  l.candidates=uint32_t((9*count+1)&~uint64_t(1));
- l.records=l.candidates+6*l.cells;
+ l.direction=l.candidates+6*l.cells;
+ l.records=l.direction+l.cells;
  l.bytes=uint64_t(l.records+8*l.cells)*4;
  return l;
 }
@@ -77,6 +82,11 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
     c.integrationMotionBins>1||(!tbd&&c.integrationCpis!=2&&c.integrationMotionBins)||
     (tbd&&(!c.detection||!c.beamCount))||
+    (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
+      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||
+      c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
+      c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
+      c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
     (c.integrationBeamTolerance!=UINT32_MAX&&(!c.beamCount||c.integrationBeamTolerance>c.beamCount/2))||
     (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
@@ -241,34 +251,51 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u)return;if(p.b!=0u){s[m[39]+i]
 }
 )glsl";
 const char* refineBody=R"glsl(
+vec2 cmul(vec2 a,vec2 b){return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);}
+vec2 cdiv(vec2 a,vec2 b){float d=dot(b,b);return vec2(a.x*b.x+a.y*b.y,a.y*b.x-a.x*b.y)/d;}
+float beamScore(uint beam,uint channels,uint cell,uint shifted,bool adaptive,vec2 inverse[64]){
+ vec2 values[8],filtered[8];for(uint c=0u;c<channels;++c)values[c]=channelMaps[c*m[34]+cell%m[33]*m[32]+shifted];
+ if(adaptive){for(uint a=0u;a<channels;++a){filtered[a]=vec2(0.0);for(uint b=0u;b<channels;++b)filtered[a]+=cmul(inverse[a*8u+b],values[b]);}}
+ vec2 numerator=vec2(0.0);for(uint c=0u;c<channels;++c)numerator+=cmul(refineWeights[beam*channels+c],adaptive?filtered[c]:values[c]);
+ if(!adaptive)return dot(numerator,numerator);
+ vec2 denominator=vec2(0.0);for(uint a=0u;a<channels;++a){vec2 z=vec2(0.0);
+  for(uint b=0u;b<channels;++b){vec2 steering=refineWeights[beam*channels+b];steering.y=-steering.y;z+=cmul(inverse[a*8u+b],steering);}
+  denominator+=cmul(refineWeights[beam*channels+a],z);}
+ return dot(numerator,numerator)/max(abs(denominator.x),1e-12);
+}
+bool excluded(uint beam,uint selected,uint fine,uint radius){uint d=beam>selected?beam-selected:selected-beam;return min(d,fine-d)<=radius;}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
  uint row=i/m[33],column=i%m[33],factor=m[81],channels=m[82],fine=m[83];
- uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u;float best=-1.0,second=-1.0;
- // Search the complete fine ring.  The old local five-beam search compared
- // adjacent oversampled points from the same broad main lobe and therefore
- // quantized every otherwise useful confidence margin to zero.
- for(uint beam=0u;beam<fine;++beam){vec2 sum=vec2(0.0);
-  for(uint channel=0u;channel<channels;++channel){vec2 value=channelMaps[channel*m[34]+column*m[32]+shifted],weight=refineWeights[beam*channels+channel];
-   sum+=vec2(weight.x*value.x-weight.y*value.y,weight.x*value.y+weight.y*value.x);}
-  float power=sum.x*sum.x+sum.y*sum.y;if(power>best){best=power;bestBeam=beam;}
+ uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u,secondBeam=0u,thirdBeam=0u;float best=-1.0,second=-1.0,third=-1.0;
+ vec2 covariance[64],inverse[64];for(uint k=0u;k<64u;++k){covariance[k]=vec2(0.0);inverse[k]=vec2(0.0);}
+ bool adaptive=m[87]==1u;uint samples=0u;
+ if(adaptive){int training=int(m[89]),guard=int(m[88]);
+  for(int dr=-training;dr<=training;++dr)for(int dc=-training;dc<=training;++dc){if(abs(dr)<=guard&&abs(dc)<=guard)continue;
+   int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
+   uint sh=(uint(rr)+m[32]/2u+1u)%m[32];vec2 v[8];for(uint c=0u;c<channels;++c)v[c]=channelMaps[c*m[34]+uint(cc)*m[32]+sh];
+   for(uint a=0u;a<channels;++a)for(uint b=0u;b<channels;++b)covariance[a*8u+b]+=vec2(v[a].x*v[b].x+v[a].y*v[b].y,v[a].y*v[b].x-v[a].x*v[b].y);samples++;}
+  float trace=0.0;for(uint c=0u;c<channels;++c)trace+=covariance[c*8u+c].x;
+  float load=max(trace/max(float(samples*channels),1.0)*uintBitsToFloat(m[90]),1e-12);
+  for(uint a=0u;a<channels;++a){for(uint b=0u;b<channels;++b)covariance[a*8u+b]/=max(float(samples),1.0);covariance[a*8u+a].x+=load;inverse[a*8u+a]=vec2(1.0,0.0);}
+  for(uint pivot=0u;pivot<channels;++pivot){uint choice=pivot;float magnitude=dot(covariance[pivot*8u+pivot],covariance[pivot*8u+pivot]);
+   for(uint r=pivot+1u;r<channels;++r){float candidate=dot(covariance[r*8u+pivot],covariance[r*8u+pivot]);if(candidate>magnitude){magnitude=candidate;choice=r;}}
+   if(!(magnitude>1e-20)){adaptive=false;break;}if(choice!=pivot)for(uint c=0u;c<channels;++c){vec2 q=covariance[pivot*8u+c];covariance[pivot*8u+c]=covariance[choice*8u+c];covariance[choice*8u+c]=q;q=inverse[pivot*8u+c];inverse[pivot*8u+c]=inverse[choice*8u+c];inverse[choice*8u+c]=q;}
+   vec2 divisor=covariance[pivot*8u+pivot];for(uint c=0u;c<channels;++c){covariance[pivot*8u+c]=cdiv(covariance[pivot*8u+c],divisor);inverse[pivot*8u+c]=cdiv(inverse[pivot*8u+c],divisor);}
+   for(uint r=0u;r<channels;++r)if(r!=pivot){vec2 multiplier=covariance[r*8u+pivot];for(uint c=0u;c<channels;++c){covariance[r*8u+c]-=cmul(multiplier,covariance[pivot*8u+c]);inverse[r*8u+c]-=cmul(multiplier,inverse[pivot*8u+c]);}}
+  }
  }
- // Confidence compares the winner with the strongest angularly independent
- // alternative, never a neighbouring interpolation point inside the array's
- // aperture-limited main lobe.
- for(uint beam=0u;beam<fine;++beam){uint delta=beam>bestBeam?beam-bestBeam:bestBeam-beam;
-  if(min(delta,fine-delta)<=m[85])continue;vec2 sum=vec2(0.0);
-  for(uint channel=0u;channel<channels;++channel){vec2 value=channelMaps[channel*m[34]+column*m[32]+shifted],weight=refineWeights[beam*channels+channel];
-   sum+=vec2(weight.x*value.x-weight.y*value.y,weight.x*value.y+weight.y*value.x);}
-  float power=sum.x*sum.x+sum.y*sum.y;if(power>second)second=power;
- }
+ for(uint beam=0u;beam<fine;++beam){float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>best){best=power;bestBeam=beam;}}
+ for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
+ for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
  double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
- if(refined>base&&base>0.0LF){double gain=20.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
+ if(m[87]==0u&&refined>base&&base>0.0LF){double gain=20.0LF*positiveLog10(refined/base);double snr=readS(record+4u)+gain;
   if(!finiteD(snr)){reject(210u);return;}writeS(record+4u,snr);writeS(m[38]+2u*i,readS(m[38]+2u*i)+gain);}
- uint nearest=((bestBeam+factor/2u)/factor)%m[75];float margin=second>0.0?10.0*log(best/second)/log(10.0):15.0;
- uint quality=uint(clamp(floor(margin),0.0,15.0));
- // Low byte remains detector state. Retain both the association-compatible
- // coarse beam and the 4x refined winner plus a bounded peak-separation hint.
- s[m[39]+i]=(s[m[39]+i]&255u)|((nearest+1u)<<8u)|((bestBeam+1u)<<17u)|(quality<<28u);atomicAdd(m[15],1u);
+ uint ratio2=second>0.0?uint(clamp(round(31.0*second/best),0.0,31.0)):0u;
+ uint ratio3=third>0.0?uint(clamp(round(31.0*third/best),0.0,31.0)):0u;
+ // Versioned per-frame three-lobe evidence. Detection/tracker association
+ // derives its coarse beam from the primary; legacy public track JSON ignores it.
+ s[m[86]+i]=0x80000000u|(bestBeam+1u)|((secondBeam+1u)<<7u)|((thirdBeam+1u)<<14u)|(ratio2<<21u)|(ratio3<<26u);
+ atomicAdd(m[15],1u);
 }
 )glsl";
 const char* centroidBody=R"glsl(
@@ -427,8 +454,12 @@ public:
   const bool tbd=config.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config.integrationCpis):0;
   const uint32_t detectorPasses=tbd?track_before_detect::detectorPassCount(config.integrationCpis):1u;
-  if(tbd&&(!channelMaps||!refinementWeights||!channels||refinementBeams!=config.beamCount*4u))
+  if(tbd&&(!channelMaps||!refinementWeights||!channels||
+    refinementBeams!=(config.bearingScanBeams?config.bearingScanBeams:config.beamCount*4u)))
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED track-before-detect refinement binding");
+  if(config.bearingScanBeams){std::vector<bool> used(channels,false);
+   if(config.bearingChannelMapping.size()!=channels)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED bearing channel mapping");
+   for(auto channel:config.bearingChannelMapping){if(channel>=channels||used[channel])throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED bearing channel mapping");used[channel]=true;}}
   if(fused.bytes<uint64_t(layout_.cells)*16||scratch.bytes<layout_.bytes||staging.bytes<8||!staging.mapped||staging.bytes%8||
      fused.handle==scratch.handle||fused.handle==staging.handle||scratch.handle==staging.handle)
    throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED scratch/staging binding");
@@ -446,6 +477,7 @@ public:
   words[41]=layout_.indices;
   words[42]=layout_.candidates;
   words[43]=layout_.records;
+  words[86]=layout_.direction;
   words[44]=doppler;
   words[45]=delay;
   words[46]=windows;
@@ -465,11 +497,15 @@ public:
   words[78]=tbd?1u:0u;
   words[79]=0;
   words[80]=banks;
-  words[81]=tbd?4u:0u;
+  words[81]=tbd?(config.bearingScanBeams?config.bearingScanBeams/config.beamCount:4u):0u;
   words[82]=channels;
   words[83]=refinementBeams;
   words[84]=windowWords;
   words[85]=config.bearingExclusionBins;
+  words[87]=config.bearingMethod;
+  words[88]=config.bearingGuardRadius;
+  words[89]=config.bearingTrainingRadius;
+  std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
   for(uint32_t r=0;r<rows;++r)putD(words.data(),doppler+2*r,config.dopplerAxis[r]);

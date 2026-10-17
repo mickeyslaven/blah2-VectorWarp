@@ -56,10 +56,26 @@ void validateConfig(const Config& c){
  else require(!f.beams&&f.frequencyHz==0&&f.radiusM==0&&f.element0Rad==0&&
   f.elementStepRad==0&&f.directPathAzimuthRad==0&&f.directPathNullDb==0,
   "Resident noncoherent fusion configuration invalid");
+ const auto& d=c.detector;
+ const auto& b=c.bearing;
+ require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
+  "Resident bearing method invalid");
+ if(b.enabled){
+  require(f.mode!=FusionMode::noncoherent&&d.enabled&&c.tracker.enabled&&
+   b.scanBeams>=f.beams&&b.scanBeams<=127&&b.scanBeams%f.beams==0&&
+   b.candidatePeaks==3&&b.guardRadius<=3&&b.trainingRadius>b.guardRadius&&
+   b.trainingRadius<=6&&std::isfinite(b.diagonalLoading)&&
+   b.diagonalLoading>0&&b.diagonalLoading<=1&&
+   b.channelMapping.size()==g.channels,"Resident bearing configuration invalid");
+  std::vector<bool> used(g.channels,false);
+  for(auto channel:b.channelMapping){require(channel<g.channels&&!used[channel],
+    "Resident bearing channel mapping invalid");used[channel]=true;}
+ }else require(!b.scanBeams&&b.candidatePeaks==3&&b.guardRadius==1&&
+  b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty(),
+  "Disabled resident bearing has configuration");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
- const auto& d=c.detector;
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
  if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&
   (d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&d.integrationMotionBins<=1&&
@@ -95,7 +111,7 @@ const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g
  uint64_t offset=bytes?align(at,64):0;
  if(bytes)at=add(offset,bytes);
  l.sections[l.count++]={uint32_t(id),type,width,access,offset,bytes};};
- put(Section::config,1,1,512,3);
+ put(Section::config,1,1,configBytes,3);
  put(Section::delayAxis,3,4,mul(g.delays,4),3);
  put(Section::dopplerAxis,5,8,mul(g.doppler,8),3);
  put(Section::canonical,6,16,mul(mul(n,s),16),1);
@@ -250,10 +266,19 @@ const auto&t=c.tracker;
  w.u32(500,d.integrationMotionBins);
  w.u32(504,d.integrationBeamTolerance);
  w.u32(508,uint32_t(std::llround(c.fusion.directPathNullDb*1000.0)));
+ w.u32(512,c.bearing.enabled);
+ w.u32(516,uint32_t(c.bearing.method));
+ w.u32(520,c.bearing.scanBeams);
+ w.u32(524,c.bearing.candidatePeaks);
+ w.u32(528,c.bearing.guardRadius);
+ w.u32(532,c.bearing.trainingRadius);
+ w.f64(536,c.bearing.diagonalLoading);
+ w.u32(544,uint32_t(c.bearing.channelMapping.size()));
+ for(size_t i=0;i<c.bearing.channelMapping.size();++i)w.u32(548+4*i,c.bearing.channelMapping[i]);
  return b;}
-Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==512,"Resident config size differs");
+Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
-require(r.u32(0)==1&&r.u32(4)==512,"Resident config schema differs");
+require(r.u32(0)==1&&r.u32(4)==configBytes,"Resident config schema differs");
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -265,6 +290,19 @@ c.fusion.element0Rad=r.f64(472);
 c.fusion.elementStepRad=r.f64(480);
 c.fusion.directPathAzimuthRad=r.f64(488);
 c.fusion.directPathNullDb=double(r.u32(508))/1000.0;
+auto& bearing=c.bearing;
+bearing.enabled=r.u32(512)!=0;
+require(r.u32(512)<=1,"Resident bearing boolean invalid");
+bearing.method=BearingMethod(r.u32(516));
+bearing.scanBeams=r.u32(520);
+bearing.candidatePeaks=r.u32(524);
+bearing.guardRadius=r.u32(528);
+bearing.trainingRadius=r.u32(532);
+bearing.diagonalLoading=r.f64(536);
+const uint32_t bearingChannels=r.u32(544);
+require(bearingChannels<=8,"Resident bearing mapping count invalid");
+for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
+r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
 g.channels=narrow(r.u64(32));
@@ -335,7 +373,7 @@ ref.centreHz=r.f64(160);
  validateConfig(c);
  require(r.u32(16)==c.stages(),"Resident stage mask differs");
  const auto canonical=encodeConfig(c);
- require(std::memcmp(canonical.data(),b.data,512)==0,"Resident config is not canonical");
+ require(std::memcmp(canonical.data(),b.data,configBytes)==0,"Resident config is not canonical");
  return c;}
 Hash wire::configHash(const Config& c){const auto config=encodeConfig(c);
 Sha256 hash;

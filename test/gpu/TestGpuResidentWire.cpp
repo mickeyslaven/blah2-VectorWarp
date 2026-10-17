@@ -72,6 +72,15 @@ void configCases(){
   "Track-before-detect configuration did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
+ auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,60,3,1,3,.01,{1,0}};
+ const auto bearingBytes=encodeConfig(bearing);
+ const auto bearingDecoded=decodeConfig(bytes(bearingBytes),bytes(d),bytes(f));
+ check(encodeConfig(bearingDecoded)==bearingBytes&&bearingDecoded.bearing.enabled&&
+  bearingDecoded.bearing.method==BearingMethod::covarianceMvdr&&bearingDecoded.bearing.scanBeams==60&&
+  bearingDecoded.bearing.channelMapping==std::vector<uint32_t>({1,0}),
+  "Adaptive bearing configuration did not round trip");
+ check(wire::configHash(bearing)!=wire::configHash(tbd),
+  "Bearing method/mapping is not bound to config identity");
  check(decoded.detector.integrationCpis==2,"Multi-CPI detector configuration did not round trip");
  auto adaptive=c;adaptive.tracker.initiationMode=TrackerInitiationMode::adaptiveGate;
  const auto adaptiveBytes=encodeConfig(adaptive);
@@ -107,6 +116,8 @@ void configCases(){
  mutate([](auto&v){v.presence&=~bit(Section::canonical);});mutate([](auto&v){v.presence|=uint64_t(1)<<63;});
  mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
+ mutate([&](auto&v){v=bearing;v.bearing.channelMapping={0,0};});
+ mutate([&](auto&v){v=bearing;v.bearing.scanBeams=59;});
  for(size_t at:{size_t(20),size_t(132),size_t(360),size_t(464),size_t(176)}){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }

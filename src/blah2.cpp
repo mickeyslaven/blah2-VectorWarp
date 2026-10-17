@@ -187,12 +187,23 @@ try
   // set up socket
   sleep(2);
   bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
+  std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
+    bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
+  double bearingDiagonalLoading=.01;std::vector<uint32_t>bearingChannelMapping;
   if(tree["process"].has_child("bearing")){
     auto bearing=tree["process"]["bearing"];
     if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
     if(bearing.has_child("min_consistent"))bearing["min_consistent"]>>bearingMinConsistent;
     if(bearing.has_child("min_peak_separation_db"))
       bearing["min_peak_separation_db"]>>bearingMinPeakSeparationDb;
+    if(bearing.has_child("method"))bearing["method"]>>bearingMethod;
+    if(bearing.has_child("scan_beams"))bearing["scan_beams"]>>bearingScanBeams;
+    if(bearing.has_child("candidate_peaks"))bearing["candidate_peaks"]>>bearingCandidatePeaks;
+    if(bearing.has_child("guard_radius"))bearing["guard_radius"]>>bearingGuardRadius;
+    if(bearing.has_child("training_radius"))bearing["training_radius"]>>bearingTrainingRadius;
+    if(bearing.has_child("diagonal_loading"))bearing["diagonal_loading"]>>bearingDiagonalLoading;
+    if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
+      uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
   }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
@@ -515,7 +526,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI5 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI6 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -653,6 +664,18 @@ try
     throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
   if(bearingEnabled&&(!residentMode||!coherentFusion))
     throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
+  if(bearingEnabled&&!trackBeforeDetect)
+    throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
+  if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
+    throw std::invalid_argument("Bearing method must be coherent_beam_bank or covariance_mvdr");
+  if(!bearingScanBeams)bearingScanBeams=coherentBeamCount*4u;
+  if(bearingEnabled&&(bearingScanBeams<coherentBeamCount||bearingScanBeams>127||
+      bearingScanBeams%coherentBeamCount))
+    throw std::invalid_argument("Bearing scan_beams must be a beam-count multiple from the beam count through 127");
+  if(bearingCandidatePeaks!=3||bearingGuardRadius>3||bearingTrainingRadius<=bearingGuardRadius||
+      bearingTrainingRadius>6||!std::isfinite(bearingDiagonalLoading)||
+      bearingDiagonalLoading<=0||bearingDiagonalLoading>1)
+    throw std::invalid_argument("Invalid bearing covariance/candidate configuration");
   if(bearingMinConsistent<2||bearingMinConsistent>100)
     throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
   if(bearingMinPeakSeparationDb<1||bearingMinPeakSeparationDb>15)
@@ -773,6 +796,9 @@ try
       residentConfig.fusion={fusionMode,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
         directPathNullDb};
+      if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
+       residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
+        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping};}
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
@@ -1187,8 +1213,9 @@ try
           if(resident){
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
-              {bearingEnabled,coherentBeamCount,4,bearingMinConsistent,xAxisBearingDeg,
-               bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb});
+              {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
+               bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
+               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }

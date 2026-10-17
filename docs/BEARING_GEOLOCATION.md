@@ -7,14 +7,22 @@ Retina payloads are unchanged. Bearing has its own TCP stream and API endpoints.
 ## Data path
 
 For every accepted delay/Doppler cell, the coherent bank retains the winning
-coarse beam used by tracker association and the winning beam from the existing
-4× candidate refinement. Candidate cells scan the complete fine-beam ring and
-compare the winner with the strongest alternative outside the aperture-limited
-main lobe. This avoids treating adjacent interpolation points as independent
-directions. Each tracker history observation carries the bounded margin, so
-bearing publication uses its temporal median rather than allowing one noisy
-frame to resolve or suppress an otherwise consistent track. The additional
-work is candidate-only; it does not add another whole-map DSP pass.
+coarse beam used by tracker association. The bearing-only candidate scan then
+retains three aperture-separated lobes and their quantized relative powers in
+each tracker observation. Temporal publication accumulates all three rather
+than pretending that different single-frame winners are the only ambiguity.
+The additional work is candidate-only; it does not add another whole-map DSP
+pass or alter CFAR scores, legacy track JSON, or Retina output. As with the
+legacy refined winner, it participates in association only when the optional
+tracker `beam_tolerance` is configured.
+
+`coherent_beam_bank` preserves the calibrated conventional scorer.
+`covariance_mvdr` builds a complex spatial covariance from a configurable
+delay/Doppler training ring around each candidate, diagonally loads and inverts
+that covariance on the GPU, and applies a normalized adaptive matched filter to
+the same calibrated manifold. The guard excludes the target neighborhood. If a
+candidate covariance is singular, that candidate safely falls back to the
+conventional score instead of failing the radar frame.
 
 The publisher reports the circular temporal mean in true-north coordinates,
 the current fine-beam bearing, peak separation, circular concentration, sample
@@ -47,7 +55,7 @@ ADS-B is not an inference input. It may be displayed after the radar result for
 validation, but cannot select a lobe, improve consistency, resolve a point, or
 change geometry acceptance.
 
-`min_peak_separation_db` is the minimum temporal-median power margin between
+`min_peak_separation_db` is the minimum temporal power margin between
 the winning lobe and the strongest aperture-separated alternative. The default
 3 dB requires the winning lobe to carry at least twice the alternative's power;
 weaker margins remain useful candidate bearings but are not labelled resolved.
@@ -62,6 +70,13 @@ geometry, and true-north orientation:
 process:
   bearing:
     enable: true
+    method: covariance_mvdr       # coherent_beam_bank remains the default
+    scan_beams: 60                # surveillance-beam multiple, at most 127
+    candidate_peaks: 3
+    guard_radius: 1
+    training_radius: 3
+    diagonal_loading: 0.01
+    channel_mapping: [0, 1, 2, 3, 4] # optional bearing-only permutation
     min_consistent: 3
     min_peak_separation_db: 3
 network:
@@ -74,6 +89,11 @@ The array record must set `mapping_confirmed`, `geometry_confirmed`, and
 the measured DAQ-to-element positions. Changing frequency, receiver mapping,
 array geometry, or reference synthesis invalidates those confirmations.
 
+`channel_mapping` maps each logical surveillance-map slot to a physical regular-
+polygon element index. It must be a complete permutation. It affects only the
+bearing refinement manifold, making suspected cable/order mappings safe to
+compare while the established detection and Retina paths remain fixed.
+
 ## Interfaces and compatibility
 
 - `/api/tracker` remains the legacy tracker schema.
@@ -83,7 +103,7 @@ array geometry, or reference synthesis invalidates those confirmations.
 - Disabled or unsupported configurations continue running ordinary passive
   radar without a bearing stream.
 
-This first standard implementation uses the already calibrated coherent beam
-bank. Experimental neural selectors are not included. Alternative MUSIC/SBL
-estimators require independent timing and real-aircraft validation before they
-can become selectable production methods.
+The conventional and covariance methods use the already calibrated coherent
+array manifold. Experimental neural, MUSIC, and SBL selectors are not included;
+they require independent timing and real-aircraft validation before becoming
+selectable production methods.

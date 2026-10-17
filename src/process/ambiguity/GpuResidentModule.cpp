@@ -1,4 +1,4 @@
-// Adjacent resident ABI5 module. The legacy ABI4 module is a separate target.
+// Adjacent resident ABI6 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -58,11 +58,15 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.integrationMotionBins=d.integrationMotionBins;
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
+ if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);p.bearingScanBeams=c.bearing.scanBeams;
+  p.bearingCandidatePeaks=c.bearing.candidatePeaks;p.bearingGuardRadius=c.bearing.guardRadius;
+  p.bearingTrainingRadius=c.bearing.trainingRadius;p.bearingDiagonalLoading=float(c.bearing.diagonalLoading);
+  p.bearingChannelMapping=c.bearing.channelMapping;}
  if(p.beamCount){
   const double pi=std::acos(-1.0),elements=double(c.surveillanceChannels.size());
   const double aperture=2*c.fusion.radiusM*std::sin(pi*std::floor(elements/2)/elements);
   const double halfWidth=std::min(90.0,.443*(299792458.0/c.fusion.frequencyHz)/aperture*180.0/pi);
-  const double fineStep=360.0/double(p.beamCount*4u);
+  const double fineStep=360.0/double(p.bearingScanBeams?p.bearingScanBeams:p.beamCount*4u);
   p.bearingExclusionBins=std::max(1u,uint32_t(std::floor(halfWidth/fineStep)));
  }
  p.delayAxis=c.delayAxis;
@@ -445,7 +449,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI5 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI6 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

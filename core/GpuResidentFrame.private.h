@@ -380,8 +380,15 @@ class ResidentFramePipeline {
     }buffer.flush(0,buffer.bytes);};
     initializeWeights(*fusionWeights,config.fusion.beams);
     if(config.postprocess.integrationCpis>2){
-     refinementWeights=std::make_unique<Buffer>(context,weightCount*4u*sizeof(std::complex<float>),host,preferred);
-     initializeWeights(*refinementWeights,config.fusion.beams*4u);
+     const uint32_t scans=config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u;
+     refinementWeights=std::make_unique<Buffer>(context,uint64_t(scans)*config.geometry.channels*sizeof(std::complex<float>),host,preferred);
+     auto* target=static_cast<std::complex<float>*>(refinementWeights->mapped);
+     for(uint32_t beam=0;beam<scans;++beam){const double beamAngle=6.283185307179586476925286766559*double(beam)/scans;
+      for(uint32_t channel=0;channel<config.geometry.channels;++channel){const uint32_t physical=config.postprocess.bearingChannelMapping.empty()?channel:config.postprocess.bearingChannelMapping[channel];
+       const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
+       const double phase=waveNumber*config.fusion.radiusM*std::cos(elementAngle-beamAngle);
+       target[uint64_t(beam)*config.geometry.channels+channel]=std::complex<float>(normalization*std::cos(phase),normalization*std::sin(phase));}}
+     refinementWeights->flush(0,refinementWeights->bytes);
     }
     fusion=std::make_unique<Kernel>(context,gpu_resident::coherentFusionSource,
       std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
@@ -390,7 +397,7 @@ class ResidentFramePipeline {
    if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
     config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_,
     config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
-    refinementWeights.get(),config.geometry.channels,refinementWeights?config.fusion.beams*4u:0u);
+    refinementWeights.get(),config.geometry.channels,refinementWeights?(config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u):0u);
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
    commands.allocate(2+3*batches);

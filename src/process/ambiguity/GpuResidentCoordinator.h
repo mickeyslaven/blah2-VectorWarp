@@ -88,7 +88,7 @@ public:
  if(config().detector.enabled)result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
- const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams};
+ const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};
  result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding);
  if(bearing.enabled)result.bearing=json::bearingCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding,bearing);}return result;}
  void commit(){wire::require(prepared_.preparedEvidence.data,"Resident commit missing prepared frame");

@@ -79,10 +79,12 @@ uint historyCapacity(){return max(m[40],100u);}
 uint recordWords(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
 uint work(uint i){return 64u+12u*i;}
-uint detectionSpatial(uint i){uint cell=s[post[41]+i],flags=s[post[39]+cell];
- uint coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
+uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell];
+ if((direction&0x80000000u)!=0u)return direction;
+ uint flags=s[post[39]+cell],coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
  return coarse|(fine<<9u)|(quality<<20u);}
-uint coarseBeam(uint spatial){return spatial&511u;}
+uint coarseBeam(uint spatial){if((spatial&0x80000000u)!=0u){uint fine=spatial&127u;if(!fine)return 0u;
+  return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}return spatial&511u;}
 uint detectionBeam(uint i){return coarseBeam(detectionSpatial(i));}
 uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
  return length==0u?0u:coarseBeam(src(r+16u+8u*((head+length-1u)%h)+7u));}
@@ -257,8 +259,11 @@ void main(){uint i=indexOf();if(m[0]!=0u)return;uint count=checkedWord(4u);
  if(checkedWord(newest+6u)!=state)reject(315u);
  for(uint j=0u;j<h;++j){uint at=r+16u+8u*j;
   if(length<h&&j>=length){for(uint k=0u;k<8u;++k)if(checkedWord(at+k)!=0u)reject(316u);}
-  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);uint spatial=checkedWord(at+7u),coarse=spatial&511u,fine=(spatial>>9u)&2047u;
-   if(checkedWord(at+6u)>3u||coarse>post[75]||fine>post[75]*4u||(coarse==0u&&fine!=0u))reject(316u);}}
+  else{for(uint k=0u;k<6u;k+=2u)if(!finiteD(checkedD(at+k)))reject(314u);uint spatial=checkedWord(at+7u);
+   if((spatial&0x80000000u)!=0u){uint a=spatial&127u,b=(spatial>>7u)&127u,c=(spatial>>14u)&127u;
+    if(a==0u||a>post[83]||b==0u||b>post[83]||c==0u||c>post[83])reject(316u);}
+   else{uint coarse=spatial&511u,fine=(spatial>>9u)&2047u;if(coarse>post[75]||fine>post[75]*4u||(coarse==0u&&fine!=0u))reject(316u);}
+   if(checkedWord(at+6u)>3u)reject(316u);}}
  atomicAdd(m[54],1u);atomicAdd(m[60u+state],1u);if(state!=0u)atomicAdd(m[59],1u);
 }
 )glsl";

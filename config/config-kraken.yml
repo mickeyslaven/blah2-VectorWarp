@@ -100,6 +100,17 @@ process:
   # Optional bearing publication, separate from legacy tracker and Retina data.
   bearing:
     enable: false
+    # The legacy coherent path remains the default. covariance_mvdr uses a
+    # local complex covariance ring and retains three independent lobes/CPI.
+    method: coherent_beam_bank
+    scan_beams: 48
+    candidate_peaks: 3
+    guard_radius: 1
+    training_radius: 3
+    diagonal_loading: 0.01
+    # Optional bearing-only logical-to-physical permutation, e.g. [0,1,2,3,4].
+    # Detection fusion and Retina output are never changed by this diagnostic.
+    # channel_mapping: [0, 1, 2, 3, 4]
     min_consistent: 3
     # Require a decisive independent-lobe power margin before resolving a bearing.
     min_peak_separation_db: 3

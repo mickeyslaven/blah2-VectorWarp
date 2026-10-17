@@ -637,6 +637,22 @@ function validateConfig(config, baseline = null) {
       number(bearing.min_consistent, 'process.bearing.min_consistent', {integer: true, min: 2, max: 100});
     if (bearing.min_peak_separation_db !== undefined)
       number(bearing.min_peak_separation_db, 'process.bearing.min_peak_separation_db', {min: 1, max: 15});
+    if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
+      errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
+    if (bearing.scan_beams !== undefined)
+      number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
+    if (bearing.candidate_peaks !== undefined)
+      number(bearing.candidate_peaks, 'process.bearing.candidate_peaks', {integer: true, min: 3, max: 3});
+    if (bearing.guard_radius !== undefined)
+      number(bearing.guard_radius, 'process.bearing.guard_radius', {integer: true, min: 0, max: 3});
+    if (bearing.training_radius !== undefined)
+      number(bearing.training_radius, 'process.bearing.training_radius', {integer: true, min: 1, max: 6});
+    if (bearing.diagonal_loading !== undefined)
+      number(bearing.diagonal_loading, 'process.bearing.diagonal_loading', {exclusiveMin: 0, max: 1});
+    if (bearing.channel_mapping !== undefined && (!Array.isArray(bearing.channel_mapping) ||
+        bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
+        new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))
+      errors.push('process.bearing.channel_mapping must be a unique array of channel indices');
     if (bearing.enable) {
       const fusion = processConfig.surveillance_fusion;
       if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||
@@ -644,6 +660,16 @@ function validateConfig(config, baseline = null) {
         errors.push('bearing output requires GPU-resident coherent tracking');
       if (!Number.isInteger(ports.bearing) || ports.bearing < 1 || ports.bearing > 65535)
         errors.push('network.ports.bearing is required when bearing output is enabled');
+      const beams = processConfig.surveillance_fusion?.beams;
+      if (bearing.scan_beams !== undefined && Number.isInteger(beams) &&
+          (bearing.scan_beams < beams || bearing.scan_beams % beams !== 0))
+        errors.push('process.bearing.scan_beams must be a multiple of the surveillance beam count');
+      if (bearing.guard_radius !== undefined && bearing.training_radius !== undefined &&
+          bearing.training_radius <= bearing.guard_radius)
+        errors.push('process.bearing.training_radius must exceed guard_radius');
+      if (bearing.channel_mapping !== undefined &&
+          bearing.channel_mapping.length !== device.surveillance_channels?.length)
+        errors.push('process.bearing.channel_mapping must include every surveillance channel once');
       const geometry = device.array_geometry;
       if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
           geometry?.orientation_confirmed !== true)
