@@ -226,7 +226,7 @@ try
           tree["process"]["surveillance_fusion"]["mode"]>>fusion;
         if(tree["process"].has_child("detection")&&tree["process"]["detection"].has_child("enable"))
           tree["process"]["detection"]["enable"]>>detection;
-        if(tree.has_child("truth")&&tree["truth"].has_child("adsb")&&tree["truth"]["adsb"].has_child("enabled"))
+        if(tree.rootref().has_child("truth")&&tree["truth"].has_child("adsb")&&tree["truth"]["adsb"].has_child("enabled"))
           tree["truth"]["adsb"]["enabled"]>>adsb;
         bool mapping=false,geometry=false,orientation=false;
         if(tree["capture"]["device"].has_child("array_geometry")){
