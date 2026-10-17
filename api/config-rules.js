@@ -60,7 +60,7 @@ const rules = {
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
   'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
   'process.tracker.initiate.stationary_clutter.enable': {type: 'boolean', optional: true},
-  'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(1, 65535), optional: true},
+  'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': {...numeric(0, 10000), optional: true},
   'process.tracker.delete': integer(1, 255),
   // Storage count only; runtime checked admission enforces the GPU/shared caps.

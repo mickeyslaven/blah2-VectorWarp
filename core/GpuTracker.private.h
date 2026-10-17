@@ -28,7 +28,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!c.enabled||!c.capacity||!cells||cells>UINT32_MAX/24||!c.m||c.m>c.n||c.n>255||!std::isfinite(c.cpi)||c.cpi<=0||
     !std::isfinite(c.maxAccInit)||c.maxAccInit<0||!std::isfinite(c.rangeRes)||c.rangeRes<=0||!std::isfinite(c.lambda)||c.lambda<=0||
     !std::isfinite(c.stationaryMaxDopplerHz)||c.stationaryMaxDopplerHz<0||
-    (c.stationaryClutter?(!c.stationaryPersistenceCpis||c.stationaryPersistenceCpis>65535):
+    (c.stationaryClutter?(c.stationaryPersistenceCpis<2||c.stationaryPersistenceCpis>65535):
       (c.stationaryPersistenceCpis||c.stationaryMaxDopplerHz!=0))||
     c.capacity>(UINT32_MAX-127)/128)
   throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED configuration or index capacity");
@@ -112,7 +112,8 @@ bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
  if(abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
- if(cell>=m[4])return false;uint packed=clutterPersistence[4u+cell],streak=packed&65535u;
+ if(cell>=m[4]||post[33]==0u)return false;uint bin=cell%post[33];
+ uint packed=clutterPersistence[4u+bin],streak=packed&65535u;
  uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
  uint effective=packed==0u||age>=streak?0u:streak-age;
  return effective<clutterPersistence[1];}
@@ -230,8 +231,10 @@ const char* persistenceBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  if(i>=m[19])return;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(abs(doppler)>maximum)return;
- uint cell=s[post[41]+i];if(cell>=m[4]){reject(320u);return;}
- uint index=4u+cell,prior=clutterPersistence[index],current=m[10]&65535u;
+ uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
+ // Stationary multipath jitters between nearby zero-Doppler rows. Accumulate
+ // it by delay bin so row jitter cannot continually reset site learning.
+ uint index=4u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
  while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)return;
   uint age=(current-last)&65535u,decayed=prior==0u||age>=streak?0u:streak-age;
   uint next=(current<<16u)|min(65535u,decayed+1u);
@@ -408,7 +411,7 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]>s[19]||s[21]>s[19]-s[27]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
@@ -437,7 +440,9 @@ class Stage {
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
   <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
-   context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched<<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
+   context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
+    <<" stationary_clutter_suppressed="<<(s[19]-s[27]-admission.unmatched)
+    <<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
   context_.diagnostics.stream()<<" cpu_predict_calls=0 cpu_associate_calls=0 cpu_history_calls=0 cpu_initiate_calls=0\n";
  }

@@ -769,7 +769,7 @@ try
   double maxAcc, rangeRes, lambda;
   std::string smooth,trackerAccelerationModel="hypothesis_bank";
   bool stationaryClutter=residentMode;
-  uint32_t stationaryPersistenceCpis=residentMode?8u:0u;
+  uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   double stationaryMaxDopplerHz=residentMode?15.0:0.0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;

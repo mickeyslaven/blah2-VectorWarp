@@ -289,7 +289,7 @@ function validateConfig(config, baseline = null) {
       {integer: true, min: 1, max: 65535});
     if (heimdall.control_port !== undefined) {
       number(heimdall.control_port, 'capture.device.heimdall.control_port',
-        {integer: true, min: 1, max: 65535});
+        {integer: true, min: 2, max: 65535});
       if (heimdall.control_port === heimdall.port)
         errors.push('capture.device.heimdall.control_port must differ from the IQ data port');
     }

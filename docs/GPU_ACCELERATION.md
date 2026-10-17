@@ -96,13 +96,15 @@ process:
     initiate:
       stationary_clutter:
         enable: true
-        persistence_cpis: 8
+        persistence_cpis: 60
         max_doppler_hz: 15
 ```
 
-The default is eight CPIs at 15 Hz when the block is omitted. Each low-Doppler
-detection strengthens its delay/Doppler cell while unused cells
-decay. Once a cell reaches `persistence_cpis`, it cannot start another track.
+The default is 60 CPIs (30 seconds at a 500 ms CPI) at 15 Hz when the block is
+omitted. Each low-Doppler detection strengthens its delay bin while unused bins
+decay. Collapsing the learned site map across only the configured low-Doppler
+band makes it robust to row jitter without creating a broad Doppler notch. Once
+a bin reaches `persistence_cpis`, it cannot start another track.
 The filter is initiation-only: an existing moving track can still associate
 through zero Doppler, and detection output is unchanged. Set `enable: false` to
 retain the previous initiation behavior. Saving a changed receiver site,
