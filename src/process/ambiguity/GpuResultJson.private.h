@@ -290,7 +290,8 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
    w.Key("covariance_samples");w.Uint(samples);w.Key("covariance");w.StartArray();
    for(uint32_t a=0;a<channels;++a){w.StartArray();for(uint32_t c=0;c<channels;++c){
     auto value=covariance[a*8+c]/std::max(double(samples),1.0);
-    if(a==c)value+=load;finite(value.real());finite(value.imag());
+    if(a==c)value+=load;
+    finite(value.real());finite(value.imag());
     w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}w.EndArray();}
    w.EndArray();
   }
