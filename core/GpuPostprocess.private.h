@@ -14,6 +14,7 @@ struct PostprocessConfig {
  uint32_t bearingGuardRadius=1,bearingTrainingRadius=3;
  float bearingDiagonalLoading=.01f;
  std::vector<uint32_t> bearingChannelMapping;
+ std::vector<std::complex<float>> bearingManifoldResponses;
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
@@ -87,6 +88,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
       c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
       c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
       c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
+    (!c.bearingManifoldResponses.empty()&&c.bearingManifoldResponses.size()!=uint64_t(c.bearingScanBeams)*c.bearingChannelMapping.size())||
     (c.integrationBeamTolerance!=UINT32_MAX&&(!c.beamCount||c.integrationBeamTolerance>c.beamCount/2))||
     (c.detection&&(!std::isfinite(c.pfa)||c.pfa<=0||c.pfa>=1||c.guard<0||c.guard>127||
     c.train<=0||c.train>127||c.minDelay<INT8_MIN||c.minDelay>INT8_MAX||
@@ -109,6 +111,7 @@ layout(binding=4) buffer CurrentPower { double currentPower[]; };
 layout(binding=5) buffer TbdBanks { double tbdBanks[]; };
 layout(binding=6) readonly buffer ChannelMaps { vec2 channelMaps[]; };
 layout(binding=7) readonly buffer RefineWeights { vec2 refineWeights[]; };
+layout(binding=8) buffer AngleHistory { uint angleHistory[]; };
 layout(push_constant) uniform P { uint count; uint a; uint b; uint c; int d; } p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128;}
 bool finiteD(double x){return !isnan(x)&&!isinf(x);}
@@ -143,7 +146,7 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76];m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
- if(m[78]!=0u)history[(m[79]%m[74])*m[34]+i]=current;
+ if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
  if(historyReady&&m[76]!=0u){
@@ -162,22 +165,26 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 }
 )glsl";
 const char* tbdBody=R"glsl(
+bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
+ uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
- uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]);
+ uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
  if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
-  double baseline=0.5LF*(currentPower[i]+history[priorSlot*m[34]+i]);
-  if(!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=baseline;
+  uint priorAt=priorSlot*m[34]+i;double baseline=angleCompatible(currentBeam,angleHistory[priorAt])?
+   0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
+  if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=max(0.0LF,baseline);
  }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
  // Every longer bank contains the shorter bank's prefix.  Accumulate each
  // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
  // history cells per motion hypothesis.
  for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
-  precise double sum=0.0LF;
+  precise double sum=0.0LF;bool compatible=true;
   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
-   uint slot=(m[79]+m[74]-(age%m[74]))%m[74];double value=history[slot*m[34]+uint(rr)*m[33]+uint(cc)];
-   if(!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
+   uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
+   double value=history[at];compatible=compatible&&angleCompatible(currentBeam,angleHistory[at]);
+   if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
    if(length==2u)best2=max(best2,sum/2.0LF);
    else if(length==4u)best4=max(best4,sum/4.0LF);
    else if(length==8u)best8=max(best8,sum/8.0LF);
@@ -409,7 +416,7 @@ class Stage {
  Buffer& staging_;
  std::unique_ptr<Buffer> metadata_;
  std::unique_ptr<Buffer> integration_;
- std::unique_ptr<Buffer> currentPower_;
+ std::unique_ptr<Buffer> currentPower_,angleHistory_;
  std::unique_ptr<Buffer> tbdBanks_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
@@ -556,13 +563,15 @@ public:
   integration_->flush(0,integration_->bytes);
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  angleHistory_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*4,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(banks+1u)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   Buffer* bankBinding=tbd?tbdBanks_.get():currentPower_.get();
   Buffer* mapBinding=tbd?channelMaps:&fused_;
   Buffer* weightBinding=tbd?refinementWeights:currentPower_.get();
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding}));
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding,angleHistory_.get()}));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
@@ -715,6 +724,7 @@ public:
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
   <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
+  <<" joint_angle_tbd="<<(config_.integrationCpis>2&&config_.integrationBeamTolerance!=UINT32_MAX)
   <<" bearing_exclusion_bins="<<config_.bearingExclusionBins
   <<" coherent_refined_candidates="<<s[refinedCandidates]<<" scratch_bytes="<<layout_.bytes<<" gpu_map_ms="<<timestamps_->milliseconds(0)<<" gpu_display_ms="<<timestamps_->milliseconds(5);
   if(config_.detection)context_.diagnostics.stream()<<" gpu_cfar_ms="<<timestamps_->milliseconds(1)<<" gpu_centroid_ms="<<timestamps_->milliseconds(2)<<" gpu_interpolation_ms="<<timestamps_->milliseconds(3)<<" gpu_compact_ms="<<timestamps_->milliseconds(4);

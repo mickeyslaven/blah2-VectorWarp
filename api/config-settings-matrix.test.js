@@ -151,11 +151,14 @@ try {
   bearing.process.bearing.guard_radius = 2;
   bearing.process.bearing.training_radius = 4;
   bearing.process.bearing.diagonal_loading = .02;
+  bearing.process.bearing.max_rate_deg_s = 30;
+  bearing.process.bearing.manifold_file = '/etc/vectorwarp/bearing-manifold.json';
   bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
   persistGroup('kraken-bearing-output', fusion, bearing,
     ['process.bearing.enable', 'process.bearing.method', 'process.bearing.scan_beams',
       'process.bearing.guard_radius', 'process.bearing.training_radius',
-      'process.bearing.diagonal_loading', 'process.bearing.channel_mapping']);
+      'process.bearing.diagonal_loading', 'process.bearing.max_rate_deg_s',
+      'process.bearing.manifold_file', 'process.bearing.channel_mapping']);
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};

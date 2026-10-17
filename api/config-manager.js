@@ -649,6 +649,11 @@ function validateConfig(config, baseline = null) {
       number(bearing.training_radius, 'process.bearing.training_radius', {integer: true, min: 1, max: 6});
     if (bearing.diagonal_loading !== undefined)
       number(bearing.diagonal_loading, 'process.bearing.diagonal_loading', {exclusiveMin: 0, max: 1});
+    if (bearing.max_rate_deg_s !== undefined)
+      number(bearing.max_rate_deg_s, 'process.bearing.max_rate_deg_s', {min: 0, max: 360});
+    if (bearing.manifold_file !== undefined &&
+        (typeof bearing.manifold_file !== 'string' || !bearing.manifold_file.trim()))
+      errors.push('process.bearing.manifold_file must be a non-empty path');
     if (bearing.channel_mapping !== undefined && (!Array.isArray(bearing.channel_mapping) ||
         bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
         new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))

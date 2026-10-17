@@ -551,15 +551,21 @@ class ResidentFramePipeline {
    }
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
+   const bool measured=&buffer==refinementWeights.get()&&!config.postprocess.bearingManifoldResponses.empty();
+   const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
+   const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
    for(uint32_t beam=0;beam<beams;++beam){
     const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
     std::array<std::complex<double>,8> steering{},combined{};
     for(uint32_t channel=0;channel<channels;++channel){
-     const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
-     const double relativePhase=waveNumber*config.fusion.radiusM*
-      (std::cos(elementAngle-beamAngle)-
-       std::cos(elementAngle-config.fusion.directPathAzimuthRad));
-     steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);
+     if(measured){const auto numerator=config.postprocess.bearingManifoldResponses[uint64_t(beam)*channels+channel];
+      const auto denominator=config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
+      steering[channel]=checkpoint.weights[channel]*std::complex<double>(numerator/denominator);
+     }else{const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
+      const double relativePhase=waveNumber*config.fusion.radiusM*
+       (std::cos(elementAngle-beamAngle)-
+        std::cos(elementAngle-config.fusion.directPathAzimuthRad));
+      steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
     }
     if(nullFraction>0){
      std::complex<double> projection{};
@@ -579,8 +585,10 @@ class ResidentFramePipeline {
       throw std::runtime_error("Noise-whitened fusion produced invalid weights");
      const double combinedScale=1.0/std::sqrt(combinedNorm);
      for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else for(uint32_t channel=0;channel<channels;++channel)
-     combined[channel]=scale*steering[channel];
+    }else if(measured){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
+     if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
+     const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
+    }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
     for(uint32_t channel=0;channel<channels;++channel){
      target[uint64_t(beam)*config.geometry.channels+channel]=
       std::complex<float>(std::conj(combined[channel]));

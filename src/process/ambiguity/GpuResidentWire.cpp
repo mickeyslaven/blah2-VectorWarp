@@ -70,8 +70,12 @@ void validateConfig(const Config& c){
   std::vector<bool> used(g.channels,false);
   for(auto channel:b.channelMapping){require(channel<g.channels&&!used[channel],
     "Resident bearing channel mapping invalid");used[channel]=true;}
+  require(b.manifoldResponses.empty()||b.manifoldResponses.size()==uint64_t(b.scanBeams)*g.channels,
+    "Resident bearing manifold dimensions invalid");
+  for(const auto& value:b.manifoldResponses)require(std::isfinite(value.real())&&std::isfinite(value.imag())&&std::norm(value)>1e-12f,
+    "Resident bearing manifold response invalid");
  }else require(!b.scanBeams&&b.candidatePeaks==3&&b.guardRadius==1&&
-  b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty(),
+  b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty()&&b.manifoldResponses.empty(),
   "Disabled resident bearing has configuration");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
@@ -275,6 +279,8 @@ const auto&t=c.tracker;
  w.f64(536,c.bearing.diagonalLoading);
  w.u32(544,uint32_t(c.bearing.channelMapping.size()));
  for(size_t i=0;i<c.bearing.channelMapping.size();++i)w.u32(548+4*i,c.bearing.channelMapping[i]);
+ w.u32(580,uint32_t(c.bearing.manifoldResponses.size()));
+ for(size_t i=0;i<c.bearing.manifoldResponses.size();++i){w.f32(640+8*i,c.bearing.manifoldResponses[i].real());w.f32(644+8*i,c.bearing.manifoldResponses[i].imag());}
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
@@ -303,6 +309,10 @@ const uint32_t bearingChannels=r.u32(544);
 require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
+const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
+r.zeros(584,56);bearing.manifoldResponses.reserve(manifoldCount);
+for(uint32_t i=0;i<manifoldCount;++i)bearing.manifoldResponses.emplace_back(r.f32(640+8*i),r.f32(644+8*i));
+r.zeros(640+8*manifoldCount,configBytes-(640+8*manifoldCount));
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
 g.channels=narrow(r.u64(32));

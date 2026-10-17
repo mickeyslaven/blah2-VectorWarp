@@ -81,6 +81,11 @@ void configCases(){
   "Adaptive bearing configuration did not round trip");
  check(wire::configHash(bearing)!=wire::configHash(tbd),
   "Bearing method/mapping is not bound to config identity");
+ auto measured=bearing;for(uint32_t beam=0;beam<60;++beam)for(uint32_t channel=0;channel<2;++channel)
+  measured.bearing.manifoldResponses.push_back(std::polar(1.0f,float(.1*beam+.2*channel)));
+ const auto measuredBytes=encodeConfig(measured);const auto measuredDecoded=decodeConfig(bytes(measuredBytes),bytes(d),bytes(f));
+ check(encodeConfig(measuredDecoded)==measuredBytes&&measuredDecoded.bearing.manifoldResponses==measured.bearing.manifoldResponses&&
+  wire::configHash(measured)!=wire::configHash(bearing),"Measured bearing manifold did not round trip or bind config identity");
  check(decoded.detector.integrationCpis==2,"Multi-CPI detector configuration did not round trip");
  auto adaptive=c;adaptive.tracker.initiationMode=TrackerInitiationMode::adaptiveGate;
  const auto adaptiveBytes=encodeConfig(adaptive);
@@ -118,6 +123,7 @@ void configCases(){
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
  mutate([&](auto&v){v=bearing;v.bearing.channelMapping={0,0};});
  mutate([&](auto&v){v=bearing;v.bearing.scanBeams=59;});
+ mutate([&](auto&v){v=bearing;v.bearing.manifoldResponses={{1,0}};});
  for(size_t at:{size_t(20),size_t(132),size_t(360),size_t(464),size_t(176)}){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }

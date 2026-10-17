@@ -93,6 +93,14 @@ void trackCases(){
   adaptive["fine_beams"].GetUint()==60&&adaptive["data"][0]["consistent_samples"].GetUint()==3&&
   adaptive["data"][0]["candidates"].Size()==3&&!adaptive["data"][0]["resolved"].GetBool(),
   "Adaptive multi-lobe bearing publication differs");
+ bank[base+16+8*(498%historyCapacity)+7]=packed(10,11,50,25,10);
+ bank[base+16+8*(499%historyCapacity)+7]=packed(30,12,50,25,10);
+ bank[base+16+8*(500%historyCapacity)+7]=packed(50,13,30,25,10);
+ rapidjson::Document moving;moving.Parse(bearingCheckpoint(11,raw(),multi,{true,12,5,2,80,30,3,1,60,.5,20}).c_str());
+ check(!moving.HasParseError()&&moving["data"][0]["hypothesis_tracking"].GetBool()&&
+  moving["data"][0]["current_bearing_deg_true"].GetDouble()==8&&
+  std::abs(moving["data"][0]["bearing_rate_deg_s"].GetDouble()+12)<.001,
+  "Motion-constrained multi-hypothesis bearing path differs");
  bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
  same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));

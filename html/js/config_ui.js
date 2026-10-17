@@ -79,6 +79,8 @@ const CONFIG_META = {
   'process.bearing.guard_radius': ['Covariance guard radius', 'Target-neighborhood cells excluded from the local covariance estimate.'],
   'process.bearing.training_radius': ['Covariance training radius', 'Delay and Doppler neighborhood used to estimate local interference.'],
   'process.bearing.diagonal_loading': ['Covariance stability', 'Diagonal loading applied before adaptive bearing inversion.'],
+  'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum plausible azimuth rate used to retain and score multiple bearing lobes across a track. Zero preserves the legacy temporal histogram.'],
+  'process.bearing.manifold_file': ['Measured array manifold', 'Optional v1 JSON calibration measured across the configured bearing scan. Empty uses ideal regular-polygon steering.'],
   'process.bearing.channel_mapping': ['Bearing channel mapping', 'Bearing-only logical-channel to physical-element permutation.'],
   'process.bearing.min_consistent': ['Bearing consistency samples', 'Minimum fine-beam observations before an estimate can become a resolved map point.'],
   'process.bearing.min_peak_separation_db': ['Bearing lobe margin', 'Power margin required before one persistent lobe is considered resolved.'],

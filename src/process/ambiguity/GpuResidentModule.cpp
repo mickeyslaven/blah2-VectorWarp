@@ -61,7 +61,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);p.bearingScanBeams=c.bearing.scanBeams;
   p.bearingCandidatePeaks=c.bearing.candidatePeaks;p.bearingGuardRadius=c.bearing.guardRadius;
   p.bearingTrainingRadius=c.bearing.trainingRadius;p.bearingDiagonalLoading=float(c.bearing.diagonalLoading);
-  p.bearingChannelMapping=c.bearing.channelMapping;}
+  p.bearingChannelMapping=c.bearing.channelMapping;p.bearingManifoldResponses=c.bearing.manifoldResponses;}
  if(p.beamCount){
   const double pi=std::acos(-1.0),elements=double(c.surveillanceChannels.size());
   const double aperture=2*c.fusion.radiusM*std::sin(pi*std::floor(elements/2)/elements);

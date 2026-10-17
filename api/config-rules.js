@@ -44,6 +44,8 @@ const rules = {
   'process.bearing.guard_radius': {...integer(0, 3), optional: true},
   'process.bearing.training_radius': {...integer(1, 6), optional: true},
   'process.bearing.diagonal_loading': {...numeric(), exclusiveMin: 0, max: 1, optional: true},
+  'process.bearing.max_rate_deg_s': {...numeric(0, 360), optional: true},
+  'process.bearing.manifold_file': {type: 'string', optional: true},
   'process.bearing.channel_mapping': {type: 'array', optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),

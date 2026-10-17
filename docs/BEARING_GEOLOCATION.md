@@ -14,7 +14,9 @@ than pretending that different single-frame winners are the only ambiguity.
 The additional work is candidate-only; it does not add another whole-map DSP
 pass or alter CFAR scores, legacy track JSON, or Retina output. As with the
 legacy refined winner, it participates in association only when the optional
-tracker `beam_tolerance` is configured.
+tracker `beam_tolerance` is configured. Association compares every retained
+lobe on both observations, so a temporarily wrong primary lobe does not discard
+an otherwise valid range/Doppler track.
 
 `coherent_beam_bank` preserves the calibrated conventional scorer.
 `covariance_mvdr` builds a complex spatial covariance from a configurable
@@ -23,6 +25,12 @@ that covariance on the GPU, and applies a normalized adaptive matched filter to
 the same calibrated manifold. The guard excludes the target neighborhood. If a
 candidate covariance is singular, that candidate safely falls back to the
 conventional score instead of failing the radar frame.
+
+When `max_rate_deg_s` is positive, the publisher runs a multi-hypothesis path
+search through the retained lobes and rejects inter-frame jumps faster than the
+configured aircraft angular-rate limit. It reports the selected path's bearing
+rate and keeps unresolved alternatives visible. A zero value preserves the
+legacy temporal histogram exactly.
 
 The publisher reports the circular temporal mean in true-north coordinates,
 the current fine-beam bearing, peak separation, circular concentration, sample
@@ -51,6 +59,16 @@ as the array's physical angular resolution. Unresolved results include candidate
 points only. The map keeps the full delay ellipse visible to distinguish
 delay-only evidence from a bearing-constrained estimate.
 
+The API also retains a short, radar-only hypothesis history for each track.
+As the aircraft moves, every candidate bearing intersects a different delay
+ellipse; a dynamic-programming pass favors paths with physically plausible
+ground speed and acceleration. The diagnostic `estimate` therefore improves
+across scans in the same way that changing geometry improves a mobile direction
+finder, except here the target supplies the motion while both radar sites stay
+fixed. This smoother never upgrades an unresolved radar bearing to a strict
+`location`; it reports `geometry_consistent_samples` and leaves alternatives
+available for diagnosis.
+
 ADS-B is not an inference input. It may be displayed after the radar result for
 validation, but cannot select a lobe, improve consistency, resolve a point, or
 change geometry acceptance.
@@ -76,6 +94,8 @@ process:
     guard_radius: 1
     training_radius: 3
     diagonal_loading: 0.01
+    max_rate_deg_s: 20            # 0 keeps legacy histogram selection
+    manifold_file: /etc/vectorwarp/bearing-manifold.json # optional
     channel_mapping: [0, 1, 2, 3, 4] # optional bearing-only permutation
     min_consistent: 3
     min_peak_separation_db: 3
@@ -93,6 +113,32 @@ array geometry, or reference synthesis invalidates those confirmations.
 polygon element index. It must be a complete permutation. It affects only the
 bearing refinement manifold, making suspected cable/order mappings safe to
 compare while the established detection and Retina paths remain fixed.
+
+`manifold_file` replaces only the bearing refinement steering vectors; the
+established detection beam bank remains unchanged. It is a strict JSON file:
+
+```json
+{
+  "schema": "vectorwarp-bearing-manifold-v1",
+  "frequency_hz": 539000000,
+  "responses": [
+    [[1.0, 0.0], [0.8, 0.2], [0.7, -0.1], [0.9, 0.1], [0.8, -0.2]]
+  ]
+}
+```
+
+`responses` must contain exactly `scan_beams` rows in local counter-clockwise
+order and one nonzero `[real, imaginary]` complex response per logical bearing
+channel. The file frequency must match the capture frequency. VectorWarp ratios
+each direction against the measured direct-path direction, then applies the
+live Heimdall/direct-path channel calibration. This preserves drift correction
+while compensating direction-dependent antenna, coupling, mounting, and roof
+effects. Invalid files stop startup rather than falling back silently.
+
+When track-before-detect and `tracker.beam_tolerance` are both enabled, the
+multi-CPI integrator also requires coarse-angle consistency along each
+delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting
+`beam_tolerance` retains the prior delay/Doppler-only integrator.
 
 ## Interfaces and compatibility
 

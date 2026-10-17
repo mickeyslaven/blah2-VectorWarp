@@ -19,7 +19,7 @@ const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
-const {locationsFromBearing} = require('./bistatic-geolocation.js');
+const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
 // parse config file
@@ -93,6 +93,7 @@ var map = '';
 var detection = '';
 var track = '';
 var bearing = '';
+const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
 var timing = '';
 var iqdata = '';
@@ -236,7 +237,7 @@ app.get('/api/locations', (req, res) => {
   try { frame = bearing ? JSON.parse(bearing) : null; }
   catch (_) { return res.status(503).json({enabled: true, available: false,
     reason: 'The current bearing frame is invalid.', data: []}); }
-  const result = locationsFromBearing(frame, config);
+  const result = locationsFromBearing(frame, config, bearingHypotheses);
   res.status(result.enabled && !result.available ? 503 : 200).json(result);
 });
 app.get('/api/timestamp', (req, res) => {

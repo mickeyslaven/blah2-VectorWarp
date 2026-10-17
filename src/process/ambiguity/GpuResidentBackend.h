@@ -14,7 +14,7 @@
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
 constexpr unsigned moduleAbi=6;
-constexpr uint32_t protocol=0x42475206,packetBytes=160,configBytes=640;
+constexpr uint32_t protocol=0x42475207,packetBytes=160,configBytes=8768;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -70,6 +70,9 @@ struct BearingConfig {
  // Bearing-only logical-channel to physical-element permutation. Detection
  // fusion keeps its established path and is therefore unaffected.
  std::vector<uint32_t> channelMapping;
+ // Optional measured complex response, local CCW scan-major then logical channel.
+ // Empty retains the ideal regular-polygon manifold.
+ std::vector<std::complex<float>> manifoldResponses;
 };
 enum class TrackerInitiationMode:uint32_t {hypothesisBank=0,adaptiveGate=1};
 struct TrackerConfig {

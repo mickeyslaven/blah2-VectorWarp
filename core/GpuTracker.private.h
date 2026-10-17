@@ -86,12 +86,17 @@ uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell]
 uint coarseBeam(uint spatial){if((spatial&0x80000000u)!=0u){uint fine=spatial&127u;if(fine==0u)return 0u;
   return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}return spatial&511u;}
 uint detectionBeam(uint i){return coarseBeam(detectionSpatial(i));}
-uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
- return length==0u?0u:coarseBeam(src(r+16u+8u*((head+length-1u)%h)+7u));}
-bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolerance=post[77];
- if(tolerance==0xffffffffu||beams==0u||trackBeam==0u||detection==0u)return true;
- uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
- return min(delta,beams-delta)<=tolerance;
+uint latestSpatial(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
+ return length==0u?0u:src(r+16u+8u*((head+length-1u)%h)+7u);}
+uint candidateBeam(uint spatial,uint candidate){if((spatial&0x80000000u)==0u)return candidate==0u?coarseBeam(spatial):0u;
+ uint fine=(spatial>>(candidate*7u))&127u;if(fine==0u)return 0u;
+ return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}
+bool bearingCompatible(uint trackSpatial,uint detectionSpatialValue){uint beams=post[75],tolerance=post[77];
+ if(tolerance==0xffffffffu||beams==0u||trackSpatial==0u||detectionSpatialValue==0u)return true;
+ for(uint leftCandidate=0u;leftCandidate<3u;++leftCandidate){uint left=candidateBeam(trackSpatial,leftCandidate);if(left==0u)continue;
+  for(uint rightCandidate=0u;rightCandidate<3u;++rightCandidate){uint right=candidateBeam(detectionSpatialValue,rightCandidate);if(right==0u)continue;
+   uint delta=left>right?left-right:right-left;if(min(delta,beams-delta)<=tolerance)return true;}}
+ return false;
 }
 bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
 uint hypothesisCount(){return m[38]&0x7fffffffu;}
@@ -135,7 +140,7 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
 const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
- for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
+ for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousSpatial=latestSpatial(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
   bool adaptiveTentative=adaptiveGate()&&state==0u;
   precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
   if(adaptiveTentative){gateTime=time*double(src(r+10u)+1u);span=md(48u)*double(m[37]);
@@ -153,7 +158,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     compatible=finiteD(accelerationLow)&&finiteD(accelerationHigh)&&accelerationLow<accelerationHigh;
     if(compatible){precise double denominator=q*q+gateTime*gateTime*cpi*cpi;
      fitAcc=clamp((gateTime*cpi*cpi*dv-q*dd)/denominator,accelerationLow,accelerationHigh);}}
-   if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))){
+   if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousSpatial,detectionSpatial(j))){
     precise double deltaDelay=delay-dp,deltaDoppler=(doppler-vp)*cpi;
     if(adaptiveTentative){deltaDelay+=q*fitAcc;deltaDoppler=(doppler-vp-fitAcc*gateTime)*cpi;}
     precise double distance=deltaDelay*deltaDelay+deltaDoppler*deltaDoppler;

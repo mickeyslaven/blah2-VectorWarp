@@ -226,7 +226,8 @@ uint32_t beamCount=0,scanBeamCount=0;};
 struct BearingConfig {bool enabled=false;
  uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
  double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;
- uint32_t minPeakSeparationDb=3,method=0,scanBeams=0;};
+ uint32_t minPeakSeparationDb=3,method=0,scanBeams=0;
+ double cpiSeconds=0,maxBearingRateDegPerSecond=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -305,7 +306,10 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   config.refinementFactor>=1&&config.minConsistent>=2&&config.minConsistent<=100&&
   std::isfinite(config.xAxisBearingDegTrue)&&std::isfinite(config.minimumUncertaintyDeg)&&
   config.minimumUncertaintyDeg>=0&&config.minimumUncertaintyDeg<=180&&
-  config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15&&config.method<=1,
+  config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15&&config.method<=1&&
+  std::isfinite(config.cpiSeconds)&&config.cpiSeconds>=0&&
+  std::isfinite(config.maxBearingRateDegPerSecond)&&config.maxBearingRateDegPerSecond>=0&&
+  (!config.maxBearingRateDegPerSecond||config.cpiSeconds>0),
   "Invalid bearing publication config");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
@@ -361,10 +365,29 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   std::vector<uint32_t> independent;for(uint32_t bin:peaks){if(histogram[bin]<=0)break;bool separated=true;
    for(uint32_t other:independent){uint32_t delta=bin>other?bin-other:other-bin;if(std::min(delta,scanBeams-delta)<=separationBins){separated=false;break;}}
    if(separated){independent.push_back(bin);if(independent.size()==3)break;}}
-  const uint32_t winner=independent.front();double x=0,y=0,selectedWeight=0,totalWeight=0;
-  for(const auto& frame:frames){uint32_t selected=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frame.bin[k]){uint32_t bin=frame.bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;selected=k;}}
-   const double angle=double(frame.bin[selected]-1)*step,weight=frame.weight[selected];x+=weight*std::cos(angle*radians);y+=weight*std::sin(angle*radians);selectedWeight+=weight;
+  const uint32_t winner=independent.front();
+  std::vector<uint32_t> selected(frames.size());
+  const bool hypothesisTracking=config.maxBearingRateDegPerSecond>0&&frames.size()>1;
+  if(hypothesisTracking){
+   constexpr double impossible=-1e100;std::vector<std::array<double,3>>score(frames.size());
+   std::vector<std::array<uint8_t,3>>previous(frames.size());
+   for(uint32_t k=0;k<3;++k)score[0][k]=frames[0].bin[k]?std::log(std::max(frames[0].weight[k],1e-6)):impossible;
+   const double allowed=std::max(step,config.maxBearingRateDegPerSecond*config.cpiSeconds);
+   for(size_t frame=1;frame<frames.size();++frame)for(uint32_t k=0;k<3;++k){score[frame][k]=impossible;if(!frames[frame].bin[k])continue;
+    const uint32_t right=frames[frame].bin[k]-1;for(uint32_t p=0;p<3;++p){if(score[frame-1][p]<=impossible/2||!frames[frame-1].bin[p])continue;
+     const uint32_t left=frames[frame-1].bin[p]-1,raw=left>right?left-right:right-left;const double delta=double(std::min(raw,scanBeams-raw))*step;
+     if(delta>allowed)continue;const double candidate=score[frame-1][p]+std::log(std::max(frames[frame].weight[k],1e-6))-.5*(delta/allowed)*(delta/allowed);
+     if(candidate>score[frame][k]){score[frame][k]=candidate;previous[frame][k]=uint8_t(p);}}}
+   uint32_t best=0;for(uint32_t k=1;k<3;++k)if(score.back()[k]>score.back()[best])best=k;
+   if(score.back()[best]<=impossible/2){for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}}
+   else for(size_t frame=frames.size();frame-->0;){selected[frame]=best;if(frame)best=previous[frame][best];}
+  }else for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}
+  double x=0,y=0,selectedWeight=0,totalWeight=0,bearingRate=0;uint32_t rateSamples=0;
+  for(size_t frameIndex=0;frameIndex<frames.size();++frameIndex){const auto&frame=frames[frameIndex];const uint32_t choice=selected[frameIndex];
+   const double angle=double(frame.bin[choice]-1)*step,weight=frame.weight[choice];x+=weight*std::cos(angle*radians);y+=weight*std::sin(angle*radians);selectedWeight+=weight;
+   if(hypothesisTracking&&frameIndex){double delta=angle-double(frames[frameIndex-1].bin[selected[frameIndex-1]]-1)*step;delta=std::remainder(delta,360.0);bearingRate+=delta/config.cpiSeconds;++rateSamples;}
    for(double weight:frame.weight)totalWeight+=weight;}
+  current=frames.back().bin[selected.back()];if(rateSamples)bearingRate/=rateSamples;
   const double concentration=selectedWeight?std::hypot(x,y)/selectedWeight:0;
   const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
   const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians)});
@@ -376,6 +399,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("delay");out.Double(realPair(w,base));out.Key("doppler");out.Double(realPair(w,base+2));
   out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-meanLocal));
   out.Key("current_bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(current-1)*step));
+  out.Key("bearing_rate_deg_s");out.Double(-bearingRate);
+  out.Key("hypothesis_tracking");out.Bool(hypothesisTracking);
   out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
   out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
   out.Key("current_peak_separation_db");out.Uint(currentQuality);

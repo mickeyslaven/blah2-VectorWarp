@@ -12,6 +12,7 @@
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
 #include "process/ambiguity/GpuResidentCoordinator.h"
+#include "process/ambiguity/BearingManifold.h"
 #ifdef VECTORWARP_MIXED_AUTO
 #include "process/mixed/MixedProcess.h"
 #include "process/mixed/MixedAutoPolicy.h"
@@ -189,7 +190,8 @@ try
   bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
   std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
     bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
-  double bearingDiagonalLoading=.01;std::vector<uint32_t>bearingChannelMapping;
+  double bearingDiagonalLoading=.01,bearingMaxRateDegPerSecond=0;std::vector<uint32_t>bearingChannelMapping;
+  std::string bearingManifoldFile;
   if(tree["process"].has_child("bearing")){
     auto bearing=tree["process"]["bearing"];
     if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
@@ -202,6 +204,8 @@ try
     if(bearing.has_child("guard_radius"))bearing["guard_radius"]>>bearingGuardRadius;
     if(bearing.has_child("training_radius"))bearing["training_radius"]>>bearingTrainingRadius;
     if(bearing.has_child("diagonal_loading"))bearing["diagonal_loading"]>>bearingDiagonalLoading;
+    if(bearing.has_child("max_rate_deg_s"))bearing["max_rate_deg_s"]>>bearingMaxRateDegPerSecond;
+    if(bearing.has_child("manifold_file"))bearing["manifold_file"]>>bearingManifoldFile;
     if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
       uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
   }
@@ -680,6 +684,8 @@ try
     throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
   if(bearingMinPeakSeparationDb<1||bearingMinPeakSeparationDb>15)
     throw std::invalid_argument("Bearing min_peak_separation_db must be from 1 through 15");
+  if(!std::isfinite(bearingMaxRateDegPerSecond)||bearingMaxRateDegPerSecond<0||bearingMaxRateDegPerSecond>360)
+    throw std::invalid_argument("Bearing max_rate_deg_s must be from 0 through 360");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
       trackBeforeDetectMotionBins > 1))
     throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
@@ -799,8 +805,10 @@ try
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
         directPathNullDb};
       if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
+       std::vector<std::complex<float>> manifold;
+       if(!bearingManifoldFile.empty())manifold=blah2::bearing_manifold::load(bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size())).responses;
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
-        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping};}
+        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping,manifold};}
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
@@ -1217,7 +1225,8 @@ try
             residentPublication=resident->format(time[0]/1000,
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
-               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams});
+               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
+               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }

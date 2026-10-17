@@ -30,6 +30,7 @@ struct Reader {
  double out;
  std::memcpy(&out,&v,8);
  return out;}
+ float f32(size_t at)const{uint32_t v=u32(at);float out;std::memcpy(&out,&v,4);return out;}
  void zeros(size_t at,size_t count)const{range(at,count);
  for(size_t i=0;i<count;++i)require(b.data[at+i]==0,"Resident reserved byte is nonzero");}
 };
@@ -43,6 +44,7 @@ struct Writer {
  void f64(size_t at,double v)const{uint64_t bits;
  std::memcpy(&bits,&v,8);
  u64(at,bits);}
+ void f32(size_t at,float v)const{uint32_t bits;std::memcpy(&bits,&v,4);u32(at,bits);}
  void copy(size_t at,const void* p,size_t n)const{range(at,n);
  require(p||!n,"Resident null copy");
  if(n)std::memcpy(b.data+at,p,n);}
