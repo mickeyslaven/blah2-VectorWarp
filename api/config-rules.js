@@ -47,6 +47,14 @@ const rules = {
   'process.bearing.max_rate_deg_s': {...numeric(0, 360), optional: true},
   'process.bearing.manifold_file': {type: 'string', optional: true},
   'process.bearing.channel_mapping': {type: 'array', optional: true},
+  'process.bearing.manifold_recorder.enabled': {type: 'boolean', optional: true},
+  'process.bearing.manifold_recorder.path': {type: 'string', optional: true},
+  'process.bearing.manifold_recorder.min_snr_db': {...numeric(-100, 100), optional: true},
+  'process.bearing.manifold_recorder.min_elevation_deg': {...numeric(-10, 90), optional: true},
+  'process.bearing.manifold_recorder.max_delay_error_km': {...numeric(.01, 50), optional: true},
+  'process.bearing.manifold_recorder.max_doppler_error_hz': {...numeric(.1, 500), optional: true},
+  'process.bearing.manifold_recorder.max_file_mb': {...integer(1, 1024), optional: true},
+  'process.bearing.manifold_recorder.max_files': {...integer(1, 20), optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
@@ -79,10 +87,10 @@ for (const group of ['ambiguity', 'clutter']) {
     ['dopplerMin', 'dopplerMax'] : [])])
     rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
 }
-for (const name of ['api','map','detection','track','bearing','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    name === 'bearing' ? {optional: true} : {})};
+    ['bearing','manifold'].includes(name) ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

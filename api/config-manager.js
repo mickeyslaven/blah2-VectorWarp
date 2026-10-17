@@ -658,6 +658,34 @@ function validateConfig(config, baseline = null) {
         bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
         new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))
       errors.push('process.bearing.channel_mapping must be a unique array of channel indices');
+    if (bearing.manifold_recorder !== undefined) {
+      const recorder = requireObject(bearing.manifold_recorder,
+        'process.bearing.manifold_recorder');
+      boolean(recorder.enabled, 'process.bearing.manifold_recorder.enabled');
+      string(recorder.path, 'process.bearing.manifold_recorder.path');
+      if (typeof recorder.path === 'string' && !path.isAbsolute(recorder.path))
+        errors.push('process.bearing.manifold_recorder.path must be absolute');
+      number(recorder.min_snr_db, 'process.bearing.manifold_recorder.min_snr_db', {min: -100, max: 100});
+      number(recorder.min_elevation_deg, 'process.bearing.manifold_recorder.min_elevation_deg', {min: -10, max: 90});
+      number(recorder.max_delay_error_km, 'process.bearing.manifold_recorder.max_delay_error_km', {min: .01, max: 50});
+      number(recorder.max_doppler_error_hz, 'process.bearing.manifold_recorder.max_doppler_error_hz', {min: .1, max: 500});
+      number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
+      number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
+      if (recorder.enabled) {
+        if (device.type !== 'Kraken' || processConfig.performance?.acceleration !== 'gpu-resident' ||
+            !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+              processConfig.surveillance_fusion?.mode) || !detection.enable)
+          errors.push('manifold recording requires Kraken GPU-resident coherent detection');
+        if (!root.truth?.adsb?.enabled)
+          errors.push('manifold recording requires ADS-B truth');
+        if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)
+          errors.push('network.ports.manifold is required when manifold recording is enabled');
+        const geometry = device.array_geometry;
+        if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
+            geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
+          errors.push('manifold recording requires confirmed array mapping, geometry, and orientation');
+      }
+    }
     if (bearing.enable) {
       const fusion = processConfig.surveillance_fusion;
       if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||

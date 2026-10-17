@@ -15,6 +15,7 @@ const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./rece
 const {createReceiverJournal} = require('./receiver-journal.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {createManifoldRecorder} = require('./manifold-recorder.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -27,6 +28,7 @@ const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -673,6 +675,9 @@ app.get('/api/adsb/status', async (req, res) => {
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
 });
+app.get('/api/bearing/manifold-recorder', (req, res) => {
+  res.json(manifoldRecorder.status());
+});
 
 // stash API
 app.get('/stash/map', (req, res) => {
@@ -838,6 +843,12 @@ listenData(server_tracker, 'track');
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => { bearing = frame; });
   listenData(server_bearing, 'bearing');
+}
+
+if (config.process?.bearing?.manifold_recorder?.enabled === true &&
+    Number.isInteger(config.network?.ports?.manifold)) {
+  const server_manifold = jsonStreamServer('manifold', frame => manifoldRecorder.accept(frame));
+  listenData(server_manifold, 'manifold');
 }
 
 // tcp listener timestamp

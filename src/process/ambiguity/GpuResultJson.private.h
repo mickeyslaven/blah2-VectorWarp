@@ -4,6 +4,7 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -219,6 +220,39 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  doppler.push_back(v.data[i].doppler);
  snr.push_back(v.data[i].snr);}
  return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
+}
+template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
+ double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
+ View<Record> detectionsView,View<uint32_t> cells,
+ View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights){
+ shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
+ require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
+  rows&&columns&&channels>=2&&channels<=8,"Invalid manifold evidence geometry");
+ const uint64_t count=uint64_t(rows)*columns;
+ require(count<=SIZE_MAX/channels&&detectionsView.count==cells.count&&
+  channelMaps.count==size_t(count)*channels&&referenceWeights.count<=8,
+  "Manifold evidence shape differs");
+ rapidjson::StringBuffer b;Writer w(b);w.SetMaxDecimalPlaces(8);
+ w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v1");
+ w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
+ w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
+ w.Key("reference_weights");w.StartArray();
+ for(size_t i=0;i<referenceWeights.count;++i){const auto value=referenceWeights.data[i];
+  finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
+ w.EndArray();w.Key("data");w.StartArray();
+ for(size_t i=0;i<detectionsView.count;++i){const auto& detection=detectionsView.data[i];
+  finite(detection.delay);finite(detection.delayKm);finite(detection.doppler);finite(detection.snr);
+  const uint32_t cell=cells.data[i];require(cell<count,"Manifold evidence cell out of range");
+  const uint32_t row=cell/columns,column=cell%columns;
+  const uint32_t shifted=(row+rows/2+1)%rows;
+  w.StartObject();w.Key("cell");w.Uint(cell);w.Key("delay_km");w.Double(detection.delayKm);
+  w.Key("doppler_hz");w.Double(detection.doppler);w.Key("snr_db");w.Double(detection.snr);
+  w.Key("response");w.StartArray();
+  for(uint32_t channel=0;channel<channels;++channel){
+   const auto value=channelMaps.data[uint64_t(channel)*count+uint64_t(column)*rows+shifted];
+   finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
+  w.EndArray();w.EndObject();}
+ w.EndArray();w.EndObject();return {b.GetString(),b.GetSize()};
 }
 struct CheckpointBinding {uint32_t capacity=0;
 uint64_t epoch=0,generation=0,consumedSequence=0;

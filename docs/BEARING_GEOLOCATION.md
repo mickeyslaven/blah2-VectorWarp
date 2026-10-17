@@ -135,6 +135,61 @@ live Heimdall/direct-path channel calibration. This preserves drift correction
 while compensating direction-dependent antenna, coupling, mounting, and roof
 effects. Invalid files stop startup rather than falling back silently.
 
+## Built-in installed-array recorder
+
+VectorWarp can learn the response in its actual installation without a
+site-specific external recorder. The recorder is disabled by default. It
+publishes only the complex surveillance-channel values at accepted radar cells,
+matches them to fresh aircraft from VectorWarp's configured ADS-B source, and
+appends bounded, rotating JSONL. ADS-B supplies offline labels only; it never
+enters detection, tracking, bearing inference, or Retina output.
+
+The recorder requires a Kraken receiver, GPU-resident coherent fusion,
+detection, confirmed mapping/geometry/orientation, and enabled ADS-B:
+
+```yaml
+process:
+  bearing:
+    manifold_recorder:
+      enabled: true
+      path: /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_delay_error_km: 3
+      max_doppler_error_hz: 12
+      max_file_mb: 64
+      max_files: 4
+network:
+  ports:
+    manifold: 3005
+```
+
+Recorder health and counts are available at
+`/api/bearing/manifold-recorder`. A slow truth source cannot back-pressure the
+radar: the API keeps at most the newest evidence frame while matching or writing.
+Full ambiguity maps are never copied or stored.
+
+After collecting broad azimuth coverage, fit a versioned manifold:
+
+```sh
+node script/fit-bearing-manifold.js \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.3 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.2 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.1 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl \
+  --output /etc/vectorwarp/bearing-manifold.json \
+  --beams 60 --min-samples 20
+```
+
+The fitter removes each echo's arbitrary common complex scalar, robustly rejects
+inconsistent samples, reserves holdout observations, refuses mixed site/config
+fingerprints, requires useful circular coverage, and labels interpolated bins.
+The live eigenbeam reference weights anchor the measured direct-path manifold
+bin used by VectorWarp's drift correction. The file records coverage, elevation
+range, and holdout correlation metadata. Review
+those diagnostics before setting `manifold_file`; an azimuth-only model does not
+erase elevation dependence or roof multipath outside the observations.
+
 When track-before-detect and `tracker.beam_tolerance` are both enabled, the
 multi-CPI integrator also requires coarse-angle consistency along each
 delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting

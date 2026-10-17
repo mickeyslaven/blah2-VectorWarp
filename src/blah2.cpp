@@ -62,6 +62,7 @@ std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
 std::unique_ptr<Socket> socket_bearing;
+std::unique_ptr<Socket> socket_manifold;
 std::unique_ptr<Socket> socket_timestamp;
 std::unique_ptr<Socket> socket_timing;
 std::unique_ptr<Socket> socket_iqdata;
@@ -187,7 +188,8 @@ try
 
   // set up socket
   sleep(2);
-  bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
+  bool bearingEnabled=false,manifoldRecorderEnabled=false;
+  uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
   std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
     bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
   double bearingDiagonalLoading=.01,bearingMaxRateDegPerSecond=0;std::vector<uint32_t>bearingChannelMapping;
@@ -208,10 +210,12 @@ try
     if(bearing.has_child("manifold_file"))bearing["manifold_file"]>>bearingManifoldFile;
     if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
       uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
+    if(bearing.has_child("manifold_recorder")&&bearing["manifold_recorder"].has_child("enabled"))
+      bearing["manifold_recorder"]["enabled"]>>manifoldRecorderEnabled;
   }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
-  uint16_t port_bearing=0;
+  uint16_t port_bearing=0,port_manifold=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
@@ -220,6 +224,11 @@ try
     if(!tree["network"]["ports"].has_child("bearing"))
       throw std::invalid_argument("Bearing output requires network.ports.bearing");
     tree["network"]["ports"]["bearing"]>>port_bearing;
+  }
+  if(manifoldRecorderEnabled){
+    if(!tree["network"]["ports"].has_child("manifold"))
+      throw std::invalid_argument("Manifold recorder requires network.ports.manifold");
+    tree["network"]["ports"]["manifold"]>>port_manifold;
   }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
@@ -231,6 +240,7 @@ try
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
     if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
+    if(manifoldRecorderEnabled)socket_manifold = std::make_unique<Socket>(ip, port_manifold);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
     socket_timing = std::make_unique<Socket>(ip, port_timing);
     socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
@@ -668,6 +678,8 @@ try
     throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
   if(bearingEnabled&&(!residentMode||!coherentFusion))
     throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
+  if(manifoldRecorderEnabled&&(!residentMode||!coherentFusion))
+    throw std::invalid_argument("Manifold recording requires GPU-resident coherent detection");
   if(bearingEnabled&&!trackBeforeDetect)
     throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
   if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
@@ -752,6 +764,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if(manifoldRecorderEnabled&&!isDetection)
+    throw std::invalid_argument("Manifold recording requires GPU-resident coherent detection");
   if(bearingEnabled&&!isTracker)
     throw std::invalid_argument("Bearing output requires tracking to be enabled");
   if (integrationBeamTolerance != UINT32_MAX && !isTracker)
@@ -1226,7 +1240,7 @@ try
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
                bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
-               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond});
+               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond},manifoldRecorderEnabled);
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
@@ -1248,6 +1262,7 @@ try
           {
             detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
+            if(manifoldRecorderEnabled)socket_manifold->sendData(residentPublication.manifoldEvidence);
           }
           if (saveDetection && isDetection)
           {

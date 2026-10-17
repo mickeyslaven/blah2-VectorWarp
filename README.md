@@ -49,6 +49,7 @@ start; VectorWarp does not distribute the vendor software.
 
 See [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md) for the data contract, uncertainty rules, configuration gate, and geolocation math.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.
+- **Installed-array calibration:** an opt-in, bounded Kraken recorder captures sparse complex echo vectors, labels them with built-in ADS-B truth, and fits a measured bearing manifold with holdout and coverage diagnostics.
 - **Local or remote aircraft feeds:** discover a local decoder or connect to a tar1090 server on another machine.
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.

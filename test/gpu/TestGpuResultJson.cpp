@@ -44,6 +44,18 @@ void detectionCases(){
  Detection big(1.125,1e19,-1e20);const std::vector<double>km{1.125*(Constants::c/double(fs))/1000},f{1e19},s{-1e20};same(detections({4294967297,view(km),view(f),view(s)}),big.to_json_km(4294967297,fs));
  rejects([&]{detections({0,view(km),{},view(s)});});const std::vector<double>nan{std::numeric_limits<double>::quiet_NaN()};rejects([&]{detections({0,view(nan),view(f),view(s)});});
  struct Record {double delay,doppler,snr,delayKm;};const std::vector<Record>records{{1.125,1e19,-1e20,km[0]}};same(detectionRecords(UINT64_C(4294967297),View<Record>{records.data(),records.size()}),big.to_json_km(UINT64_C(4294967297),fs));
+ const std::vector<Record>evidenceRecords{{1,20,9,.15}};const std::vector<uint32_t>cells{3};
+ // Channel maps use the production delay-major, FFT-shifted layout. Cell 3 is
+ // row 1, column 1 in a 3x2 row-major detector grid, hence shifted row 0.
+ std::vector<std::complex<float>>channelMaps(12);channelMaps[3]={1,2};channelMaps[9]={3,4};
+ const std::vector<std::complex<double>>weights{{.5,.25},{-.5,.75}};
+ rapidjson::Document evidence;evidence.Parse(manifoldEvidence(5,539e6,2.4e6,3,2,2,
+  View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
+  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()}).c_str());
+ check(!evidence.HasParseError()&&std::string(evidence["schema"].GetString())=="vectorwarp-manifold-evidence-v1"&&
+  evidence["data"].Size()==1&&evidence["data"][0]["response"][0][0].GetDouble()==1&&
+  evidence["data"][0]["response"][1][1].GetDouble()==4&&evidence["reference_weights"].Size()==2,
+  "Sparse manifold evidence serialization differs");
  std::cout<<"PASS serializer-detection empty=1 order=1 legacy_km=1 scientific_roundtrip=1\n";
 }
 void trackCases(){

@@ -54,6 +54,15 @@ process:
     enable: false
     min_consistent: 3
     min_peak_separation_db: 3
+    manifold_recorder:
+      enabled: false
+      path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_delay_error_km: 3
+      max_doppler_error_hz: 12
+      max_file_mb: 64
+      max_files: 4
 
 network:
   ip: 0.0.0.0
@@ -63,6 +72,7 @@ network:
     detection: 3002
     track: 3003
     bearing: 3004
+    manifold: 3005
     timestamp: 4000
     timing: 4001
     iqdata: 4002

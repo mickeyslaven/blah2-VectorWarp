@@ -78,14 +78,21 @@ public:
  signal+=std::norm(expected);
  peak=std::max(peak,std::norm(expected));
  maxError=std::max(maxError,delta);}wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
- struct Publication {std::string spectrum,map,detections,tracks,bearing;};
- Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={}){const auto& v=receivePrepared();
+ struct Publication {std::string spectrum,map,detections,tracks,bearing,manifoldEvidence;};
+ Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={},
+  bool publishManifoldEvidence=false){const auto& v=receivePrepared();
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");
  namespace json=gpu_result_json;
  Publication result;
  result.spectrum=json::spectrum({timestamp,{v.frequencies.data,v.frequencies.size},{v.spectrumDb.data,v.spectrumDb.size}});
  result.map=json::map({timestamp,config().geometry.doppler,config().geometry.delays,v.noise,v.maxPower,{v.delayKm.data,v.delayKm.size},{v.doppler.data,v.doppler.size},{v.display.data,v.display.size}});
- if(config().detector.enabled)result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
+ if(config().detector.enabled){result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
+  if(publishManifoldEvidence){const auto reference=referenceState(v.referenceCheckpoint);
+   result.manifoldEvidence=json::manifoldEvidence(timestamp,config().fusion.frequencyHz,
+    config().sampleRate,config().geometry.doppler,config().geometry.delays,
+    config().geometry.channels,json::View<DetectionRecord>{v.detections.data,v.detections.size},
+    {v.detectionCells.data,v.detectionCells.size},{v.maps.data,v.maps.size},
+    {reference.weights.data(),reference.weightCount});}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
  const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};

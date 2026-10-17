@@ -334,6 +334,7 @@ class Lifecycle:
             raise RuntimeError(f'API is missing under {self.root}')
         self.logs.mkdir(mode=0o700, exist_ok=True)
         (self.state / 'recordings').mkdir(mode=0o700, exist_ok=True)
+        (self.state / 'calibration').mkdir(mode=0o700, exist_ok=True)
         if not self.config.exists():
             self.config.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             # Parse/dump through the app's YAML library: quotes or newlines in
@@ -344,6 +345,7 @@ const yaml=require(path.join(root,'api/node_modules/js-yaml'));
 const c=yaml.load(fs.readFileSync(path.join(root,'config/config.yml'),'utf8'));
 c.network.ip='127.0.0.1'; c.save.path=path.join(state,'recordings')+'/';
 c.capture.replay.file=path.join(state,'recordings','recording.blah2iq');
+c.process.bearing.manifold_recorder.path=path.join(state,'calibration','manifold-samples.jsonl');
 process.stdout.write(yaml.dump(c));'''
             payload = subprocess.check_output([self.node, '-e', source, str(self.root), str(self.state)], timeout=5)
             atomic_write(self.config, payload)
