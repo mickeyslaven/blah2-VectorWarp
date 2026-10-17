@@ -334,7 +334,11 @@ class ResidentFramePipeline {
   std::unique_ptr<gpu_native::Timestamps> timestamps;
   gpu_resident::Commands commands; // Destroy commands before anything they reference.
   const uint32_t capacity;
-  Workspace(ResidentFramePipeline& owner,uint32_t channels):config(owner.config_),commands(owner.context_),capacity(channels){
+  // One count owns allocation, initial angles, checkpoint recalibration and
+  // postprocess validation. A non-4x scan must never be relabelled as 4x.
+  const uint32_t refinementBeamCount;
+  Workspace(ResidentFramePipeline& owner,uint32_t channels):config(owner.config_),commands(owner.context_),capacity(channels),
+   refinementBeamCount(config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u){
    auto& context=owner.context_;
    const auto& config=owner.config_;
    auto g=config.geometry;
@@ -380,10 +384,9 @@ class ResidentFramePipeline {
     }buffer.flush(0,buffer.bytes);};
     initializeWeights(*fusionWeights,config.fusion.beams);
     if(config.postprocess.integrationCpis>2){
-     const uint32_t scans=config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u;
-     refinementWeights=std::make_unique<Buffer>(context,uint64_t(scans)*config.geometry.channels*sizeof(std::complex<float>),host,preferred);
+     refinementWeights=std::make_unique<Buffer>(context,uint64_t(refinementBeamCount)*config.geometry.channels*sizeof(std::complex<float>),host,preferred);
      auto* target=static_cast<std::complex<float>*>(refinementWeights->mapped);
-     for(uint32_t beam=0;beam<scans;++beam){const double beamAngle=6.283185307179586476925286766559*double(beam)/scans;
+     for(uint32_t beam=0;beam<refinementBeamCount;++beam){const double beamAngle=6.283185307179586476925286766559*double(beam)/refinementBeamCount;
       for(uint32_t channel=0;channel<config.geometry.channels;++channel){const uint32_t physical=config.postprocess.bearingChannelMapping.empty()?channel:config.postprocess.bearingChannelMapping[channel];
        const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
        const double phase=waveNumber*config.fusion.radiusM*std::cos(elementAngle-beamAngle);
@@ -397,7 +400,7 @@ class ResidentFramePipeline {
    if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
     config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_,
     config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
-    refinementWeights.get(),config.geometry.channels,refinementWeights?(config.postprocess.bearingScanBeams?config.postprocess.bearingScanBeams:config.fusion.beams*4u):0u);
+    refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
    commands.allocate(2+3*batches);
@@ -585,7 +588,7 @@ class ResidentFramePipeline {
    }
    buffer.flush(0,buffer.bytes);};
    calibrate(*fusionWeights,config.fusion.beams);
-   if(refinementWeights)calibrate(*refinementWeights,config.fusion.beams*4u);
+   if(refinementWeights)calibrate(*refinementWeights,refinementBeamCount);
   }
  };
  std::unique_ptr<Workspace> work_; // Released before full ambiguity/context.
