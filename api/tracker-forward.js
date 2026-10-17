@@ -7,8 +7,8 @@ const normalizedHex = value => typeof value === 'string' ? value.trim().toLowerC
 
 class TrackerForwarder {
   constructor(config, adsbSource, {connect = options => net.createConnection(options),
-    schedule = setTimeout, cancel = clearTimeout, now = Date.now} = {}) {
-    const settings = config.network?.tracker_forward || {};
+    schedule = setTimeout, cancel = clearTimeout, now = Date.now,
+    settings = config.network?.tracker_forward || {}, annotateAdsb = true} = {}) {
     this.enabled = settings.enabled === true;
     this.host = settings.host || '127.0.0.1';
     this.port = settings.port || 30100;
@@ -21,6 +21,7 @@ class TrackerForwarder {
     this.schedule = schedule;
     this.cancel = cancel;
     this.now = now;
+    this.annotateAdsb = annotateAdsb;
     this.socket = null;
     this.reconnectTimer = null;
     this.connected = false;
@@ -87,6 +88,11 @@ class TrackerForwarder {
   }
 
   async annotate(frame) {
+    if (!this.annotateAdsb) {
+      const annotations = (frame.delay || []).map(() => null);
+      this.counters.unmatched += annotations.length;
+      return {...frame, adsb: annotations};
+    }
     const [feed, predictions] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
     const aircraft = new Map((feed?.aircraft || []).map(item => [normalizedHex(item?.hex), item]));
@@ -158,7 +164,16 @@ class TrackerForwarder {
 }
 
 function createTrackerForwarder(config, adsbSource, dependencies) {
-  return new TrackerForwarder(config, adsbSource, dependencies);
+  const assisted = new TrackerForwarder(config, adsbSource, dependencies);
+  const settings = config.network?.tracker_forward || {};
+  if (settings.unassisted?.enabled !== true) return assisted;
+  const unassisted = new TrackerForwarder(config, adsbSource, {
+    ...dependencies, settings: settings.unassisted, annotateAdsb: false});
+  return {
+    accept(frame) { assisted.accept(frame); unassisted.accept(frame); },
+    status() { return {...assisted.status(), unassisted: unassisted.status()}; },
+    close() { assisted.close(); unassisted.close(); }
+  };
 }
 
 module.exports = {TrackerForwarder, createTrackerForwarder};

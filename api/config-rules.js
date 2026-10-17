@@ -90,6 +90,9 @@ const rules = {
   'network.tracker_forward.enabled': {type: 'boolean', optional: true},
   'network.tracker_forward.host': {type: 'string', optional: true},
   'network.tracker_forward.port': {...integer(1, 65535), optional: true},
+  'network.tracker_forward.unassisted.enabled': {type: 'boolean', optional: true},
+  'network.tracker_forward.unassisted.host': {type: 'string', optional: true},
+  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true},
   'truth.ais.port': {...integer(1, 65535), readOnly: 'AIS input is not implemented.'}
 };
 for (const group of ['ambiguity', 'clutter']) {

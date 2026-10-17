@@ -166,12 +166,18 @@ try {
       'network.ports.bearing']);
   const trackerForward = clone(krakenBase);
   trackerForward.process.performance.acceleration = 'auto';
-  trackerForward.network.tracker_forward = {enabled: true, host: '127.0.0.2', port: 30101};
+  trackerForward.network.tracker_forward = {
+    enabled: true, host: '127.0.0.2', port: 30101,
+    unassisted: {enabled: true, host: '127.0.0.3', port: 30102}
+  };
   trackerForward.truth.adsb.delay_tolerance = 3;
   trackerForward.truth.adsb.doppler_tolerance = 6;
   persistGroup('tracker-forward-output', krakenBase, trackerForward,
     ['network.tracker_forward.enabled', 'network.tracker_forward.host',
-      'network.tracker_forward.port', 'truth.adsb.delay_tolerance',
+      'network.tracker_forward.port',
+      'network.tracker_forward.unassisted.enabled',
+      'network.tracker_forward.unassisted.host',
+      'network.tracker_forward.unassisted.port', 'truth.adsb.delay_tolerance',
       'truth.adsb.doppler_tolerance']);
   const cpuRecorder = clone(fusion);
   Object.assign(cpuRecorder.capture.device.array_geometry, {

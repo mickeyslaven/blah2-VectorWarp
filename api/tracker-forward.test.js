@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 const {EventEmitter} = require('events');
-const {TrackerForwarder} = require('./tracker-forward');
+const {TrackerForwarder, createTrackerForwarder} = require('./tracker-forward');
 
 class Socket extends EventEmitter {
   constructor() { super(); this.writes = []; }
@@ -83,10 +83,38 @@ async function rejectsIncompleteFrames() {
   forwarder.close();
 }
 
+async function mirrorsFramesWithoutAdsbToAnIndependentShadow() {
+  const sockets = [];
+  let truthReads = 0;
+  const dual = structuredClone(config);
+  dual.network.tracker_forward.unassisted =
+    {enabled: true, host: '127.0.0.1', port: 30101};
+  const forwarder = createTrackerForwarder(dual,
+    {get: async kind => {
+      truthReads += 1;
+      return kind === 'aircraft' ? feed : predictions;
+    }}, {connect: () => {
+      const socket = new Socket(); sockets.push(socket); return socket;
+    }});
+  assert.equal(sockets.length, 2);
+  sockets.forEach(socket => socket.emit('connect'));
+  forwarder.accept({timestamp: 1, delay: [12.5], doppler: [-38], snr: [8]});
+  await tick(); await tick();
+  assert.equal(sockets[0].writes.length, 1);
+  assert.equal(sockets[1].writes.length, 1);
+  assert.equal(JSON.parse(sockets[0].writes[0]).adsb[0].hex, 'abc123');
+  assert.deepEqual(JSON.parse(sockets[1].writes[0]).adsb, [null]);
+  assert.equal(truthReads, 2, 'Only the assisted sink may read ADS-B truth');
+  assert.equal(forwarder.status().unassisted.forwarded, 1);
+  assert.equal(forwarder.status().unassisted.matches, 0);
+  forwarder.close();
+}
+
 (async () => {
   await forwardsAnnotatedDelimitedFrames();
   await keepsOnlyNewestFrameWhileTruthIsSlow();
   await disabledDoesNothing();
   await rejectsIncompleteFrames();
+  await mirrorsFramesWithoutAdsbToAnIndependentShadow();
   console.log('tracker-forward tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -203,6 +203,8 @@ function validateConfig(config, baseline = null) {
   const ports = requireObject(network.ports, 'network.ports');
   const trackerForward = network.tracker_forward === undefined ? null :
     requireObject(network.tracker_forward, 'network.tracker_forward');
+  const unassistedTrackerForward = trackerForward?.unassisted === undefined ? null :
+    requireObject(trackerForward.unassisted, 'network.tracker_forward.unassisted');
   const location = requireObject(root.location, 'location');
   const receiver = requireObject(location.rx, 'location.rx');
   const transmitter = requireObject(location.tx, 'location.tx');
@@ -762,6 +764,15 @@ function validateConfig(config, baseline = null) {
     boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
     string(trackerForward.host, 'network.tracker_forward.host');
     number(trackerForward.port, 'network.tracker_forward.port',
+      {integer: true, min: 1, max: 65535});
+  }
+  if (unassistedTrackerForward) {
+    boolean(unassistedTrackerForward.enabled,
+      'network.tracker_forward.unassisted.enabled');
+    string(unassistedTrackerForward.host,
+      'network.tracker_forward.unassisted.host');
+    number(unassistedTrackerForward.port,
+      'network.tracker_forward.unassisted.port',
       {integer: true, min: 1, max: 65535});
   }
 

@@ -29,10 +29,27 @@ the parallel `adsb` array. These annotations are inputs only to the external
 tracker. They never change CFAR detections, built-in associations, bearing
 estimates, or the existing Retina track stream.
 
+For a same-input control that cannot use ADS-B assistance, configure a second
+sink. It receives the same validated detection frames with an all-null `adsb`
+array and maintains independent connection and overwrite accounting:
+
+```yaml
+network:
+  tracker_forward:
+    enabled: true
+    host: 127.0.0.1
+    port: 30100
+    unassisted:
+      enabled: true
+      host: 127.0.0.1
+      port: 30101
+```
+
 Inspect `/api/tracker-forward` for connection state, frames received and sent,
 pending-frame overwrites, ADS-B matches, the most recent send time, and errors.
 An increasing `overwritten` count means the shadow consumer or ADS-B lookup is
 not keeping pace; it does not imply a dropped radar CPI.
+The unassisted sink's corresponding counters are returned under `unassisted`.
 The original numeric CPI timestamp is preserved when the API normalizes its
 framed JSON stream for the sidecar. Incomplete or malformed messages are
 rejected and counted as `invalid` instead of being allowed to terminate a
