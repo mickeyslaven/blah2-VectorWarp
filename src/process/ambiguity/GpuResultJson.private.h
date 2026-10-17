@@ -342,7 +342,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t historyState=w[at+6];stateName(historyState);
-   if(historyState!=1u&&historyState!=2u)continue;const uint32_t spatial=w[at+7];Lobes frame;
+   if(historyState!=1u&&historyState!=2u)continue;
+   const uint32_t spatial=w[at+7];Lobes frame;
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
     require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
@@ -350,7 +351,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    else{const uint32_t coarse=spatial&511u,fine=(spatial>>9u)&2047u,q=(spatial>>20u)&15u;
     require(coarse<=config.beamCount&&fine<=scanBeams&&!(coarse==0&&fine!=0),"GPU bearing spatial metadata invalid");if(!fine)continue;
     frame.bin={fine,0,0};frame.weight={1,0,0};current=fine;currentQuality=q;legacyQuality[q]++;legacyCount++;}
-   for(uint32_t k=0;k<3;++k)if(frame.bin[k])histogram[frame.bin[k]-1]+=frame.weight[k];frames.push_back(frame);count++;
+   for(uint32_t k=0;k<3;++k)if(frame.bin[k])histogram[frame.bin[k]-1]+=frame.weight[k];
+   frames.push_back(frame);count++;
   }
   if(!count||!current)continue;
   const uint32_t separationBins=std::max(1u,uint32_t(std::floor(config.minimumUncertaintyDeg/step)));
