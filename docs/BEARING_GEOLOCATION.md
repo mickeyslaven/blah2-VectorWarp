@@ -187,6 +187,13 @@ Recorder health and counts are available at
 radar: the API keeps at most the newest evidence frame while matching or writing.
 Full ambiguity maps are never copied or stored.
 
+When covariance MVDR is active, each accepted sample also stores the small
+per-target loaded spatial covariance used by the live scorer. This is bounded by
+eight channels and the already accepted sparse detections; it does not retain a
+full ambiguity map. The covariance makes the installed-array wiring check a
+replay of the actual complex channels and MVDR equation instead of a rotation of
+the finished bearing.
+
 The recorder fingerprints receiver/transmitter sites, frequency, sample rate,
 channel mapping, and complete array geometry. A changed fingerprint archives the
 previous active JSONL as `.site-previous` (within the configured file bound),
@@ -214,6 +221,33 @@ range, and holdout correlation metadata. Review
 those diagnostics before setting `manifold_file`; an azimuth-only model does not
 erase elevation dependence or roof multipath outside the observations.
 
+## Built-in channel-order and heading diagnostic
+
+`/api/bearing/diagnostic` and the Radar locations page expose a read-only,
+shadow-only diagnostic once replay-capable samples exist. The same check can be
+run without the web service:
+
+```sh
+node script/evaluate-bearing-calibration.js \
+  --config /etc/vectorwarp/config.yml \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
+```
+
+The diagnostic replays the recorded complex target vector and its local loaded
+covariance through every cyclic and reflected regular-polygon channel mapping.
+It reports pass-balanced median error, aircraft and azimuth-sector coverage,
+the currently configured mapping, the best replay mapping, and a separate
+heading-only correction. It never edits configuration or feeds ADS-B into live
+bearing, detection, tracking, or Retina output.
+
+A symmetric regular polygon has an unavoidable identifiability limit: rotating
+the channel labels by one element is mathematically equivalent to changing the
+array heading by one element angle. Therefore even strong replay evidence is a
+review result, not proof of mislabeled cables. A known-angle RF source or a
+physical one-channel-at-a-time verification is required to distinguish those
+two explanations. Older v1 samples remain valid for manifold fitting but lack
+the covariance needed for exact MVDR mapping replay.
+
 When track-before-detect and `tracker.beam_tolerance` are both enabled, the
 multi-CPI integrator also requires coarse-angle consistency along each
 delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting
@@ -223,6 +257,7 @@ delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting
 
 - `/api/tracker` remains the legacy tracker schema.
 - `/api/bearing` exposes radar-only temporal bearing evidence.
+- `/api/bearing/diagnostic` reports the shadow-only wiring/heading replay.
 - `/api/locations` adds bistatic candidate points and uncertainty corridors.
 - `/display/locations` overlays gold bearing evidence on orange delay ellipses.
 - Disabled or unsupported configurations continue running ordinary passive

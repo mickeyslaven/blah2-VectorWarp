@@ -419,9 +419,13 @@
     const hiddenCoastingTracks = array(tracker?.data).filter(track =>
       String(track?.state || '').toUpperCase() === 'COASTING').length;
     let bearingLocations = null;
+    let bearingDiagnostic = null;
     if (config?.process?.bearing?.enable === true) {
-      try { bearingLocations = await apiJson('/api/locations'); }
-      catch (_) { bearingLocations = {enabled: true, available: false, data: []}; }
+      const [locationsResult, diagnosticResult] = await Promise.allSettled([
+        apiJson('/api/locations'), apiJson('/api/bearing/diagnostic')]);
+      bearingLocations = locationsResult.status === 'fulfilled' ? locationsResult.value :
+        {enabled: true, available: false, data: []};
+      bearingDiagnostic = diagnosticResult.status === 'fulfilled' ? diagnosticResult.value : null;
     }
 
     let aircraft = [];
@@ -520,7 +524,16 @@
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
     document.getElementById('view-summary').innerHTML = `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>`;
+    const diagnostic = !bearingDiagnostic ? '' : bearingDiagnostic.available ?
+      `<section class="info-card"><h2>Bearing wiring diagnostic · shadow only</h2><dl>
+        <div><dt>Evidence</dt><dd>${integer(bearingDiagnostic.samples)} samples · ${integer(bearingDiagnostic.aircraft)} aircraft · ${integer(bearingDiagnostic.sectors)}/8 sectors</dd></div>
+        <div><dt>Active mapping</dt><dd>${escapeHtml(array(bearingDiagnostic.active?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.active?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Best replay</dt><dd>${escapeHtml(array(bearingDiagnostic.best?.mapping).join(' → ') || 'Unavailable')} · median error ${number(bearingDiagnostic.best?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Heading-only correction</dt><dd>${number(bearingDiagnostic.global_heading_bias?.signed_correction_deg, 0)}° · median error ${number(bearingDiagnostic.global_heading_bias?.median_error_deg, 1)}°</dd></div>
+        <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
+      </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
+      `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},

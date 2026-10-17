@@ -28,19 +28,35 @@ function azimuthElevation(site, aircraft) {
 }
 
 function validateEvidence(frame) {
-  if (!frame || frame.schema !== 'vectorwarp-manifold-evidence-v1' ||
+  if (!frame || !['vectorwarp-manifold-evidence-v1', 'vectorwarp-manifold-evidence-v2'].includes(frame.schema) ||
       !finite(frame.timestamp) || !finite(frame.frequency_hz) || frame.frequency_hz <= 0 ||
       !Number.isInteger(frame.channels) || frame.channels < 2 || frame.channels > 8 ||
       !Array.isArray(frame.reference_weights) || frame.reference_weights.length !== frame.channels ||
       frame.reference_weights.some(value => !Array.isArray(value) || value.length !== 2 ||
         !value.every(finite)) || !Array.isArray(frame.data) || frame.data.length > 65536)
     throw new Error('Invalid manifold evidence frame');
+  if (frame.schema === 'vectorwarp-manifold-evidence-v2') {
+    const replay = frame.bearing_replay;
+    if (!replay || !['coherent_beam_bank', 'covariance_mvdr'].includes(replay.method) ||
+        !Number.isInteger(replay.scan_beams) || replay.scan_beams < 4 || replay.scan_beams > 127 ||
+        !Array.isArray(replay.channel_mapping) || replay.channel_mapping.length !== frame.channels ||
+        new Set(replay.channel_mapping).size !== frame.channels ||
+        replay.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value >= frame.channels))
+      throw new Error('Invalid manifold replay metadata');
+  }
   for (const row of frame.data) {
     if (!Number.isInteger(row?.cell) || row.cell < 0 || !finite(row.delay_km) ||
         !finite(row.doppler_hz) || !finite(row.snr_db) || !Array.isArray(row.response) ||
         row.response.length !== frame.channels || row.response.some(value =>
           !Array.isArray(value) || value.length !== 2 || !value.every(finite)))
       throw new Error('Invalid manifold evidence row');
+    if (frame.schema === 'vectorwarp-manifold-evidence-v2' &&
+        frame.bearing_replay.method === 'covariance_mvdr' &&
+        (!Number.isInteger(row.covariance_samples) || row.covariance_samples < 1 ||
+         !Array.isArray(row.covariance) || row.covariance.length !== frame.channels ||
+         row.covariance.some(line => !Array.isArray(line) || line.length !== frame.channels ||
+           line.some(value => !Array.isArray(value) || value.length !== 2 || !value.every(finite)))))
+      throw new Error('Invalid manifold covariance evidence');
   }
   return frame;
 }
@@ -76,6 +92,13 @@ class ManifoldRecorder {
       surveillance_channels: config.capture?.device?.surveillance_channels,
       array_geometry: config.capture?.device?.array_geometry,
       receiver: config.location?.rx, transmitter: config.location?.tx,
+      bearing_replay_v1: {method: config.process?.bearing?.method,
+        scan_beams: config.process?.bearing?.scan_beams,
+        guard_radius: config.process?.bearing?.guard_radius,
+        training_radius: config.process?.bearing?.training_radius,
+        diagonal_loading: config.process?.bearing?.diagonal_loading,
+        channel_mapping: config.process?.bearing?.channel_mapping,
+        manifold_file: config.process?.bearing?.manifold_file},
       recorder_selection_v2: {min_snr_db: this.options.min_snr_db,
         min_elevation_deg: this.options.min_elevation_deg,
         max_elevation_deg: this.options.max_elevation_deg,
@@ -243,7 +266,10 @@ class ManifoldRecorder {
         detection: {cell: evidence.cell, delay_km: evidence.delay_km,
           doppler_hz: evidence.doppler_hz, snr_db: evidence.snr_db},
         direct_path_local_azimuth_deg: normalize(orientation - direct.bearingDeg),
-        response: evidence.response, reference_weights: frame.reference_weights});
+        response: evidence.response, reference_weights: frame.reference_weights,
+        ...(frame.bearing_replay ? {bearing_replay: frame.bearing_replay} : {}),
+        ...(evidence.covariance ? {covariance: evidence.covariance,
+          covariance_samples: evidence.covariance_samples} : {})});
     }
     this.state.unmatched += frame.data.length - usedEvidence.size;
     if (!records.length) return;

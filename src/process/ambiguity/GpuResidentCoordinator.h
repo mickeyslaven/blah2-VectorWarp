@@ -93,7 +93,9 @@ public:
     config().sampleRate,config().geometry.doppler,config().geometry.delays,
     config().geometry.channels,json::View<DetectionRecord>{v.detections.data,v.detections.size},
     {v.detectionCells.data,v.detectionCells.size},{v.maps.data,v.maps.size},
-    {reference.weights.data(),reference.weightCount});}}
+    {reference.weights.data(),reference.weightCount},uint32_t(config().bearing.method),config().bearing.scanBeams,
+    config().bearing.guardRadius,config().bearing.trainingRadius,config().bearing.diagonalLoading,
+    {config().bearing.channelMapping.data(),config().bearing.channelMapping.size()});}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
  const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};

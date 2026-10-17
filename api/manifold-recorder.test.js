@@ -67,6 +67,22 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   assert.ok(fs.existsSync(`${filename}.site-previous.1`));
   assert.ok(!fs.existsSync(`${filename}.site-previous.2`),
     'Site archives plus the active collection must obey max_files');
+  const adaptive = validateEvidence({schema: 'vectorwarp-manifold-evidence-v2', timestamp: 100000,
+    frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
+    reference_weights: [[1, 0], [0, 1]], bearing_replay: {method: 'covariance_mvdr',
+      scan_beams: 60, guard_radius: 0, training_radius: 1, diagonal_loading: .01,
+      channel_mapping: [0, 1]},
+    data: [{cell: 5, delay_km: 10.5, doppler_hz: 18, snr_db: 9,
+      response: [[1, 2], [3, 4]], covariance_samples: 8,
+      covariance: [[[2, 0], [.5, .25]], [[.5, -.25], [3, 0]]]}]});
+  const adaptiveFile = path.join(directory, 'adaptive.jsonl');
+  const adaptiveConfig = JSON.parse(JSON.stringify(config));
+  adaptiveConfig.process.bearing.manifold_recorder.path = adaptiveFile;
+  const adaptiveRecorder = new ManifoldRecorder(adaptiveConfig, source);
+  await adaptiveRecorder.record(adaptive);
+  const adaptiveRow = JSON.parse(fs.readFileSync(adaptiveFile, 'utf8').trim());
+  assert.equal(adaptiveRow.bearing_replay.method, 'covariance_mvdr');
+  assert.deepEqual(adaptiveRow.covariance, adaptive.data[0].covariance);
   fs.rmSync(directory, {recursive: true});
   console.log('Manifold recorder: automatic eligibility, site reset, sparse matching, and portable labelled JSONL passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

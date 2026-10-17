@@ -224,7 +224,9 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
 template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
  View<Record> detectionsView,View<uint32_t> cells,
- View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights){
+ View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights,
+ uint32_t bearingMethod,uint32_t bearingScanBeams,uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
+ double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping){
  shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
  require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
   rows&&columns&&channels>=2&&channels<=8,"Invalid manifold evidence geometry");
@@ -232,10 +234,26 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(count<=SIZE_MAX/channels&&detectionsView.count==cells.count&&
   channelMaps.count==size_t(count)*channels&&referenceWeights.count<=8,
   "Manifold evidence shape differs");
+ require(bearingMethod<=1&&bearingScanBeams>=4&&bearingScanBeams<=127&&bearingChannelMapping.count==channels,
+  "Invalid manifold replay configuration");
+ std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
+  require(bearingChannelMapping.data[i]<channels&&!used[bearingChannelMapping.data[i]],
+   "Invalid manifold replay mapping");used[bearingChannelMapping.data[i]]=true;}
+ if(bearingMethod==1)require(bearingGuardRadius<=3&&bearingTrainingRadius>bearingGuardRadius&&
+  bearingTrainingRadius<=6&&std::isfinite(bearingDiagonalLoading)&&
+  bearingDiagonalLoading>0&&bearingDiagonalLoading<=1,
+  "Invalid adaptive manifold replay configuration");
  rapidjson::StringBuffer b;Writer w(b);w.SetMaxDecimalPlaces(8);
- w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v1");
+ w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v2");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
+ w.Key("bearing_replay");w.StartObject();w.Key("method");
+ w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
+ w.Key("scan_beams");w.Uint(bearingScanBeams);
+ w.Key("guard_radius");w.Uint(bearingGuardRadius);w.Key("training_radius");w.Uint(bearingTrainingRadius);
+ w.Key("diagonal_loading");w.Double(bearingDiagonalLoading);w.Key("channel_mapping");w.StartArray();
+ for(size_t i=0;i<bearingChannelMapping.count;++i)w.Uint(bearingChannelMapping.data[i]);
+ w.EndArray();w.EndObject();
  w.Key("reference_weights");w.StartArray();
  for(size_t i=0;i<referenceWeights.count;++i){const auto value=referenceWeights.data[i];
   finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
@@ -251,7 +269,32 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
   for(uint32_t channel=0;channel<channels;++channel){
    const auto value=channelMaps.data[uint64_t(channel)*count+uint64_t(column)*rows+shifted];
    finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
-  w.EndArray();w.EndObject();}
+  w.EndArray();
+  if(bearingMethod==1){
+   std::array<std::complex<double>,64> covariance{};uint32_t samples=0;
+   const int training=int(bearingTrainingRadius),guard=int(bearingGuardRadius);
+   for(int dr=-training;dr<=training;++dr)for(int dc=-training;dc<=training;++dc){
+    if(std::abs(dr)<=guard&&std::abs(dc)<=guard)continue;
+    const int rr=int(row)+dr,cc=int(column)+dc;
+    if(rr<0||cc<0||rr>=int(rows)||cc>=int(columns))continue;
+    const uint32_t sh=(uint32_t(rr)+rows/2+1)%rows;
+    for(uint32_t a=0;a<channels;++a){
+     const auto va=std::complex<double>(channelMaps.data[uint64_t(a)*count+uint64_t(cc)*rows+sh]);
+     for(uint32_t c=0;c<channels;++c){
+      const auto vc=std::complex<double>(channelMaps.data[uint64_t(c)*count+uint64_t(cc)*rows+sh]);
+      covariance[a*8+c]+=va*std::conj(vc);}}
+    ++samples;
+   }
+   double trace=0;for(uint32_t channel=0;channel<channels;++channel)trace+=covariance[channel*8+channel].real();
+   const double load=std::max(trace/std::max(double(samples*channels),1.0)*bearingDiagonalLoading,1e-12);
+   w.Key("covariance_samples");w.Uint(samples);w.Key("covariance");w.StartArray();
+   for(uint32_t a=0;a<channels;++a){w.StartArray();for(uint32_t c=0;c<channels;++c){
+    auto value=covariance[a*8+c]/std::max(double(samples),1.0);
+    if(a==c)value+=load;finite(value.real());finite(value.imag());
+    w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}w.EndArray();}
+   w.EndArray();
+  }
+  w.EndObject();}
  w.EndArray();w.EndObject();return {b.GetString(),b.GetSize()};
 }
 struct CheckpointBinding {uint32_t capacity=0;

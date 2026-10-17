@@ -16,6 +16,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder} = require('./manifold-recorder.js');
+const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
@@ -30,6 +31,7 @@ const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
+const bearingDiagnostic = createBearingDiagnostic(config);
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
@@ -682,6 +684,9 @@ app.get('/api/adsb/status', async (req, res) => {
 });
 app.get('/api/bearing/manifold-recorder', (req, res) => {
   res.json(manifoldRecorder.status());
+});
+app.get('/api/bearing/diagnostic', (req, res) => {
+  res.json(bearingDiagnostic.status());
 });
 
 // stash API
