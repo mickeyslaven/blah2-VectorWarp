@@ -1,8 +1,8 @@
 {
   "suite": {
-    "revision": "f648514df41d90efd89984edad8b83c3680167f5",
-    "url": "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/f648514df41d90efd89984edad8b83c3680167f5",
-    "sha256": "3c398220f360250a66a0ee3c6e032c65110c2ff3ea9fa17cb4b1c088af5be663"
+    "revision": "3a95e19f7f81b078e60a4f6eb86e738418756f5e",
+    "url": "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/3a95e19f7f81b078e60a4f6eb86e738418756f5e",
+    "sha256": "b8c33ba26a20b10fa186f09af4a6ee76bc4b7e436a68287346227d4e8b2e80d0"
   },
   "rtlsdr": {
     "revision": "08fb08165ecfcdd954c7a20cb1bbfbc159294f0e",
