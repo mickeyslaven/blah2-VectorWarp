@@ -16,6 +16,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder} = require('./manifold-recorder.js');
+const {createTrackerForwarder} = require('./tracker-forward.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -29,6 +30,7 @@ const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
+const trackerForwarder = createTrackerForwarder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -226,6 +228,9 @@ app.get('/api/detection', (req, res) => {
 });
 app.get('/api/tracker', (req, res) => {
   res.send(track);
+});
+app.get('/api/tracker-forward', (req, res) => {
+  res.json(trackerForwarder.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -832,6 +837,7 @@ listenData(server_map, 'map');
 const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
   stash_detection.update_data(detection);
+  trackerForwarder.accept(frame);
 });
 listenData(server_detection, 'detection');
 
@@ -899,5 +905,6 @@ listenData(server_iqdata, 'iqdata');
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
+  trackerForwarder.close();
   process.exit(0);
 });

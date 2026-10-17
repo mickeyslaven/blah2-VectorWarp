@@ -44,6 +44,7 @@ start; VectorWarp does not distribute the vendor software.
 - **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
 - **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.
+- **Bounded external-tracker experiments:** optionally copy the newest detection frame to a local tracker sidecar, with strict ADS-B annotations and health counters, without blocking or replacing the built-in tracker. See [External tracker shadow feed](docs/EXTERNAL_TRACKER_SHADOW.md).
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
 - **Bearing-aware bistatic mapping:** an opt-in GPU-resident path can use the calibrated coherent scan or local complex-covariance MVDR scoring, load a measured direction-dependent array manifold, retain three independent lobes per CPI, and follow those hypotheses with angular-rate constraints. A bearing-only channel permutation makes cable/element mapping testable without changing detection. A separate API accumulates candidate intersections as the aircraft crosses changing delay ellipses, favors physically plausible speed/acceleration paths, and publishes uncertainty corridors; unresolved results remain candidates rather than falsely precise aircraft positions. The legacy tracker and Retina feeds are unchanged, and ADS-B is validation-only.
 
@@ -268,5 +269,8 @@ Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 Thanks to [30hours](https://github.com/30hours/blah2) for the original radar
 engine. Comparisons use [blah2 at c821bee](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de).
-ADS-B is used for display and evaluation, not radar detection or tracking input.
+By default, ADS-B is used for display and evaluation, not radar detection or
+tracking input. The explicitly enabled external shadow feed is the exception:
+it can annotate a separate experimental tracker while leaving VectorWarp's
+built-in detector, tracker, bearing path, and Retina output unchanged.
 [MIT license](LICENSE)

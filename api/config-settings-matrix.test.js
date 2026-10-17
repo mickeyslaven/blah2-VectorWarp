@@ -164,6 +164,15 @@ try {
       'process.bearing.manifold_file', 'process.bearing.channel_mapping',
       'process.bearing.manifold_recorder.enabled', 'truth.adsb.enabled',
       'network.ports.bearing']);
+  const trackerForward = clone(krakenBase);
+  trackerForward.process.performance.acceleration = 'auto';
+  trackerForward.network.tracker_forward = {enabled: true, host: '127.0.0.2', port: 30101};
+  trackerForward.truth.adsb.delay_tolerance = 3;
+  trackerForward.truth.adsb.doppler_tolerance = 6;
+  persistGroup('tracker-forward-output', krakenBase, trackerForward,
+    ['network.tracker_forward.enabled', 'network.tracker_forward.host',
+      'network.tracker_forward.port', 'truth.adsb.delay_tolerance',
+      'truth.adsb.doppler_tolerance']);
   const cpuRecorder = clone(fusion);
   Object.assign(cpuRecorder.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true

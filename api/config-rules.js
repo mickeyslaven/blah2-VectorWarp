@@ -80,6 +80,11 @@ const rules = {
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},
+  'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
+  'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
+  'network.tracker_forward.enabled': {type: 'boolean', optional: true},
+  'network.tracker_forward.host': {type: 'string', optional: true},
+  'network.tracker_forward.port': {...integer(1, 65535), optional: true},
   'truth.ais.port': {...integer(1, 65535), readOnly: 'AIS input is not implemented.'}
 };
 for (const group of ['ambiguity', 'clutter']) {

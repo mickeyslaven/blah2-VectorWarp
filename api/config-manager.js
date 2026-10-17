@@ -197,6 +197,8 @@ function validateConfig(config, baseline = null) {
   const initiate = requireObject(tracker.initiate, 'process.tracker.initiate');
   const network = requireObject(root.network, 'network');
   const ports = requireObject(network.ports, 'network.ports');
+  const trackerForward = network.tracker_forward === undefined ? null :
+    requireObject(network.tracker_forward, 'network.tracker_forward');
   const location = requireObject(root.location, 'location');
   const receiver = requireObject(location.rx, 'location.rx');
   const transmitter = requireObject(location.tx, 'location.tx');
@@ -725,6 +727,12 @@ function validateConfig(config, baseline = null) {
       if (portValues.filter(port => port === value).length > 1)
         errors.push(`network.ports.${name}: network ports must be unique`);
     });
+  if (trackerForward) {
+    boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
+    string(trackerForward.host, 'network.tracker_forward.host');
+    number(trackerForward.port, 'network.tracker_forward.port',
+      {integer: true, min: 1, max: 65535});
+  }
 
   for (const [name, site] of [['rx', receiver], ['tx', transmitter]]) {
     number(site.latitude, `location.${name}.latitude`, {min: -90, max: 90});
@@ -751,6 +759,10 @@ function validateConfig(config, baseline = null) {
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
+  if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
+    'truth.adsb.delay_tolerance', {min: 0, max: 1000});
+  if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
+    'truth.adsb.doppler_tolerance', {min: 0, max: 10000});
   boolean(ais.enabled, 'truth.ais.enabled');
   string(ais.ip, 'truth.ais.ip');
   number(ais.port, 'truth.ais.port', {integer: true, min: 1, max: 65535});
