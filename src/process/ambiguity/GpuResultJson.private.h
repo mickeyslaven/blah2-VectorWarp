@@ -261,7 +261,9 @@ struct BearingConfig {bool enabled=false;
  uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
  double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;
  uint32_t minPeakSeparationDb=3,method=0,scanBeams=0;
- double cpiSeconds=0,maxBearingRateDegPerSecond=0;};
+ double cpiSeconds=0,maxBearingRateDegPerSecond=0;
+ uint32_t stationaryPersistenceCpis=0;
+ double stationaryMaxDopplerHz=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -343,7 +345,10 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15&&config.method<=1&&
   std::isfinite(config.cpiSeconds)&&config.cpiSeconds>=0&&
   std::isfinite(config.maxBearingRateDegPerSecond)&&config.maxBearingRateDegPerSecond>=0&&
-  (!config.maxBearingRateDegPerSecond||config.cpiSeconds>0),
+  (!config.maxBearingRateDegPerSecond||config.cpiSeconds>0)&&
+  std::isfinite(config.stationaryMaxDopplerHz)&&config.stationaryMaxDopplerHz>=0&&
+  ((!config.stationaryPersistenceCpis&&config.stationaryMaxDopplerHz==0)||
+   (config.stationaryPersistenceCpis>=2&&config.cpiSeconds>0)),
   "Invalid bearing publication config");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
@@ -376,12 +381,16 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    start<historyCapacity,"GPU bearing history metadata invalid");
   std::vector<double> histogram(scanBeams,0);
   struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};uint32_t sample=0;};
-  std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0;
+  std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0,stationarySamples=0;
+  double minimumDelay=std::numeric_limits<double>::infinity(),maximumDelay=-std::numeric_limits<double>::infinity();
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t historyState=w[at+6];stateName(historyState);
    if(historyState!=1u&&historyState!=2u)continue;
    const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
+   const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);
+   if(std::abs(sampleDoppler)<=config.stationaryMaxDopplerHz){stationarySamples++;
+    minimumDelay=std::min(minimumDelay,sampleDelay);maximumDelay=std::max(maximumDelay,sampleDelay);}
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
     require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
@@ -428,6 +437,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   const double concentration=selectedWeight?std::hypot(x,y)/selectedWeight:0;
   const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
   const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians)});
+  const bool stationaryClutter=config.stationaryPersistenceCpis&&count>=config.stationaryPersistenceCpis&&
+   stationarySamples==count&&maximumDelay-minimumDelay<=1.5;
   const double runner=independent.size()>1?histogram[independent[1]]:0;
   uint32_t temporalQuality=runner>0?uint32_t(std::clamp(std::floor(10*std::log10(histogram[winner]/runner)),0.0,15.0)):15u;
   if(legacyCount==count){uint32_t seen=0;for(temporalQuality=0;temporalQuality<legacyQuality.size();++temporalQuality){seen+=legacyQuality[temporalQuality];if(seen>(count-1)/2)break;}}
@@ -441,7 +452,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
   out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
   out.Key("current_peak_separation_db");out.Uint(currentQuality);
-  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
+  out.Key("stationary_clutter");out.Bool(stationaryClutter);out.Key("publishable");out.Bool(!stationaryClutter);
+  out.Key("resolved");out.Bool(!stationaryClutter&&count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
    temporalQuality>=config.minPeakSeparationDb);
   out.Key("candidates");out.StartArray();uint32_t emitted=0;
   for(uint32_t bin:independent){if(emitted&&histogram[bin]*4<histogram[winner])break;

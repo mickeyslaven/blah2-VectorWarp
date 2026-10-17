@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {ManifoldRecorder, validateEvidence} = require('./manifold-recorder');
+const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./manifold-recorder');
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-manifold-'));
@@ -34,6 +34,34 @@ const {ManifoldRecorder, validateEvidence} = require('./manifold-recorder');
   assert.ok(Number.isFinite(rows[0].direct_path_local_azimuth_deg));
   assert.deepEqual(rows[0].response, [[1, 2], [3, 4]]);
   assert.equal(recorder.status().samples, 1);
+  const automaticConfig = JSON.parse(JSON.stringify(config));
+  automaticConfig.process.bearing.manifold_recorder.enabled = 'auto';
+  Object.assign(automaticConfig.capture.device, {type: 'Kraken'});
+  Object.assign(automaticConfig.capture.device.array_geometry, {
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+  automaticConfig.process.surveillance_fusion = {mode: 'coherent_beam_bank'};
+  automaticConfig.process.detection = {enable: true};
+  automaticConfig.truth = {adsb: {enabled: true}};
+  assert.equal(automaticallyEligible(automaticConfig), true);
+  const changedSite = JSON.parse(JSON.stringify(automaticConfig));
+  changedSite.location.rx.longitude = -80.01;
+  const second = new ManifoldRecorder(changedSite, source);
+  assert.equal(second.status().enabled, true);
+  await second.record(frame);
+  assert.ok(fs.existsSync(`${filename}.site-previous`),
+    'A site fingerprint change must archive the previous active collection');
+  const current = fs.readFileSync(filename, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(current.length === 1 && current[0].config_fingerprint === second.fingerprint,
+    'A site fingerprint change must begin a clean active collection');
+  assert.ok(second.status().siteResetAt,
+    'Site reset must be visible in recorder health');
+  const thirdSite = JSON.parse(JSON.stringify(changedSite));
+  thirdSite.location.rx.longitude = -80.02;
+  const third = new ManifoldRecorder(thirdSite, source);
+  await third.record(frame);
+  assert.ok(fs.existsSync(`${filename}.site-previous.1`));
+  assert.ok(!fs.existsSync(`${filename}.site-previous.2`),
+    'Site archives plus the active collection must obey max_files');
   fs.rmSync(directory, {recursive: true});
-  console.log('Manifold recorder: sparse evidence matching and portable labelled JSONL passed.');
+  console.log('Manifold recorder: automatic eligibility, site reset, sparse matching, and portable labelled JSONL passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -211,8 +211,33 @@ try
     if(bearing.has_child("manifold_file"))bearing["manifold_file"]>>bearingManifoldFile;
     if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
       uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
-    if(bearing.has_child("manifold_recorder")&&bearing["manifold_recorder"].has_child("enabled"))
-      bearing["manifold_recorder"]["enabled"]>>manifoldRecorderEnabled;
+    if(bearing.has_child("manifold_recorder")){
+      auto recorder=bearing["manifold_recorder"];
+      bool automatic=!recorder.has_child("enabled");
+      if(recorder.has_child("enabled")){
+        std::string mode;recorder["enabled"]>>mode;
+        if(mode=="true"||mode=="on")manifoldRecorderEnabled=true;
+        else if(mode=="auto")automatic=true;
+        else if(mode!="false"&&mode!="off")throw std::invalid_argument("Manifold recorder enabled must be auto, on or off");
+      }
+      if(automatic){
+        std::string fusion="noncoherent";bool detection=false,adsb=false;
+        if(tree["process"].has_child("surveillance_fusion")&&tree["process"]["surveillance_fusion"].has_child("mode"))
+          tree["process"]["surveillance_fusion"]["mode"]>>fusion;
+        if(tree["process"].has_child("detection")&&tree["process"]["detection"].has_child("enable"))
+          tree["process"]["detection"]["enable"]>>detection;
+        if(tree.has_child("truth")&&tree["truth"].has_child("adsb")&&tree["truth"]["adsb"].has_child("enabled"))
+          tree["truth"]["adsb"]["enabled"]>>adsb;
+        bool mapping=false,geometry=false,orientation=false;
+        if(tree["capture"]["device"].has_child("array_geometry")){
+          auto array=tree["capture"]["device"]["array_geometry"];
+          if(array.has_child("mapping_confirmed"))array["mapping_confirmed"]>>mapping;
+          if(array.has_child("geometry_confirmed"))array["geometry_confirmed"]>>geometry;
+          if(array.has_child("orientation_confirmed"))array["orientation_confirmed"]>>orientation;
+        }
+        manifoldRecorderEnabled=type=="Kraken"&&fusion!="noncoherent"&&detection&&adsb&&mapping&&geometry&&orientation;
+      }
+    }
   }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
@@ -743,12 +768,22 @@ try
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
   std::string smooth,trackerAccelerationModel="hypothesis_bank";
+  bool stationaryClutter=residentMode;
+  uint32_t stationaryPersistenceCpis=residentMode?8u:0u;
+  double stationaryMaxDopplerHz=residentMode?15.0:0.0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
   if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
     tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
+  if(tree["process"]["tracker"]["initiate"].has_child("stationary_clutter")){
+    const auto& stationary=tree["process"]["tracker"]["initiate"]["stationary_clutter"];
+    stationary["enable"] >> stationaryClutter;
+    if(stationaryClutter){stationary["persistence_cpis"] >> stationaryPersistenceCpis;
+      stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
+    else {stationaryPersistenceCpis=0;stationaryMaxDopplerHz=0;}
+  }
   if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
     throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
   rangeRes = (double)Constants::c/fs;
@@ -838,7 +873,8 @@ try
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
-        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
+        stationaryPersistenceCpis,stationaryMaxDopplerHz};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
@@ -1242,7 +1278,9 @@ try
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
                bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
-               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond},manifoldRecorderEnabled);
+               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond,
+               stationaryClutter?stationaryPersistenceCpis:0u,
+               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled);
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }

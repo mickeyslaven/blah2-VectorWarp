@@ -195,9 +195,14 @@ try {
   const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
   resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+  resident.process.tracker.initiate.stationary_clutter = {enable: true,
+    persistence_cpis: 8, max_doppler_hz: 15};
   resident.process.detection.integration_cpis = 2;
   persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
     'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+    'process.tracker.initiate.stationary_clutter.enable',
+    'process.tracker.initiate.stationary_clutter.persistence_cpis',
+    'process.tracker.initiate.stationary_clutter.max_doppler_hz',
     'process.detection.integration_cpis']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);

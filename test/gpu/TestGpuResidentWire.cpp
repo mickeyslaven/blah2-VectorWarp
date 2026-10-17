@@ -94,6 +94,17 @@ void configCases(){
   encodeConfig(adaptiveDecoded)==adaptiveBytes,"Adaptive tracker initiation did not round trip");
  check(wire::configHash(adaptive)!=wire::configHash(c),
   "Adaptive tracker initiation is not bound to config identity");
+ auto clutterAware=adaptive;clutterAware.tracker.stationaryClutter=true;
+ clutterAware.tracker.stationaryPersistenceCpis=8;clutterAware.tracker.stationaryMaxDopplerHz=15;
+ const auto clutterBytes=encodeConfig(clutterAware);
+ const auto clutterDecoded=decodeConfig(bytes(clutterBytes),bytes(d),bytes(f));
+ check(clutterDecoded.tracker.stationaryClutter&&
+  clutterDecoded.tracker.stationaryPersistenceCpis==8&&
+  clutterDecoded.tracker.stationaryMaxDopplerHz==15&&
+  encodeConfig(clutterDecoded)==clutterBytes,
+  "Persistent clutter initiation configuration did not round trip");
+ check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
+  "Persistent clutter initiation is not bound to config identity");
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -111,6 +122,7 @@ void configCases(){
  mutate([](auto&v){v.spectrumBins=63;});mutate([](auto&v){v.tracker.cpi=.5;});
  mutate([](auto&v){v.tracker.capacity=0;});mutate([](auto&v){v.tracker.n=256;});
  mutate([](auto&v){v.tracker.initiationMode=TrackerInitiationMode(2);});
+ mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=0;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.detector.integrationCpis=3;});
  mutate([](auto&v){v.detector.integrationCpis=6;});

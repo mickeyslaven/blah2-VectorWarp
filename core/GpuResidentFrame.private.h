@@ -330,6 +330,12 @@ class ResidentFramePipeline {
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
+  // Usually the native refinement reference buffer is large enough to double
+  // as postprocess scratch.  That is an optimization, not a geometry contract:
+  // larger clutter filters can legitimately leave a smaller borrowed buffer.
+  // Keep the zero-allocation fast path and allocate dedicated device storage
+  // only when the actual postprocess layout requires it.
+  std::unique_ptr<Buffer> dedicatedPostprocessScratch;
   std::unique_ptr<Kernel> referenceCast,referencePack,surveillanceCast,subtract,surveillancePack,subtractPack,fusion;
   std::unique_ptr<gpu_native::Timestamps> timestamps;
   gpu_resident::Commands commands; // Destroy commands before anything they reference.
@@ -397,10 +403,19 @@ class ResidentFramePipeline {
       std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
    }else fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
-   if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
-    config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_,
-    config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
-    refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
+   if(config.postprocess.enabled){
+    Buffer* scratch=&clutter->borrowedReference();
+    const auto required=gpu_postprocess::layout(config.geometry.doppler,config.geometry.delays).bytes;
+    if(scratch->bytes<required){
+     constexpr auto device=VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+     dedicatedPostprocessScratch=std::make_unique<Buffer>(context,required,device);
+     scratch=dedicatedPostprocessScratch.get();
+    }
+    postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
+     config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,*scratch,*owner.output_,
+     config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
+     refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
+   }
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
    commands.allocate(2+3*batches);
@@ -492,6 +507,7 @@ class ResidentFramePipeline {
    gpu_resident::hostRead(command);
    check(vkEndCommandBuffer(command),"resident ambiguity recording");
   }
+  Buffer& postprocessScratch(){return dedicatedPostprocessScratch?*dedicatedPostprocessScratch:clutter->borrowedReference();}
   void calibrateFusion(const ReferenceCheckpoint& checkpoint){
    if(config.fusion.mode==0)return;
    if(checkpoint.weightCount!=config.geometry.channels)
@@ -767,7 +783,7 @@ public:
   // Tracker capacity is explicit and never retried/shrunk. All existing full-frame
   // allocations, plans and transient peaks have already been admitted.
   if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
-   work_->postprocessStage->metadataBuffer(),work_->clutter->borrowedReference(),work_->postprocessStage->scratchLayout());
+   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout());
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity

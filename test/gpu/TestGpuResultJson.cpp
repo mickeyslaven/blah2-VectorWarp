@@ -103,6 +103,16 @@ void trackCases(){
   temporal["data"][0]["current_peak_separation_db"].GetUint()==6&&
   temporal["data"][0]["resolved"].GetBool()&&temporal["data"][0]["candidates"].Size()==1,
   "Temporal independent-lobe bearing confidence differs");
+ for(uint32_t value=498;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);
+  real(at,250);real(at+2,value==499?1.0:0.0);}
+ rapidjson::Document stationary;stationary.Parse(bearingCheckpoint(8,raw(),spatial,
+  {true,12,4,2,80,30,3,0,0,.5,0,3,15}).c_str());
+ check(!stationary.HasParseError()&&stationary["data"][0]["stationary_clutter"].GetBool()&&
+  !stationary["data"][0]["publishable"].GetBool()&&
+  !stationary["data"][0]["resolved"].GetBool(),
+  "Stationary bearing classification differs");
+ for(uint32_t value=498;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);
+  real(at,value);real(at+2,-double(value));}
  rapidjson::Document strict;strict.Parse(bearingCheckpoint(9,raw(),spatial,{true,12,4,2,80,30,5}).c_str());
  check(!strict.HasParseError()&&strict["min_peak_separation_db"].GetUint()==5&&
   !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");

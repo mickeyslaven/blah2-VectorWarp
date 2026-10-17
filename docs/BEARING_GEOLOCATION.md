@@ -38,6 +38,14 @@ count, angular uncertainty, and up to three persistent candidate lobes. It sets
 `resolved: true` only after the configured sample minimum and conservative
 consistency, uncertainty, and peak-separation gates pass.
 
+When the tracker persistent-clutter option is enabled, the bearing record also
+contains `stationary_clutter` and `publishable`. A low-Doppler history must stay
+within 1.5 delay bins for the configured persistence interval before it is
+classified as stationary. The raw `/api/bearing` and `/api/locations` records
+remain available for diagnosis, but stationary records are never marked
+resolved and `/display/locations` hides them by default. Add
+`?showStationary=1` to inspect them.
+
 The nominal fine scan spacing is not physical accuracy. Aperture size,
 multipath, sidelobes, calibration error, and target geometry can make the real
 uncertainty much wider. Consumers must honor `resolved` and `uncertainty_deg`.
@@ -138,8 +146,9 @@ effects. Invalid files stop startup rather than falling back silently.
 ## Built-in installed-array recorder
 
 VectorWarp can learn the response in its actual installation without a
-site-specific external recorder. The recorder is disabled by default. It
-publishes only the complex surveillance-channel values at accepted radar cells,
+site-specific external recorder. Collection starts automatically when coherent
+Kraken detection, confirmed geometry/orientation, and ADS-B truth are available;
+`enabled: false` remains an explicit opt-out. It publishes only the complex surveillance-channel values at accepted radar cells,
 matches them to fresh aircraft from VectorWarp's configured ADS-B source, and
 appends bounded, rotating JSONL. ADS-B supplies offline labels only; it never
 enters detection, tracking, bearing inference, or Retina output.
@@ -169,6 +178,12 @@ Recorder health and counts are available at
 `/api/bearing/manifold-recorder`. A slow truth source cannot back-pressure the
 radar: the API keeps at most the newest evidence frame while matching or writing.
 Full ambiguity maps are never copied or stored.
+
+The recorder fingerprints receiver/transmitter sites, frequency, sample rate,
+channel mapping, and complete array geometry. A changed fingerprint archives the
+previous active JSONL as `.site-previous` (within the configured file bound),
+writes a new site ledger, and begins a clean collection. Samples from different
+installations are therefore never silently fitted as one manifold.
 
 After collecting broad azimuth coverage, fit a versioned manifold:
 

@@ -80,6 +80,9 @@ struct TrackerConfig {
  uint32_t capacity=0,m=0,n=0,nDelete=0;
  TrackerInitiationMode initiationMode=TrackerInitiationMode::hypothesisBank;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
+ bool stationaryClutter=false;
+ uint32_t stationaryPersistenceCpis=0;
+ double stationaryMaxDopplerHz=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
 inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){

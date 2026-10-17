@@ -29,7 +29,7 @@ function setupDefaults() {
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
         acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
-        manifold_recorder: {enabled: false,
+        manifold_recorder: {enabled: 'auto',
           path: calibrationPath,
           min_snr_db: 6, min_elevation_deg: 0, max_delay_error_km: 3,
           max_doppler_error_hz: 12, max_file_mb: 64, max_files: 4}}
@@ -107,6 +107,8 @@ function readConfig(filename) {
     // default's JavaScript type would discard a valid persisted alternative.
     if (type === 'gain') return typeof current === 'string' || typeof current === 'number';
     if (type === 'serial') return typeof current === 'string' || Array.isArray(current);
+    if (type === 'autoBoolean') return typeof current === 'boolean' ||
+      ['auto', 'on', 'off'].includes(current);
     return false;
   };
   const merge = (base, current, prefix = '') => {

@@ -165,7 +165,10 @@ function validateConfig(config, baseline = null) {
     else if (rule && rule.type === 'gain' && !(value === 'keep' || value === -1 ||
         (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 && Math.round(value * 10) === value * 10)))
       errors.push(`${key} must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps`);
-    else if (rule && (rule.type === 'array' ? !Array.isArray(value) : !['gain', 'serial'].includes(rule.type) && typeof value !== rule.type))
+    else if (rule && rule.type === 'autoBoolean' && !(typeof value === 'boolean' ||
+        ['auto', 'on', 'off'].includes(value)))
+      errors.push(`${key} must be auto, on, off, or a boolean`);
+    else if (rule && (rule.type === 'array' ? !Array.isArray(value) : !['gain', 'serial', 'autoBoolean'].includes(rule.type) && typeof value !== rule.type))
       errors.push(`${key} must be ${rule.type}`);
     if (isObject(value)) {
       if (key && !rule && !Object.keys(FIELD_RULES).some(field => field.startsWith(`${key}.`)) &&
@@ -180,7 +183,8 @@ function validateConfig(config, baseline = null) {
       return;
     }
     if (rule.type === 'number') number(value, key, rule);
-    if (rule.choices) oneOf(value, key, rule.choices);
+    if (rule.choices && !(rule.type === 'autoBoolean' && typeof value === 'boolean'))
+      oneOf(value, key, rule.choices);
     if (rule.readOnly && baseline && previous !== undefined && previous !== value)
       errors.push(`${key} is read-only: ${rule.readOnly}`);
   };
@@ -516,6 +520,25 @@ function validateConfig(config, baseline = null) {
   if (initiate.acceleration_model !== undefined)
     oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
       ['hypothesis_bank', 'adaptive_gate']);
+  let stationaryClutter = null;
+  if (initiate.stationary_clutter !== undefined) {
+    stationaryClutter = requireObject(initiate.stationary_clutter,
+      'process.tracker.initiate.stationary_clutter');
+    boolean(stationaryClutter.enable,
+      'process.tracker.initiate.stationary_clutter.enable');
+    if (stationaryClutter.persistence_cpis !== undefined)
+      number(stationaryClutter.persistence_cpis,
+        'process.tracker.initiate.stationary_clutter.persistence_cpis',
+        {integer: true, min: 1, max: 65535});
+    if (stationaryClutter.max_doppler_hz !== undefined)
+      number(stationaryClutter.max_doppler_hz,
+        'process.tracker.initiate.stationary_clutter.max_doppler_hz',
+        {min: 0, max: 10000});
+    if (stationaryClutter.enable === true &&
+        (!Number.isInteger(stationaryClutter.persistence_cpis) ||
+         !Number.isFinite(stationaryClutter.max_doppler_hz)))
+      errors.push('enabled persistent clutter filtering requires persistence_cpis and max_doppler_hz');
+  }
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
@@ -539,6 +562,8 @@ function validateConfig(config, baseline = null) {
     if (initiate.acceleration_model === 'adaptive_gate' &&
         performance.acceleration !== 'gpu-resident')
       errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
+    if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');
@@ -663,7 +688,8 @@ function validateConfig(config, baseline = null) {
     if (bearing.manifold_recorder !== undefined) {
       const recorder = requireObject(bearing.manifold_recorder,
         'process.bearing.manifold_recorder');
-      boolean(recorder.enabled, 'process.bearing.manifold_recorder.enabled');
+      if (recorder.enabled !== undefined && typeof recorder.enabled !== 'boolean')
+        oneOf(recorder.enabled, 'process.bearing.manifold_recorder.enabled', ['auto', 'on', 'off']);
       string(recorder.path, 'process.bearing.manifold_recorder.path');
       if (typeof recorder.path === 'string' && !path.isAbsolute(recorder.path))
         errors.push('process.bearing.manifold_recorder.path must be absolute');
@@ -673,7 +699,7 @@ function validateConfig(config, baseline = null) {
       number(recorder.max_doppler_error_hz, 'process.bearing.manifold_recorder.max_doppler_error_hz', {min: .1, max: 500});
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
-      if (recorder.enabled) {
+      if (recorder.enabled === true || recorder.enabled === 'on') {
         if (device.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
               processConfig.surveillance_fusion?.mode) || !detection.enable)
           errors.push('manifold recording requires Kraken coherent detection');

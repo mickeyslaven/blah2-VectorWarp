@@ -45,6 +45,16 @@ function validateEvidence(frame) {
   return frame;
 }
 
+function automaticallyEligible(config) {
+  const device = config.capture?.device || {}, geometry = device.array_geometry || {};
+  const fusion = config.process?.surveillance_fusion?.mode;
+  return device.type === 'Kraken' &&
+    ['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion) &&
+    config.process?.detection?.enable === true && config.truth?.adsb?.enabled === true &&
+    geometry.mapping_confirmed === true && geometry.geometry_confirmed === true &&
+    geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
+}
+
 class ManifoldRecorder {
   constructor(config, adsbSource, {fileSystem = fs} = {}) {
     this.config = config;
@@ -53,7 +63,10 @@ class ManifoldRecorder {
     this.fs = fileSystem;
     this.latest = null;
     this.running = false;
-    this.state = {enabled: this.options.enabled === true, frames: 0, samples: 0,
+    const automatic = this.options.enabled === undefined || this.options.enabled === 'auto';
+    this.state = {enabled: this.options.enabled === true || this.options.enabled === 'on' ||
+      (automatic && automaticallyEligible(config)),
+      automatic, frames: 0, samples: 0,
       unmatched: 0, lastWriteAt: null, error: null, path: this.options.path || null};
     const fingerprint = {
       frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
@@ -62,6 +75,7 @@ class ManifoldRecorder {
       receiver: config.location?.rx, transmitter: config.location?.tx
     };
     this.fingerprint = crypto.createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex');
+    this.sitePrepared = false;
   }
 
   status() { return {...this.state, queued: this.latest !== null, active: this.running}; }
@@ -106,7 +120,49 @@ class ManifoldRecorder {
     }
   }
 
+  async prepareSite() {
+    if (this.sitePrepared) return;
+    const filename = this.options.path, metadata = `${filename}.site.json`;
+    let prior = null;
+    try { prior = JSON.parse(await this.fs.promises.readFile(metadata, 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!prior) {
+      try {
+        const text = await this.fs.promises.readFile(filename, 'utf8');
+        const lines = text.trim().split('\n');
+        if (lines.length && lines[lines.length - 1]) prior = {
+          fingerprint: JSON.parse(lines[lines.length - 1]).config_fingerprint};
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    if (prior?.fingerprint && prior.fingerprint !== this.fingerprint) {
+      if (this.options.max_files === 1) {
+        try { await this.fs.promises.unlink(filename); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      } else {
+        for (let i = this.options.max_files - 2; i >= 1; --i) {
+          try { await this.fs.promises.rename(`${filename}.site-previous.${i}`,
+            `${filename}.site-previous.${i + 1}`); }
+          catch (error) { if (error.code !== 'ENOENT') throw error; }
+        }
+        try { await this.fs.promises.rename(`${filename}.site-previous`,
+          `${filename}.site-previous.1`); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        try { await this.fs.promises.rename(filename, `${filename}.site-previous`); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+      }
+      this.state.siteResetAt = Date.now();
+    }
+    await this.fs.promises.mkdir(path.dirname(filename), {recursive: true});
+    const site = JSON.stringify({schema: 'vectorwarp-manifold-site-v1',
+      fingerprint: this.fingerprint, started_at: new Date().toISOString()}) + '\n';
+    const temporary = `${metadata}.${process.pid}.tmp`;
+    await this.fs.promises.writeFile(temporary, site, {mode: 0o600});
+    await this.fs.promises.rename(temporary, metadata);
+    this.sitePrepared = true;
+  }
+
   async record(frame) {
+    await this.prepareSite();
     ++this.state.frames;
     if (!frame.data.length) return;
     const [raw, delayDoppler] = await Promise.all([
@@ -172,4 +228,5 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
   return new ManifoldRecorder(config, adsbSource, dependencies);
 }
 
-module.exports = {azimuthElevation, validateEvidence, ManifoldRecorder, createManifoldRecorder};
+module.exports = {azimuthElevation, validateEvidence, automaticallyEligible,
+  ManifoldRecorder, createManifoldRecorder};
