@@ -21,7 +21,7 @@ For a direct source build, first build VectorWarp, then stage its companion
 into the same artifact:
 
 ```sh
-brew install cmake ninja pkgconf eigen fftw libusb
+brew install cmake ninja pkgconf eigen libusb
 script/build-macos.sh --backend all --test --jobs 1
 python3 script/build-kraken-macos.py --jobs 1 --output-dir build/macos/artifact
 ```
@@ -103,10 +103,10 @@ Intel receiver behavior; local runs only qualify the architecture actually used.
 ## Source provenance
 
 `config/kraken-macos-sources.json` pins Suite commit
-`f648514df41d90efd89984edad8b83c3680167f5`, Kraken RTL-SDR commit
+`3a95e19f7f81b078e60a4f6eb86e738418756f5e`, Kraken RTL-SDR commit
 `08fb08165ecfcdd954c7a20cb1bbfbc159294f0e`, uWebSockets and uSockets.
-See the [October 2026 compatibility record](KRAKEN_SUITE_UPDATE_2026_10.md)
-for changed calibration behavior and the software checks for this revision.
+See the [current compatibility record](KRAKEN_SUITE_UPDATE_2026_10_17.md)
+for the upstream pffft change and the software checks for this revision.
 The build installs dependency license files supplied upstream. The pinned
 Suite repository has no repository-wide license file; its code is not
 relicensed under VectorWarp's MIT license. These development formulas build
