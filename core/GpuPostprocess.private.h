@@ -50,12 +50,13 @@ enum Counter : uint32_t {error=0,levelCells=1,metricCells=2,displayCells=3,cfarC
  refinedCandidates=15,cfarDiagnosticRecords=16,centroidDiagnosticRecords=17,
  compactTileCounts=23,compactPrefixTiles=24,compactScatterCells=25,compactKinds=26,statusWords=32};
 struct Layout {
- uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,direction=0,records=0;
+ uint32_t cells=0,levels=0,powers=0,snr=0,flags=0,keep=0,indices=0,candidates=0,direction=0,records=0,
+  metricPartials=0,metricPartialCount=0;
  uint64_t bytes=0;
 };
 inline Layout layout(uint32_t rows,uint32_t columns){
  const uint64_t count=uint64_t(rows)*columns;
- if(!rows||!columns||rows>65535||columns>65535||count>UINT32_MAX/24)
+ if(!rows||!columns||rows>65535||columns>65535||count>UINT32_MAX/25)
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED index capacity");
  Layout l;
  l.cells=uint32_t(count);
@@ -67,7 +68,9 @@ inline Layout layout(uint32_t rows,uint32_t columns){
  l.candidates=uint32_t((9*count+1)&~uint64_t(1));
  l.direction=l.candidates+6*l.cells;
  l.records=l.direction+l.cells;
- l.bytes=uint64_t(l.records+8*l.cells)*4;
+ l.metricPartials=l.records+8*l.cells;
+ l.metricPartialCount=(l.cells+127u)/128u;
+ l.bytes=uint64_t(l.metricPartials+4*l.metricPartialCount)*4;
  return l;
 }
 inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns,double fs){
@@ -208,21 +211,24 @@ void main(){if(indexOf()==0u&&m[78]!=0u&&m[0]==0u)m[79]=min(m[79]+1u,0xfffffffeu
 const char* metricsBody=R"glsl(
 shared double metricTile[128];
 void main(){
- // One workgroup prefetches; lane zero preserves the original row-major sum.
- if(gl_WorkGroupID.x!=0u||gl_WorkGroupID.y!=0u||gl_WorkGroupID.z!=0u||m[0]!=0u)return;
- uint lane=gl_LocalInvocationID.x;precise double total=0.0LF;double maximum=0.0LF;
- if(lane==0u)maximum=readS(m[36]);
- for(uint first=0u;first<m[34];first+=128u){
-  uint count=min(128u,m[34]-first);
-  metricTile[lane]=lane<count?readS(m[36]+2u*(first+lane)):0.0LF;
-  barrier();
-  if(lane==0u){for(uint j=0u;j<count;++j){double value=metricTile[j];total=total+value;maximum=maximum<value?value:maximum;}}
-  barrier();
- }
- if(lane!=0u)return;
+ // Preserve ordered FP64 additions inside each contiguous tile while allowing
+ // every tile to be reduced independently. A short ordered second pass below
+ // combines only ceil(cells/128) partials instead of serializing the full map.
+ if(m[0]!=0u)return;uint lane=gl_LocalInvocationID.x,first=indexOf()-lane,tile=first/128u;
+ uint count=first>=m[34]?0u:min(128u,m[34]-first);
+ metricTile[lane]=lane<count?readS(m[36]+2u*(first+lane)):0.0LF;barrier();
+ if(lane!=0u||count==0u)return;precise double total=0.0LF;double maximum=metricTile[0];
+ for(uint j=0u;j<count;++j){double value=metricTile[j];total=total+value;maximum=maximum<value?value:maximum;}
+ uint at=m[91]+4u*tile;writeS(at,total);writeS(at+2u,maximum);atomicAdd(m[2],count);
+}
+)glsl";
+const char* metricsFinishBody=R"glsl(
+void main(){if(indexOf()!=0u||m[0]!=0u)return;precise double total=0.0LF;double maximum=readS(m[91]+2u);
+ for(uint tile=0u;tile<m[92];++tile){uint at=m[91]+4u*tile;double subtotal=readS(at),peak=readS(at+2u);
+  total=total+subtotal;maximum=maximum<peak?peak:maximum;}
  precise double noise=total/(double(m[32])*double(m[33]));precise double peak=maximum-noise;
  if(!finiteD(total)||!finiteD(noise)||!finiteD(peak)){reject(203u);return;}
- writeD(64u,noise);writeD(66u,peak);m[2]=m[34];
+ writeD(64u,noise);writeD(66u,peak);
 }
 )glsl";
 const char* displayBody=R"glsl(
@@ -392,7 +398,7 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
 }
 )glsl";
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
- const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody}};
+ const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies)result.emplace_back(b.first,std::string(common)+b.second);
  return result;
@@ -513,6 +519,8 @@ public:
   words[87]=config.bearingMethod;
   words[88]=config.bearingGuardRadius;
   words[89]=config.bearingTrainingRadius;
+  words[91]=layout_.metricPartials;
+  words[92]=layout_.metricPartialCount;
   std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
@@ -589,7 +597,9 @@ public:
   if(tbd){kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}
-  kernels_[1]->append(command,{1,0,0,0,0});
+  kernels_[1]->append(command,{layout_.cells,0,0,0,0});
+  barrier(command);
+  kernels_[13]->append(command,{1,0,0,0,0});
   barrier(command);
   if(config_.detection){kernels_[2]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);}timestamps_->end(command,0);
