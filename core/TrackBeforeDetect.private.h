@@ -1,6 +1,7 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace track_before_detect {
@@ -17,6 +18,14 @@ inline uint32_t bankLength(uint32_t bank) {
 inline double trialCount(uint32_t maximum, uint32_t motionBins) {
   const double width = double(2u * motionBins + 1u);
   return double(bankCount(maximum)) * width * width;
+}
+inline uint64_t angleHistoryWords(uint64_t cells, uint32_t maximum,
+    uint32_t beamTolerance) {
+  if (beamTolerance == UINT32_MAX) return 1;
+  const uint32_t depth = validMaximum(maximum) ? maximum : 1u;
+  if (!cells || cells > std::numeric_limits<uint64_t>::max() / depth)
+    throw std::invalid_argument("Track-before-detect angle history dimensions invalid");
+  return cells * depth;
 }
 inline double passPfa(double baselinePfa, uint32_t maximum,
     uint32_t motionBins, uint32_t pass) {

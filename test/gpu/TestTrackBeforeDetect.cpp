@@ -23,6 +23,10 @@ int main() try {
   check(bankLength(0) == 2 && bankLength(1) == 4 && bankLength(2) == 8,
     "Unexpected multi-timescale bank lengths");
   check(trialCount(8, 1) == 27, "Motion-path trial correction changed");
+  check(angleHistoryWords(307111, 8, UINT32_MAX) == 1,
+    "Disabled angle consistency retained a production-size GPU allocation");
+  check(angleHistoryWords(307111, 8, 1) == 2456888,
+    "Enabled angle consistency history dimensions changed");
   check(close(passPfa(.001, 8, 1, 0), .001) &&
       close(passPfa(.001, 8, 1, 1), .001 / 27),
     "Conventional and motion-bank PFA separation changed");

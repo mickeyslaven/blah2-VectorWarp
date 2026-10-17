@@ -146,7 +146,8 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76];m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
- if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
+ if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;
+  if(m[77]!=0xffffffffu)angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
  if(historyReady&&m[76]!=0u){
@@ -171,7 +172,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
  if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
-  uint priorAt=priorSlot*m[34]+i;double baseline=angleCompatible(currentBeam,angleHistory[priorAt])?
+  uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
    0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
   if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=max(0.0LF,baseline);
  }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
@@ -183,7 +184,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
    uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
-   double value=history[at];compatible=compatible&&angleCompatible(currentBeam,angleHistory[at]);
+   double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
    if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
    if(length==2u)best2=max(best2,sum/2.0LF);
    else if(length==4u)best4=max(best4,sum/4.0LF);
@@ -563,7 +564,9 @@ public:
   integration_->flush(0,integration_->bytes);
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  angleHistory_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*4,
+  const uint64_t angleWords=track_before_detect::angleHistoryWords(layout_.cells,
+   config.integrationCpis,config.integrationBeamTolerance);
+  angleHistory_=std::make_unique<Buffer>(context,angleWords*4,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(banks+1u)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
