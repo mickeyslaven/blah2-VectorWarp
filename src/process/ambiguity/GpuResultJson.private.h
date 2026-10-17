@@ -376,7 +376,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    for(size_t frame=1;frame<frames.size();++frame)for(uint32_t k=0;k<3;++k){score[frame][k]=impossible;if(!frames[frame].bin[k])continue;
     const uint32_t right=frames[frame].bin[k]-1;for(uint32_t p=0;p<3;++p){if(score[frame-1][p]<=impossible/2||!frames[frame-1].bin[p])continue;
      const uint32_t left=frames[frame-1].bin[p]-1,raw=left>right?left-right:right-left;const double delta=double(std::min(raw,scanBeams-raw))*step;
-     if(delta>allowed)continue;const double candidate=score[frame-1][p]+std::log(std::max(frames[frame].weight[k],1e-6))-.5*(delta/allowed)*(delta/allowed);
+     if(delta>allowed)continue;
+     const double candidate=score[frame-1][p]+std::log(std::max(frames[frame].weight[k],1e-6))-.5*(delta/allowed)*(delta/allowed);
      if(candidate>score[frame][k]){score[frame][k]=candidate;previous[frame][k]=uint8_t(p);}}}
    uint32_t best=0;for(uint32_t k=1;k<3;++k)if(score.back()[k]>score.back()[best])best=k;
    if(score.back()[best]<=impossible/2){for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}}
