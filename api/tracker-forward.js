@@ -71,13 +71,18 @@ class TrackerForwarder {
   accept(frame) {
     if (!this.enabled) return;
     this.counters.frames += 1;
-    if (!frame || !finite(frame.timestamp) || !Array.isArray(frame.delay) ||
-        !Array.isArray(frame.doppler) || !Array.isArray(frame.snr)) {
+    let value = frame;
+    if (typeof value === 'string') {
+      try { value = JSON.parse(value); }
+      catch (_) { value = null; }
+    }
+    if (!value || !finite(value.timestamp) || !Array.isArray(value.delay) ||
+        !Array.isArray(value.doppler) || !Array.isArray(value.snr)) {
       this.counters.invalid += 1;
       return;
     }
     if (this.queued) this.counters.overwritten += 1;
-    this.queued = frame;
+    this.queued = value;
     this.drain();
   }
 

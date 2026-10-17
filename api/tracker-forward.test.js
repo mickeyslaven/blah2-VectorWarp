@@ -23,11 +23,13 @@ async function forwardsAnnotatedDelimitedFrames() {
   const source = {get: async kind => kind === 'aircraft' ? feed : predictions};
   const forwarder = new TrackerForwarder(config, source, {connect: () => socket});
   socket.emit('connect');
-  forwarder.accept({timestamp: 1, delay: [12.5, 30], doppler: [-38, 10], snr: [8, 9]});
+  forwarder.accept(JSON.stringify(
+    {timestamp: 1, delay: [12.5, 30], doppler: [-38, 10], snr: [8, 9]}));
   await tick(); await tick();
   assert.equal(socket.writes.length, 1);
   assert.ok(socket.writes[0].endsWith('\n'));
   const value = JSON.parse(socket.writes[0]);
+  assert.equal(value.timestamp, 1);
   assert.equal(value.adsb[0].hex, 'abc123');
   assert.equal(value.adsb[0].expected_delay, 12);
   assert.equal(value.adsb[1], null);
@@ -71,12 +73,13 @@ async function rejectsIncompleteFrames() {
   const source = {get: async () => assert.fail('Invalid frames must not query ADS-B')};
   const forwarder = new TrackerForwarder(config, source, {connect: () => socket});
   socket.emit('connect');
+  forwarder.accept('{invalid');
   forwarder.accept({delay: [], doppler: [], snr: []});
   forwarder.accept({timestamp: 1, delay: [], doppler: []});
   await tick();
   assert.equal(socket.writes.length, 0);
-  assert.equal(forwarder.status().frames, 2);
-  assert.equal(forwarder.status().invalid, 2);
+  assert.equal(forwarder.status().frames, 3);
+  assert.equal(forwarder.status().invalid, 3);
   forwarder.close();
 }
 
