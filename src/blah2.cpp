@@ -13,6 +13,7 @@
 #include "process/ambiguity/Acceleration.h"
 #include "process/ambiguity/GpuResidentCoordinator.h"
 #include "process/ambiguity/BearingManifold.h"
+#include "process/ambiguity/ManifoldEvidence.h"
 #ifdef VECTORWARP_MIXED_AUTO
 #include "process/mixed/MixedProcess.h"
 #include "process/mixed/MixedAutoPolicy.h"
@@ -678,8 +679,8 @@ try
     throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
   if(bearingEnabled&&(!residentMode||!coherentFusion))
     throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
-  if(manifoldRecorderEnabled&&(!residentMode||!coherentFusion))
-    throw std::invalid_argument("Manifold recording requires GPU-resident coherent detection");
+  if(manifoldRecorderEnabled&&!coherentFusion)
+    throw std::invalid_argument("Manifold recording requires coherent detection");
   if(bearingEnabled&&!trackBeforeDetect)
     throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
   if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
@@ -1009,6 +1010,7 @@ try
           #ifdef VECTORWARP_MIXED_AUTO
           bool mixedCandidateReady=false,mixedPublished=false;
           #endif
+          std::vector<Map<std::complex<double>> *> channelMaps(ambiguity.size());
           if(!resident||residentOracle){
           if (!arrayReference && !pairedDirectFrame)
             referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
@@ -1143,8 +1145,6 @@ try
           
           if(resident)resident->checkFiltered(surveillancePointers);
           // Produce one map per surveillance channel, then combine their power.
-          std::vector<Map<std::complex<double>> *> channelMaps(
-            surveillanceData.size());
 #ifdef VECTORWARP_MIXED_AUTO
           if (mixedPublished) {
             try {
@@ -1234,6 +1234,7 @@ try
 
           } // legacy computation or explicitly labeled startup oracle
           blah2::resident::Coordinator::Publication residentPublication;
+          std::string cpuManifoldEvidence;
           if(resident){
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
@@ -1244,6 +1245,9 @@ try
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
+          else if(manifoldRecorderEnabled)
+            cpuManifoldEvidence=blah2::manifold_evidence::cpu(time[0]/1000,double(fc),double(fs),
+              *detection,channelMaps,referenceSynthesizer.get_metrics().weights);
 
           // output IqData meta data
           jsonIqData = resident ? std::move(residentPublication.spectrum) : referenceData->to_json(time[0]/1000);
@@ -1262,7 +1266,8 @@ try
           {
             detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
-            if(manifoldRecorderEnabled)socket_manifold->sendData(residentPublication.manifoldEvidence);
+            if(manifoldRecorderEnabled)socket_manifold->sendData(resident?
+              residentPublication.manifoldEvidence:cpuManifoldEvidence);
           }
           if (saveDetection && isDetection)
           {

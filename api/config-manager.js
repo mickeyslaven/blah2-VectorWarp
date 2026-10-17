@@ -672,10 +672,9 @@ function validateConfig(config, baseline = null) {
       number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
       number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
       if (recorder.enabled) {
-        if (device.type !== 'Kraken' || processConfig.performance?.acceleration !== 'gpu-resident' ||
-            !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+        if (device.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
               processConfig.surveillance_fusion?.mode) || !detection.enable)
-          errors.push('manifold recording requires Kraken GPU-resident coherent detection');
+          errors.push('manifold recording requires Kraken coherent detection');
         if (!root.truth?.adsb?.enabled)
           errors.push('manifold recording requires ADS-B truth');
         if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)

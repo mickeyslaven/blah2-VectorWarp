@@ -164,6 +164,19 @@ try {
       'process.bearing.manifold_file', 'process.bearing.channel_mapping',
       'process.bearing.manifold_recorder.enabled', 'truth.adsb.enabled',
       'network.ports.bearing']);
+  const cpuRecorder = clone(fusion);
+  Object.assign(cpuRecorder.capture.device.array_geometry, {
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
+  });
+  cpuRecorder.process.performance.acceleration = 'cpu';
+  cpuRecorder.process.detection.integration_cpis = 1;
+  cpuRecorder.process.detection.integration_motion_bins = 0;
+  cpuRecorder.process.detection.track_before_detect.enable = false;
+  delete cpuRecorder.process.tracker.beam_tolerance;
+  cpuRecorder.process.bearing.manifold_recorder.enabled = true;
+  cpuRecorder.truth.adsb.enabled = true;
+  assert.equal(validateConfig(cpuRecorder).valid, true,
+    'CPU coherent Kraken installations must be able to record manifold samples');
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};

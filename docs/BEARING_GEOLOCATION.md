@@ -144,8 +144,9 @@ matches them to fresh aircraft from VectorWarp's configured ADS-B source, and
 appends bounded, rotating JSONL. ADS-B supplies offline labels only; it never
 enters detection, tracking, bearing inference, or Retina output.
 
-The recorder requires a Kraken receiver, GPU-resident coherent fusion,
-detection, confirmed mapping/geometry/orientation, and enabled ADS-B:
+The recorder requires a Kraken receiver, coherent fusion, detection, confirmed
+mapping/geometry/orientation, and enabled ADS-B. Collection works on both CPU
+and GPU-resident coherent processing paths:
 
 ```yaml
 process:
