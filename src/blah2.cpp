@@ -709,7 +709,9 @@ try
       << track_before_detect::bankCount(trackBeforeDetectCpis)
       << " max_cpis=" << trackBeforeDetectCpis
       << " motion_bins=" << trackBeforeDetectMotionBins
-      << " coherent_refinement_factor=4\n";
+      << " coherent_refinement_factor="
+      << (bearingEnabled ? bearingScanBeams / coherentBeamCount : 0u)
+      << " bearing_method=" << (bearingEnabled ? bearingMethod : "disabled") << "\n";
   CfarDetector1D *cfarDetector1D = new CfarDetector1D(detectorPfa, nGuard, nTrain, minDelay, minDoppler);
   Interpolate *interpolate = new Interpolate(true, true);
 
