@@ -110,11 +110,28 @@ async function mirrorsFramesWithoutAdsbToAnIndependentShadow() {
   forwarder.close();
 }
 
+async function makesPrimaryFeedUnassistedWithoutTruthReads() {
+  const socket = new Socket();
+  const unassisted = structuredClone(config);
+  unassisted.network.tracker_forward.annotate_adsb = false;
+  let truthReads = 0;
+  const forwarder = createTrackerForwarder(unassisted,
+    {get: async () => { truthReads += 1; return feed; }},
+    {connect: () => socket});
+  socket.emit('connect');
+  forwarder.accept({timestamp: 1, delay: [12.5], doppler: [-38], snr: [8]});
+  await tick(); await tick();
+  assert.equal(truthReads, 0);
+  assert.deepEqual(JSON.parse(socket.writes[0]).adsb, [null]);
+  forwarder.close();
+}
+
 (async () => {
   await forwardsAnnotatedDelimitedFrames();
   await keepsOnlyNewestFrameWhileTruthIsSlow();
   await disabledDoesNothing();
   await rejectsIncompleteFrames();
   await mirrorsFramesWithoutAdsbToAnIndependentShadow();
+  await makesPrimaryFeedUnassistedWithoutTruthReads();
   console.log('tracker-forward tests passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

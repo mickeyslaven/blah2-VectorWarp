@@ -169,7 +169,7 @@ try {
   const trackerForward = clone(krakenBase);
   trackerForward.process.performance.acceleration = 'auto';
   trackerForward.network.tracker_forward = {
-    enabled: true, host: '127.0.0.2', port: 30101,
+    enabled: true, host: '127.0.0.2', port: 30101, annotate_adsb: false,
     unassisted: {enabled: true, host: '127.0.0.3', port: 30102}
   };
   trackerForward.truth.adsb.delay_tolerance = 3;
@@ -177,10 +177,29 @@ try {
   persistGroup('tracker-forward-output', krakenBase, trackerForward,
     ['network.tracker_forward.enabled', 'network.tracker_forward.host',
       'network.tracker_forward.port',
+      'network.tracker_forward.annotate_adsb',
       'network.tracker_forward.unassisted.enabled',
       'network.tracker_forward.unassisted.host',
       'network.tracker_forward.unassisted.port', 'truth.adsb.delay_tolerance',
       'truth.adsb.doppler_tolerance']);
+  const trackerPublication = clone(krakenBase);
+  trackerPublication.process.performance.acceleration = 'auto';
+  trackerPublication.process.tracker.publication = {
+    mode: 'hybrid', event_file: '/var/lib/vectorwarp-api/tracker/unassisted.jsonl',
+    stale_after_s: 3, native_min_associations: 5,
+    delay_tolerance: 2, doppler_tolerance: 5
+  };
+  trackerPublication.network.tracker_forward = {
+    enabled: true, host: '127.0.0.1', port: 30100, annotate_adsb: false
+  };
+  persistGroup('tracker-publication', krakenBase, trackerPublication,
+    ['process.tracker.publication.mode', 'process.tracker.publication.event_file',
+      'process.tracker.publication.stale_after_s',
+      'process.tracker.publication.native_min_associations',
+      'process.tracker.publication.delay_tolerance',
+      'process.tracker.publication.doppler_tolerance',
+      'network.tracker_forward.enabled', 'network.tracker_forward.host',
+      'network.tracker_forward.port', 'network.tracker_forward.annotate_adsb']);
   const cpuRecorder = clone(fusion);
   Object.assign(cpuRecorder.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true

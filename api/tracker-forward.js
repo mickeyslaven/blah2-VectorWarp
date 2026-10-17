@@ -8,7 +8,8 @@ const normalizedHex = value => typeof value === 'string' ? value.trim().toLowerC
 class TrackerForwarder {
   constructor(config, adsbSource, {connect = options => net.createConnection(options),
     schedule = setTimeout, cancel = clearTimeout, now = Date.now,
-    settings = config.network?.tracker_forward || {}, annotateAdsb = true} = {}) {
+    settings = config.network?.tracker_forward || {},
+    annotateAdsb = settings.annotate_adsb !== false} = {}) {
     this.enabled = settings.enabled === true;
     this.host = settings.host || '127.0.0.1';
     this.port = settings.port || 30100;

@@ -199,6 +199,8 @@ function validateConfig(config, baseline = null) {
   const detection = requireObject(processConfig.detection, 'process.detection');
   const tracker = requireObject(processConfig.tracker, 'process.tracker');
   const initiate = requireObject(tracker.initiate, 'process.tracker.initiate');
+  const trackerPublication = tracker.publication === undefined ? null :
+    requireObject(tracker.publication, 'process.tracker.publication');
   const network = requireObject(root.network, 'network');
   const ports = requireObject(network.ports, 'network.ports');
   const trackerForward = network.tracker_forward === undefined ? null :
@@ -659,6 +661,29 @@ function validateConfig(config, baseline = null) {
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
   }
+  if (trackerPublication) {
+    oneOf(trackerPublication.mode, 'process.tracker.publication.mode',
+      ['native', 'external', 'hybrid']);
+    if (trackerPublication.event_file !== undefined)
+      string(trackerPublication.event_file, 'process.tracker.publication.event_file');
+    if (trackerPublication.stale_after_s !== undefined)
+      number(trackerPublication.stale_after_s,
+        'process.tracker.publication.stale_after_s', {min: .1, max: 60});
+    if (trackerPublication.native_min_associations !== undefined)
+      number(trackerPublication.native_min_associations,
+        'process.tracker.publication.native_min_associations',
+        {integer: true, min: 1, max: 65535});
+    if (trackerPublication.delay_tolerance !== undefined)
+      number(trackerPublication.delay_tolerance,
+        'process.tracker.publication.delay_tolerance', {min: 0, max: 1000});
+    if (trackerPublication.doppler_tolerance !== undefined)
+      number(trackerPublication.doppler_tolerance,
+        'process.tracker.publication.doppler_tolerance', {min: 0, max: 10000});
+    if (trackerPublication.mode !== 'native' && !path.isAbsolute(trackerPublication.event_file || ''))
+      errors.push('external tracker publication requires an absolute event_file path');
+    if (trackerPublication.mode !== 'native' && trackerForward?.enabled !== true)
+      errors.push('external tracker publication requires network.tracker_forward.enabled');
+  }
   if (processConfig.bearing !== undefined) {
     const bearing = requireObject(processConfig.bearing, 'process.bearing');
     boolean(bearing.enable, 'process.bearing.enable');
@@ -768,6 +793,8 @@ function validateConfig(config, baseline = null) {
     string(trackerForward.host, 'network.tracker_forward.host');
     number(trackerForward.port, 'network.tracker_forward.port',
       {integer: true, min: 1, max: 65535});
+    if (trackerForward.annotate_adsb !== undefined)
+      boolean(trackerForward.annotate_adsb, 'network.tracker_forward.annotate_adsb');
   }
   if (unassistedTrackerForward) {
     boolean(unassistedTrackerForward.enabled,

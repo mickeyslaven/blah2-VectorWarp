@@ -18,6 +18,7 @@ const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder} = require('./manifold-recorder.js');
 const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
+const {createTrackerPublication} = require('./tracker-publication.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -33,6 +34,7 @@ const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW 
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const bearingDiagnostic = createBearingDiagnostic(config);
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
+const trackerPublication = createTrackerPublication(config);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -229,7 +231,13 @@ app.get('/api/detection', (req, res) => {
   res.send(detection);
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(track);
+  res.send(trackerPublication.frame());
+});
+app.get('/api/tracker/native', (req, res) => {
+  res.send(trackerPublication.nativeOnly());
+});
+app.get('/api/tracker/publication', (req, res) => {
+  res.json(trackerPublication.status());
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -843,11 +851,13 @@ const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
+  trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
+  trackerPublication.acceptNative(frame);
 });
 listenData(server_tracker, 'track');
 
@@ -911,5 +921,6 @@ listenData(server_iqdata, 'iqdata');
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
+  trackerPublication.close();
   process.exit(0);
 });
