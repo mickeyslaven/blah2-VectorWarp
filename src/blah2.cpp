@@ -840,7 +840,8 @@ try
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
         ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
     }
-    residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference);
+    residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
+      (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
   }
 
