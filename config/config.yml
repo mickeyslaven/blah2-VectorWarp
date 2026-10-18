@@ -61,8 +61,10 @@ process:
     enable: false
     min_consistent: 3
     min_peak_separation_db: 3
+    manifold_automation:
+      auto_promote: true
     manifold_recorder:
-      enabled: false
+      enabled: auto
       path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
       min_snr_db: 6
       min_elevation_deg: 0

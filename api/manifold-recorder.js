@@ -81,6 +81,31 @@ function automaticallyEligible(config) {
     geometry.orientation_confirmed === true && finite(geometry.x_axis_bearing_deg_true);
 }
 
+function fingerprintDescriptor(config) {
+  const options = config.process?.bearing?.manifold_recorder || {};
+  return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+    surveillance_channels: config.capture?.device?.surveillance_channels,
+    array_geometry: config.capture?.device?.array_geometry,
+    receiver: config.location?.rx, transmitter: config.location?.tx,
+    bearing_replay_v1: {method: config.process?.bearing?.method,
+      reference_anchor: config.process?.bearing?.reference_anchor,
+      scan_beams: config.process?.bearing?.scan_beams,
+      guard_radius: config.process?.bearing?.guard_radius,
+      training_radius: config.process?.bearing?.training_radius,
+      diagonal_loading: config.process?.bearing?.diagonal_loading,
+      channel_mapping: config.process?.bearing?.channel_mapping},
+    recorder_selection_v2: {min_snr_db: options.min_snr_db,
+      min_elevation_deg: options.min_elevation_deg,
+      max_elevation_deg: options.max_elevation_deg,
+      max_delay_error_km: options.max_delay_error_km,
+      max_doppler_error_hz: options.max_doppler_error_hz,
+      max_truth_age_s: options.max_truth_age_s}};
+}
+
+function siteFingerprint(config) {
+  return crypto.createHash('sha256').update(JSON.stringify(fingerprintDescriptor(config))).digest('hex');
+}
+
 class ManifoldRecorder {
   constructor(config, adsbSource, {fileSystem = fs} = {}) {
     this.config = config;
@@ -100,27 +125,7 @@ class ManifoldRecorder {
       referencePath: this.options.path ? `${this.options.path}.reference.jsonl` : null,
       referenceUpdates: 0, referenceSamples: 0, lastReferenceAt: null,
       maxReferencePhaseStepDeg: null, maxReferenceAmplitudeStepDb: null};
-    const fingerprint = {
-      frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
-      surveillance_channels: config.capture?.device?.surveillance_channels,
-      array_geometry: config.capture?.device?.array_geometry,
-      receiver: config.location?.rx, transmitter: config.location?.tx,
-      bearing_replay_v1: {method: config.process?.bearing?.method,
-        reference_anchor: config.process?.bearing?.reference_anchor,
-        scan_beams: config.process?.bearing?.scan_beams,
-        guard_radius: config.process?.bearing?.guard_radius,
-        training_radius: config.process?.bearing?.training_radius,
-        diagonal_loading: config.process?.bearing?.diagonal_loading,
-        channel_mapping: config.process?.bearing?.channel_mapping,
-        manifold_file: config.process?.bearing?.manifold_file},
-      recorder_selection_v2: {min_snr_db: this.options.min_snr_db,
-        min_elevation_deg: this.options.min_elevation_deg,
-        max_elevation_deg: this.options.max_elevation_deg,
-        max_delay_error_km: this.options.max_delay_error_km,
-        max_doppler_error_hz: this.options.max_doppler_error_hz,
-        max_truth_age_s: this.options.max_truth_age_s}
-    };
-    this.fingerprint = crypto.createHash('sha256').update(JSON.stringify(fingerprint)).digest('hex');
+    this.fingerprint = siteFingerprint(config);
     this.sitePrepared = false;
     this.lastReferenceUpdate = null;
     this.lastRelativeReference = null;
@@ -359,5 +364,5 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
   return new ManifoldRecorder(config, adsbSource, dependencies);
 }
 
-module.exports = {azimuthElevation, validateEvidence, automaticallyEligible,
+module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor, siteFingerprint,
   ManifoldRecorder, createManifoldRecorder};

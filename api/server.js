@@ -15,7 +15,8 @@ const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./rece
 const {createReceiverJournal} = require('./receiver-journal.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
-const {createManifoldRecorder} = require('./manifold-recorder.js');
+const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
+const {createManifoldAutomation} = require('./manifold-automation.js');
 const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
@@ -32,6 +33,9 @@ const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
+const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
+  {onQualified: promoteQualifiedManifold});
+manifoldAutomation.start();
 const bearingDiagnostic = createBearingDiagnostic(config);
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
@@ -219,6 +223,34 @@ function launchRestart() {
         result.error ? `Restart could not start: ${result.error.message}` :
         `Restart request failed (${result.signal || `exit ${result.code}`}). ${result.diagnostic || 'Check the local service manager.'}`};
   }});
+}
+
+async function promoteQualifiedManifold(candidate) {
+  if (candidate.fingerprint !== manifoldRecorder.fingerprint)
+    return {active: false, pending: false, reason: 'The qualified model belongs to an earlier site configuration.'};
+  if (config.process?.bearing?.manifold_file === candidate.path)
+    return {active: true, pending: false, reason: 'The qualified model is active.'};
+  if (configWriteInProgress || restartState.state === 'running' || restartState.state === 'scheduled')
+    return {active: false, pending: true, reason: 'Waiting for the current settings operation to finish.'};
+  const current = readConfig(configFile);
+  if (!current.exists || !writable(configFile))
+    return {active: false, pending: true, reason: 'The qualified model is ready, but the configuration is read-only.'};
+  if (siteFingerprint(current.config) !== candidate.fingerprint)
+    return {active: false, pending: false, reason: 'Site settings changed during qualification; collecting a new model.'};
+  if (current.config.process?.bearing?.manifold_file === candidate.path)
+    return {active: false, pending: true,
+      reason: 'Qualified model is selected and will activate at the next VectorWarp restart.'};
+  const updated = JSON.parse(JSON.stringify(current.config));
+  updated.process.bearing.manifold_file = candidate.path;
+  const saved = saveConfig(configFile, updated, current.revision);
+  if (!restartCommandAvailable())
+    return {active: false, pending: true, revision: saved.revision,
+      reason: 'Qualified model saved. It will activate at the next VectorWarp restart.'};
+  restartState = {state: 'scheduled', requestedAt: Date.now(), revision: saved.revision,
+    reason: 'automatic-manifold-promotion'};
+  setTimeout(launchRestart, 150).unref();
+  return {active: false, pending: true, revision: saved.revision,
+    reason: 'Qualified model saved; a controlled restart was requested.'};
 }
 app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
@@ -693,6 +725,9 @@ app.get('/api/adsb/status', async (req, res) => {
 app.get('/api/bearing/manifold-recorder', (req, res) => {
   res.json(manifoldRecorder.status());
 });
+app.get('/api/bearing/manifold-automation', (req, res) => {
+  res.json(manifoldAutomation.status());
+});
 app.get('/api/bearing/diagnostic', (req, res) => {
   res.json(bearingDiagnostic.status());
 });
@@ -866,7 +901,7 @@ if (config.process?.bearing?.enable === true && Number.isInteger(config.network?
   listenData(server_bearing, 'bearing');
 }
 
-if (config.process?.bearing?.manifold_recorder?.enabled === true &&
+if (manifoldRecorder.status().enabled &&
     Number.isInteger(config.network?.ports?.manifold)) {
   const server_manifold = jsonStreamServer('manifold', frame => manifoldRecorder.accept(frame));
   listenData(server_manifold, 'manifold');

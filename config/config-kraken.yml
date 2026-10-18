@@ -119,8 +119,11 @@ process:
     min_peak_separation_db: 3
     # Optional installed-array calibration. Sparse radar cells are labelled by
     # built-in ADS-B truth outside the detection/bearing inference path.
+    manifold_automation:
+      # Pass-balanced shadow A/B gates must beat the default model before use.
+      auto_promote: true
     manifold_recorder:
-      enabled: false
+      enabled: auto
       path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
       min_snr_db: 6
       min_elevation_deg: 0

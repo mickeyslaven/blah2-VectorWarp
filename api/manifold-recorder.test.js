@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./manifold-recorder');
+const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprint} = require('./manifold-recorder');
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-manifold-'));
@@ -48,6 +48,10 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible} = require('./m
   automaticConfig.process.detection = {enable: true};
   automaticConfig.truth = {adsb: {enabled: true}};
   assert.equal(automaticallyEligible(automaticConfig), true);
+  const promotedConfig = JSON.parse(JSON.stringify(automaticConfig));
+  promotedConfig.process.bearing.manifold_file = `${filename}.qualified.json`;
+  assert.equal(siteFingerprint(promotedConfig), siteFingerprint(automaticConfig),
+    'Selecting an automatically fitted model must not manufacture a new physical site');
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
   changedSite.location.rx.longitude = -80.01;
   const second = new ManifoldRecorder(changedSite, source);
