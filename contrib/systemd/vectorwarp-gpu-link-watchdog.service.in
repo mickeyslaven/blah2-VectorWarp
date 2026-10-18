@@ -7,7 +7,7 @@ After=vectorwarp-api.service vectorwarp-processor.service
 [Service]
 Type=oneshot
 EnvironmentFile=@SYSCONFDIR@/gpu-link-watchdog
-ExecStart=@PREFIX@/libexec/vectorwarp-gpu-link-watchdog --bdf ${VECTORWARP_GPU_BDF} --cpi-limit-ms ${VECTORWARP_GPU_CPI_LIMIT_MS}
+ExecStart=@PREFIX@/libexec/vectorwarp-gpu-link-watchdog --bdf ${VECTORWARP_GPU_BDF} --cpi-limit-ms ${VECTORWARP_GPU_CPI_LIMIT_MS} --timing-url ${VECTORWARP_GPU_TIMING_URL}
 TimeoutStartSec=60
 Nice=10
 RuntimeDirectory=vectorwarp-gpu-link-watchdog
