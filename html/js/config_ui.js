@@ -82,6 +82,8 @@ const CONFIG_META = {
   'process.bearing.diagonal_loading': ['Covariance stability', 'Diagonal loading applied before adaptive bearing inversion.'],
   'process.bearing.max_rate_deg_s': ['Bearing motion limit', 'Maximum plausible azimuth rate used to retain and score multiple bearing lobes across a track. Zero preserves the legacy temporal histogram.'],
   'process.bearing.manifold_file': ['Measured array manifold', 'Optional v1 JSON calibration measured across the configured bearing scan. Empty uses ideal regular-polygon steering.'],
+  'process.bearing.manifold_automation': ['Automatic manifold qualification', 'Fit and shadow-test installed-site calibration in a background worker.'],
+  'process.bearing.manifold_automation.auto_promote': ['Promote qualified manifold', 'Activate only after withheld flight passes beat default steering.'],
   'process.bearing.channel_mapping': ['Bearing channel mapping', 'Bearing-only logical-channel to physical-element permutation.'],
   'process.bearing.manifold_recorder': ['Array calibration recorder', 'Collect sparse, ADS-B-labelled complex echo vectors for an installed-array manifold.'],
   'process.bearing.manifold_recorder.enabled': ['Record manifold samples', 'Eligible coherent Kraken sites collect automatically; turn this off to opt out.'],

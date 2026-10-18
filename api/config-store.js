@@ -7,6 +7,7 @@ const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig, writeConfigAtomically} = require('./config-manager');
 const FIELD_RULES = require('./config-rules');
 const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
+const {siteFingerprint} = require('./manifold-recorder');
 
 // Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
@@ -29,6 +30,7 @@ function setupDefaults() {
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
         acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
+        manifold_automation: {auto_promote: true},
         manifold_recorder: {enabled: 'auto',
           path: calibrationPath,
           min_snr_db: 6, min_elevation_deg: 0, max_elevation_deg: 15,
@@ -173,6 +175,10 @@ function saveConfig(filename, candidate, expectedRevision) {
     throw error;
   }
   const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  const automaticPath = before.config.process?.bearing?.manifold_recorder?.path;
+  if (automaticPath && prepared.process?.bearing?.manifold_file === `${automaticPath}.qualified.json` &&
+      siteFingerprint(before.config) !== siteFingerprint(prepared))
+    delete prepared.process.bearing.manifold_file;
   writeConfigAtomically(filename, prepared);
   return readConfig(filename);
 }

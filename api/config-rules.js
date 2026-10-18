@@ -47,6 +47,7 @@ const rules = {
   'process.bearing.diagonal_loading': {...numeric(), exclusiveMin: 0, max: 1, optional: true},
   'process.bearing.max_rate_deg_s': {...numeric(0, 360), optional: true},
   'process.bearing.manifold_file': {type: 'string', optional: true},
+  'process.bearing.manifold_automation.auto_promote': {type: 'boolean', optional: true},
   'process.bearing.channel_mapping': {type: 'array', optional: true},
   'process.bearing.manifold_recorder.enabled': {type: 'autoBoolean', choices: ['auto', 'on', 'off'], optional: true},
   'process.bearing.manifold_recorder.path': {type: 'string', optional: true},

@@ -138,6 +138,39 @@ function bestBearing(sample, config, candidate) {
   return normalize(geometry(config).xAxis - best * 360 / beams);
 }
 
+function bestMeasuredBearing(sample, config, manifold) {
+  const beams = manifold?.calibration?.beams;
+  if (!Number.isInteger(beams) || !Array.isArray(manifold.responses) ||
+      manifold.responses.length !== beams || manifold.responses.some(row =>
+        !Array.isArray(row) || row.length !== sample.channels))
+    throw new Error('Invalid measured manifold for replay');
+  const directBin = manifold.calibration.direct_path_bin;
+  if (!Number.isInteger(directBin) || directBin < 0 || directBin >= beams)
+    throw new Error('Measured manifold has no direct-path bin');
+  const fixedSite = sample.bearing_replay?.reference_anchor === 'fixed_site';
+  const anchor = fixedSite ? manifold.responses[directBin] : sample.reference_weights;
+  const anchorNorm = anchor.reduce((sum, value) => sum + magnitude2(value), 0);
+  if (!(anchorNorm > 0)) throw new Error('Measured manifold reference has zero norm');
+  const nullFraction = 1 - 10 ** (-(config.process?.surveillance_fusion?.direct_path_null_db || 0) / 20);
+  const covarianceInverse = sample.bearing_replay?.method === 'covariance_mvdr' ? inverse(sample.covariance) : null;
+  if (sample.bearing_replay?.method === 'covariance_mvdr' && !covarianceInverse)
+    throw new Error('Recorded covariance is singular');
+  let best = 0, bestScore = -1;
+  for (let beam = 0; beam < beams; ++beam) {
+    let steering = manifold.responses[beam].map((value, channel) => fixedSite ? value :
+      multiply(sample.reference_weights[channel], divide(value, manifold.responses[directBin][channel])));
+    if (nullFraction > 0) {
+      const projection = scale(steering.reduce((sum, value, channel) =>
+        add(sum, multiply(conjugate(anchor[channel]), value)), [0, 0]), nullFraction / anchorNorm);
+      steering = steering.map((value, channel) => subtract(value, multiply(projection, anchor[channel])));
+    }
+    const weights = steering.map(conjugate);
+    const value = score(sample.response, weights, covarianceInverse);
+    if (value > bestScore) { bestScore = value; best = beam; }
+  }
+  return normalize(geometry(config).xAxis - best * 360 / beams);
+}
+
 function balanced(errors) {
   const byAircraft = new Map();
   for (const row of errors) {
@@ -237,4 +270,5 @@ function createBearingDiagnostic(config, {fileSystem = fs} = {}) {
 }
 
 module.exports = {evaluateBearing, createBearingDiagnostic, readSamples, mappings, inverse,
+  bestBearing, bestMeasuredBearing, circularError,
   steeringWeights: weights};

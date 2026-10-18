@@ -177,7 +177,7 @@ and GPU-resident coherent processing paths:
 process:
   bearing:
     manifold_recorder:
-      enabled: true
+      enabled: auto
       path: /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
       min_snr_db: 6
       min_elevation_deg: 0
@@ -196,6 +196,42 @@ Recorder health and counts are available at
 `/api/bearing/manifold-recorder`. A slow truth source cannot back-pressure the
 radar: the API keeps at most the newest evidence frame while matching or writing.
 Full ambiguity maps are never copied or stored.
+
+### Automatic measured-manifold lifecycle
+
+The normal Kraken configuration also runs the fitter and validation lifecycle
+in a background worker. No calibration script or frame-count judgement is
+required. `/api/bearing/manifold-automation` reports `collecting`, `evaluating`,
+`qualified-pending-restart`, or `active`, together with every unmet gate. The
+worker writes `<path>.candidate.json`; it promotes only a qualified model to
+`<path>.qualified.json`.
+
+Promotion is deliberately pass-balanced. Frames from the same aircraft pass
+share one vote, and complete passes are withheld from fitting. The candidate
+and VectorWarp's default free-space model are replayed on exactly those unseen
+passes. The built-in gates require, by default:
+
+- at least 40 independent passes and 12 aircraft;
+- independent coverage in at least six of eight azimuth sectors, with five
+  passes and three aircraft in every counted sector;
+- at least 12 withheld passes across four sectors;
+- a measured-model median error no worse than 45 degrees;
+- at least a five-degree or 15-percent median improvement over the default;
+- no reduction in the withheld within-45-degree rate; and
+- no independently tested sector regressing by more than eight degrees.
+
+When all gates pass, `manifold_automation.auto_promote: true` atomically selects
+the qualified file and requests the configured controlled service restart. If
+restart control is unavailable, the selection is saved and activates at the
+next ordinary restart. A site-defining setting change automatically removes an
+auto-selected model before saving the new configuration, so the recorder starts
+a new corpus. `auto_promote: false` retains automatic collection, fitting, and
+shadow comparison but leaves activation to the operator.
+
+ADS-B is used only to label the calibration corpus and score the shadow A/B
+test. It is not available to live bearing, detection, tracking, or Retina after
+promotion. Fit work runs outside the radar processor and does not consume its
+CPI budget.
 
 The recorder also writes `<path>.reference.jsonl` whenever the array-eigenbeam
 reference analysis advances. This bounded shadow log stores the coherent
@@ -222,7 +258,7 @@ previous active JSONL as `.site-previous` (within the configured file bound),
 writes a new site ledger, and begins a clean collection. Samples from different
 installations are therefore never silently fitted as one manifold.
 
-After collecting broad azimuth coverage, fit a versioned manifold:
+For offline experiments or manual review, the same fitter remains available:
 
 ```sh
 node script/fit-bearing-manifold.js \
