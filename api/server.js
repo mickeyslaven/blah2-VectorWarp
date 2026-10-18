@@ -22,6 +22,7 @@ const {createTrackerPublication} = require('./tracker-publication.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
+const {createPerformanceHealth} = require('./performance-health.js');
 const jsonFrames = require('./json-frames.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
@@ -30,6 +31,7 @@ const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW 
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
+const performanceHealth = createPerformanceHealth(config.process?.data?.cpi || 1);
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const bearingDiagnostic = createBearingDiagnostic(config);
@@ -120,6 +122,7 @@ function invalidateTimingTelemetry() {
   activeTimingConnection = ++timingGeneration;
   lastTimingAt = null;
   timing = '';
+  performanceHealth.reset();
   return {restart: restartGeneration, connection: activeTimingConnection};
 }
 
@@ -319,9 +322,11 @@ app.get('/api/system/status', async (req, res) => {
   const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
   const backend = currentTimingBackend();
+  const timingFresh = lastTimingAt !== null && Date.now() - lastTimingAt < freshness;
   res.json({serverId, configRevision: document.revision,
     acceleration: backend.acceleration || null,
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
+    performance: performanceHealth.status(timingFresh),
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
     lastFrameAt, timestampConnections,
@@ -894,6 +899,7 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionCurrent(generation)) return;
     timing = frame;
     lastTimingAt = Date.now();
+    performanceHealth.accept(frame);
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
   });

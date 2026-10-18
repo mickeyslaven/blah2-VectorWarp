@@ -178,6 +178,35 @@ in place, an unexpected exception aborts the frame rather than retrying CPU
 filtering on already changed IQ. Software Vulkan
 renderers such as lavapipe are not treated as GPUs.
 
+### Runtime performance health
+
+Startup qualification proves correctness and initial speed; it cannot guarantee
+that an operating system or device will retain the same power, memory, or bus
+state indefinitely. VectorWarp therefore evaluates completed timing frames on
+every platform and exposes `performance` in `/api/system/status`. The check is
+hardware-independent: it ignores startup qualification, requires consecutive
+deadline misses, distinguishes a transient slow frame, and reports the configured
+CPI budget, current CPI, retained fast baseline, and whether capture drops are
+increasing.
+
+Recovery remains platform-specific. CPU, integrated-GPU, discrete-GPU, Vulkan,
+and MoltenVK systems do not share a safe device-reset operation. Linux systems
+whose discrete PCIe GPU is known to down-train may opt into the packaged
+`vectorwarp-gpu-link-watchdog.timer` with a root-owned
+`/etc/vectorwarp/gpu-link-watchdog` containing:
+
+```ini
+VECTORWARP_GPU_BDF=0000:01:00.0
+VECTORWARP_GPU_CPI_LIMIT_MS=500
+VECTORWARP_GPU_TIMING_URL=http://127.0.0.1:3000/api/timing
+```
+
+The timer is disabled by default. It acts only after two consecutive checks show
+both a down-trained PCIe link and an over-budget qualified CPI, waits at least 15
+minutes between attempts, and re-enumerates only that GPU. It never stops the
+receiver service or Heimdall. Integrated GPUs, macOS, and systems already meeting
+their deadline use the universal health report and do not receive this recovery.
+
 ## Clutter precision and capacity
 
 The legacy `auto`/`gpu` Vulkan clutter path keeps its initial coefficients and linear
