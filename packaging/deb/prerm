@@ -6,6 +6,7 @@ set -e
 if [ "${1:-}" = remove ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
     vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-gpu-link-watchdog.service vectorwarp-gpu-link-watchdog.timer \
     vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 exit 0

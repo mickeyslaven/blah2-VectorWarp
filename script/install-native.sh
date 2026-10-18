@@ -176,7 +176,7 @@ if $WITH_SYSTEMD; then
     [[ -f $ARTIFACT/systemd/72-vectorwarp-hackrf.rules ]] ||
       die 'Fedora HackRF rule is missing from artifact'
   fi
-  for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
+  for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp-gpu-link-watchdog.service.in vectorwarp-gpu-link-watchdog.timer vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
     [[ -f $ARTIFACT/systemd/$file ]] || die "systemd artifact is incomplete: $file"
   done
   [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
@@ -296,10 +296,13 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
   render "$ARTIFACT/systemd/vectorwarp-restart.service.in" "$temporary/vectorwarp-restart.service"
+  render "$ARTIFACT/systemd/vectorwarp-gpu-link-watchdog.service.in" "$temporary/vectorwarp-gpu-link-watchdog.service"
   render "$ARTIFACT/systemd/vectorwarp.sudoers.in" "$temporary/vectorwarp"
   run install -m 0644 "$temporary/vectorwarp-api.service" "$unit_dir/vectorwarp-api.service"
   run install -m 0644 "$temporary/vectorwarp-processor.service" "$unit_dir/vectorwarp-processor.service"
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
+  run install -m 0644 "$temporary/vectorwarp-gpu-link-watchdog.service" "$unit_dir/vectorwarp-gpu-link-watchdog.service"
+  run install -m 0644 "$ARTIFACT/systemd/vectorwarp-gpu-link-watchdog.timer" "$unit_dir/vectorwarp-gpu-link-watchdog.timer"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.sysusers" "$sysusers_dir/vectorwarp.conf"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.tmpfiles" "$tmpfiles_dir/vectorwarp.conf"
   # Fedora's packaged HackRF rule has no group; Debian/Ubuntu already grant
@@ -329,6 +332,9 @@ if $WITH_SYSTEMD; then
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
   if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
     run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
+  fi
+  if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-link-watchdog ]]; then
+    run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-link-watchdog" "$target_prefix/libexec/vectorwarp-gpu-link-watchdog"
   fi
   if [[ -f $ARTIFACT/libexec/vectorwarp-sdrplay-service.py ]]; then
     render "$ARTIFACT/libexec/vectorwarp-sdrplay-service.py" "$temporary/vectorwarp-sdrplay-service"
