@@ -72,15 +72,23 @@ void configCases(){
   "Track-before-detect configuration did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
- auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,60,3,1,3,.01,{1,0}};
+ auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,
+  BearingReferenceAnchor::fixedSite,60,3,1,3,.01,{1,0}};
  const auto bearingBytes=encodeConfig(bearing);
  const auto bearingDecoded=decodeConfig(bytes(bearingBytes),bytes(d),bytes(f));
  check(encodeConfig(bearingDecoded)==bearingBytes&&bearingDecoded.bearing.enabled&&
-  bearingDecoded.bearing.method==BearingMethod::covarianceMvdr&&bearingDecoded.bearing.scanBeams==60&&
+  bearingDecoded.bearing.method==BearingMethod::covarianceMvdr&&
+  bearingDecoded.bearing.referenceAnchor==BearingReferenceAnchor::fixedSite&&
+  bearingDecoded.bearing.scanBeams==60&&
   bearingDecoded.bearing.channelMapping==std::vector<uint32_t>({1,0}),
   "Adaptive bearing configuration did not round trip");
  check(wire::configHash(bearing)!=wire::configHash(tbd),
   "Bearing method/mapping is not bound to config identity");
+ auto measured=bearing;for(uint32_t beam=0;beam<60;++beam)for(uint32_t channel=0;channel<2;++channel)
+  measured.bearing.manifoldResponses.push_back(std::polar(1.0f,float(.1*beam+.2*channel)));
+ const auto measuredBytes=encodeConfig(measured);const auto measuredDecoded=decodeConfig(bytes(measuredBytes),bytes(d),bytes(f));
+ check(encodeConfig(measuredDecoded)==measuredBytes&&measuredDecoded.bearing.manifoldResponses==measured.bearing.manifoldResponses&&
+  wire::configHash(measured)!=wire::configHash(bearing),"Measured bearing manifold did not round trip or bind config identity");
  check(decoded.detector.integrationCpis==2,"Multi-CPI detector configuration did not round trip");
  auto adaptive=c;adaptive.tracker.initiationMode=TrackerInitiationMode::adaptiveGate;
  const auto adaptiveBytes=encodeConfig(adaptive);
@@ -89,6 +97,17 @@ void configCases(){
   encodeConfig(adaptiveDecoded)==adaptiveBytes,"Adaptive tracker initiation did not round trip");
  check(wire::configHash(adaptive)!=wire::configHash(c),
   "Adaptive tracker initiation is not bound to config identity");
+ auto clutterAware=adaptive;clutterAware.tracker.stationaryClutter=true;
+ clutterAware.tracker.stationaryPersistenceCpis=8;clutterAware.tracker.stationaryMaxDopplerHz=15;
+ const auto clutterBytes=encodeConfig(clutterAware);
+ const auto clutterDecoded=decodeConfig(bytes(clutterBytes),bytes(d),bytes(f));
+ check(clutterDecoded.tracker.stationaryClutter&&
+  clutterDecoded.tracker.stationaryPersistenceCpis==8&&
+  clutterDecoded.tracker.stationaryMaxDopplerHz==15&&
+  encodeConfig(clutterDecoded)==clutterBytes,
+  "Persistent clutter initiation configuration did not round trip");
+ check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
+  "Persistent clutter initiation is not bound to config identity");
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -106,6 +125,8 @@ void configCases(){
  mutate([](auto&v){v.spectrumBins=63;});mutate([](auto&v){v.tracker.cpi=.5;});
  mutate([](auto&v){v.tracker.capacity=0;});mutate([](auto&v){v.tracker.n=256;});
  mutate([](auto&v){v.tracker.initiationMode=TrackerInitiationMode(2);});
+ mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=0;v.tracker.stationaryMaxDopplerHz=15;});
+ mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=1;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.detector.integrationCpis=3;});
  mutate([](auto&v){v.detector.integrationCpis=6;});
@@ -118,6 +139,7 @@ void configCases(){
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
  mutate([&](auto&v){v=bearing;v.bearing.channelMapping={0,0};});
  mutate([&](auto&v){v=bearing;v.bearing.scanBeams=59;});
+ mutate([&](auto&v){v=bearing;v.bearing.manifoldResponses={{1,0}};});
  for(size_t at:{size_t(20),size_t(132),size_t(360),size_t(464),size_t(176)}){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }
@@ -161,8 +183,8 @@ void outputCases(){
  const uint32_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
  m.u32(0,1);m.u32(4,128);m.u64(8,p.frame.logicalId);m.u64(16,p.frame.consumedSequence);m.f64(24,-5);m.f64(32,20);m.u64(40,3);m.u64(48,2);m.u64(56,1);m.u64(64,trackerHeaderWords+recordWords);m.u32(72,1);m.u32(76,0);m.u32(80,c.stages());m.u32(84,c.stages());
  wire::Writer bank{map.bytes(Section::tracker1)};bank.zero();bank.u32(0,1);bank.u32(4,recordWords*4);bank.u32(8,c.tracker.capacity);bank.u32(12,history);bank.u64(16,1);bank.u64(40,c.epoch);bank.u64(48,p.frame.logicalId);bank.u64(56,p.frame.consumedSequence);
- auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==trackerHeaderWords+recordWords&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
- auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Unrequested optional diagnostics exposed or mandatory results removed");
+ auto prepared=views(map,c,p);check(prepared.detections.size==1&&prepared.detectionCells.size==1&&prepared.cfar.size==3&&prepared.centroid.size==2&&prepared.trackerCheckpoint.size==trackerHeaderWords+recordWords&&prepared.trackerSlot==1,"Prepared prefixes/slot differ");
+ auto minimal=p;minimal.diagnosticPresence=0;auto hidden=views(map,c,minimal);check(!hidden.filtered.data&&!hidden.reference.data&&!hidden.cfar.data&&!hidden.centroid.data&&!hidden.levels.data&&!hidden.detectionCells.data&&hidden.detections.size==1&&hidden.maps.size==prepared.maps.size,"Unrequested optional diagnostics exposed or mandatory results removed");
  auto bad=[&](size_t at,uint64_t value){const auto before=wire::Reader{map.read(Section::metrics)}.u64(at);m.u64(at,value);reject([&]{views(map,c,p);},"Invalid output metadata accepted");m.u64(at,before);};
  bad(8,p.frame.logicalId-1);bad(16,18);bad(40,25);bad(48,4);bad(56,3);bad(64,33);bad(72,2);bad(88,1);
  auto wrong=p;wrong.tracker.generation--;reject([&]{views(map,c,wrong);},"Stale prepared token accepted");wrong=p;wrong.phase=Phase::idle;reject([&]{views(map,c,wrong);},"Idle exposed outputs");wrong=p;wrong.presence^=bit(Section::canonical);reject([&]{views(map,c,wrong);},"Output presence substitution accepted");

@@ -10,6 +10,9 @@ const {reconcile, recordErrors} = require('../html/js/kraken_geometry');
 
 // Neutral first-run form, not a running radar configuration or site claim.
 function setupDefaults() {
+  const calibrationPath = process.env.VECTORWARP_MACOS_STATE ?
+    path.join(process.env.VECTORWARP_MACOS_STATE, 'calibration', 'manifold-samples.jsonl') :
+    '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
   return {
     capture: {fs: 2000000, fc: 204640000,
       device: getDeviceProfiles().find(item => item.type === 'RspDuo').device,
@@ -25,10 +28,16 @@ function setupDefaults() {
         track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
         acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'},
-      bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3}
+      bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
+        manifold_recorder: {enabled: 'auto',
+          path: calibrationPath,
+          min_snr_db: 6, min_elevation_deg: 0, max_elevation_deg: 15,
+          max_delay_error_km: .25, max_doppler_error_hz: 5,
+          max_truth_age_s: 3, max_file_mb: 64, max_files: 4}}
     },
     network: {ip: '0.0.0.0', ports: {api: 3000, map: 3001, detection: 3002,
-      track: 3003, bearing: 3004, timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
+      track: 3003, bearing: 3004, manifold: 3005,
+      timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1, smoothing_window: 10, max_position_age: 30},
       ais: {enabled: false, ip: '0.0.0.0', port: 30001}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
@@ -99,6 +108,8 @@ function readConfig(filename) {
     // default's JavaScript type would discard a valid persisted alternative.
     if (type === 'gain') return typeof current === 'string' || typeof current === 'number';
     if (type === 'serial') return typeof current === 'string' || Array.isArray(current);
+    if (type === 'autoBoolean') return typeof current === 'boolean' ||
+      ['auto', 'on', 'off'].includes(current);
     return false;
   };
   const merge = (base, current, prefix = '') => {

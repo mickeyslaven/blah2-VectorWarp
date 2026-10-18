@@ -60,6 +60,8 @@ void validateConfig(const Config& c){
  const auto& b=c.bearing;
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
+ require(b.referenceAnchor==BearingReferenceAnchor::liveEigenbeam||
+  b.referenceAnchor==BearingReferenceAnchor::fixedSite,"Resident bearing reference anchor invalid");
  if(b.enabled){
   require(f.mode!=FusionMode::noncoherent&&d.enabled&&c.tracker.enabled&&
    b.scanBeams>=f.beams&&b.scanBeams<=127&&b.scanBeams%f.beams==0&&
@@ -70,8 +72,12 @@ void validateConfig(const Config& c){
   std::vector<bool> used(g.channels,false);
   for(auto channel:b.channelMapping){require(channel<g.channels&&!used[channel],
     "Resident bearing channel mapping invalid");used[channel]=true;}
+  require(b.manifoldResponses.empty()||b.manifoldResponses.size()==uint64_t(b.scanBeams)*g.channels,
+    "Resident bearing manifold dimensions invalid");
+  for(const auto& value:b.manifoldResponses)require(std::isfinite(value.real())&&std::isfinite(value.imag())&&std::norm(value)>1e-12f,
+    "Resident bearing manifold response invalid");
  }else require(!b.scanBeams&&b.candidatePeaks==3&&b.guardRadius==1&&
-  b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty(),
+  b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty()&&b.manifoldResponses.empty(),
   "Disabled resident bearing has configuration");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
@@ -83,10 +89,10 @@ void validateConfig(const Config& c){
   (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
- require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0,"Resident tracker configuration invalid");
+ require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0)),"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
  require(std::memcmp(&actual,&t.cpi,8)==0,"Resident tracker CPI must be actual CPI");}
- else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0,"Disabled resident tracker has configuration");
+ else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0,"Disabled resident tracker has configuration");
  require(!c.device.empty()&&c.device.size()<96&&c.device.find('\0')==std::string::npos,"Resident device selector invalid");
  const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<30)-2);
  require((c.presence&mandatory)==mandatory&&!(c.presence&~known),"Resident required/presence bits invalid");
@@ -254,6 +260,9 @@ const auto&t=c.tracker;
  w.f64(320,t.maxAccInit);
  w.f64(328,t.rangeRes);
  w.f64(336,t.lambda);
+ w.u32(584,t.stationaryClutter);
+ w.u32(588,t.stationaryPersistenceCpis);
+ w.f64(592,t.stationaryMaxDopplerHz);
  w.u64(344,c.spectrumBins);
  w.u64(352,c.presence);
  w.f64(360,c.fusion.frequencyHz);
@@ -275,6 +284,9 @@ const auto&t=c.tracker;
  w.f64(536,c.bearing.diagonalLoading);
  w.u32(544,uint32_t(c.bearing.channelMapping.size()));
  for(size_t i=0;i<c.bearing.channelMapping.size();++i)w.u32(548+4*i,c.bearing.channelMapping[i]);
+ w.u32(580,uint32_t(c.bearing.manifoldResponses.size()));
+ w.u32(600,uint32_t(c.bearing.referenceAnchor));
+ for(size_t i=0;i<c.bearing.manifoldResponses.size();++i){w.f32(640+8*i,c.bearing.manifoldResponses[i].real());w.f32(644+8*i,c.bearing.manifoldResponses[i].imag());}
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
@@ -294,6 +306,7 @@ auto& bearing=c.bearing;
 bearing.enabled=r.u32(512)!=0;
 require(r.u32(512)<=1,"Resident bearing boolean invalid");
 bearing.method=BearingMethod(r.u32(516));
+ bearing.referenceAnchor=BearingReferenceAnchor(r.u32(600));
 bearing.scanBeams=r.u32(520);
 bearing.candidatePeaks=r.u32(524);
 bearing.guardRadius=r.u32(528);
@@ -303,6 +316,10 @@ const uint32_t bearingChannels=r.u32(544);
 require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
+const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
+r.zeros(604,36);bearing.manifoldResponses.reserve(manifoldCount);
+for(uint32_t i=0;i<manifoldCount;++i)bearing.manifoldResponses.emplace_back(r.f32(640+8*i),r.f32(644+8*i));
+r.zeros(640+8*manifoldCount,configBytes-(640+8*manifoldCount));
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
 g.channels=narrow(r.u64(32));
@@ -359,6 +376,9 @@ ref.centreHz=r.f64(160);
  t.maxAccInit=r.f64(320);
  t.rangeRes=r.f64(328);
  t.lambda=r.f64(336);
+ t.stationaryClutter=boolean(584);
+ t.stationaryPersistenceCpis=r.u32(588);
+ t.stationaryMaxDopplerHz=r.f64(592);
  c.spectrumBins=narrow(r.u64(344));
  c.presence=r.u64(352);
  size_t length=0;

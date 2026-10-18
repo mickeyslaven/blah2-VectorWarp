@@ -4,6 +4,7 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -220,13 +221,103 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  snr.push_back(v.data[i].snr);}
  return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
 }
+template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
+ double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
+ View<Record> detectionsView,View<uint32_t> cells,
+ View<std::complex<float>> channelMaps,View<std::complex<double>> referenceWeights,
+ uint64_t referenceFrames,uint64_t referenceUpdates,double coherentFraction,double coherentGainDb,double referenceScale,
+ uint32_t bearingMethod,uint32_t bearingReferenceAnchor,uint32_t bearingScanBeams,
+ uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
+ double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping){
+ shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
+ require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
+  rows&&columns&&channels>=2&&channels<=8,"Invalid manifold evidence geometry");
+ const uint64_t count=uint64_t(rows)*columns;
+ require(count<=SIZE_MAX/channels&&detectionsView.count==cells.count&&
+  channelMaps.count==size_t(count)*channels&&referenceWeights.count<=8,
+  "Manifold evidence shape differs");
+ require(std::isfinite(coherentFraction)&&coherentFraction>=0&&
+  std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
+  "Invalid reference diagnostic state");
+ require(bearingMethod<=1&&bearingReferenceAnchor<=1&&bearingScanBeams>=4&&
+  bearingScanBeams<=127&&bearingChannelMapping.count==channels,
+  "Invalid manifold replay configuration");
+ std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
+  require(bearingChannelMapping.data[i]<channels&&!used[bearingChannelMapping.data[i]],
+   "Invalid manifold replay mapping");used[bearingChannelMapping.data[i]]=true;}
+ if(bearingMethod==1)require(bearingGuardRadius<=3&&bearingTrainingRadius>bearingGuardRadius&&
+  bearingTrainingRadius<=6&&std::isfinite(bearingDiagonalLoading)&&
+  bearingDiagonalLoading>0&&bearingDiagonalLoading<=1,
+  "Invalid adaptive manifold replay configuration");
+ rapidjson::StringBuffer b;Writer w(b);w.SetMaxDecimalPlaces(8);
+ w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v2");
+ w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
+ w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
+ w.Key("bearing_replay");w.StartObject();w.Key("method");
+ w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
+ w.Key("reference_anchor");w.String(bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
+ w.Key("scan_beams");w.Uint(bearingScanBeams);
+ w.Key("guard_radius");w.Uint(bearingGuardRadius);w.Key("training_radius");w.Uint(bearingTrainingRadius);
+ w.Key("diagonal_loading");w.Double(bearingDiagonalLoading);w.Key("channel_mapping");w.StartArray();
+ for(size_t i=0;i<bearingChannelMapping.count;++i)w.Uint(bearingChannelMapping.data[i]);
+ w.EndArray();w.EndObject();
+ w.Key("reference_weights");w.StartArray();
+ for(size_t i=0;i<referenceWeights.count;++i){const auto value=referenceWeights.data[i];
+  finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
+ w.EndArray();w.Key("reference_state");w.StartObject();
+ w.Key("frames");w.Uint64(referenceFrames);w.Key("updates");w.Uint64(referenceUpdates);
+ w.Key("coherent_fraction");w.Double(coherentFraction);w.Key("coherent_gain_db");w.Double(coherentGainDb);
+ w.Key("scale");w.Double(referenceScale);w.EndObject();w.Key("data");w.StartArray();
+ for(size_t i=0;i<detectionsView.count;++i){const auto& detection=detectionsView.data[i];
+  finite(detection.delay);finite(detection.delayKm);finite(detection.doppler);finite(detection.snr);
+  const uint32_t cell=cells.data[i];require(cell<count,"Manifold evidence cell out of range");
+  const uint32_t row=cell/columns,column=cell%columns;
+  const uint32_t shifted=(row+rows/2+1)%rows;
+  w.StartObject();w.Key("cell");w.Uint(cell);w.Key("delay_km");w.Double(detection.delayKm);
+  w.Key("doppler_hz");w.Double(detection.doppler);w.Key("snr_db");w.Double(detection.snr);
+  w.Key("response");w.StartArray();
+  for(uint32_t channel=0;channel<channels;++channel){
+   const auto value=channelMaps.data[uint64_t(channel)*count+uint64_t(column)*rows+shifted];
+   finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
+  w.EndArray();
+  if(bearingMethod==1){
+   std::array<std::complex<double>,64> covariance{};uint32_t samples=0;
+   const int training=int(bearingTrainingRadius),guard=int(bearingGuardRadius);
+   for(int dr=-training;dr<=training;++dr)for(int dc=-training;dc<=training;++dc){
+    if(std::abs(dr)<=guard&&std::abs(dc)<=guard)continue;
+    const int rr=int(row)+dr,cc=int(column)+dc;
+    if(rr<0||cc<0||rr>=int(rows)||cc>=int(columns))continue;
+    const uint32_t sh=(uint32_t(rr)+rows/2+1)%rows;
+    for(uint32_t a=0;a<channels;++a){
+     const auto va=std::complex<double>(channelMaps.data[uint64_t(a)*count+uint64_t(cc)*rows+sh]);
+     for(uint32_t c=0;c<channels;++c){
+      const auto vc=std::complex<double>(channelMaps.data[uint64_t(c)*count+uint64_t(cc)*rows+sh]);
+      covariance[a*8+c]+=va*std::conj(vc);}}
+    ++samples;
+   }
+   double trace=0;for(uint32_t channel=0;channel<channels;++channel)trace+=covariance[channel*8+channel].real();
+   const double load=std::max(trace/std::max(double(samples*channels),1.0)*bearingDiagonalLoading,1e-12);
+   w.Key("covariance_samples");w.Uint(samples);w.Key("covariance");w.StartArray();
+   for(uint32_t a=0;a<channels;++a){w.StartArray();for(uint32_t c=0;c<channels;++c){
+    auto value=covariance[a*8+c]/std::max(double(samples),1.0);
+    if(a==c)value+=load;
+    finite(value.real());finite(value.imag());
+    w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}w.EndArray();}
+   w.EndArray();
+  }
+  w.EndObject();}
+ w.EndArray();w.EndObject();return {b.GetString(),b.GetSize()};
+}
 struct CheckpointBinding {uint32_t capacity=0;
 uint64_t epoch=0,generation=0,consumedSequence=0;
 uint32_t beamCount=0,scanBeamCount=0;};
 struct BearingConfig {bool enabled=false;
  uint32_t beamCount=0,refinementFactor=4,minConsistent=3;
  double xAxisBearingDegTrue=0,minimumUncertaintyDeg=0;
- uint32_t minPeakSeparationDb=3,method=0,scanBeams=0;};
+ uint32_t minPeakSeparationDb=3,method=0,scanBeams=0;
+ double cpiSeconds=0,maxBearingRateDegPerSecond=0;
+ uint32_t stationaryPersistenceCpis=0;
+ double stationaryMaxDopplerHz=0;};
 inline uint64_t wordPair(const uint32_t*w,size_t at){return uint64_t(w[at])|(uint64_t(w[at+1])<<32);}
 inline double realPair(const uint32_t*w,size_t at){const uint64_t bits=wordPair(w,at);
 double value;
@@ -305,7 +396,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   config.refinementFactor>=1&&config.minConsistent>=2&&config.minConsistent<=100&&
   std::isfinite(config.xAxisBearingDegTrue)&&std::isfinite(config.minimumUncertaintyDeg)&&
   config.minimumUncertaintyDeg>=0&&config.minimumUncertaintyDeg<=180&&
-  config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15&&config.method<=1,
+  config.minPeakSeparationDb>=1&&config.minPeakSeparationDb<=15&&config.method<=1&&
+  std::isfinite(config.cpiSeconds)&&config.cpiSeconds>=0&&
+  std::isfinite(config.maxBearingRateDegPerSecond)&&config.maxBearingRateDegPerSecond>=0&&
+  (!config.maxBearingRateDegPerSecond||config.cpiSeconds>0)&&
+  std::isfinite(config.stationaryMaxDopplerHz)&&config.stationaryMaxDopplerHz>=0&&
+  ((!config.stationaryPersistenceCpis&&config.stationaryMaxDopplerHz==0)||
+   (config.stationaryPersistenceCpis>=2&&config.cpiSeconds>0)),
   "Invalid bearing publication config");
  require(bank.count>=32,"Short GPU tracker header");
  const auto*w=bank.data;
@@ -337,13 +434,17 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   require(state<=3&&head<historyCapacity&&length&&display&&display<=length&&
    start<historyCapacity,"GPU bearing history metadata invalid");
   std::vector<double> histogram(scanBeams,0);
-  struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};};
-  std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0;
+  struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};uint32_t sample=0;};
+  std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0,stationarySamples=0;
+  double minimumDelay=std::numeric_limits<double>::infinity(),maximumDelay=-std::numeric_limits<double>::infinity();
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t historyState=w[at+6];stateName(historyState);
    if(historyState!=1u&&historyState!=2u)continue;
-   const uint32_t spatial=w[at+7];Lobes frame;
+   const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
+   const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);
+   if(std::abs(sampleDoppler)<=config.stationaryMaxDopplerHz){stationarySamples++;
+    minimumDelay=std::min(minimumDelay,sampleDelay);maximumDelay=std::max(maximumDelay,sampleDelay);}
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
     require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
@@ -361,13 +462,37 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   std::vector<uint32_t> independent;for(uint32_t bin:peaks){if(histogram[bin]<=0)break;bool separated=true;
    for(uint32_t other:independent){uint32_t delta=bin>other?bin-other:other-bin;if(std::min(delta,scanBeams-delta)<=separationBins){separated=false;break;}}
    if(separated){independent.push_back(bin);if(independent.size()==3)break;}}
-  const uint32_t winner=independent.front();double x=0,y=0,selectedWeight=0,totalWeight=0;
-  for(const auto& frame:frames){uint32_t selected=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frame.bin[k]){uint32_t bin=frame.bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;selected=k;}}
-   const double angle=double(frame.bin[selected]-1)*step,weight=frame.weight[selected];x+=weight*std::cos(angle*radians);y+=weight*std::sin(angle*radians);selectedWeight+=weight;
+  const uint32_t winner=independent.front();
+  std::vector<uint32_t> selected(frames.size());
+  const bool hypothesisTracking=config.maxBearingRateDegPerSecond>0&&frames.size()>1;
+  if(hypothesisTracking){
+   constexpr double impossible=-1e100;std::vector<std::array<double,3>>score(frames.size());
+   std::vector<std::array<uint8_t,3>>previous(frames.size());
+   for(uint32_t k=0;k<3;++k)score[0][k]=frames[0].bin[k]?std::log(std::max(frames[0].weight[k],1e-6)):impossible;
+   for(size_t frame=1;frame<frames.size();++frame)for(uint32_t k=0;k<3;++k){score[frame][k]=impossible;if(!frames[frame].bin[k])continue;
+    const double elapsed=config.cpiSeconds*double(frames[frame].sample-frames[frame-1].sample);
+    const double allowed=std::max(step,config.maxBearingRateDegPerSecond*elapsed);
+    const uint32_t right=frames[frame].bin[k]-1;for(uint32_t p=0;p<3;++p){if(score[frame-1][p]<=impossible/2||!frames[frame-1].bin[p])continue;
+     const uint32_t left=frames[frame-1].bin[p]-1,raw=left>right?left-right:right-left;const double delta=double(std::min(raw,scanBeams-raw))*step;
+     if(delta>allowed)continue;
+     const double candidate=score[frame-1][p]+std::log(std::max(frames[frame].weight[k],1e-6))-.5*(delta/allowed)*(delta/allowed);
+     if(candidate>score[frame][k]){score[frame][k]=candidate;previous[frame][k]=uint8_t(p);}}}
+   uint32_t best=0;for(uint32_t k=1;k<3;++k)if(score.back()[k]>score.back()[best])best=k;
+   if(score.back()[best]<=impossible/2){for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}}
+   else for(size_t frame=frames.size();frame-->0;){selected[frame]=best;if(frame)best=previous[frame][best];}
+  }else for(size_t frame=0;frame<frames.size();++frame){uint32_t nearest=0,bestDelta=UINT32_MAX;for(uint32_t k=0;k<3;++k)if(frames[frame].bin[k]){uint32_t bin=frames[frame].bin[k]-1,delta=bin>winner?bin-winner:winner-bin;delta=std::min(delta,scanBeams-delta);if(delta<bestDelta){bestDelta=delta;nearest=k;}}selected[frame]=nearest;}
+  double x=0,y=0,selectedWeight=0,totalWeight=0,bearingRate=0;uint32_t rateSamples=0;
+  for(size_t frameIndex=0;frameIndex<frames.size();++frameIndex){const auto&frame=frames[frameIndex];const uint32_t choice=selected[frameIndex];
+   const double angle=double(frame.bin[choice]-1)*step,weight=frame.weight[choice];x+=weight*std::cos(angle*radians);y+=weight*std::sin(angle*radians);selectedWeight+=weight;
+   if(hypothesisTracking&&frameIndex){double delta=angle-double(frames[frameIndex-1].bin[selected[frameIndex-1]]-1)*step;delta=std::remainder(delta,360.0);
+    const double elapsed=config.cpiSeconds*double(frame.sample-frames[frameIndex-1].sample);bearingRate+=delta/elapsed;++rateSamples;}
    for(double weight:frame.weight)totalWeight+=weight;}
+  current=frames.back().bin[selected.back()];if(rateSamples)bearingRate/=rateSamples;
   const double concentration=selectedWeight?std::hypot(x,y)/selectedWeight:0;
   const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
   const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians)});
+  const bool stationaryClutter=config.stationaryPersistenceCpis&&count>=config.stationaryPersistenceCpis&&
+   stationarySamples==count&&maximumDelay-minimumDelay<=1.5;
   const double runner=independent.size()>1?histogram[independent[1]]:0;
   uint32_t temporalQuality=runner>0?uint32_t(std::clamp(std::floor(10*std::log10(histogram[winner]/runner)),0.0,15.0)):15u;
   if(legacyCount==count){uint32_t seen=0;for(temporalQuality=0;temporalQuality<legacyQuality.size();++temporalQuality){seen+=legacyQuality[temporalQuality];if(seen>(count-1)/2)break;}}
@@ -376,10 +501,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   out.Key("delay");out.Double(realPair(w,base));out.Key("doppler");out.Double(realPair(w,base+2));
   out.Key("bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-meanLocal));
   out.Key("current_bearing_deg_true");out.Double(normalizeDegrees(config.xAxisBearingDegTrue-double(current-1)*step));
+  out.Key("bearing_rate_deg_s");out.Double(-bearingRate);
+  out.Key("hypothesis_tracking");out.Bool(hypothesisTracking);
   out.Key("uncertainty_deg");out.Double(uncertainty);out.Key("temporal_consistency");out.Double(concentration);
   out.Key("consistent_samples");out.Uint(count);out.Key("peak_separation_db");out.Uint(temporalQuality);
   out.Key("current_peak_separation_db");out.Uint(currentQuality);
-  out.Key("resolved");out.Bool(count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
+  out.Key("stationary_clutter");out.Bool(stationaryClutter);out.Key("publishable");out.Bool(!stationaryClutter);
+  out.Key("resolved");out.Bool(!stationaryClutter&&count>=config.minConsistent&&concentration>=.65&&uncertainty<=45&&
    temporalQuality>=config.minPeakSeparationDb);
   out.Key("candidates");out.StartArray();uint32_t emitted=0;
   for(uint32_t bin:independent){if(emitted&&histogram[bin]*4<histogram[winner])break;

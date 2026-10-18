@@ -34,7 +34,7 @@ public:
  const Config& config()const{return session_->config();}
  bool qualifying()const{return checks_<Acceleration::TotalQualificationFrames;}
  const AccelerationStatus& status()const{return status_;}
- void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();wire::require(capture.size()==config().geometry.channels,"Resident capture channel count differs");auto input=session_->input();canonical_=input.data;size_t offset=0;for(const auto& channel:capture){const auto& samples=channel->view_data();wire::require(samples.size()==config().geometry.clutterSamples,"Resident captured CPI size differs");std::copy(samples.begin(),samples.end(),input.data+offset);offset+=samples.size();}wire::require(offset==input.size,"Resident canonical input shape differs");refChecked_=filteredChecked_=mapChecked_=false;session_->begin(frame,qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
+ void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();wire::require(capture.size()==config().geometry.channels,"Resident capture channel count differs");auto input=session_->input();canonical_=input.data;size_t offset=0;for(const auto& channel:capture){const auto& samples=channel->view_data();wire::require(samples.size()==config().geometry.clutterSamples,"Resident captured CPI size differs");std::copy(samples.begin(),samples.end(),input.data+offset);offset+=samples.size();}wire::require(offset==input.size,"Resident canonical input shape differs");refChecked_=filteredChecked_=mapChecked_=false;uint64_t diagnostics=qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0;if(config().presence&bit(Section::detectionCells))diagnostics|=bit(Section::detectionCells);session_->begin(frame,diagnostics);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
  const OutputViews& receivePrepared(){sessionCall([&]{if(!prepared_.preparedEvidence.data)prepared_=session_->receivePrepared();});
  return prepared_;}
  void checkReference(const IqData& reference,const ArrayReferenceSynthesizer::Metrics& metrics){oracle();
@@ -79,14 +79,26 @@ public:
  peak=std::max(peak,std::norm(expected));
  maxError=std::max(maxError,delta);}}
  wire::require(std::isfinite(error)&&std::isfinite(signal)&&error<=std::max(signal*1e-8,1e-20)&&maxError<=std::max(peak*1e-8,1e-20),"Resident composed map oracle rejected frame");}mapChecked_=true;}
- struct Publication {std::string spectrum,map,detections,tracks,bearing;};
- Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={}){const auto& v=receivePrepared();
+ struct Publication {std::string spectrum,map,detections,tracks,bearing,manifoldEvidence;};
+ Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={},
+  bool publishManifoldEvidence=false){const auto& v=receivePrepared();
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");
  namespace json=gpu_result_json;
  Publication result;
  result.spectrum=json::spectrum({timestamp,{v.frequencies.data,v.frequencies.size},{v.spectrumDb.data,v.spectrumDb.size}});
  result.map=json::map({timestamp,config().geometry.doppler,config().geometry.delays,v.noise,v.maxPower,{v.delayKm.data,v.delayKm.size},{v.doppler.data,v.doppler.size},{v.display.data,v.display.size}});
- if(config().detector.enabled)result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
+ if(config().detector.enabled){result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
+  if(publishManifoldEvidence){const auto reference=referenceState(v.referenceCheckpoint);
+   result.manifoldEvidence=json::manifoldEvidence(timestamp,config().fusion.frequencyHz,
+    config().sampleRate,config().geometry.doppler,config().geometry.delays,
+    config().geometry.channels,json::View<DetectionRecord>{v.detections.data,v.detections.size},
+    {v.detectionCells.data,v.detectionCells.size},{v.maps.data,v.maps.size},
+    {reference.weights.data(),reference.weightCount},reference.frames,reference.updates,
+    reference.coherentFraction,reference.coherentGainDb,reference.scale,
+    uint32_t(config().bearing.method),uint32_t(config().bearing.referenceAnchor),
+    config().bearing.scanBeams,
+    config().bearing.guardRadius,config().bearing.trainingRadius,config().bearing.diagonalLoading,
+    {config().bearing.channelMapping.data(),config().bearing.channelMapping.size()});}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
  const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};

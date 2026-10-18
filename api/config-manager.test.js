@@ -61,6 +61,19 @@ const nonresidentAdaptiveTracker = clone(adaptiveTracker);
 nonresidentAdaptiveTracker.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentAdaptiveTracker).valid, false,
   'adaptive tracker initiation requires resident acceleration');
+const stationaryClutterTracker = clone(adaptiveTracker);
+stationaryClutterTracker.process.tracker.initiate.stationary_clutter = {
+  enable: true, persistence_cpis: 8, max_doppler_hz: 15};
+assert.equal(validateConfig(stationaryClutterTracker).valid, true,
+  'persistent clutter initiation accepts bounded resident settings');
+const instantStationaryClutter = clone(stationaryClutterTracker);
+instantStationaryClutter.process.tracker.initiate.stationary_clutter.persistence_cpis = 1;
+assert.equal(validateConfig(instantStationaryClutter).valid, false,
+  'persistent clutter initiation requires temporal evidence');
+const nonresidentStationaryClutter = clone(stationaryClutterTracker);
+nonresidentStationaryClutter.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(nonresidentStationaryClutter).valid, false,
+  'persistent clutter initiation requires resident acceleration');
 const mismatchedCalibration = clone(coherentFusion);
 mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
 assert.equal(validateConfig(mismatchedCalibration).valid, false,

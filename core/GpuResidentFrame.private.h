@@ -2,6 +2,7 @@
 #include "GpuReferenceSpectrum.private.h"
 #include "GpuPostprocess.private.h"
 #include "GpuTracker.private.h"
+#include "process/ambiguity/BearingSteering.h"
 // Private direct-call arithmetic seam. Included after ClutterPipeline, inside
 // blah2's private namespace. No main/worker ABI or production route is changed.
 // Host work is immutable input/output byte copies, status checks and submission.
@@ -330,6 +331,12 @@ class ResidentFramePipeline {
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
+  // Usually the native refinement reference buffer is large enough to double
+  // as postprocess scratch.  That is an optimization, not a geometry contract:
+  // larger clutter filters can legitimately leave a smaller borrowed buffer.
+  // Keep the zero-allocation fast path and allocate dedicated device storage
+  // only when the actual postprocess layout requires it.
+  std::unique_ptr<Buffer> dedicatedPostprocessScratch;
   std::unique_ptr<Kernel> referenceCast,referencePack,surveillanceCast,subtract,surveillancePack,subtractPack,fusion;
   std::unique_ptr<gpu_native::Timestamps> timestamps;
   gpu_resident::Commands commands; // Destroy commands before anything they reference.
@@ -397,10 +404,19 @@ class ResidentFramePipeline {
       std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
    }else fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
-   if(config.postprocess.enabled)postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
-    config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,clutter->borrowedReference(),*owner.output_,
-    config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
-    refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
+   if(config.postprocess.enabled){
+    Buffer* scratch=&clutter->borrowedReference();
+    const auto required=gpu_postprocess::layout(config.geometry.doppler,config.geometry.delays).bytes;
+    if(scratch->bytes<required){
+     constexpr auto device=VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+     dedicatedPostprocessScratch=std::make_unique<Buffer>(context,required,device);
+     scratch=dedicatedPostprocessScratch.get();
+    }
+    postprocessStage=std::make_unique<gpu_postprocess::Stage>(context,config.postprocess,
+     config.geometry.doppler,config.geometry.delays,uint32_t(config.sampleRate),*fused,*scratch,*owner.output_,
+     config.postprocess.integrationCpis>2?owner.doppler_.get():nullptr,
+     refinementWeights.get(),config.geometry.channels,refinementWeights?refinementBeamCount:0u);
+   }
    timestamps=std::make_unique<gpu_native::Timestamps>(context);
    const uint32_t batches=(config.geometry.channels+channels-1)/channels;
    commands.allocate(2+3*batches);
@@ -492,6 +508,7 @@ class ResidentFramePipeline {
    gpu_resident::hostRead(command);
    check(vkEndCommandBuffer(command),"resident ambiguity recording");
   }
+  Buffer& postprocessScratch(){return dedicatedPostprocessScratch?*dedicatedPostprocessScratch:clutter->borrowedReference();}
   void calibrateFusion(const ReferenceCheckpoint& checkpoint){
    if(config.fusion.mode==0)return;
    if(checkpoint.weightCount!=config.geometry.channels)
@@ -551,23 +568,51 @@ class ResidentFramePipeline {
    }
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
+   const bool bearingRefinement=&buffer==refinementWeights.get();
+   const bool measured=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool fixedSite=bearingRefinement&&
+    config.postprocess.bearingReferenceAnchor==1;
+   const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
+   const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
+   std::array<std::complex<double>,8> referenceAnchor{};double referenceAnchorNorm=0;
+   for(uint32_t channel=0;channel<channels;++channel){
+    if(!fixedSite)referenceAnchor[channel]=checkpoint.weights[channel];
+    else if(measured)referenceAnchor[channel]=
+     config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
+    else{const uint32_t physical=blah2::bearing_steering::physicalElement(
+      channel,config.postprocess.bearingChannelMapping);
+     const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
+     referenceAnchor[channel]=std::polar(1.0,waveNumber*config.fusion.radiusM*
+      std::cos(elementAngle-config.fusion.directPathAzimuthRad));}
+    referenceAnchorNorm+=std::norm(referenceAnchor[channel]);
+   }
+   if(!(referenceAnchorNorm>0)||!std::isfinite(referenceAnchorNorm))
+    throw std::runtime_error("Bearing reference anchor has zero norm");
    for(uint32_t beam=0;beam<beams;++beam){
     const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
     std::array<std::complex<double>,8> steering{},combined{};
     for(uint32_t channel=0;channel<channels;++channel){
-     const double elementAngle=config.fusion.element0Rad+channel*config.fusion.elementStepRad;
-     const double relativePhase=waveNumber*config.fusion.radiusM*
-      (std::cos(elementAngle-beamAngle)-
-       std::cos(elementAngle-config.fusion.directPathAzimuthRad));
-     steering[channel]=checkpoint.weights[channel]*std::polar(1.0,-relativePhase);
+     if(measured){const auto numerator=config.postprocess.bearingManifoldResponses[uint64_t(beam)*channels+channel];
+      const auto denominator=config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
+      steering[channel]=fixedSite?std::complex<double>(numerator):
+       checkpoint.weights[channel]*std::complex<double>(numerator/denominator);
+     }else{const uint32_t physical=bearingRefinement?
+       blah2::bearing_steering::physicalElement(channel,config.postprocess.bearingChannelMapping):channel;
+      const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
+      const double relativePhase=waveNumber*config.fusion.radiusM*
+       (std::cos(elementAngle-beamAngle)-
+        std::cos(elementAngle-config.fusion.directPathAzimuthRad));
+      steering[channel]=bearingRefinement?
+       std::conj(blah2::bearing_steering::mapCoefficient(referenceAnchor[channel],relativePhase)):
+       checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
     }
     if(nullFraction>0){
      std::complex<double> projection{};
      for(uint32_t channel=0;channel<channels;++channel)
-      projection+=std::conj(checkpoint.weights[channel])*steering[channel];
-     projection*=nullFraction/norm;
+      projection+=std::conj(referenceAnchor[channel])*steering[channel];
+     projection*=nullFraction/referenceAnchorNorm;
      for(uint32_t channel=0;channel<channels;++channel)
-      steering[channel]-=projection*checkpoint.weights[channel];
+      steering[channel]-=projection*referenceAnchor[channel];
     }
     if(whiten){
      double combinedNorm=0;
@@ -579,8 +624,10 @@ class ResidentFramePipeline {
       throw std::runtime_error("Noise-whitened fusion produced invalid weights");
      const double combinedScale=1.0/std::sqrt(combinedNorm);
      for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else for(uint32_t channel=0;channel<channels;++channel)
-     combined[channel]=scale*steering[channel];
+    }else if(measured){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
+     if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
+     const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
+    }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
     for(uint32_t channel=0;channel<channels;++channel){
      target[uint64_t(beam)*config.geometry.channels+channel]=
       std::complex<float>(std::conj(combined[channel]));
@@ -759,7 +806,7 @@ public:
   // Tracker capacity is explicit and never retried/shrunk. All existing full-frame
   // allocations, plans and transient peaks have already been admitted.
   if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
-   work_->postprocessStage->metadataBuffer(),work_->clutter->borrowedReference(),work_->postprocessStage->scratchLayout());
+   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout());
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity

@@ -13,8 +13,8 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=6;
-constexpr uint32_t protocol=0x42475206,packetBytes=160,configBytes=640;
+constexpr unsigned moduleAbi=7;
+constexpr uint32_t protocol=0x42475208,packetBytes=160,configBytes=8768;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -62,14 +62,19 @@ struct DetectorConfig {
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
 enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
+enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1};
 struct BearingConfig {
  bool enabled=false;
  BearingMethod method=BearingMethod::coherentBeamBank;
+ BearingReferenceAnchor referenceAnchor=BearingReferenceAnchor::liveEigenbeam;
  uint32_t scanBeams=0,candidatePeaks=3,guardRadius=1,trainingRadius=3;
  double diagonalLoading=.01;
  // Bearing-only logical-channel to physical-element permutation. Detection
  // fusion keeps its established path and is therefore unaffected.
  std::vector<uint32_t> channelMapping;
+ // Optional measured complex response, local CCW scan-major then logical channel.
+ // Empty retains the ideal regular-polygon manifold.
+ std::vector<std::complex<float>> manifoldResponses;
 };
 enum class TrackerInitiationMode:uint32_t {hypothesisBank=0,adaptiveGate=1};
 struct TrackerConfig {
@@ -77,6 +82,9 @@ struct TrackerConfig {
  uint32_t capacity=0,m=0,n=0,nDelete=0;
  TrackerInitiationMode initiationMode=TrackerInitiationMode::hypothesisBank;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
+ bool stationaryClutter=false;
+ uint32_t stationaryPersistenceCpis=0;
+ double stationaryMaxDopplerHz=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
 inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){

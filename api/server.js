@@ -15,11 +15,15 @@ const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./rece
 const {createReceiverJournal} = require('./receiver-journal.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {createManifoldRecorder} = require('./manifold-recorder.js');
+const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
+const {createTrackerForwarder} = require('./tracker-forward.js');
+const {createTrackerPublication} = require('./tracker-publication.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
-const {locationsFromBearing} = require('./bistatic-geolocation.js');
+const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
 // parse config file
@@ -27,6 +31,10 @@ const configFile = path.resolve(process.argv[2] || 'config/config.yml');
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const manifoldRecorder = createManifoldRecorder(config, adsbSource);
+const bearingDiagnostic = createBearingDiagnostic(config);
+const trackerForwarder = createTrackerForwarder(config, adsbSource);
+const trackerPublication = createTrackerPublication(config);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -93,6 +101,7 @@ var map = '';
 var detection = '';
 var track = '';
 var bearing = '';
+const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
 var timing = '';
 var iqdata = '';
@@ -222,7 +231,16 @@ app.get('/api/detection', (req, res) => {
   res.send(detection);
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(track);
+  res.send(trackerPublication.frame());
+});
+app.get('/api/tracker/native', (req, res) => {
+  res.send(trackerPublication.nativeOnly());
+});
+app.get('/api/tracker/publication', (req, res) => {
+  res.json(trackerPublication.status());
+});
+app.get('/api/tracker-forward', (req, res) => {
+  res.json(trackerForwarder.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -236,7 +254,7 @@ app.get('/api/locations', (req, res) => {
   try { frame = bearing ? JSON.parse(bearing) : null; }
   catch (_) { return res.status(503).json({enabled: true, available: false,
     reason: 'The current bearing frame is invalid.', data: []}); }
-  const result = locationsFromBearing(frame, config);
+  const result = locationsFromBearing(frame, config, bearingHypotheses);
   res.status(result.enabled && !result.available ? 503 : 200).json(result);
 });
 app.get('/api/timestamp', (req, res) => {
@@ -672,6 +690,12 @@ app.get('/api/adsb/status', async (req, res) => {
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
 });
+app.get('/api/bearing/manifold-recorder', (req, res) => {
+  res.json(manifoldRecorder.status());
+});
+app.get('/api/bearing/diagnostic', (req, res) => {
+  res.json(bearingDiagnostic.status());
+});
 
 // stash API
 app.get('/stash/map', (req, res) => {
@@ -826,17 +850,26 @@ listenData(server_map, 'map');
 const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
   stash_detection.update_data(detection);
+  trackerForwarder.accept(frame);
+  trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
+  trackerPublication.acceptNative(frame);
 });
 listenData(server_tracker, 'track');
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => { bearing = frame; });
   listenData(server_bearing, 'bearing');
+}
+
+if (config.process?.bearing?.manifold_recorder?.enabled === true &&
+    Number.isInteger(config.network?.ports?.manifold)) {
+  const server_manifold = jsonStreamServer('manifold', frame => manifoldRecorder.accept(frame));
+  listenData(server_manifold, 'manifold');
 }
 
 // tcp listener timestamp
@@ -887,5 +920,7 @@ listenData(server_iqdata, 'iqdata');
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
+  trackerForwarder.close();
+  trackerPublication.close();
   process.exit(0);
 });

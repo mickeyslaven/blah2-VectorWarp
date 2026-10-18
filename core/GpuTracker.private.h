@@ -6,6 +6,9 @@ struct TrackerConfig {
  uint32_t capacity=0,m=0,n=0,nDelete=0;
  bool adaptiveGate=false;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
+ bool stationaryClutter=false;
+ uint32_t stationaryPersistenceCpis=0;
+ double stationaryMaxDopplerHz=0;
  uint64_t epoch=0;
 };
 struct TrackerFrame {uint64_t generation=0,consumedSequence=0,timestamp=0;};
@@ -24,6 +27,9 @@ double resolution=0;};
 inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!c.enabled||!c.capacity||!cells||cells>UINT32_MAX/24||!c.m||c.m>c.n||c.n>255||!std::isfinite(c.cpi)||c.cpi<=0||
     !std::isfinite(c.maxAccInit)||c.maxAccInit<0||!std::isfinite(c.rangeRes)||c.rangeRes<=0||!std::isfinite(c.lambda)||c.lambda<=0||
+    !std::isfinite(c.stationaryMaxDopplerHz)||c.stationaryMaxDopplerHz<0||
+    (c.stationaryClutter?(c.stationaryPersistenceCpis<2||c.stationaryPersistenceCpis>65535):
+      (c.stationaryPersistenceCpis||c.stationaryMaxDopplerHz!=0))||
     c.capacity>(UINT32_MAX-127)/128)
   throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED configuration or index capacity");
  Admission a;
@@ -40,13 +46,13 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!std::isfinite(a.resolution*double(a.nAcc))||!std::isfinite(1/c.cpi))throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED derived configuration");
  a.bankWords=headerWords+a.recordWords*c.capacity;
  a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity)*4;
- a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes;
+ a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes+(c.stationaryClutter?uint64_t(cells+4)*4:16);
  if(uint64_t(a.bankWords)*4>SIZE_MAX||a.stageBytes>SIZE_MAX){throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED host byte capacity");}
  return a;
 }
 inline bool sameToken(const TrackerToken& a,const TrackerToken& b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 inline bool sameDouble(double a,double b){return std::memcmp(&a,&b,sizeof(a))==0;}
-inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda);}
+inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
 const char* common=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -55,6 +61,7 @@ layout(binding=1) buffer BankA {uint a[];};
 layout(binding=2) buffer BankB {uint b[];};
 layout(binding=3) buffer Scratch {uint s[];};
 layout(binding=4) readonly buffer Postprocess {uint post[];};
+layout(binding=5) buffer StationaryClutter {uint clutterPersistence[];};
 layout(push_constant) uniform P {uint count;uint a;uint b;uint c;int d;} p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128u;}
 uint groupOf(){return gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;}
@@ -86,15 +93,31 @@ uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell]
 uint coarseBeam(uint spatial){if((spatial&0x80000000u)!=0u){uint fine=spatial&127u;if(fine==0u)return 0u;
   return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}return spatial&511u;}
 uint detectionBeam(uint i){return coarseBeam(detectionSpatial(i));}
-uint latestBeam(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
- return length==0u?0u:coarseBeam(src(r+16u+8u*((head+length-1u)%h)+7u));}
-bool bearingCompatible(uint trackBeam,uint detection){uint beams=post[75],tolerance=post[77];
- if(tolerance==0xffffffffu||beams==0u||trackBeam==0u||detection==0u)return true;
- uint left=trackBeam-1u,right=detection-1u,delta=left>right?left-right:right-left;
- return min(delta,beams-delta)<=tolerance;
+uint latestSpatial(uint r){uint packed=src(r+13u),head=packed&255u,length=(packed>>8u)&255u,h=historyCapacity();
+ return length==0u?0u:src(r+16u+8u*((head+length-1u)%h)+7u);}
+uint candidateBeam(uint spatial,uint candidate){if((spatial&0x80000000u)==0u)return candidate==0u?coarseBeam(spatial):0u;
+ uint fine=(spatial>>(candidate*7u))&127u;if(fine==0u)return 0u;
+ return (((fine-1u)+post[81]/2u)/post[81])%post[75]+1u;}
+bool bearingCompatible(uint trackSpatial,uint detectionSpatialValue){uint beams=post[75],tolerance=post[77];
+ if(tolerance==0xffffffffu||beams==0u||trackSpatial==0u||detectionSpatialValue==0u)return true;
+ for(uint leftCandidate=0u;leftCandidate<3u;++leftCandidate){uint left=candidateBeam(trackSpatial,leftCandidate);if(left==0u)continue;
+  for(uint rightCandidate=0u;rightCandidate<3u;++rightCandidate){uint right=candidateBeam(detectionSpatialValue,rightCandidate);if(right==0u)continue;
+   uint delta=left>right?left-right:right-left;if(min(delta,beams-delta)<=tolerance)return true;}}
+ return false;
 }
 bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
 uint hypothesisCount(){return m[38]&0x7fffffffu;}
+bool clutterAware(){return clutterPersistence[0]!=0u;}
+bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
+ if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
+ double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
+ if(abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
+ if(cell>=m[4]||post[33]==0u)return false;uint bin=cell%post[33];
+ uint packed=clutterPersistence[4u+bin],streak=packed&65535u;
+ uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
+ uint missed=age>0u?age-1u:0u;
+ uint effective=packed==0u||missed>=streak?0u:streak-missed;
+ return effective<clutterPersistence[1];}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
  put(0u,1u);put(1u,recordWords()*4u);put(2u,m[3]);put(3u,historyCapacity());put(4u,count);
@@ -135,7 +158,7 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u)return;
 const char* associateBody=R"glsl(
 shared double distances[128];shared uint identities[128];
 void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
- for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousBeam=latestBeam(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
+ for(uint i=0u;i<m[18];++i){uint r=record(i),w=work(i),previousSpatial=latestSpatial(r),state=src(r+14u);double dp=md(w),vp=md(w+2u),cpi=md(42u);
   bool adaptiveTentative=adaptiveGate()&&state==0u;
   precise double delayMargin=1.0LF,dopplerMargin=1.0LF/cpi,span=0.0LF,time=md(50u),gateTime=time,q=0.0LF;
   if(adaptiveTentative){gateTime=time*double(src(r+10u)+1u);span=md(48u)*double(m[37]);
@@ -153,7 +176,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     compatible=finiteD(accelerationLow)&&finiteD(accelerationHigh)&&accelerationLow<accelerationHigh;
     if(compatible){precise double denominator=q*q+gateTime*gateTime*cpi*cpi;
      fitAcc=clamp((gateTime*cpi*cpi*dv-q*dd)/denominator,accelerationLow,accelerationHigh);}}
-   if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousBeam,detectionBeam(j))){
+   if(compatible&&s[m[6]+j]==0u&&bearingCompatible(previousSpatial,detectionSpatial(j))){
     precise double deltaDelay=delay-dp,deltaDoppler=(doppler-vp)*cpi;
     if(adaptiveTentative){deltaDelay+=q*fitAcc;deltaDoppler=(doppler-vp-fitAcc*gateTime)*cpi;}
     precise double distance=deltaDelay*deltaDelay+deltaDoppler*deltaDoppler;
@@ -181,7 +204,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
 const char* unmatchedCountBody=R"glsl(
 shared uint values[128];
 void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19]+127u)/128u;
- if(m[0]!=0u||m[2]!=2u||tile>=tiles)return;values[lane]=i<m[19]&&s[m[6]+i]==0u?1u:0u;barrier();
+ if(m[0]!=0u||m[2]!=2u||tile>=tiles)return;values[lane]=i<m[19]&&initiationEligible(i)?1u:0u;barrier();
  for(uint width=64u;width>0u;width>>=1u){if(lane<width)values[lane]+=values[lane+width];barrier();}
  if(lane==0u){s[m[7]+m[4]+tile]=values[0];atomicAdd(m[56],1u);}
 }
@@ -200,9 +223,24 @@ void main(){if(indexOf()!=0u||m[0]!=0u||m[2]!=2u)return;uint count=0u;
 const char* unmatchedScatterBody=R"glsl(
 shared uint values[128];
 void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19]+127u)/128u;
- if(m[0]!=0u||m[2]!=2u||tile>=tiles)return;bool keep=i<m[19]&&s[m[6]+i]==0u;values[lane]=keep?1u:0u;barrier();
+ if(m[0]!=0u||m[2]!=2u||tile>=tiles)return;bool keep=i<m[19]&&initiationEligible(i);values[lane]=keep?1u:0u;barrier();
  for(uint distance=1u;distance<128u;distance<<=1u){uint addend=lane>=distance?values[lane-distance]:0u;barrier();values[lane]+=addend;barrier();}
  if(keep)s[m[7]+s[m[7]+m[4]+tile]+values[lane]-1u]=i;
+}
+)glsl";
+const char* persistenceBody=R"glsl(
+void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
+ if(i>=m[19])return;uint at=m[5]+8u*i;double doppler=sd(at+2u);
+ double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(abs(doppler)>maximum)return;
+ uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
+ // Stationary multipath jitters between nearby zero-Doppler rows. Accumulate
+ // it by delay bin so row jitter cannot continually reset site learning.
+ uint index=4u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
+ while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)return;
+  uint age=(current-last)&65535u,missed=age>0u?age-1u:0u;
+  uint decayed=prior==0u||missed>=streak?0u:streak-missed;
+  uint next=(current<<16u)|min(65535u,decayed+1u);
+  uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}
 }
 )glsl";
 const char* historyBody=R"glsl(
@@ -284,7 +322,7 @@ void main(){if(indexOf()!=0u||m[0]!=0u)return;if(m[2]<1u||m[2]>3u){reject(319u);
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
  const std::pair<const char*,const char*> bodies[]={{"initialize",initializeBody},{"admit",admitBody},{"predict",predictBody},{"associate",associateBody},
   {"unmatched_count",unmatchedCountBody},{"unmatched_prefix",unmatchedPrefixBody},{"unmatched_scatter",unmatchedScatterBody},{"history",historyBody},
-  {"initiate",initiateBody},{"finalize",finalizeBody},{"validate",validateBody},{"validate_totals",validateTotalsBody},{"commit",commitBody}};
+  {"initiate",initiateBody},{"finalize",finalizeBody},{"validate",validateBody},{"validate_totals",validateTotalsBody},{"commit",commitBody},{"persistence",persistenceBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& body:bodies)result.emplace_back(body.first,std::string(common)+body.second);
  return result;
@@ -297,7 +335,7 @@ class Stage {
  const gpu_postprocess::Layout layout_;
  Buffer& post_;
  Buffer& scratch_;
- std::unique_ptr<Buffer> banks_[2],metadata_;
+ std::unique_ptr<Buffer> banks_[2],metadata_,clutterPersistence_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t active_=0;
@@ -375,7 +413,7 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]>s[19]||s[21]>s[19]-s[27]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
@@ -390,7 +428,7 @@ class Stage {
   const auto a=range(out.checkpoint,out.wordCapacity*4),z=range(out.result,sizeof(TrackerResult));
   const auto overlaps=[](auto x,auto y){return x.first<y.second&&y.first<x.second;};
   if(overlaps(a,z))throw std::invalid_argument("GPU tracker outputs overlap");
-  for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),&post_,&scratch_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
+  for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
   if(overlaps(a,x)||overlaps(z,x))throw std::invalid_argument("GPU tracker output aliases device storage");}
  }
  void copyBank(uint32_t bank,uint32_t words,TrackerOutputs out,const TrackerToken& token,bool noOp){
@@ -404,7 +442,9 @@ class Stage {
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
   <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
-   context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched<<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
+   context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
+    <<" stationary_clutter_suppressed="<<(s[19]-s[27]-admission.unmatched)
+    <<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
   context_.diagnostics.stream()<<" cpu_predict_calls=0 cpu_associate_calls=0 cpu_history_calls=0 cpu_initiate_calls=0\n";
  }
@@ -421,15 +461,22 @@ public:
      uint64_t(layout.keep)+cells>layout.indices||uint64_t(layout.indices)+cells>layout.candidates||
      uint64_t(layout.candidates)+cells+(uint64_t(cells)+127)/128>layout.records||uint64_t(layout.records)+uint64_t(cells)*8>layout.bytes/4||
      post.handle==scratch.handle||
-     std::max(uint64_t(admission_.bankWords)*4,admission_.stageBytes)>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<5||limit.maxDescriptorSetStorageBuffers<5)
+     std::max({uint64_t(admission_.bankWords)*4,admission_.stageBytes,config.stationaryClutter?uint64_t(cells+4)*4:16})>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<6||limit.maxDescriptorSetStorageBuffers<6)
    throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED buffers or device limits");
   constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
   constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
   banks_[0]=std::make_unique<Buffer>(context,uint64_t(admission_.bankWords)*4,host,preferred);
   banks_[1]=std::make_unique<Buffer>(context,uint64_t(admission_.bankWords)*4,host,preferred);
   metadata_=std::make_unique<Buffer>(context,admission_.stageBytes,host,preferred);
+  clutterPersistence_=std::make_unique<Buffer>(context,config.stationaryClutter?uint64_t(cells+4)*4:16,host,preferred);
+  std::memset(clutterPersistence_->mapped,0,size_t(clutterPersistence_->bytes));
+  auto* persistence=static_cast<uint32_t*>(clutterPersistence_->mapped);
+  persistence[0]=config.stationaryClutter;
+  persistence[1]=config.stationaryPersistenceCpis;
+  std::memcpy(persistence+2,&config.stationaryMaxDopplerHz,8);
+  clutterPersistence_->flush(0,clutterPersistence_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_}));
+  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_,clutterPersistence_.get()}));
   setup({},0);
   commands([&](VkCommandBuffer command){timestamps_->begin(command,6);append(command,0,1);timestamps_->end(command,6);});
   std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
@@ -449,7 +496,7 @@ public:
   commands([&](VkCommandBuffer command){
     timestamps_->begin(command,0);append(command,1,1);append(command,2,std::max(cells_,config_.capacity));timestamps_->end(command,0);
     timestamps_->begin(command,1);append(command,3,1);timestamps_->end(command,1);
-    timestamps_->begin(command,2);append(command,4,cells_);append(command,5,1);append(command,6,cells_);timestamps_->end(command,2);
+    timestamps_->begin(command,2);append(command,13,cells_);append(command,4,cells_);append(command,5,1);append(command,6,cells_);timestamps_->end(command,2);
     timestamps_->begin(command,3);append(command,7,128*config_.capacity);append(command,8,128*config_.capacity);append(command,9,1);timestamps_->end(command,3);
     timestamps_->begin(command,4);append(command,10,config_.capacity);timestamps_->end(command,4);
     timestamps_->begin(command,5);append(command,11,1);timestamps_->end(command,5);});
@@ -513,7 +560,7 @@ public:
   const uintptr_t first=reinterpret_cast<uintptr_t>(checkpoint);
   const size_t bytes=words*4;
   if(bytes>UINTPTR_MAX-first||first%alignof(uint32_t))throw std::invalid_argument("GPU tracker checkpoint address invalid");
-  for(const Buffer* buffer:{banks_[0].get(),banks_[1].get(),metadata_.get(),&post_,&scratch_})if(buffer->mapped){
+  for(const Buffer* buffer:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_})if(buffer->mapped){
    const uintptr_t at=reinterpret_cast<uintptr_t>(buffer->mapped);
    if(buffer->bytes>UINTPTR_MAX-at||(first<at+buffer->bytes&&at<first+bytes))
     throw std::invalid_argument("GPU tracker checkpoint aliases device storage");}

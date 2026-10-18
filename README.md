@@ -40,15 +40,19 @@ start; VectorWarp does not distribute the vendor software.
 - **Kraken configuration checks:** compare the receiver's reported frequency, sample rate, and channel count with VectorWarp's settings.
 - **Coherent Kraken arrays:** use 2–8 synchronized inputs, synthesize the broadcast reference from several elements, and keep every selected channel available for surveillance.
 - **Calibrated 360-degree beam banks:** combine coherent surveillance maps with measured per-channel phase and gain instead of relying only on ideal antenna geometry.
-- **Weak-echo controls:** optionally integrate two CPIs or use GPU-resident track-before-detect banks over 2/4/8 CPIs, with limited motion search, exact multi-CPI CFAR thresholds, calibrated beam/motion trials, candidate-only fine coherent beam refinement, and a bounded direct-path null.
+- **Weak-echo controls:** optionally integrate two CPIs or use GPU-resident track-before-detect banks over 2/4/8 CPIs, with limited motion search, optional joint coarse-angle trajectory gating, exact multi-CPI CFAR thresholds, calibrated beam/motion trials, candidate-only fine coherent beam refinement, and a bounded direct-path null.
 - **Spatially aware tracking:** retain the winning beam with each detection and optionally require bearing-consistent associations without changing the public track or Retina data formats.
 - **Bounded GPU tracking:** cap resident tracker memory and recover capacity deterministically instead of allowing an overloaded tracker to grow without limit.
 - **Efficient weak-target initiation:** optionally replace duplicate acceleration-hypothesis tracks with one acceleration-aware tentative track, solve its joint delay/Doppler motion envelope continuously, and compact internal history without shortening public trails—freeing capacity for more detections.
+- **Persistent-clutter-aware initiation:** GPU-resident tracking defaults to a bounded temporal clutter map that learns recurring low-Doppler cells and prevents only new hypotheses from starting there. Existing aircraft tracks remain eligible while crossing zero Doppler, raw detections stay available, and stationary bearing hypotheses remain available through the API while the map hides them by default.
+- **Geometry-safe GPU scratch:** full-span clutter filters no longer depend on an incidental borrowed-buffer size; VectorWarp reuses native storage when it fits and allocates dedicated postprocess scratch only when the configured geometry needs it.
+- **Unassisted external tracking with loss-resistant publication:** optionally copy the newest detection frame to a local tracker without ADS-B reads, publish its stable identities as primary, retain persistent non-overlapping native tracks as a weak-target safety net, and fall back automatically if the external stream becomes stale. See [External tracker feed and safe publication](docs/EXTERNAL_TRACKER_SHADOW.md).
 - **A redesigned interface:** clearer navigation, readable controls, live status, and fullscreen radar views.
-- **Bearing-aware bistatic mapping:** an opt-in GPU-resident path can use the calibrated coherent scan or local complex-covariance MVDR scoring, retains three independent lobes and their relative powers per CPI, and follows those hypotheses over track history. A bearing-only channel permutation makes cable/element mapping testable without changing detection. A separate API intersects radar-only azimuth candidates with the measured delay ellipse and publishes uncertainty corridors; unresolved results remain candidates rather than falsely precise aircraft positions. The legacy tracker and Retina feeds are unchanged, and ADS-B is validation-only.
+- **Bearing-aware bistatic mapping:** an opt-in GPU-resident path can use the calibrated coherent scan or local complex-covariance MVDR scoring, load a measured direction-dependent array manifold, retain three independent lobes per CPI, and follow those hypotheses with angular-rate constraints. A bearing-only channel permutation makes cable/element mapping testable without changing detection. A separate API accumulates candidate intersections as the aircraft crosses changing delay ellipses, favors physically plausible speed/acceleration paths, and publishes uncertainty corridors; unresolved results remain candidates rather than falsely precise aircraft positions. The legacy tracker and Retina feeds are unchanged, and ADS-B is validation-only.
 
 See [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md) for the data contract, uncertainty rules, configuration gate, and geolocation math.
 - **Built-in ADS-B conversion:** the adsb2dd integration runs inside VectorWarp; no separate converter process to manage.
+- **Installed-array calibration:** an opt-in, bounded Kraken recorder captures sparse complex echo vectors, labels them with built-in ADS-B truth, and fits a measured bearing manifold with holdout and coverage diagnostics. Its shadow-only wiring diagnostic replays the actual complex channels and local MVDR covariance, reports channel-order hypotheses separately from heading bias, and never rewrites geometry automatically.
 - **Local or remote aircraft feeds:** discover a local decoder or connect to a tar1090 server on another machine.
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.
@@ -267,5 +271,8 @@ Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 Thanks to [30hours](https://github.com/30hours/blah2) for the original radar
 engine. Comparisons use [blah2 at c821bee](https://github.com/30hours/blah2/tree/c821bee3f0d27cf20c8447f3d908ef722905a4de).
-ADS-B is used for display and evaluation, not radar detection or tracking input.
+By default, ADS-B is used for display and evaluation, not radar detection or
+tracking input. The explicitly enabled external shadow feed is the exception:
+it can annotate a separate experimental tracker while leaving VectorWarp's
+built-in detector, tracker, bearing path, and Retina output unchanged.
 [MIT license](LICENSE)

@@ -39,20 +39,43 @@ const rules = {
   'process.bearing.min_consistent': {...integer(2, 100), optional: true},
   'process.bearing.min_peak_separation_db': {...numeric(1, 15), optional: true},
   'process.bearing.method': {type: 'string', choices: ['coherent_beam_bank', 'covariance_mvdr'], optional: true},
+  'process.bearing.reference_anchor': {type: 'string', choices: ['live_eigenbeam', 'fixed_site'], optional: true},
   'process.bearing.scan_beams': {...integer(4, 127), optional: true},
   'process.bearing.candidate_peaks': {...integer(3, 3), optional: true, readOnly: 'Fixed at three independent lobes.'},
   'process.bearing.guard_radius': {...integer(0, 3), optional: true},
   'process.bearing.training_radius': {...integer(1, 6), optional: true},
   'process.bearing.diagonal_loading': {...numeric(), exclusiveMin: 0, max: 1, optional: true},
+  'process.bearing.max_rate_deg_s': {...numeric(0, 360), optional: true},
+  'process.bearing.manifold_file': {type: 'string', optional: true},
   'process.bearing.channel_mapping': {type: 'array', optional: true},
+  'process.bearing.manifold_recorder.enabled': {type: 'autoBoolean', choices: ['auto', 'on', 'off'], optional: true},
+  'process.bearing.manifold_recorder.path': {type: 'string', optional: true},
+  'process.bearing.manifold_recorder.min_snr_db': {...numeric(-100, 100), optional: true},
+  'process.bearing.manifold_recorder.min_elevation_deg': {...numeric(-10, 90), optional: true},
+  'process.bearing.manifold_recorder.max_elevation_deg': {...numeric(0, 90), optional: true},
+  'process.bearing.manifold_recorder.max_delay_error_km': {...numeric(.01, 50), optional: true},
+  'process.bearing.manifold_recorder.max_doppler_error_hz': {...numeric(.1, 500), optional: true},
+  'process.bearing.manifold_recorder.max_truth_age_s': {...numeric(.1, 60), optional: true},
+  'process.bearing.manifold_recorder.max_file_mb': {...integer(1, 1024), optional: true},
+  'process.bearing.manifold_recorder.max_files': {...integer(1, 20), optional: true},
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
   'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
+  'process.tracker.initiate.stationary_clutter.enable': {type: 'boolean', optional: true},
+  'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},
+  'process.tracker.initiate.stationary_clutter.max_doppler_hz': {...numeric(0, 10000), optional: true},
   'process.tracker.delete': integer(1, 255),
   // Storage count only; runtime checked admission enforces the GPU/shared caps.
   'process.tracker.gpu_capacity': {...integer(1, 4294967295), optional: true},
   'process.tracker.beam_tolerance': {...integer(0, 180), optional: true},
+  'process.tracker.publication.mode': {type: 'string',
+    choices: ['native', 'external', 'hybrid'], optional: true},
+  'process.tracker.publication.event_file': {type: 'string', optional: true},
+  'process.tracker.publication.stale_after_s': {...numeric(.1, 60), optional: true},
+  'process.tracker.publication.native_min_associations': {...integer(1, 65535), optional: true},
+  'process.tracker.publication.delay_tolerance': {...numeric(0, 1000), optional: true},
+  'process.tracker.publication.doppler_tolerance': {...numeric(0, 10000), optional: true},
   'process.tracker.smooth': {type: 'string', readOnly: 'Not used by this processor.'},
   'process.performance.surveillance_workers': integer(0, 8),
   'process.performance.fft_threads': integer(0, 256),
@@ -70,6 +93,15 @@ const rules = {
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},
+  'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
+  'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
+  'network.tracker_forward.enabled': {type: 'boolean', optional: true},
+  'network.tracker_forward.host': {type: 'string', optional: true},
+  'network.tracker_forward.port': {...integer(1, 65535), optional: true},
+  'network.tracker_forward.annotate_adsb': {type: 'boolean', optional: true},
+  'network.tracker_forward.unassisted.enabled': {type: 'boolean', optional: true},
+  'network.tracker_forward.unassisted.host': {type: 'string', optional: true},
+  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true},
   'truth.ais.port': {...integer(1, 65535), readOnly: 'AIS input is not implemented.'}
 };
 for (const group of ['ambiguity', 'clutter']) {
@@ -77,10 +109,10 @@ for (const group of ['ambiguity', 'clutter']) {
     ['dopplerMin', 'dopplerMax'] : [])])
     rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
 }
-for (const name of ['api','map','detection','track','bearing','timestamp','timing','iqdata','config'])
+for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
     {readOnly: 'Reserved; no configuration-control listener uses this port.'} :
-    name === 'bearing' ? {optional: true} : {})};
+    ['bearing','manifold'].includes(name) ? {optional: true} : {})};
 for (const site of ['rx','tx']) {
   rules[`location.${site}.latitude`] = numeric(-90, 90);
   rules[`location.${site}.longitude`] = numeric(-180, 180);

@@ -12,6 +12,8 @@
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
 #include "process/ambiguity/GpuResidentCoordinator.h"
+#include "process/ambiguity/BearingManifold.h"
+#include "process/ambiguity/ManifoldEvidence.h"
 #ifdef VECTORWARP_MIXED_AUTO
 #include "process/mixed/MixedProcess.h"
 #include "process/mixed/MixedAutoPolicy.h"
@@ -61,6 +63,7 @@ std::unique_ptr<Socket> socket_map;
 std::unique_ptr<Socket> socket_detection;
 std::unique_ptr<Socket> socket_track;
 std::unique_ptr<Socket> socket_bearing;
+std::unique_ptr<Socket> socket_manifold;
 std::unique_ptr<Socket> socket_timestamp;
 std::unique_ptr<Socket> socket_timing;
 std::unique_ptr<Socket> socket_iqdata;
@@ -186,10 +189,12 @@ try
 
   // set up socket
   sleep(2);
-  bool bearingEnabled=false;uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
-  std::string bearingMethod="coherent_beam_bank";uint32_t bearingScanBeams=0,
+  bool bearingEnabled=false,manifoldRecorderEnabled=false;
+  uint32_t bearingMinConsistent=3,bearingMinPeakSeparationDb=3;
+  std::string bearingMethod="coherent_beam_bank",bearingReferenceAnchor="live_eigenbeam";uint32_t bearingScanBeams=0,
     bearingCandidatePeaks=3,bearingGuardRadius=1,bearingTrainingRadius=3;
-  double bearingDiagonalLoading=.01;std::vector<uint32_t>bearingChannelMapping;
+  double bearingDiagonalLoading=.01,bearingMaxRateDegPerSecond=0;std::vector<uint32_t>bearingChannelMapping;
+  std::string bearingManifoldFile;
   if(tree["process"].has_child("bearing")){
     auto bearing=tree["process"]["bearing"];
     if(bearing.has_child("enable"))bearing["enable"]>>bearingEnabled;
@@ -197,17 +202,47 @@ try
     if(bearing.has_child("min_peak_separation_db"))
       bearing["min_peak_separation_db"]>>bearingMinPeakSeparationDb;
     if(bearing.has_child("method"))bearing["method"]>>bearingMethod;
+    if(bearing.has_child("reference_anchor"))bearing["reference_anchor"]>>bearingReferenceAnchor;
     if(bearing.has_child("scan_beams"))bearing["scan_beams"]>>bearingScanBeams;
     if(bearing.has_child("candidate_peaks"))bearing["candidate_peaks"]>>bearingCandidatePeaks;
     if(bearing.has_child("guard_radius"))bearing["guard_radius"]>>bearingGuardRadius;
     if(bearing.has_child("training_radius"))bearing["training_radius"]>>bearingTrainingRadius;
     if(bearing.has_child("diagonal_loading"))bearing["diagonal_loading"]>>bearingDiagonalLoading;
+    if(bearing.has_child("max_rate_deg_s"))bearing["max_rate_deg_s"]>>bearingMaxRateDegPerSecond;
+    if(bearing.has_child("manifold_file"))bearing["manifold_file"]>>bearingManifoldFile;
     if(bearing.has_child("channel_mapping"))for(auto value:bearing["channel_mapping"].children()){
       uint32_t channel=0;value>>channel;bearingChannelMapping.push_back(channel);}
+    if(bearing.has_child("manifold_recorder")){
+      auto recorder=bearing["manifold_recorder"];
+      bool automatic=!recorder.has_child("enabled");
+      if(recorder.has_child("enabled")){
+        std::string mode;recorder["enabled"]>>mode;
+        if(mode=="true"||mode=="on")manifoldRecorderEnabled=true;
+        else if(mode=="auto")automatic=true;
+        else if(mode!="false"&&mode!="off")throw std::invalid_argument("Manifold recorder enabled must be auto, on or off");
+      }
+      if(automatic){
+        std::string fusion="noncoherent";bool detection=false,adsb=false;
+        if(tree["process"].has_child("surveillance_fusion")&&tree["process"]["surveillance_fusion"].has_child("mode"))
+          tree["process"]["surveillance_fusion"]["mode"]>>fusion;
+        if(tree["process"].has_child("detection")&&tree["process"]["detection"].has_child("enable"))
+          tree["process"]["detection"]["enable"]>>detection;
+        if(tree.rootref().has_child("truth")&&tree["truth"].has_child("adsb")&&tree["truth"]["adsb"].has_child("enabled"))
+          tree["truth"]["adsb"]["enabled"]>>adsb;
+        bool mapping=false,geometry=false,orientation=false;
+        if(tree["capture"]["device"].has_child("array_geometry")){
+          auto array=tree["capture"]["device"]["array_geometry"];
+          if(array.has_child("mapping_confirmed"))array["mapping_confirmed"]>>mapping;
+          if(array.has_child("geometry_confirmed"))array["geometry_confirmed"]>>geometry;
+          if(array.has_child("orientation_confirmed"))array["orientation_confirmed"]>>orientation;
+        }
+        manifoldRecorderEnabled=type=="Kraken"&&fusion!="noncoherent"&&detection&&adsb&&mapping&&geometry&&orientation;
+      }
+    }
   }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
-  uint16_t port_bearing=0;
+  uint16_t port_bearing=0,port_manifold=0;
   std::string ip;
   tree["network"]["ports"]["map"] >> port_map;
   tree["network"]["ports"]["detection"] >> port_detection;
@@ -216,6 +251,11 @@ try
     if(!tree["network"]["ports"].has_child("bearing"))
       throw std::invalid_argument("Bearing output requires network.ports.bearing");
     tree["network"]["ports"]["bearing"]>>port_bearing;
+  }
+  if(manifoldRecorderEnabled){
+    if(!tree["network"]["ports"].has_child("manifold"))
+      throw std::invalid_argument("Manifold recorder requires network.ports.manifold");
+    tree["network"]["ports"]["manifold"]>>port_manifold;
   }
   tree["network"]["ports"]["timestamp"] >> port_timestamp;
   tree["network"]["ports"]["timing"] >> port_timing;
@@ -227,6 +267,7 @@ try
     socket_detection = std::make_unique<Socket>(ip, port_detection);
     socket_track = std::make_unique<Socket>(ip, port_track);
     if(bearingEnabled)socket_bearing = std::make_unique<Socket>(ip, port_bearing);
+    if(manifoldRecorderEnabled)socket_manifold = std::make_unique<Socket>(ip, port_manifold);
     socket_timestamp = std::make_unique<Socket>(ip, port_timestamp);
     socket_timing = std::make_unique<Socket>(ip, port_timing);
     socket_iqdata = std::make_unique<Socket>(ip, port_iqdata);
@@ -526,7 +567,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI6 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI7 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -664,10 +705,14 @@ try
     throw std::invalid_argument("Track-before-detect requires gpu-resident coherent surveillance fusion");
   if(bearingEnabled&&(!residentMode||!coherentFusion))
     throw std::invalid_argument("Bearing output requires GPU-resident coherent tracking");
+  if(manifoldRecorderEnabled&&!coherentFusion)
+    throw std::invalid_argument("Manifold recording requires coherent detection");
   if(bearingEnabled&&!trackBeforeDetect)
     throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
   if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
     throw std::invalid_argument("Bearing method must be coherent_beam_bank or covariance_mvdr");
+  if(bearingReferenceAnchor!="live_eigenbeam"&&bearingReferenceAnchor!="fixed_site")
+    throw std::invalid_argument("Bearing reference_anchor must be live_eigenbeam or fixed_site");
   if(!bearingScanBeams)bearingScanBeams=coherentBeamCount*4u;
   if(bearingEnabled&&(bearingScanBeams<coherentBeamCount||bearingScanBeams>127||
       bearingScanBeams%coherentBeamCount))
@@ -680,6 +725,8 @@ try
     throw std::invalid_argument("Bearing min_consistent must be from 2 through 100");
   if(bearingMinPeakSeparationDb<1||bearingMinPeakSeparationDb>15)
     throw std::invalid_argument("Bearing min_peak_separation_db must be from 1 through 15");
+  if(!std::isfinite(bearingMaxRateDegPerSecond)||bearingMaxRateDegPerSecond<0||bearingMaxRateDegPerSecond>360)
+    throw std::invalid_argument("Bearing max_rate_deg_s must be from 0 through 360");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
       trackBeforeDetectMotionBins > 1))
     throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
@@ -724,12 +771,22 @@ try
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
   std::string smooth,trackerAccelerationModel="hypothesis_bank";
+  bool stationaryClutter=residentMode;
+  uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
+  double stationaryMaxDopplerHz=residentMode?15.0:0.0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
   if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
     tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
+  if(tree["process"]["tracker"]["initiate"].has_child("stationary_clutter")){
+    const auto& stationary=tree["process"]["tracker"]["initiate"]["stationary_clutter"];
+    stationary["enable"] >> stationaryClutter;
+    if(stationaryClutter){stationary["persistence_cpis"] >> stationaryPersistenceCpis;
+      stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
+    else {stationaryPersistenceCpis=0;stationaryMaxDopplerHz=0;}
+  }
   if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
     throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
   rangeRes = (double)Constants::c/fs;
@@ -746,6 +803,8 @@ try
   bool isDetection, isTracker;
   tree["process"]["detection"]["enable"] >> isDetection;
   tree["process"]["tracker"]["enable"] >> isTracker;
+  if(manifoldRecorderEnabled&&!isDetection)
+    throw std::invalid_argument("Manifold recording requires GPU-resident coherent detection");
   if(bearingEnabled&&!isTracker)
     throw std::invalid_argument("Bearing output requires tracking to be enabled");
   if (integrationBeamTolerance != UINT32_MAX && !isTracker)
@@ -799,8 +858,11 @@ try
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
         directPathNullDb};
       if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
+       std::vector<std::complex<float>> manifold;
+       if(!bearingManifoldFile.empty())manifold=blah2::bearing_manifold::load(bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size())).responses;
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
-        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping};}
+        bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:blah2::resident::BearingReferenceAnchor::liveEigenbeam,
+        bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping,manifold};}
     }
     const double spectrumResolution=double(fs)/nSamples;
     const uint32_t decimation=uint32_t(std::min<double>(nSamples,std::max(1.0,std::ceil(spectrumBandwidth/spectrumResolution))));
@@ -815,9 +877,11 @@ try
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
-        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda};
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
+        stationaryPersistenceCpis,stationaryMaxDopplerHz};
     }
-    residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference);
+    residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
+      (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
   }
 
@@ -987,6 +1051,7 @@ try
           #ifdef VECTORWARP_MIXED_AUTO
           bool mixedCandidateReady=false,mixedPublished=false;
           #endif
+          std::vector<Map<std::complex<double>> *> channelMaps(ambiguity.size());
           if(!resident||residentOracle){
           if (!arrayReference && !pairedDirectFrame)
             referenceData->replace(captureData[referenceChannel]->drain_front(nSamples));
@@ -1121,8 +1186,6 @@ try
           
           if(resident)resident->checkFiltered(surveillancePointers);
           // Produce one map per surveillance channel, then combine their power.
-          std::vector<Map<std::complex<double>> *> channelMaps(
-            surveillanceData.size());
 #ifdef VECTORWARP_MIXED_AUTO
           if (mixedPublished) {
             try {
@@ -1212,15 +1275,22 @@ try
 
           } // legacy computation or explicitly labeled startup oracle
           blah2::resident::Coordinator::Publication residentPublication;
+          std::string cpuManifoldEvidence;
           if(resident){
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
-               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams});
+               bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
+               ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond,
+               stationaryClutter?stationaryPersistenceCpis:0u,
+               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled);
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
+          else if(manifoldRecorderEnabled)
+            cpuManifoldEvidence=blah2::manifold_evidence::cpu(time[0]/1000,double(fc),double(fs),
+              *detection,channelMaps,referenceSynthesizer.get_metrics().weights);
 
           // output IqData meta data
           jsonIqData = resident ? std::move(residentPublication.spectrum) : referenceData->to_json(time[0]/1000);
@@ -1239,6 +1309,8 @@ try
           {
             detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
             socket_detection->sendData(detectionJson);
+            if(manifoldRecorderEnabled)socket_manifold->sendData(resident?
+              residentPublication.manifoldEvidence:cpuManifoldEvidence);
           }
           if (saveDetection && isDetection)
           {

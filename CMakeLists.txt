@@ -317,6 +317,7 @@ add_executable(testKrakenMultiChannel
   test/unit/process/conditioning/TestArrayReferenceSynthesizer.cpp
   test/unit/process/fusion/TestNoncoherent.cpp
   test/unit/process/fusion/TestCoherentBeamBank.cpp
+  test/unit/process/fusion/TestBearingSteering.cpp
   src/capture/kraken/HeimdallFrame.cpp
   src/process/conditioning/ArrayReferenceSynthesizer.cpp
   src/process/fusion/Noncoherent.cpp

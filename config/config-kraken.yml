@@ -103,6 +103,9 @@ process:
     # The legacy coherent path remains the default. covariance_mvdr uses a
     # local complex covariance ring and retains three independent lobes/CPI.
     method: coherent_beam_bank
+    # Bearing refinement normally follows the live eigenbeam. fixed_site uses
+    # the configured/manifold direct-path response as an absolute phase anchor.
+    reference_anchor: live_eigenbeam
     scan_beams: 48
     candidate_peaks: 3
     guard_radius: 1
@@ -114,6 +117,19 @@ process:
     min_consistent: 3
     # Require a decisive independent-lobe power margin before resolving a bearing.
     min_peak_separation_db: 3
+    # Optional installed-array calibration. Sparse radar cells are labelled by
+    # built-in ADS-B truth outside the detection/bearing inference path.
+    manifold_recorder:
+      enabled: false
+      path: "/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl"
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
+      max_file_mb: 64
+      max_files: 4
 
 network:
   ip: 0.0.0.0
@@ -123,6 +139,7 @@ network:
     detection: 3002
     track: 3003
     bearing: 3004
+    manifold: 3005
     timestamp: 4000
     timing: 4001
     iqdata: 4002

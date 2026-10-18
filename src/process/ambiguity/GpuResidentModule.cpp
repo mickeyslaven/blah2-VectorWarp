@@ -1,4 +1,4 @@
-// Adjacent resident ABI6 module. Older cohorts are separate targets.
+// Adjacent resident ABI7 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -58,10 +58,11 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.integrationMotionBins=d.integrationMotionBins;
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
- if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);p.bearingScanBeams=c.bearing.scanBeams;
+ if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);
+  p.bearingReferenceAnchor=uint32_t(c.bearing.referenceAnchor);p.bearingScanBeams=c.bearing.scanBeams;
   p.bearingCandidatePeaks=c.bearing.candidatePeaks;p.bearingGuardRadius=c.bearing.guardRadius;
   p.bearingTrainingRadius=c.bearing.trainingRadius;p.bearingDiagonalLoading=float(c.bearing.diagonalLoading);
-  p.bearingChannelMapping=c.bearing.channelMapping;}
+  p.bearingChannelMapping=c.bearing.channelMapping;p.bearingManifoldResponses=c.bearing.manifoldResponses;}
  if(p.beamCount){
   const double pi=std::acos(-1.0),elements=double(c.surveillanceChannels.size());
   const double aperture=2*c.fusion.radiusM*std::sin(pi*std::floor(elements/2)/elements);
@@ -75,7 +76,8 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  const auto&t=c.tracker;
  v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
-  t.cpi,t.maxAccInit,t.rangeRes,t.lambda,c.epoch};
+  t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.stationaryClutter,
+  t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,c.epoch};
  return v;
 }
 class ResidentModule final:public resident::Backend {
@@ -449,7 +451,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI6 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI7 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

@@ -147,15 +147,72 @@ try {
   });
   bearing.process.bearing.enable = true;
   bearing.process.bearing.method = 'covariance_mvdr';
+  bearing.process.bearing.reference_anchor = 'fixed_site';
   bearing.process.bearing.scan_beams = 60;
   bearing.process.bearing.guard_radius = 2;
   bearing.process.bearing.training_radius = 4;
   bearing.process.bearing.diagonal_loading = .02;
+  bearing.process.bearing.max_rate_deg_s = 30;
+  bearing.process.bearing.manifold_file = '/etc/vectorwarp/bearing-manifold.json';
   bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
+  bearing.process.bearing.manifold_recorder.enabled = true;
+  bearing.truth.adsb.enabled = true;
+  bearing.network.ports.bearing = 3014;
   persistGroup('kraken-bearing-output', fusion, bearing,
-    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.scan_beams',
+    ['process.bearing.enable', 'process.bearing.method', 'process.bearing.reference_anchor',
+      'process.bearing.scan_beams',
       'process.bearing.guard_radius', 'process.bearing.training_radius',
-      'process.bearing.diagonal_loading', 'process.bearing.channel_mapping']);
+      'process.bearing.diagonal_loading', 'process.bearing.max_rate_deg_s',
+      'process.bearing.manifold_file', 'process.bearing.channel_mapping',
+      'process.bearing.manifold_recorder.enabled', 'truth.adsb.enabled',
+      'network.ports.bearing']);
+  const trackerForward = clone(krakenBase);
+  trackerForward.process.performance.acceleration = 'auto';
+  trackerForward.network.tracker_forward = {
+    enabled: true, host: '127.0.0.2', port: 30101, annotate_adsb: false,
+    unassisted: {enabled: true, host: '127.0.0.3', port: 30102}
+  };
+  trackerForward.truth.adsb.delay_tolerance = 3;
+  trackerForward.truth.adsb.doppler_tolerance = 6;
+  persistGroup('tracker-forward-output', krakenBase, trackerForward,
+    ['network.tracker_forward.enabled', 'network.tracker_forward.host',
+      'network.tracker_forward.port',
+      'network.tracker_forward.annotate_adsb',
+      'network.tracker_forward.unassisted.enabled',
+      'network.tracker_forward.unassisted.host',
+      'network.tracker_forward.unassisted.port', 'truth.adsb.delay_tolerance',
+      'truth.adsb.doppler_tolerance']);
+  const trackerPublication = clone(krakenBase);
+  trackerPublication.process.performance.acceleration = 'auto';
+  trackerPublication.process.tracker.publication = {
+    mode: 'hybrid', event_file: '/var/lib/vectorwarp-api/tracker/unassisted.jsonl',
+    stale_after_s: 3, native_min_associations: 5,
+    delay_tolerance: 2, doppler_tolerance: 5
+  };
+  trackerPublication.network.tracker_forward = {
+    enabled: true, host: '127.0.0.1', port: 30100, annotate_adsb: false
+  };
+  persistGroup('tracker-publication', krakenBase, trackerPublication,
+    ['process.tracker.publication.mode', 'process.tracker.publication.event_file',
+      'process.tracker.publication.stale_after_s',
+      'process.tracker.publication.native_min_associations',
+      'process.tracker.publication.delay_tolerance',
+      'process.tracker.publication.doppler_tolerance',
+      'network.tracker_forward.enabled', 'network.tracker_forward.host',
+      'network.tracker_forward.port', 'network.tracker_forward.annotate_adsb']);
+  const cpuRecorder = clone(fusion);
+  Object.assign(cpuRecorder.capture.device.array_geometry, {
+    mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
+  });
+  cpuRecorder.process.performance.acceleration = 'cpu';
+  cpuRecorder.process.detection.integration_cpis = 1;
+  cpuRecorder.process.detection.integration_motion_bins = 0;
+  cpuRecorder.process.detection.track_before_detect.enable = false;
+  delete cpuRecorder.process.tracker.beam_tolerance;
+  cpuRecorder.process.bearing.manifold_recorder.enabled = true;
+  cpuRecorder.truth.adsb.enabled = true;
+  assert.equal(validateConfig(cpuRecorder).valid, true,
+    'CPU coherent Kraken installations must be able to record manifold samples');
   const rspBase = shipped('config-kraken.yml'); const rsp = clone(rspBase); const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
   rsp.capture.fs = rspProfile.sampleRate; rsp.capture.device = clone(rspProfile.device); rsp.capture.device.serial = '0000000000000001';
   delete rsp.process.reference_synthesis; rsp.process.performance = {...clone(rspProfile.process.performance), acceleration: 'auto'};
@@ -165,9 +222,14 @@ try {
   const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
   resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
+  resident.process.tracker.initiate.stationary_clutter = {enable: true,
+    persistence_cpis: 8, max_doppler_hz: 15};
   resident.process.detection.integration_cpis = 2;
   persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
     'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+    'process.tracker.initiate.stationary_clutter.enable',
+    'process.tracker.initiate.stationary_clutter.persistence_cpis',
+    'process.tracker.initiate.stationary_clutter.max_doppler_hz',
     'process.detection.integration_cpis']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);

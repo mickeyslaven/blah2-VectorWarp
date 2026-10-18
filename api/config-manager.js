@@ -165,7 +165,10 @@ function validateConfig(config, baseline = null) {
     else if (rule && rule.type === 'gain' && !(value === 'keep' || value === -1 ||
         (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 && Math.round(value * 10) === value * 10)))
       errors.push(`${key} must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps`);
-    else if (rule && (rule.type === 'array' ? !Array.isArray(value) : !['gain', 'serial'].includes(rule.type) && typeof value !== rule.type))
+    else if (rule && rule.type === 'autoBoolean' && !(typeof value === 'boolean' ||
+        ['auto', 'on', 'off'].includes(value)))
+      errors.push(`${key} must be auto, on, off, or a boolean`);
+    else if (rule && (rule.type === 'array' ? !Array.isArray(value) : !['gain', 'serial', 'autoBoolean'].includes(rule.type) && typeof value !== rule.type))
       errors.push(`${key} must be ${rule.type}`);
     if (isObject(value)) {
       if (key && !rule && !Object.keys(FIELD_RULES).some(field => field.startsWith(`${key}.`)) &&
@@ -180,7 +183,8 @@ function validateConfig(config, baseline = null) {
       return;
     }
     if (rule.type === 'number') number(value, key, rule);
-    if (rule.choices) oneOf(value, key, rule.choices);
+    if (rule.choices && !(rule.type === 'autoBoolean' && typeof value === 'boolean'))
+      oneOf(value, key, rule.choices);
     if (rule.readOnly && baseline && previous !== undefined && previous !== value)
       errors.push(`${key} is read-only: ${rule.readOnly}`);
   };
@@ -195,8 +199,14 @@ function validateConfig(config, baseline = null) {
   const detection = requireObject(processConfig.detection, 'process.detection');
   const tracker = requireObject(processConfig.tracker, 'process.tracker');
   const initiate = requireObject(tracker.initiate, 'process.tracker.initiate');
+  const trackerPublication = tracker.publication === undefined ? null :
+    requireObject(tracker.publication, 'process.tracker.publication');
   const network = requireObject(root.network, 'network');
   const ports = requireObject(network.ports, 'network.ports');
+  const trackerForward = network.tracker_forward === undefined ? null :
+    requireObject(network.tracker_forward, 'network.tracker_forward');
+  const unassistedTrackerForward = trackerForward?.unassisted === undefined ? null :
+    requireObject(trackerForward.unassisted, 'network.tracker_forward.unassisted');
   const location = requireObject(root.location, 'location');
   const receiver = requireObject(location.rx, 'location.rx');
   const transmitter = requireObject(location.tx, 'location.tx');
@@ -283,7 +293,7 @@ function validateConfig(config, baseline = null) {
       {integer: true, min: 1, max: 65535});
     if (heimdall.control_port !== undefined) {
       number(heimdall.control_port, 'capture.device.heimdall.control_port',
-        {integer: true, min: 1, max: 65535});
+        {integer: true, min: 2, max: 65535});
       if (heimdall.control_port === heimdall.port)
         errors.push('capture.device.heimdall.control_port must differ from the IQ data port');
     }
@@ -514,6 +524,25 @@ function validateConfig(config, baseline = null) {
   if (initiate.acceleration_model !== undefined)
     oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
       ['hypothesis_bank', 'adaptive_gate']);
+  let stationaryClutter = null;
+  if (initiate.stationary_clutter !== undefined) {
+    stationaryClutter = requireObject(initiate.stationary_clutter,
+      'process.tracker.initiate.stationary_clutter');
+    boolean(stationaryClutter.enable,
+      'process.tracker.initiate.stationary_clutter.enable');
+    if (stationaryClutter.persistence_cpis !== undefined)
+      number(stationaryClutter.persistence_cpis,
+        'process.tracker.initiate.stationary_clutter.persistence_cpis',
+        {integer: true, min: 1, max: 65535});
+    if (stationaryClutter.max_doppler_hz !== undefined)
+      number(stationaryClutter.max_doppler_hz,
+        'process.tracker.initiate.stationary_clutter.max_doppler_hz',
+        {min: 0, max: 10000});
+    if (stationaryClutter.enable === true &&
+        (!Number.isInteger(stationaryClutter.persistence_cpis) ||
+         !Number.isFinite(stationaryClutter.max_doppler_hz)))
+      errors.push('enabled persistent clutter filtering requires persistence_cpis and max_doppler_hz');
+  }
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
     errors.push('process.tracker.initiate.maxAcc is too large for this CPI');
@@ -537,6 +566,8 @@ function validateConfig(config, baseline = null) {
     if (initiate.acceleration_model === 'adaptive_gate' &&
         performance.acceleration !== 'gpu-resident')
       errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
+    if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');
@@ -630,6 +661,29 @@ function validateConfig(config, baseline = null) {
         tracker.beam_tolerance > Math.floor(fusion.beams / 2))
       errors.push('tracker beam_tolerance cannot exceed half the beam count');
   }
+  if (trackerPublication) {
+    oneOf(trackerPublication.mode, 'process.tracker.publication.mode',
+      ['native', 'external', 'hybrid']);
+    if (trackerPublication.event_file !== undefined)
+      string(trackerPublication.event_file, 'process.tracker.publication.event_file');
+    if (trackerPublication.stale_after_s !== undefined)
+      number(trackerPublication.stale_after_s,
+        'process.tracker.publication.stale_after_s', {min: .1, max: 60});
+    if (trackerPublication.native_min_associations !== undefined)
+      number(trackerPublication.native_min_associations,
+        'process.tracker.publication.native_min_associations',
+        {integer: true, min: 1, max: 65535});
+    if (trackerPublication.delay_tolerance !== undefined)
+      number(trackerPublication.delay_tolerance,
+        'process.tracker.publication.delay_tolerance', {min: 0, max: 1000});
+    if (trackerPublication.doppler_tolerance !== undefined)
+      number(trackerPublication.doppler_tolerance,
+        'process.tracker.publication.doppler_tolerance', {min: 0, max: 10000});
+    if (trackerPublication.mode !== 'native' && !path.isAbsolute(trackerPublication.event_file || ''))
+      errors.push('external tracker publication requires an absolute event_file path');
+    if (trackerPublication.mode !== 'native' && trackerForward?.enabled !== true)
+      errors.push('external tracker publication requires network.tracker_forward.enabled');
+  }
   if (processConfig.bearing !== undefined) {
     const bearing = requireObject(processConfig.bearing, 'process.bearing');
     boolean(bearing.enable, 'process.bearing.enable');
@@ -639,6 +693,9 @@ function validateConfig(config, baseline = null) {
       number(bearing.min_peak_separation_db, 'process.bearing.min_peak_separation_db', {min: 1, max: 15});
     if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
       errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
+    if (bearing.reference_anchor !== undefined &&
+        !['live_eigenbeam', 'fixed_site'].includes(bearing.reference_anchor))
+      errors.push('process.bearing.reference_anchor must be live_eigenbeam or fixed_site');
     if (bearing.scan_beams !== undefined)
       number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
     if (bearing.candidate_peaks !== undefined)
@@ -649,10 +706,48 @@ function validateConfig(config, baseline = null) {
       number(bearing.training_radius, 'process.bearing.training_radius', {integer: true, min: 1, max: 6});
     if (bearing.diagonal_loading !== undefined)
       number(bearing.diagonal_loading, 'process.bearing.diagonal_loading', {exclusiveMin: 0, max: 1});
+    if (bearing.max_rate_deg_s !== undefined)
+      number(bearing.max_rate_deg_s, 'process.bearing.max_rate_deg_s', {min: 0, max: 360});
+    if (bearing.manifold_file !== undefined &&
+        (typeof bearing.manifold_file !== 'string' || !bearing.manifold_file.trim()))
+      errors.push('process.bearing.manifold_file must be a non-empty path');
     if (bearing.channel_mapping !== undefined && (!Array.isArray(bearing.channel_mapping) ||
         bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
         new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))
       errors.push('process.bearing.channel_mapping must be a unique array of channel indices');
+    if (bearing.manifold_recorder !== undefined) {
+      const recorder = requireObject(bearing.manifold_recorder,
+        'process.bearing.manifold_recorder');
+      if (recorder.enabled !== undefined && typeof recorder.enabled !== 'boolean')
+        oneOf(recorder.enabled, 'process.bearing.manifold_recorder.enabled', ['auto', 'on', 'off']);
+      string(recorder.path, 'process.bearing.manifold_recorder.path');
+      if (typeof recorder.path === 'string' && !path.isAbsolute(recorder.path))
+        errors.push('process.bearing.manifold_recorder.path must be absolute');
+      number(recorder.min_snr_db, 'process.bearing.manifold_recorder.min_snr_db', {min: -100, max: 100});
+      number(recorder.min_elevation_deg, 'process.bearing.manifold_recorder.min_elevation_deg', {min: -10, max: 90});
+      number(recorder.max_elevation_deg, 'process.bearing.manifold_recorder.max_elevation_deg', {min: 0, max: 90});
+      if (Number.isFinite(recorder.min_elevation_deg) && Number.isFinite(recorder.max_elevation_deg) &&
+          recorder.max_elevation_deg < recorder.min_elevation_deg)
+        errors.push('process.bearing.manifold_recorder.max_elevation_deg must not be below min_elevation_deg');
+      number(recorder.max_delay_error_km, 'process.bearing.manifold_recorder.max_delay_error_km', {min: .01, max: 50});
+      number(recorder.max_doppler_error_hz, 'process.bearing.manifold_recorder.max_doppler_error_hz', {min: .1, max: 500});
+      number(recorder.max_truth_age_s, 'process.bearing.manifold_recorder.max_truth_age_s', {min: .1, max: 60});
+      number(recorder.max_file_mb, 'process.bearing.manifold_recorder.max_file_mb', {integer: true, min: 1, max: 1024});
+      number(recorder.max_files, 'process.bearing.manifold_recorder.max_files', {integer: true, min: 1, max: 20});
+      if (recorder.enabled === true || recorder.enabled === 'on') {
+        if (device.type !== 'Kraken' || !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(
+              processConfig.surveillance_fusion?.mode) || !detection.enable)
+          errors.push('manifold recording requires Kraken coherent detection');
+        if (!root.truth?.adsb?.enabled)
+          errors.push('manifold recording requires ADS-B truth');
+        if (!Number.isInteger(ports.manifold) || ports.manifold < 1 || ports.manifold > 65535)
+          errors.push('network.ports.manifold is required when manifold recording is enabled');
+        const geometry = device.array_geometry;
+        if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
+            geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
+          errors.push('manifold recording requires confirmed array mapping, geometry, and orientation');
+      }
+    }
     if (bearing.enable) {
       const fusion = processConfig.surveillance_fusion;
       if (!tracker.enable || !fusion || fusion.mode === 'noncoherent' ||
@@ -693,6 +788,23 @@ function validateConfig(config, baseline = null) {
       if (portValues.filter(port => port === value).length > 1)
         errors.push(`network.ports.${name}: network ports must be unique`);
     });
+  if (trackerForward) {
+    boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
+    string(trackerForward.host, 'network.tracker_forward.host');
+    number(trackerForward.port, 'network.tracker_forward.port',
+      {integer: true, min: 1, max: 65535});
+    if (trackerForward.annotate_adsb !== undefined)
+      boolean(trackerForward.annotate_adsb, 'network.tracker_forward.annotate_adsb');
+  }
+  if (unassistedTrackerForward) {
+    boolean(unassistedTrackerForward.enabled,
+      'network.tracker_forward.unassisted.enabled');
+    string(unassistedTrackerForward.host,
+      'network.tracker_forward.unassisted.host');
+    number(unassistedTrackerForward.port,
+      'network.tracker_forward.unassisted.port',
+      {integer: true, min: 1, max: 65535});
+  }
 
   for (const [name, site] of [['rx', receiver], ['tx', transmitter]]) {
     number(site.latitude, `location.${name}.latitude`, {min: -90, max: 90});
@@ -719,6 +831,10 @@ function validateConfig(config, baseline = null) {
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
+  if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
+    'truth.adsb.delay_tolerance', {min: 0, max: 1000});
+  if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
+    'truth.adsb.doppler_tolerance', {min: 0, max: 10000});
   boolean(ais.enabled, 'truth.ais.enabled');
   string(ais.ip, 'truth.ais.ip');
   number(ais.port, 'truth.ais.port', {integer: true, min: 1, max: 65535});

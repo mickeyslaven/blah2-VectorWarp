@@ -40,6 +40,22 @@ Config configuration(const char* device) {
   c.detector.centroidDopplerResolution = resolution;
   c.detector.integrationCpis = 8;
   c.detector.integrationMotionBins = 1;
+  c.detector.integrationBeamTolerance = 1;
+  c.tracker.enabled = true;
+  c.tracker.capacity = 64;
+  c.tracker.m = 2;
+  c.tracker.n = 3;
+  c.tracker.nDelete = 4;
+  c.tracker.cpi = 63.0 / c.sampleRate;
+  c.tracker.rangeRes = 299792458.0 / c.sampleRate;
+  c.tracker.lambda = 299792458.0 / c.fusion.frequencyHz;
+  c.bearing = {true, BearingMethod::covarianceMvdr, BearingReferenceAnchor::fixedSite,
+    60, 3, 1, 3, .01,
+    {0, 1, 2, 3, 4}};
+  for (uint32_t beam = 0; beam < c.bearing.scanBeams; ++beam)
+    for (uint32_t channel = 0; channel < g.channels; ++channel)
+      c.bearing.manifoldResponses.push_back(std::polar(1.0f,
+        float(.01 * double(beam) * double(channel + 1))));
   c.device = device;
   c.presence = wire::mandatoryPresence(c);
   return c;

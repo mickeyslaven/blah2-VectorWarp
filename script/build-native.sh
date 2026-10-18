@@ -282,6 +282,7 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp" "$ARTIFACT_TMP/libexec/vectorwarp"
 run install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$ARTIFACT_TMP/libexec/vectorwarp-quiesce"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
+run install -m 0755 "$SOURCE_DIR/script/evaluate-bearing-calibration.js" "$ARTIFACT_TMP/libexec/vectorwarp-bearing-diagnostic"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFACT_TMP/libexec/vectorwarp-sudoers-migrate"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"

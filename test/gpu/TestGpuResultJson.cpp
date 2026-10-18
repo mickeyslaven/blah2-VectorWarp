@@ -1,4 +1,5 @@
 #include "GpuResultJson.private.h"
+#include "ManifoldEvidence.h"
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "data/Detection.h"
@@ -44,6 +45,41 @@ void detectionCases(){
  Detection big(1.125,1e19,-1e20);const std::vector<double>km{1.125*(Constants::c/double(fs))/1000},f{1e19},s{-1e20};same(detections({4294967297,view(km),view(f),view(s)}),big.to_json_km(4294967297,fs));
  rejects([&]{detections({0,view(km),{},view(s)});});const std::vector<double>nan{std::numeric_limits<double>::quiet_NaN()};rejects([&]{detections({0,view(nan),view(f),view(s)});});
  struct Record {double delay,doppler,snr,delayKm;};const std::vector<Record>records{{1.125,1e19,-1e20,km[0]}};same(detectionRecords(UINT64_C(4294967297),View<Record>{records.data(),records.size()}),big.to_json_km(UINT64_C(4294967297),fs));
+ const std::vector<Record>evidenceRecords{{1,20,9,.15}};const std::vector<uint32_t>cells{3};
+ // Channel maps use the production delay-major, FFT-shifted layout. Cell 3 is
+ // row 1, column 1 in a 3x2 row-major detector grid, hence shifted row 0.
+ std::vector<std::complex<float>>channelMaps(12);channelMaps[3]={1,2};channelMaps[9]={3,4};
+ const std::vector<std::complex<double>>weights{{.5,.25},{-.5,.75}};
+ const std::vector<uint32_t>mapping{0,1};
+ rapidjson::Document evidence;evidence.Parse(manifoldEvidence(5,539e6,2.4e6,3,2,2,
+  View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
+  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},20,2,.8,6.1,1.2,1,1,60,0,1,.01,
+  {mapping.data(),mapping.size()}).c_str());
+ check(!evidence.HasParseError()&&std::string(evidence["schema"].GetString())=="vectorwarp-manifold-evidence-v2"&&
+  evidence["data"].Size()==1&&evidence["data"][0]["response"][0][0].GetDouble()==1&&
+  evidence["data"][0]["response"][1][1].GetDouble()==4&&evidence["reference_weights"].Size()==2&&
+  evidence["reference_state"]["updates"].GetUint64()==2&&
+  evidence["reference_state"]["coherent_gain_db"].GetDouble()==6.1&&
+  evidence["data"][0]["covariance"].Size()==2&&
+  std::string(evidence["bearing_replay"]["reference_anchor"].GetString())=="fixed_site"&&
+  evidence["bearing_replay"]["channel_mapping"].Size()==2,
+  "Sparse manifold evidence serialization differs");
+ // The initial analysis is update one while the completed-frame counter is
+ // still zero. Those counters have different meanings and no ordering rule.
+ auto initial=manifoldEvidence(5,539e6,2.4e6,3,2,2,
+  View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
+  {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},0,1,.8,6.1,1.2,1,1,60,0,1,.01,
+  {mapping.data(),mapping.size()});
+ check(!initial.empty(),"Initial reference update rejected");
+ Map<std::complex<double>>map0(3,2),map1(3,2);map0.delay={0,1};map1.delay=map0.delay;
+ map0.doppler={-20,0,20};map1.doppler=map0.doppler;map0.data[2][1]={5,6};map1.data[2][1]={7,8};
+ Detection cpuEvidence(1.2,18,9);std::vector<Map<std::complex<double>>*>cpuMaps{&map0,&map1};
+ rapidjson::Document cpuDoc;cpuDoc.Parse(blah2::manifold_evidence::cpu(6,539e6,2e6,
+  cpuEvidence,cpuMaps,weights).c_str());
+ check(!cpuDoc.HasParseError()&&cpuDoc["data"][0]["cell"].GetUint()==5&&
+  cpuDoc["data"][0]["response"][0][0].GetDouble()==5&&
+  cpuDoc["data"][0]["response"][1][1].GetDouble()==8,
+  "CPU sparse manifold evidence serialization differs");
  std::cout<<"PASS serializer-detection empty=1 order=1 legacy_km=1 scientific_roundtrip=1\n";
 }
 void trackCases(){
@@ -81,6 +117,16 @@ void trackCases(){
   temporal["data"][0]["current_peak_separation_db"].GetUint()==6&&
   temporal["data"][0]["resolved"].GetBool()&&temporal["data"][0]["candidates"].Size()==1,
   "Temporal independent-lobe bearing confidence differs");
+ for(uint32_t value=498;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);
+  real(at,250);real(at+2,value==499?1.0:0.0);}
+ rapidjson::Document stationary;stationary.Parse(bearingCheckpoint(8,raw(),spatial,
+  {true,12,4,2,80,30,3,0,0,.5,0,3,15}).c_str());
+ check(!stationary.HasParseError()&&stationary["data"][0]["stationary_clutter"].GetBool()&&
+  !stationary["data"][0]["publishable"].GetBool()&&
+  !stationary["data"][0]["resolved"].GetBool(),
+  "Stationary bearing classification differs");
+ for(uint32_t value=498;value<=500;++value){const size_t at=base+16+8*(value%historyCapacity);
+  real(at,value);real(at+2,-double(value));}
  rapidjson::Document strict;strict.Parse(bearingCheckpoint(9,raw(),spatial,{true,12,4,2,80,30,5}).c_str());
  check(!strict.HasParseError()&&strict["min_peak_separation_db"].GetUint()==5&&
   !strict["data"][0]["resolved"].GetBool(),"Bearing confidence threshold differs");
@@ -93,6 +139,14 @@ void trackCases(){
   adaptive["fine_beams"].GetUint()==60&&adaptive["data"][0]["consistent_samples"].GetUint()==3&&
   adaptive["data"][0]["candidates"].Size()==3&&!adaptive["data"][0]["resolved"].GetBool(),
   "Adaptive multi-lobe bearing publication differs");
+ bank[base+16+8*(498%historyCapacity)+7]=packed(10,11,50,25,10);
+ bank[base+16+8*(499%historyCapacity)+7]=packed(30,12,50,25,10);
+ bank[base+16+8*(500%historyCapacity)+7]=packed(50,13,30,25,10);
+ rapidjson::Document moving;moving.Parse(bearingCheckpoint(11,raw(),multi,{true,12,5,2,80,30,3,1,60,.5,20}).c_str());
+ check(!moving.HasParseError()&&moving["data"][0]["hypothesis_tracking"].GetBool()&&
+  moving["data"][0]["current_bearing_deg_true"].GetDouble()==8&&
+  std::abs(moving["data"][0]["bearing_rate_deg_s"].GetDouble()+12)<.001,
+  "Motion-constrained multi-hypothesis bearing path differs");
  bank[base+16+8*(498%historyCapacity)+7]=0;bank[base+16+8*(499%historyCapacity)+7]=0;
  bank[base+16+8*(500%historyCapacity)+7]=packedSpatial;
  same(trackerCheckpoint(UINT64_MAX,raw(),spatial),cpu.to_json(UINT64_MAX));

@@ -14,7 +14,9 @@ than pretending that different single-frame winners are the only ambiguity.
 The additional work is candidate-only; it does not add another whole-map DSP
 pass or alter CFAR scores, legacy track JSON, or Retina output. As with the
 legacy refined winner, it participates in association only when the optional
-tracker `beam_tolerance` is configured.
+tracker `beam_tolerance` is configured. Association compares every retained
+lobe on both observations, so a temporarily wrong primary lobe does not discard
+an otherwise valid range/Doppler track.
 
 `coherent_beam_bank` preserves the calibrated conventional scorer.
 `covariance_mvdr` builds a complex spatial covariance from a configurable
@@ -24,11 +26,25 @@ the same calibrated manifold. The guard excludes the target neighborhood. If a
 candidate covariance is singular, that candidate safely falls back to the
 conventional score instead of failing the radar frame.
 
+When `max_rate_deg_s` is positive, the publisher runs a multi-hypothesis path
+search through the retained lobes and rejects inter-frame jumps faster than the
+configured aircraft angular-rate limit. It reports the selected path's bearing
+rate and keeps unresolved alternatives visible. A zero value preserves the
+legacy temporal histogram exactly.
+
 The publisher reports the circular temporal mean in true-north coordinates,
 the current fine-beam bearing, peak separation, circular concentration, sample
 count, angular uncertainty, and up to three persistent candidate lobes. It sets
 `resolved: true` only after the configured sample minimum and conservative
 consistency, uncertainty, and peak-separation gates pass.
+
+When the tracker persistent-clutter option is enabled, the bearing record also
+contains `stationary_clutter` and `publishable`. A low-Doppler history must stay
+within 1.5 delay bins for the configured persistence interval before it is
+classified as stationary. The raw `/api/bearing` and `/api/locations` records
+remain available for diagnosis, but stationary records are never marked
+resolved and `/display/locations` hides them by default. Add
+`?showStationary=1` to inspect them.
 
 The nominal fine scan spacing is not physical accuracy. Aperture size,
 multipath, sidelobes, calibration error, and target geometry can make the real
@@ -51,6 +67,16 @@ as the array's physical angular resolution. Unresolved results include candidate
 points only. The map keeps the full delay ellipse visible to distinguish
 delay-only evidence from a bearing-constrained estimate.
 
+The API also retains a short, radar-only hypothesis history for each track.
+As the aircraft moves, every candidate bearing intersects a different delay
+ellipse; a dynamic-programming pass favors paths with physically plausible
+ground speed and acceleration. The diagnostic `estimate` therefore improves
+across scans in the same way that changing geometry improves a mobile direction
+finder, except here the target supplies the motion while both radar sites stay
+fixed. This smoother never upgrades an unresolved radar bearing to a strict
+`location`; it reports `geometry_consistent_samples` and leaves alternatives
+available for diagnosis.
+
 ADS-B is not an inference input. It may be displayed after the radar result for
 validation, but cannot select a lobe, improve consistency, resolve a point, or
 change geometry acceptance.
@@ -71,11 +97,14 @@ process:
   bearing:
     enable: true
     method: covariance_mvdr       # coherent_beam_bank remains the default
+    reference_anchor: live_eigenbeam # fixed_site rejects live anchor wander
     scan_beams: 60                # surveillance-beam multiple, at most 127
     candidate_peaks: 3
     guard_radius: 1
     training_radius: 3
     diagonal_loading: 0.01
+    max_rate_deg_s: 20            # 0 keeps legacy histogram selection
+    manifold_file: /etc/vectorwarp/bearing-manifold.json # optional
     channel_mapping: [0, 1, 2, 3, 4] # optional bearing-only permutation
     min_consistent: 3
     min_peak_separation_db: 3
@@ -94,10 +123,163 @@ polygon element index. It must be a complete permutation. It affects only the
 bearing refinement manifold, making suspected cable/order mappings safe to
 compare while the established detection and Retina paths remain fixed.
 
+`reference_anchor` controls only the fine bearing refinement bank. The default,
+`live_eigenbeam`, preserves the adaptive reference response. `fixed_site` uses
+the measured manifold response at the configured direct-path angle, or the
+ideal array response when no measured manifold is loaded. It does not alter
+reference synthesis, clutter cancellation, detection maps, tracking, or Retina
+publication. At 2.4 MSPS a delay sample spans about 125 m one-way, so ordinary
+roof multipath cannot be isolated by selecting an earlier delay sample; an
+absolute site/manifold response is the appropriate constraint.
+
+The recorder rejects stale ADS-B truth, ambiguous delay/Doppler assignments,
+and elevations above `max_elevation_deg`. A planar azimuth manifold cannot fold
+near-overhead arrivals into the same steering row without biasing every bearing;
+those samples remain available to the radar and tracker but are excluded from
+site calibration.
+
+`manifold_file` replaces only the bearing refinement steering vectors; the
+established detection beam bank remains unchanged. It is a strict JSON file:
+
+```json
+{
+  "schema": "vectorwarp-bearing-manifold-v1",
+  "frequency_hz": 539000000,
+  "responses": [
+    [[1.0, 0.0], [0.8, 0.2], [0.7, -0.1], [0.9, 0.1], [0.8, -0.2]]
+  ]
+}
+```
+
+`responses` must contain exactly `scan_beams` rows in local counter-clockwise
+order and one nonzero `[real, imaginary]` complex response per logical bearing
+channel. The file frequency must match the capture frequency. VectorWarp ratios
+each direction against the measured direct-path direction, then applies the
+live Heimdall/direct-path channel calibration. This preserves drift correction
+while compensating direction-dependent antenna, coupling, mounting, and roof
+effects. Invalid files stop startup rather than falling back silently.
+
+## Built-in installed-array recorder
+
+VectorWarp can learn the response in its actual installation without a
+site-specific external recorder. Collection starts automatically when coherent
+Kraken detection, confirmed geometry/orientation, and ADS-B truth are available;
+`enabled: false` remains an explicit opt-out. It publishes only the complex surveillance-channel values at accepted radar cells,
+matches them to fresh aircraft from VectorWarp's configured ADS-B source, and
+appends bounded, rotating JSONL. ADS-B supplies offline labels only; it never
+enters detection, tracking, bearing inference, or Retina output.
+
+The recorder requires a Kraken receiver, coherent fusion, detection, confirmed
+mapping/geometry/orientation, and enabled ADS-B. Collection works on both CPU
+and GPU-resident coherent processing paths:
+
+```yaml
+process:
+  bearing:
+    manifold_recorder:
+      enabled: true
+      path: /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
+      max_file_mb: 64
+      max_files: 4
+network:
+  ports:
+    manifold: 3005
+```
+
+Recorder health and counts are available at
+`/api/bearing/manifold-recorder`. A slow truth source cannot back-pressure the
+radar: the API keeps at most the newest evidence frame while matching or writing.
+Full ambiguity maps are never copied or stored.
+
+The recorder also writes `<path>.reference.jsonl` whenever the array-eigenbeam
+reference analysis advances. This bounded shadow log stores the coherent
+fraction/gain and each channel's complex principal-eigenvector response relative
+to channel 0 (or the strongest channel if channel 0 is unusable), together with
+the maximum phase and amplitude step since the preceding update. It does not
+alter calibration, bearing, detection, tracking, or Retina output. Use it to
+distinguish time-varying interchannel drift from a stable installed-site
+manifold: stable reference phase with repeatable wrong lobes points to mounting
+or multipath, while phase motion correlated with bearing errors supports a
+future, separately qualified correction. Site fingerprint changes archive this
+log and begin a clean collection alongside the manifold samples.
+
+When covariance MVDR is active, each accepted sample also stores the small
+per-target loaded spatial covariance used by the live scorer. This is bounded by
+eight channels and the already accepted sparse detections; it does not retain a
+full ambiguity map. The covariance makes the installed-array wiring check a
+replay of the actual complex channels and MVDR equation instead of a rotation of
+the finished bearing.
+
+The recorder fingerprints receiver/transmitter sites, frequency, sample rate,
+channel mapping, and complete array geometry. A changed fingerprint archives the
+previous active JSONL as `.site-previous` (within the configured file bound),
+writes a new site ledger, and begins a clean collection. Samples from different
+installations are therefore never silently fitted as one manifold.
+
+After collecting broad azimuth coverage, fit a versioned manifold:
+
+```sh
+node script/fit-bearing-manifold.js \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.3 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.2 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl.1 \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl \
+  --output /etc/vectorwarp/bearing-manifold.json \
+  --beams 60 --min-samples 20
+```
+
+The fitter removes each echo's arbitrary common complex scalar, robustly rejects
+inconsistent samples, reserves holdout observations, refuses mixed site/config
+fingerprints, requires useful circular coverage, and labels interpolated bins.
+The live eigenbeam reference weights anchor the measured direct-path manifold
+bin used by VectorWarp's drift correction. The file records coverage, elevation
+range, and holdout correlation metadata. Review
+those diagnostics before setting `manifold_file`; an azimuth-only model does not
+erase elevation dependence or roof multipath outside the observations.
+
+## Built-in channel-order and heading diagnostic
+
+`/api/bearing/diagnostic` and the Radar locations page expose a read-only,
+shadow-only diagnostic once replay-capable samples exist. The same check can be
+run without the web service:
+
+```sh
+node script/evaluate-bearing-calibration.js \
+  --config /etc/vectorwarp/config.yml \
+  --input /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
+```
+
+The diagnostic replays the recorded complex target vector and its local loaded
+covariance through every cyclic and reflected regular-polygon channel mapping.
+It reports pass-balanced median error, aircraft and azimuth-sector coverage,
+the currently configured mapping, the best replay mapping, and a separate
+heading-only correction. It never edits configuration or feeds ADS-B into live
+bearing, detection, tracking, or Retina output.
+
+A symmetric regular polygon has an unavoidable identifiability limit: rotating
+the channel labels by one element is mathematically equivalent to changing the
+array heading by one element angle. Therefore even strong replay evidence is a
+review result, not proof of mislabeled cables. A known-angle RF source or a
+physical one-channel-at-a-time verification is required to distinguish those
+two explanations. Older v1 samples remain valid for manifold fitting but lack
+the covariance needed for exact MVDR mapping replay.
+
+When track-before-detect and `tracker.beam_tolerance` are both enabled, the
+multi-CPI integrator also requires coarse-angle consistency along each
+delay/Doppler motion trajectory. This is joint delay-Doppler-angle TBD; omitting
+`beam_tolerance` retains the prior delay/Doppler-only integrator.
+
 ## Interfaces and compatibility
 
 - `/api/tracker` remains the legacy tracker schema.
 - `/api/bearing` exposes radar-only temporal bearing evidence.
+- `/api/bearing/diagnostic` reports the shadow-only wiring/heading replay.
 - `/api/locations` adds bistatic candidate points and uncertainty corridors.
 - `/display/locations` overlays gold bearing evidence on orange delay ellipses.
 - Disabled or unsupported configurations continue running ordinary passive
