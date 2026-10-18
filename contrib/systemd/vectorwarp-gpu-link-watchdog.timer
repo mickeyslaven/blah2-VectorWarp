@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically check VectorWarp GPU PCIe link performance
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

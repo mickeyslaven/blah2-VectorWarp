@@ -1,0 +1,15 @@
+[Unit]
+Description=VectorWarp opt-in GPU PCIe link watchdog
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+ConditionPathExists=@SYSCONFDIR@/gpu-link-watchdog
+After=vectorwarp-api.service vectorwarp-processor.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=@SYSCONFDIR@/gpu-link-watchdog
+ExecStart=@PREFIX@/libexec/vectorwarp-gpu-link-watchdog --bdf ${VECTORWARP_GPU_BDF} --cpi-limit-ms ${VECTORWARP_GPU_CPI_LIMIT_MS}
+TimeoutStartSec=60
+Nice=10
+RuntimeDirectory=vectorwarp-gpu-link-watchdog
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes

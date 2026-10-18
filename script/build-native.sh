@@ -288,6 +288,7 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFAC
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-apt.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-apt.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-dnf.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-dnf.py"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-setup" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-setup"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-gpu-link-watchdog.py" "$ARTIFACT_TMP/libexec/vectorwarp-gpu-link-watchdog"
 # Present only in current builds. Keeping these optional preserves the ability
 # to install historical artifacts without inventing an SDRplay action for them.
 if [[ -f $SOURCE_DIR/script/vectorwarp-sdrplay-service.py ]]; then
