@@ -373,6 +373,11 @@ node script/run-frequency-resolved-shadow.js \
   --output /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
 ```
 
+Packaged `vectorwarp-frequency-resolved-shadow.service` and `.timer` units run
+that one-shot with least privilege every five minutes. Sites whose API is not
+on loopback can override `VECTORWARP_CONFIG_URL` in
+`/etc/vectorwarp/frequency-resolved-shadow.env`.
+
 Promotion requires a separate processor implementation and held-out ADS-B
 comparison across multiple aircraft and sectors. In particular, a well-
 conditioned direct constraint is not by itself proof that suppressing the
