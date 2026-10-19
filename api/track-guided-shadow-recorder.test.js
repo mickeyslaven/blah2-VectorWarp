@@ -25,6 +25,9 @@ const waitFor = async predicate => {
     {aircraft: [{hex: 'abc123', flight: 'TEST', lat: 40, lon: -80}]} :
     {abc123: {timestamp: 100, flight: 'TEST', delay: 20, doppler: -40}}};
   const recorder = new TrackGuidedShadowRecorder(config, source, {now: () => 100500});
+  recorder.accept({timestamp: 99999, delay: [], doppler: [], snr: []});
+  assert.equal(recorder.status().counters.invalid, 0,
+    'ordinary frames without shadow recoveries must be ignored');
   recorder.accept({timestamp: 100000, track_guided_shadow: [{track_id: '001A',
     state: 'TENTATIVE', maturity: 'tentative', delay_bin: 160, delay_km: 20.5,
     doppler_hz: -38}]});

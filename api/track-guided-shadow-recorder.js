@@ -44,7 +44,8 @@ class TrackGuidedShadowRecorder {
     if (!this.enabled) return;
     try {
       if (typeof value === 'string') value = JSON.parse(value);
-      if (!finite(value?.timestamp) || !Array.isArray(value.track_guided_shadow))
+      if (!value || !Object.prototype.hasOwnProperty.call(value, 'track_guided_shadow')) return;
+      if (!finite(value.timestamp) || !Array.isArray(value.track_guided_shadow))
         throw new Error('Invalid track-guided shadow frame');
       const recoveries = value.track_guided_shadow.filter(item => item &&
         typeof item.track_id === 'string' && ['tentative', 'established'].includes(item.maturity) &&
