@@ -242,7 +242,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
 #if TRACK_GUIDED_SHADOW
-   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
+   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);atomicAdd(m[guidedBase()+(src(r+14u)<2u?11u:12u)],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
 #endif
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
   }
@@ -372,7 +372,7 @@ void main(){if(indexOf()!=0u||m[0]!=0u)return;if(m[2]<1u||m[2]>3u){reject(319u);
 const char* guidedShadowBody=R"glsl(
 #if TRACK_GUIDED_SHADOW
 void main(){uint i=indexOf();if(i>=guidedRead(1u)||i>=m[18]||m[0]!=0u||m[2]!=2u)return;
- uint r=record(i),w=work(i),id=src(r+12u)&65535u;guidedWrite(16u+i,id<<16u);
+ uint r=record(i),w=work(i),id=src(r+12u)&65535u,state=src(r+14u);guidedWrite(16u+i,id<<16u);
  if(guidedRead(0u)==0u||post[78]==0u||post[74]<4u||post[79]<2u){atomicAdd(m[guidedBase()+6u],1u);return;}
  double currentDelay=md(w),currentDoppler=md(w+2u),priorDelay=sourceD(r),priorDoppler=sourceD(r+2u);
  int currentColumn=int(floor(currentDelay-double(int(post[post[45]]))+.5LF));
@@ -397,7 +397,8 @@ void main(){uint i=indexOf();if(i>=guidedRead(1u)||i>=m[18]||m[0]!=0u||m[2]!=2u)
  double alpha=packDouble2x32(uvec2(post[window+8u],post[window+9u]));
  precise double cut=.5LF*(a+b),threshold=alpha*(train/double(n));
  if(!finiteD(cut)||!finiteD(threshold)){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
- atomicOr(m[guidedBase()+16u+i],1u);atomicAdd(m[guidedBase()+3u],1u);if(cut>threshold){atomicOr(m[guidedBase()+16u+i],2u);atomicAdd(m[guidedBase()+4u],1u);}
+ atomicOr(m[guidedBase()+16u+i],1u);atomicAdd(m[guidedBase()+3u],1u);atomicAdd(m[guidedBase()+(state<2u?9u:10u)],1u);
+ if(cut>threshold){atomicOr(m[guidedBase()+16u+i],2u);atomicAdd(m[guidedBase()+4u],1u);}
 }
 #else
 void main(){}
@@ -541,7 +542,9 @@ class Stage {
    if(!guidedBudgetExceeded_){guidedLastMs_=timestamps_->milliseconds(8);if(guidedLastMs_>10.0)guidedBudgetExceeded_=true;}
    context_.diagnostics.stream()<<" guided_shadow=1 guided_max_tracks="<<g[1]<<" guided_evaluated="<<g[3]<<" guided_above_threshold="<<g[4]
     <<" guided_stationary_rejected="<<g[5]<<" guided_invalid="<<g[6]<<" guided_would_recover="<<g[7]
-    <<" guided_already_detected="<<g[8]<<" guided_auto_disabled="<<guidedBudgetExceeded_<<" gpu_guided_shadow_ms="<<guidedLastMs_<<" guided_recovery_track_ids=";
+    <<" guided_already_detected="<<g[8]<<" guided_tentative_evaluated="<<g[9]<<" guided_established_evaluated="<<g[10]
+    <<" guided_tentative_would_recover="<<g[11]<<" guided_established_would_recover="<<g[12]
+    <<" guided_auto_disabled="<<guidedBudgetExceeded_<<" gpu_guided_shadow_ms="<<guidedLastMs_<<" guided_recovery_track_ids=";
    uint32_t written=0;for(uint32_t i=0;i<std::min(s[18],g[1]);++i)if((g[16+i]&32u)!=0u){if(written++)context_.diagnostics.stream()<<',';context_.diagnostics.stream()<<(g[16+i]>>16u);}
    if(!written)context_.diagnostics.stream()<<"none";
   }

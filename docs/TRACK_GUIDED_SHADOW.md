@@ -30,9 +30,13 @@ The work is `O(min(active tracks, max_tracks) * CFAR training cells)`, not
 `O(range-Doppler map cells)`. Both power maps stay on the GPU. The only host
 read is the small bounded result buffer already synchronized with tracker
 status. Logs report the separate `gpu_guided_shadow_ms`, aggregate outcomes,
-and bounded tracker IDs for `guided_would_recover` cases. A shadow dispatch
-that exceeds 10 ms latches the diagnostic off for subsequent frames; this
-cannot stop or slow the authoritative tracker.
+tentative-versus-established evaluation and recovery counts, and bounded
+tracker IDs for `guided_would_recover` cases. "Tentative" includes one-hit
+hypotheses that have not yet satisfied the configured M-of-N rule, so the
+diagnostic measures whether guided recovery can create more confirmed tracks,
+not only prolong already-established tracks. A shadow dispatch that exceeds
+10 ms latches the diagnostic off for subsequent frames; this cannot stop or
+slow the authoritative tracker.
 
 The approach follows the established track-before-detect pattern of retaining
 pre-threshold evidence, integrating along physically admissible trajectories,
