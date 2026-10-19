@@ -300,6 +300,8 @@ function validateConfig(config, baseline = null) {
     if (heimdall.gain !== undefined && !(heimdall.gain === 'keep' || heimdall.gain === -1 ||
         (typeof heimdall.gain === 'number' && Number.isFinite(heimdall.gain) && heimdall.gain >= 0 && heimdall.gain <= 50 && Math.round(heimdall.gain * 10) === heimdall.gain * 10)))
       errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
+    if (heimdall.gain_control === 'measured' && heimdall.gain === -1)
+      errors.push('capture.device.heimdall.gain must be keep or a fixed starting gain when automatic headroom selection is enabled; Suite AGC cannot provide a stable measurement.');
     if (typeof heimdall.host === 'string' &&
         !net.isIP(heimdall.host) && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(heimdall.host))
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');

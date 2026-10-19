@@ -64,13 +64,13 @@ class FrequencyResolvedShadow {
   status() { return {...this.state, fingerprint: this.fingerprint, path: this.outputPath}; }
 
   start() {
-    if (!this.state.enabled || this.timer || this.worker) return;
+    if (this.paused || !this.state.enabled || this.timer || this.worker) return;
     this.timer = setTimeout(() => { this.timer = null; void this.run(); }, this.initialDelayMs);
     this.timer.unref();
   }
 
   schedule() {
-    if (!this.state.enabled || this.timer) return;
+    if (this.paused || !this.state.enabled || this.timer) return;
     const delay = (this.options.interval_s ?? 300) * 1000;
     this.timer = setTimeout(() => { this.timer = null; void this.run(); }, delay);
     this.timer.unref();
@@ -90,7 +90,7 @@ class FrequencyResolvedShadow {
   }
 
   async run() {
-    if (!this.state.enabled || this.worker) return this.status();
+    if (this.paused || !this.state.enabled || this.worker) return this.status();
     this.state = {...this.state, active: true, error: null};
     const workerPath = path.join(__dirname, 'frequency-resolved-shadow-worker.js');
     const heimdall = this.config.capture.device.heimdall || {};
@@ -103,8 +103,9 @@ class FrequencyResolvedShadow {
         const done = callback => value => { if (!settled) { settled = true; this.worker = null; callback(value); } };
         worker.once('message', done(message => message.ok ? resolve(message.result) : reject(new Error(message.error))));
         worker.once('error', done(reject));
-        worker.once('exit', code => { if (!settled && code) done(reject)(new Error(`Frequency-resolved worker exited ${code}`)); });
+        worker.once('exit', code => { if (!settled) done(reject)(new Error(`Frequency-resolved worker exited ${code}`)); });
       });
+      if (this.paused) return this.status();
       if (result.config_fingerprint !== this.fingerprint)
         throw new Error('Frequency-resolved worker returned a different site fingerprint');
       const prior = await this.prior();
@@ -125,6 +126,15 @@ class FrequencyResolvedShadow {
     finally { this.schedule(); }
     return this.status();
   }
+
+  async pause() {
+    this.paused = true;
+    clearTimeout(this.timer); this.timer = null;
+    if (this.worker) await this.worker.terminate();
+    this.state = {...this.state, active: false};
+  }
+
+  resume() { this.paused = false; this.start(); }
 }
 
 function createFrequencyResolvedShadow(config, dependencies) {

@@ -10,6 +10,10 @@ const RECEIVER_SYNC_BUDGET = Object.freeze({
   defaultTransactionTimeoutMs: 75000,
   maxTransactionTimeoutMs: 75000
 });
+const RECEIVER_RECALIBRATION_BUDGET = Object.freeze({
+  defaultTimeoutMs: 150000,
+  maxTimeoutMs: 150000
+});
 
 function plainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -114,11 +118,11 @@ function publicStatus(status) {
   return status && {...status};
 }
 
-function validateInitialStatus(status, wanted) {
+function validateInitialStatus(status, wanted, {waitForRecovery = false} = {}) {
   if (status.operatingMode !== 'coherent')
     throw receiverError('KRAKEN_MODE_MISMATCH',
       `Suite V2 is in ${status.operatingMode} mode. Live processing requires coherent mode.`, 409);
-  if (status.reconfiguring || status.recovering)
+  if (status.reconfiguring || (status.recovering && !waitForRecovery))
     throw receiverError('KRAKEN_BUSY',
       'Suite V2 is reconfiguring or recovering. Wait until it is idle, then save again.', 409);
   if (status.sampleRate !== wanted.sampleRate)
@@ -197,15 +201,21 @@ function createKrakenControlClient(options = {}) {
   const readbackTimeoutMs = options.readbackTimeoutMs ?? DEFAULT_READBACK_TIMEOUT_MS;
   const transactionTimeoutMs = options.transactionTimeoutMs ??
     RECEIVER_SYNC_BUDGET.defaultTransactionTimeoutMs;
+  const recalibrationTimeoutMs = options.recalibrationTimeoutMs ??
+    RECEIVER_RECALIBRATION_BUDGET.defaultTimeoutMs;
   if (typeof connector !== 'function' || !Number.isInteger(statusTimeoutMs) ||
       statusTimeoutMs < 50 || statusTimeoutMs > 10000 ||
       !Number.isInteger(readbackTimeoutMs) || readbackTimeoutMs < 50 ||
       readbackTimeoutMs > 30000 || !Number.isInteger(transactionTimeoutMs) ||
       transactionTimeoutMs < 100 ||
-      transactionTimeoutMs > RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs)
+      transactionTimeoutMs > RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs ||
+      !Number.isInteger(recalibrationTimeoutMs) || recalibrationTimeoutMs < 100 ||
+      recalibrationTimeoutMs > RECEIVER_RECALIBRATION_BUDGET.maxTimeoutMs)
     throw receiverError('INVALID_RECEIVER_SYNC', 'Receiver synchronization options are invalid.', 500);
 
-  function synchronize(config, {readOnly = false} = {}) {
+  function transact(config, {readOnly = false, recalibrate = false} = {}) {
+    if (recalibrate && config?.capture?.replay?.state === true)
+      throw receiverError('INVALID_RECEIVER_SYNC', 'Recalibration requires a live Kraken profile.', 422);
     const endpoint = endpointFrom(config);
     const wanted = requestedSettings(config);
     return new Promise((resolve, reject) => {
@@ -267,8 +277,8 @@ function createKrakenControlClient(options = {}) {
         reject(error);
       };
       transactionTimer = setTimeout(() => fail(receiverError('KRAKEN_TRANSACTION_TIMEOUT',
-        'Suite V2 synchronization timed out.', 504,
-        failureReceipt())), transactionTimeoutMs);
+        `Suite V2 ${recalibrate ? 'recalibration' : 'synchronization'} timed out.`, 504,
+        failureReceipt())), recalibrate ? recalibrationTimeoutMs : transactionTimeoutMs);
       const finish = () => {
         if (settled) return;
         if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
@@ -276,7 +286,8 @@ function createKrakenControlClient(options = {}) {
             'Suite V2 no longer reports the requested settings. The config was not saved.', 409));
         settled = true;
         close();
-        receipt.status = receipt.operations.length ? 'synchronized' : 'already-matched';
+        receipt.status = recalibrate ? 'recalibrated' :
+          receipt.operations.length ? 'synchronized' : 'already-matched';
         receipt.after = publicStatus(lastStatus);
         resolve(receipt);
       };
@@ -284,7 +295,10 @@ function createKrakenControlClient(options = {}) {
         !observed.recovering && !observed.cooldownActive;
       const validateRecoveryStatus = (frame, observed) => {
         if (observed.operatingMode !== 'coherent' || observed.sampleRate !== wanted.sampleRate ||
-            observed.channelCount !== initialStatus.channelCount || observed.reconfiguring)
+            observed.channelCount !== initialStatus.channelCount || observed.reconfiguring ||
+            (recalibrate && (observed.centerFrequency !== wanted.frequency ||
+              observed.channelCount !== wanted.channelCount ||
+              observed.gain !== (wanted.gain ?? initialStatus.gain))))
           throw receiverError('KRAKEN_STATUS_DRIFT', 'Suite mode, sample rate or channel count changed during planned AUTO recovery.', 409);
         if (frame.kerberos_mode === true || frame.external_noise === true)
           throw receiverError('KRAKEN_RESET_UNSUPPORTED', 'Automatic recovery requires the normal internal-noise Kraken workflow.', 409);
@@ -293,8 +307,16 @@ function createKrakenControlClient(options = {}) {
             (frame.external_noise !== undefined && typeof frame.external_noise !== 'boolean') ||
             (frame.noise_source !== undefined && typeof frame.noise_source !== 'boolean') ||
             (frame.phase_state !== undefined && !Number.isInteger(frame.phase_state)) ||
-            (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)))
+            (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)) ||
+            (recalibrate && (typeof frame.noise_source !== 'boolean' ||
+              !Number.isInteger(frame.phase_state) || frame.calibration_state === undefined)))
           throw receiverError('KRAKEN_PROTOCOL_MISMATCH', 'Suite omitted or malformed required AUTO recovery status.', 502);
+      };
+      const sendFullRecalibration = () => {
+        validateRecoveryStatus(lastFrame, lastStatus);
+        resetSent = true;
+        resetAfterStatus = statusSequence;
+        socket.write(`${JSON.stringify({command: 'reset_lag_compensation'})}\n`);
       };
       const sendCurrent = () => {
         if (current.fullResetAfterAck) validateRecoveryStatus(lastFrame, lastStatus);
@@ -310,9 +332,10 @@ function createKrakenControlClient(options = {}) {
         currentRejected = false;
         currentSent = true;
         acknowledgedAfterStatus = statusSequence;
-        arm(readbackTimeoutMs,
+        arm(recalibrate ? recalibrationTimeoutMs : readbackTimeoutMs,
           `Suite V2 did not confirm ${current.field}=${current.value} before the deadline.`);
-        socket.write(`${JSON.stringify(current.command)}\n`);
+        if (current.resetOnly) sendFullRecalibration();
+        else socket.write(`${JSON.stringify(current.command)}\n`);
       };
       const next = () => {
         current = operations.shift() || null;
@@ -325,7 +348,7 @@ function createKrakenControlClient(options = {}) {
         if (!current) return finish();
         if (!suiteIdle(lastStatus)) {
           waitingForIdle = true;
-          arm(readbackTimeoutMs,
+          arm(recalibrate ? recalibrationTimeoutMs : readbackTimeoutMs,
             `Suite V2 did not become idle before ${current.field}=${current.value}.`);
           return;
         }
@@ -337,7 +360,9 @@ function createKrakenControlClient(options = {}) {
           acknowledged: true, readbackMatched: true,
           ...(current.fullResetAfterAck ? {fullRecalibration: {commandSent: true,
             acknowledged: true, recoveryObserved: true, completed: true,
-            verification: 'reported recovery completion; no RF measurement'}} : {})});
+            verification: 'reported recovery completion; no RF measurement',
+            ...(recalibrate ? {phaseState: lastFrame.phase_state,
+              calibrationState: lastFrame.calibration_state, noiseSource: lastFrame.noise_source} : {})}} : {})});
         current = null;
         currentAcknowledged = false;
         next();
@@ -355,9 +380,18 @@ function createKrakenControlClient(options = {}) {
           initialStatus = observed;
           receipt.before = publicStatus(observed);
           receipt.after = publicStatus(observed);
-          try { validateInitialStatus(observed, wanted); }
+          try { validateInitialStatus(observed, wanted, {waitForRecovery: recalibrate}); }
           catch (error) { return fail(error); }
-          operations = operationList(observed, wanted);
+          if (recalibrate) {
+            if (observed.gain === null)
+              return fail(receiverError('KRAKEN_GAIN_NOT_REPORTED',
+                'Suite V2 must report gain before a full recalibration.', 409));
+            validateRecoveryStatus(frame, observed);
+            operations = [{id: 'reset_lag_compensation', field: 'calibration',
+              value: 'lag-and-phase', fullResetAfterAck: true, resetOnly: true,
+              matches: status => matchesTuple(status, wanted.frequency, wanted.channelCount,
+                wanted.gain ?? initialStatus.gain)}];
+          } else operations = operationList(observed, wanted);
           if (readOnly && operations.length)
             return fail(receiverError('KRAKEN_STARTUP_MISMATCH',
               'Suite settings differ from saved receiver settings. Apply them before starting live processing.', 409));
@@ -370,13 +404,14 @@ function createKrakenControlClient(options = {}) {
           }
           return next();
         }
+        if (recalibrate) validateRecoveryStatus(frame, observed);
         if (scannerPending) return;
         if (current?.fullResetAfterAck && resetSent) {
           validateRecoveryStatus(frame, observed);
           if (resetAcknowledged && statusSequence > acknowledgedAfterStatus && observed.recovering && current.matches(observed) &&
               matchesTuple(observed, expectedReadback.frequency, expectedReadback.channelCount, expectedReadback.gain))
             recoveryAfterStatus ||= statusSequence;
-          if (recoveryAfterStatus && frame.calibration_state === 'FAILED')
+          if ((recoveryAfterStatus || (recalibrate && resetAcknowledged)) && frame.calibration_state === 'FAILED')
             return fail(receiverError('KRAKEN_CALIBRATION_FAILED', 'Suite full recalibration reported FAILED. The config was not saved.', 409));
         }
         if (waitingForIdle) {
@@ -404,11 +439,13 @@ function createKrakenControlClient(options = {}) {
         if (current?.fullResetAfterAck && resetSent) {
           if (frame.status !== 'success') {
             resetRejected = true;
+            if (current.resetOnly) currentRejected = true;
             return fail(receiverError('KRAKEN_COMMAND_REJECTED', 'Suite rejected the planned full recalibration.', 409));
           }
           if (resetAcknowledged || frame.message !== 'Full recalibration (lag + phase) started')
             return fail(receiverError('KRAKEN_ACKNOWLEDGEMENT_MISMATCH', 'Suite did not acknowledge the planned full recalibration.', 502));
           resetAcknowledged = true;
+          if (current.resetOnly) currentAcknowledged = true;
           acknowledgedAfterStatus = statusSequence;
           return;
         }
@@ -435,10 +472,7 @@ function createKrakenControlClient(options = {}) {
         // A status received before this exact ACK is never its readback.
         acknowledgedAfterStatus = statusSequence;
         if (current.fullResetAfterAck) {
-          validateRecoveryStatus(lastFrame, lastStatus);
-          resetSent = true;
-          resetAfterStatus = statusSequence;
-          socket.write(`${JSON.stringify({command: 'reset_lag_compensation'})}\n`);
+          sendFullRecalibration();
         }
       };
       const handleLine = line => {
@@ -496,7 +530,9 @@ function createKrakenControlClient(options = {}) {
     });
   }
 
-  return {synchronize, verify: config => synchronize(config, {readOnly: true})};
+  return {synchronize: (config, options) => transact(config, options),
+    verify: config => transact(config, {readOnly: true}),
+    recalibrate: config => transact(config, {recalibrate: true})};
 }
 
 function receiverAcceptanceBoundary(config) {
@@ -545,6 +581,18 @@ function createReceiverSynchronizer(options = {}) {
   return {
     requires: requiresReceiverSynchronization,
     boundary: receiverAcceptanceBoundary,
+    async verify(config) {
+      if (config?.capture?.device?.type !== 'Kraken' || config?.capture?.replay?.state === true)
+        throw receiverError('INVALID_RECEIVER_SYNC', 'Verification requires a live Kraken profile.', 422);
+      const result = await kraken.verify(config);
+      return {...result, acceptance: receiverAcceptanceBoundary(config)};
+    },
+    async recalibrate(config) {
+      if (config?.capture?.device?.type !== 'Kraken' || config?.capture?.replay?.state === true)
+        throw receiverError('INVALID_RECEIVER_SYNC', 'Recalibration requires a live Kraken profile.', 422);
+      const result = await kraken.recalibrate(config);
+      return {...result, acceptance: receiverAcceptanceBoundary(config)};
+    },
     async synchronize(previous, candidate, {force = false} = {}) {
       const liveKraken = candidate?.capture?.device?.type === 'Kraken' &&
         candidate?.capture?.replay?.state !== true;
@@ -561,4 +609,5 @@ function createReceiverSynchronizer(options = {}) {
 
 module.exports = {createKrakenControlClient, createReceiverSynchronizer,
   endpointFrom, normalizeStatus, receiverAcceptanceBoundary, RECEIVER_SYNC_BUDGET,
+  RECEIVER_RECALIBRATION_BUDGET,
   requiresReceiverSynchronization};

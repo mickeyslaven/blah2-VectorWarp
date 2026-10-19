@@ -45,6 +45,11 @@ class FakeWorker extends EventEmitter {
     assert.equal(saved.config_fingerprint, fingerprint); assert.equal(saved.sequence, 1);
     assert.equal(saved.history.length, 1);
     clearTimeout(shadow.timer);
+    await shadow.pause();
+    shadow.start();
+    await shadow.run();
+    assert.equal(shadow.timer, null);
+    assert.equal(shadow.status().analyses, 1, 'Paused shadow must not collect under changing gain');
     const disabled = structuredClone(config);
     disabled.process.bearing.frequency_resolved_shadow.enabled = false;
     assert.equal(new FrequencyResolvedShadow(disabled).status().enabled, false);

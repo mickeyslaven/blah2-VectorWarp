@@ -1,5 +1,6 @@
 const express = require('express');
 const net = require("net");
+const http = require('http');
 const fs = require('fs');
 const yaml = require('js-yaml');
 const crypto = require('crypto');
@@ -12,7 +13,11 @@ const {readConfig, writable, saveConfig} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
+const {createAutomaticGain, enabled: automaticGainEnabled, MAX_AUTOMATIC_GAIN_MS} = require('./automatic-gain.js');
+const {measureGain} = require('./kraken-gain-probe.js');
+const {createGainMonitor} = require('./gain-monitor.js');
 const {createReceiverJournal} = require('./receiver-journal.js');
+const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
@@ -76,8 +81,45 @@ const receiverSynchronizer = createReceiverSynchronizer({krakenOptions: {
   statusTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_STATUS_TIMEOUT_MS', 10000),
   readbackTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_READBACK_TIMEOUT_MS', 30000)
 }});
+const automaticGain = createAutomaticGain({synchronizer: receiverSynchronizer, measureGain});
+// An interrupted gain check must not publish frames from an uncertain receiver.
+// Successful checks also remain blocked until the normal API/processor restart.
+let gainPublicationBlocked = gainRestart.publicationBlocked(receiverSyncState);
+let gainRestartTimestampAt = null;
+if (gainPublicationBlocked) void frequencyResolvedShadow.pause();
 const RECEIVER_SYNC_HEADER = 'X-VectorWarp-Receiver-Sync';
 const RECEIVER_SYNC_INTENT = 'synchronize-v1';
+let gainMonitorStatus = {state: 'starting'};
+const gainMonitor = createGainMonitor({
+  getConfig: () => readConfig(configFile).config,
+  getRevision: () => readConfig(configFile).revision,
+  busy: () => configWriteInProgress || gainPublicationBlocked || capture ||
+    !processorStatusFresh(processorStatus) ||
+    startupDocument.revision !== readConfig(configFile).revision ||
+    ['running', 'scheduled'].includes(restartState.state) ||
+    frequencyResolvedShadow.status().active,
+  measureGain,
+  report: value => { gainMonitorStatus = value; },
+  onOverload: ({config: candidate, revision}) => new Promise((resolve, reject) => {
+    const body = JSON.stringify(candidate);
+    // Reuse the exact same revision-guarded, journaled Apply path. Backoff never
+    // raises gain. This request cannot bypass calibration or restart checks.
+    const host = HOST === '0.0.0.0' ? '127.0.0.1' : HOST === '::' ? '::1' : HOST;
+    const request = http.request({host, port: PORT, path: '/api/config?restart=true&gain=backoff',
+      method: 'PUT', headers: {'Content-Type': 'application/json',
+        Origin: `http://${net.isIP(host) === 6 ? `[${host}]` : host}:${PORT}`,
+        'Content-Length': Buffer.byteLength(body), 'If-Match': `"${revision}"`,
+        'X-VectorWarp-Intent': 'config-write-v1',
+        [RECEIVER_SYNC_HEADER]: RECEIVER_SYNC_INTENT}}, response => {
+      response.resume();
+      response.on('end', () => response.statusCode === 200 ? resolve() :
+        reject(new Error(`Automatic overload backoff returned HTTP ${response.statusCode}.`)));
+    });
+    request.setTimeout(MAX_AUTOMATIC_GAIN_MS + 15000, () =>
+      request.destroy(new Error('Automatic overload backoff outcome is unknown.')));
+    request.on('error', reject); request.end(body);
+  })
+});
 
 function replayTruthDisabled() {
   return config.capture?.replay?.state === true ||
@@ -120,6 +162,7 @@ let captureRevision = 0;
 
 function invalidateTimestampTelemetry() {
   activeTimestampConnection = ++timestampGeneration;
+  gainRestartTimestampAt = null;
   lastFrameAt = null;
   timestamp = '';
   return {restart: restartGeneration, connection: activeTimestampConnection};
@@ -157,6 +200,26 @@ function currentGpuRuntime(freshness) {
 // api server
 const app = express();
 const {readSdrplayStartup} = require('./sdrplay-startup');
+function completePendingGainRestart() {
+  if (!gainPublicationBlocked || !gainRestart.pending(receiverSyncState)) return;
+  try {
+    const document = readConfig(configFile);
+    const next = gainRestart.complete({state: receiverSyncState, config,
+      revision: document.revision, loadedRevision: startupDocument.revision, serverId,
+      restartReceipt: readSdrplayStartup(document.revision), processorStatus,
+      timestampReceivedAt: gainRestartTimestampAt,
+      timestampMaxAgeMs: Math.max(10000, (config.process?.data?.cpi || 1) * 3000)},
+    value => receiverJournal.write(value));
+    if (next) {
+      receiverSyncState = next;
+      gainPublicationBlocked = false;
+      frequencyResolvedShadow.resume?.();
+      serviceErrors.delete('gain-restart');
+    }
+  } catch (error) {
+    serviceErrors.set('gain-restart', `Gain restart verification could not be saved: ${error.message}`);
+  }
+}
 const {installSdrplayBuildRoutes, helperStatus} = require('./sdrplay-build');
 const {installMacRspduoBuildRoutes, createMacRspduoBuild} = require('./macos-rspduo-build');
 const macRspduoBuild = process.platform === 'darwin' ? createMacRspduoBuild() : null;
@@ -190,6 +253,13 @@ app.options('*', (req, res) => {
     return res.status(403).json({ok: false,
       errors: ['Configuration changes must come from this VectorWarp host.']});
   res.sendStatus(204);
+});
+app.use((req, res, next) => {
+  if (gainPublicationBlocked && ['/api/map', '/api/detection', '/api/tracker',
+    '/api/tracker/native', '/api/bearing', '/api/locations', '/api/iqdata'].includes(req.path))
+    return res.status(503).json({available: false, data: [],
+      reason: 'Receiver gain is being checked or a verified restart is pending.'});
+  next();
 });
 
 function configFileWritable() {
@@ -235,7 +305,7 @@ async function promoteQualifiedManifold(candidate) {
     return {active: false, pending: false, reason: 'The qualified model belongs to an earlier site configuration.'};
   if (config.process?.bearing?.manifold_file === candidate.path)
     return {active: true, pending: false, reason: 'The qualified model is active.'};
-  if (configWriteInProgress || restartState.state === 'running' || restartState.state === 'scheduled')
+  if (gainPublicationBlocked || configWriteInProgress || restartState.state === 'running' || restartState.state === 'scheduled')
     return {active: false, pending: true, reason: 'Waiting for the current settings operation to finish.'};
   const current = readConfig(configFile);
   if (!current.exists || !writable(configFile))
@@ -312,6 +382,13 @@ app.get('/api/runtime/config', (req, res) => {
   // with newly saved tuning/site settings until the services have restarted.
   res.json(config);
 });
+app.get('/api/receiver/gain', (req, res) => res.json({
+  policy: config.capture?.device?.heimdall?.gain_control || 'fixed',
+  selectedGainDb: config.capture?.device?.heimdall?.gain,
+  pendingRestart: gainPublicationBlocked,
+  selection: receiverSyncState.receipt?.automaticGain || null,
+  monitor: gainMonitorStatus
+}));
 app.get('/api/config/capabilities', async (req, res) => {
   const document = readConfig(configFile);
   const compiledLiveTypes = configuredReceiverTypes();
@@ -336,6 +413,8 @@ app.get('/api/config/capabilities', async (req, res) => {
       intentValue: RECEIVER_SYNC_INTENT,
       pendingIntentValue: 'save-pending-v1',
       applicationState: receiverSyncState.state,
+      measuredGainSupported: gainRestart.installedGainRestartSupported(restartCommand),
+      measuredGainMaximumMs: MAX_AUTOMATIC_GAIN_MS,
       currentReceiver: receiverAcceptanceBoundary(document.config)
     },
     setupRequired: document.setupRequired,
@@ -378,7 +457,8 @@ app.get('/api/system/status', async (req, res) => {
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
-    radar: lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
+    gainCheckPending: gainPublicationBlocked,
+    radar: gainPublicationBlocked || lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
       Math.max(10000, (config.process?.data?.cpi || 1) * 3000) ? 'receiving' : 'stale',
     processor: processor && {...processor, receivedAt: processorStatus.receivedAt},
     processorFresh: processor !== null,
@@ -399,6 +479,7 @@ app.post('/api/processor/status', (req, res) => {
     return res.status(422).json({ok: false, errors: checked.errors});
   }
   processorStatus = {value: checked.value, receivedAt: Date.now()};
+  completePendingGainRestart();
   if (checked.value.input === 'replay') adsbSource.clear();
   if (checked.value.input === 'live' && checked.value.recordingError &&
       checked.value.recordingRequestId === captureRevision) {
@@ -550,6 +631,12 @@ app.put('/api/config', async (req, res) => {
     return res.status(428).json({ok: false, errors: ['Reload settings before saving (configuration revision required).']});
   if (restartState.state === 'running' || restartState.state === 'scheduled')
     return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
+  // A failed final journal write can leave both the restart marker and an
+  // unresolved receiver outcome. Allow explicit Apply to reconcile that case;
+  // publication remains blocked until a successful transaction and restart.
+  if (gainRestart.pending(receiverSyncState) && !receiverReconciliationRequired)
+    return res.status(409).json({ok: false, code: 'GAIN_CHECK_RESTART_PENDING',
+      errors: ['The verified gain is awaiting a confirmed processor and API restart. Complete that restart before changing settings.']});
   if (configWriteInProgress || receiverManagement.busy() || macRspduoBuild?.busy())
     return res.status(409).json({ok: false,
       errors: ['Another settings transaction is in progress. Wait for its result.']});
@@ -569,6 +656,16 @@ app.put('/api/config', async (req, res) => {
   const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
+  const measuredGain = !saveLater && automaticGainEnabled(req.body);
+  if (measuredGain && !gainRestart.installedGainRestartSupported(restartCommand))
+    return res.status(409).json({ok: false, code: 'GAIN_CHECK_RESTART_UNSUPPORTED',
+      errors: ['Automatic gain requires the installed Linux receiver restart helper and its verified completion receipt.']});
+  if (measuredGain && !wantsRestart)
+    return res.status(409).json({ok: false, code: 'GAIN_CHECK_RESTART_REQUIRED',
+      errors: ['Automatic gain requires Apply and restart so processing resumes with the verified settings. Use fixed gain for a controlled measurement block.']});
+  if (measuredGain && (capture || processorStatus?.value?.recording === true))
+    return res.status(409).json({ok: false, code: 'GAIN_CHECK_RECORDING_ACTIVE',
+      errors: ['Finish the current recording before applying automatic gain.']});
   if (saveLater && receiverReconciliationRequired)
     return res.status(409).json({ok: false, code: 'RECEIVER_RECONCILIATION_REQUIRED',
       receiverSync: receiverSyncState.receipt,
@@ -588,6 +685,7 @@ app.put('/api/config', async (req, res) => {
   configWriteInProgress = true;
   let receiverSync = null;
   let localKrakenController = null;
+  let gainTransaction = null;
   const previousReceiverReceipt = receiverSyncState.receipt || null;
   try {
     // Hold the write flag across this bounded read-only query. A stale local
@@ -607,6 +705,7 @@ app.put('/api/config', async (req, res) => {
     // A failed journal write prevents every receiver/config mutation below.
     receiverJournal.write({state: 'in-progress', startedAt: Date.now(),
       previousRevision: currentDocument.revision, reconciliationRequired: true,
+      automaticGain: measuredGain,
       receiverType: req.body.capture.device.type, saveLater,
       receipt: receiverSyncState.receipt || null});
     if (saveLater) {
@@ -645,14 +744,34 @@ app.put('/api/config', async (req, res) => {
     receiverSyncState = {state: receiverSyncRequired ? 'synchronizing' : 'not-required',
       startedAt: Date.now(), receipt: null};
     localKrakenController = await ensureLocalKrakenController(req.body, currentDocument.config);
-    receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
-      {force: observeLiveReceiver});
-    if (receiverSync.operations?.some(operation => operation.commandSent))
+    if (measuredGain) {
+      gainPublicationBlocked = true;
+      invalidateTimestampTelemetry();
+      await frequencyResolvedShadow.pause();
+      gainTransaction = await automaticGain.apply(currentDocument.config, req.body,
+        {increase: req.query.gain !== 'backoff'});
+      req.body = gainTransaction.config;
+      receiverSync = gainTransaction.receiverSync;
+    } else {
+      receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
+        {force: observeLiveReceiver});
+    }
+    if (receiverSync.operations?.some(operation => operation.commandSent &&
+        (!measuredGain || !['set_gain', 'reset_lag_compensation'].includes(operation.operation))))
       invalidateGeometry(req.body?.capture?.device?.array_geometry);
     let saved;
     try {
       saved = saveConfig(configFile, req.body, currentDocument.revision);
     } catch (error) {
+      if (gainTransaction) {
+        // A save can fail after rename. Restore hardware only when the file is
+        // still exactly the starting document; never overwrite a concurrent edit.
+        if (readConfig(configFile).revision === currentDocument.revision) {
+          try { receiverSync = await gainTransaction.rollback(); }
+          catch (rollbackError) { receiverSync = rollbackError.receiverSync; }
+        }
+        error.receiverSync = receiverSync;
+      }
       if (receiverSyncRequired) {
         const changedUpstream = receiverSync.operations?.length > 0;
         const revisionConflict = error.status === 409;
@@ -670,6 +789,8 @@ app.put('/api/config', async (req, res) => {
       throw error;
     }
     receiverSync = {...receiverSync, configPersisted: true, configRevision: saved.revision};
+    if (measuredGain) receiverSync = {...receiverSync, automaticGain: {
+      ...receiverSync.automaticGain, restartPendingAt: Date.now(), restartOriginServerId: serverId}};
     // Direct backends apply through their SDK at processor startup. A deliberate
     // Apply can repair a disk-only failure there, but must not claim to have
     // reconciled a previous, different upstream receiver.
@@ -810,6 +931,8 @@ app.get('/capture/status', (req, res) => {
 app.post('/capture/toggle', (req, res) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== RECORDING_INTENT)
     return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
+  if (gainPublicationBlocked)
+    return res.status(409).json({error: 'Wait for the gain check and processing restart before recording.'});
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input === 'replay' || config.capture.replay?.state === true)
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
@@ -882,6 +1005,7 @@ function listenData(server, name) {
 function jsonStreamServer(name, onFrame) {
   return net.createServer(socket => {
     const feed = jsonFrames(frame => {
+      if (gainPublicationBlocked) return;
       onFrame(frame);
       // A new complete frame proves this listener and connection recovered.
       serviceErrors.delete(name);
@@ -936,6 +1060,9 @@ const server_timestamp = net.createServer((socket)=>{
   timestampConnections += 1;
   socket.on("data",(msg)=>{
     if (!timestampConnectionCurrent(generation)) return;
+    gainRestartTimestampAt = Date.now();
+    completePendingGainRestart();
+    if (gainPublicationBlocked) return;
     lastFrameAt = Date.now();
     timestamp = msg.toString();
   });
@@ -975,10 +1102,12 @@ const server_iqdata = jsonStreamServer('iqdata', frame => {
   stash_iqdata.update_data(iqdata);
 });
 listenData(server_iqdata, 'iqdata');
+gainMonitor.start();
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
+  gainMonitor.stop();
   process.exit(0);
 });
