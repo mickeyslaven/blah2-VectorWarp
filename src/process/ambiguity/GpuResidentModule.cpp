@@ -298,7 +298,11 @@ class ResidentModule final:public resident::Backend {
  for(size_t i=0;i<8;++i)w.u64(32+8*i,fields[i]);
  w.u64(96,valid|32);
  w.u64(104,++event_);
- if((valid&1)&&pipeline_->tracker_)words(w,128,pipeline_->tracker_->evidenceControl());
+ if((valid&1)&&pipeline_->tracker_){const auto& status=pipeline_->tracker_->evidenceControl();
+  // The control envelope reserves exactly 64 words before timing at byte 384.
+  // New tracker-only diagnostics remain available in prepared evidence.
+  rw::require(status.size()>=64,"Resident tracker control proof is short");
+  for(size_t i=0;i<64;++i)w.u32(128+4*i,status[i]);}
  if(pipeline_&&pipeline_->tracker_){const auto&t=pipeline_->tracker_->evidenceTimes();
  if(valid&2)w.f64(384,t.observed(6));
  if(valid&4)w.f64(392,t.observed(5));
