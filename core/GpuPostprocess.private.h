@@ -586,6 +586,8 @@ public:
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
+ Buffer& integrationBuffer(){return *integration_;} // Rolling power history; remains device resident.
+ Buffer& currentPowerBuffer(){return *currentPower_;} // Current CPI power map; remains device resident.
  void append(VkCommandBuffer command){
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;

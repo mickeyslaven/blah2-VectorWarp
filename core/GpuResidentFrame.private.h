@@ -806,7 +806,8 @@ public:
   // Tracker capacity is explicit and never retried/shrunk. All existing full-frame
   // allocations, plans and transient peaks have already been admitted.
   if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
-   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout());
+   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout(),
+   work_->postprocessStage->integrationBuffer(),work_->postprocessStage->currentPowerBuffer());
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity

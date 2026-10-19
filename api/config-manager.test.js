@@ -74,6 +74,24 @@ const nonresidentStationaryClutter = clone(stationaryClutterTracker);
 nonresidentStationaryClutter.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentStationaryClutter).valid, false,
   'persistent clutter initiation requires resident acceleration');
+const guidedShadowTracker = clone(stationaryClutterTracker);
+guidedShadowTracker.process.detection.track_before_detect = {
+  enable: true, max_cpis: 8, motion_bins: 1};
+guidedShadowTracker.process.tracker.track_guided_shadow = {enable: true, max_tracks: 64};
+assert.equal(validateConfig(guidedShadowTracker).valid, true,
+  'bounded track-guided shadow accepts resident rolling history');
+const unboundedGuidedShadow = clone(guidedShadowTracker);
+unboundedGuidedShadow.process.tracker.track_guided_shadow.max_tracks = 1025;
+assert.equal(validateConfig(unboundedGuidedShadow).valid, false,
+  'track-guided shadow cannot exceed tracker capacity');
+const noHistoryGuidedShadow = clone(guidedShadowTracker);
+noHistoryGuidedShadow.process.detection.track_before_detect.enable = false;
+assert.equal(validateConfig(noHistoryGuidedShadow).valid, false,
+  'track-guided shadow requires rolling track-before-detect history');
+const nonresidentGuidedShadow = clone(guidedShadowTracker);
+nonresidentGuidedShadow.process.performance.acceleration = 'auto';
+assert.equal(validateConfig(nonresidentGuidedShadow).valid, false,
+  'track-guided shadow requires resident GPU execution');
 const mismatchedCalibration = clone(coherentFusion);
 mismatchedCalibration.process.reference_synthesis.channels = [0, 1, 2, 3];
 assert.equal(validateConfig(mismatchedCalibration).valid, false,

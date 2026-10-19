@@ -567,7 +567,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI7 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI8 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -774,6 +774,8 @@ try
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   double stationaryMaxDopplerHz=residentMode?15.0:0.0;
+  bool trackGuidedShadow=false;
+  uint32_t trackGuidedShadowMaxTracks=0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
@@ -786,6 +788,11 @@ try
     if(stationaryClutter){stationary["persistence_cpis"] >> stationaryPersistenceCpis;
       stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
     else {stationaryPersistenceCpis=0;stationaryMaxDopplerHz=0;}
+  }
+  if(tree["process"]["tracker"].has_child("track_guided_shadow")){
+    const auto& guided=tree["process"]["tracker"]["track_guided_shadow"];
+    guided["enable"] >> trackGuidedShadow;
+    if(trackGuidedShadow)guided["max_tracks"] >> trackGuidedShadowMaxTracks;
   }
   if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
     throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
@@ -878,7 +885,8 @@ try
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
         ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
-        stationaryPersistenceCpis,stationaryMaxDopplerHz};
+        stationaryPersistenceCpis,stationaryMaxDopplerHz,
+        trackGuidedShadow,trackGuidedShadowMaxTracks};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);

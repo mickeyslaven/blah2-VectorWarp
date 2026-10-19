@@ -227,18 +227,18 @@ try {
   persistGroup('rsp-profile-edit', rspBase, rsp, ['capture.fs','capture.device.type','capture.device.serial']);
   // Explicit resident capacity is optional in legacy files but must persist
   // as a coherent resident-mode edit without changing unrelated settings.
-  const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
-  resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
+  const residentBase = clone(fusion); const resident = clone(residentBase);
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
-  resident.process.detection.integration_cpis = 2;
-  persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
-    'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+  resident.process.tracker.track_guided_shadow = {enable: true, max_tracks: 32};
+  persistGroup('resident-capacity-edit', residentBase, resident, [
+    'process.tracker.initiate.acceleration_model',
     'process.tracker.initiate.stationary_clutter.enable',
     'process.tracker.initiate.stationary_clutter.persistence_cpis',
     'process.tracker.initiate.stationary_clutter.max_doppler_hz',
-    'process.detection.integration_cpis']);
+    'process.tracker.track_guided_shadow.enable',
+    'process.tracker.track_guided_shadow.max_tracks']);
   const measuredGain = clone(krakenBase);
   measuredGain.process.performance.acceleration = 'auto';
   measuredGain.capture.device.heimdall.gain_control = 'measured';

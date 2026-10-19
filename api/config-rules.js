@@ -76,6 +76,8 @@ const rules = {
   'process.tracker.initiate.stationary_clutter.enable': {type: 'boolean', optional: true},
   'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': {...numeric(0, 10000), optional: true},
+  'process.tracker.track_guided_shadow.enable': {type: 'boolean', optional: true},
+  'process.tracker.track_guided_shadow.max_tracks': {...integer(1, 65535), optional: true},
   'process.tracker.delete': integer(1, 255),
   // Storage count only; runtime checked admission enforces the GPU/shared caps.
   'process.tracker.gpu_capacity': {...integer(1, 4294967295), optional: true},

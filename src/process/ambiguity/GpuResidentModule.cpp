@@ -1,4 +1,4 @@
-// Adjacent resident ABI7 module. Older cohorts are separate targets.
+// Adjacent resident ABI8 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -77,7 +77,8 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
   t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.stationaryClutter,
-  t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,c.epoch};
+  t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
+  t.trackGuidedShadow,t.trackGuidedShadowMaxTracks,c.epoch};
  return v;
 }
 class ResidentModule final:public resident::Backend {
@@ -451,7 +452,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI7 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI8 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

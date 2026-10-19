@@ -13,7 +13,7 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=7;
+constexpr unsigned moduleAbi=8;
 constexpr uint32_t protocol=0x42475208,packetBytes=160,configBytes=8768;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
@@ -85,6 +85,8 @@ struct TrackerConfig {
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
+ bool trackGuidedShadow=false;
+ uint32_t trackGuidedShadowMaxTracks=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
 inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){

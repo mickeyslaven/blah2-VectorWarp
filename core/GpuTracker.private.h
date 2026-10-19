@@ -9,6 +9,8 @@ struct TrackerConfig {
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
+ bool trackGuidedShadow=false;
+ uint32_t trackGuidedShadowMaxTracks=0;
  uint64_t epoch=0;
 };
 struct TrackerFrame {uint64_t generation=0,consumedSequence=0,timestamp=0;};
@@ -31,6 +33,8 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
     !std::isfinite(c.stationaryMaxDopplerHz)||c.stationaryMaxDopplerHz<0||
     (c.stationaryClutter?(c.stationaryPersistenceCpis<2||c.stationaryPersistenceCpis>65535):
       (c.stationaryPersistenceCpis||c.stationaryMaxDopplerHz!=0))||
+    (c.trackGuidedShadow?(!c.trackGuidedShadowMaxTracks||c.trackGuidedShadowMaxTracks>c.capacity):
+      c.trackGuidedShadowMaxTracks!=0)||
     c.capacity>(UINT32_MAX-127)/128)
   throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED configuration or index capacity");
  Admission a;
@@ -46,7 +50,8 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  a.hypotheses=c.adaptiveGate?1:2*a.nAcc+1;
  if(!std::isfinite(a.resolution*double(a.nAcc))||!std::isfinite(1/c.cpi))throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED derived configuration");
  a.bankWords=headerWords+a.recordWords*c.capacity;
- a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity)*4;
+ a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity+
+  (c.trackGuidedShadow?16u+c.capacity:0u))*4;
  a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes+
   (c.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16);
  if(uint64_t(a.bankWords)*4>SIZE_MAX||a.stageBytes>SIZE_MAX){throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED host byte capacity");}
@@ -54,7 +59,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
 }
 inline bool sameToken(const TrackerToken& a,const TrackerToken& b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 inline bool sameDouble(double a,double b){return std::memcmp(&a,&b,sizeof(a))==0;}
-inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
+inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.trackGuidedShadow==b.trackGuidedShadow&&a.trackGuidedShadowMaxTracks==b.trackGuidedShadowMaxTracks&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
 const char* common=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -64,6 +69,10 @@ layout(binding=2) buffer BankB {uint b[];};
 layout(binding=3) buffer Scratch {uint s[];};
 layout(binding=4) readonly buffer Postprocess {uint post[];};
 layout(binding=5) buffer StationaryClutter {uint clutterPersistence[];};
+#if TRACK_GUIDED_SHADOW
+layout(binding=6) readonly buffer Integration {double integrationHistory[];};
+layout(binding=7) readonly buffer CurrentPower {double currentPower[];};
+#endif
 layout(push_constant) uniform P {uint count;uint a;uint b;uint c;int d;} p;
 uint indexOf(){return gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*128u;}
 uint groupOf(){return gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;}
@@ -88,6 +97,11 @@ uint historyCapacity(){return max(m[40],100u);}
 uint recordWords(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
 uint work(uint i){return 65u+12u*i;}
+#if TRACK_GUIDED_SHADOW
+uint guidedBase(){return 65u+12u*m[3];}
+uint guidedRead(uint at){return m[guidedBase()+at];}
+void guidedWrite(uint at,uint value){m[guidedBase()+at]=value;}
+#endif
 uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell];
  if((direction&0x80000000u)!=0u)return direction;
  uint flags=s[post[39]+cell],coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
@@ -116,6 +130,13 @@ uint clutterStreak(uint bin){
  uint missed=age>0u?age-1u:0u;
  return packed==0u||missed>=streak?0u:streak-missed;
 }
+uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
+ while(low<high){uint middle=low+(high-low)/2u;
+  if(packDouble2x32(uvec2(post[post[44]+2u*middle],post[post[44]+2u*middle+1u]))<value)low=middle+1u;else high=middle;}
+ if(low==0u)return 0u;if(low>=count)return count-1u;
+ double right=packDouble2x32(uvec2(post[post[44]+2u*low],post[post[44]+2u*low+1u]));
+ double left=packDouble2x32(uvec2(post[post[44]+2u*(low-1u)],post[post[44]+2u*(low-1u)+1u]));
+ return abs(value-left)<=abs(right-value)?low-1u:low;}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
@@ -220,6 +241,9 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;
     if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
+#if TRACK_GUIDED_SHADOW
+   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
+#endif
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
   }
   // Each claim is visible before any lane examines the next ordered track.
@@ -345,12 +369,48 @@ void main(){if(indexOf()!=0u||m[0]!=0u)return;if(m[2]<1u||m[2]>3u){reject(319u);
  if(m[2]!=1u)m[1]=1u-m[1];m[58]=1u;
 }
 )glsl";
-inline std::vector<std::pair<std::string,std::string>> shaderSources(){
+const char* guidedShadowBody=R"glsl(
+#if TRACK_GUIDED_SHADOW
+void main(){uint i=indexOf();if(i>=guidedRead(1u)||i>=m[18]||m[0]!=0u||m[2]!=2u)return;
+ uint r=record(i),w=work(i),id=src(r+12u)&65535u;guidedWrite(16u+i,id<<16u);
+ if(guidedRead(0u)==0u||post[78]==0u||post[74]<4u||post[79]<2u){atomicAdd(m[guidedBase()+6u],1u);return;}
+ double currentDelay=md(w),currentDoppler=md(w+2u),priorDelay=sourceD(r),priorDoppler=sourceD(r+2u);
+ int currentColumn=int(floor(currentDelay-double(int(post[post[45]]))+.5LF));
+ int priorColumn=int(floor(priorDelay-double(int(post[post[45]]))+.5LF));
+ if(currentColumn<0||priorColumn<0||currentColumn>=int(post[33])||priorColumn>=int(post[33])||
+    !finiteD(currentDelay)||!finiteD(currentDoppler)||!finiteD(priorDelay)||!finiteD(priorDoppler)){
+  atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
+ uint currentRow=nearestDopplerRow(currentDoppler),priorRow=nearestDopplerRow(priorDoppler),column=uint(currentColumn);
+ if(clutterAware()){double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
+  if(abs(currentDoppler)<=maximum&&clutterStreak(column)>=clutterPersistence[1]){
+   atomicOr(m[guidedBase()+16u+i],4u);atomicAdd(m[guidedBase()+5u],1u);return;}}
+ uint window=post[46]+post[84]*column,n=post[window+4u];if(n==0u){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
+ uint currentCell=currentRow*post[33]+column,priorCell=priorRow*post[33]+uint(priorColumn);
+ uint priorSlot=(post[79]+post[74]-2u)%post[74];double a=currentPower[currentCell],b=integrationHistory[priorSlot*post[34]+priorCell];
+ if(!finiteD(a)||!finiteD(b)||a<0.0LF||b<0.0LF){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
+ precise double train=0.0LF;uint seen=0u;int shift=priorColumn-currentColumn;
+ for(uint side=0u;side<2u;++side){uint first=post[window+2u*side],last=post[window+2u*side+1u];
+  for(uint j=first;j<last;++j){int old=int(j)+shift;if(old<0||old>=int(post[33]))continue;
+   double x=currentPower[currentRow*post[33]+j],y=integrationHistory[priorSlot*post[34]+priorRow*post[33]+uint(old)];
+   if(finiteD(x)&&finiteD(y)&&x>=0.0LF&&y>=0.0LF){train+=.5LF*(x+y);seen++;}}}
+ if(seen!=n){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
+ double alpha=packDouble2x32(uvec2(post[window+8u],post[window+9u]));
+ precise double cut=.5LF*(a+b),threshold=alpha*(train/double(n));
+ if(!finiteD(cut)||!finiteD(threshold)){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
+ atomicOr(m[guidedBase()+16u+i],1u);atomicAdd(m[guidedBase()+3u],1u);if(cut>threshold){atomicOr(m[guidedBase()+16u+i],2u);atomicAdd(m[guidedBase()+4u],1u);}
+}
+#else
+void main(){}
+#endif
+)glsl";
+inline std::vector<std::pair<std::string,std::string>> shaderSources(bool guided=false){
  const std::pair<const char*,const char*> bodies[]={{"initialize",initializeBody},{"admit",admitBody},{"predict",predictBody},{"associate",associateBody},
   {"unmatched_count",unmatchedCountBody},{"unmatched_prefix",unmatchedPrefixBody},{"unmatched_scatter",unmatchedScatterBody},{"history",historyBody},
-  {"initiate",initiateBody},{"finalize",finalizeBody},{"validate",validateBody},{"validate_totals",validateTotalsBody},{"commit",commitBody},{"persistence",persistenceBody}};
+  {"initiate",initiateBody},{"finalize",finalizeBody},{"validate",validateBody},{"validate_totals",validateTotalsBody},{"commit",commitBody},{"persistence",persistenceBody},{"guided_shadow",guidedShadowBody}};
  std::vector<std::pair<std::string,std::string>> result;
- for(const auto& body:bodies)result.emplace_back(body.first,std::string(common)+body.second);
+ const std::string definition=guided?"#define TRACK_GUIDED_SHADOW 1\n":"#define TRACK_GUIDED_SHADOW 0\n";
+ const std::string header=std::string(common),prefix=header.substr(0,13)+definition+header.substr(13);
+ for(const auto& body:bodies)result.emplace_back(body.first,prefix+body.second);
  return result;
 }
 class Stage {
@@ -361,12 +421,16 @@ class Stage {
  const gpu_postprocess::Layout layout_;
  Buffer& post_;
  Buffer& scratch_;
+ Buffer& integration_;
+ Buffer& currentPower_;
  std::unique_ptr<Buffer> banks_[2],metadata_,clutterPersistence_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t active_=0;
  uint64_t serial_=0;
  bool pending_=false,poisoned_=false,lastCommitted_=false,noOp_=false,copied_=false;
+ bool guidedBudgetExceeded_=false;
+ double guidedLastMs_=0;
  std::array<uint32_t,statusWords> controlEvidence_{};
  double evidenceHostCommitMs_=0;
  TrackerToken pendingToken_{},lastToken_{};
@@ -454,7 +518,7 @@ class Stage {
   const auto a=range(out.checkpoint,out.wordCapacity*4),z=range(out.result,sizeof(TrackerResult));
   const auto overlaps=[](auto x,auto y){return x.first<y.second&&y.first<x.second;};
   if(overlaps(a,z))throw std::invalid_argument("GPU tracker outputs overlap");
-  for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
+  for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_,&integration_,&currentPower_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
   if(overlaps(a,x)||overlaps(z,x))throw std::invalid_argument("GPU tracker output aliases device storage");}
  }
  void copyBank(uint32_t bank,uint32_t words,TrackerOutputs out,const TrackerToken& token,bool noOp){
@@ -472,6 +536,15 @@ class Stage {
     <<" stationary_clutter_suppressed="<<(s[19]-s[27]-admission.unmatched)
     <<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
+  if(config_.trackGuidedShadow){const uint64_t guidedOffset=uint64_t(statusWords+workWords*config_.capacity)*4;
+   metadata_->invalidate(guidedOffset,uint64_t(16+config_.capacity)*4);const auto*g=static_cast<const uint32_t*>(metadata_->mapped)+statusWords+workWords*config_.capacity;
+   if(!guidedBudgetExceeded_){guidedLastMs_=timestamps_->milliseconds(8);if(guidedLastMs_>10.0)guidedBudgetExceeded_=true;}
+   context_.diagnostics.stream()<<" guided_shadow=1 guided_max_tracks="<<g[1]<<" guided_evaluated="<<g[3]<<" guided_above_threshold="<<g[4]
+    <<" guided_stationary_rejected="<<g[5]<<" guided_invalid="<<g[6]<<" guided_would_recover="<<g[7]
+    <<" guided_already_detected="<<g[8]<<" guided_auto_disabled="<<guidedBudgetExceeded_<<" gpu_guided_shadow_ms="<<guidedLastMs_<<" guided_recovery_track_ids=";
+   uint32_t written=0;for(uint32_t i=0;i<std::min(s[18],g[1]);++i)if((g[16+i]&32u)!=0u){if(written++)context_.diagnostics.stream()<<',';context_.diagnostics.stream()<<(g[16+i]>>16u);}
+   if(!written)context_.diagnostics.stream()<<"none";
+  }
   context_.diagnostics.stream()<<" cpu_predict_calls=0 cpu_associate_calls=0 cpu_history_calls=0 cpu_initiate_calls=0\n";
  }
 public:
@@ -480,14 +553,18 @@ public:
  const gpu_native::Timestamps& evidenceTimes()const{return *timestamps_;}
  double evidenceHostCommitMs()const{return evidenceHostCommitMs_;}
  uint32_t activeBank()const{return active_;}
- Stage(Context& context,const TrackerConfig& config,uint32_t cells,Buffer& post,Buffer& scratch,const gpu_postprocess::Layout& layout)
-  :context_(context),config_(config),admission_(validate(config,cells)),cells_(cells),layout_(layout),post_(post),scratch_(scratch){
+ Stage(Context& context,const TrackerConfig& config,uint32_t cells,Buffer& post,Buffer& scratch,const gpu_postprocess::Layout& layout,
+  Buffer& integration,Buffer& currentPower)
+  :context_(context),config_(config),admission_(validate(config,cells)),cells_(cells),layout_(layout),post_(post),scratch_(scratch),integration_(integration),currentPower_(currentPower){
   const auto& limit=context_.candidate.properties.limits;
+  const auto*postWords=static_cast<const uint32_t*>(post.mapped);
   if(layout.cells!=cells||post.bytes<gpu_postprocess::statusWords*4||scratch.bytes<layout.bytes||
      uint64_t(layout.keep)+cells>layout.indices||uint64_t(layout.indices)+cells>layout.candidates||
      uint64_t(layout.candidates)+cells+(uint64_t(cells)+127)/128>layout.records||uint64_t(layout.records)+uint64_t(cells)*8>layout.bytes/4||
-     post.handle==scratch.handle||
-     std::max({uint64_t(admission_.bankWords)*4,admission_.stageBytes,config.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16})>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<6||limit.maxDescriptorSetStorageBuffers<6)
+     !post.mapped||integration.bytes<uint64_t(cells)*(config.trackGuidedShadow?4u:1u)*8||currentPower.bytes<uint64_t(cells)*8||
+     post.handle==scratch.handle||post.handle==integration.handle||post.handle==currentPower.handle||integration.handle==currentPower.handle||
+     (config.trackGuidedShadow&&(!postWords[78]||postWords[74]<4u))||
+     std::max({uint64_t(admission_.bankWords)*4,admission_.stageBytes,config.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16})>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<(config.trackGuidedShadow?8u:6u)||limit.maxDescriptorSetStorageBuffers<(config.trackGuidedShadow?8u:6u))
    throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED buffers or device limits");
   constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
   constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
@@ -507,11 +584,17 @@ public:
   std::memcpy(persistence+6,&retirement.maxDopplerHz,8);
   std::memcpy(persistence+8,&retirement.maxDelaySpan,8);
   clutterPersistence_->flush(0,clutterPersistence_->bytes);
+  std::memset(metadata_->mapped,0,size_t(metadata_->bytes));
+  if(config.trackGuidedShadow){auto* guided=static_cast<uint32_t*>(metadata_->mapped)+statusWords+workWords*config.capacity;
+   guided[0]=1u;guided[1]=config.trackGuidedShadowMaxTracks;}
+  metadata_->flush(0,metadata_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_,clutterPersistence_.get()}));
+  std::vector<Buffer*> bindings{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_,clutterPersistence_.get()};
+  if(config.trackGuidedShadow){bindings.push_back(&integration_);bindings.push_back(&currentPower_);}
+  for(const auto& source:shaderSources(config.trackGuidedShadow))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
   setup({},0);
   commands([&](VkCommandBuffer command){timestamps_->begin(command,6);append(command,0,1);timestamps_->end(command,6);});
-  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
+  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" track_guided_shadow="<<config.trackGuidedShadow<<" guided_max_tracks="<<config.trackGuidedShadowMaxTracks<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
  }
  bool pending()const{return pending_;}
  TrackerToken preparedToken()const{healthy();
@@ -527,6 +610,9 @@ public:
   try{setup(pendingToken_,frame.timestamp);
   commands([&](VkCommandBuffer command){
     timestamps_->begin(command,0);append(command,1,1);append(command,2,std::max(cells_,config_.capacity));timestamps_->end(command,0);
+    if(config_.trackGuidedShadow){const VkDeviceSize offset=uint64_t(statusWords+workWords*config_.capacity)*4+8;
+     vkCmdFillBuffer(command,metadata_->handle,offset,metadata_->bytes-offset,0);barrier(command);
+     if(!guidedBudgetExceeded_){timestamps_->begin(command,8);append(command,14,config_.trackGuidedShadowMaxTracks);timestamps_->end(command,8);}}
     timestamps_->begin(command,1);append(command,3,1);timestamps_->end(command,1);
     timestamps_->begin(command,2);append(command,13,cells_);append(command,4,cells_);append(command,5,1);append(command,6,cells_);timestamps_->end(command,2);
     timestamps_->begin(command,3);append(command,7,128*config_.capacity);append(command,8,128*config_.capacity);append(command,9,1);timestamps_->end(command,3);
@@ -592,7 +678,7 @@ public:
   const uintptr_t first=reinterpret_cast<uintptr_t>(checkpoint);
   const size_t bytes=words*4;
   if(bytes>UINTPTR_MAX-first||first%alignof(uint32_t))throw std::invalid_argument("GPU tracker checkpoint address invalid");
-  for(const Buffer* buffer:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_})if(buffer->mapped){
+  for(const Buffer* buffer:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_,&integration_,&currentPower_})if(buffer->mapped){
    const uintptr_t at=reinterpret_cast<uintptr_t>(buffer->mapped);
    if(buffer->bytes>UINTPTR_MAX-at||(first<at+buffer->bytes&&at<first+bytes))
     throw std::invalid_argument("GPU tracker checkpoint aliases device storage");}

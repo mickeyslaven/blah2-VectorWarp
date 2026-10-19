@@ -570,6 +570,25 @@ function validateConfig(config, baseline = null) {
       errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
       errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
+    let trackGuidedShadow = null;
+    if (tracker.track_guided_shadow !== undefined) {
+      trackGuidedShadow = requireObject(tracker.track_guided_shadow,
+        'process.tracker.track_guided_shadow');
+      boolean(trackGuidedShadow.enable,
+        'process.tracker.track_guided_shadow.enable');
+      number(trackGuidedShadow.max_tracks,
+        'process.tracker.track_guided_shadow.max_tracks',
+        {integer: true, min: 1, max: 65535});
+      if (trackGuidedShadow.enable === true &&
+          (!trackBeforeDetect?.enable || !tracker.enable))
+        errors.push('track-guided shadow requires enabled tracking and track-before-detect');
+      if (trackGuidedShadow.enable === true &&
+          Number.isInteger(tracker.gpu_capacity) &&
+          trackGuidedShadow.max_tracks > tracker.gpu_capacity)
+        errors.push('process.tracker.track_guided_shadow.max_tracks cannot exceed gpu_capacity');
+    }
+    if (trackGuidedShadow?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('track-guided shadow requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');

@@ -43,6 +43,9 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    track_guided_shadow:
+      enable: false
+      max_tracks: 64
     initiate:
       M: 3
       N: 5
