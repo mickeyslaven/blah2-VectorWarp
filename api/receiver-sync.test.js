@@ -371,6 +371,41 @@ async function rejected(promise, code, pattern) {
     }
   } finally { await countMatrix.close(); }
 
+  // Final read-only verification must not drop reported calibration problems
+  // after earlier valid IQ measurements. Stock omissions remain unknown and
+  // compatible; verification never sends a command or invents RF proof.
+  for (const {fields, error} of [
+    {fields: {}},
+    {fields: {phase_state: 4}},
+    {fields: {phase_state: 4, calibration_state: 'CONVERGED', noise_source: false}},
+    ...[{phase_state: '4'}, {phase_state: 4.5}, {phase_state: null},
+      {noise_source: 'false'}, {noise_source: null}, {calibration_state: 'unknown'},
+      {calibration_state: null}].map(fields => ({fields, error: 'KRAKEN_PROTOCOL_MISMATCH'})),
+    ...[{phase_state: 0}, {noise_source: true}, {calibration_state: 'PENDING'}]
+      .map(fields => ({fields, error: 'KRAKEN_CALIBRATION_UNVERIFIED'})),
+    {fields: {calibration_state: 'FAILED'}, error: 'KRAKEN_CALIBRATION_FAILED'}
+  ]) {
+    const writes = [];
+    const verification = await oneShotSuite(socket => {
+      socket.on('data', chunk => writes.push(chunk.toString()));
+      socket.end(JSON.stringify({...status({frequency: 204640000, sampleRate: 2400000,
+        channels: 5, maximum: 5, reconfiguring: false}), ...fields}) + '\n');
+    });
+    try {
+      const promise = createKrakenControlClient({statusTimeoutMs: 100,
+        readbackTimeoutMs: 100}).verify(config(verification.port));
+      if (error) await assert.rejects(promise, caught => caught.code === error &&
+        caught.receiverSync.operations.length === 0, JSON.stringify(fields));
+      else {
+        const receipt = await promise;
+        assert.equal(receipt.status, 'already-matched');
+        assert.equal(receipt.calibrationVerified, false);
+        assert.equal(receipt.hardwareVerified, false);
+      }
+      assert.deepEqual(writes, [], 'Read-only verification must not write receiver commands');
+    } finally { await verification.close(); }
+  }
+
   const malformed = await oneShotSuite(socket => socket.end('{not-json}\n'));
   try {
     await rejected(createKrakenControlClient({statusTimeoutMs: 100,

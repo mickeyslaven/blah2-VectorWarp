@@ -118,6 +118,18 @@ function publicStatus(status) {
   return status && {...status};
 }
 
+function validateOptionalCalibrationDetails(frame, requireReady = false) {
+  if ((frame.noise_source !== undefined && typeof frame.noise_source !== 'boolean') ||
+      (frame.phase_state !== undefined && !Number.isInteger(frame.phase_state)) ||
+      (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)))
+    throw receiverError('KRAKEN_PROTOCOL_MISMATCH', 'Suite supplied malformed calibration status.', 502);
+  if (requireReady && (frame.noise_source === true ||
+      (frame.phase_state !== undefined && frame.phase_state !== 4) ||
+      (frame.calibration_state !== undefined && frame.calibration_state !== 'CONVERGED')))
+    throw receiverError(frame.calibration_state === 'FAILED' ? 'KRAKEN_CALIBRATION_FAILED' :
+      'KRAKEN_CALIBRATION_UNVERIFIED', 'Suite reports calibration is not ready for verification.', 409);
+}
+
 function validateInitialStatus(status, wanted, {waitForRecovery = false} = {}) {
   if (status.operatingMode !== 'coherent')
     throw receiverError('KRAKEN_MODE_MISMATCH',
@@ -281,6 +293,13 @@ function createKrakenControlClient(options = {}) {
         failureReceipt())), recalibrate ? recalibrationTimeoutMs : transactionTimeoutMs);
       const finish = () => {
         if (settled) return;
+        // Read-only verification is also the final gain-selection check. Stock
+        // Suite may omit calibration details, but supplied invalid/non-ready
+        // values cannot be silently discarded after a valid earlier IQ probe.
+        if (readOnly) {
+          try { validateOptionalCalibrationDetails(lastFrame, true); }
+          catch (error) { return fail(error); }
+        }
         if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
           return fail(receiverError('KRAKEN_STATUS_DRIFT',
             'Suite V2 no longer reports the requested settings. The config was not saved.', 409));
@@ -304,11 +323,9 @@ function createKrakenControlClient(options = {}) {
           throw receiverError('KRAKEN_RESET_UNSUPPORTED', 'Automatic recovery requires the normal internal-noise Kraken workflow.', 409);
         if (typeof frame.recovering !== 'boolean' || typeof frame.cooldown_active !== 'boolean' ||
             (frame.kerberos_mode !== undefined && typeof frame.kerberos_mode !== 'boolean') ||
-            (frame.external_noise !== undefined && typeof frame.external_noise !== 'boolean') ||
-            (frame.noise_source !== undefined && typeof frame.noise_source !== 'boolean') ||
-            (frame.phase_state !== undefined && !Number.isInteger(frame.phase_state)) ||
-            (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)))
+            (frame.external_noise !== undefined && typeof frame.external_noise !== 'boolean'))
           throw receiverError('KRAKEN_PROTOCOL_MISMATCH', 'Suite omitted or malformed required AUTO recovery status.', 502);
+        validateOptionalCalibrationDetails(frame);
       };
       const sendFullRecalibration = () => {
         validateRecoveryStatus(lastFrame, lastStatus);
