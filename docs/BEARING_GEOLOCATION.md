@@ -364,6 +364,15 @@ load or apply them. The output is atomically replaced, carries a fingerprint of
 the complete RF/geometry model, and is exposed at
 `/api/bearing/frequency-resolved-shadow`.
 
+The same bounded analysis can run as a one-shot during staged deployments
+without changing the active API configuration:
+
+```sh
+node script/run-frequency-resolved-shadow.js \
+  --config-url http://receiver-host:3000/api/config \
+  --output /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
+```
+
 Promotion requires a separate processor implementation and held-out ADS-B
 comparison across multiple aircraft and sectors. In particular, a well-
 conditioned direct constraint is not by itself proof that suppressing the
