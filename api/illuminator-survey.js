@@ -1,7 +1,9 @@
 'use strict';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
-const clamp = value => Math.max(0, Math.min(1, value));
+const count = value => Number.isSafeInteger(value) && value >= 0;
+const identifier = value => typeof value === 'string' && value.trim().length > 0;
+const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
 
 const DAB_BLOCKS = Object.freeze([
   ['5A', 174928000], ['5B', 176640000], ['5C', 178352000], ['5D', 180064000],
@@ -78,7 +80,9 @@ function receiverCapabilities(config) {
     rf_prescreen: coherent,
     spatial_reflection_assessment: spatial ? 'multi-element' :
       coherent && channels === 2 ? 'two-channel-limited' : 'unavailable',
-    automatic_bearing_safe_selection: spatial,
+    bearing_evidence_evaluation: spatial,
+    automatic_survey_execution: false,
+    automatic_bearing_safe_selection: false,
     limitation: spatial ? null : coherent && channels === 2 ?
       'Two coherent channels can rank reference and radar performance, but cannot independently certify a reflection-safe multi-element bearing manifold.' :
       'A coherent receiver is required for automated illuminator assessment.'};
@@ -89,8 +93,9 @@ const DEFAULT_LIMITS = Object.freeze({minimum_cnr_db: 8, maximum_clipping_fracti
   minimum_cancellation_db: 20,
   minimum_repeat_correlation: .98, minimum_ideal_correlation: .4,
   maximum_amplitude_span_db: 6, maximum_phase_curvature_deg: 60,
-  minimum_adsb_opportunities: 5, minimum_matched_detections: 30,
-  minimum_persistent_tracks: 2, minimum_matched_aircraft: 3, minimum_sectors: 2,
+  minimum_adsb_opportunities: 5, minimum_sector_opportunities: 5, minimum_matched_detections: 30,
+  minimum_persistent_tracks: 2, minimum_persistent_passes: 2,
+  minimum_matched_aircraft: 3, minimum_sectors: 2,
   minimum_held_out_observations: 30,
   maximum_held_out_bearing_error_deg: 20});
 
@@ -106,105 +111,228 @@ function limitsFrom(value) {
       throw new Error(`Illuminator survey limit ${key} must be a non-negative number`);
     if ((key.includes('correlation') || key.includes('fraction')) && setting > 1)
       throw new Error(`Illuminator survey limit ${key} must not exceed 1`);
+    if (['minimum_adsb_opportunities', 'minimum_sector_opportunities',
+      'minimum_matched_detections', 'minimum_persistent_tracks', 'minimum_persistent_passes', 'minimum_matched_aircraft',
+      'minimum_sectors', 'minimum_held_out_observations'].includes(key) && !count(setting))
+      throw new Error(`Illuminator survey limit ${key} must be a non-negative integer`);
     limits[key] = setting;
   }
   return limits;
 }
 
+const COMPARISON_FIELDS = ['site_id', 'protocol_id', 'sector_definition_id',
+  'common_support_id', 'baseline_id'];
+
+// These IDs identify frozen site/protocol/support definitions; frequency and
+// transmitter are the experiment variables and deliberately are not cohort keys.
+function comparisonKey(candidate) {
+  const comparison = candidate?.comparison;
+  if (!comparison || COMPARISON_FIELDS.some(field => !identifier(comparison[field])) ||
+      !Array.isArray(comparison.sector_ids) || comparison.sector_ids.length < 2 ||
+      comparison.sector_ids.some(sector => !identifier(sector)) ||
+      new Set(comparison.sector_ids).size !== comparison.sector_ids.length ||
+      typeof candidate.bearing_required !== 'boolean') return null;
+  return JSON.stringify([...COMPARISON_FIELDS.map(field => comparison[field]),
+    [...comparison.sector_ids].sort(), candidate.bearing_required]);
+}
+
+function trackingEvidence(candidate, limits, failures, missing) {
+  const tracking = candidate?.tracking || {};
+  const sectors = comparisonKey(candidate) ? candidate.comparison.sector_ids : [];
+  const metrics = ['adsb_opportunities', 'matched_passes', 'persistent_passes',
+    'matched_detections', 'persistent_tracks', 'matched_aircraft', 'sectors',
+    'held_out_observations'];
+  for (const field of metrics) {
+    if (tracking[field] === undefined) missing.push(`tracking.${field}`);
+    else if (!count(tracking[field])) failures.push(`invalid-${field.replaceAll('_', '-')}`);
+  }
+  for (const [numerator, denominator] of [['matched_passes', 'adsb_opportunities'],
+    ['persistent_passes', 'matched_passes'], ['matched_aircraft', 'matched_passes'],
+    ['persistent_tracks', 'matched_detections']]) {
+    if (count(tracking[numerator]) && count(tracking[denominator]) &&
+        tracking[numerator] > tracking[denominator]) failures.push(`invalid-${numerator.replaceAll('_', '-')}`);
+  }
+  for (const [field, threshold] of [['adsb_opportunities', limits.minimum_adsb_opportunities],
+    ['matched_detections', limits.minimum_matched_detections],
+    ['persistent_tracks', limits.minimum_persistent_tracks],
+    ['persistent_passes', limits.minimum_persistent_passes],
+    ['matched_aircraft', Math.max(2, limits.minimum_matched_aircraft)],
+    ['sectors', Math.max(2, limits.minimum_sectors)],
+    ['held_out_observations', limits.minimum_held_out_observations]]) {
+    if (count(tracking[field]) && tracking[field] < threshold)
+      failures.push(`insufficient-${field.replaceAll('_', '-')}`);
+  }
+
+  const passes = new Map(), bySector = new Map(sectors.map(sector => [sector, []]));
+  if (!Array.isArray(tracking.eligible_passes)) missing.push('tracking.eligible_passes');
+  else {
+    for (const pass of tracking.eligible_passes) {
+      if (!pass || !identifier(pass.pass_id) || !identifier(pass.aircraft_id) ||
+          !identifier(pass.sector_id) || typeof pass.matched !== 'boolean' ||
+          typeof pass.persistent !== 'boolean' || (pass.persistent && !pass.matched) ||
+          passes.has(pass.pass_id) || !bySector.has(pass.sector_id)) {
+        failures.push('invalid-eligible-pass-provenance');
+        continue;
+      }
+      passes.set(pass.pass_id, pass);
+      bySector.get(pass.sector_id).push(pass);
+    }
+    const matched = [...passes.values()].filter(pass => pass.matched);
+    const derived = {adsb_opportunities: passes.size, matched_passes: matched.length,
+      persistent_passes: matched.filter(pass => pass.persistent).length,
+      matched_aircraft: new Set(matched.map(pass => pass.aircraft_id)).size,
+      sectors: new Set(matched.map(pass => pass.sector_id)).size};
+    for (const [field, value] of Object.entries(derived)) {
+      if (count(tracking[field]) && tracking[field] !== value)
+        failures.push(`inconsistent-${field.replaceAll('_', '-')}`);
+    }
+    if (count(tracking.matched_detections) && tracking.matched_detections < matched.length)
+      failures.push('invalid-matched-detections');
+    if (count(tracking.persistent_tracks) && tracking.persistent_tracks < derived.persistent_passes)
+      failures.push('invalid-persistent-tracks');
+  }
+  const sectorRates = sectors.map(sector_id => {
+    const eligible = bySector.get(sector_id);
+    if (eligible.length < Math.max(1, limits.minimum_sector_opportunities))
+      failures.push('insufficient-sector-opportunities');
+    return {sector_id, adsb_opportunities: eligible.length,
+      matched_passes: eligible.filter(pass => pass.matched).length,
+      persistent_passes: eligible.filter(pass => pass.persistent).length};
+  });
+
+  const heldOut = tracking.held_out || {}, fitPasses = new Set(), fitAircraft = new Set();
+  if (!Array.isArray(heldOut.fit_passes)) missing.push('tracking.held_out.fit_passes');
+  else for (const pass of heldOut.fit_passes) {
+    if (!pass || !identifier(pass.pass_id) || !identifier(pass.aircraft_id) ||
+        fitPasses.has(pass.pass_id)) failures.push('invalid-fit-pass-provenance');
+    else { fitPasses.add(pass.pass_id); fitAircraft.add(pass.aircraft_id); }
+  }
+  // All eligible passes belong to the evaluation split, including unmatched
+  // opportunities. Training aircraft must not inflate the yield ranking.
+  if ([...passes.values()].some(pass => fitPasses.has(pass.pass_id) || fitAircraft.has(pass.aircraft_id)))
+    failures.push('evaluation-data-leakage');
+  const observations = [], observationIds = new Set();
+  if (!Array.isArray(heldOut.observations)) missing.push('tracking.held_out.observations');
+  else {
+    for (const observation of heldOut.observations) {
+      const pass = passes.get(observation?.pass_id);
+      if (!observation || !identifier(observation.observation_id) ||
+          observationIds.has(observation.observation_id) || !pass || !pass.matched ||
+          pass.aircraft_id !== observation.aircraft_id || pass.sector_id !== observation.sector_id) {
+        failures.push('invalid-held-out-provenance');
+        continue;
+      }
+      observationIds.add(observation.observation_id);
+      if (fitPasses.has(observation.pass_id) || fitAircraft.has(observation.aircraft_id))
+        failures.push('held-out-data-leakage');
+      observations.push(observation);
+    }
+    if (count(tracking.held_out_observations) && tracking.held_out_observations !== observations.length)
+      failures.push('inconsistent-held-out-observations');
+    if (new Set(observations.map(item => item.aircraft_id)).size < Math.max(2, limits.minimum_matched_aircraft))
+      failures.push('insufficient-held-out-aircraft');
+    if (new Set(observations.map(item => item.sector_id)).size < Math.max(2, limits.minimum_sectors))
+      failures.push('insufficient-held-out-sectors');
+  }
+
+  const sectorErrors = [];
+  for (const sector_id of sectors) {
+    const observed = observations.filter(item => item.sector_id === sector_id);
+    if (!observed.length) missing.push(`tracking.held_out.sector:${sector_id}`);
+    if (candidate?.bearing_required !== true || !observed.length) continue;
+    if (observed.some(item => !finite(item.bearing_error_deg) || item.bearing_error_deg < 0 ||
+        item.bearing_error_deg > 180 || !finite(item.baseline_bearing_error_deg) ||
+        item.baseline_bearing_error_deg < 0 || item.baseline_bearing_error_deg > 180)) {
+      failures.push('invalid-held-out-bearing-error');
+      continue;
+    }
+    // Equal pass weight inside each sector prevents a long dwell from hiding
+    // a bad pass; sectors also receive equal weight in the final ranking.
+    const passIds = [...new Set(observed.map(item => item.pass_id))];
+    const averageError = field => mean(passIds.map(pass_id =>
+      mean(observed.filter(item => item.pass_id === pass_id).map(item => item[field]))));
+    const error = averageError('bearing_error_deg');
+    const baseline = averageError('baseline_bearing_error_deg');
+    sectorErrors.push({sector_id, bearing_error_deg: error, baseline_bearing_error_deg: baseline});
+    if (error > limits.maximum_held_out_bearing_error_deg) failures.push('held-out-bearing-error');
+    if (error > baseline) failures.push('held-out-sector-regression');
+  }
+  const heldOutError = sectorErrors.length === sectors.length && sectors.length ?
+    mean(sectorErrors.map(item => item.bearing_error_deg)) : null;
+  if (candidate?.bearing_required === true) {
+    if (tracking.held_out_bearing_error_deg === undefined) missing.push('tracking.held_out_bearing_error_deg');
+    else if (!finite(tracking.held_out_bearing_error_deg) || tracking.held_out_bearing_error_deg < 0 ||
+        tracking.held_out_bearing_error_deg > 180) failures.push('invalid-held-out-bearing-error');
+    else if (heldOutError !== null && Math.abs(tracking.held_out_bearing_error_deg - heldOutError) > 1e-6)
+      failures.push('inconsistent-held-out-bearing-error');
+  }
+  const rate = field => sectorRates.length && sectorRates.every(item => item.adsb_opportunities > 0) ?
+    mean(sectorRates.map(item => item[field] / item.adsb_opportunities)) : null;
+  return {persistent_pass_rate: rate('persistent_passes'), matched_pass_rate: rate('matched_passes'),
+    held_out_bearing_error_deg: heldOutError, sector_rates: sectorRates,
+    held_out_sector_errors: sectorErrors};
+}
+
 function evaluateCandidate(candidate, capabilities, suppliedLimits = {}) {
   const limits = limitsFrom(suppliedLimits);
   const reference = candidate?.reference || {}, spatial = candidate?.spatial || {};
-  const tracking = candidate?.tracking || {}, failures = [], missing = [];
-  if (!finite(candidate?.frequency_hz) || candidate.frequency_hz <= 0)
-    failures.push('invalid-frequency');
+  const failures = [], missing = [];
+  if (!finite(candidate?.frequency_hz) || candidate.frequency_hz <= 0) failures.push('invalid-frequency');
+  if (typeof candidate?.bearing_required !== 'boolean') missing.push('bearing_required');
+  if (!comparisonKey(candidate)) missing.push('comparison-cohort-and-sector-support');
+  if (capabilities?.rf_prescreen !== true || !count(capabilities?.coherent_channels) ||
+      capabilities.coherent_channels < 2) failures.push('unsupported-receiver');
   if (!finite(reference.cnr_db)) missing.push('reference.cnr_db');
   else if (reference.cnr_db < limits.minimum_cnr_db) failures.push('reference-too-weak');
   if (!finite(reference.clipping_fraction)) missing.push('reference.clipping_fraction');
-  else if (reference.clipping_fraction > limits.maximum_clipping_fraction)
-    failures.push('receiver-clipping');
+  else if (reference.clipping_fraction < 0 || reference.clipping_fraction > 1)
+    failures.push('invalid-clipping-fraction');
+  else if (reference.clipping_fraction > limits.maximum_clipping_fraction) failures.push('receiver-clipping');
   if (!finite(reference.occupied_bandwidth_fraction)) missing.push('reference.occupied_bandwidth_fraction');
-  else if (reference.occupied_bandwidth_fraction < limits.minimum_occupied_bandwidth_fraction ||
-      reference.occupied_bandwidth_fraction > 1) failures.push('insufficient-occupied-bandwidth');
+  else if (reference.occupied_bandwidth_fraction < 0 || reference.occupied_bandwidth_fraction > 1)
+    failures.push('invalid-occupied-bandwidth-fraction');
+  else if (reference.occupied_bandwidth_fraction < limits.minimum_occupied_bandwidth_fraction)
+    failures.push('insufficient-occupied-bandwidth');
   if (!finite(reference.ambiguity_pslr_db)) missing.push('reference.ambiguity_pslr_db');
-  else if (reference.ambiguity_pslr_db > -limits.minimum_ambiguity_suppression_db)
-    failures.push('poor-ambiguity-sidelobes');
+  else if (reference.ambiguity_pslr_db > -limits.minimum_ambiguity_suppression_db) failures.push('poor-ambiguity-sidelobes');
   if (!finite(reference.cancellation_db)) missing.push('reference.cancellation_db');
-  else if (reference.cancellation_db < limits.minimum_cancellation_db)
-    failures.push('poor-cancellation');
+  else if (reference.cancellation_db < limits.minimum_cancellation_db) failures.push('poor-cancellation');
 
-  let bearingStatus = 'not-requested';
+  let bearingStatus = candidate?.bearing_required === false ? 'not-requested' : 'unproven';
   if (candidate?.bearing_required === true) {
     if (capabilities?.spatial_reflection_assessment === 'multi-element') {
-      bearingStatus = 'eligible';
+      const spatialFailures = failures.length;
       const spatialChecks = [
-        ['repeat_principal_correlation', limits.minimum_repeat_correlation, 'minimum',
-          'spatial-response-unstable'],
-        ['ideal_correlation', limits.minimum_ideal_correlation, 'minimum',
-          'direct-path-spatial-mismatch'],
-        ['coherent_component_amplitude_span_db', limits.maximum_amplitude_span_db, 'maximum',
-          'severe-channel-imbalance'],
-        ['phase_curvature_peak_to_peak_deg', limits.maximum_phase_curvature_deg, 'maximum',
-          'severe-frequency-dependent-multipath']
+        ['repeat_principal_correlation', limits.minimum_repeat_correlation, 'minimum', 'spatial-response-unstable'],
+        ['ideal_correlation', limits.minimum_ideal_correlation, 'minimum', 'direct-path-spatial-mismatch'],
+        ['coherent_component_amplitude_span_db', limits.maximum_amplitude_span_db, 'maximum', 'severe-channel-imbalance'],
+        ['phase_curvature_peak_to_peak_deg', limits.maximum_phase_curvature_deg, 'maximum', 'severe-frequency-dependent-multipath']
       ];
       for (const [field, boundary, direction, reason] of spatialChecks) {
         if (!finite(spatial[field])) missing.push(`spatial.${field}`);
-        else if (direction === 'minimum' ? spatial[field] < boundary : spatial[field] > boundary)
-          failures.push(reason);
+        else if (spatial[field] < 0 || (field.includes('correlation') && spatial[field] > 1))
+          failures.push(`invalid-spatial-${field.replaceAll('_', '-')}`);
+        else if (direction === 'minimum' ? spatial[field] < boundary : spatial[field] > boundary) failures.push(reason);
       }
-      if (spatial.transmitter_coordinates_verified !== true)
-        missing.push('spatial.transmitter_coordinates_verified');
-      if (failures.some(reason => reason.startsWith('spatial-') ||
-          reason.includes('mismatch') || reason.includes('imbalance') || reason.includes('multipath')))
-        bearingStatus = 'unsafe';
-      else if (missing.some(field => field.startsWith('spatial.'))) bearingStatus = 'unproven';
+      if (spatial.transmitter_coordinates_verified !== true) missing.push('spatial.transmitter_coordinates_verified');
+      bearingStatus = failures.length > spatialFailures ? 'unsafe' :
+        missing.some(field => field.startsWith('spatial.')) ? 'unproven' : 'eligible';
     } else {
       bearingStatus = 'externally-unverified';
       missing.push('multi-element-spatial-reflection-assessment');
     }
   }
-
-  const evidence = [
-    ['matched_aircraft', limits.minimum_matched_aircraft],
-    ['sectors', limits.minimum_sectors],
-    ['held_out_observations', limits.minimum_held_out_observations]
-  ];
-  for (const [field, threshold] of evidence) {
-    if (!finite(tracking[field])) missing.push(`tracking.${field}`);
-    else if (tracking[field] < threshold) failures.push(`insufficient-${field.replaceAll('_', '-')}`);
+  const scores = trackingEvidence(candidate, limits, failures, missing);
+  if (candidate?.bearing_required === true && bearingStatus === 'eligible') {
+    if (failures.some(reason => reason.startsWith('held-out-') || reason.startsWith('invalid-held-out')))
+      bearingStatus = 'unsafe';
+    else if (failures.length || missing.length) bearingStatus = 'unproven';
   }
-  if (candidate?.bearing_required === true) {
-    if (!finite(tracking.held_out_bearing_error_deg)) missing.push('tracking.held_out_bearing_error_deg');
-    else if (tracking.held_out_bearing_error_deg > limits.maximum_held_out_bearing_error_deg)
-      failures.push('held-out-bearing-error');
-  }
-  for (const [field, threshold] of [['adsb_opportunities', limits.minimum_adsb_opportunities],
-    ['matched_detections', limits.minimum_matched_detections],
-    ['persistent_tracks', limits.minimum_persistent_tracks]]) {
-    if (!finite(tracking[field])) missing.push(`tracking.${field}`);
-    else if (tracking[field] < threshold) failures.push(`insufficient-${field.replaceAll('_', '-')}`);
-  }
-
   const hardFailure = failures.some(reason => !reason.startsWith('insufficient-'));
-  const status = hardFailure ? 'rejected' : failures.length || missing.length ?
-    'rf-prescreen-only' : 'qualified';
-  const signalScore = [
-    finite(reference.cnr_db) ? clamp((reference.cnr_db - 8) / 32) : 0,
-    finite(reference.occupied_bandwidth_fraction) ? clamp(reference.occupied_bandwidth_fraction) : 0,
-    finite(reference.ambiguity_pslr_db) ? clamp((-reference.ambiguity_pslr_db - 3) / 27) : 0,
-    finite(reference.cancellation_db) ? clamp((reference.cancellation_db - 10) / 40) : 0
-  ].reduce((sum, value) => sum + value, 0) / 4;
-  const spatialScore = capabilities?.spatial_reflection_assessment !== 'multi-element' ? null : [
-    finite(spatial.ideal_correlation) ? clamp((spatial.ideal_correlation - .4) / .6) : 0,
-    finite(spatial.coherent_component_amplitude_span_db) ?
-      clamp(1 - spatial.coherent_component_amplitude_span_db / 6) : 0,
-    finite(spatial.phase_curvature_peak_to_peak_deg) ?
-      clamp(1 - spatial.phase_curvature_peak_to_peak_deg / 60) : 0,
-    finite(spatial.repeat_principal_correlation) ?
-      clamp((spatial.repeat_principal_correlation - .98) / .02) : 0
-  ].reduce((sum, value) => sum + value, 0) / 4;
+  const status = hardFailure ? 'rejected' : failures.length || missing.length ? 'rf-prescreen-only' : 'qualified';
   return {frequency_hz: candidate?.frequency_hz, name: candidate?.name || null,
     status, bearing_status: bearingStatus, failures: [...new Set(failures)],
-    missing: [...new Set(missing)], scores: {signal: signalScore, spatial: spatialScore}};
+    missing: [...new Set(missing)], scores};
 }
 
 function evaluateSurvey(candidates, config, limits) {
@@ -212,14 +340,22 @@ function evaluateSurvey(candidates, config, limits) {
     throw new Error('Illuminator survey requires candidate measurements');
   const capabilities = receiverCapabilities(config);
   const results = candidates.map(candidate => evaluateCandidate(candidate, capabilities, limits));
-  const eligible = results.filter(result => result.status === 'qualified');
-  eligible.sort((left, right) =>
-    ((right.scores.signal + (right.scores.spatial ?? 0)) -
-     (left.scores.signal + (left.scores.spatial ?? 0))));
-  return {schema: 'vectorwarp-illuminator-survey-evaluation-v1', capabilities,
-    results, selected: eligible[0] || null,
-    selection_reason: eligible.length ? 'Highest fully qualified radar and spatial score.' :
-      'No candidate passed both radar-performance evidence and bearing-safety gates.'};
+  const keys = candidates.map(comparisonKey);
+  const comparable = keys.every(key => key !== null && key === keys[0]);
+  const eligible = comparable ? results.filter(result => result.status === 'qualified') : [];
+  const compareYield = (left, right) =>
+    right.scores.persistent_pass_rate - left.scores.persistent_pass_rate ||
+    right.scores.matched_pass_rate - left.scores.matched_pass_rate ||
+    (left.scores.held_out_bearing_error_deg ?? 0) - (right.scores.held_out_bearing_error_deg ?? 0);
+  eligible.sort(compareYield);
+  const tied = eligible.length > 1 && compareYield(eligible[0], eligible[1]) === 0;
+  return {schema: 'vectorwarp-illuminator-survey-evaluation-v2', capabilities,
+    results, selected: tied ? null : eligible[0] || null, recommendation_only: true,
+    comparison_failures: comparable ? [] : ['incomparable-survey-cohorts'],
+    selection_reason: tied ? 'Qualified candidates tie on pass yield and held-out error; more evidence is required.' : eligible.length ?
+      'Highest equal-sector persistent-pass yield, then matched-pass yield, then lowest held-out bearing error; recommendation only.' :
+      comparable ? 'No candidate passed radar-performance evidence and requested bearing-safety gates.' :
+        'Selection requires the same site, protocol, common support, sectors, baseline and explicit bearing requirement.'};
 }
 
 module.exports = {DEFAULT_LIMITS, bandPlans, receiverCapabilities,

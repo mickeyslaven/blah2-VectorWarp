@@ -39,3 +39,50 @@ receiver's honest assessment limits. `POST /api/illuminator-survey/evaluate`
 accepts candidate evidence and returns per-candidate rejection/missing-evidence
 reasons. The evaluator never promotes a candidate merely because it is the
 best of a bad set.
+
+## Evidence and ranking contract (v2)
+
+Each candidate must explicitly set `bearing_required` to a boolean. Omitting
+it cannot bypass bearing checks. The recommendation is conditional on supplied
+evidence and is never a command to change the receiver or promote a model.
+Capabilities expose `bearing_evidence_evaluation` separately from automatic
+execution and selection, both of which remain false.
+
+`comparison` contains `site_id`, `protocol_id`, `sector_definition_id`,
+`common_support_id`, `baseline_id`, and `sector_ids` (at least two unique strings).
+These identify frozen definitions, not arbitrary labels for otherwise different
+experiments. They must match across the survey. Frequency/transmitter identity
+remain candidate variables. Mixed radar-only and bearing-required candidates
+cannot be ranked in one survey.
+
+`tracking.eligible_passes` contains unique evaluation passes with `pass_id`,
+`aircraft_id`, `sector_id`, `matched` and `persistent`. The two latter fields are
+booleans; persistence implies a match. Eligibility is determined independently
+of detection success. Aggregate counts `adsb_opportunities`, `matched_passes`,
+`persistent_passes`, `matched_aircraft` and `sectors` must agree with these
+records. `matched_detections` counts matched frames and is **not** divided by
+pass opportunities. `persistent_tracks` remains a separate evidence count.
+
+`tracking.held_out.fit_passes` is an explicit array of `{pass_id, aircraft_id}`;
+use `[]` for a predetermined model with no fit data. Training aircraft/passes
+must be disjoint from the evaluation passes. `held_out.observations` contains
+`observation_id`, `pass_id`, `aircraft_id` and `sector_id`, plus paired
+`bearing_error_deg` and `baseline_bearing_error_deg` for bearing-required runs.
+Each observation must refer to a matched evaluation pass. IDs are unique and
+aircraft, sector and aggregate counts are cross-checked. Every declared sector
+needs opportunities and held-out observations. Counts, fractions and circular
+errors have explicit validity ranges.
+
+Bearing errors use equal pass weight within each sector, then equal sector
+weight. `tracking.held_out_bearing_error_deg` must match that derived value.
+Each sector must pass the absolute error limit and not regress from its paired
+baseline. RF/spatial measurements are qualification gates only. Qualified
+candidates rank by equal-sector persistent-pass yield, matched-pass yield, then
+held-out bearing error. This avoids treating a stronger reference or more busy
+airspace as better radar performance. Confidence intervals and provenance still
+belong in the acquisition report; the evaluator cannot authenticate caller data.
+
+See [the executor design](ILLUMINATOR_SURVEY_EXECUTOR.md) for preview/intent,
+catalog and receiver contracts, durable restore, alternating blocks, opportunity
+definitions and failure tests. That document describes work still needed before
+automatic end-to-end surveys can run.

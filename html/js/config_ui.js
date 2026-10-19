@@ -736,6 +736,10 @@ function typedInput(value, path) {
     wrapper.append(mode, manual);
     return wrapper;
   }
+  if (rule.type === 'autoBoolean') {
+    const selected = typeof value === 'boolean' ? (value ? 'on' : 'off') : value;
+    return selectInput(rule.choices, selected, next => setValue(path, next));
+  }
   if (typeof value === 'boolean' || rule.type === 'boolean') {
     const label = document.createElement('label');
     label.className = 'switch';
