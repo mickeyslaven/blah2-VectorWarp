@@ -91,7 +91,7 @@ Bearing errors use equal pass weight within each sector, then equal sector
 weight. `tracking.held_out_bearing_error_deg` must match that derived value.
 Each sector must pass the absolute error limit and not regress from its paired
 baseline. RF/spatial measurements are qualification gates only. Qualified
-candidates rank by equal-sector persistent-pass yield, matched-pass yield,
+candidates rank by equal-sector-by-range persistent-pass yield, matched-pass yield,
 safely available receiver gain, input-referred noise, then held-out bearing
 error. Gain is only a tie-breaker after actual radar yield and cannot make a weak
 or otherwise unqualified reference win. This avoids treating a stronger direct

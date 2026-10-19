@@ -393,7 +393,7 @@ function evaluateSurvey(candidates, config, limits) {
     results, selected: tied ? null : eligible[0] || null, recommendation_only: true,
     comparison_failures: comparable ? [] : ['incomparable-survey-cohorts'],
     selection_reason: tied ? 'Qualified candidates tie on pass yield, surveillance sensitivity and held-out error; more evidence is required.' : eligible.length ?
-      'Highest equal-sector persistent-pass yield, then matched-pass yield, safely available receiver gain, lowest input-referred noise and held-out bearing error; recommendation only.' :
+      'Highest equal-sector-by-range persistent-pass yield, then matched-pass yield, safely available receiver gain, lowest input-referred noise and held-out bearing error; recommendation only.' :
       comparable ? 'No candidate passed radar-performance evidence and requested bearing-safety gates.' :
         'Selection requires the same site, protocol, common support, sectors, baseline and explicit bearing requirement.'};
 }
