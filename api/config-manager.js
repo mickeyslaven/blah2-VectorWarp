@@ -576,6 +576,9 @@ function validateConfig(config, baseline = null) {
         'process.tracker.track_guided_shadow');
       boolean(trackGuidedShadow.enable,
         'process.tracker.track_guided_shadow.enable');
+      if (trackGuidedShadow.promote !== undefined)
+        boolean(trackGuidedShadow.promote,
+          'process.tracker.track_guided_shadow.promote');
       number(trackGuidedShadow.max_tracks,
         'process.tracker.track_guided_shadow.max_tracks',
         {integer: true, min: 1, max: 65535});
@@ -593,6 +596,8 @@ function validateConfig(config, baseline = null) {
       if (trackGuidedShadow.enable === true &&
           (!trackBeforeDetect?.enable || !tracker.enable))
         errors.push('track-guided shadow requires enabled tracking and track-before-detect');
+      if (trackGuidedShadow.promote === true && trackGuidedShadow.enable !== true)
+        errors.push('track-guided recovery promotion requires the shadow evaluator');
       if (trackGuidedShadow.enable === true &&
           Number.isInteger(tracker.gpu_capacity) &&
           trackGuidedShadow.max_tracks > tracker.gpu_capacity)

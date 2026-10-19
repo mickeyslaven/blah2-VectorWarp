@@ -137,6 +137,7 @@ const CONFIG_META = {
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': ['Stationary Doppler band', 'Absolute Doppler range learned as persistent clutter, in Hz.'],
   'process.tracker.track_guided_shadow': ['Track-guided recovery shadow', 'Test weak moving-track recovery from rolling CPI maps without changing live tracks.'],
   'process.tracker.track_guided_shadow.enable': ['Enable recovery shadow', 'Run the bounded GPU-resident counterfactual and report timing and would-recover track IDs.'],
+  'process.tracker.track_guided_shadow.promote': ['Promote guided recoveries', 'Feed qualifying guided observations through the normal tracker lifecycle; disable to retain shadow-only evaluation.'],
   'process.tracker.track_guided_shadow.max_tracks': ['Maximum shadow tracks', 'Hard per-frame GPU cap for the selected tracks and their small CFAR windows.'],
   'process.tracker.track_guided_shadow.evidence_path': ['Recovery evidence path', 'Absolute JSONL path for ADS-B-labelled shadow recovery evidence.'],
   'process.tracker.track_guided_shadow.max_truth_age_s': ['Maximum ADS-B age', 'Discard recovery comparisons whose aircraft position is too old.'],

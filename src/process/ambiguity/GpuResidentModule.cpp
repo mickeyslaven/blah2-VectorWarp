@@ -78,7 +78,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
   t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.stationaryClutter,
   t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
-  t.trackGuidedShadow,t.trackGuidedShadowMaxTracks,c.epoch};
+  t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedShadowMaxTracks,c.epoch};
  return v;
 }
 class ResidentModule final:public resident::Backend {

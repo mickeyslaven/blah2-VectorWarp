@@ -53,6 +53,7 @@ Config configuration(const char* device) {
   c.tracker.rangeRes = 299792458.0 / c.sampleRate;
   c.tracker.lambda = 299792458.0 / c.fusion.frequencyHz;
   c.tracker.trackGuidedShadow = true;
+  c.tracker.trackGuidedPromote = true;
   c.tracker.trackGuidedShadowMaxTracks = 64;
   c.bearing = {true, BearingMethod::covarianceMvdr, BearingReferenceAnchor::fixedSite,
     60, 3, 1, 3, .01,

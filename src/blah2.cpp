@@ -775,6 +775,7 @@ try
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   double stationaryMaxDopplerHz=residentMode?15.0:0.0;
   bool trackGuidedShadow=false;
+  bool trackGuidedPromote=false;
   uint32_t trackGuidedShadowMaxTracks=0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
@@ -792,7 +793,8 @@ try
   if(tree["process"]["tracker"].has_child("track_guided_shadow")){
     const auto& guided=tree["process"]["tracker"]["track_guided_shadow"];
     guided["enable"] >> trackGuidedShadow;
-    if(trackGuidedShadow)guided["max_tracks"] >> trackGuidedShadowMaxTracks;
+    if(trackGuidedShadow){guided["max_tracks"] >> trackGuidedShadowMaxTracks;
+      if(guided.has_child("promote"))guided["promote"] >> trackGuidedPromote;}
   }
   if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
     throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
@@ -886,7 +888,7 @@ try
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
         ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
         stationaryPersistenceCpis,stationaryMaxDopplerHz,
-        trackGuidedShadow,trackGuidedShadowMaxTracks};
+        trackGuidedShadow,trackGuidedPromote,trackGuidedShadowMaxTracks};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);

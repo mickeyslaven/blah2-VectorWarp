@@ -108,11 +108,12 @@ void configCases(){
   "Persistent clutter initiation configuration did not round trip");
  check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
   "Persistent clutter initiation is not bound to config identity");
- auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedShadowMaxTracks=4;
+ auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedPromote=true;guided.tracker.trackGuidedShadowMaxTracks=4;
  guided.presence|=bit(Section::guidedRecoveries);
  const auto guidedBytes=encodeConfig(guided);
  const auto guidedDecoded=decodeConfig(bytes(guidedBytes),bytes(d),bytes(f));
  check(guidedDecoded.tracker.trackGuidedShadow&&
+  guidedDecoded.tracker.trackGuidedPromote&&
   guidedDecoded.tracker.trackGuidedShadowMaxTracks==4&&
   encodeConfig(guidedDecoded)==guidedBytes,
   "Track-guided shadow configuration did not round trip");
@@ -138,6 +139,7 @@ void configCases(){
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=0;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=1;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=1;});
+ mutate([](auto&v){v.tracker.trackGuidedPromote=true;});
  mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=0;});
  mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=v.tracker.capacity+1;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});

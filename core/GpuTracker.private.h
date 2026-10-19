@@ -10,6 +10,7 @@ struct TrackerConfig {
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
  bool trackGuidedShadow=false;
+ bool trackGuidedPromote=false;
  uint32_t trackGuidedShadowMaxTracks=0;
  uint64_t epoch=0;
 };
@@ -37,7 +38,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
     (c.stationaryClutter?(c.stationaryPersistenceCpis<2||c.stationaryPersistenceCpis>65535):
       (c.stationaryPersistenceCpis||c.stationaryMaxDopplerHz!=0))||
     (c.trackGuidedShadow?(!c.trackGuidedShadowMaxTracks||c.trackGuidedShadowMaxTracks>c.capacity):
-      c.trackGuidedShadowMaxTracks!=0)||
+      (c.trackGuidedShadowMaxTracks!=0||c.trackGuidedPromote))||
     c.capacity>(UINT32_MAX-127)/128)
   throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED configuration or index capacity");
  Admission a;
@@ -62,7 +63,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
 }
 inline bool sameToken(const TrackerToken& a,const TrackerToken& b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 inline bool sameDouble(double a,double b){return std::memcmp(&a,&b,sizeof(a))==0;}
-inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.trackGuidedShadow==b.trackGuidedShadow&&a.trackGuidedShadowMaxTracks==b.trackGuidedShadowMaxTracks&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
+inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.trackGuidedShadow==b.trackGuidedShadow&&a.trackGuidedPromote==b.trackGuidedPromote&&a.trackGuidedShadowMaxTracks==b.trackGuidedShadowMaxTracks&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
 const char* common=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -237,17 +238,25 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     if(distances[other]<distances[lane]||(distances[other]==distances[lane]&&identities[other]<identities[lane])){
      distances[lane]=distances[other];identities[lane]=identities[other];}}
    barrier();}
-  if(lane==0u){match=identities[0];double acc=sourceD(r+6u);bool alive=true;
+  if(lane==0u){match=identities[0];double acc=sourceD(r+6u);bool alive=true,guidedAssociation=false;
+#if TRACK_GUIDED_SHADOW
+   uint shadow=guidedRead(16u+i)|(src(r+14u)<<8u);
+   if(guidedRead(0u)!=0u&&(shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);atomicAdd(m[guidedBase()+(src(r+14u)<2u?11u:12u)],1u);shadow|=32u;
+      if((guidedRead(0u)&2u)!=0u){guidedAssociation=true;shadow|=64u;atomicAdd(m[guidedBase()+13u],1u);}}
+     else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}
+   guidedWrite(16u+i,shadow);
+#endif
    if(match!=0xffffffffu){precise double updated=adaptiveTentative&&src(r+10u)>0u?
      sourceD(r+6u)+(sd(m[5]+8u*match+2u)-md(w+2u))/gateTime:
      (sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
     if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;
     if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
+   else if(guidedAssociation){state=(state==2u||state==3u)?2u:1u;m[27]++;}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
-#if TRACK_GUIDED_SHADOW
-   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i)|(src(r+14u)<<8u);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);atomicAdd(m[guidedBase()+(src(r+14u)<2u?11u:12u)],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
-#endif
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
+#if TRACK_GUIDED_SHADOW
+   m[w+10u]=guidedAssociation?1u:0u;
+#endif
   }
   // Each claim is visible before any lane examines the next ordered track.
   memoryBarrierBuffer();barrier();if(m[0]!=0u)return;
@@ -301,15 +310,15 @@ void main(){uint i=groupOf(),lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u||
  uint source=record(i),target=record(m[w+5u]);for(uint k=lane;k<recordWords();k+=128u)put(target+k,src(source+k));memoryBarrierBuffer();barrier();
  if(lane!=0u)return;uint ringBits=src(source+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,slot,h=historyCapacity();
  if(length<h){slot=(head+length)%h;length++;}else{slot=head;head=(head+1u)%h;}
- uint at=target+16u+8u*slot,match=m[w+4u],state=m[w+6u];
+ uint at=target+16u+8u*slot,match=m[w+4u],state=m[w+6u];bool associated=match!=0xffffffffu||m[w+10u]!=0u;
  uint previousNewest=source+16u+8u*((head+length-2u)%h);
  uint beam=match==0xffffffffu?src(previousNewest+7u):detectionSpatial(match);
  for(uint k=0u;k<6u;++k){uint value=match==0xffffffffu?(k<4u?m[w+k]:0u):s[m[5]+8u*match+k];put(target+k,value);put(at+k,value);}
  put(at+6u,state);put(at+7u,beam);put(target+6u,m[w+8u]);put(target+7u,m[w+9u]);
- uvec2 associated=plusOne(pairS(source+8u)),inactive=match==0xffffffffu?plusOne(pairS(source+10u)):uvec2(0u);
- put(target+8u,associated.x);put(target+9u,associated.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
+ uvec2 age=plusOne(pairS(source+8u)),inactive=associated?uvec2(0u):plusOne(pairS(source+10u));
+ put(target+8u,age.x);put(target+9u,age.y);put(target+10u,inactive.x);put(target+11u,inactive.y);
  uint display=min(length,100u),start=(head+length-display)%h;put(target+13u,head|(length<<8u)|(start<<16u)|(display<<24u));
- if(match!=0xffffffffu&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
+ if(associated&&length>=m[40]){uint count=0u;for(uint j=length-m[40];j<length;++j){uint value=dst(target+16u+8u*((head+j)%h)+6u);if(value==1u||value==2u)count++;}
   if(count>=m[39]){state=2u;put(at+6u,state);}}
  put(target+14u,state);put(target+15u,0xffffffffu);atomicAdd(m[31],1u);
 }
@@ -505,11 +514,15 @@ class Stage {
      s[14]!=uint32_t(config_.epoch)||s[15]!=uint32_t(config_.epoch>>32)||s[52]!=uint32_t(token.generation)||s[53]!=uint32_t(token.generation>>32))throw std::runtime_error("GPU tracker transaction echo mismatch");
  }
  void checkCoverage(const std::array<uint32_t,statusWords>& s)const{
+  uint32_t guidedPromoted=0;
+  if(config_.trackGuidedPromote){const uint64_t guidedOffset=uint64_t(statusWords+workWords*config_.capacity)*4;
+   metadata_->invalidate(guidedOffset,uint64_t(16+config_.capacity)*4);
+   guidedPromoted=static_cast<const uint32_t*>(metadata_->mapped)[statusWords+workWords*config_.capacity+13];}
   if(s[1]!=active_||s[24]<headerWords||s[24]>admission_.bankWords||s[54]>config_.capacity||s[24]!=headerWords+admission_.recordWords*s[54]||
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]>s[19]||s[21]>s[19]-s[27]||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]<guidedPromoted||s[27]-guidedPromoted>s[19]||s[21]>s[19]-(s[27]-guidedPromoted)||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
@@ -542,8 +555,9 @@ class Stage {
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
   <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_stationary_retired="<<s[64]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
+   uint32_t guidedPromoted=0;if(config_.trackGuidedPromote){const auto*g=static_cast<const uint32_t*>(metadata_->mapped)+statusWords+workWords*config_.capacity;guidedPromoted=g[13];}
    context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
-    <<" stationary_clutter_suppressed="<<(s[19]-s[27]-admission.unmatched)
+    <<" stationary_clutter_suppressed="<<(s[19]-(s[27]-guidedPromoted)-admission.unmatched)
     <<" admitted_detections="<<admission.admittedDetections<<" dropped_capacity_detections="<<admission.droppedDetections;}
   for(uint32_t phase=0;phase<6;++phase)context_.diagnostics.stream()<<" gpu_phase"<<phase<<"_ms="<<timestamps_->milliseconds(phase);
   if(config_.trackGuidedShadow){const uint64_t guidedOffset=uint64_t(statusWords+workWords*config_.capacity)*4;
@@ -553,6 +567,7 @@ class Stage {
     <<" guided_stationary_rejected="<<g[5]<<" guided_invalid="<<g[6]<<" guided_would_recover="<<g[7]
     <<" guided_already_detected="<<g[8]<<" guided_tentative_evaluated="<<g[9]<<" guided_established_evaluated="<<g[10]
     <<" guided_tentative_would_recover="<<g[11]<<" guided_established_would_recover="<<g[12]
+    <<" guided_promote="<<config_.trackGuidedPromote<<" guided_promoted="<<g[13]
     <<" guided_auto_disabled="<<guidedBudgetExceeded_<<" gpu_guided_shadow_ms="<<guidedLastMs_<<" guided_recovery_track_ids=";
    uint32_t written=0;for(uint32_t i=0;i<std::min(s[18],g[1]);++i)if((g[16+i]&32u)!=0u){if(written++)context_.diagnostics.stream()<<',';context_.diagnostics.stream()<<(g[16+i]>>16u);}
    if(!written)context_.diagnostics.stream()<<"none";
@@ -598,7 +613,7 @@ public:
   clutterPersistence_->flush(0,clutterPersistence_->bytes);
   std::memset(metadata_->mapped,0,size_t(metadata_->bytes));
   if(config.trackGuidedShadow){auto* guided=static_cast<uint32_t*>(metadata_->mapped)+statusWords+workWords*config.capacity;
-   guided[0]=1u;guided[1]=config.trackGuidedShadowMaxTracks;}
+   guided[0]=1u|(config.trackGuidedPromote?2u:0u);guided[1]=config.trackGuidedShadowMaxTracks;}
   metadata_->flush(0,metadata_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   std::vector<Buffer*> bindings{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_,clutterPersistence_.get()};
@@ -606,7 +621,7 @@ public:
   for(const auto& source:shaderSources(config.trackGuidedShadow))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
   setup({},0);
   commands([&](VkCommandBuffer command){timestamps_->begin(command,6);append(command,0,1);timestamps_->end(command,6);});
-  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" track_guided_shadow="<<config.trackGuidedShadow<<" guided_max_tracks="<<config.trackGuidedShadowMaxTracks<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
+  std::cerr<<"GPU_TRACKER_READY capacity="<<config.capacity<<" history="<<admission_.historyCount<<" record_bytes="<<admission_.recordWords*4<<" bank_bytes="<<uint64_t(admission_.bankWords)*4<<" stage_bytes="<<admission_.stageBytes<<" requested_bytes="<<admission_.totalBytes<<" track_guided_shadow="<<config.trackGuidedShadow<<" guided_promote="<<config.trackGuidedPromote<<" guided_max_tracks="<<config.trackGuidedShadowMaxTracks<<" gpu_initialize_ms="<<timestamps_->milliseconds(6)<<" selected_live_capacity=0\n";
  }
  bool pending()const{return pending_;}
  TrackerToken preparedToken()const{healthy();

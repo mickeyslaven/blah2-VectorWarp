@@ -86,6 +86,7 @@ struct TrackerConfig {
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
  bool trackGuidedShadow=false;
+ bool trackGuidedPromote=false;
  uint32_t trackGuidedShadowMaxTracks=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;

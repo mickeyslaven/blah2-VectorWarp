@@ -80,6 +80,15 @@ guidedShadowTracker.process.detection.track_before_detect = {
 guidedShadowTracker.process.tracker.track_guided_shadow = {enable: true, max_tracks: 64};
 assert.equal(validateConfig(guidedShadowTracker).valid, true,
   'bounded track-guided shadow accepts resident rolling history');
+const promotedGuidedTracker = clone(guidedShadowTracker);
+promotedGuidedTracker.process.tracker.track_guided_shadow.promote = true;
+assert.equal(validateConfig(promotedGuidedTracker).valid, true,
+  'track-guided promotion accepts the qualified evaluator path');
+const promotionWithoutShadow = clone(guidedShadowTracker);
+promotionWithoutShadow.process.tracker.track_guided_shadow = {enable: false,
+  promote: true, max_tracks: 64};
+assert.equal(validateConfig(promotionWithoutShadow).valid, false,
+  'track-guided promotion cannot bypass the evaluator');
 const unboundedGuidedShadow = clone(guidedShadowTracker);
 unboundedGuidedShadow.process.tracker.track_guided_shadow.max_tracks = 1025;
 assert.equal(validateConfig(unboundedGuidedShadow).valid, false,

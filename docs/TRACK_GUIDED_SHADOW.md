@@ -3,7 +3,11 @@
 This optional GPU-resident diagnostic tests whether an existing tracker state
 could recover a weak moving target by combining the current and previous
 500 ms power maps along the track's predicted delay/Doppler path. It does not
-change detections, associations, tracks, publication, or CPI cadence.
+change detections, associations, tracks, publication, or CPI cadence while
+`promote` is false. With `promote: true`, a guided hit that has no ordinary
+associated detection is appended at the track-predicted delay/Doppler cell and
+must then survive the ordinary M-of-N, deletion, acceleration,
+stationary-clutter, and publication lifecycle.
 
 Enable it only with GPU-resident tracking and `track_before_detect`:
 
@@ -12,6 +16,8 @@ process:
   tracker:
     track_guided_shadow:
       enable: true
+      # Set only after shadow evidence qualifies the recovery gate.
+      promote: false
       max_tracks: 64
       # Optional; defaults below save.path.
       evidence_path: /var/lib/vectorwarp-api/track-guided-shadow-evidence.jsonl

@@ -77,6 +77,7 @@ const rules = {
   'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},
   'process.tracker.initiate.stationary_clutter.max_doppler_hz': {...numeric(0, 10000), optional: true},
   'process.tracker.track_guided_shadow.enable': {type: 'boolean', optional: true},
+  'process.tracker.track_guided_shadow.promote': {type: 'boolean', optional: true},
   'process.tracker.track_guided_shadow.max_tracks': {...integer(1, 65535), optional: true},
   'process.tracker.track_guided_shadow.evidence_path': {type: 'string', optional: true},
   'process.tracker.track_guided_shadow.max_truth_age_s': {...numeric(.1, 60), optional: true},
