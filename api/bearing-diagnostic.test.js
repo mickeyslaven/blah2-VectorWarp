@@ -1,7 +1,8 @@
 'use strict';
 
 const assert = require('assert');
-const {evaluateBearing, mappings, steeringWeights, inverse} = require('./bearing-diagnostic');
+const {evaluateBearing, evaluateReferenceDirection, evaluateReferenceSurvey, mappings,
+  steeringWeights, inverse} = require('./bearing-diagnostic');
 
 const channels = 5, beams = 60, radius = .19;
 const config = {capture: {device: {surveillance_channels: [0, 1, 2, 3, 4],
@@ -46,4 +47,70 @@ assert.deepEqual(inverse([[[2, 0], [0, 0]], [[0, 0], [4, 0]]]),
 const unsupported = JSON.parse(JSON.stringify(config));
 unsupported.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
 assert.equal(evaluateBearing(samples, unsupported).available, false);
+
+const transmitterBearing = 0, knownMapping = mappings(channels).find(item => item.id === 'forward-3');
+function expectedReference(mapping, heading, bearing = transmitterBearing, frequency = 539000000) {
+  const direct = (heading - bearing) * Math.PI / 180;
+  const wave = 2 * Math.PI * frequency / 299792458;
+  const positions = config.capture.device.array_geometry.elements.map(item => item.position);
+  const raw = positions.map((_, channel) => {
+    const position = positions[mapping[channel]];
+    const phase = wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct));
+    return [Math.cos(phase), Math.sin(phase)];
+  });
+  const anchorPhase = Math.atan2(raw[0][1], raw[0][0]);
+  return raw.map(value => ({amplitude_db: 0,
+    phase_deg: ((Math.atan2(value[1], value[0]) - anchorPhase) * 180 / Math.PI + 540) % 360 - 180}));
+}
+const referenceConfig = JSON.parse(JSON.stringify(config));
+referenceConfig.location = {rx: {latitude: 40, longitude: -80},
+  tx: {latitude: 41, longitude: -80, name: 'Known transmitter'}};
+const referenceChannels = expectedReference(knownMapping.mapping, 80);
+const referenceRows = Array.from({length: 40}, (_, index) => ({
+  schema: 'vectorwarp-reference-drift-v1', frequency_hz: 539000000,
+  radar_timestamp_ms: 1000000 + index * 10000, config_fingerprint: 'site-a',
+  relative_eigenvector: {anchor_channel: 0, channels: referenceChannels},
+  reference_state: {coherent_fraction: .84}}));
+const referenceResult = evaluateReferenceDirection(referenceRows, referenceConfig);
+assert.equal(referenceResult.available, true);
+assert.equal(referenceResult.quality.updates, 40);
+assert.equal(referenceResult.quality.reliable, true);
+assert.deepEqual(referenceResult.best_mapping_at_configured_heading.mapping, knownMapping.mapping);
+assert.ok(referenceResult.best_mapping_at_configured_heading.median_phase_error_deg < 1e-6);
+assert.deepEqual(referenceResult.best_mapping_at_configured_heading.channel_median_phase_error_deg,
+  [null, 0, 0, 0, 0]);
+assert.ok(referenceResult.configured.median_phase_error_deg > 20);
+assert.ok(referenceResult.heading_with_configured_mapping.median_phase_error_deg < 1);
+assert.equal(referenceResult.auto_apply, false);
+assert.match(referenceResult.interpretation, /independent known-angle source/i);
+
+const surveyConfig = JSON.parse(JSON.stringify(referenceConfig));
+surveyConfig.location.rx = {latitude: 0, longitude: 0};
+surveyConfig.process.bearing.channel_mapping = knownMapping.mapping;
+function surveyRows(bearing, frequency, fingerprint) {
+  const values = expectedReference(knownMapping.mapping, 80, bearing, frequency);
+  return Array.from({length: 12}, (_, index) => ({
+    schema: 'vectorwarp-reference-drift-v1', frequency_hz: frequency,
+    radar_timestamp_ms: 2000000 + index * 10000, config_fingerprint: fingerprint,
+    relative_eigenvector: {anchor_channel: 0, channels: values},
+    reference_state: {coherent_fraction: .95}}));
+}
+const surveyResult = evaluateReferenceSurvey([
+  {name: 'North reference', latitude: 1, longitude: 0, frequency_hz: 527000000,
+    reference_updates: surveyRows(0, 527000000, 'north')},
+  {name: 'East reference', latitude: 0, longitude: 1, frequency_hz: 485000000,
+    reference_updates: surveyRows(90, 485000000, 'east')}
+], surveyConfig);
+assert.equal(surveyResult.available, true);
+assert.deepEqual(surveyResult.reliable_sources, ['North reference', 'East reference']);
+assert.deepEqual(surveyResult.configured_mapping.mapping, knownMapping.mapping);
+assert.equal(surveyResult.physical_ch0_heading_deg_true, 80);
+assert.equal(surveyResult.configured_mapping.fitted_phase_axis_heading_deg_true, 80);
+assert.ok(surveyResult.configured_mapping.median_phase_error_deg < 1e-6);
+assert.equal(surveyResult.auto_apply, false);
+const rejectedSurvey = evaluateReferenceSurvey([{name: 'Poor reference', latitude: 1,
+  longitude: 0, frequency_hz: 527000000, reference_updates: surveyRows(0, 527000000, 'poor')
+    .map(row => ({...row, reference_state: {coherent_fraction: .5}}))}], surveyConfig);
+assert.equal(rejectedSurvey.available, false);
+assert.match(rejectedSurvey.reason, /quality gate/i);
 console.log('Bearing diagnostic: complex channel permutations, exact covariance scoring, and safe shadow-only reporting passed.');

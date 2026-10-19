@@ -524,6 +524,16 @@
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
     document.getElementById('view-summary').innerHTML = `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`;
+    const reference = bearingDiagnostic?.known_angle_reference;
+    const referenceDiagnostic = !reference ? '' : reference.available ?
+      `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
+        <div><dt>RF source</dt><dd>${escapeHtml(reference.source?.name || 'Configured transmitter')} · ${number(reference.source?.bearing_deg_true, 3)}° true</dd></div>
+        <div><dt>Configured fit</dt><dd>Heading ${number(reference.configured?.heading_deg_true, 1)}° · phase error ${number(reference.configured?.median_phase_error_deg, 1)}° median / ${number(reference.configured?.p95_phase_error_deg, 1)}° p95</dd></div>
+        <div><dt>Best mapping at configured heading</dt><dd>${escapeHtml(array(reference.best_mapping_at_configured_heading?.mapping).join(' → ') || 'Unavailable')} · phase error ${number(reference.best_mapping_at_configured_heading?.median_phase_error_deg, 1)}°</dd></div>
+        <div><dt>Fitted phase axis with configured mapping</dt><dd>${number(reference.heading_with_configured_mapping?.heading_deg_true, 0)}° true (${number(reference.heading_with_configured_mapping?.signed_correction_deg, 0)}° model offset) · phase error ${number(reference.heading_with_configured_mapping?.median_phase_error_deg, 1)}°</dd></div>
+        <div><dt>RF evidence</dt><dd>${integer(reference.quality?.updates)} updates · coherence ${number(reference.quality?.coherent_fraction_median, 3)} median · amplitude span ${number(reference.quality?.amplitude_span_db_median, 1)} dB median</dd></div>
+      </dl>${reference.quality?.reliable === false ? '<p class="view-note">This source is excluded from multi-reference calibration by the RF quality gate.</p>' : ''}<p class="view-note">${escapeHtml(reference.limitation)}</p></section>` :
+      `<section class="info-card"><h2>Known-angle reference</h2><p>${escapeHtml(reference.reason)}</p></section>`;
     const diagnostic = !bearingDiagnostic ? '' : bearingDiagnostic.available ?
       `<section class="info-card"><h2>Bearing wiring diagnostic · shadow only</h2><dl>
         <div><dt>Evidence</dt><dd>${integer(bearingDiagnostic.samples)} samples · ${integer(bearingDiagnostic.aircraft)} aircraft · ${integer(bearingDiagnostic.sectors)}/8 sectors</dd></div>
@@ -533,7 +543,7 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}`;
+    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}${referenceDiagnostic}`;
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},

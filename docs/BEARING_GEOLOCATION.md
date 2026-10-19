@@ -298,6 +298,43 @@ the currently configured mapping, the best replay mapping, and a separate
 heading-only correction. It never edits configuration or feeds ADS-B into live
 bearing, detection, tracking, or Retina output.
 
+The same endpoint also scores the recorded direct-path eigenbeam against the
+configured transmitter as a known-angle RF source. It reports phase residuals
+for the configured mapping and heading, every regular-polygon mapping at the
+configured heading, and every whole-degree heading with the configured mapping.
+This closes an important observability gap in `fixed_site`: that setting builds
+the bearing anchor from configured geometry, while the known-angle diagnostic
+uses the independently observed eigenbeam phases. Reference amplitude imbalance,
+coherence, multipath, and mapping/heading aliases remain visible, and the result
+is always shadow-only; it never edits configuration.
+
+For a stronger check, the transmitter-agnostic survey CLI combines two or more
+known RF sources. Each manifest source supplies its name, latitude, longitude,
+frequency, and reference JSONL path; no station list or site-specific bearing is
+built into VectorWarp. Sources must provide at least 10 updates, median coherence
+of at least 0.8, and median inter-channel amplitude span no greater than 6 dB.
+
+```sh
+node script/evaluate-reference-survey.js \
+  --config /etc/vectorwarp/config.yml \
+  --manifest reference-survey.json
+```
+
+```json
+{"sources":[
+  {"name":"North reference","latitude":40.1,"longitude":-80.0,
+   "frequency_hz":527000000,"reference":"north.reference.jsonl"},
+  {"name":"East reference","latitude":40.0,"longitude":-79.9,
+   "frequency_hz":485000000,"reference":"east.reference.jsonl"}
+]}
+```
+
+The output ranks the configured mapping and the best forward and reverse
+handedness families over every whole-degree fitted phase-axis heading. The
+physical CH0/+X heading remains configuration truth: a fitted phase-axis offset
+is calibration evidence, not an assertion that the array physically moved.
+The tool is read-only and never applies its result.
+
 A symmetric regular polygon has an unavoidable identifiability limit: rotating
 the channel labels by one element is mathematically equivalent to changing the
 array heading by one element angle. Therefore even strong replay evidence is a
