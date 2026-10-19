@@ -160,8 +160,8 @@ Use one-to-one delay/Doppler matching with ambiguity rejection and fresh truth;
 never use bearing agreement to decide the truth label for bearing scoring.
 
 Report matched_passes / eligible_passes and persistent_passes / eligible_passes.
-Use equal predefined sector weights on common support, with minimum opportunity
-counts in every compared sector. Include pooled rates only as diagnostics.
+Use equal predefined sector-by-range weights on common support, with minimum
+opportunity counts in every compared cell. Include pooled rates only as diagnostics.
 Different traffic mixes, survey protocols, sites, masks, firmware or processing
 versions cannot be silently pooled. Preserve block-level rates and per-pass
 duration/SNR distributions; estimate uncertainty by resampling aircraft/pass

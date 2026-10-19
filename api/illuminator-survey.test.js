@@ -28,7 +28,8 @@ function candidateFor(layout = ['PPPMUU', 'PPPMUU', 'PPPMUU']) {
   const sector_ids = layout.map((_, index) => `sector-${index}`);
   const eligible_passes = layout.flatMap((states, sector) => [...states].map((state, index) => ({
     pass_id: `pass-${sector}-${index}`, aircraft_id: `aircraft-${sector}-${index}`,
-    sector_id: sector_ids[sector], matched: state !== 'U', persistent: state === 'P'
+    sector_id: sector_ids[sector], range_bin_id: index % 2 ? 'far' : 'near',
+    matched: state !== 'U', persistent: state === 'P'
   })));
   const matched = eligible_passes.filter(pass => pass.matched);
   const observations = matched.flatMap(pass => Array.from({length: 4}, (_, index) => ({
@@ -39,7 +40,7 @@ function candidateFor(layout = ['PPPMUU', 'PPPMUU', 'PPPMUU']) {
   return {frequency_hz: 527000000, name: 'fixture', bearing_required: true,
     comparison: {site_id: 'test-site', protocol_id: 'fixed-protocol-v1',
       sector_definition_id: 'azimuth-v1', common_support_id: 'eligible-range-doppler-v1',
-      baseline_id: 'ideal-manifold-v1', sector_ids},
+      baseline_id: 'ideal-manifold-v1', sector_ids, range_bin_ids: ['near', 'far']},
     reference: {cnr_db: 28, clipping_fraction: 0, occupied_bandwidth_fraction: .9,
       ambiguity_pslr_db: -18, cancellation_db: 32},
     sensitivity: {gain_strategy: 'measured-highest-safe-common', selected_gain_db: 12,
@@ -87,7 +88,7 @@ for (const path of ['reference.ambiguity_pslr_db', 'sensitivity.gain_strategy',
   'sensitivity.selected_gain_db', 'sensitivity.peak_fraction',
   'sensitivity.input_referred_noise_db', 'tracking.held_out_observations',
   'tracking.eligible_passes', 'tracking.held_out.fit_passes', 'tracking.held_out.observations',
-  'comparison.common_support_id', 'bearing_required']) {
+  'comparison.common_support_id', 'comparison.range_bin_ids', 'bearing_required']) {
   const incomplete = structuredClone(complete);
   const parts = path.split('.'), field = parts.pop();
   delete parts.reduce((value, part) => value[part], incomplete)[field];
@@ -185,6 +186,9 @@ for (const field of ['matched_passes', 'persistent_passes', 'matched_aircraft'])
 const duplicatePass = structuredClone(complete);
 duplicatePass.tracking.eligible_passes.push(duplicatePass.tracking.eligible_passes[0]);
 assert.ok(evaluate(duplicatePass).failures.includes('invalid-eligible-pass-provenance'));
+const invalidRange = structuredClone(complete);
+invalidRange.tracking.eligible_passes[0].range_bin_id = 'outside-common-support';
+assert.ok(evaluate(invalidRange).failures.includes('invalid-eligible-pass-provenance'));
 const leakedAircraft = structuredClone(complete);
 leakedAircraft.tracking.held_out.fit_passes = [{pass_id: 'different-pass',
   aircraft_id: complete.tracking.held_out.observations[0].aircraft_id}];

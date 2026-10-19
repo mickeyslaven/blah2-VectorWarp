@@ -52,7 +52,8 @@ Capabilities expose `bearing_evidence_evaluation` separately from automatic
 execution and selection, both of which remain false.
 
 `comparison` contains `site_id`, `protocol_id`, `sector_definition_id`,
-`common_support_id`, `baseline_id`, and `sector_ids` (at least two unique strings).
+`common_support_id`, `baseline_id`, `sector_ids`, and `range_bin_ids` (at least
+two unique strings for each support dimension).
 These identify frozen definitions, not arbitrary labels for otherwise different
 experiments. They must match across the survey. Frequency/transmitter identity
 remain candidate variables. Mixed radar-only and bearing-required candidates
@@ -67,7 +68,7 @@ by the comparison protocol, while the selected numeric gain may differ by
 frequency. A peak above the configured headroom limit rejects the candidate.
 
 `tracking.eligible_passes` contains unique evaluation passes with `pass_id`,
-`aircraft_id`, `sector_id`, `matched` and `persistent`. The two latter fields are
+`aircraft_id`, `sector_id`, `range_bin_id`, `matched` and `persistent`. The two latter fields are
 booleans; persistence implies a match. Eligibility is determined independently
 of detection success. Aggregate counts `adsb_opportunities`, `matched_passes`,
 `persistent_passes`, `matched_aircraft` and `sectors` must agree with these
@@ -84,6 +85,8 @@ aircraft, sector and aggregate counts are cross-checked. Every declared sector
 needs opportunities and held-out observations. Counts, fractions and circular
 errors have explicit validity ranges.
 
+Detection and persistence yields give equal weight to every declared sector-by-
+range support cell, so nearby traffic cannot hide poor long-range sensitivity.
 Bearing errors use equal pass weight within each sector, then equal sector
 weight. `tracking.held_out_bearing_error_deg` must match that derived value.
 Each sector must pass the absolute error limit and not regress from its paired

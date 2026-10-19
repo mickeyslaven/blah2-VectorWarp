@@ -94,7 +94,8 @@ const DEFAULT_LIMITS = Object.freeze({minimum_cnr_db: 8, maximum_clipping_fracti
   minimum_cancellation_db: 20,
   minimum_repeat_correlation: .98, minimum_ideal_correlation: .4,
   maximum_amplitude_span_db: 6, maximum_phase_curvature_deg: 60,
-  minimum_adsb_opportunities: 5, minimum_sector_opportunities: 5, minimum_matched_detections: 30,
+  minimum_adsb_opportunities: 5, minimum_sector_opportunities: 5,
+  minimum_range_bin_opportunities: 2, minimum_matched_detections: 30,
   minimum_persistent_tracks: 2, minimum_persistent_passes: 2,
   minimum_matched_aircraft: 3, minimum_sectors: 2,
   minimum_held_out_observations: 30,
@@ -112,7 +113,7 @@ function limitsFrom(value) {
       throw new Error(`Illuminator survey limit ${key} must be a non-negative number`);
     if ((key.includes('correlation') || key.includes('fraction')) && setting > 1)
       throw new Error(`Illuminator survey limit ${key} must not exceed 1`);
-    if (['minimum_adsb_opportunities', 'minimum_sector_opportunities',
+    if (['minimum_adsb_opportunities', 'minimum_sector_opportunities', 'minimum_range_bin_opportunities',
       'minimum_matched_detections', 'minimum_persistent_tracks', 'minimum_persistent_passes', 'minimum_matched_aircraft',
       'minimum_sectors', 'minimum_held_out_observations'].includes(key) && !count(setting))
       throw new Error(`Illuminator survey limit ${key} must be a non-negative integer`);
@@ -132,14 +133,19 @@ function comparisonKey(candidate) {
       !Array.isArray(comparison.sector_ids) || comparison.sector_ids.length < 2 ||
       comparison.sector_ids.some(sector => !identifier(sector)) ||
       new Set(comparison.sector_ids).size !== comparison.sector_ids.length ||
+      !Array.isArray(comparison.range_bin_ids) || comparison.range_bin_ids.length < 2 ||
+      comparison.range_bin_ids.some(bin => !identifier(bin)) ||
+      new Set(comparison.range_bin_ids).size !== comparison.range_bin_ids.length ||
       typeof candidate.bearing_required !== 'boolean') return null;
   return JSON.stringify([...COMPARISON_FIELDS.map(field => comparison[field]),
-    [...comparison.sector_ids].sort(), candidate.bearing_required]);
+    [...comparison.sector_ids].sort(), [...comparison.range_bin_ids].sort(),
+    candidate.bearing_required]);
 }
 
 function trackingEvidence(candidate, limits, failures, missing) {
   const tracking = candidate?.tracking || {};
   const sectors = comparisonKey(candidate) ? candidate.comparison.sector_ids : [];
+  const rangeBins = comparisonKey(candidate) ? candidate.comparison.range_bin_ids : [];
   const metrics = ['adsb_opportunities', 'matched_passes', 'persistent_passes',
     'matched_detections', 'persistent_tracks', 'matched_aircraft', 'sectors',
     'held_out_observations'];
@@ -165,11 +171,14 @@ function trackingEvidence(candidate, limits, failures, missing) {
   }
 
   const passes = new Map(), bySector = new Map(sectors.map(sector => [sector, []]));
+  const bySupport = new Map(sectors.flatMap(sector => rangeBins.map(rangeBin =>
+    [JSON.stringify([sector, rangeBin]), []])));
   if (!Array.isArray(tracking.eligible_passes)) missing.push('tracking.eligible_passes');
   else {
     for (const pass of tracking.eligible_passes) {
       if (!pass || !identifier(pass.pass_id) || !identifier(pass.aircraft_id) ||
           !identifier(pass.sector_id) || typeof pass.matched !== 'boolean' ||
+          !identifier(pass.range_bin_id) || !rangeBins.includes(pass.range_bin_id) ||
           typeof pass.persistent !== 'boolean' || (pass.persistent && !pass.matched) ||
           passes.has(pass.pass_id) || !bySector.has(pass.sector_id)) {
         failures.push('invalid-eligible-pass-provenance');
@@ -177,6 +186,7 @@ function trackingEvidence(candidate, limits, failures, missing) {
       }
       passes.set(pass.pass_id, pass);
       bySector.get(pass.sector_id).push(pass);
+      bySupport.get(JSON.stringify([pass.sector_id, pass.range_bin_id])).push(pass);
     }
     const matched = [...passes.values()].filter(pass => pass.matched);
     const derived = {adsb_opportunities: passes.size, matched_passes: matched.length,
@@ -197,6 +207,14 @@ function trackingEvidence(candidate, limits, failures, missing) {
     if (eligible.length < Math.max(1, limits.minimum_sector_opportunities))
       failures.push('insufficient-sector-opportunities');
     return {sector_id, adsb_opportunities: eligible.length,
+      matched_passes: eligible.filter(pass => pass.matched).length,
+      persistent_passes: eligible.filter(pass => pass.persistent).length};
+  });
+  const supportRates = [...bySupport.entries()].map(([key, eligible]) => {
+    const [sector_id, range_bin_id] = JSON.parse(key);
+    if (eligible.length < Math.max(1, limits.minimum_range_bin_opportunities))
+      failures.push('insufficient-range-support');
+    return {sector_id, range_bin_id, adsb_opportunities: eligible.length,
       matched_passes: eligible.filter(pass => pass.matched).length,
       persistent_passes: eligible.filter(pass => pass.persistent).length};
   });
@@ -267,10 +285,10 @@ function trackingEvidence(candidate, limits, failures, missing) {
     else if (heldOutError !== null && Math.abs(tracking.held_out_bearing_error_deg - heldOutError) > 1e-6)
       failures.push('inconsistent-held-out-bearing-error');
   }
-  const rate = field => sectorRates.length && sectorRates.every(item => item.adsb_opportunities > 0) ?
-    mean(sectorRates.map(item => item[field] / item.adsb_opportunities)) : null;
+  const rate = field => supportRates.length && supportRates.every(item => item.adsb_opportunities > 0) ?
+    mean(supportRates.map(item => item[field] / item.adsb_opportunities)) : null;
   return {persistent_pass_rate: rate('persistent_passes'), matched_pass_rate: rate('matched_passes'),
-    held_out_bearing_error_deg: heldOutError, sector_rates: sectorRates,
+    held_out_bearing_error_deg: heldOutError, sector_rates: sectorRates, support_rates: supportRates,
     held_out_sector_errors: sectorErrors};
 }
 
