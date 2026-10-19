@@ -89,6 +89,7 @@ function receiverCapabilities(config) {
 }
 
 const DEFAULT_LIMITS = Object.freeze({minimum_cnr_db: 8, maximum_clipping_fraction: 1e-4,
+  maximum_peak_fraction: .95,
   minimum_occupied_bandwidth_fraction: .5, minimum_ambiguity_suppression_db: 8,
   minimum_cancellation_db: 20,
   minimum_repeat_correlation: .98, minimum_ideal_correlation: .4,
@@ -298,6 +299,22 @@ function evaluateCandidate(candidate, capabilities, suppliedLimits = {}) {
   if (!finite(reference.cancellation_db)) missing.push('reference.cancellation_db');
   else if (reference.cancellation_db < limits.minimum_cancellation_db) failures.push('poor-cancellation');
 
+  // A common fixed gain can reward an overpowering direct path while hiding a
+  // weaker illuminator's usable surveillance sensitivity. Compare candidates
+  // at the highest safe gain selected by the same measured protocol, then
+  // freeze that gain for every accepted block belonging to the candidate.
+  const sensitivity = candidate?.sensitivity || {};
+  if (sensitivity.gain_strategy !== 'measured-highest-safe-common')
+    missing.push('sensitivity.gain_strategy');
+  if (!finite(sensitivity.selected_gain_db)) missing.push('sensitivity.selected_gain_db');
+  if (!finite(sensitivity.peak_fraction)) missing.push('sensitivity.peak_fraction');
+  else if (sensitivity.peak_fraction < 0 || sensitivity.peak_fraction > 1)
+    failures.push('invalid-peak-fraction');
+  else if (sensitivity.peak_fraction > limits.maximum_peak_fraction)
+    failures.push('insufficient-receiver-headroom');
+  if (!finite(sensitivity.input_referred_noise_db))
+    missing.push('sensitivity.input_referred_noise_db');
+
   let bearingStatus = candidate?.bearing_required === false ? 'not-requested' : 'unproven';
   if (candidate?.bearing_required === true) {
     if (capabilities?.spatial_reflection_assessment === 'multi-element') {
@@ -330,6 +347,9 @@ function evaluateCandidate(candidate, capabilities, suppliedLimits = {}) {
   }
   const hardFailure = failures.some(reason => !reason.startsWith('insufficient-'));
   const status = hardFailure ? 'rejected' : failures.length || missing.length ? 'rf-prescreen-only' : 'qualified';
+  scores.selected_gain_db = finite(sensitivity.selected_gain_db) ? sensitivity.selected_gain_db : null;
+  scores.input_referred_noise_db = finite(sensitivity.input_referred_noise_db) ?
+    sensitivity.input_referred_noise_db : null;
   return {frequency_hz: candidate?.frequency_hz, name: candidate?.name || null,
     status, bearing_status: bearingStatus, failures: [...new Set(failures)],
     missing: [...new Set(missing)], scores};
@@ -346,14 +366,16 @@ function evaluateSurvey(candidates, config, limits) {
   const compareYield = (left, right) =>
     right.scores.persistent_pass_rate - left.scores.persistent_pass_rate ||
     right.scores.matched_pass_rate - left.scores.matched_pass_rate ||
+    right.scores.selected_gain_db - left.scores.selected_gain_db ||
+    left.scores.input_referred_noise_db - right.scores.input_referred_noise_db ||
     (left.scores.held_out_bearing_error_deg ?? 0) - (right.scores.held_out_bearing_error_deg ?? 0);
   eligible.sort(compareYield);
   const tied = eligible.length > 1 && compareYield(eligible[0], eligible[1]) === 0;
-  return {schema: 'vectorwarp-illuminator-survey-evaluation-v2', capabilities,
+  return {schema: 'vectorwarp-illuminator-survey-evaluation-v3', capabilities,
     results, selected: tied ? null : eligible[0] || null, recommendation_only: true,
     comparison_failures: comparable ? [] : ['incomparable-survey-cohorts'],
-    selection_reason: tied ? 'Qualified candidates tie on pass yield and held-out error; more evidence is required.' : eligible.length ?
-      'Highest equal-sector persistent-pass yield, then matched-pass yield, then lowest held-out bearing error; recommendation only.' :
+    selection_reason: tied ? 'Qualified candidates tie on pass yield, surveillance sensitivity and held-out error; more evidence is required.' : eligible.length ?
+      'Highest equal-sector persistent-pass yield, then matched-pass yield, safely available receiver gain, lowest input-referred noise and held-out bearing error; recommendation only.' :
       comparable ? 'No candidate passed radar-performance evidence and requested bearing-safety gates.' :
         'Selection requires the same site, protocol, common support, sectors, baseline and explicit bearing requirement.'};
 }

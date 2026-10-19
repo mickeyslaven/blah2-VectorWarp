@@ -42,6 +42,8 @@ function candidateFor(layout = ['PPPMUU', 'PPPMUU', 'PPPMUU']) {
       baseline_id: 'ideal-manifold-v1', sector_ids},
     reference: {cnr_db: 28, clipping_fraction: 0, occupied_bandwidth_fraction: .9,
       ambiguity_pslr_db: -18, cancellation_db: 32},
+    sensitivity: {gain_strategy: 'measured-highest-safe-common', selected_gain_db: 12,
+      peak_fraction: .7, input_referred_noise_db: -86},
     spatial: {repeat_principal_correlation: .999, ideal_correlation: .75,
       coherent_component_amplitude_span_db: 2, phase_curvature_peak_to_peak_deg: 25,
       transmitter_coordinates_verified: true},
@@ -81,7 +83,9 @@ assert.equal(twoChannel.status, 'rf-prescreen-only');
 assert.equal(twoChannel.bearing_status, 'externally-unverified');
 assert.ok(twoChannel.missing.includes('multi-element-spatial-reflection-assessment'));
 
-for (const path of ['reference.ambiguity_pslr_db', 'tracking.held_out_observations',
+for (const path of ['reference.ambiguity_pslr_db', 'sensitivity.gain_strategy',
+  'sensitivity.selected_gain_db', 'sensitivity.peak_fraction',
+  'sensitivity.input_referred_noise_db', 'tracking.held_out_observations',
   'tracking.eligible_passes', 'tracking.held_out.fit_passes', 'tracking.held_out.observations',
   'comparison.common_support_id', 'bearing_required']) {
   const incomplete = structuredClone(complete);
@@ -115,6 +119,21 @@ betterBearing.frequency_hz = 551000000;
 betterBearing.tracking.held_out.observations.forEach(item => { item.bearing_error_deg = 7; });
 betterBearing.tracking.held_out_bearing_error_deg = 7;
 assert.equal(evaluateSurvey([complete, betterBearing], kraken).selected.frequency_hz, 551000000);
+
+// Equal radar yield favors the candidate that permits more safe receiver gain;
+// a stronger direct path is not itself a range/sensitivity advantage.
+const lowerSafeGain = structuredClone(complete);
+lowerSafeGain.frequency_hz = 533000000;
+lowerSafeGain.reference.cnr_db = 60;
+lowerSafeGain.sensitivity.selected_gain_db = 1;
+assert.equal(evaluateSurvey([lowerSafeGain, complete], kraken).selected.frequency_hz, 527000000);
+const worseInputNoise = structuredClone(complete);
+worseInputNoise.frequency_hz = 539000000;
+worseInputNoise.sensitivity.input_referred_noise_db = -80;
+assert.equal(evaluateSurvey([worseInputNoise, complete], kraken).selected.frequency_hz, 527000000);
+const noHeadroom = structuredClone(complete);
+noHeadroom.sensitivity.peak_fraction = .97;
+assert.ok(evaluate(noHeadroom).failures.includes('insufficient-receiver-headroom'));
 
 // Unequal traffic mix is standardized by sector, not pooled across passes.
 const busyEasySector = candidateFor(['PPPPPPPPPPPPPPPPPPPP', 'PMUUUU']);

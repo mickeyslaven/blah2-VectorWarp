@@ -15,7 +15,9 @@ Selection is staged:
 
 1. RF prescreen measures carrier-to-noise, clipping, occupied bandwidth,
    repeatability, channel balance, and (for a positioned array) agreement with
-   the surveyed transmitter direction and phase-versus-frequency curvature.
+   the surveyed transmitter direction and phase-versus-frequency curvature. It
+   also finds each candidate's highest safe coherent common gain using the same
+   measured headroom protocol and records input-referred noise.
 2. Radar qualification measures the waveform ambiguity sidelobes and actual
    clutter/direct-path cancellation rather than inferring them from strength.
 3. Operational qualification uses eligible ADS-B opportunities, matched
@@ -30,8 +32,9 @@ for array bearing. No candidate is selected while required radar or held-out
 evidence is missing.
 
 The band plans and evaluator are receiver- and site-agnostic. A survey executor
-must use the receiver's managed apply/readback path, preserve gain and sample
-rate during comparisons, partition evidence by frequency/transmitter/site,
+must use the receiver's managed apply/readback path, preserve sample rate and
+the gain-selection protocol during comparisons, freeze each candidate's selected
+gain within its blocks, partition evidence by frequency/transmitter/site,
 and restore the exact starting configuration after success or failure.
 
 `GET /api/illuminator-survey` returns the built-in plans and the current
@@ -40,7 +43,7 @@ accepts candidate evidence and returns per-candidate rejection/missing-evidence
 reasons. The evaluator never promotes a candidate merely because it is the
 best of a bad set.
 
-## Evidence and ranking contract (v2)
+## Evidence and ranking contract (v3)
 
 Each candidate must explicitly set `bearing_required` to a boolean. Omitting
 it cannot bypass bearing checks. The recommendation is conditional on supplied
@@ -54,6 +57,14 @@ These identify frozen definitions, not arbitrary labels for otherwise different
 experiments. They must match across the survey. Frequency/transmitter identity
 remain candidate variables. Mixed radar-only and bearing-required candidates
 cannot be ranked in one survey.
+
+`sensitivity` records the candidate-specific receiver operating point. Its
+`gain_strategy` must be `measured-highest-safe-common`; `selected_gain_db`,
+`peak_fraction`, and `input_referred_noise_db` on one documented common scale
+are mandatory. All candidates
+must use the same device gain scale and measured-selection protocol, identified
+by the comparison protocol, while the selected numeric gain may differ by
+frequency. A peak above the configured headroom limit rejects the candidate.
 
 `tracking.eligible_passes` contains unique evaluation passes with `pass_id`,
 `aircraft_id`, `sector_id`, `matched` and `persistent`. The two latter fields are
@@ -77,9 +88,11 @@ Bearing errors use equal pass weight within each sector, then equal sector
 weight. `tracking.held_out_bearing_error_deg` must match that derived value.
 Each sector must pass the absolute error limit and not regress from its paired
 baseline. RF/spatial measurements are qualification gates only. Qualified
-candidates rank by equal-sector persistent-pass yield, matched-pass yield, then
-held-out bearing error. This avoids treating a stronger reference or more busy
-airspace as better radar performance. Confidence intervals and provenance still
+candidates rank by equal-sector persistent-pass yield, matched-pass yield,
+safely available receiver gain, input-referred noise, then held-out bearing
+error. Gain is only a tie-breaker after actual radar yield and cannot make a weak
+or otherwise unqualified reference win. This avoids treating a stronger direct
+path or more busy airspace as better radar performance. Confidence intervals and provenance still
 belong in the acquisition report; the evaluator cannot authenticate caller data.
 
 See [the executor design](ILLUMINATOR_SURVEY_EXECUTOR.md) for preview/intent,

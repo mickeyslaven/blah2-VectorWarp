@@ -99,10 +99,14 @@ they cannot independently certify a multi-element bearing manifold.
 
 ## Acquisition protocol
 
-Prescreen at fixed gain, rate, mapping, geometry, reference algorithm and
-detector/tracker settings. Change only frequency and the correct transmitter
-geometry. Verify actual settings and exclude warm-up/calibration frames before
-each measurement. Freeze the prescreen thresholds before looking at outcomes.
+Prescreen at fixed rate, mapping, geometry, reference algorithm and detector/
+tracker settings. For every frequency, use the same measured procedure to find
+the highest safe coherent common gain; do not force every transmitter to use the
+gain required by the strongest direct path. Freeze that selected gain within all
+accepted blocks for that candidate. Change only frequency, candidate gain and
+the correct transmitter geometry. Verify actual settings and exclude warm-up/
+calibration frames before each measurement. Freeze the prescreen thresholds
+before looking at outcomes.
 Capture repeated short records and reject clipping, weak CNR, instability,
 severe imbalance, direction mismatch and excessive spectral phase curvature.
 Retain at most a small predetermined shortlist (default two).
@@ -121,7 +125,9 @@ Measurements must include:
 - RF: calibrated CNR procedure, per-channel clipping fraction from ADC-level
   data, usable occupied bandwidth and spatial/subband repeatability. Zero IQ
   display minima/maxima are not proof of no clipping. Relative sample power is
-  not dBm. If the input format cannot reveal clipping, record it as unavailable.
+  not dBm. Record the selected common gain, peak fraction and input-referred
+  noise for every candidate. If the input format cannot reveal clipping or the
+  gain scale cannot support an input-referred comparison, record it as unavailable.
 - Waveform: ambiguity peak sidelobe level with a fixed exclusion of the main
   lobe and fixed delay/Doppler search region; pre/post-cancellation power on
   matched samples, cancellation depth and residual clutter. Reference
@@ -174,18 +180,19 @@ learned manifold at other aircraft directions.
 
 Hard safety gates precede ranking. Rank only compatible fully qualified
 candidates by sector-standardized persistent-pass yield, then matched-pass
-yield, then held-out bearing error. No measured sector may regress against the
+yield, safely available receiver gain, input-referred noise and held-out bearing
+error. Actual radar yield always outranks gain. No measured sector may regress against the
 frozen paired baseline. The evaluator's recommendation is conditional on its
 supplied evidence; it cannot authenticate measurements or establish statistical
 superiority without acquisition provenance and uncertainty analysis.
 
 ## Ford Street next run and acceptance
 
-Keep the raised array, 80° true CH0 heading, identity mapping, gain 14, 2.4 MSPS
-and all five channels. A is WPXI 527 MHz; B is WINP 485 MHz. The exact original
-WPXI configuration is the restore authority, including transmitter altitude
-614.5 m; do not replace it with a different catalog height. Verify WINP catalog
-coordinates/antenna altitude before enabling its geometry-dependent scoring.
+Keep the raised array, 80° true CH0 heading, identity mapping, 2.4 MSPS and all
+five channels. The next radar-sensitivity candidate should be chosen from a
+measured safe-gain prescreen rather than the old fixed-gain WPXI/WINP proposal.
+The exact original configuration remains the restore authority; do not replace
+catalog geometry without verification.
 
 A proposed eight-block pilot uses ten valid minutes per block: A B B A B A A B.
 This is 80 valid minutes, up to 16 minutes of bounded transitions and a separate
