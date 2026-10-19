@@ -14,12 +14,15 @@ function status(config, gain = config.capture.device.heimdall.gain) {
 function measurement(config, p999 = .6, overrides = {}) {
   return {frequencyHz: config.capture.fc, sampleRateHz: config.capture.fs,
     channelCount: config.capture.device.channel_count, gainDb: config.capture.device.heimdall.gain,
+    source: 'calibrated_mchq_uint8_wire', packets: 1,
+    calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 1},
     channels: Array.from({length: config.capture.device.channel_count}, (_, channel) => ({
       channel, samples: 600000, railFraction: 0, peakFraction: Math.max(.6, p999),
       p999Fraction: p999, rmsFraction: p999 / 2})), ...overrides};
 }
 function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
-  syncError, calibrationError, verifyError, verifyDrift, syncBusy = false, clock} = {}) {
+  syncError, calibrationError, verifyError, verifyDrift, syncBusy = false, clock,
+  calibrationFlags = {calibrationState: 'CONVERGED', phaseState: 4, noiseSource: false}} = {}) {
   const calls = []; let live = status(previous, actualGain);
   let syncs = 0, calibrations = 0, verifies = 0, captures = 0;
   function receipt(operations = []) { return {status: 'synchronized', before: clone(live),
@@ -54,7 +57,7 @@ function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
       return {...receipt([{operation: 'reset_lag_compensation', commandSent: true,
         acknowledged: true, readbackMatched: true, fullRecalibration: {commandSent: true,
           acknowledged: true, recoveryObserved: true, completed: true,
-          calibrationState: 'CONVERGED', phaseState: 4, noiseSource: false}}]), status: 'recalibrated'};
+          ...calibrationFlags}}]), status: 'recalibrated'};
     }
   };
   async function measureGain(next) {
@@ -99,6 +102,33 @@ async function rejected(run, code) {
   assert.equal(result.receiverSync.automaticGain.claims.radarQualificationProven, false);
   assert.deepEqual(result.receiverSync.operations.map(operation => operation.automaticGainStage),
     ['trial-synchronize', 'trial-recalibrate']);
+
+  // Stock Suite omits these optional control flags. Recovery ACK/readback still
+  // proves control completion, while all fresh MCHQ headers prove wire state.
+  for (const calibrationFlags of [{phaseState: null, calibrationState: null, noiseSource: null}, {}]) {
+    run = fixture({calibrationFlags});
+    result = await run.controller.apply(run.previous, run.candidate);
+    assert.equal(result.receiverSync.automaticGain.status, 'verified');
+    assert.equal(result.receiverSync.calibrationVerified, false);
+    assert.equal(result.receiverSync.automaticGain.probes.length, 2);
+    for (const probe of result.receiverSync.automaticGain.probes)
+      assert.deepEqual(probe.calibration,
+        {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 1});
+  }
+  for (const calibrationFlags of [{phaseState: 3}, {calibrationState: 'FAILED'}, {noiseSource: true}]) {
+    run = fixture({calibrationFlags});
+    await rejected(run, 'AUTOMATIC_GAIN_CALIBRATION_UNVERIFIED');
+    assert.equal(run.calls.filter(call => call.stage === 'probe').length, 0);
+  }
+  for (const mutate of [probe => { delete probe.calibration; },
+    probe => { delete probe.source; }, probe => { probe.source = 'raw_adc'; },
+    probe => { probe.calibration.phaseState = 3; }, probe => { probe.calibration.phaseState = null; },
+    probe => { probe.calibration.noiseSource = true; }, probe => { probe.calibration.retuning = true; },
+    probe => { probe.calibration.verifiedPackets = 0; }, probe => { probe.packets = 2; }]) {
+    run = fixture({probes: [next => { const probe = measurement(next); mutate(probe); return probe; }]});
+    const error = await rejected(run, 'AUTOMATIC_GAIN_UNCALIBRATED_PROBE');
+    assert.equal(error.receiverSync.automaticGain.rollback.status, 'restored');
+  }
 
   // Synchronization may return a matching tuple while Suite recovery/cooldown
   // is active. Full recalibration owns waiting for idle before its reset.

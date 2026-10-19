@@ -18,8 +18,12 @@ restart receipt provider is implemented.
 The controller first verifies the old receiver tuple and records its actual
 fixed gain. After applying a candidate gain it explicitly requests full lag and
 phase calibration, requires an acknowledgement, observes recovery and verifies
-completion with the requested frequency, rate, channel count and gain. It then
-measures a bounded fresh 0.25-second MCHQ capture in a worker thread. A second
+completion with the requested frequency, rate, channel count and gain. Stock
+Suite may omit optional control calibration flags; missing values remain unknown
+in the receipt, while malformed or failed reported flags are rejected. It then
+measures a bounded fresh 0.25-second MCHQ capture in a worker thread. Every
+captured packet must report phase state 4, noise off and no retuning, supplying
+the stream evidence that an omitted control flag cannot provide. A second
 independent capture must pass at the final gain. Measurements use separate I/Q
 histograms on all channels; the worst channel determines acceptance. No antenna
 orientation or channel remapping is inferred from this check.

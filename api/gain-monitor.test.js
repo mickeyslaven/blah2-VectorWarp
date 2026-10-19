@@ -11,7 +11,9 @@ function config() {
       heimdall: {host: '127.0.0.1', port: 8091, gain: 14, gain_control: 'measured'}}}};
 }
 function probe(c, safe = false) {
-  return {frequencyHz: c.capture.fc, sampleRateHz: c.capture.fs,
+  return {source: 'calibrated_mchq_uint8_wire', packets: 1,
+    calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 1},
+    frequencyHz: c.capture.fc, sampleRateHz: c.capture.fs,
     channelCount: c.capture.device.channel_count, gainDb: c.capture.device.heimdall.gain,
     channels: Array.from({length: c.capture.device.channel_count}, (_, channel) => ({channel,
       samples: 600000, railFraction: safe ? 0 : .001, peakFraction: safe ? .8 : 1,

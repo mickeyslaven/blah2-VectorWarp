@@ -307,9 +307,7 @@ function createKrakenControlClient(options = {}) {
             (frame.external_noise !== undefined && typeof frame.external_noise !== 'boolean') ||
             (frame.noise_source !== undefined && typeof frame.noise_source !== 'boolean') ||
             (frame.phase_state !== undefined && !Number.isInteger(frame.phase_state)) ||
-            (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)) ||
-            (recalibrate && (typeof frame.noise_source !== 'boolean' ||
-              !Number.isInteger(frame.phase_state) || frame.calibration_state === undefined)))
+            (frame.calibration_state !== undefined && !['PENDING', 'CONVERGED', 'FAILED'].includes(frame.calibration_state)))
           throw receiverError('KRAKEN_PROTOCOL_MISMATCH', 'Suite omitted or malformed required AUTO recovery status.', 502);
       };
       const sendFullRecalibration = () => {
@@ -355,14 +353,21 @@ function createKrakenControlClient(options = {}) {
         sendCurrent();
       };
       const acceptReadback = () => {
+        // Stock Suite reports the recovery cycle but omits these optional
+        // calibration details. Preserve unknowns; only a fresh coherent MCHQ
+        // capture can supply the missing stream evidence to a gain coordinator.
+        const missingCalibrationDetails = recalibrate &&
+          ['phase_state', 'calibration_state', 'noise_source'].some(key => lastFrame[key] === undefined);
         receipt.operations.push({operation: current.id, field: current.field,
           requested: current.value, commandSent: true, commandOutcome: 'acknowledged',
           acknowledged: true, readbackMatched: true,
           ...(current.fullResetAfterAck ? {fullRecalibration: {commandSent: true,
             acknowledged: true, recoveryObserved: true, completed: true,
-            verification: 'reported recovery completion; no RF measurement',
-            ...(recalibrate ? {phaseState: lastFrame.phase_state,
-              calibrationState: lastFrame.calibration_state, noiseSource: lastFrame.noise_source} : {})}} : {})});
+            verification: missingCalibrationDetails ?
+              'reported recovery completion; requires fresh coherent MCHQ validation; no RF measurement' :
+              'reported recovery completion; no RF measurement',
+            ...(recalibrate ? {phaseState: lastFrame.phase_state ?? null,
+              calibrationState: lastFrame.calibration_state ?? null, noiseSource: lastFrame.noise_source ?? null} : {})}} : {})});
         current = null;
         currentAcknowledged = false;
         next();

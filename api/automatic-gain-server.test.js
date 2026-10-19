@@ -46,8 +46,7 @@ let gain = 14, expectedSavedGain = 14, recovering = false, probes = 0, child, st
 const status = () => ({settings: {center_freq: config.capture.fc,
   sample_rate: config.capture.fs, gain}, num_channels: 5, max_elements: 5,
   operating_mode: 'coherent', reconfiguring: false, recovering,
-  cooldown_active: false, noise_source: false, phase_state: recovering ? 0 : 4,
-  calibration_state: recovering ? 'PENDING' : 'CONVERGED'});
+  cooldown_active: false}); // Stock Suite omits optional control calibration flags.
 function own(socket) { sockets.add(socket); socket.on('error', () => {}); socket.on('close', () => sockets.delete(socket)); }
 function send(socket, value) { if (!socket.destroyed) socket.write(JSON.stringify(value) + '\n'); }
 const suite = net.createServer(socket => {

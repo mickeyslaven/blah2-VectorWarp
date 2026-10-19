@@ -20,6 +20,8 @@ const CLAIMS = Object.freeze({
   measured: 'Headroom of delivered calibrated wire samples at the selected common Suite gain.',
   rawAdcClippingProven: false, radarQualificationProven: false,
   hardwareGainStepsVerified: false,
+  controlCalibration: 'Acknowledged full reset and observed receiver recovery; optional status flags are checked when reported.',
+  wireCalibration: 'Every measured MCHQ packet reports phase state 4, noise off and no retuning.',
   limitation: 'Corrected wire samples do not prove raw ADC headroom, receiver sensitivity, or radar performance.'
 });
 
@@ -48,9 +50,11 @@ function assertCalibration(receipt, config) {
     return operation.commandSent === true && operation.acknowledged === true &&
       operation.readbackMatched === true && full?.commandSent === true &&
       full.acknowledged === true && full.recoveryObserved === true && full.completed === true &&
-      full.phaseState === 4 && full.calibrationState === 'CONVERGED' && full.noiseSource === false;
+      (full.phaseState == null || full.phaseState === 4) &&
+      (full.calibrationState == null || full.calibrationState === 'CONVERGED') &&
+      (full.noiseSource == null || full.noiseSource === false);
   })) throw failure('AUTOMATIC_GAIN_CALIBRATION_UNVERIFIED',
-    'Measured gain requires acknowledged full lag and phase recalibration with observed recovery and CONVERGED status.');
+    'Measured gain requires acknowledged full lag and phase recalibration with observed recovery and valid reported completion flags.');
 }
 
 function validateProbe(probe, config) {
@@ -61,6 +65,12 @@ function validateProbe(probe, config) {
       !Array.isArray(probe.channels) || probe.channels.length !== count)
     throw failure('AUTOMATIC_GAIN_PROBE_MISMATCH',
       'Gain measurement did not match the requested frequency, sample rate, channel count and fixed gain.');
+  const calibration = probe.calibration;
+  if (probe.source !== 'calibrated_mchq_uint8_wire' || !Number.isSafeInteger(probe.packets) ||
+      probe.packets < 1 || calibration?.phaseState !== 4 || calibration.noiseSource !== false ||
+      calibration.retuning !== false || calibration.verifiedPackets !== probe.packets)
+    throw failure('AUTOMATIC_GAIN_UNCALIBRATED_PROBE',
+      'Gain measurement requires calibrated MCHQ header evidence for every captured packet.');
   const seen = new Set();
   const channels = probe.channels.map(channel => {
     if (!channel || !Number.isInteger(channel.channel) || channel.channel < 0 ||
@@ -82,6 +92,8 @@ function validateProbe(probe, config) {
     channel.peakFraction <= LIMITS.peakFraction && channel.p999Fraction <= LIMITS.p999Fraction);
   return {frequencyHz: probe.frequencyHz, sampleRateHz: probe.sampleRateHz,
     channelCount: count, gainDb: probe.gainDb, channels, safe,
+    source: probe.source, packets: probe.packets,
+    calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: probe.packets},
     worstP999Fraction: Math.max(...channels.map(channel => channel.p999Fraction)),
     railsObserved: channels.some(channel => channel.railFraction > 0)};
 }

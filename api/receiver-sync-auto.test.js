@@ -7,11 +7,17 @@ const results = [];
 async function run(name, options = {}) {
   const commands = [];
   const sockets = new Set();
-  const live = {settings: {center_freq: 527000000, sample_rate: 2400000, gain: options.retune ? -1 : 40},
+  const live = {settings: {center_freq: 527000000, sample_rate: 2400000, gain: options.retune ? -1 : options.initialGain ?? 40},
     num_channels: 5, max_elements: 5, reconfiguring: false, recovering: false,
     cooldown_active: false, operating_mode: 'coherent', noise_source: false,
     phase_state: 4, calibration_state: 'CONVERGED'};
-  if (options.stock) {delete live.noise_source; delete live.calibration_state; delete live.phase_state;}
+  if (options.stock) {
+    delete live.noise_source; delete live.calibration_state; delete live.phase_state;
+    Object.assign(live, {wideband_enabled: false, external_noise: false,
+      cooldown_remaining_ms: 0, channel_comp: [], coherence_events: 0});
+    live.settings.rtl_tcp_channel = 0;
+  }
+  Object.assign(live, options.initialCalibrationFields);
   if (options.missingPhase) delete live.phase_state;
   if (options.missingGain) delete live.settings.gain;
   if (options.initialFrequencyDrift) live.settings.center_freq++;
@@ -81,6 +87,7 @@ async function run(name, options = {}) {
             if (options.sampleRateDrift) live.settings.sample_rate++;
             if (options.channelDrift) live.num_channels--;
             if (options.gainDrift) live.settings.gain = 20;
+            Object.assign(live, options.completionCalibrationFields);
             status(socket);
             if (options.failed) {live.calibration_state = 'CONVERGED'; status(socket);}
           }, options.completionDelayMs || 0);
@@ -93,7 +100,7 @@ async function run(name, options = {}) {
   const port = server.address().port;
   const candidate = {capture: {fc: options.retune ? 528000000 : 527000000, fs: 2400000,
     device: {type: 'Kraken', channel_count: 5, heimdall: {host: '127.0.0.1', control_port: port,
-      gain: options.forced ? (options.keepGain ? 'keep' : 40) : options.retune ? 'keep' : -1}}}};
+      gain: options.forced ? (options.keepGain ? 'keep' : options.initialGain ?? 40) : options.retune ? 'keep' : -1}}}};
   let receipt, error;
   try {
     const client = createKrakenControlClient({statusTimeoutMs: 200, readbackTimeoutMs: 100,
@@ -115,8 +122,11 @@ async function run(name, options = {}) {
     assert.equal(receipt.status, options.forced ? 'recalibrated' : 'synchronized');
     assert.deepEqual(receipt.operations[0].fullRecalibration,
       {commandSent: true, acknowledged: true, recoveryObserved: true, completed: true,
-        verification: 'reported recovery completion; no RF measurement',
-        ...(options.forced ? {phaseState: 4, calibrationState: 'CONVERGED', noiseSource: false} : {})});
+        verification: options.forced && (options.stock || options.missingPhase) ?
+          'reported recovery completion; requires fresh coherent MCHQ validation; no RF measurement' :
+          'reported recovery completion; no RF measurement',
+        ...(options.forced ? {phaseState: options.stock || options.missingPhase ? null : 4,
+          calibrationState: options.stock ? null : 'CONVERGED', noiseSource: options.stock ? null : false} : {})});
     assert.equal(receipt.operations[0].readbackMatched, true);
     assert.equal(receipt.calibrationVerified, false); assert.equal(receipt.hardwareVerified, false);
   }
@@ -156,8 +166,23 @@ async function run(name, options = {}) {
     completionDelayMs: 140, transactionTimeoutMs: 100});
   await run('explicit calibration scanner active refuses reset', {forced: true,
     scanning: true, error: 'KRAKEN_RESET_UNSUPPORTED'});
-  await run('explicit calibration requires full reported phase state', {forced: true,
-    missingPhase: true, noWrite: true, error: 'KRAKEN_PROTOCOL_MISMATCH'});
+  await run('stock HP explicit calibration records omitted details as unknown', {forced: true,
+    stock: true, initialGain: 14});
+  await run('explicit calibration keeps individually omitted phase unknown', {forced: true,
+    missingPhase: true});
+  for (const [field, value] of [['phase_state', '4'], ['phase_state', 4.5],
+    ['noise_source', 'false'], ['noise_source', null], ['calibration_state', 'unknown'],
+    ['calibration_state', null]])
+    await run(`explicit calibration rejects malformed supplied ${field}=${value}`, {forced: true,
+      initialCalibrationFields: {[field]: value}, noWrite: true, error: 'KRAKEN_PROTOCOL_MISMATCH'});
+  await run('stock explicit calibration still requires observed recovery', {forced: true,
+    stock: true, noRecovery: true, error: 'KRAKEN_TRANSACTION_TIMEOUT'});
+  await run('stock explicit calibration rejects malformed details first supplied at completion', {forced: true,
+    stock: true, completionCalibrationFields: {phase_state: '4'}, error: 'KRAKEN_PROTOCOL_MISMATCH'});
+  await run('stock explicit calibration honors FAILED when first supplied at completion', {forced: true,
+    stock: true, completionCalibrationFields: {calibration_state: 'FAILED'}, error: 'KRAKEN_CALIBRATION_FAILED'});
+  await run('explicit calibration refuses reported pending after recovery', {forced: true,
+    completionCalibrationFields: {calibration_state: 'PENDING'}, error: 'KRAKEN_TRANSACTION_TIMEOUT'});
   await run('explicit calibration requires reported gain even with keep', {forced: true,
     keepGain: true, missingGain: true, noWrite: true, error: 'KRAKEN_GAIN_NOT_REPORTED'});
   await run('explicit calibration refuses initial tuple mismatch', {forced: true,

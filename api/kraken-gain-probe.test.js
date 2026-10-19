@@ -108,6 +108,8 @@ test('worker probe parses fragmented loopback frames, all channels and exact sam
   assert.equal(result.worstCase.railFraction, .4);
   assert.equal(result.worstCase.peakFraction, 1);
   assert.equal(result.source, 'calibrated_mchq_uint8_wire');
+  assert.deepEqual(result.calibration,
+    {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 2});
   assert.equal(result.sampleRateVerifiedByStream, false);
   assert.equal(result.sampleRateSource, 'config');
   assert.ok(result.elapsedMs < 3000);
@@ -160,6 +162,17 @@ test('rejects frequency counter or group changes after the first accepted packet
     const rejection = assert.rejects(promise, {code: 'KRAKEN_GAIN_PROBE_MISMATCH'});
     socket.emit('data', Buffer.concat([frame(c), frame(c, change)]));
     await rejection;
+  }
+});
+
+test('calibration evidence covers every packet, including a later invalid header', async () => {
+  const c = config();
+  for (const change of [{phase: 3}, {noise: 1}, {retune: 1}]) {
+    const {socket, promise} = injected(c);
+    const rejection = assert.rejects(promise, {code: 'KRAKEN_GAIN_PROBE_UNCALIBRATED'});
+    socket.emit('data', Buffer.concat([frame(c), frame(c, change)]));
+    await rejection;
+    assert.equal(socket.destroyed, true);
   }
 });
 

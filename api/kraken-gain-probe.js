@@ -165,6 +165,7 @@ function capture(descriptor, options, connect, signal) {
         startedAt, captureElapsedMs: performance.now() - started,
         frequencyChangeCounter: firstHeader.frequencyChangeCounter, groupIndex: firstHeader.groupIndex,
         source: 'calibrated_mchq_uint8_wire', sampleRateSource: 'config',
+        calibration: {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: packets},
         sampleRateVerifiedByStream: false, wireCenter: CENTER, wireFullScale: CENTER,
         meanUnits: 'signed_fraction_of_wire_full_scale',
         componentAggregation: 'railFraction is across I/Q; peak, p999 and RMS are the worse component',
