@@ -3,7 +3,8 @@
 
 const fs = require('fs');
 const yaml = require('../api/node_modules/js-yaml');
-const {evaluateBearing, readSamples} = require('../api/bearing-diagnostic');
+const {evaluateBearing, evaluateReferenceDirection, readSamples,
+  readReferenceUpdates} = require('../api/bearing-diagnostic');
 
 function option(name) {
   const at = process.argv.indexOf(name);
@@ -13,7 +14,14 @@ function option(name) {
 
 try {
   const config = yaml.load(fs.readFileSync(option('--config'), 'utf8'), {schema: yaml.JSON_SCHEMA});
-  const result = evaluateBearing(readSamples(option('--input')), config);
+  const input = option('--input');
+  const result = evaluateBearing(readSamples(input), config);
+  const referenceAt = process.argv.indexOf('--reference');
+  const reference = referenceAt >= 0 ? option('--reference') : `${input}.reference.jsonl`;
+  let updates = [];
+  try { updates = readReferenceUpdates(reference, {maximumRows: 4096}); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  result.known_angle_reference = evaluateReferenceDirection(updates, config);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.available) process.exitCode = 2;
 } catch (error) {
