@@ -42,6 +42,16 @@ attribute all energy to the nearest tower. Unknown altitude or identity remains
 missing evidence. Receiver bandwidth limits the captured waveform; a 2.4 MSPS
 capture is not evidence for the full 6 MHz ATSC channel.
 
+The normalized snapshot schema is
+`vectorwarp-illuminator-transmitter-catalog-v1`. `api/illuminator-catalog.js`
+validates and fingerprints immutable snapshots, filters them by band plan,
+time, receiver location and radius, and deliberately preserves every
+co-channel transmitter. The source registry covers FCC LMS for US FM/ATSC,
+Ofcom TxParams for UK FM/DAB, Ofcom DTT for UK DVB-T/T2, and the same validated
+format for operator files. Regulator downloads must be normalized to WGS84 and
+pinned before preview; the API never fetches an arbitrary URL supplied by a
+client. The preview hash must include the resulting catalog fingerprint.
+
 ## Transaction and recovery
 
 State progression is PREVIEWED → LOCKED → BACKED_UP → PRESCREEN → SHORTLIST →

@@ -30,6 +30,7 @@ const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
+const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -431,7 +432,9 @@ app.get('/api/illuminator-survey', (req, res) => {
   const document = readConfig(configFile);
   res.json({schema: 'vectorwarp-illuminator-survey-capabilities-v1',
     capabilities: illuminatorReceiverCapabilities(document.config),
-    band_plans: illuminatorBandPlans()});
+    band_plans: illuminatorBandPlans(), catalog_sources: illuminatorCatalogSources(),
+    catalog_schema: 'vectorwarp-illuminator-transmitter-catalog-v1',
+    catalog_runtime: {live_network_fetch: false, pinned_snapshot_required: true}});
 });
 app.post('/api/illuminator-survey/evaluate', (req, res) => {
   try {

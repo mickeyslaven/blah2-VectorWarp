@@ -38,7 +38,13 @@ gain within its blocks, partition evidence by frequency/transmitter/site,
 and restore the exact starting configuration after success or failure.
 
 `GET /api/illuminator-survey` returns the built-in plans and the current
-receiver's honest assessment limits. `POST /api/illuminator-survey/evaluate`
+receiver's honest assessment limits. It also returns the regulator/operator
+catalog source registry, normalized catalog schema, and the explicit fact that
+a pinned snapshot is required: the request path never performs a live network
+fetch. `api/illuminator-catalog.js` validates and fingerprints those snapshots,
+resolves FM, DAB, ATSC or DVB-T/T2 transmitters by plan, time, location and
+radius, and keeps co-channel/SFN sites as separate hypotheses.
+`POST /api/illuminator-survey/evaluate`
 accepts candidate evidence and returns per-candidate rejection/missing-evidence
 reasons. The evaluator never promotes a candidate merely because it is the
 best of a bad set.
