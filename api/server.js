@@ -14,7 +14,7 @@ const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
 const {createAutomaticGain, enabled: automaticGainEnabled, MAX_AUTOMATIC_GAIN_MS} = require('./automatic-gain.js');
-const {measureGain} = require('./kraken-gain-probe.js');
+const {measureGain, waitForGainSettled} = require('./kraken-gain-probe.js');
 const {createGainMonitor} = require('./gain-monitor.js');
 const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
@@ -81,7 +81,7 @@ const receiverSynchronizer = createReceiverSynchronizer({krakenOptions: {
   statusTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_STATUS_TIMEOUT_MS', 10000),
   readbackTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_READBACK_TIMEOUT_MS', 30000)
 }});
-const automaticGain = createAutomaticGain({synchronizer: receiverSynchronizer, measureGain});
+const automaticGain = createAutomaticGain({synchronizer: receiverSynchronizer, measureGain, waitForGainSettled});
 // An interrupted gain check must not publish frames from an uncertain receiver.
 // Successful checks also remain blocked until the normal API/processor restart.
 let gainPublicationBlocked = gainRestart.publicationBlocked(receiverSyncState);

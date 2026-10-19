@@ -21,10 +21,11 @@ function measurement(config, p999 = .6, overrides = {}) {
       p999Fraction: p999, rmsFraction: p999 / 2})), ...overrides};
 }
 function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
-  syncError, calibrationError, verifyError, verifyDrift, syncBusy = false, clock,
+  syncError, calibrationError, verifyError, verifyDrift, syncBusy = false, clock, settlingError,
+  settlingProbe,
   calibrationFlags = {calibrationState: 'CONVERGED', phaseState: 4, noiseSource: false}} = {}) {
   const calls = []; let live = status(previous, actualGain);
-  let syncs = 0, calibrations = 0, verifies = 0, captures = 0;
+  let syncs = 0, calibrations = 0, verifies = 0, captures = 0, settles = 0;
   function receipt(operations = []) { return {status: 'synchronized', before: clone(live),
     after: clone(live), operations}; }
   function injected(code) { const error = new Error(code); error.code = code; return error; }
@@ -68,7 +69,19 @@ function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
     if (value instanceof Error) throw value;
     return typeof value === 'function' ? value(next) : measurement(next, value);
   }
-  return {controller: createAutomaticGain({synchronizer, measureGain,
+  async function waitForGainSettled(next, options) {
+    calls.push({stage: 'settle', config: clone(next)}); settles++;
+    assert.equal(options.timeoutMs, LIMITS.settlingTimeoutMs);
+    if (clock) clock.value += LIMITS.settlingTimeoutMs;
+    if (settlingError === settles) throw injected('SETTLING_FAILED');
+    // Deliberately clipped: ready does not mean safe gain.
+    const result = measurement(next, 1);
+    result.settling = {transitionObserved: options.requireTransition};
+    result.channels[0].railFraction = .1;
+    if (settlingProbe && settles === 1) settlingProbe(result);
+    return result;
+  }
+  return {controller: createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
     ...(clock ? {now: () => clock.value} : {})}), previous,
     candidate: clone(previous), calls, live: () => clone(live), synchronizer};
 }
@@ -93,7 +106,7 @@ async function rejected(run, code) {
   const originals = [clone(run.previous), clone(run.candidate)];
   let result = await run.controller.apply(run.previous, run.candidate);
   assert.deepEqual(run.calls.map(call => call.stage),
-    ['verify', 'synchronize', 'recalibrate', 'probe', 'probe', 'verify']);
+    ['verify', 'synchronize', 'settle', 'recalibrate', 'probe', 'probe', 'verify']);
   assert.deepEqual([run.previous, run.candidate], originals);
   assert.equal(result.config.capture.device.heimdall.gain, 20);
   assert.equal(result.receiverSync.automaticGain.finalPassingProbes, 2);
@@ -102,6 +115,23 @@ async function rejected(run, code) {
   assert.equal(result.receiverSync.automaticGain.claims.radarQualificationProven, false);
   assert.deepEqual(result.receiverSync.operations.map(operation => operation.automaticGainStage),
     ['trial-synchronize', 'trial-recalibrate']);
+
+  assert.equal(result.receiverSync.automaticGain.settling.length, 1);
+  assert.equal(result.receiverSync.automaticGain.settling[0].safe, false,
+    'Clipped but coherent readiness evidence cannot substitute for safe final probes');
+  run = fixture({settlingError: 1});
+  let settleFailure = await rejected(run, 'SETTLING_FAILED');
+  assert.equal(settleFailure.receiverSync.automaticGain.rollback.status, 'restored');
+  assert.equal(run.calls.filter(call => call.stage === 'recalibrate').length, 1,
+    'Only restoration may recalibrate after trial settling fails');
+  assert.equal(run.calls.filter(call => call.stage === 'probe').length, 0);
+  run = fixture({settlingProbe: probe => { probe.calibration.phaseState = 3; }});
+  settleFailure = await rejected(run, 'AUTOMATIC_GAIN_UNCALIBRATED_PROBE');
+  assert.equal(settleFailure.receiverSync.automaticGain.rollback.status, 'restored');
+
+  run = fixture({settlingProbe: probe => { delete probe.settling; }});
+  settleFailure = await rejected(run, 'AUTOMATIC_GAIN_SETTLING_UNVERIFIED');
+  assert.equal(settleFailure.receiverSync.automaticGain.rollback.status, 'restored');
 
   // Stock Suite omits these optional control flags. Recovery ACK/readback still
   // proves control completion, while all fresh MCHQ headers prove wire state.
@@ -131,13 +161,13 @@ async function rejected(run, code) {
   }
 
   // Synchronization may return a matching tuple while Suite recovery/cooldown
-  // is active. Full recalibration owns waiting for idle before its reset.
+  // is active. Fresh coherent stream readiness must precede the full reset.
   run = fixture({syncBusy: true});
   result = await run.controller.apply(run.previous, run.candidate);
   await result.rollback();
   assert.equal(result.receiverSync.automaticGain.rollback.status, 'restored');
   assert.deepEqual(run.calls.map(call => call.stage), ['verify', 'synchronize',
-    'recalibrate', 'probe', 'probe', 'verify', 'synchronize', 'recalibrate', 'verify']);
+    'settle', 'recalibrate', 'probe', 'probe', 'verify', 'synchronize', 'settle', 'recalibrate', 'verify']);
 
   run = fixture({verifyDrift: 2});
   const finalDrift = await rejected(run, 'AUTOMATIC_GAIN_RECEIVER_MISMATCH');
@@ -145,7 +175,7 @@ async function rejected(run, code) {
   assert.equal(finalDrift.receiverSync.automaticGain.selectedGainDb, null);
   assert.deepEqual(run.live(), status(run.previous));
   assert.deepEqual(run.calls.map(call => call.stage), ['verify', 'synchronize',
-    'recalibrate', 'probe', 'probe', 'verify', 'synchronize', 'recalibrate', 'verify']);
+    'settle', 'recalibrate', 'probe', 'probe', 'verify', 'synchronize', 'settle', 'recalibrate', 'verify']);
 
   // Persistence failure restores the actual old numeric gain, even for keep,
   // with one idempotent restoration regardless of repeated/concurrent calls.
@@ -281,14 +311,14 @@ async function rejected(run, code) {
   assert.ok(error.receiverSync.automaticGain.trials.length <= LIMITS.maxTrialSettings);
 
   // Full stage reservations enforce fifteen minutes without racing live I/O;
-  // rollback still gets its own complete five-minute budget.
+  // rollback still gets its own complete 315-second budget.
   const clock = {value: 0};
   run = fixture({probes: Array(16).fill(.2), clock});
   error = await rejected(run, 'AUTOMATIC_GAIN_DEADLINE');
   assert.equal(error.receiverSync.automaticGain.rollback.status, 'restored');
   assert.equal(run.calls.filter(call => call.stage === 'probe').length, 3);
   assert.ok(clock.value <= MAX_AUTOMATIC_GAIN_MS);
-  assert.equal(clock.value, 1170000);
+  assert.equal(clock.value, 1155000);
   assert.equal(run.calls.at(-1).stage, 'verify');
 
   // A rejected post-save restore is itself idempotent and retains the receipt.

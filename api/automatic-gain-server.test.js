@@ -43,6 +43,7 @@ const sockets = new Set();
 const commands = [];
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '../config/config-kraken.yml'), 'utf8'));
 let gain = 14, expectedSavedGain = 14, recovering = false, probes = 0, child, stderr = '', rejectProbe = false;
+let gainPhasePending = false;
 const status = () => ({settings: {center_freq: config.capture.fc,
   sample_rate: config.capture.fs, gain}, num_channels: 5, max_elements: 5,
   operating_mode: 'coherent', reconfiguring: false, recovering,
@@ -60,8 +61,11 @@ const suite = net.createServer(socket => {
       if (command.command === 'get_scanner_status') {
         send(socket, {status: 'success', enabled: false});
       } else if (command.command === 'set_gain') {
-        gain = command.gain; send(socket, {status: 'success', gain}); send(socket, status());
+        gain = command.gain; gainPhasePending = true;
+        send(socket, {status: 'success', gain}); send(socket, status());
       } else if (command.command === 'reset_lag_compensation') {
+        assert.equal(gainPhasePending, false,
+          'A full reset must wait for the gain-change phase transition, even when TCP reports idle');
         send(socket, {status: 'success', message: 'Full recalibration (lag + phase) started'});
         recovering = true; send(socket, status());
         setTimeout(() => { recovering = false; send(socket, status()); }, 15);
@@ -71,15 +75,22 @@ const suite = net.createServer(socket => {
 });
 const iq = net.createServer(socket => {
   own(socket); probes++;
+  const phasePending = gainPhasePending;
   const samples = 16384, bytes = 32 + 5 * 8 + 5 * samples * 2;
   const frame = Buffer.alloc(bytes);
   frame.writeUInt32BE(0x4d434851, 0); frame.writeUInt32BE(5, 4);
-  frame.writeUInt32BE(samples, 8); frame.writeUInt32BE(4, 12);
+  frame.writeUInt32BE(samples, 8); frame.writeUInt32BE(phasePending ? 5 : 4, 12);
   for (let channel = 0; channel < 5; channel++) {
     frame.writeFloatLE(config.capture.fc + (rejectProbe ? 6000000 : 0), 32 + channel * 8);
     frame.writeFloatLE(gain, 36 + channel * 8);
   }
   for (let at = 72; at < bytes; at++) frame[at] = gain >= 14 ? (at % 2 ? 255 : 0) : (at % 2 ? 191 : 64);
+  if (phasePending) {
+    // Expose calibration-in-progress before its asynchronous cleanup. TCP's
+    // idle flags deliberately stay false, matching the stock Suite gap.
+    socket.write(frame, () => { gainPhasePending = false; });
+    return;
+  }
   let count = 0;
   function write() {
     if (socket.destroyed) return;
@@ -133,7 +144,9 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal(result.status, 200, JSON.stringify(result.body));
     assert.equal(result.body.receiverSync.automaticGain.status, 'verified');
     assert.equal(result.body.config.capture.device.heimdall.gain, 13);
-    assert.equal(probes, 3, 'Unsafe trial, safe replacement, independent confirmation');
+    assert.equal(probes, 6, 'Two readiness checks plus one transitional capture remain separate from three headroom captures');
+    assert.equal(result.body.receiverSync.automaticGain.probes.length, 3);
+    assert.equal(result.body.receiverSync.automaticGain.settling[1].transitionObserved, true);
     assert.equal(commands.filter(row => row.command === 'reset_lag_compensation').length, 2);
     assert.equal((await request('GET', '/api/detection')).status, 503, 'No old-pipeline publication before restart');
     for (let i = 0; i < 30 && !fs.existsSync(marker); i++) await new Promise(resolve => setTimeout(resolve, 25));

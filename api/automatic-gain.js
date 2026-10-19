@@ -7,14 +7,14 @@ const enabled = config => liveKraken(config) &&
   config.capture.device.heimdall?.gain_control === 'measured';
 const fixedGain = gain => typeof gain === 'number' && Number.isFinite(gain) &&
   gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10;
-const MAX_AUTOMATIC_GAIN_MS = 1200000;
+const MAX_AUTOMATIC_GAIN_MS = 1215000;
 const LIMITS = Object.freeze({maxTrialSettings: 16, maxProbeCaptures: 32,
   gainMinDb: 0, gainMaxDb: 50, commonRequestedGainStepDb: 1,
   railFraction: 0, peakFraction: .95, p999Fraction: .70,
   increaseBelowPeakFraction: .80, increaseBelowP999Fraction: .60,
   finalPassingProbes: 2, probeSeconds: .25, probeTimeoutMs: 15000,
-  synchronizationTimeoutMs: 75000, recalibrationTimeoutMs: 150000,
-  selectionTimeoutMs: 900000, restoreTimeoutMs: 300000,
+  synchronizationTimeoutMs: 75000, settlingTimeoutMs: 15000, recalibrationTimeoutMs: 150000,
+  selectionTimeoutMs: 900000, restoreTimeoutMs: 315000,
   maxDurationMs: MAX_AUTOMATIC_GAIN_MS});
 const CLAIMS = Object.freeze({
   measured: 'Headroom of delivered calibrated wire samples at the selected common Suite gain.',
@@ -98,10 +98,11 @@ function validateProbe(probe, config) {
     railsObserved: channels.some(channel => channel.railFraction > 0)};
 }
 
-function createAutomaticGain({synchronizer, measureGain, now = Date.now} = {}) {
+function createAutomaticGain({synchronizer, measureGain, waitForGainSettled, now = Date.now} = {}) {
   if (!synchronizer || !['verify', 'synchronize', 'recalibrate'].every(key =>
-    typeof synchronizer[key] === 'function') || typeof measureGain !== 'function' || typeof now !== 'function')
-    throw new TypeError('Measured gain requires receiver verification, synchronization, recalibration and measurement.');
+    typeof synchronizer[key] === 'function') || typeof measureGain !== 'function' ||
+      typeof waitForGainSettled !== 'function' || typeof now !== 'function')
+    throw new TypeError('Measured gain requires receiver verification, synchronization, stream settling, recalibration and measurement.');
 
   async function apply(previous, candidate, {increase = true} = {}) {
     let restoreConfig, attemptedConfig, rollbackPromise, mutated = false;
@@ -110,14 +111,14 @@ function createAutomaticGain({synchronizer, measureGain, now = Date.now} = {}) {
     const config = clone(candidate);
     const receiverSync = {schemaVersion: 1, receiverType: 'Kraken', status: 'pending',
       operations: [], calibrationVerified: false, hardwareVerified: false,
-      automaticGain: {status: 'measuring', probes: [], trials: [], selectedGainDb: null,
+      automaticGain: {status: 'measuring', probes: [], settling: [], trials: [], selectedGainDb: null,
         limits: {...LIMITS}, claims: {...CLAIMS}}};
     const automatic = receiverSync.automaticGain;
     // Dependencies own their bounded I/O and cancellation. Never race an active
     // write against a timer: rollback starts only after that operation settles.
     // Selection has a 15-minute budget and at most sixteen trial settings.
-    // Restoration has a separate five-minute budget: sync75s + cal150s +
-    // verify75s. Each stage reserves its entire bound before it may start.
+    // Restoration has a separate 315-second budget: sync75s + settle15s +
+    // cal150s + verify75s. Each stage reserves its entire bound before it may start.
     function requireBudget(name, milliseconds, restoring = false) {
       if (now() + milliseconds > (restoring ? restoreDeadline : selectionDeadline))
         throw failure(restoring ? 'AUTOMATIC_GAIN_RESTORE_DEADLINE' : 'AUTOMATIC_GAIN_DEADLINE',
@@ -135,6 +136,29 @@ function createAutomaticGain({synchronizer, measureGain, now = Date.now} = {}) {
       try { const receipt = await action(); record(receipt); return receipt; }
       catch (error) { record(error.receiverSync); throw error; }
     }
+    async function settle(name, candidate, synchronized, trial = null) {
+      const requireTransition = synchronized.operations?.some(operation => operation.commandSent &&
+        ['set_gain', 'set_frequency', 'set_num_elements'].includes(operation.operation)) === true;
+      requireBudget(name, LIMITS.settlingTimeoutMs, name.startsWith('restore-'));
+      try {
+        // Gain changes initiate Suite phase calibration independently of its
+        // TCP recovery flag. Wait for its coherent output before another reset.
+        // These samples are readiness evidence, never a headroom acceptance.
+        const result = await waitForGainSettled(clone(candidate), {
+          captureSeconds: LIMITS.probeSeconds, timeoutMs: LIMITS.settlingTimeoutMs, requireTransition
+        });
+        const measured = validateProbe(result, candidate);
+        if (requireTransition && result.settling?.transitionObserved !== true)
+          throw failure('AUTOMATIC_GAIN_SETTLING_UNVERIFIED',
+            'A changed receiver setting requires a fresh non-ready to coherent stream transition before recalibration.');
+        automatic.settling.push({...measured, requireTransition,
+          transitionObserved: result.settling?.transitionObserved === true, stage: name, trial, purpose: 'pre-reset-readiness'});
+      } catch (error) {
+        automatic.settling.push({stage: name, trial, status: 'failed',
+          code: error.code || 'AUTOMATIC_GAIN_SETTLING_FAILED', message: error.message});
+        throw error;
+      }
+    }
     async function rollback() {
       if (rollbackPromise) return rollbackPromise;
       rollbackPromise = (async () => {
@@ -148,6 +172,7 @@ function createAutomaticGain({synchronizer, measureGain, now = Date.now} = {}) {
           const synchronized = await stage('restore-synchronize', () =>
             synchronizer.synchronize(attemptedConfig, restoreConfig, {force: true}));
           assertTuple(synchronized, restoreConfig, {requireIdle: false});
+          await settle('restore-settle', restoreConfig, synchronized);
           assertCalibration(await stage('restore-recalibrate', () =>
             synchronizer.recalibrate(restoreConfig)), restoreConfig);
           assertTuple(await stage('restore-verify', () => synchronizer.verify(restoreConfig)), restoreConfig);
@@ -212,6 +237,7 @@ function createAutomaticGain({synchronizer, measureGain, now = Date.now} = {}) {
           return synchronizer.synchronize(restoreConfig, clone(config), {force: true});
         }, trial);
         assertTuple(synchronized, config, {requireIdle: false});
+        await settle('trial-settle', config, synchronized, trial);
         assertCalibration(await stage('trial-recalibrate', () =>
           synchronizer.recalibrate(clone(config)), trial), config);
         let measurement = await probe(trial);

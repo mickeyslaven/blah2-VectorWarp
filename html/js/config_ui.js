@@ -1,7 +1,7 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
-const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1215000;
+const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1230000;
 const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],

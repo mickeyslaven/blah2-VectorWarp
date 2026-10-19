@@ -9,6 +9,8 @@ const LIMITS = Object.freeze({maxChannels: 16, maxPacketSamples: 262144,
   maxFrameBytes: 32 + 16 * 8 + 16 * 262144 * 2});
 const MAGIC = 0x4d434851;
 const CENTER = 127.5;
+const SETTLE_MAX_ATTEMPTS = 16;
+const SETTLE_RETRY_DELAY_MS = 1000;
 
 function probeError(code, message) {
   const error = new Error(message);
@@ -111,13 +113,19 @@ function decodeHeader(buffer, descriptor, firstHeader) {
   if (channels !== descriptor.channelCount)
     throw probeError('MISMATCH', 'MCHQ channel count differs from the requested settings.');
   const phase = buffer.readUInt32BE(12);
-  if ((phase & 255) !== 4 || (phase & 0xe00) || buffer.readUInt32BE(16) !== 0 || buffer.readUInt32BE(28) !== 0)
-    throw probeError('UNCALIBRATED', 'MCHQ frame is uncalibrated, stale, in another mode, noisy, or retuning.');
+  const phaseState = phase & 255, noise = buffer.readUInt32BE(16), retuning = buffer.readUInt32BE(28);
+  if ((phase & ~0xfff) || phaseState > 6 || noise > 1 || retuning > 1)
+    throw probeError('PROTOCOL', 'MCHQ frame has malformed calibration flags.');
+  if (phase & 0xe00)
+    throw probeError('MODE', 'MCHQ frame is stale or in a noncoherent receiver mode.');
+  if (retuning !== 0)
+    throw probeError('RETUNING', 'MCHQ receiver is retuning.');
   const frequencyChangeCounter = buffer.readUInt32BE(20), groupIndex = buffer.readUInt32BE(24);
   if (firstHeader && (frequencyChangeCounter !== firstHeader.frequencyChangeCounter ||
       groupIndex !== firstHeader.groupIndex))
     throw probeError('MISMATCH', 'MCHQ frequency counter or channel group changed during the probe.');
-  return {channels, samples, frequencyChangeCounter, groupIndex};
+  return {channels, samples, frequencyChangeCounter, groupIndex,
+    phaseState, noiseSource: noise === 1, uncalibrated: phaseState !== 4 || noise !== 0};
 }
 
 function validateMetadata(buffer, descriptor) {
@@ -190,6 +198,16 @@ function capture(descriptor, options, connect, signal) {
             needed = 32 + header.channels * 8; stage = 'metadata';
           } else if (stage === 'metadata') {
             validateMetadata(buffer, descriptor);
+            // Check the whole requested tuple before classifying an ordinary
+            // calibration transition as retryable by waitForGainSettled.
+            if (header.uncalibrated) {
+              const error = probeError('UNCALIBRATED', 'MCHQ calibration has not settled with noise off.');
+              error.transition = {frequencyHz: descriptor.frequencyHz, sampleRateHz: descriptor.sampleRateHz,
+                channelCount: descriptor.channelCount, gainDb: descriptor.gainDb,
+                phaseState: header.phaseState, noiseSource: header.noiseSource,
+                retuning: false, metadataMatched: true};
+              throw error;
+            }
             needed += header.channels * header.samples * 2; stage = 'payload';
           } else {
             const take = Math.min(header.samples, targetSamples - samples);
@@ -247,7 +265,9 @@ async function measureGain(config, options = {}) {
       worker.once('message', message => {
         if (message.ok) finish(null, message.result);
         else {
-          const error = new Error(message.error); error.code = message.code; finish(error);
+          const error = new Error(message.error); error.code = message.code;
+          if (message.transition) error.transition = message.transition;
+          finish(error);
         }
       });
       worker.once('error', error => finish(error));
@@ -258,10 +278,70 @@ async function measureGain(config, options = {}) {
   });
 }
 
+function abortableDelay(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    let timer;
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
+    const abort = () => { cleanup(); reject(probeError('ABORTED', 'Gain settle wait aborted.')); };
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener('abort', abort, {once: true});
+    timer = setTimeout(() => { cleanup(); resolve(); }, milliseconds);
+  });
+}
+
+/** Wait for a fresh complete 0.25 s calibrated capture before a new full reset.
+ * Each attempt uses a new strict measureGain worker. Only normal calibration
+ * phases/noise-on may retry; malformed data, retuning and tuple/mode drift fail.
+ * All attempts, worker teardown and retry pauses share one maximum 15 s budget.
+ */
+async function waitForGainSettled(config, options = {},
+  {measure = measureGain, now = () => performance.now(), pause = abortableDelay} = {}) {
+  const descriptor = descriptorFrom(config);
+  const normalized = captureOptions(options);
+  if (normalized.captureSeconds !== .25 || typeof measure !== 'function' ||
+      typeof now !== 'function' || typeof pause !== 'function' ||
+      (options.requireTransition !== undefined && typeof options.requireTransition !== 'boolean'))
+    throw probeError('CONFIG', 'Gain settling requires a full 0.25 s capture and bounded dependencies.');
+  const started = now(), deadline = started + normalized.timeoutMs;
+  const signal = options.signal;
+  const transitionRequired = options.requireTransition === true;
+  let transitionObserved = false;
+  function remaining() {
+    if (signal?.aborted) throw probeError('ABORTED', 'Gain settle wait aborted.');
+    const value = Math.floor(deadline - now());
+    if (value < 1) throw probeError('TIMEOUT', 'Gain settling exceeded its total deadline.');
+    return value;
+  }
+  for (let attempt = 1; attempt <= SETTLE_MAX_ATTEMPTS; attempt++) {
+    const timeoutMs = remaining();
+    try {
+      const result = await measure(config, {captureSeconds: .25, timeoutMs, signal});
+      remaining();
+      if (!transitionRequired || transitionObserved)
+        return {...result, settling: {transitionRequired, transitionObserved,
+          attempts: attempt, elapsedMs: now() - started,
+          timeoutMs: normalized.timeoutMs, captureSeconds: .25}};
+    } catch (error) {
+      if (error.code !== 'KRAKEN_GAIN_PROBE_UNCALIBRATED') throw error;
+      const transition = error.transition;
+      if (transition?.metadataMatched === true && transition.frequencyHz === descriptor.frequencyHz &&
+          transition.sampleRateHz === descriptor.sampleRateHz && transition.channelCount === descriptor.channelCount &&
+          transition.gainDb === descriptor.gainDb && transition.retuning === false &&
+          typeof transition.noiseSource === 'boolean' &&
+          [0, 1, 2, 3, 5, 6].includes(transition.phaseState))
+        transitionObserved = true;
+    }
+    if (attempt === SETTLE_MAX_ATTEMPTS)
+      throw probeError('TIMEOUT', 'Gain calibration did not settle with the required transition within bounded attempts.');
+    await pause(Math.min(SETTLE_RETRY_DELAY_MS, remaining()), signal);
+  }
+}
+
 if (!isMainThread && workerData?.kind === 'kraken-gain-probe') {
   capture(workerData.descriptor, workerData.options, net.createConnection)
     .then(result => parentPort.postMessage({ok: true, result}),
-      error => parentPort.postMessage({ok: false, error: error.message, code: error.code}));
+      error => parentPort.postMessage({ok: false, error: error.message, code: error.code,
+        transition: error.transition}));
 }
 
-module.exports = {measureGain, captureGain, packetMetrics, LIMITS};
+module.exports = {measureGain, waitForGainSettled, captureGain, packetMetrics, LIMITS};

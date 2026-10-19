@@ -16,8 +16,14 @@ completion receipt. Automatic mode is unsupported on macOS until a trusted
 restart receipt provider is implemented.
 
 The controller first verifies the old receiver tuple and records its actual
-fixed gain. After applying a candidate gain it explicitly requests full lag and
-phase calibration, requires an acknowledgement, observes recovery and verifies
+fixed gain. After applying settings it first waits for a fresh coherent MCHQ
+stream. When a receiver setting command was sent, this requires a matching-tuple
+phase transition from a non-ready phase to sustained phase 4 with noise off;
+noise-on alone does not count. A missed transition fails closed. This bounded
+15-second readiness check prevents Suite's gain-change calibration cleanup from
+overlapping a subsequent full reset. It is distinct from headroom acceptance.
+The controller then explicitly requests full lag and phase calibration,
+requires an acknowledgement, observes recovery and verifies
 completion with the requested frequency, rate, channel count and gain. Stock
 Suite may omit optional control calibration flags; missing values remain unknown
 in the receipt, while malformed or failed reported flags are rejected. It then
@@ -36,7 +42,7 @@ near that headroom target or just below a measured unsafe setting. An unsafe
 upward trial returns to the last measured safe gain. Requests are not guaranteed
 physical tuner steps because Suite does not advertise a gain table. Clipping at
 minimum gain fails qualification. Sixteen trials and a 15-minute selection
-deadline bound the search; up to five further minutes are reserved for rollback.
+deadline bound the search; up to 315 further seconds are reserved for rollback.
 These finite captures cannot guarantee the absence of later overload.
 
 While processing runs, a bounded probe checks every minute. Two consecutive
@@ -75,8 +81,8 @@ file still has its starting revision: concurrent edits and ambiguous post-rename
 failures require reconciliation. A successful restore is recorded distinctly
 from verified headroom. No retry races a command still in flight. Each normal
 sync is bounded by 75 seconds, each full calibration by 150 seconds and each
-capture by 15 seconds. A new operation starts only if its complete timeout fits
-the remaining selection budget. The browser allows 20 minutes plus transport
+readiness check and capture by 15 seconds. A new operation starts only if its complete timeout fits
+the remaining selection budget. The browser allows 20 minutes 15 seconds plus transport
 time for selection and rollback; ordinary settings transactions keep their
 existing shorter timeout.
 

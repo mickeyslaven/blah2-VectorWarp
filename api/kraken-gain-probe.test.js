@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {test} = require('node:test');
 const {EventEmitter} = require('node:events');
 const net = require('node:net');
-const {measureGain, captureGain, packetMetrics, LIMITS} = require('./kraken-gain-probe');
+const {measureGain, waitForGainSettled, captureGain, packetMetrics, LIMITS} = require('./kraken-gain-probe');
 
 function config(overrides = {}) {
   return {capture: {fc: 527000001, fs: 40, replay: {state: false},
@@ -143,11 +143,17 @@ test('rejects mismatched/nonfinite metadata on every channel without using paylo
 
 test('rejects uncalibrated, stale/wideband/independent, noise and retuning frames', async () => {
   const c = config();
-  for (const change of [{phase: 3}, {phase: 4 | 0x200}, {phase: 4 | 0x400},
-    {phase: 4 | 0x800}, {noise: 1}, {retune: 1}]) {
+  const cases = [
+    ...[0, 1, 2, 3, 5, 6].map(phase => [{phase}, 'UNCALIBRATED']),
+    ...[0x200, 0x400, 0x800].map(flag => [{phase: 4 | flag}, 'MODE']),
+    [{noise: 1}, 'UNCALIBRATED'], [{retune: 1}, 'RETUNING'],
+    [{phase: 7}, 'PROTOCOL'], [{phase: 4 | 0x1000}, 'PROTOCOL'],
+    [{noise: 2}, 'PROTOCOL'], [{retune: 2}, 'PROTOCOL']
+  ];
+  for (const [change, code] of cases) {
     const {socket, promise} = injected(c);
-    const rejection = assert.rejects(promise, {code: 'KRAKEN_GAIN_PROBE_UNCALIBRATED'});
-    socket.emit('data', frame(c, change).subarray(0, 32));
+    const rejection = assert.rejects(promise, {code: `KRAKEN_GAIN_PROBE_${code}`});
+    socket.emit('data', frame(c, change).subarray(0, 32 + c.capture.device.channel_count * 8));
     await rejection;
   }
   const {socket, promise} = injected(c);
@@ -169,7 +175,8 @@ test('calibration evidence covers every packet, including a later invalid header
   const c = config();
   for (const change of [{phase: 3}, {noise: 1}, {retune: 1}]) {
     const {socket, promise} = injected(c);
-    const rejection = assert.rejects(promise, {code: 'KRAKEN_GAIN_PROBE_UNCALIBRATED'});
+    const rejection = assert.rejects(promise, {code: change.retune ?
+      'KRAKEN_GAIN_PROBE_RETUNING' : 'KRAKEN_GAIN_PROBE_UNCALIBRATED'});
     socket.emit('data', Buffer.concat([frame(c), frame(c, change)]));
     await rejection;
     assert.equal(socket.destroyed, true);
@@ -218,4 +225,126 @@ test('worker total deadline and cancellation terminate stalled capture', async t
   const pending = measureGain(c, {timeoutMs: 3000, signal: controller.signal});
   const rejection = assert.rejects(pending, {code: 'KRAKEN_GAIN_PROBE_ABORTED'});
   controller.abort(); await rejection;
+});
+
+test('settle wait observes a requested phase transition then a fresh full calibrated capture', async t => {
+  const c = config(); let connections = 0;
+  c.capture.device.heimdall.port = await loopback(t, socket => {
+    connections++;
+    socket.write(connections === 1 ? frame(c, {phase: 5}) :
+      Buffer.concat([frame(c), frame(c)]));
+  });
+  const result = await waitForGainSettled(c, {timeoutMs: 3000, requireTransition: true});
+  assert.equal(connections, 2);
+  assert.equal(result.settling.attempts, 2);
+  assert.equal(result.settling.transitionRequired, true);
+  assert.equal(result.settling.transitionObserved, true);
+  assert.equal(result.captureSeconds, .25);
+  assert.equal(result.samplesPerChannel, 10);
+  assert.equal(result.channels.length, 2);
+  assert.deepEqual(result.calibration,
+    {phaseState: 4, noiseSource: false, retuning: false, verifiedPackets: 2});
+  assert.ok(result.settling.elapsedMs < 3000);
+});
+
+test('settle accepts ready-only data only when no transition was required', async t => {
+  const c = config();
+  c.capture.device.heimdall.port = await loopback(t, socket =>
+    socket.write(Buffer.concat([frame(c), frame(c)])));
+  const result = await waitForGainSettled(c, {timeoutMs: 1000});
+  assert.equal(result.settling.transitionRequired, false);
+  assert.equal(result.settling.transitionObserved, false);
+  assert.equal(result.settling.attempts, 1);
+});
+
+test('uncalibrated headers cannot mask wrong tuple metadata', async t => {
+  const c = config(); let connections = 0;
+  c.capture.device.heimdall.port = await loopback(t, socket => {
+    connections++;
+    socket.write(frame(c, {phase: 3, gain: [14.4, 15]}));
+  });
+  await assert.rejects(waitForGainSettled(c, {requireTransition: true}),
+    {code: 'KRAKEN_GAIN_PROBE_MISMATCH'});
+  assert.equal(connections, 1);
+});
+
+test('settle wait retries only the classified transition error', async () => {
+  for (const code of ['MODE', 'RETUNING', 'PROTOCOL', 'MISMATCH', 'CONNECTION', 'TIMEOUT', 'WORKER', 'ABORTED', 'UNKNOWN']) {
+    let attempts = 0, pauses = 0;
+    const error = new Error(code); error.code = `KRAKEN_GAIN_PROBE_${code}`;
+    await assert.rejects(waitForGainSettled(config(), {}, {
+      measure: async () => { attempts++; throw error; },
+      pause: async () => { pauses++; }
+    }), caught => caught === error);
+    assert.equal(attempts, 1); assert.equal(pauses, 0);
+  }
+});
+
+test('settle retries share one deadline and never overlap active probes', async () => {
+  let elapsed = 0, active = false;
+  const timeouts = [], pauses = [];
+  await assert.rejects(waitForGainSettled(config(), {}, {
+    now: () => elapsed,
+    measure: async (_config, options) => {
+      assert.equal(active, false); active = true;
+      assert.equal(options.captureSeconds, .25);
+      timeouts.push(options.timeoutMs);
+      await Promise.resolve(); elapsed += 4000; active = false;
+      const error = new Error('Normal calibration'); error.code = 'KRAKEN_GAIN_PROBE_UNCALIBRATED';
+      throw error;
+    },
+    pause: async milliseconds => { assert.equal(active, false); pauses.push(milliseconds); elapsed += milliseconds; }
+  }), {code: 'KRAKEN_GAIN_PROBE_TIMEOUT'});
+  assert.deepEqual(timeouts, [15000, 10000, 5000]);
+  assert.deepEqual(pauses, [1000, 1000, 1000]);
+  assert.equal(elapsed, 15000);
+
+  let attempts = 0;
+  await assert.rejects(waitForGainSettled(config(), {}, {
+    now: () => 0, pause: async () => {}, measure: async () => {
+      attempts++; const error = new Error('Normal calibration');
+      error.code = 'KRAKEN_GAIN_PROBE_UNCALIBRATED'; throw error;
+    }
+  }), {code: 'KRAKEN_GAIN_PROBE_TIMEOUT'});
+  assert.equal(attempts, 16, 'The attempt bound also prevents a hot loop under an unchanged injected clock');
+});
+
+test('ready-only or noise-only observations cannot substitute for the requested phase transition', async () => {
+  const c = config();
+  for (const noiseFirst of [false, true]) {
+    let elapsed = 0, attempts = 0;
+    await assert.rejects(waitForGainSettled(c, {timeoutMs: 3000, requireTransition: true}, {
+      now: () => elapsed, pause: async milliseconds => { elapsed += milliseconds; },
+      measure: async () => {
+        attempts++;
+        if (noiseFirst && attempts === 1) {
+          const error = new Error('Noise still on'); error.code = 'KRAKEN_GAIN_PROBE_UNCALIBRATED';
+          error.transition = {frequencyHz: c.capture.fc, sampleRateHz: c.capture.fs,
+            channelCount: 2, gainDb: 14.4, phaseState: 4, noiseSource: true,
+            retuning: false, metadataMatched: true};
+          throw error;
+        }
+        return {captureSeconds: .25};
+      }
+    }), {code: 'KRAKEN_GAIN_PROBE_TIMEOUT'});
+    assert.equal(attempts, 3);
+  }
+});
+
+test('settle cancellation interrupts retry pauses and bounded options reject before probing', async () => {
+  const controller = new AbortController(); let attempts = 0;
+  const pending = waitForGainSettled(config(), {signal: controller.signal}, {
+    measure: async () => {
+      attempts++; const error = new Error('Normal calibration');
+      error.code = 'KRAKEN_GAIN_PROBE_UNCALIBRATED'; throw error;
+    }
+  });
+  const rejection = assert.rejects(pending, {code: 'KRAKEN_GAIN_PROBE_ABORTED'});
+  setTimeout(() => controller.abort(), 10);
+  await rejection; assert.equal(attempts, 1);
+  for (const options of [{captureSeconds: .1}, {captureSeconds: .5}, {timeoutMs: 15001},
+    {timeoutMs: 0}, {requireTransition: 'true'}])
+    await assert.rejects(waitForGainSettled(config(), options, {
+      measure: async () => assert.fail('Invalid options started a probe')
+    }), {code: 'KRAKEN_GAIN_PROBE_CONFIG'});
 });
