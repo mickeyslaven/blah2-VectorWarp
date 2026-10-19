@@ -86,6 +86,43 @@ const missingFusionElement = clone(coherentFusion);
 missingFusionElement.capture.device.array_geometry.elements.pop();
 assert.equal(validateConfig(missingFusionElement).valid, false,
   'coherent beam-bank fusion requires every surveillance element');
+const projectedBearing = clone(coherentFusion);
+Object.assign(projectedBearing.capture.replay, {state: true, format: 'blah2',
+  file: '/tmp/five-channel-replay.blah2'});
+projectedBearing.capture.device.channel_count = 5;
+projectedBearing.capture.device.surveillance_channels = [0, 1, 2, 3, 4];
+projectedBearing.process.reference_synthesis = {mode: 'array_eigenbeam',
+  channels: [0, 1, 2, 3, 4], analysis_samples: 4096, analysis_interval: 1,
+  power_iterations: 12, covariance_smoothing: 0, diagonal_loading: .01};
+projectedBearing.process.clutter.enable = true;
+projectedBearing.process.performance.acceleration = 'gpu-resident';
+projectedBearing.process.tracker.gpu_capacity = 4096;
+Object.assign(projectedBearing.process.surveillance_fusion,
+  {mode: 'coherent_beam_bank', direct_path_null_db: 0});
+Object.assign(projectedBearing.process.bearing, {enable: true,
+  method: 'covariance_mvdr', reference_anchor: 'fixed_site_projected'});
+delete projectedBearing.process.bearing.manifold_file;
+Object.assign(projectedBearing.capture.device.array_geometry,
+  {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+const projectedBearingValidation = validateConfig(projectedBearing);
+assert.equal(projectedBearingValidation.valid, true,
+  `projected fixed-site model accepts only the explicit native replay experiment: ${projectedBearingValidation.errors.join('; ')}`);
+for (const mutate of [
+  value => { value.capture.replay.state = false; },
+  value => { value.capture.replay.format = 'auto'; },
+  value => { value.capture.device.surveillance_channels = [0, 2, 1, 3, 4]; },
+  value => { value.process.reference_synthesis.mode = 'channel'; },
+  value => { value.process.clutter.enable = false; },
+  value => { value.process.performance.acceleration = 'cpu'; },
+  value => { value.process.bearing.method = 'coherent_beam_bank'; },
+  value => { value.process.bearing.manifold_file = '/tmp/measured.json'; },
+  value => { value.process.surveillance_fusion.direct_path_null_db = 20; }
+]) {
+  const invalid = clone(projectedBearing);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'projected fixed-site model must fail closed outside its replay contract');
+}
 for (const beams of [3, 361, 12.5]) {
   const invalid = clone(coherentFusion);
   invalid.process.surveillance_fusion.beams = beams;

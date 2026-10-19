@@ -259,6 +259,8 @@ function evaluateReferenceSurvey(sources, config) {
 }
 
 function weights(sample, config, mapping, beams) {
+  if (sample.bearing_replay?.reference_anchor === 'fixed_site_projected')
+    throw new Error('Experimental projected replay evidence is excluded from ordinary bearing diagnostics');
   const {positions} = geometry(config);
   const channels = positions.length;
   const frequency = sample.frequency_hz;
@@ -322,6 +324,8 @@ function bestBearing(sample, config, candidate) {
 }
 
 function bestMeasuredBearing(sample, config, manifold) {
+  if (sample.bearing_replay?.reference_anchor === 'fixed_site_projected')
+    throw new Error('Experimental projected replay evidence is excluded from ordinary bearing diagnostics');
   const beams = manifold?.calibration?.beams;
   if (!Number.isInteger(beams) || !Array.isArray(manifold.responses) ||
       manifold.responses.length !== beams || manifold.responses.some(row =>
@@ -368,6 +372,9 @@ function balanced(errors) {
 }
 
 function evaluateBearing(samples, config) {
+  if (config.process?.bearing?.reference_anchor === 'fixed_site_projected' ||
+      samples.some(sample => sample?.bearing_replay?.reference_anchor === 'fixed_site_projected'))
+    return {available: false, reason: 'Experimental projected replay evidence is excluded from ordinary bearing diagnostics.'};
   const fusion = config.process?.surveillance_fusion?.mode;
   if (config.process?.bearing?.manifold_file) return {available: false,
     reason: 'Channel-order replay is disabled while a measured manifold is active; its channel identities are already site-specific.'};

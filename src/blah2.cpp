@@ -240,6 +240,35 @@ try
       }
     }
   }
+  // Fail closed before opening output sockets or allocating/opening capture.
+  // This anchor is an offline experiment; native IQ is the only admitted input.
+  if(bearingReferenceAnchor=="fixed_site_projected"){
+    if(!state||replayFormat!="blah2")
+      throw std::invalid_argument("fixed_site_projected is experimental and requires explicit native blah2 replay");
+    auto process=tree["process"],device=tree["capture"]["device"];
+    const auto allFive=[](ryml::NodeRef values){
+      uint32_t index=0;for(auto child:values.children()){uint32_t value=UINT32_MAX;child>>value;
+        if(value!=index++)return false;}return index==5;
+    };
+    uint32_t channels=0;bool clutter=false;std::string reference,fusion,acceleration;double nullDb=0;
+    if(device.has_child("channel_count"))device["channel_count"]>>channels;
+    if(process.has_child("reference_synthesis")&&process["reference_synthesis"].has_child("mode"))
+      process["reference_synthesis"]["mode"]>>reference;
+    if(process.has_child("clutter")&&process["clutter"].has_child("enable"))process["clutter"]["enable"]>>clutter;
+    if(process.has_child("performance")&&process["performance"].has_child("acceleration"))
+      process["performance"]["acceleration"]>>acceleration;
+    if(process.has_child("surveillance_fusion")){
+      auto node=process["surveillance_fusion"];
+      if(node.has_child("mode"))node["mode"]>>fusion;
+      if(node.has_child("direct_path_null_db"))node["direct_path_null_db"]>>nullDb;
+    }
+    if(type!="Kraken"||channels!=5||!device.has_child("surveillance_channels")||
+       !allFive(device["surveillance_channels"])||reference!="array_eigenbeam"||
+       !process["reference_synthesis"].has_child("channels")||!allFive(process["reference_synthesis"]["channels"])||
+       !clutter||acceleration!="gpu-resident"||!bearingEnabled||bearingMethod!="covariance_mvdr"||
+       tree["process"]["bearing"].has_child("manifold_file")||fusion!="coherent_beam_bank"||nullDb!=0)
+      throw std::invalid_argument("fixed_site_projected requires enabled five-channel GPU-resident array-eigenbeam clutter cancellation, ideal covariance_mvdr bearing and coherent_beam_bank with direct_path_null_db: 0");
+  }
   uint16_t port_map, port_detection, port_timestamp, 
     port_timing, port_iqdata, port_track;
   uint16_t port_bearing=0,port_manifold=0;
@@ -711,8 +740,8 @@ try
     throw std::invalid_argument("Bearing output requires track-before-detect candidate maps");
   if(bearingMethod!="coherent_beam_bank"&&bearingMethod!="covariance_mvdr")
     throw std::invalid_argument("Bearing method must be coherent_beam_bank or covariance_mvdr");
-  if(bearingReferenceAnchor!="live_eigenbeam"&&bearingReferenceAnchor!="fixed_site")
-    throw std::invalid_argument("Bearing reference_anchor must be live_eigenbeam or fixed_site");
+  if(bearingReferenceAnchor!="live_eigenbeam"&&bearingReferenceAnchor!="fixed_site"&&bearingReferenceAnchor!="fixed_site_projected")
+    throw std::invalid_argument("Bearing reference_anchor must be live_eigenbeam, fixed_site or fixed_site_projected");
   if(!bearingScanBeams)bearingScanBeams=coherentBeamCount*4u;
   if(bearingEnabled&&(bearingScanBeams<coherentBeamCount||bearingScanBeams>127||
       bearingScanBeams%coherentBeamCount))
@@ -861,6 +890,7 @@ try
        std::vector<std::complex<float>> manifold;
        if(!bearingManifoldFile.empty())manifold=blah2::bearing_manifold::load(bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size())).responses;
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
+        bearingReferenceAnchor=="fixed_site_projected"?blah2::resident::BearingReferenceAnchor::fixedSiteProjected:
         bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:blah2::resident::BearingReferenceAnchor::liveEigenbeam,
         bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,bearingDiagonalLoading,bearingChannelMapping,manifold};}
     }

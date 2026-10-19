@@ -61,7 +61,15 @@ void validateConfig(const Config& c){
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
  require(b.referenceAnchor==BearingReferenceAnchor::liveEigenbeam||
-  b.referenceAnchor==BearingReferenceAnchor::fixedSite,"Resident bearing reference anchor invalid");
+  b.referenceAnchor==BearingReferenceAnchor::fixedSite||
+  b.referenceAnchor==BearingReferenceAnchor::fixedSiteProjected,"Resident bearing reference anchor invalid");
+ // Capture provenance is checked by the host before opening native replay;
+ // the existing wire layout carries only the bounded DSP experiment contract.
+ if(b.referenceAnchor==BearingReferenceAnchor::fixedSiteProjected)
+  require(b.enabled&&b.method==BearingMethod::covarianceMvdr&&g.channels==5&&
+   r.channels==std::vector<uint32_t>({0,1,2,3,4})&&
+   f.mode==FusionMode::coherentRegularPolygon&&f.directPathNullDb==0&&
+   b.manifoldResponses.empty(),"Projected bearing experiment requires five-channel ideal covariance replay");
  if(b.enabled){
   require(f.mode!=FusionMode::noncoherent&&d.enabled&&c.tracker.enabled&&
    b.scanBeams>=f.beams&&b.scanBeams<=127&&b.scanBeams%f.beams==0&&
