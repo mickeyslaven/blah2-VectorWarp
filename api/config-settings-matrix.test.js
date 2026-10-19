@@ -155,6 +155,10 @@ try {
   bearing.process.bearing.max_rate_deg_s = 30;
   bearing.process.bearing.manifold_file = '/etc/vectorwarp/bearing-manifold.json';
   bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
+  bearing.process.bearing.frequency_resolved_shadow.enabled = 'on';
+  bearing.process.bearing.frequency_resolved_shadow.fft_size = 4096;
+  bearing.process.bearing.frequency_resolved_shadow.path =
+    '/var/lib/vectorwarp-api/calibration/frequency-resolved-shadow.json';
   bearing.process.bearing.manifold_recorder.enabled = true;
   bearing.truth.adsb.enabled = true;
   bearing.network.ports.bearing = 3014;
@@ -164,6 +168,9 @@ try {
       'process.bearing.guard_radius', 'process.bearing.training_radius',
       'process.bearing.diagonal_loading', 'process.bearing.max_rate_deg_s',
       'process.bearing.manifold_file', 'process.bearing.channel_mapping',
+      'process.bearing.frequency_resolved_shadow.enabled',
+      'process.bearing.frequency_resolved_shadow.fft_size',
+      'process.bearing.frequency_resolved_shadow.path',
       'process.bearing.manifold_recorder.enabled', 'truth.adsb.enabled',
       'network.ports.bearing']);
   const trackerForward = clone(krakenBase);

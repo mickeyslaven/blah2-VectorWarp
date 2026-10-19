@@ -18,6 +18,7 @@ const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
 const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
+const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
@@ -37,6 +38,8 @@ const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
 manifoldAutomation.start();
 const bearingDiagnostic = createBearingDiagnostic(config);
+const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
+frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
 if (startupDocument.setupRequired)
@@ -730,6 +733,9 @@ app.get('/api/bearing/manifold-automation', (req, res) => {
 });
 app.get('/api/bearing/diagnostic', (req, res) => {
   res.json(bearingDiagnostic.status());
+});
+app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
+  res.json(frequencyResolvedShadow.status());
 });
 
 // stash API

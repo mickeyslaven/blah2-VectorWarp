@@ -325,3 +325,46 @@ The conventional and covariance methods use the already calibrated coherent
 array manifold. Experimental neural, MUSIC, and SBL selectors are not included;
 they require independent timing and real-aircraft validation before becoming
 selectable production methods.
+
+## Frequency-resolved coherent-multipath shadow
+
+A nearby coherent reflector can occupy the same delay sample as the direct
+transmitter. Whole-band covariance then sees one rank-one spatial mode even
+though the path delay remains visible as phase slope across RF frequency. The
+optional frequency-resolved shadow preserves that information without changing
+reference synthesis, detection, tracking, bearing, or Retina output:
+
+```yaml
+process:
+  bearing:
+    frequency_resolved_shadow:
+      enabled: true
+      fft_size: 2048
+      subbands: 24
+      bandwidth_fraction: 0.9
+      diagonal_loading: 0.01
+      capture_seconds: 0.25
+      interval_s: 300
+      timeout_ms: 15000
+      path: /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
+```
+
+The API launches a bounded worker that attaches as another read-only Heimdall
+MCHQ client. It derives frequency, sample rate, channel count, channel order,
+element coordinates, array orientation, and transmitter direction from the
+active configuration. There are no channel, frequency, television-standard,
+site, or transmitter-name constants.
+
+Each run accumulates complex cross-spectral matrices across the configured
+subbands, extracts their principal coherent responses, measures rank-one
+fraction and phase curvature, and constructs diagonally loaded direct-
+constrained MVDR candidate weights. Candidate weights use the mathematical
+convention `y = w^H x`. They are diagnostic output only; the processor does not
+load or apply them. The output is atomically replaced, carries a fingerprint of
+the complete RF/geometry model, and is exposed at
+`/api/bearing/frequency-resolved-shadow`.
+
+Promotion requires a separate processor implementation and held-out ADS-B
+comparison across multiple aircraft and sectors. In particular, a well-
+conditioned direct constraint is not by itself proof that suppressing the
+reference composite improves aircraft bearings.
