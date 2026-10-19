@@ -15,6 +15,8 @@ const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./r
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
 const {createAutomaticGain, enabled: automaticGainEnabled, MAX_AUTOMATIC_GAIN_MS} = require('./automatic-gain.js');
 const {measureGain, waitForGainSettled} = require('./kraken-gain-probe.js');
+const {createReceiverHelperClient} = require('./receiver-helper-client.js');
+const gainRestartPreflight = createReceiverHelperClient();
 const {createGainMonitor} = require('./gain-monitor.js');
 const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
@@ -693,6 +695,18 @@ app.put('/api/config', async (req, res) => {
     if (localRspRequested && !await localRspCurrent())
       return res.status(422).json({ok: false, code: 'SDRPLAY_LOCAL_BUILD_REQUIRED',
         errors: ['Build SDRplay support in Settings after installing the SDRplay API and headers, then apply live RSPduo settings.']});
+    if (measuredGain) {
+      // Check the actual installed broker/policy/manifest before any journal,
+      // hardware or config mutation. A matching helper command alone is not
+      // proof that this installation can accept its managed restart.
+      let readiness;
+      try { readiness = await gainRestartPreflight({verb: 'discover'}); }
+      catch (error) { readiness = {ok: false, code: error.code}; }
+      if (readiness?.ok !== true)
+        return res.status(503).json({ok: false, code: 'GAIN_CHECK_RESTART_UNAVAILABLE',
+          cause: readiness?.code || 'MANAGEMENT_UNAVAILABLE',
+          errors: ['Automatic gain cannot start because the installed receiver restart helper is unavailable or its release metadata is invalid. Repair the installed release and retry; no receiver setting was changed.']});
+    }
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.

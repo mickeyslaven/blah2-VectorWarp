@@ -1,7 +1,7 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
-const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1230000;
+const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],
@@ -466,7 +466,10 @@ function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
 }
 
 function setValue(path, value) {
-  const geometryContext = geometryEditor?.context(activeConfig);
+  const gainPolicy = path.join('.') === 'capture.device.heimdall.gain_control'
+    ? value : activeConfig.capture?.device?.heimdall?.gain_control;
+  const geometryOptions = {ignoreGain: gainPolicy === 'measured'};
+  const geometryContext = geometryEditor?.context(activeConfig, geometryOptions);
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
@@ -477,7 +480,7 @@ function setValue(path, value) {
       control.replaceChildren(...Array.from(next.childNodes));
     }
   }
-  if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig)) {
+  if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig, geometryOptions)) {
     geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
     refreshGeometryEditor();
   }

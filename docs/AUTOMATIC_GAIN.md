@@ -12,7 +12,9 @@ for matched illuminator experiments with a preselected common gain. Save for
 later and replay never run a gain search. The automatic workflow requires the
 installed Linux restart helper and refuses to interrupt a recording. A generic
 restart command is insufficient: automatic mode requires the helper's root-owned
-completion receipt. Automatic mode is unsupported on macOS until a trusted
+completion receipt. A fresh read-only broker check must also validate the installed
+policy and build manifest before any receiver command or configuration write.
+Automatic mode is unsupported on macOS until a trusted
 restart receipt provider is implemented.
 
 The controller first verifies the old receiver tuple and records its actual
@@ -36,6 +38,11 @@ orientation or channel remapping is inferred from this check. Measured gain-only
 changes preserve existing physical geometry confirmations; endpoint, frequency,
 rate, role, mapping, geometry and orientation changes retain their existing
 invalidation rules. No missing operator confirmation is created.
+Requested gain is also part of the manifold recorder's evidence partition.
+A gain change deselects an active learned manifold and disables its bearing
+output until requalified, without deleting the model file. Existing ideal
+steering, detection and tracking remain enabled as configured; changing only
+the gain-control policy preserves RF qualification.
 
 The conservative limits are zero observed rail samples, peak magnitude no more
 than 95% of a component's full scale, and 99.9th-percentile magnitude no more
@@ -85,8 +92,8 @@ failures require reconciliation. A successful restore is recorded distinctly
 from verified headroom. No retry races a command still in flight. Each normal
 sync is bounded by 75 seconds, each full calibration by 150 seconds and each
 readiness check and capture by 15 seconds. A new operation starts only if its complete timeout fits
-the remaining selection budget. The browser allows 20 minutes 15 seconds plus transport
-time for selection and rollback; ordinary settings transactions keep their
+the remaining selection budget. The browser allows 20 minutes 35 seconds plus transport
+time for restart preflight, selection and rollback; ordinary settings transactions keep their
 existing shorter timeout.
 
 Changing the receiver endpoint or beginning from continuously varying Suite AGC

@@ -178,6 +178,16 @@ function saveConfig(filename, candidate, expectedRevision) {
     throw error;
   }
   const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  const previousGain = before.config.capture?.device?.heimdall?.gain ?? 'keep';
+  const selectedGain = prepared.capture?.device?.heimdall?.gain ?? 'keep';
+  const bearing = prepared.process?.bearing;
+  if (selectedGain !== previousGain && bearing &&
+      (bearing.manifold_file || before.config.process?.bearing?.manifold_file)) {
+    // Gain changes invalidate learned RF qualification, not physical surveys.
+    // Do not silently substitute ideal steering for an active learned model.
+    delete bearing.manifold_file;
+    bearing.enable = false;
+  }
   const automaticPath = before.config.process?.bearing?.manifold_recorder?.path;
   if (automaticPath && prepared.process?.bearing?.manifold_file === `${automaticPath}.qualified.json` &&
       siteFingerprint(before.config) !== siteFingerprint(prepared))

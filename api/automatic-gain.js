@@ -7,7 +7,7 @@ const enabled = config => liveKraken(config) &&
   config.capture.device.heimdall?.gain_control === 'measured';
 const fixedGain = gain => typeof gain === 'number' && Number.isFinite(gain) &&
   gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10;
-const MAX_AUTOMATIC_GAIN_MS = 1215000;
+const MAX_AUTOMATIC_GAIN_MS = 1235000;
 const LIMITS = Object.freeze({maxTrialSettings: 16, maxProbeCaptures: 32,
   gainMinDb: 0, gainMaxDb: 50, commonRequestedGainStepDb: 1,
   railFraction: 0, peakFraction: .95, p999Fraction: .70,

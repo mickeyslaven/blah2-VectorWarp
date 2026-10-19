@@ -63,5 +63,55 @@ moved.location.rx.altitude += 3;
 const saved = saveConfig(filename, moved, document.revision);
 assert.equal(saved.config.process.bearing.manifold_file, undefined,
   'a site-defining settings change must clear an automatically selected model');
+
+const clone = value => JSON.parse(JSON.stringify(value));
+const gainConfig = yaml.load(fs.readFileSync(path.join(__dirname, '../config/config-kraken.yml'), 'utf8'));
+gainConfig.capture.device.heimdall.gain = 14;
+gainConfig.capture.device.heimdall.gain_control = 'fixed';
+gainConfig.capture.device.array_geometry = {shape: 'regular_polygon', units: 'm',
+  coordinate_frame: 'array_xy_right_handed', mapping_confirmed: true,
+  geometry_confirmed: true, orientation_confirmed: true, x_axis_bearing_deg_true: 30,
+  bearing_channels: [0, 1, 2, 3, 4], elements: [0, 1, 2, 3, 4].map(channel => ({
+    id: `element-${channel}`, daq_channel: channel,
+    position: [.2 * Math.cos(channel * 2 * Math.PI / 5), .2 * Math.sin(channel * 2 * Math.PI / 5), 0]}))};
+gainConfig.process.performance.acceleration = 'gpu-resident';
+gainConfig.process.tracker.gpu_capacity = 128;
+gainConfig.process.surveillance_fusion.mode = 'coherent_beam_bank';
+gainConfig.process.bearing.enable = true;
+gainConfig.process.bearing.manifold_recorder.path = path.join(directory, 'gain-samples.jsonl');
+const modelBytes = JSON.stringify(result.manifold);
+for (const selection of ['automatic', 'manual', 'ideal']) {
+  const source = clone(gainConfig);
+  const selectedPath = selection === 'automatic' ? `${source.process.bearing.manifold_recorder.path}.qualified.json` :
+    selection === 'manual' ? path.join(directory, 'manually-selected-model.json') : null;
+  if (selectedPath) {
+    source.process.bearing.manifold_file = selectedPath;
+    fs.writeFileSync(selectedPath, modelBytes);
+  }
+  const gainFilename = path.join(directory, `gain-${selection}.yml`);
+  fs.writeFileSync(gainFilename, yaml.dump(source));
+  const initial = readConfig(gainFilename);
+  assert.equal(initial.validation.valid, true, initial.validation.errors.join('; '));
+  const policyOnly = clone(initial.config);
+  policyOnly.capture.device.heimdall.gain_control = 'measured';
+  const sameGain = saveConfig(gainFilename, policyOnly, initial.revision);
+  assert.equal(sameGain.config.process.bearing.manifold_file, selectedPath || undefined,
+    'Changing only gain policy must preserve selected RF qualification');
+  assert.equal(sameGain.config.process.bearing.enable, true);
+  const changedGain = clone(sameGain.config);
+  changedGain.capture.device.heimdall.gain = 1;
+  const changed = saveConfig(gainFilename, changedGain, sameGain.revision);
+  assert.equal(changed.validation.valid, true, changed.validation.errors.join('; '));
+  assert.equal(changed.config.process.bearing.manifold_file, undefined);
+  assert.equal(changed.config.process.bearing.enable, selection === 'ideal',
+    'A changed gain disables learned bearing, while existing ideal steering remains enabled');
+  assert.deepEqual(changed.config.capture.device.array_geometry, source.capture.device.array_geometry,
+    'RF qualification invalidation must preserve physical survey confirmations');
+  for (const section of ['detection', 'tracker'])
+    assert.deepEqual(changed.config.process[section], sameGain.config.process[section],
+      'Radar detection and tracking must not change');
+  if (selectedPath) assert.equal(fs.readFileSync(selectedPath, 'utf8'), modelBytes,
+    'Invalidating selection must never rewrite or delete a learned model file');
+}
 fs.rmSync(directory, {recursive: true});
 console.log('Manifold automation: pass-balanced holdout comparison and promotion gates passed.');

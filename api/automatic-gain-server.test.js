@@ -15,11 +15,14 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automatic-gain-api-'));
 const filename = path.join(dir, 'config.yml');
 const marker = path.join(dir, 'restart');
 const journalFault = path.join(dir, 'fail-success-journal');
+const preflightFault = path.join(dir, 'fail-restart-preflight');
 const preload = path.join(dir, 'preload.cjs');
 // Only this disposable child mocks the already separately tested root-receipt
 // reader. Production has no environment switch that bypasses trusted ownership.
 fs.writeFileSync(preload, `
 const fs=require('fs');
+require(${JSON.stringify(path.join(__dirname, 'receiver-helper-client.js'))}).createReceiverHelperClient=()=>async()=>
+  fs.existsSync(${JSON.stringify(preflightFault)}) ? {ok:false,code:'MANAGEMENT_FAILED'} : {ok:true,actions:[]};
 require(${JSON.stringify(path.join(__dirname, 'gain-restart.js'))}).installedGainRestartSupported=()=>true;
 require(${JSON.stringify(path.join(__dirname, 'sdrplay-startup.js'))}).readSdrplayStartup=()=>{
 try{return JSON.parse(fs.readFileSync(${JSON.stringify(marker)},'utf8'));}catch{return null;}
@@ -149,6 +152,15 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     const proposed = structuredClone(config); proposed.capture.device.heimdall.gain_control = 'measured';
     assert.equal((await request('PUT', '/api/config?restart=false', proposed)).body.code, 'GAIN_CHECK_RESTART_REQUIRED');
     assert.equal(commands.length, 0); assert.equal(probes, 0);
+    fs.writeFileSync(preflightFault, 'installed manifest unavailable');
+    const unavailable = await request('PUT', '/api/config?restart=true', proposed);
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.body.code, 'GAIN_CHECK_RESTART_UNAVAILABLE');
+    assert.equal(commands.length, 0); assert.equal(probes, 0);
+    assert.deepEqual(yaml.load(fs.readFileSync(filename, 'utf8')), config);
+    assert.equal(fs.existsSync(filename + '.receiver-state.json'), false,
+      'Restart preflight failure must precede the write-ahead journal');
+    fs.unlinkSync(preflightFault);
     const result = await request('PUT', '/api/config?restart=true', proposed);
     assert.equal(result.status, 200, JSON.stringify(result.body));
     assert.equal(result.body.receiverSync.automaticGain.status, 'verified');

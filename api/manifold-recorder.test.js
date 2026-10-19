@@ -52,6 +52,30 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   promotedConfig.process.bearing.manifold_file = `${filename}.qualified.json`;
   assert.equal(siteFingerprint(promotedConfig), siteFingerprint(automaticConfig),
     'Selecting an automatically fitted model must not manufacture a new physical site');
+  const fixedGainConfig = JSON.parse(JSON.stringify(automaticConfig));
+  fixedGainConfig.capture.device.heimdall = {gain: 14, gain_control: 'fixed'};
+  fixedGainConfig.process.bearing.manifold_recorder.path = path.join(directory, 'gain-samples.jsonl');
+  const measuredPolicyConfig = JSON.parse(JSON.stringify(fixedGainConfig));
+  measuredPolicyConfig.capture.device.heimdall.gain_control = 'measured';
+  assert.equal(siteFingerprint(fixedGainConfig), siteFingerprint(measuredPolicyConfig),
+    'Policy alone is not a changed RF gain');
+  const changedGainConfig = JSON.parse(JSON.stringify(measuredPolicyConfig));
+  changedGainConfig.capture.device.heimdall.gain = 1;
+  assert.notEqual(siteFingerprint(fixedGainConfig), siteFingerprint(changedGainConfig),
+    'Qualification cannot carry across requested gain changes');
+  const firstGainRecorder = new ManifoldRecorder(fixedGainConfig, source);
+  await firstGainRecorder.record(frame);
+  const nextGainRecorder = new ManifoldRecorder(changedGainConfig, source);
+  await nextGainRecorder.record(frame);
+  const gainPath = changedGainConfig.process.bearing.manifold_recorder.path;
+  const oldGainRows = fs.readFileSync(`${gainPath}.site-previous`, 'utf8').trim().split('\n').map(JSON.parse);
+  const newGainRows = fs.readFileSync(gainPath, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(oldGainRows.length, 1);
+  assert.equal(newGainRows.length, 1);
+  assert.equal(oldGainRows[0].config_fingerprint, firstGainRecorder.fingerprint);
+  assert.equal(newGainRows[0].config_fingerprint, nextGainRecorder.fingerprint);
+  assert.notEqual(oldGainRows[0].config_fingerprint, newGainRows[0].config_fingerprint,
+    'Old and new gain evidence must not mix in the active collection');
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
   changedSite.location.rx.longitude = -80.01;
   const second = new ManifoldRecorder(changedSite, source);
