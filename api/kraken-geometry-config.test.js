@@ -87,19 +87,56 @@ try {
   saved = saveConfig(file, saved.config, saved.revision);
   assert.equal(saved.config.capture.device.array_geometry.mapping_confirmed, true, 'Unchanged measurements can carry operator statements');
   const confirmed = clone(saved.config);
+  const confirmationFields = ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed'];
+  const fixed = clone(confirmed);
+  Object.assign(fixed.capture.device.heimdall, {gain: 14, gain_control: 'fixed'});
+  const gainFile = path.join(directory, 'measured-gain.yml');
+  writeConfigAtomically(gainFile, fixed);
+  let gainSaved = readConfig(gainFile);
+  for (const gain of [1, 2]) {
+    const candidate = clone(gainSaved.config);
+    Object.assign(candidate.capture.device.heimdall, {gain, gain_control: 'measured'});
+    assert.notEqual(geometry.context(candidate), geometry.context(gainSaved.config),
+      'The default shared context still includes gain and control policy');
+    gainSaved = saveConfig(gainFile, candidate, gainSaved.revision);
+    for (const field of confirmationFields)
+      assert.equal(gainSaved.config.capture.device.array_geometry[field], true,
+        'Measured gain-only saves preserve existing physical survey confirmations');
+  }
+  for (const field of confirmationFields) {
+    const unconfirmed = clone(gainSaved.config);
+    unconfirmed.capture.device.array_geometry[field] = false;
+    const candidate = clone(unconfirmed); candidate.capture.device.heimdall.gain = 3;
+    geometry.reconcile(candidate, unconfirmed);
+    assert.equal(candidate.capture.device.array_geometry[field], false,
+      'Measured gain changes never create an absent operator confirmation');
+  }
+  for (const previous of [fixed, gainSaved.config]) {
+    const candidate = clone(previous);
+    Object.assign(candidate.capture.device.heimdall, {gain: 13, gain_control: 'fixed'});
+    geometry.reconcile(candidate, previous);
+    for (const field of confirmationFields)
+      assert.equal(candidate.capture.device.array_geometry[field], false,
+        'Fixed gain changes and leaving measured mode retain normal invalidation');
+  }
   for (const mutate of [
     c => { c.capture.device.channel_count = 4; }, c => { c.capture.device.reference_channel = 4; },
     c => { c.capture.device.surveillance_channels.reverse(); }, c => { c.process.reference_synthesis.mode = 'array_eigenbeam'; },
     c => { c.capture.fc += 100; }, c => { c.capture.fs += 1; }, c => { c.capture.device.heimdall.host = '192.0.2.1'; },
+    c => { c.capture.device.heimdall.port += 1; }, c => { c.capture.device.heimdall.control_port += 1; },
+    c => { c.capture.device.heimdall.other_setting = true; },
     c => { c.capture.device.array_geometry.elements.reverse(); },
     c => { c.capture.device.array_geometry.elements[0].position[0] += 1; },
     c => { c.capture.device.array_geometry.elements[0].receiver_serial = 'operator-entry'; },
     c => { c.capture.device.array_geometry.bearing_channels.reverse(); },
     c => { c.capture.device.array_geometry.x_axis_bearing_deg_true = 45; }
   ]) {
-    const candidate = clone(confirmed); mutate(candidate);
-    geometry.reconcile(candidate, confirmed);
-    for (const field of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed']) assert.equal(candidate.capture.device.array_geometry[field], false);
+    for (const previous of [confirmed, gainSaved.config]) {
+      const candidate = clone(previous); mutate(candidate);
+      if (candidate.capture.device.heimdall.gain_control === 'measured') candidate.capture.device.heimdall.gain = 3;
+      geometry.reconcile(candidate, previous);
+      for (const field of confirmationFields) assert.equal(candidate.capture.device.array_geometry[field], false);
+    }
   }
   const resized = clone(confirmed); resized.capture.device.channel_count = 2; normalizeKrakenChannels(resized, 5);
   assert.deepEqual(resized.capture.device.array_geometry.elements, confirmed.capture.device.array_geometry.elements);

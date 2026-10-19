@@ -32,7 +32,10 @@ captured packet must report phase state 4, noise off and no retuning, supplying
 the stream evidence that an omitted control flag cannot provide. A second
 independent capture must pass at the final gain. Measurements use separate I/Q
 histograms on all channels; the worst channel determines acceptance. No antenna
-orientation or channel remapping is inferred from this check.
+orientation or channel remapping is inferred from this check. Measured gain-only
+changes preserve existing physical geometry confirmations; endpoint, frequency,
+rate, role, mapping, geometry and orientation changes retain their existing
+invalidation rules. No missing operator confirmation is created.
 
 The conservative limits are zero observed rail samples, peak magnitude no more
 than 95% of a component's full scale, and 99.9th-percentile magnitude no more

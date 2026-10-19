@@ -135,6 +135,15 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     config.capture.device.heimdall = {host: '127.0.0.1', port: iq.address().port,
       control_port: suite.address().port, gain: 14, gain_control: 'fixed'};
     config.capture.device.array_geometry = emptyRecord(5);
+    const layout = config.capture.device.array_geometry;
+    Object.assign(layout, {mapping_confirmed: true, geometry_confirmed: true,
+      orientation_confirmed: true, x_axis_bearing_deg_true: 80,
+      bearing_channels: [...config.capture.device.surveillance_channels]});
+    layout.elements.forEach((element, channel) => {
+      element.daq_channel = channel;
+      element.position = [.2 * Math.cos(channel * 2 * Math.PI / 5),
+        .2 * Math.sin(channel * 2 * Math.PI / 5), 0];
+    });
     fs.writeFileSync(filename, yaml.dump(config));
     await start();
     const proposed = structuredClone(config); proposed.capture.device.heimdall.gain_control = 'measured';
@@ -144,6 +153,8 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal(result.status, 200, JSON.stringify(result.body));
     assert.equal(result.body.receiverSync.automaticGain.status, 'verified');
     assert.equal(result.body.config.capture.device.heimdall.gain, 13);
+    assert.deepEqual(result.body.config.capture.device.array_geometry, layout,
+      'Measured gain does not change operator-confirmed physical geometry');
     assert.equal(probes, 6, 'Two readiness checks plus one transitional capture remain separate from three headroom captures');
     assert.equal(result.body.receiverSync.automaticGain.probes.length, 3);
     assert.equal(result.body.receiverSync.automaticGain.settling[1].transitionObserved, true);
