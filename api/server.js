@@ -21,6 +21,8 @@ const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
+const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
+  evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -343,6 +345,21 @@ app.get('/api/config/capabilities', async (req, res) => {
     validation: document.validation,
     configPath: configFile
   });
+});
+app.get('/api/illuminator-survey', (req, res) => {
+  const document = readConfig(configFile);
+  res.json({schema: 'vectorwarp-illuminator-survey-capabilities-v1',
+    capabilities: illuminatorReceiverCapabilities(document.config),
+    band_plans: illuminatorBandPlans()});
+});
+app.post('/api/illuminator-survey/evaluate', (req, res) => {
+  try {
+    const document = readConfig(configFile);
+    res.json(evaluateIlluminatorSurvey(req.body?.candidates, document.config,
+      req.body?.limits));
+  } catch (error) {
+    res.status(422).json({ok: false, errors: [error.message]});
+  }
 });
 app.get('/api/system/status', async (req, res) => {
   const document = readConfig(configFile);

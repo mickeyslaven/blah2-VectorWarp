@@ -7,7 +7,7 @@
   "scripts": {
     "test:receiver-management": "node all-receiver-profiles-loopback.test.js && node sdrplay-startup.test.js && node sdrplay-server.test.js && node sdrplay-local-apply.test.js && node sdrplay-build.test.js && node receiver-journal.test.js && node receiver-management.test.js && node receiver-routes.test.js && node ../test/ui/receiver-management-dom.test.js && node ../test/ui/sdrplay-build-dom.test.js && python3 ../test/packaging/test_sdrplay_service.py && python3 ../script/test_sdrplay_install.py && python3 ../test/packaging/test_sdrplay_restart.py && python3 ../test/packaging/test_receiver_helper.py && python3 ../test/packaging/test_receiver_apt.py && python3 ../test/packaging/test_receiver_dnf.py",
     "start": "node server.js",
-    "test:manifold": "node manifold-recorder.test.js && node manifold-fitter.test.js && node manifold-automation.test.js && node bearing-diagnostic.test.js && node frequency-resolved-analysis.test.js && node frequency-resolved-shadow.test.js && node ../script/run-frequency-resolved-shadow.test.js",
+    "test:manifold": "node manifold-recorder.test.js && node manifold-fitter.test.js && node manifold-automation.test.js && node bearing-diagnostic.test.js && node frequency-resolved-analysis.test.js && node frequency-resolved-shadow.test.js && node illuminator-survey.test.js && node ../script/run-frequency-resolved-shadow.test.js",
     "test:tracker-forward": "node tracker-forward.test.js && node tracker-publication.test.js",
     "pretest": "npm run test:manifold && npm run test:tracker-forward",
     "test:gpu-setup": "node gpu-setup.test.js && node ../test/ui/gpu-setup-dom.test.js && python3 ../test/packaging/test_gpu_setup.py",
