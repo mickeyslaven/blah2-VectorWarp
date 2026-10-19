@@ -6,7 +6,13 @@ const os = require('os');
 const path = require('path');
 const {TrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder');
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
+const waitFor = async predicate => {
+  for (let attempt = 0; attempt < 100; ++attempt) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('Timed out waiting for guided shadow recorder');
+};
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-guided-'));
@@ -22,7 +28,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   recorder.accept({timestamp: 100000, track_guided_shadow: [{track_id: '001A',
     state: 'TENTATIVE', maturity: 'tentative', delay_bin: 160, delay_km: 20.5,
     doppler_hz: -38}]});
-  for (let i = 0; i < 10 && recorder.status().active; ++i) await tick();
+  await waitFor(() => recorder.status().counters.matched === 1 &&
+    recorder.status().lastWriteAt !== null);
   const lines = fs.readFileSync(filename, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(lines.length, 1);
   assert.equal(lines[0].classification, 'matched');
@@ -34,7 +41,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
   recorder.accept({timestamp: 100000, track_guided_shadow: [{track_id: '001B',
     state: 'ACTIVE', maturity: 'established', delay_bin: 400, delay_km: 50,
     doppler_hz: 100}]});
-  for (let i = 0; i < 10 && recorder.status().active; ++i) await tick();
+  await waitFor(() => recorder.status().counters.unmatched === 1 &&
+    recorder.status().recent.length === 2);
   assert.equal(recorder.status().counters.unmatched, 1);
   assert.equal(recorder.status().recent.at(-1).adsb, null);
 
