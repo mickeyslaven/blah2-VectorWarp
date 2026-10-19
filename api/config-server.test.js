@@ -142,6 +142,13 @@ function closeSocket(socket) {
   return new Promise(resolve => { socket.once('close', resolve); socket.end(); });
 }
 
+function connect(port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({host: '127.0.0.1', port}, () => resolve(socket));
+    socket.once('error', reject);
+  });
+}
+
 (async () => {
   try {
     const capabilities = await waitForServer();
@@ -286,6 +293,12 @@ function closeSocket(socket) {
       assert.deepEqual(reported.acceleration, ambiguityBackend, 'Existing ambiguity telemetry is unchanged');
       assert.deepEqual(reported.clutterAcceleration, clutterBackend,
         'Clutter state and execution flags propagate independently; older timing frames clear the field');
+      const timingProbe = await connect(config.network.ports.timing);
+      assert.deepEqual((await request('GET', '/api/system/status')).body.acceleration, ambiguityBackend,
+        'An empty probe must not steal the active timing stream');
+      await closeSocket(timingProbe);
+      assert.deepEqual((await request('GET', '/api/system/status')).body.acceleration, ambiguityBackend,
+        'Closing a non-owner must not clear active timing telemetry');
       await closeSocket(socket);
       assert.equal((await request('GET', '/api/system/status')).body.acceleration, null,
         'A closed timing stream must not leave GPU qualification telemetry current');
@@ -306,6 +319,12 @@ function closeSocket(socket) {
     });
     await waitForSystemStatus(status => status.lastFrameAt !== null,
       'Timestamp frame was not observed while its socket remained connected');
+    const timestampProbe = await connect(config.network.ports.timestamp);
+    assert.notEqual((await request('GET', '/api/system/status')).body.lastFrameAt, null,
+      'An empty probe must not steal the active timestamp stream');
+    await closeSocket(timestampProbe);
+    assert.notEqual((await request('GET', '/api/system/status')).body.lastFrameAt, null,
+      'Closing a non-owner must not clear the live frame marker');
     const startedCapture = await request('POST', '/capture/toggle', undefined,
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'});

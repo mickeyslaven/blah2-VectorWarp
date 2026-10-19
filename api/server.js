@@ -64,6 +64,8 @@ let timestampConnections = 0;
 let restartGeneration = 0;
 let timestampGeneration = 0;
 let timingGeneration = 0;
+let timestampConnectionSequence = 0;
+let timingConnectionSequence = 0;
 let activeTimestampConnection = 0;
 let activeTimingConnection = 0;
 let upstreamCache = null;
@@ -164,26 +166,34 @@ var captureStartedAt = null;
 let captureRevision = 0;
 
 function invalidateTimestampTelemetry() {
-  activeTimestampConnection = ++timestampGeneration;
+  timestampGeneration += 1;
+  activeTimestampConnection = 0;
   gainRestartTimestampAt = null;
   lastFrameAt = null;
   timestamp = '';
-  return {restart: restartGeneration, connection: activeTimestampConnection};
 }
 
 function invalidateTimingTelemetry() {
-  activeTimingConnection = ++timingGeneration;
+  timingGeneration += 1;
+  activeTimingConnection = 0;
   lastTimingAt = null;
   timing = '';
-  return {restart: restartGeneration, connection: activeTimingConnection};
 }
 
-function timestampConnectionCurrent(generation) {
-  return generation.restart === restartGeneration && generation.connection === activeTimestampConnection;
+function timestampConnectionEligible(connection) {
+  return connection.restart === restartGeneration && connection.generation === timestampGeneration;
 }
 
-function timingConnectionCurrent(generation) {
-  return generation.restart === restartGeneration && generation.connection === activeTimingConnection;
+function timingConnectionEligible(connection) {
+  return connection.restart === restartGeneration && connection.generation === timingGeneration;
+}
+
+function timestampConnectionCurrent(connection) {
+  return timestampConnectionEligible(connection) && connection.id === activeTimestampConnection;
+}
+
+function timingConnectionCurrent(connection) {
+  return timingConnectionEligible(connection) && connection.id === activeTimingConnection;
 }
 
 function currentTimingBackend() {
@@ -1073,27 +1083,43 @@ if (manifoldRecorder.status().enabled &&
 
 // tcp listener timestamp
 const server_timestamp = net.createServer((socket)=>{
-  const generation = invalidateTimestampTelemetry();
+  const connection = {restart: restartGeneration, generation: timestampGeneration,
+    id: ++timestampConnectionSequence};
   timestampConnections += 1;
   socket.on("data",(msg)=>{
-    if (!timestampConnectionCurrent(generation)) return;
+    const value = msg.toString();
+    if (!/^\s*\d{10,}(?:\.\d+)?\s*$/.test(value)) {
+      serviceErrors.set('timestamp', 'timestamp connection: Expected numeric radar timestamp');
+      socket.destroy();
+      return;
+    }
+    if (!timestampConnectionEligible(connection)) return;
+    activeTimestampConnection = connection.id;
+    serviceErrors.delete('timestamp');
     gainRestartTimestampAt = Date.now();
     completePendingGainRestart();
     if (gainPublicationBlocked) return;
     lastFrameAt = Date.now();
-    timestamp = msg.toString();
+    timestamp = value;
   });
   socket.on("close",()=>{
-      if (timestampConnectionCurrent(generation)) invalidateTimestampTelemetry();
+      if (timestampConnectionCurrent(connection)) {
+        activeTimestampConnection = 0;
+        gainRestartTimestampAt = null;
+        lastFrameAt = null;
+        timestamp = '';
+      }
       console.log("Connection closed.");
   })
 });
 listenData(server_timestamp, 'timestamp');
 
 const server_timing = net.createServer(socket => {
-  const generation = invalidateTimingTelemetry();
+  const connection = {restart: restartGeneration, generation: timingGeneration,
+    id: ++timingConnectionSequence};
   const feed = jsonFrames(frame => {
-    if (!timingConnectionCurrent(generation)) return;
+    if (!timingConnectionEligible(connection)) return;
+    activeTimingConnection = connection.id;
     timing = frame;
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
@@ -1108,7 +1134,11 @@ const server_timing = net.createServer(socket => {
     }
   });
   socket.on('close', () => {
-    if (timingConnectionCurrent(generation)) invalidateTimingTelemetry();
+    if (timingConnectionCurrent(connection)) {
+      activeTimingConnection = 0;
+      lastTimingAt = null;
+      timing = '';
+    }
     console.log('Connection closed.');
   });
 });
