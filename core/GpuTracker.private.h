@@ -394,7 +394,9 @@ void main(){uint i=indexOf();if(i>=guidedRead(1u)||i>=m[18]||m[0]!=0u||m[2]!=2u)
    double x=currentPower[currentRow*post[33]+j],y=integrationHistory[priorSlot*post[34]+priorRow*post[33]+uint(old)];
    if(finiteD(x)&&finiteD(y)&&x>=0.0LF&&y>=0.0LF){train+=.5LF*(x+y);seen++;}}}
  if(seen!=n){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
- double alpha=packDouble2x32(uvec2(post[window+8u],post[window+9u]));
+ // The tracker supplies one pre-registered motion path. Use the ordinary
+ // two-CPI single-path alpha, not the full-map 27-motion-trial penalty.
+ double alpha=packDouble2x32(uvec2(post[window+6u],post[window+7u]));
  precise double cut=.5LF*(a+b),threshold=alpha*(train/double(n));
  if(!finiteD(cut)||!finiteD(threshold)){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
  atomicOr(m[guidedBase()+16u+i],1u);atomicAdd(m[guidedBase()+3u],1u);atomicAdd(m[guidedBase()+(state<2u?9u:10u)],1u);

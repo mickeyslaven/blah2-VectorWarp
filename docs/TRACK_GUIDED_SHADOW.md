@@ -21,8 +21,12 @@ For each bounded existing track, one GPU invocation:
    track state to the preceding rolling power map.
 2. Averages the two noncoherent powers along that exact path.
 3. Applies the same translated path to the range-CFAR training cells.
-4. Uses the existing conservative motion-bank two-CPI threshold, so the shadow
-   does not gain sensitivity by silently spending more false alarms.
+4. Uses the ordinary two-CPI single-path CFAR threshold. The full-map TBD bank
+   pays a multiple-comparison penalty for 27 motion trials; applying that same
+   penalty to one tracker-predicted path removes the intended sensitivity gain.
+   The shadow therefore spends one pre-registered test per bounded track, while
+   M-of-N confirmation, stationary-clutter rejection, and the kinematic gate
+   remain independent safeguards.
 5. Rejects incomplete edge windows, non-finite data, and learned persistent
    stationary clutter.
 
@@ -71,7 +75,8 @@ evidence:
 - `gpu_guided_shadow_ms` is bounded and capture drops remain flat;
 - ADS-B/Yagi counterfactual review shows more true moving-aircraft recoveries
   than stationary or incompatible-path candidates;
-- false-alarm accounting remains conservative across the configured maximum
-  track count; and
+- tentative guided recoveries survive ADS-B/Yagi review rather than reinforcing
+  false seed hypotheses, with the configured maximum track count remaining a
+  hard work and trial bound; and
 - authoritative tracker output is byte-identical with the shadow disabled and
   enabled for the same input replay.
