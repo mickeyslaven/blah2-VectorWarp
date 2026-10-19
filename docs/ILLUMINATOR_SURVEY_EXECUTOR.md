@@ -194,9 +194,11 @@ not an active schedule. A preview must replace these budgets if adapter
 capabilities cannot meet them. No minimum duration guarantees enough aircraft.
 
 Before running that pilot, require correct delay-unit tests, a live eligible
-opportunity recorder, at least one verified per-channel target match, measured
+opportunity recorder, replay-verified per-channel target recording, measured
 clipping/cancellation/ambiguity telemetry, and restore fault-injection tests.
-Then collect the multi-aircraft/multi-sector held-out comparison. Missing
+Zero matches for A is a valid radar outcome and must not prevent measuring B.
+Acquire verified target matches during the pilot before claiming bearing
+qualification, then collect the multi-aircraft/multi-sector held-out comparison. Missing
 frequency-resolved target evidence leaves that candidate unqualified. No live
 fixed reflection null, mapping/heading change, calibrated-manifold promotion or
 second-node geolocation integration is part of this experiment.
