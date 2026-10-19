@@ -1,6 +1,7 @@
 const geometryEditor = typeof module !== 'undefined' && module.exports ?
   require('./kraken_geometry') : window.KrakenGeometry;
 const CONFIG_SAVE_TIMEOUT_MS = 90000;
+const MEASURED_GAIN_SAVE_TIMEOUT_MS = 1250000;
 const CONFIG_META = {
   'capture': ['Receiver', 'Radio hardware, tuning and replay'],
   'process': ['Radar', 'Timing, search area, filtering and tracking'],
@@ -20,7 +21,8 @@ const CONFIG_META = {
   'capture.device.heimdall.host': ['HeIMDALL host', 'Computer running HeIMDALL.'],
   'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
   'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
-  'capture.device.heimdall.gain': ['Receiver gain', 'Keep, automatic, or manual dB. Manual gain is checked against Suite V2 status.'],
+  'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
+  'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
   'capture.device.address': ['USRP address', 'UHD device address or hostname'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
@@ -85,6 +87,16 @@ const CONFIG_META = {
   'process.bearing.manifold_automation': ['Automatic manifold qualification', 'Fit and shadow-test installed-site calibration in a background worker.'],
   'process.bearing.manifold_automation.auto_promote': ['Promote qualified manifold', 'Activate only after withheld flight passes beat default steering.'],
   'process.bearing.channel_mapping': ['Bearing channel mapping', 'Bearing-only logical-channel to physical-element permutation.'],
+  'process.bearing.frequency_resolved_shadow': ['Frequency-resolved multipath shadow', 'Measure coherent path delay structure without changing radar output.'],
+  'process.bearing.frequency_resolved_shadow.enabled': ['Run multipath shadow', 'Analyze short read-only coherent captures in an isolated worker.'],
+  'process.bearing.frequency_resolved_shadow.fft_size': ['Multipath FFT size', 'Transform length used to estimate cross-spectral channel response.'],
+  'process.bearing.frequency_resolved_shadow.subbands': ['Multipath subbands', 'Number of frequency slices retained in each candidate model.'],
+  'process.bearing.frequency_resolved_shadow.bandwidth_fraction': ['Analyzed bandwidth fraction', 'Central fraction of captured RF bandwidth used by the model.'],
+  'process.bearing.frequency_resolved_shadow.diagonal_loading': ['Direct constraint loading', 'Stabilization applied when constructing shadow MVDR weights.'],
+  'process.bearing.frequency_resolved_shadow.capture_seconds': ['Shadow capture duration', 'Coherent RF duration analyzed during each periodic run.'],
+  'process.bearing.frequency_resolved_shadow.interval_s': ['Shadow analysis interval', 'Seconds between bounded frequency-resolved analyses.'],
+  'process.bearing.frequency_resolved_shadow.timeout_ms': ['Shadow capture timeout', 'Maximum time allowed for one read-only receiver capture.'],
+  'process.bearing.frequency_resolved_shadow.path': ['Multipath candidate path', 'Absolute path for the latest fingerprinted candidate model.'],
   'process.bearing.manifold_recorder': ['Array calibration recorder', 'Collect sparse, ADS-B-labelled complex echo vectors for an installed-array manifold.'],
   'process.bearing.manifold_recorder.enabled': ['Record manifold samples', 'Eligible coherent Kraken sites collect automatically; turn this off to opt out.'],
   'process.bearing.manifold_recorder.path': ['Calibration sample path', 'Absolute path for rotating JSONL manifold samples.'],
@@ -454,7 +466,10 @@ function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
 }
 
 function setValue(path, value) {
-  const geometryContext = geometryEditor?.context(activeConfig);
+  const gainPolicy = path.join('.') === 'capture.device.heimdall.gain_control'
+    ? value : activeConfig.capture?.device?.heimdall?.gain_control;
+  const geometryOptions = {ignoreGain: gainPolicy === 'measured'};
+  const geometryContext = geometryEditor?.context(activeConfig, geometryOptions);
   let target = activeConfig;
   path.slice(0, -1).forEach(key => { target = target[key]; });
   target[path[path.length - 1]] = value;
@@ -465,7 +480,7 @@ function setValue(path, value) {
       control.replaceChildren(...Array.from(next.childNodes));
     }
   }
-  if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig)) {
+  if (geometryEditor && geometryContext !== geometryEditor.context(activeConfig, geometryOptions)) {
     geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
     refreshGeometryEditor();
   }
@@ -709,7 +724,7 @@ function typedInput(value, path) {
     manual.setAttribute('aria-label', 'Manual Suite gain in dB');
     const mode = selectInput([
       {value: 'keep', label: 'Keep current receiver gain'},
-      {value: '-1', label: 'Automatic'},
+      {value: '-1', label: 'Suite AGC (unmeasured)'},
       {value: 'manual', label: 'Manual gain'}
     ], known ? (isManual ? 'manual' : String(value)) : String(value), selected => {
       manual.hidden = selected !== 'manual';
@@ -726,6 +741,10 @@ function typedInput(value, path) {
     wrapper.append(mode, manual);
     return wrapper;
   }
+  if (rule.type === 'autoBoolean') {
+    const selected = typeof value === 'boolean' ? (value ? 'on' : 'off') : value;
+    return selectInput(rule.choices, selected, next => setValue(path, next));
+  }
   if (typeof value === 'boolean' || rule.type === 'boolean') {
     const label = document.createElement('label');
     label.className = 'switch';
@@ -738,6 +757,9 @@ function typedInput(value, path) {
     return label;
   }
   if (key === 'capture.fc') return frequencyInput(value, path);
+  if (key === 'capture.device.heimdall.gain_control')
+    return selectInput([{value: 'measured', label: 'Automatic headroom check'},
+      {value: 'fixed', label: 'Fixed gain'}], value, selected => setValue(path, selected));
   if (key === 'capture.device.lnaState') return rspDuoLnaInput(value);
   if (key === 'process.performance.acceleration')
     return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
@@ -969,6 +991,8 @@ function group(key, value, path, topLevel = false) {
   // default does not write or retune anything until the operator changes it.
   if (dotted === 'capture.device.heimdall' && value.gain === undefined)
     content.appendChild(field('keep', [...currentPath, 'gain']));
+  if (dotted === 'capture.device.heimdall' && value.gain_control === undefined)
+    content.appendChild(field('fixed', [...currentPath, 'gain_control']));
   if (advancedFields.children.length) content.appendChild(advancedReference);
   if (dotted === 'process.performance' && activeConfig.process?.data?.buffer !== undefined)
     content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
@@ -1304,6 +1328,9 @@ function upstreamRestartError(status) {
 
 function receiverSaveMessage(result, restarted) {
   const sync = result?.receiverSync;
+  if (sync?.automaticGain?.status === 'verified')
+    return `Settings saved. Shared gain ${sync.automaticGain.selectedGainDb} dB passed the headroom check.` +
+      (restarted ? ' Radar restarted; new frames received.' : ' Restart is pending.');
   if (sync?.receiverType === 'Kraken' &&
       ['synchronized', 'already-matched'].includes(sync.status)) {
     const confirmed = 'Settings saved. Suite V2 settings confirmed.';
@@ -1322,6 +1349,8 @@ function receiverSaveMessage(result, restarted) {
 
 function receiverSaveDetails(result) {
   const sync = result?.receiverSync;
+  if (sync?.automaticGain?.status === 'verified')
+    return 'All receiver channels passed two calibrated-stream headroom checks. Gain is held fixed until the next Apply. Aircraft tracking and bearing accuracy require separate validation.';
   if (sync?.acceptance?.mode === 'replay') return 'No receiver hardware was opened.';
   if (sync?.receiverType === 'Kraken') {
     const check = sync.status === 'synchronized' ?
@@ -1734,7 +1763,11 @@ async function saveConfiguration(mode) {
       return;
     }
     restartInProgress = true;
-    setRestartProgress(30, saveLater ? 'Saving without applying…' : 'Checking receiver settings…');
+    const measuredGain = !saveLater && activeConfig.capture?.replay?.state !== true &&
+      activeConfig.capture?.device?.type === 'Kraken' &&
+      activeConfig.capture?.device?.heimdall?.gain_control === 'measured';
+    setRestartProgress(30, saveLater ? 'Saving without applying…' : measuredGain ?
+      'Measuring receiver headroom and calibrating shared gain…' : 'Checking receiver settings…');
     document.querySelectorAll('#config-fields input, #config-fields select').forEach(input => { input.disabled = true; });
     writeAttempted = true;
     const response = await configFetch(liveApiUrl(saveLater ? '/api/config?mode=pending&restart=false' :
@@ -1747,7 +1780,7 @@ async function saveConfiguration(mode) {
     // Receiver synchronization has a 75s absolute deadline across all commands
     // and idle waits. Allow another 15s for bind checks and response transport.
     // Transport loss still leaves the outcome unknown; never retry automatically.
-    }, CONFIG_SAVE_TIMEOUT_MS);
+    }, measuredGain ? MEASURED_GAIN_SAVE_TIMEOUT_MS : CONFIG_SAVE_TIMEOUT_MS);
     const result = await response.json();
     responseReceived = true;
     if (!response.ok) {
@@ -1992,4 +2025,4 @@ function accelerationSummary(value, radar) {
 if (typeof module !== 'undefined')
   module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
-    receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS};
+    receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

@@ -157,8 +157,17 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     await save();
     assert.equal(current().capture.device.array_geometry.mapping_confirmed, true);
     assert.equal(g('elements.0.position.0').disabled, false, 'Save must restore editing');
+    change(query('capture.device.heimdall.gain_control'), 'measured');
+    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] select'), 'manual');
+    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] input'), 13);
+    for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed'])
+      assert.equal(g(name).checked, true, 'Measured gain preserves physical statements in the editor');
     change(g('elements.0.position.0'), -.55);
     assert.equal(g('mapping_confirmed').checked, false);
+    // This preview cannot run the Linux gain/restart workflow. The real API
+    // loopback test checks its saved statements; return this editor to fixed.
+    change(query('capture.device.heimdall.gain_control'), 'fixed');
+    change(doc.querySelector('[data-path="capture.device.heimdall.gain"] select'), 'keep');
     await save();
     assert.equal(current().capture.device.array_geometry.mapping_confirmed, false);
     await window.renderConfiguration();

@@ -300,6 +300,8 @@ function validateConfig(config, baseline = null) {
     if (heimdall.gain !== undefined && !(heimdall.gain === 'keep' || heimdall.gain === -1 ||
         (typeof heimdall.gain === 'number' && Number.isFinite(heimdall.gain) && heimdall.gain >= 0 && heimdall.gain <= 50 && Math.round(heimdall.gain * 10) === heimdall.gain * 10)))
       errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
+    if (heimdall.gain_control === 'measured' && heimdall.gain === -1)
+      errors.push('capture.device.heimdall.gain must be keep or a fixed starting gain when automatic headroom selection is enabled; Suite AGC cannot provide a stable measurement.');
     if (typeof heimdall.host === 'string' &&
         !net.isIP(heimdall.host) && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(heimdall.host))
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');
@@ -715,6 +717,40 @@ function validateConfig(config, baseline = null) {
         bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
         new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))
       errors.push('process.bearing.channel_mapping must be a unique array of channel indices');
+    if (bearing.frequency_resolved_shadow !== undefined) {
+      const shadow = requireObject(bearing.frequency_resolved_shadow,
+        'process.bearing.frequency_resolved_shadow');
+      if (shadow.enabled !== undefined && typeof shadow.enabled !== 'boolean')
+        oneOf(shadow.enabled, 'process.bearing.frequency_resolved_shadow.enabled', ['auto', 'on', 'off']);
+      number(shadow.fft_size, 'process.bearing.frequency_resolved_shadow.fft_size',
+        {integer: true, min: 256, max: 16384});
+      if (Number.isInteger(shadow.fft_size) && (shadow.fft_size & (shadow.fft_size - 1)))
+        errors.push('process.bearing.frequency_resolved_shadow.fft_size must be a power of two');
+      number(shadow.subbands, 'process.bearing.frequency_resolved_shadow.subbands',
+        {integer: true, min: 4, max: 64});
+      number(shadow.bandwidth_fraction, 'process.bearing.frequency_resolved_shadow.bandwidth_fraction',
+        {exclusiveMin: 0, max: 1});
+      number(shadow.diagonal_loading, 'process.bearing.frequency_resolved_shadow.diagonal_loading',
+        {exclusiveMin: 0, max: 1});
+      number(shadow.capture_seconds, 'process.bearing.frequency_resolved_shadow.capture_seconds',
+        {min: .05, max: 10});
+      number(shadow.interval_s, 'process.bearing.frequency_resolved_shadow.interval_s',
+        {integer: true, min: 10, max: 86400});
+      number(shadow.timeout_ms, 'process.bearing.frequency_resolved_shadow.timeout_ms',
+        {integer: true, min: 1000, max: 60000});
+      if (shadow.path !== undefined && (typeof shadow.path !== 'string' || !path.isAbsolute(shadow.path)))
+        errors.push('process.bearing.frequency_resolved_shadow.path must be absolute');
+      if ([true, 'on', 'auto'].includes(shadow.enabled)) {
+        const geometry = device.array_geometry;
+        const referenceChannels = processConfig.reference_synthesis?.channels;
+        if (device.type !== 'Kraken' || processConfig.reference_synthesis?.mode !== 'array_eigenbeam' ||
+            !Array.isArray(referenceChannels) || referenceChannels.length < 2)
+          errors.push('frequency-resolved shadow requires multi-channel Kraken array reference synthesis');
+        if (geometry?.mapping_confirmed !== true || geometry?.geometry_confirmed !== true ||
+            geometry?.orientation_confirmed !== true || !Number.isFinite(geometry.x_axis_bearing_deg_true))
+          errors.push('frequency-resolved shadow requires confirmed mapping, geometry, and orientation');
+      }
+    }
     if (bearing.manifold_recorder !== undefined) {
       const recorder = requireObject(bearing.manifold_recorder,
         'process.bearing.manifold_recorder');

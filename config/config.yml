@@ -61,6 +61,15 @@ process:
     enable: false
     min_consistent: 3
     min_peak_separation_db: 3
+    frequency_resolved_shadow:
+      enabled: false
+      fft_size: 2048
+      subbands: 24
+      bandwidth_fraction: 0.9
+      diagonal_loading: 0.01
+      capture_seconds: 0.25
+      interval_s: 300
+      timeout_ms: 15000
     manifold_automation:
       auto_promote: true
     manifold_recorder:

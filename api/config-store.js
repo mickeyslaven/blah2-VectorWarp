@@ -30,6 +30,9 @@ function setupDefaults() {
       tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
         acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none'},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
+        frequency_resolved_shadow: {enabled: false, fft_size: 2048, subbands: 24,
+          bandwidth_fraction: .9, diagonal_loading: .01, capture_seconds: .25,
+          interval_s: 300, timeout_ms: 15000},
         manifold_automation: {auto_promote: true},
         manifold_recorder: {enabled: 'auto',
           path: calibrationPath,
@@ -175,6 +178,16 @@ function saveConfig(filename, candidate, expectedRevision) {
     throw error;
   }
   const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  const previousGain = before.config.capture?.device?.heimdall?.gain ?? 'keep';
+  const selectedGain = prepared.capture?.device?.heimdall?.gain ?? 'keep';
+  const bearing = prepared.process?.bearing;
+  if (selectedGain !== previousGain && bearing &&
+      (bearing.manifold_file || before.config.process?.bearing?.manifold_file)) {
+    // Gain changes invalidate learned RF qualification, not physical surveys.
+    // Do not silently substitute ideal steering for an active learned model.
+    delete bearing.manifold_file;
+    bearing.enable = false;
+  }
   const automaticPath = before.config.process?.bearing?.manifold_recorder?.path;
   if (automaticPath && prepared.process?.bearing?.manifold_file === `${automaticPath}.qualified.json` &&
       siteFingerprint(before.config) !== siteFingerprint(prepared))

@@ -6,12 +6,15 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS} =
   require('../../html/js/config_ui.js');
 const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
+const {MAX_AUTOMATIC_GAIN_MS} = require('../../api/automatic-gain.js');
 
 assert.ok(CONFIG_SAVE_TIMEOUT_MS >= RECEIVER_SYNC_BUDGET.maxTransactionTimeoutMs + 15000,
   'Browser save must allow the entire receiver transaction plus response overhead');
+assert.ok(MEASURED_GAIN_SAVE_TIMEOUT_MS >= MAX_AUTOMATIC_GAIN_MS + 15000,
+  'Measured gain save must allow the complete search and rollback budget');
 
 const base = yaml.load(fs.readFileSync(
   path.join(__dirname, '..', '..', 'config', 'config-kraken.yml'), 'utf8'));

@@ -13,17 +13,21 @@
     if (object(geometry)) confirmations.forEach(key => { geometry[key] = false; });
     return geometry;
   }
-  function context(config) {
+  function context(config, {ignoreGain = false} = {}) {
     if (!config) return null;
     const device = config.capture?.device || {};
     const geometry = {...device.array_geometry};
     confirmations.forEach(key => { delete geometry[key]; });
+    const heimdall = ignoreGain && object(device.heimdall) ? {...device.heimdall} : device.heimdall;
+    if (ignoreGain && object(heimdall)) { delete heimdall.gain; delete heimdall.gain_control; }
     return JSON.stringify([config.capture?.fc, config.capture?.fs, config.capture?.replay, device.type,
       device.channel_count, device.reference_channel, device.surveillance_channels,
-      device.heimdall, config.process?.reference_synthesis, geometry]);
+      heimdall, config.process?.reference_synthesis, geometry]);
   }
   function reconcile(config, previous) {
-    if (previous && context(config) !== context(previous)) invalidate(config.capture?.device?.array_geometry);
+    const options = {ignoreGain: config?.capture?.device?.heimdall?.gain_control === 'measured'};
+    if (previous && context(config, options) !== context(previous, options))
+      invalidate(config.capture?.device?.array_geometry);
     return config;
   }
   function recordErrors(geometry) {

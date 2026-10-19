@@ -18,6 +18,8 @@ let saved = setupDefaults();
 // saved profile. Keep it present so both a valid value and its replay contract
 // are exercised, instead of treating an optional UI path as untestable.
 saved.capture.replay.legacy_block_samples = 1024;
+// Existing files may use booleans for settings that now also accept auto/on/off.
+saved.process.bearing.manifold_recorder.enabled = true;
 let revision = 'matrix-0';
 let writes = 0;
 const covered = new Set();
@@ -67,7 +69,8 @@ function renderedValue(key, expected) {
     return [...box.querySelectorAll('input:checked')].map(input => Number(input.value));
   const inputs = [...box.querySelectorAll('input, select')].filter(input => !input.disabled);
   const normalize = (input, expectedValue) => input.type === 'checkbox' ? input.checked :
-    (typeof expectedValue === 'boolean' ? input.value === 'true' :
+    (typeof expectedValue === 'boolean' ? input.value ===
+      (FIELD_RULES[key]?.type === 'autoBoolean' ? 'on' : 'true') :
       (input.type === 'number' || typeof expectedValue === 'number' ? Number(input.value) : input.value));
   if (inputs.length > 1) return inputs.map((input, index) => normalize(input, expected[index]));
   const input = inputs[0];
@@ -95,6 +98,32 @@ async function saveAndAssert(label, expected) {
     // These legacy/reserved values must survive saves but have no misleading UI.
     for (const [key, rule] of Object.entries(FIELD_RULES))
       if (rule.readOnly) assert.equal(field(key), null, `${key} is intentionally not editable`);
+
+    const autoBooleanPaths = [
+      'process.bearing.frequency_resolved_shadow.enabled',
+      'process.bearing.manifold_recorder.enabled'
+    ];
+    for (const [index, key] of autoBooleanPaths.entries()) {
+      assert.equal(control(key).tagName, 'SELECT', `${key}: booleans retain all three modes`);
+      assert.deepEqual([...control(key).options].map(option => option.value), ['auto', 'on', 'off']);
+      assert.equal(control(key).value, index ? 'on' : 'off');
+    }
+    // This unqualified RSPduo fixture cannot enable either worker. Turning the
+    // recorder off must leave the unedited shadow's legacy false value intact.
+    setScalar(autoBooleanPaths[1], 'off');
+    await saveAndAssert('Unedited legacy boolean mode', {
+      [autoBooleanPaths[0]]: false, [autoBooleanPaths[1]]: 'off'
+    });
+    for (const key of autoBooleanPaths) {
+      setScalar(key, 'on');
+      assert.equal(await window.validateActiveConfiguration(), false,
+        `${key}: the dropdown must retain receiver qualification checks`);
+      setScalar(key, 'off');
+    }
+    await saveAndAssert('Explicit off modes', Object.fromEntries(
+      autoBooleanPaths.map(key => [key, 'off'])));
+    setScalar(autoBooleanPaths[1], 'auto');
+    await saveAndAssert('Automatic recorder mode', {[autoBooleanPaths[1]]: 'auto'});
 
     // Browser validation combines native constraints with API cross-field
     // checks, including replay-format requirements that native inputs cannot

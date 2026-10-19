@@ -20,7 +20,8 @@ function validDifferent(key, current, rule) {
   const explicit = {
     'capture.fs': 2000001, 'capture.fc': 204640001, 'capture.device.heimdall.host': '127.0.0.2',
     'capture.device.heimdall.port': 8093, 'capture.device.heimdall.control_port': 8094,
-    'capture.device.heimdall.gain': -1, 'capture.device.address': 'type=b200,serial=0000000000000001',
+    'capture.device.heimdall.gain': -1, 'capture.device.heimdall.gain_control': 'fixed',
+    'capture.device.address': 'type=b200,serial=0000000000000001',
     'capture.device.subdev': 'A:B A:A', 'capture.device.serial': ['0000000000000003','0000000000000004'],
     'capture.device.antenna': ['TX/RX','TX/RX'], 'capture.device.gain': [21,21],
     'capture.device.gain_lna': [16,16], 'capture.device.gain_vga': [20,20], 'capture.device.gainReduction': [51,51],
@@ -155,6 +156,10 @@ try {
   bearing.process.bearing.max_rate_deg_s = 30;
   bearing.process.bearing.manifold_file = '/etc/vectorwarp/bearing-manifold.json';
   bearing.process.bearing.channel_mapping = [1, 0, 2, 3, 4];
+  bearing.process.bearing.frequency_resolved_shadow.enabled = 'on';
+  bearing.process.bearing.frequency_resolved_shadow.fft_size = 4096;
+  bearing.process.bearing.frequency_resolved_shadow.path =
+    '/var/lib/vectorwarp-api/calibration/frequency-resolved-shadow.json';
   bearing.process.bearing.manifold_recorder.enabled = true;
   bearing.truth.adsb.enabled = true;
   bearing.network.ports.bearing = 3014;
@@ -164,6 +169,9 @@ try {
       'process.bearing.guard_radius', 'process.bearing.training_radius',
       'process.bearing.diagonal_loading', 'process.bearing.max_rate_deg_s',
       'process.bearing.manifold_file', 'process.bearing.channel_mapping',
+      'process.bearing.frequency_resolved_shadow.enabled',
+      'process.bearing.frequency_resolved_shadow.fft_size',
+      'process.bearing.frequency_resolved_shadow.path',
       'process.bearing.manifold_recorder.enabled', 'truth.adsb.enabled',
       'network.ports.bearing']);
   const trackerForward = clone(krakenBase);
@@ -231,6 +239,10 @@ try {
     'process.tracker.initiate.stationary_clutter.persistence_cpis',
     'process.tracker.initiate.stationary_clutter.max_doppler_hz',
     'process.detection.integration_cpis']);
+  const measuredGain = clone(krakenBase);
+  measuredGain.process.performance.acceleration = 'auto';
+  measuredGain.capture.device.heimdall.gain_control = 'measured';
+  persistGroup('measured-gain-policy', krakenBase, measuredGain, ['capture.device.heimdall.gain_control']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

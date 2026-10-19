@@ -4,6 +4,12 @@ const fs = require('fs');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 
+function samplesPerKilometre(sampleRate) {
+  if (!finite(sampleRate) || sampleRate <= 0) return null;
+  const scale = sampleRate * 1000 / 299792458;
+  return finite(scale) && scale > 0 ? scale : null;
+}
+
 function publicationSettings(config) {
   const tracker = config.process?.tracker || {};
   const settings = tracker.publication || {};
@@ -13,7 +19,7 @@ function publicationSettings(config) {
     staleAfterMs: finite(settings.stale_after_s) ? settings.stale_after_s * 1000 : 3_000,
     nativeMinAssociations: Number.isInteger(settings.native_min_associations) ?
       settings.native_min_associations : 5,
-    delayTolerance: finite(settings.delay_tolerance) ? settings.delay_tolerance : 2,
+    delayTolerance: finite(settings.delay_tolerance) ? settings.delay_tolerance : 2, // sample bins
     dopplerTolerance: finite(settings.doppler_tolerance) ? settings.doppler_tolerance : 5
   };
 }
@@ -31,20 +37,25 @@ function recentDetections(event) {
     item && finite(item.delay) && finite(item.doppler)) : [];
 }
 
-function externalTrack(event) {
+function externalTrack(event, sampleRate) {
+  const delayScale = samplesPerKilometre(sampleRate);
+  if (delayScale === null) return null;
   const detections = recentDetections(event);
   const latest = detections[detections.length - 1];
   if (!event || typeof event.track_id !== 'string' || !event.track_id ||
       !finite(event.timestamp) || !latest) return null;
+  // External detections are kilometres; native/API track delays are sample bins.
+  const delays = detections.map(item => item.delay * delayScale);
+  if (!delays.every(finite)) return null;
   const length = Number.isInteger(event.length) && event.length > 0 ? event.length : detections.length;
   return {
     id: event.track_id,
     state: 'ACTIVE',
-    delay: latest.delay,
+    delay: delays[delays.length - 1],
     doppler: latest.doppler,
     acceleration: 0,
     n: length,
-    associated_delay: detections.map(item => item.delay),
+    associated_delay: delays,
     associated_doppler: detections.map(item => item.doppler),
     associated_state: detections.map(() => 'ACTIVE'),
     source: 'unassisted',
@@ -58,6 +69,7 @@ function externalTrack(event) {
 class TrackerPublication {
   constructor(config, {now = Date.now} = {}) {
     this.settings = publicationSettings(config);
+    this.sampleRate = config.capture?.fs;
     this.now = now;
     this.native = '';
     this.externalTimestamp = null;
@@ -82,7 +94,7 @@ class TrackerPublication {
 
   acceptExternal(value) {
     const event = parseObject(value);
-    const track = externalTrack(event);
+    const track = externalTrack(event, this.sampleRate);
     if (!track) { this.counters.invalid += 1; return false; }
     if (event.timestamp !== this.externalTimestamp) {
       this.externalTimestamp = event.timestamp;
@@ -111,7 +123,7 @@ class TrackerPublication {
   frame() {
     const native = this.nativeFrame();
     if (this.settings.mode === 'native') return this.native;
-    if (!this.inputFresh()) {
+    if (samplesPerKilometre(this.sampleRate) === null || !this.inputFresh()) {
       this.lastFusion = {nativeSupplements: 0, nativeDeduplicated: 0,
         fallbackActive: true};
       return this.native;

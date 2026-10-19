@@ -13,6 +13,9 @@ capture:
       # Preserve the Suite's existing gain unless an operator explicitly selects
       # automatic (-1) or a manual 0–50 dB Suite gain in Settings.
       gain: "keep"
+      # Optional measured shared-gain selection on EVERY Apply and restart:
+      # gain_control: "measured"
+      # Omit or use "fixed" to preserve gain during controlled comparisons.
     # Must match the number of channels streamed by the Suite.
     channel_count: 5
     reference_channel: 0
@@ -117,6 +120,17 @@ process:
     min_consistent: 3
     # Require a decisive independent-lobe power margin before resolving a bearing.
     min_peak_separation_db: 3
+    # Optional read-only wideband multipath observer. It attaches as another
+    # Heimdall client in a worker and never changes radar samples or bearings.
+    frequency_resolved_shadow:
+      enabled: false
+      fft_size: 2048
+      subbands: 24
+      bandwidth_fraction: 0.9
+      diagonal_loading: 0.01
+      capture_seconds: 0.25
+      interval_s: 300
+      timeout_ms: 15000
     # Optional installed-array calibration. Sparse radar cells are labelled by
     # built-in ADS-B truth outside the detection/bearing inference path.
     manifold_automation:

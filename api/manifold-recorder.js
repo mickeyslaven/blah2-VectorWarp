@@ -84,6 +84,7 @@ function automaticallyEligible(config) {
 function fingerprintDescriptor(config) {
   const options = config.process?.bearing?.manifold_recorder || {};
   return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+    receiver_gain_v1: {requested_common_gain: config.capture?.device?.heimdall?.gain ?? 'keep'},
     surveillance_channels: config.capture?.device?.surveillance_channels,
     array_geometry: config.capture?.device?.array_geometry,
     receiver: config.location?.rx, transmitter: config.location?.tx,

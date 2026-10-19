@@ -83,6 +83,12 @@ external tracks, with the same stale fallback. `/api/tracker/native` always
 exposes the untouched processor frame, and `/api/tracker/publication` reports
 freshness, input errors, deduplication, supplementation, and fallback state.
 
+External event detection delays and their history are in kilometres. Publication
+converts them to the native API's sample bins using `capture.fs * 1000 / 299792458`
+before deduplication. Publication `delay_tolerance` is in sample bins. A missing
+or invalid sample rate rejects external events and falls back to the complete
+native frame.
+
 The external event file is tailed asynchronously and never enters the CPI
 processing path. Start it empty or allow the reader to reach EOF; VectorWarp
 intentionally ignores old history when it first opens a file. Give the API
