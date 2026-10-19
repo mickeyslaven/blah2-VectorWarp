@@ -17,9 +17,12 @@ struct TrackerFrame {uint64_t generation=0,consumedSequence=0,timestamp=0;};
 struct TrackerToken {uint64_t epoch=0,transaction=0,generation=0,consumedSequence=0;};
 struct TrackerResult {TrackerToken token{};
 uint32_t checkpointWords=0;
+uint32_t guidedRecoveries=0;
 bool noOp=false;};
 struct TrackerOutputs {uint32_t* checkpoint=nullptr;
 size_t wordCapacity=0;
+uint32_t* guidedRecoveries=nullptr;
+size_t guidedWordCapacity=0;
 TrackerResult* result=nullptr;};
 namespace gpu_tracker {
 constexpr uint32_t headerWords=32,displayHistory=100,statusWords=65,workWords=12,
@@ -242,7 +245,7 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
     if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
 #if TRACK_GUIDED_SHADOW
-   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);atomicAdd(m[guidedBase()+(src(r+14u)<2u?11u:12u)],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
+   if(guidedRead(0u)!=0u){uint shadow=guidedRead(16u+i)|(src(r+14u)<<8u);if((shadow&2u)!=0u){if(match==0xffffffffu){atomicAdd(m[guidedBase()+7u],1u);atomicAdd(m[guidedBase()+(src(r+14u)<2u?11u:12u)],1u);shadow|=32u;}else{atomicAdd(m[guidedBase()+8u],1u);shadow|=16u;}}guidedWrite(16u+i,shadow);}
 #endif
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
   }
@@ -515,12 +518,16 @@ class Stage {
  }
  void validateOutputs(TrackerOutputs out)const{
   if(!out.checkpoint||out.wordCapacity!=admission_.bankWords||!out.result)throw std::invalid_argument("GPU tracker output dimensions changed");
+  if(config_.trackGuidedShadow?(!out.guidedRecoveries||out.guidedWordCapacity!=uint64_t(config_.trackGuidedShadowMaxTracks)*6):
+    (out.guidedRecoveries||out.guidedWordCapacity))throw std::invalid_argument("GPU tracker guided output dimensions changed");
   const auto range=[](const void* p,size_t bytes){uintptr_t start=reinterpret_cast<uintptr_t>(p);
   if(bytes>UINTPTR_MAX-start)throw std::invalid_argument("GPU tracker output overflow");
   return std::pair<uintptr_t,uintptr_t>{start,start+bytes};};
   const auto a=range(out.checkpoint,out.wordCapacity*4),z=range(out.result,sizeof(TrackerResult));
   const auto overlaps=[](auto x,auto y){return x.first<y.second&&y.first<x.second;};
   if(overlaps(a,z))throw std::invalid_argument("GPU tracker outputs overlap");
+  if(out.guidedRecoveries){const auto g=range(out.guidedRecoveries,out.guidedWordCapacity*4);
+   if(overlaps(a,g)||overlaps(z,g))throw std::invalid_argument("GPU tracker guided outputs overlap");}
   for(const Buffer* b:{banks_[0].get(),banks_[1].get(),metadata_.get(),clutterPersistence_.get(),&post_,&scratch_,&integration_,&currentPower_})if(b->mapped){const auto x=range(b->mapped,size_t(b->bytes));
   if(overlaps(a,x)||overlaps(z,x))throw std::invalid_argument("GPU tracker output aliases device storage");}
  }
@@ -529,7 +536,7 @@ class Stage {
   if(words<headerWords||words>admission_.bankWords)throw std::runtime_error("GPU tracker checkpoint size invalid");
   banks_[bank]->invalidate(0,uint64_t(words)*4);
   std::memcpy(out.checkpoint,banks_[bank]->mapped,size_t(words)*4);
-  *out.result={token,words,noOp};
+  *out.result={token,words,0,noOp};
  }
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
@@ -641,6 +648,19 @@ public:
  copied_=false;
  validateOutputs(out);
   try{copyBank(noOp_?active_:1-active_,ready_[24],out,pendingToken_,noOp_);
+  out.result->guidedRecoveries=0;
+  if(config_.trackGuidedShadow&&!noOp_){
+   const uint64_t workBytes=uint64_t(workWords)*config_.capacity*4,guidedOffset=uint64_t(statusWords)*4+workBytes;
+   metadata_->invalidate(uint64_t(statusWords)*4,workBytes+uint64_t(16+config_.capacity)*4);
+   const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
+   const auto* guided=words+statusWords+workWords*config_.capacity;
+   for(uint32_t i=0;i<std::min(ready_[18],config_.trackGuidedShadowMaxTracks);++i){const uint32_t flags=guided[16+i];
+    if((flags&32u)==0u)continue;uint32_t* target=out.guidedRecoveries+6u*out.result->guidedRecoveries++;
+    target[0]=flags>>16u;target[1]=(flags>>8u)&3u;
+    std::memcpy(target+2,words+statusWords+workWords*i,8);
+    std::memcpy(target+4,words+statusWords+workWords*i+2,8);
+   }
+  }
   copied_=true;}catch(...){poisoned_=true;
   throw;}}
  void commit(TrackerToken token){healthy();

@@ -579,6 +579,17 @@ function validateConfig(config, baseline = null) {
       number(trackGuidedShadow.max_tracks,
         'process.tracker.track_guided_shadow.max_tracks',
         {integer: true, min: 1, max: 65535});
+      if (trackGuidedShadow.evidence_path !== undefined) {
+        string(trackGuidedShadow.evidence_path,
+          'process.tracker.track_guided_shadow.evidence_path');
+        if (!path.isAbsolute(trackGuidedShadow.evidence_path))
+          errors.push('process.tracker.track_guided_shadow.evidence_path must be absolute');
+      }
+      for (const [field, limits] of [['max_truth_age_s', {min: .1, max: 60}],
+        ['max_file_mb', {integer: true, min: 1, max: 1024}],
+        ['max_files', {integer: true, min: 1, max: 20}]])
+        if (trackGuidedShadow[field] !== undefined)
+          number(trackGuidedShadow[field], `process.tracker.track_guided_shadow.${field}`, limits);
       if (trackGuidedShadow.enable === true &&
           (!trackBeforeDetect?.enable || !tracker.enable))
         errors.push('track-guided shadow requires enabled tracking and track-before-detect');

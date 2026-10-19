@@ -12,6 +12,7 @@ uint64_t wire::mandatoryPresence(const Config& c){uint64_t m=0;
 for(unsigned i=1;i<=12;++i)m|=uint64_t(1)<<i;
 for(unsigned i=25;i<=29;++i)m|=uint64_t(1)<<i;
 if(c.tracker.enabled)m|=bit(Section::tracker0)|bit(Section::tracker1);
+if(c.tracker.trackGuidedShadow)m|=bit(Section::guidedRecoveries);
 if(c.detector.enabled)m|=bit(Section::detections);
 return m;}
 void validateConfig(const Config& c){
@@ -95,7 +96,7 @@ void validateConfig(const Config& c){
  require(!t.trackGuidedShadow||d.integrationCpis>2,"Track-guided shadow requires rolling track-before-detect history");}
  else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.trackGuidedShadow&&!t.trackGuidedShadowMaxTracks,"Disabled resident tracker has configuration");
  require(!c.device.empty()&&c.device.size()<96&&c.device.find('\0')==std::string::npos,"Resident device selector invalid");
- const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<30)-2);
+ const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<31)-2);
  require((c.presence&mandatory)==mandatory&&!(c.presence&~known),"Resident required/presence bits invalid");
  require(t.enabled||!(c.presence&(bit(Section::tracker0)|bit(Section::tracker1))),"Disabled tracker checkpoint supplied");
  const uint64_t detectorOnly=bit(Section::detections)|bit(Section::unflooredSnr)|bit(Section::cfar)|bit(Section::centroid)|bit(Section::flags)|bit(Section::detectionCells);
@@ -147,6 +148,7 @@ const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g
  put(Section::device,1,1,deviceEvidenceBytes,2);
  put(Section::preparedEvidence,1,1,preparedEvidenceBytes,2);
  put(Section::controlEvidence,1,1,controlEvidenceBytes,2);
+ put(Section::guidedRecoveries,2,4,mul(c.tracker.trackGuidedShadowMaxTracks,24),2);
  l.bytes=align(at,pageBytes);
  require(l.bytes<=sharedLimit&&l.bytes<=SIZE_MAX&&l.bytes<=INT64_MAX,"Resident shared-memory budget exceeded");
  return l;}
@@ -470,7 +472,10 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  require(p.phase==Phase::prepared||p.phase==Phase::committed,"Resident outputs unavailable in this phase");
  Reader r{map.read(Section::metrics)};
  require(r.u32(0)==1&&r.u32(4)==128&&r.u64(8)==p.frame.logicalId&&r.u64(16)==p.frame.consumedSequence,"Resident metrics identity mismatch");
- r.zeros(88,40);
+ const uint32_t guidedCount=r.u32(88),guidedWords=r.u32(92);
+ if(c.tracker.trackGuidedShadow)require(guidedCount<=c.tracker.trackGuidedShadowMaxTracks&&guidedWords==6,"Resident guided recovery metrics invalid");
+ else require(!guidedCount&&!guidedWords,"Disabled guided recovery produced metrics");
+ r.zeros(96,32);
  require(r.u32(80)==c.stages()&&r.u32(84)==c.stages(),"Resident completed computational mask differs");
  v.noise=r.f64(24);
  v.maxPower=r.f64(32);
@@ -503,6 +508,9 @@ v.reference=sectionView<std::complex<double>>(map,visible,Section::fullReference
  require(r.u32(76)<=1&&v.trackerSlot<=1,"Resident tracker flags invalid");
  if(c.tracker.enabled){v.trackerToken=p.tracker;
  v.trackerCheckpoint=sectionView<uint32_t>(map,visible,v.trackerSlot?Section::tracker1:Section::tracker0);
+ v.guidedRecoveryWords=sectionView<uint32_t>(map,visible,Section::guidedRecoveries);
+ require(v.guidedRecoveryWords.size>=uint64_t(guidedCount)*guidedWords,"Resident guided recovery output short");
+ v.guidedRecoveryWords.size=uint64_t(guidedCount)*guidedWords;
  const uint64_t words=r.u64(64);
  const uint64_t recordWords=trackerRecordWords(c.tracker),history=trackerHistoryCapacity(c.tracker);
  require(words>=trackerHeaderWords&&words<=v.trackerCheckpoint.size&&(words-trackerHeaderWords)%recordWords==0,"Resident checkpoint used length invalid");

@@ -109,6 +109,7 @@ void configCases(){
  check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
   "Persistent clutter initiation is not bound to config identity");
  auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedShadowMaxTracks=4;
+ guided.presence|=bit(Section::guidedRecoveries);
  const auto guidedBytes=encodeConfig(guided);
  const auto guidedDecoded=decodeConfig(bytes(guidedBytes),bytes(d),bytes(f));
  check(guidedDecoded.tracker.trackGuidedShadow&&

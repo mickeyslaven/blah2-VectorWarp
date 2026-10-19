@@ -231,14 +231,16 @@ try {
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
-  resident.process.tracker.track_guided_shadow = {enable: true, max_tracks: 32};
+  resident.process.tracker.track_guided_shadow = {enable: true, max_tracks: 32,
+    evidence_path: path.join(directory, 'guided-shadow.jsonl')};
   persistGroup('resident-capacity-edit', residentBase, resident, [
     'process.tracker.initiate.acceleration_model',
     'process.tracker.initiate.stationary_clutter.enable',
     'process.tracker.initiate.stationary_clutter.persistence_cpis',
     'process.tracker.initiate.stationary_clutter.max_doppler_hz',
     'process.tracker.track_guided_shadow.enable',
-    'process.tracker.track_guided_shadow.max_tracks']);
+    'process.tracker.track_guided_shadow.max_tracks',
+    'process.tracker.track_guided_shadow.evidence_path']);
   const measuredGain = clone(krakenBase);
   measuredGain.process.performance.acceleration = 'auto';
   measuredGain.capture.device.heimdall.gain_control = 'measured';

@@ -28,6 +28,7 @@ const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
+const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
@@ -52,6 +53,7 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
+const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -361,6 +363,9 @@ app.get('/api/tracker/publication', (req, res) => {
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
+});
+app.get('/api/tracker/guided-shadow', (req, res) => {
+  res.json(trackGuidedShadowRecorder.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -1060,6 +1065,7 @@ const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
+  trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
 });
 listenData(server_detection, 'detection');

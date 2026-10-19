@@ -13,6 +13,11 @@ process:
     track_guided_shadow:
       enable: true
       max_tracks: 64
+      # Optional; defaults below save.path.
+      evidence_path: /var/lib/vectorwarp-api/track-guided-shadow-evidence.jsonl
+      max_truth_age_s: 3
+      max_file_mb: 10
+      max_files: 3
 ```
 
 For each bounded existing track, one GPU invocation:
@@ -41,6 +46,15 @@ diagnostic measures whether guided recovery can create more confirmed tracks,
 not only prolong already-established tracks. A shadow dispatch that exceeds
 10 ms latches the diagnostic off for subsequent frames; this cannot stop or
 slow the authoritative tracker.
+
+Each unique counterfactual recovery is also attached to the ordinary detection
+frame as bounded diagnostic metadata: tracker ID, prior state, predicted delay
+bin, bistatic delay in kilometres, and Doppler. The API matches that metadata
+against fresh ADS-B delay/Doppler truth and writes rotating JSONL records with
+`matched`, `unmatched`, or `ambiguous` classification. Current counters and the
+20 most recent records are available at `/api/tracker/guided-shadow`. ADS-B is
+an offline label only: it is read after the GPU/tracker decision and is never
+an input to detection, association, confirmation, or publication.
 
 The approach follows the established track-before-detect pattern of retaining
 pre-threshold evidence, integrating along physically admissible trajectories,

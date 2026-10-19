@@ -45,6 +45,18 @@ void detectionCases(){
  Detection big(1.125,1e19,-1e20);const std::vector<double>km{1.125*(Constants::c/double(fs))/1000},f{1e19},s{-1e20};same(detections({4294967297,view(km),view(f),view(s)}),big.to_json_km(4294967297,fs));
  rejects([&]{detections({0,view(km),{},view(s)});});const std::vector<double>nan{std::numeric_limits<double>::quiet_NaN()};rejects([&]{detections({0,view(nan),view(f),view(s)});});
  struct Record {double delay,doppler,snr,delayKm;};const std::vector<Record>records{{1.125,1e19,-1e20,km[0]}};same(detectionRecords(UINT64_C(4294967297),View<Record>{records.data(),records.size()}),big.to_json_km(UINT64_C(4294967297),fs));
+ std::vector<uint32_t>guided(6);guided[0]=0x1a;guided[1]=0;double guidedDelay=160,guidedDoppler=-38;
+ std::memcpy(guided.data()+2,&guidedDelay,8);std::memcpy(guided.data()+4,&guidedDoppler,8);
+ rapidjson::Document guidedDocument;guidedDocument.Parse(detectionRecords(100000,
+  View<Record>{records.data(),records.size()},{guided.data(),guided.size()},2400000).c_str());
+ check(!guidedDocument.HasParseError()&&guidedDocument["track_guided_shadow"].Size()==1&&
+  std::string(guidedDocument["track_guided_shadow"][0]["track_id"].GetString())=="001A"&&
+  std::string(guidedDocument["track_guided_shadow"][0]["maturity"].GetString())=="tentative"&&
+  std::abs(guidedDocument["track_guided_shadow"][0]["delay_km"].GetDouble()-19.9861639)<1e-5&&
+  guidedDocument["track_guided_shadow"][0]["doppler_hz"].GetDouble()==-38,
+  "Guided recovery JSON differs");
+ rejects([&]{detectionRecords(0,View<Record>{records.data(),records.size()},
+  {guided.data(),guided.size()-1},2400000);});
  const std::vector<Record>evidenceRecords{{1,20,9,.15}};const std::vector<uint32_t>cells{3};
  // Channel maps use the production delay-major, FFT-shifted layout. Cell 3 is
  // row 1, column 1 in a 3x2 row-major detector grid, hence shifted row 0.
