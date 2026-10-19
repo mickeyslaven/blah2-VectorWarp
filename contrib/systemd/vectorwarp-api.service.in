@@ -29,7 +29,7 @@ ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-ReadWritePaths=@SYSCONFDIR@ /var/lib/vectorwarp-api
+ReadWritePaths=@SYSCONFDIR@ /var/lib/vectorwarp-api /var/lib/vectorwarp/recordings
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
