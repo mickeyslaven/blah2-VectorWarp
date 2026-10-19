@@ -650,12 +650,13 @@ public:
   try{copyBank(noOp_?active_:1-active_,ready_[24],out,pendingToken_,noOp_);
   out.result->guidedRecoveries=0;
   if(config_.trackGuidedShadow&&!noOp_){
-   const uint64_t workBytes=uint64_t(workWords)*config_.capacity*4,guidedOffset=uint64_t(statusWords)*4+workBytes;
+   const uint64_t workBytes=uint64_t(workWords)*config_.capacity*4;
    metadata_->invalidate(uint64_t(statusWords)*4,workBytes+uint64_t(16+config_.capacity)*4);
    const auto* words=static_cast<const uint32_t*>(metadata_->mapped);
    const auto* guided=words+statusWords+workWords*config_.capacity;
    for(uint32_t i=0;i<std::min(ready_[18],config_.trackGuidedShadowMaxTracks);++i){const uint32_t flags=guided[16+i];
-    if((flags&32u)==0u)continue;uint32_t* target=out.guidedRecoveries+6u*out.result->guidedRecoveries++;
+    if((flags&32u)==0u)continue;
+    uint32_t* target=out.guidedRecoveries+6u*out.result->guidedRecoveries++;
     target[0]=flags>>16u;target[1]=(flags>>8u)&3u;
     std::memcpy(target+2,words+statusWords+workWords*i,8);
     std::memcpy(target+4,words+statusWords+workWords*i+2,8);
