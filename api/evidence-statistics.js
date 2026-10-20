@@ -107,7 +107,8 @@ class EvidenceStatistics {
     this.key = siteKey(config);
     this.limits = limits(config);
     this.state = {schema: 'vectorwarp-evidence-statistics-v1', createdAt: now(),
-      updatedAt: null, passes: [], active: {}, rollup: {passes: 0, eligible: 0,
+      updatedAt: null, passes: [], active: {}, rollup: {siteKey: this.key,
+        passes: 0, eligible: 0,
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
         truthUnusable: 0, eligibleNoRadar: 0, detectedNotTracked: 0}, error: null};
     this.latest = {detection: null, tracker: null, bearing: null};
@@ -124,6 +125,10 @@ class EvidenceStatistics {
       if (value?.schema !== this.state.schema || !Array.isArray(value.passes) ||
           !value.active || typeof value.active !== 'object') throw new Error('Statistics file has an invalid schema');
       this.state = {...this.state, ...value, error: null};
+      if (this.state.rollup?.siteKey !== this.key) this.state.rollup = {
+        siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
+        missed: 0, outOfConfig: 0, truthUnusable: 0,
+        eligibleNoRadar: 0, detectedNotTracked: 0};
     } catch (error) {
       if (error.code !== 'ENOENT') this.state.error = error.message;
     }
@@ -212,6 +217,7 @@ class EvidenceStatistics {
     this.state.passes.push(pass); delete this.state.active[hex];
     while (this.state.passes.length > MAX_PASSES) {
       const old = this.state.passes.shift(); const eligible = old.eligibleFrames >= 3;
+      if (old.siteKey !== this.key) continue;
       this.state.rollup.passes += 1;
       if (old.physicalEligibleFrames < 3) this.state.rollup.outOfConfig += 1;
       if (old.physicalEligibleFrames >= 3 && !eligible) this.state.rollup.truthUnusable += 1;
@@ -242,8 +248,11 @@ class EvidenceStatistics {
 
   summarize(duration, timestamp) {
     const cutoff = duration === Infinity ? -Infinity : timestamp - duration;
-    const rows = [...this.state.passes, ...Object.values(this.state.active)]
+    const rows = this.state.passes
       .filter(pass => pass.siteKey === this.key && pass.lastAt >= cutoff);
+    const active = Object.values(this.state.active)
+      .filter(pass => pass.siteKey === this.key && pass.lastAt >= cutoff);
+    const observed = rows.concat(active);
     const eligible = rows.filter(pass => pass.eligibleFrames >= 3);
     const detected = eligible.filter(pass => pass.detectedFrames >= 3);
     const tracked = eligible.filter(pass => pass.trackedFrames >= 3);
@@ -260,7 +269,9 @@ class EvidenceStatistics {
     const eligibleCount = eligible.length + base.eligible;
     const detectedCount = detected.length + base.detected;
     const trackedCount = tracked.length + base.tracked;
-    return {passes: rows.length + base.passes, eligible_passes: eligibleCount,
+    return {passes: rows.length + base.passes, active_passes: active.length,
+      provisional_eligible_passes: active.filter(pass => pass.eligibleFrames >= 3).length,
+      eligible_passes: eligibleCount,
       out_of_config_passes: outOfConfig.length + (base.outOfConfig || 0),
       truth_unusable_passes: truthUnusable.length + (base.truthUnusable || 0),
       detected_passes: detectedCount, tracked_passes: trackedCount,
@@ -270,14 +281,14 @@ class EvidenceStatistics {
       detection_yield: ratio(detectedCount, eligibleCount),
       tracking_yield: ratio(trackedCount, eligibleCount),
       eligible_aircraft: new Set(eligible.map(pass => pass.hex)).size,
-      opportunity_frames: rows.reduce((sum, pass) => sum + pass.frames, 0),
-      eligible_frames: rows.reduce((sum, pass) => sum + pass.eligibleFrames, 0),
+      opportunity_frames: observed.reduce((sum, pass) => sum + pass.frames, 0),
+      eligible_frames: observed.reduce((sum, pass) => sum + pass.eligibleFrames, 0),
       out_of_span: {
-        below_detection_floor: rows.reduce((sum, pass) => sum + pass.belowFloorFrames, 0),
-        above_delay_ceiling: rows.reduce((sum, pass) => sum + pass.aboveDelayFrames, 0),
-        outside_doppler_span: rows.reduce((sum, pass) => sum + pass.outsideDopplerFrames, 0),
-        stale_truth: rows.reduce((sum, pass) => sum + pass.staleTruthFrames, 0),
-        beyond_clutter_cancellation: rows.reduce((sum, pass) =>
+        below_detection_floor: observed.reduce((sum, pass) => sum + pass.belowFloorFrames, 0),
+        above_delay_ceiling: observed.reduce((sum, pass) => sum + pass.aboveDelayFrames, 0),
+        outside_doppler_span: observed.reduce((sum, pass) => sum + pass.outsideDopplerFrames, 0),
+        stale_truth: observed.reduce((sum, pass) => sum + pass.staleTruthFrames, 0),
+        beyond_clutter_cancellation: observed.reduce((sum, pass) =>
           sum + (pass.outsideClutterFrames || 0), 0)} };
   }
 

@@ -39,6 +39,11 @@ to the current site fingerprint. The fingerprint includes frequency, sample
 rate, receiver and transmitter sites, search limits, channel selection, array
 geometry and bearing mapping; incompatible sites are never mixed.
 
+Pass outcomes are finalized only after the aircraft leaves the opportunity
+stream for two minutes. The API reports active and provisionally eligible pass
+counts separately, so a newly appearing aircraft is never temporarily mislabeled
+as out of configuration or missed.
+
 The persistent file defaults to `evidence-statistics.json` beside the configured
 manifold-recorder corpus. `BLAH2_STATISTICS_PATH` can select another writable
 location.

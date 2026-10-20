@@ -31,10 +31,19 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     clock += 1000;
   }
   let result = stats.status();
+  assert.equal(result.windows.hour.active_passes, 1);
+  assert.equal(result.windows.hour.eligible_passes, 0,
+    'An in-progress pass must not be prematurely classified');
+  clock += 121000;
+  source.get = async () => ({});
+  stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
+  while (stats.running) await new Promise(resolve => setImmediate(resolve));
+  result = stats.status();
   assert.equal(result.windows.hour.eligible_passes, 1);
   assert.equal(result.windows.hour.detected_passes, 1);
   assert.equal(result.windows.hour.tracked_passes, 1);
   assert.equal(result.windows.hour.tracking_yield, 1);
+  clock += 1000;
 
   source.get = async () => ({def456: {delay: 70, doppler: 800,
     timestamp: clock / 1000, flight: 'OUT'}});
@@ -43,6 +52,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     while (stats.running) await new Promise(resolve => setImmediate(resolve));
     clock += 1000;
   }
+  clock += 121000;
+  source.get = async () => ({});
+  stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
+  while (stats.running) await new Promise(resolve => setImmediate(resolve));
   result = stats.status();
   assert.equal(result.windows.hour.eligible_passes, 1,
     'Out-of-span aircraft must not enter the tracking denominator');
