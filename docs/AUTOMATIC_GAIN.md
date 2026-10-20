@@ -17,6 +17,18 @@ policy and build manifest before any receiver command or configuration write.
 Automatic mode is unsupported on macOS until a trusted
 restart receipt provider is implemented.
 
+For arrays whose direct path reaches the tuners very unevenly, fixed mode also
+accepts `capture.device.heimdall.channel_gains`, with one manual 0–50 dB value
+per active coherent channel. The Suite applies the complete vector in one
+quarantined transaction, verifies every physical tuner-table readback, restores
+the previous complete vector on a partial write, and recalibrates before valid
+IQ resumes. The ordinary `gain` remains the common safe startup baseline; the
+saved vector is reapplied and read back after restart. Per-channel gains are
+incompatible with measured common-gain selection because a later common update
+would erase the vector. This feature changes analog headroom; it is not digital
+post-ADC reference attenuation and does not claim improved aircraft yield until
+the live ADS-B-correlated comparison establishes it.
+
 The controller first verifies the old receiver tuple and records its actual
 fixed gain. After applying settings it first waits for a fresh coherent MCHQ
 stream. When a receiver setting command was sent, this requires a matching-tuple

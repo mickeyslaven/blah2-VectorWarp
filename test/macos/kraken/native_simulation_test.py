@@ -324,6 +324,22 @@ class Control:
             time.sleep(.02)
         raise AssertionError(f"No CONVERGED control status at {frequency} after message {after}; last={messages[-2:]}")
 
+    def wait_channel_gains(self, expected, after=0, timeout=5):
+        deadline = time.monotonic() + timeout
+        messages = []
+        while time.monotonic() < deadline:
+            if self.error:
+                raise AssertionError(self.error)
+            with self.lock:
+                messages = list(self.messages)
+            found = next((m.copy() for m in messages if m["_fixtureSequence"] > after and
+                          m.get("calibration_state") == "CONVERGED" and
+                          m.get("channel_gains") == expected), None)
+            if found:
+                return found
+            time.sleep(.02)
+        raise AssertionError(f"No CONVERGED channel gains {expected} after message {after}; last={messages[-2:]}")
+
     def wait_headroom(self, frequency, gain, after=0, timeout=5):
         deadline = time.monotonic() + timeout
         messages = []
@@ -632,6 +648,21 @@ def run_case(args, binary, work, name, fail=None, count=5):
             assert all(later[0] > earlier[0] for earlier, later in
                        zip(headroom_generations, headroom_generations[1:])), headroom_generations
             report["rawAdcHeadroomGenerations"] = headroom_generations
+
+            channel_gains = [19.7, 25.4, 22.9, 25.4, 22.9]
+            mark = frames.mark()
+            control_mark = control_reader.mark()
+            command(control, {"command": "set_channel_gains", "gains": channel_gains})
+            invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
+            frames.wait(lambda f: f["valid"], after=invalid["number"],
+                        timeout=args.calibration_timeout)
+            channel_status = control_reader.wait_channel_gains(
+                channel_gains, after=control_mark, timeout=args.calibration_timeout)
+            assert [channel["actual_gain_db"] for channel in
+                    channel_status["adc_headroom"]["channels"]] == channel_gains
+            report["coherentChannelGainsDb"] = channel_gains
+            print(json.dumps({"case": name, "stage": "channel_gains_changed",
+                              "channelGainsDb": channel_gains}), flush=True)
 
             # Auto gain must switch to its own fixed VGA index (11), and the
             # next manual command must restore index 8 before loss recovery.

@@ -22,6 +22,7 @@ const CONFIG_META = {
   'capture.device.heimdall.port': ['HeIMDALL port', 'HeIMDALL TCP data port.'],
   'capture.device.heimdall.control_port': ['HeIMDALL control port', 'Suite V2 status and command port. Usually 8092; separate from the IQ data port.'],
   'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
+  'capture.device.heimdall.channel_gains': ['Coherent channel gains', 'Optional fixed dB vector, one physical tuner-table gain per channel.'],
   'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
   'capture.device.address': ['USRP address', 'UHD device address or hostname'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],

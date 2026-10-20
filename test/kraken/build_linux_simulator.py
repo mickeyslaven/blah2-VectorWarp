@@ -25,6 +25,7 @@ LINUX_DRIVER_FLAGS = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
                       '-DDETACH_KERNEL_DRIVER=ON', '-DWITH_RPC=OFF']
 PINS = ROOT / 'config/kraken-macos-sources.json'
 PATCHES = [ROOT / 'script/patches/heimdall-v2-macos.patch',
+           ROOT / 'script/patches/heimdall-v2-coherent-channel-gains.patch',
            ROOT / 'script/patches/kraken-librtlsdr-macos.patch']
 
 

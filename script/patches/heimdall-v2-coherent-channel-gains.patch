@@ -1,0 +1,182 @@
+diff --git a/heimdall_v2/src/sdr/sdr_init.hpp b/heimdall_v2/src/sdr/sdr_init.hpp
+--- a/heimdall_v2/src/sdr/sdr_init.hpp
++++ b/heimdall_v2/src/sdr/sdr_init.hpp
+@@ -71,6 +71,11 @@ bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& de
+ // back on the previous settings (logged; a failed restore signals coherence
+ // loss). frequency 0 / gain -999 = leave unchanged.
+ bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
++// Coherent-mode atomic per-channel manual gain update. The vector must contain
++// one tenth-dB value per active channel. All tuners are verified and any
++// partial failure restores the complete previous vector before failing closed.
++bool update_coherent_channel_gains(const std::vector<int>& gains,
++                                   const std::vector<std::unique_ptr<SDRDevice>>& devices);
+ void handle_settings_change();
+ 
+ // Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).
+diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
+--- a/heimdall_v2/src/sdr/sdr_init.cpp
++++ b/heimdall_v2/src/sdr/sdr_init.cpp
+@@ -793,6 +793,95 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     return true;
+ }
+ 
++bool update_coherent_channel_gains(const std::vector<int>& gains,
++                                   const std::vector<std::unique_ptr<SDRDevice>>& devices) {
++    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
++    if (operating_mode.load(std::memory_order_acquire) != OperatingMode::COHERENT)
++        throw std::runtime_error("per-channel gains require coherent mode");
++    const int active = active_num_elements.load(std::memory_order_acquire);
++    if (active < 2 || gains.size() != static_cast<size_t>(active))
++        throw std::runtime_error("per-channel gain count must equal active channel count");
++    if (std::any_of(gains.begin(), gains.end(), [](int gain) { return gain < 0 || gain > 500; }))
++        throw std::runtime_error("per-channel gains must be manual values from 0 through 50 dB");
++
++    std::lock_guard<std::mutex> settings_lock(settings_mutex);
++    if (hardware_settings_failed.load(std::memory_order_acquire) ||
++        (calibration_failed.load(std::memory_order_acquire) && coherence_lost.load(std::memory_order_acquire)))
++        throw std::runtime_error("receiver settings or coherence recovery failed; restart required");
++    std::lock_guard<std::recursive_mutex> device_lock(device_io_mutex);
++
++    std::vector<int> previous(static_cast<size_t>(active), -999);
++    bool unchanged = true;
++    for (int i = 0; i < active; ++i) {
++        if (static_cast<size_t>(i) >= devices.size() || !devices[i] || !devices[i]->dev)
++            throw std::runtime_error("active channel is unavailable");
++        previous[static_cast<size_t>(i)] = devices[i]->actual_gain_tenths.load(std::memory_order_acquire);
++        if (previous[static_cast<size_t>(i)] < 0)
++            throw std::runtime_error("active channel gain readback is unavailable");
++        unchanged = unchanged && previous[static_cast<size_t>(i)] == gains[static_cast<size_t>(i)];
++    }
++    if (unchanged) return false;
++
++    begin_acquisition_transition();
++    if (phase_compensation && !recovery_in_progress.load(std::memory_order_acquire)) {
++        std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
++        phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
++        phase_compensation->last_frequency_change = std::chrono::steady_clock::now();
++        phase_compensation->cooldown_active = true;
++        phase_compensation->compensation_applied = false;
++        phase_compensation->stable_nonzero_count = 0;
++        per_bin_cal.ready.store(false, std::memory_order_release);
++    }
++
++    auto apply = [&](const std::vector<int>& requested, std::vector<char>& ok) {
++        ok.assign(static_cast<size_t>(active), 0);
++        std::vector<std::thread> threads;
++        threads.reserve(static_cast<size_t>(active));
++        for (int i = 0; i < active; ++i) {
++            threads.emplace_back([&, i]() {
++                int actual = -999;
++                ok[static_cast<size_t>(i)] = apply_validated_gain(
++                    devices[static_cast<size_t>(i)]->dev, requested[static_cast<size_t>(i)], &actual) &&
++                    actual == requested[static_cast<size_t>(i)];
++                if (ok[static_cast<size_t>(i)])
++                    devices[static_cast<size_t>(i)]->actual_gain_tenths.store(actual, std::memory_order_release);
++            });
++        }
++        for (auto& thread : threads) thread.join();
++    };
++    auto failed = [&](const std::vector<char>& ok) {
++        std::string channels;
++        for (int i = 0; i < active; ++i)
++            if (!ok[static_cast<size_t>(i)])
++                channels += (channels.empty() ? "" : ", ") + std::to_string(i);
++        return channels;
++    };
++
++    std::vector<char> applied;
++    apply(gains, applied);
++    const std::string failed_channels = failed(applied);
++    if (!failed_channels.empty()) {
++        std::cerr << "SDR: coherent channel gain update failed on channel(s) " << failed_channels
++                  << " - restoring every previous gain" << std::endl;
++        std::vector<char> restored;
++        apply(previous, restored);
++        const std::string restore_failed = failed(restored);
++        if (!restore_failed.empty()) {
++            std::cerr << "SDR: coherent channel gain rollback failed on channel(s) " << restore_failed << std::endl;
++            signal_coherence_lost("per-channel gain rollback failed");
++        }
++        hardware_settings_failed.store(true, std::memory_order_release);
++        coherence_lost.store(true, std::memory_order_release);
++        complete_acquisition_transition();
++        throw std::runtime_error("partial per-channel gain update; restart required");
++    }
++
++    for (int i = 0; i < active; ++i)
++        devices[static_cast<size_t>(i)]->adc_headroom.request_reset();
++    complete_acquisition_transition();
++    return true;
++}
++
+ void handle_settings_change() {
+     std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
+     // Wideband scan / independent: no phase calibration exists to redo (the
+diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
+--- a/heimdall_v2/src/net/tcp_control_server.cpp
++++ b/heimdall_v2/src/net/tcp_control_server.cpp
+@@ -207,6 +207,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+         }
+         status_json << "]";
+     }
++    if (operating_mode.load() == OperatingMode::COHERENT) {
++        status_json << ",\"channel_gains\":[";
++        for (int i = 0; i < num_active; ++i) {
++            if (i > 0) status_json << ",";
++            const int gain = static_cast<size_t>(i) < devices.size() && devices[i]
++                ? devices[i]->actual_gain_tenths.load(std::memory_order_acquire) : -999;
++            status_json << (gain < 0 ? -1.0f : gain / 10.0f);
++        }
++        status_json << "]";
++    }
+ 
+     // Raw ADC headroom is measured in each RTL callback before calibration,
+     // floating-point conversion, DC removal and MCHQ uint8 requantization.
+@@ -857,6 +867,47 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+         return "{\"status\":\"error\",\"message\":\"Invalid delay format\"}";
+     }
+ 
++    if (json_str.find("\"set_channel_gains\"") != std::string::npos) {
++        if (operating_mode.load(std::memory_order_acquire) != OperatingMode::COHERENT)
++            return "{\"status\":\"error\",\"message\":\"per-channel gains require coherent mode\"}";
++        const size_t key = json_str.find("\"gains\":");
++        const size_t begin = key == std::string::npos ? std::string::npos : json_str.find('[', key + 8);
++        const size_t end = begin == std::string::npos ? std::string::npos : json_str.find(']', begin + 1);
++        if (begin == std::string::npos || end == std::string::npos)
++            return "{\"status\":\"error\",\"message\":\"gains array required\"}";
++        std::vector<int> gains;
++        std::stringstream values(json_str.substr(begin + 1, end - begin - 1));
++        std::string value;
++        while (std::getline(values, value, ',')) {
++            try {
++                size_t consumed = 0;
++                const double gain_db = std::stod(value, &consumed);
++                if (consumed != value.find_last_not_of(" \t\r\n") + 1 || !std::isfinite(gain_db) ||
++                    gain_db < 0 || gain_db > 50)
++                    return "{\"status\":\"error\",\"message\":\"gains must be 0-50 dB numbers\"}";
++                gains.push_back(static_cast<int>(std::lround(gain_db * 10.0)));
++            } catch (...) {
++                return "{\"status\":\"error\",\"message\":\"invalid gains array\"}";
++            }
++        }
++        if (gains.size() != static_cast<size_t>(active_num_elements.load(std::memory_order_acquire)))
++            return "{\"status\":\"error\",\"message\":\"gain count must equal active channel count\"}";
++        try {
++            const bool changed = update_coherent_channel_gains(gains, devices);
++            if (changed) begin_retune_cooldown("Per-channel gains changed");
++        } catch (const std::exception& error) {
++            return "{\"status\":\"error\",\"message\":\"" + std::string(error.what()) + "\"}";
++        }
++        std::ostringstream response;
++        response << "{\"status\":\"success\",\"channel_gains\":[";
++        for (size_t i = 0; i < gains.size(); ++i) {
++            if (i > 0) response << ",";
++            response << gains[i] / 10.0;
++        }
++        response << "]}";
++        return response.str();
++    }
++
+     if (json_str.find("\"set_gain\"") != std::string::npos) {
+         size_t gain_pos = json_str.find("\"gain\":");
+         if (gain_pos != std::string::npos) {

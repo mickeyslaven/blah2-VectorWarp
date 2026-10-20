@@ -13,6 +13,7 @@ const rules = {
   'capture.device.heimdall.port': integer(1, 65535),
   'capture.device.heimdall.control_port': {...integer(1, 65535), optional: true},
   'capture.device.heimdall.gain': {type: 'gain', optional: true},
+  'capture.device.heimdall.channel_gains': {type: 'array', optional: true},
   'capture.device.heimdall.gain_control': {type: 'string', choices: ['fixed', 'measured'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
