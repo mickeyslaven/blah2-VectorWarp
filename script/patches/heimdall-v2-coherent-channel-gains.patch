@@ -180,3 +180,28 @@ diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tc
      if (json_str.find("\"set_gain\"") != std::string::npos) {
          size_t gain_pos = json_str.find("\"gain\":");
          if (gain_pos != std::string::npos) {
+diff --git a/heimdall_v2/src/net/tcp_data_server.cpp b/heimdall_v2/src/net/tcp_data_server.cpp
+--- a/heimdall_v2/src/net/tcp_data_server.cpp
++++ b/heimdall_v2/src/net/tcp_data_server.cpp
+@@ -3,6 +3,7 @@
+ #include "../core/utils.hpp"
+ #include "../dsp/compensation.hpp"
+ #include "../sdr/pipeline_control.hpp"
++#include "../sdr/sdr_device.hpp"
+ #include <iostream>
+ #include <algorithm>
+ #include <chrono>
+@@ -173,5 +173,13 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
+         float ch_gain_db = gain_db;
++        if (mode == OperatingMode::COHERENT && ch < devices.size() && devices[ch]) {
++            // The MCHQ metadata describes the physical tuner that produced
++            // this channel. A coherent array may now use unequal fixed gains;
++            // retaining the common requested value here would make captures
++            // and downstream evidence claim a setting that was not applied.
++            const int actual = devices[ch]->actual_gain_tenths.load(std::memory_order_acquire);
++            if (actual >= 0) ch_gain_db = actual / 10.0f;
++        }
+         if (independent) {
+             const int g = wideband_config.get_tuner_gain(ch);
+             ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
+         }

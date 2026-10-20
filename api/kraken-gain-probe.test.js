@@ -102,6 +102,7 @@ test('worker probe parses fragmented loopback frames, all channels and exact sam
   assert.equal(result.captureSeconds, .25);
   assert.equal(result.frequencyHz, c.capture.fc);
   assert.equal(result.gainDb, 14.4, 'float32 metadata rounding is accepted');
+  assert.deepEqual(result.channelGains, [14.4, 14.4]);
   assert.equal(result.frequencyChangeCounter, 7);
   assert.equal(result.channels.length, 2);
   for (const channel of result.channels) assert.equal(channel.railFraction, .4);
@@ -115,6 +116,16 @@ test('worker probe parses fragmented loopback frames, all channels and exact sam
   assert.ok(result.elapsedMs < 3000);
 });
 
+test('accepts and reports coherent per-channel physical gain metadata', async () => {
+  const c = config();
+  c.capture.device.heimdall.channel_gains = [19.7, 25.4];
+  const {socket, promise} = injected(c);
+  socket.emit('data', frame(c, {samples: 10, gain: [19.7, 25.4]}));
+  const result = await promise;
+  assert.equal(result.gainDb, 14.4, 'common gain remains the startup fallback');
+  assert.deepEqual(result.channelGains, [19.7, 25.4]);
+});
+
 test('rejects missing expectations, non-fixed gain and unbounded options before connecting', async () => {
   const mutations = [c => { delete c.capture.fc; }, c => { delete c.capture.fs; },
     c => { c.capture.device.channel_count = 17; }, c => { c.capture.device.type = 'RspDuo'; },
@@ -123,6 +134,11 @@ test('rejects missing expectations, non-fixed gain and unbounded options before 
     c => { c.capture.device.heimdall.gain = NaN; }, c => { c.capture.device.heimdall.host = 'http://example.com'; }];
   for (const mutate of mutations) {
     const c = config(); mutate(c);
+    await assert.rejects(captureGain(c, {}, {connect: () => assert.fail('Invalid config connected')}),
+      {code: 'KRAKEN_GAIN_PROBE_CONFIG'});
+  }
+  for (const channelGains of [[19.7], [19.7, Infinity], [19.7, -1], 'bad']) {
+    const c = config(); c.capture.device.heimdall.channel_gains = channelGains;
     await assert.rejects(captureGain(c, {}, {connect: () => assert.fail('Invalid config connected')}),
       {code: 'KRAKEN_GAIN_PROBE_CONFIG'});
   }

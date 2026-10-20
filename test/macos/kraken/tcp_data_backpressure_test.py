@@ -22,6 +22,7 @@ stubs = {
 #include <atomic>
 #include <complex>
 #include <cstdint>
+#include <memory>
 #include <vector>
 using Complex=std::complex<float>; using ComplexBuffer=std::vector<Complex>;
 enum class OperatingMode { COHERENT, WIDEBAND_SCAN, INDEPENDENT };
@@ -31,6 +32,8 @@ struct WidebandConfig { uint32_t get_tuner_frequency(int) const{return 101000000
 extern WidebandConfig wideband_config;
 struct Scanner { std::atomic<uint32_t> frequency_change_counter{0},current_group_index{0}; std::atomic<bool> retuning_in_progress{false}; };
 extern Scanner discrete_scanner;
+struct SDRDevice { std::atomic<int> actual_gain_tenths{200}; };
+extern std::vector<std::unique_ptr<SDRDevice>> devices;
 ''',
 'src/core/config.hpp': '''#pragma once
 #include <cstdint>
@@ -52,6 +55,7 @@ inline std::optional<PhaseCompensatorState> get_phase_compensation_state_nonbloc
 inline bool kerberos_manual_cal_only(){return false;} extern std::atomic<bool> kerberos_cal_stale;
 ''',
 'src/sdr/pipeline_control.hpp': '#pragma once\n',
+'src/sdr/sdr_device.hpp': '#pragma once\n#include "../core/types.hpp"\n',
 }
 
 program = r'''
@@ -78,6 +82,11 @@ std::atomic<uint64_t> current_frequency{101000000};
 std::atomic<OperatingMode> operating_mode{OperatingMode::COHERENT};
 WidebandConfig wideband_config;
 Scanner discrete_scanner;
+std::vector<std::unique_ptr<SDRDevice>> devices = [] {
+    std::vector<std::unique_ptr<SDRDevice>> value;
+    value.emplace_back(std::make_unique<SDRDevice>());
+    return value;
+}();
 std::atomic<bool> kerberos_cal_stale{false}, bias_tee_enabled{false};
 int tcp_data_port = 0;
 std::string heimdall_bind_host = "127.0.0.1";

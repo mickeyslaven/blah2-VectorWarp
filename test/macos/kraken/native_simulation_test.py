@@ -217,6 +217,7 @@ class Frames:
                     self.count += 1
                     frame = dict(number=self.count, phase=phase, noise=noise, epoch=epoch,
                                  retuning=retuning, frequency=metadata[0], gain=metadata[1],
+                                 channelGains=list(metadata[1::2]),
                                  valid=valid, samples=samples, referenceRms=envelope)
                     self.frames.append(frame)
                     if valid:
@@ -542,7 +543,8 @@ def run_case(args, binary, work, name, fail=None, count=5):
             frames = Frames(connect(args.data_port, process))
             control = connect(args.control_port, process)
             control_reader = Control(control)
-            frames.wait(lambda f: f["valid"] and f["frequency"] == 101000000 and f["gain"] == 50,
+            frames.wait(lambda f: f["valid"] and f["frequency"] == 101000000 and
+                        math.isclose(f["gain"], 49.6, abs_tol=1e-5),
                         timeout=args.calibration_timeout)
             report["numerical"] = numerical_check(frames)
             control_reader.wait_calibrated(101000000, gain=50)
@@ -633,7 +635,8 @@ def run_case(args, binary, work, name, fail=None, count=5):
                 control_mark = control_reader.mark()
                 command(control, {"command": "set_gain", "gain": gain})
                 invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
-                changed = frames.wait(lambda f: f["valid"] and f["gain"] == gain,
+                changed = frames.wait(lambda f: f["valid"] and
+                                      math.isclose(f["gain"], actual_gain_db[gain], abs_tol=1e-5),
                                       after=invalid["number"], timeout=args.calibration_timeout)
                 control_reader.wait_calibrated(101000000, gain=gain, after=control_mark)
                 headroom = control_reader.wait_headroom(101000000, gain, after=control_mark)
@@ -654,13 +657,16 @@ def run_case(args, binary, work, name, fail=None, count=5):
             control_mark = control_reader.mark()
             command(control, {"command": "set_channel_gains", "gains": channel_gains})
             invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
-            frames.wait(lambda f: f["valid"], after=invalid["number"],
-                        timeout=args.calibration_timeout)
+            channel_frame = frames.wait(
+                lambda f: f["valid"] and all(math.isclose(actual, expected, abs_tol=1e-5)
+                                              for actual, expected in zip(f["channelGains"], channel_gains)),
+                after=invalid["number"], timeout=args.calibration_timeout)
             channel_status = control_reader.wait_channel_gains(
                 channel_gains, after=control_mark, timeout=args.calibration_timeout)
             assert [channel["actual_gain_db"] for channel in
                     channel_status["adc_headroom"]["channels"]] == channel_gains
             report["coherentChannelGainsDb"] = channel_gains
+            report["coherentChannelGainMetadataFrame"] = channel_frame["number"]
             print(json.dumps({"case": name, "stage": "channel_gains_changed",
                               "channelGainsDb": channel_gains}), flush=True)
 
@@ -682,7 +688,8 @@ def run_case(args, binary, work, name, fail=None, count=5):
             control_mark = control_reader.mark()
             command(control, {"command": "set_gain", "gain": 50})
             invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
-            frames.wait(lambda f: f["valid"] and f["gain"] == 50, after=invalid["number"],
+            frames.wait(lambda f: f["valid"] and math.isclose(f["gain"], 49.6, abs_tol=1e-5),
+                        after=invalid["number"],
                         timeout=args.calibration_timeout)
             control_reader.wait_calibrated(101000000, gain=50, after=control_mark)
             assert {e["channel"] for e in driver_events(case)[before_manual:]

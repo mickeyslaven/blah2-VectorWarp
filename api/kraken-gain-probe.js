@@ -33,8 +33,13 @@ function descriptorFrom(config) {
   if (typeof endpoint.gain !== 'number' || !Number.isFinite(endpoint.gain) ||
       endpoint.gain < 0 || endpoint.gain > 50)
     throw probeError('CONFIG', 'Gain probing requires a known common fixed gain from 0 through 50 dB.');
+  const channelGains = endpoint.channel_gains ??
+    Array(device.channel_count).fill(endpoint.gain);
+  if (!Array.isArray(channelGains) || channelGains.length !== device.channel_count ||
+      channelGains.some(gain => typeof gain !== 'number' || !Number.isFinite(gain) || gain < 0 || gain > 50))
+    throw probeError('CONFIG', 'Gain probing requires one fixed channel gain from 0 through 50 dB per channel.');
   return {frequencyHz: capture.fc, sampleRateHz: capture.fs, channelCount: device.channel_count,
-    gainDb: endpoint.gain, host: endpoint.host, port: endpoint.port};
+    gainDb: endpoint.gain, channelGains: [...channelGains], host: endpoint.host, port: endpoint.port};
 }
 
 function captureOptions(options = {}) {
@@ -134,9 +139,10 @@ function validateMetadata(buffer, descriptor) {
     const gain = buffer.readFloatLE(36 + channel * 8);
     // The protocol serializes frequency and gain as little-endian float32.
     // Compare frequency to its representable wire value, not unrounded Hz.
-    const gainTolerance = Math.max(1e-6, Math.abs(descriptor.gainDb) * 2 ** -23);
+    const expectedGain = descriptor.channelGains[channel];
+    const gainTolerance = Math.max(1e-6, Math.abs(expectedGain) * 2 ** -23);
     if (!Number.isFinite(frequency) || frequency !== Math.fround(descriptor.frequencyHz) ||
-        !Number.isFinite(gain) || Math.abs(gain - descriptor.gainDb) > gainTolerance)
+        !Number.isFinite(gain) || Math.abs(gain - expectedGain) > gainTolerance)
       throw probeError('MISMATCH', `MCHQ frequency or fixed gain differs on channel ${channel}.`);
   }
 }
@@ -168,7 +174,8 @@ function capture(descriptor, options, connect, signal) {
         .map(key => [key, Math.max(...channels.map(channel => channel[key]))]));
       settled = true; cleanup();
       resolve({frequencyHz: descriptor.frequencyHz, sampleRateHz: descriptor.sampleRateHz,
-        channelCount: descriptor.channelCount, gainDb: descriptor.gainDb, channels, worstCase,
+        channelCount: descriptor.channelCount, gainDb: descriptor.gainDb,
+        channelGains: [...descriptor.channelGains], channels, worstCase,
         packets, samplesPerChannel: samples, captureSeconds: samples / descriptor.sampleRateHz,
         startedAt, captureElapsedMs: performance.now() - started,
         frequencyChangeCounter: firstHeader.frequencyChangeCounter, groupIndex: firstHeader.groupIndex,
@@ -204,6 +211,7 @@ function capture(descriptor, options, connect, signal) {
               const error = probeError('UNCALIBRATED', 'MCHQ calibration has not settled with noise off.');
               error.transition = {frequencyHz: descriptor.frequencyHz, sampleRateHz: descriptor.sampleRateHz,
                 channelCount: descriptor.channelCount, gainDb: descriptor.gainDb,
+                channelGains: [...descriptor.channelGains],
                 phaseState: header.phaseState, noiseSource: header.noiseSource,
                 retuning: false, metadataMatched: true};
               throw error;
@@ -327,6 +335,9 @@ async function waitForGainSettled(config, options = {},
       if (transition?.metadataMatched === true && transition.frequencyHz === descriptor.frequencyHz &&
           transition.sampleRateHz === descriptor.sampleRateHz && transition.channelCount === descriptor.channelCount &&
           transition.gainDb === descriptor.gainDb && transition.retuning === false &&
+          Array.isArray(transition.channelGains) &&
+          transition.channelGains.length === descriptor.channelGains.length &&
+          transition.channelGains.every((gain, index) => gain === descriptor.channelGains[index]) &&
           typeof transition.noiseSource === 'boolean' &&
           [0, 1, 2, 3, 5, 6].includes(transition.phaseState))
         transitionObserved = true;
