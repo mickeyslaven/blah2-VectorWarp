@@ -153,11 +153,12 @@ def build(args):
     shutil.copytree(trees['uwebsockets'], native / 'uWebSockets', dirs_exist_ok=True)
     shutil.copytree(trees['usockets'], native / 'uWebSockets/uSockets', dirs_exist_ok=True)
     apply_patch(suite, PATCHES[0])
+    apply_patch(suite, PATCHES[1])
     driver = suite / 'librtlsdr'
     if driver.exists():
         shutil.rmtree(driver)
     shutil.copytree(trees['rtlsdr'], driver)
-    apply_patch(driver, PATCHES[1])
+    apply_patch(driver, PATCHES[2])
     for test in ('convergence_oracle_test.py', 'tcp_data_send_test.py',
                  'tcp_data_backpressure_test.py', 'socket_lifecycle_test.py',
                  'watchdog_oracle_test.py'):
