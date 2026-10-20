@@ -21,6 +21,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 SONAME = 'libvectorwarp-simulated-rtlsdr.so'
 FAKE = ROOT / 'test/macos/kraken/fake_rtlsdr.cpp'
+LINUX_DRIVER_FLAGS = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
+                      '-DDETACH_KERNEL_DRIVER=ON', '-DWITH_RPC=OFF']
 PINS = ROOT / 'config/kraken-macos-sources.json'
 PATCHES = [ROOT / 'script/patches/heimdall-v2-macos.patch',
            ROOT / 'script/patches/kraken-librtlsdr-macos.patch']
@@ -161,8 +163,10 @@ def build(args):
         run([sys.executable, ROOT / 'test/macos/kraken' / test, '--source', native])
     for test in ('control_reader_test.py', 'driver_events_test.py', 'shutdown_process_test.py'):
         run([sys.executable, ROOT / 'test/macos/kraken' / test, '-v'])
-    flags = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
-             '-DDETACH_KERNEL_DRIVER=OFF', '-DWITH_RPC=OFF']
+    # A production Linux receiver must reclaim RTL2832 devices after a clean
+    # service restart. Without this option librtlsdr reports every tuner as
+    # claimed by dvb_usb_rtl28xxu and Heimdall exits before opening its ports.
+    flags = LINUX_DRIVER_FLAGS
     run(['cmake', '-S', driver, '-B', driver / 'build', '-G', 'Unix Makefiles', *flags])
     run(['cmake', '--build', driver / 'build', '--target', 'rtlsdr_static', '--parallel', args.jobs])
     run(['make', 'WITH_SSL=0', f'-j{args.jobs}'], cwd=native / 'uWebSockets/uSockets')

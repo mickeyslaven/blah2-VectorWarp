@@ -1,6 +1,7 @@
 'use strict';
 
 const net = require('net');
+const {normalizeAdcHeadroom} = require('./kraken-adc-headroom');
 
 const RECEIVER_TYPES = Object.freeze(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
 const MAX_FRAME_BYTES = 65536;
@@ -104,13 +105,19 @@ function normalizeStatus(frame) {
       !['coherent', 'wideband', 'independent'].includes(frame.operating_mode))
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
       'Suite V2 status is missing tuning, channel, mode, or reconfiguration fields.', 502);
+  let adcHeadroom;
+  try { adcHeadroom = normalizeAdcHeadroom(frame.adc_headroom, channelCount); }
+  catch (error) {
+    throw receiverError('KRAKEN_PROTOCOL_MISMATCH', error.message, 502);
+  }
   return {
     centerFrequency, sampleRate, channelCount, maximumChannels,
     gain: Number.isFinite(gain) ? gain : null,
     operatingMode: frame.operating_mode,
     reconfiguring: frame.reconfiguring,
     recovering: frame.recovering === true,
-    cooldownActive: frame.cooldown_active === true
+    cooldownActive: frame.cooldown_active === true,
+    adcHeadroom
   };
 }
 
