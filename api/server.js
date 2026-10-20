@@ -28,6 +28,7 @@ const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
+const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
@@ -52,6 +53,7 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
+const evidenceStatistics = createEvidenceStatistics(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -358,6 +360,16 @@ app.get('/api/tracker/native', (req, res) => {
 });
 app.get('/api/tracker/publication', (req, res) => {
   res.json(trackerPublication.status());
+});
+app.get('/api/statistics', (req, res) => {
+  const diagnostic = bearingDiagnostic.status();
+  const recorder = manifoldRecorder.status();
+  const automation = manifoldAutomation.status();
+  res.json(evidenceStatistics.status({enabled: config.process?.bearing?.enable === true,
+    calibrated: Boolean(config.process?.bearing?.manifold_file),
+    manifold_file: config.process?.bearing?.manifold_file || null,
+    diagnostic, recorder, automation,
+    frequency_resolved: frequencyResolvedShadow.status()}));
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -1061,17 +1073,22 @@ const server_detection = jsonStreamServer('detection', frame => {
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
+  evidenceStatistics.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
+  evidenceStatistics.acceptTracker(trackerPublication.frame());
 });
 listenData(server_tracker, 'track');
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
-  const server_bearing = jsonStreamServer('bearing', frame => { bearing = frame; });
+  const server_bearing = jsonStreamServer('bearing', frame => {
+    bearing = frame;
+    evidenceStatistics.acceptBearing(frame);
+  });
   listenData(server_bearing, 'bearing');
 }
 
@@ -1155,6 +1172,7 @@ process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
+  evidenceStatistics.close();
   gainMonitor.stop();
   process.exit(0);
 });
