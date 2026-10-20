@@ -28,6 +28,7 @@ assert.equal(metadata(['truth', 'adsb'])[0], 'ADS-B');
 assert.equal(metadata(['truth', 'adsb', 'enabled'])[0], 'Show ADS-B');
 assert.equal(metadata(['capture', 'device', 'serial'], 'RspDuo')[0], 'RSPduo serial');
 assert.equal(metadata(['capture', 'device', 'serial'], 'HackRF')[0], 'HackRF serial numbers');
+assert.equal(metadata(['process', 'clutter', 'followAmbiguity'])[0], 'Follow radar delay range');
 const captureSource = fs.readFileSync(path.join(
   __dirname, '..', '..', 'src', 'capture', 'Capture.cpp'), 'utf8');
 const validTypes = captureSource.match(
