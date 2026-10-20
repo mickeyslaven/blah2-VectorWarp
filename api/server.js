@@ -24,7 +24,7 @@ const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
-const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
+const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
@@ -48,7 +48,8 @@ const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
 manifoldAutomation.start();
-const bearingDiagnostic = createBearingDiagnostic(config);
+const bearingDiagnostic = createBearingDiagnosticCache(config);
+bearingDiagnostic.start();
 const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
@@ -909,6 +910,7 @@ app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
 app.get('/api/bearing/diagnostic', (req, res) => {
+  if (req.query.refresh === 'true') void bearingDiagnostic.refresh({force: true});
   res.json(bearingDiagnostic.status());
 });
 app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
@@ -1173,6 +1175,7 @@ process.on('SIGTERM', () => {
   trackerForwarder.close();
   trackerPublication.close();
   evidenceStatistics.close();
+  bearingDiagnostic.close();
   gainMonitor.stop();
   process.exit(0);
 });

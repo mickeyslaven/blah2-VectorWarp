@@ -58,6 +58,12 @@ The same page consolidates VectorWarp's built-in bearing evidence:
   qualification gates; and
 - frequency-resolved reference/multipath diagnostics.
 
+Historical bearing replay is intentionally isolated from radar processing. A
+low-priority child process refreshes a durable cache at most hourly; API and UI
+requests only read that cache. A slow or failed replay therefore cannot block
+live CPI ingestion, detection, tracking, or the web API. The diagnostic endpoint
+can enqueue an early refresh with `?refresh=true`, but still returns immediately.
+
 Truth-assisted best-lobe, channel-order and heading results remain explicitly
 diagnostic. They are not presented as calibrated bearing accuracy. A measured
 manifold is called calibrated only after the existing independent-pass,
