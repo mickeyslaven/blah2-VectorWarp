@@ -118,7 +118,10 @@ const rules = {
 for (const group of ['ambiguity', 'clutter']) {
   for (const name of ['delayMin', 'delayMax', ...(group === 'ambiguity' ?
     ['dopplerMin', 'dopplerMax'] : [])])
-    rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
+    rules[`process.${group}.${name}`] = {
+      ...integer(-2147483648, 2147483647),
+      ...(group === 'clutter' ? {optional: true} : {})
+    };
 }
 for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
@@ -132,6 +135,7 @@ for (const site of ['rx','tx']) {
 }
 for (const name of ['capture.replay.state','capture.replay.loop',
   'capture.device.dabNotch','capture.device.rfNotch','process.clutter.enable',
+  'process.clutter.followAmbiguity',
   'process.detection.enable','process.tracker.enable','truth.adsb.enabled',
   'truth.ais.enabled','save.iq','save.map','save.detection','save.timing'])
   rules[name] = {type: 'boolean'};

@@ -46,6 +46,8 @@ process:
     dopplerMax: 200
   clutter:
     enable: true
+    # Covers ambiguity.delayMin through ambiguity.delayMax (inclusive).
+    followAmbiguity: true
     delayMin: -10
     delayMax: 400
   reference_synthesis:

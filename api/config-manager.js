@@ -449,16 +449,30 @@ function validateConfig(config, baseline = null) {
     }
   }
   boolean(clutter.enable, 'process.clutter.enable');
-  const clutterMin = number(clutter.delayMin, 'process.clutter.delayMin',
+  const followsAmbiguity = clutter.followAmbiguity === undefined ? false :
+    (boolean(clutter.followAmbiguity, 'process.clutter.followAmbiguity'),
+      clutter.followAmbiguity);
+  // Existing numeric configurations retain their manual half-open interval.
+  // The opt-in default derives [ambiguity.delayMin, ambiguity.delayMax + 1),
+  // covering every inclusive ambiguity-map bin without site-specific tuning.
+  const configuredClutterMin = clutter.delayMin === undefined ? null : number(clutter.delayMin, 'process.clutter.delayMin',
     {integer: true, min: INT32_MIN, max: INT32_MAX});
-  const clutterMax = number(clutter.delayMax, 'process.clutter.delayMax',
+  const configuredClutterMax = clutter.delayMax === undefined ? null : number(clutter.delayMax, 'process.clutter.delayMax',
     {integer: true, min: INT32_MIN, max: INT32_MAX});
+  if (!followsAmbiguity && (configuredClutterMin === null || configuredClutterMax === null))
+    errors.push('process.clutter: provide delayMin and delayMax, or enable followAmbiguity');
+  if (followsAmbiguity && delayMax === INT32_MAX)
+    errors.push('process.clutter.followAmbiguity: ambiguity.delayMax must leave room for the exclusive filter endpoint');
+  const clutterMin = followsAmbiguity ? delayMin : configuredClutterMin;
+  const clutterMax = followsAmbiguity && delayMax !== null && delayMax < INT32_MAX ?
+    delayMax + 1 : (followsAmbiguity ? null : configuredClutterMax);
   if (clutterMin !== null && clutterMax !== null && clutterMin >= clutterMax)
     errors.push('process.clutter.delayMin must be smaller than process.clutter.delayMax');
   if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
       clutterMax - clutterMin > cpiSamples)
     errors.push('process.clutter.delayMax: filter delay span must fit inside the CPI sample count');
-  if (clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
+  if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
+      clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
     errors.push('process.clutter.delayMax: filter FFT exceeds the processor limit');
   const channels = device.type === 'Kraken' ? device.channel_count : 2;
   const paths = device.type === 'Kraken' ? device.surveillance_channels?.length : 1;

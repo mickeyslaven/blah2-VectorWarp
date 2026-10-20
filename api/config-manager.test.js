@@ -29,6 +29,23 @@ sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74
 assert.equal(validateConfig(sixChannel).valid, true);
 
 const clone = value => JSON.parse(JSON.stringify(value));
+const automaticClutter = clone(sixChannel);
+automaticClutter.process.ambiguity.delayMin = -8;
+automaticClutter.process.ambiguity.delayMax = 47;
+automaticClutter.process.clutter.followAmbiguity = true;
+automaticClutter.process.clutter.delayMin = -2; // Ignored while following.
+automaticClutter.process.clutter.delayMax = 12;
+assert.equal(validateConfig(automaticClutter).valid, true,
+  'followAmbiguity covers a changed ambiguity range without manual clutter tuning');
+const legacyManualClutter = clone(automaticClutter);
+delete legacyManualClutter.process.clutter.followAmbiguity;
+assert.equal(validateConfig(legacyManualClutter).valid, true,
+  'existing numeric clutter ranges remain valid without the follow flag');
+const incompleteManualClutter = clone(automaticClutter);
+incompleteManualClutter.process.clutter.followAmbiguity = false;
+delete incompleteManualClutter.process.clutter.delayMax;
+assert.equal(validateConfig(incompleteManualClutter).valid, false,
+  'manual clutter range requires both half-open endpoints');
 const coherentFusion = load('config-kraken.yml');
 coherentFusion.process.surveillance_fusion = {mode: 'coherent_beam_bank', beams: 12};
 coherentFusion.capture.device.array_geometry = {
@@ -313,6 +330,8 @@ for (const [key, value] of [
   ['capture.replay.format', 'unsupported'], ['process.reference_synthesis.diagonal_loading', -1]
 ]) {
   const invalid = clone(sixChannel);
+  if (key.startsWith('process.clutter.delay'))
+    invalid.process.clutter.followAmbiguity = false;
   set(invalid, key.split('.'), value);
   assert.equal(validateConfig(invalid).valid, false, `${key}=${value}`);
 }

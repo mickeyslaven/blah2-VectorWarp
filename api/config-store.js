@@ -22,7 +22,9 @@ function setupDefaults() {
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
       data: {cpi: 0.5, buffer: 2, overlap: 0},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
-      clutter: {enable: true, delayMin: -10, delayMax: 400},
+      // The numeric interval remains available for legacy/manual tuning, but
+      // fresh configurations track the full ambiguity interval by default.
+      clutter: {enable: true, followAmbiguity: true, delayMin: -10, delayMax: 400},
       detection: {enable: true, pfa: 0.00001, nGuard: 2, nTrain: 6,
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
         integration_motion_bins: 0,
