@@ -11,10 +11,17 @@ const point = (now, lon, seen = 0, extra = {}) => ({now, aircraft: [{hex: 'abc',
 assert.deepEqual(history.update(point(100, .5)).data, {}, 'First position warms up');
 const first = history.update(point(101, .6)).data.abc;
 assert.ok(Number.isFinite(first.delay) && Number.isFinite(first.doppler));
+assert.equal(first.position.longitude, .6);
+assert.equal(first.position.altitude_geom_ft, 10000);
+assert.ok(Number.isFinite(first.geometry.bearing_deg_true));
+assert.ok(Number.isFinite(first.geometry.elevation_deg));
+assert.ok(Number.isFinite(first.geometry.ground_range_km));
 assert.ok(first.doppler < 0, 'Increasing bistatic range has negative Doppler');
 const delayed = history.update(point(103, .7, 1)).data.abc;
 const rate = -(delayed.doppler) * (C / config.capture.fc);
 assert.ok(Number.isFinite(rate) && rate > 0, 'Doppler is numeric Hz derived from metres/second');
+assert.ok(Number.isFinite(delayed.delay_rate_km_s));
+assert.ok(Number.isFinite(delayed.doppler_rate_hz_s));
 assert.deepEqual(history.update(point(104, .7)).data.abc, delayed,
   'PR #5 duplicate coordinates retain the last computed overlay');
 assert.deepEqual(history.update(point(102, .8)).data.abc, delayed, 'Out-of-order position is ignored');

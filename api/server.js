@@ -24,10 +24,11 @@ const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
-const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
+const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
+const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
@@ -48,11 +49,13 @@ const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
 manifoldAutomation.start();
-const bearingDiagnostic = createBearingDiagnostic(config);
+const bearingDiagnostic = createBearingDiagnosticCache(config);
+bearingDiagnostic.start();
 const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
+const evidenceStatistics = createEvidenceStatistics(config, adsbSource);
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
@@ -368,6 +371,16 @@ app.get('/api/tracker/native', (req, res) => {
 });
 app.get('/api/tracker/publication', (req, res) => {
   res.json(trackerPublication.status());
+});
+app.get('/api/statistics', (req, res) => {
+  const diagnostic = bearingDiagnostic.status();
+  const recorder = manifoldRecorder.status();
+  const automation = manifoldAutomation.status();
+  res.json(evidenceStatistics.status({enabled: config.process?.bearing?.enable === true,
+    calibrated: Boolean(config.process?.bearing?.manifold_file),
+    manifold_file: config.process?.bearing?.manifold_file || null,
+    diagnostic, recorder, automation,
+    frequency_resolved: frequencyResolvedShadow.status()}));
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -910,6 +923,7 @@ app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
 app.get('/api/bearing/diagnostic', (req, res) => {
+  if (req.query.refresh === 'true') void bearingDiagnostic.refresh({force: true});
   res.json(bearingDiagnostic.status());
 });
 app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
@@ -1075,17 +1089,22 @@ const server_detection = jsonStreamServer('detection', frame => {
   trackerForwarder.accept(frame);
   trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
+  evidenceStatistics.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
+  evidenceStatistics.acceptTracker(trackerPublication.frame());
 });
 listenData(server_tracker, 'track');
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
-  const server_bearing = jsonStreamServer('bearing', frame => { bearing = frame; });
+  const server_bearing = jsonStreamServer('bearing', frame => {
+    bearing = frame;
+    evidenceStatistics.acceptBearing(frame);
+  });
   listenData(server_bearing, 'bearing');
 }
 
@@ -1169,6 +1188,8 @@ process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
+  evidenceStatistics.close();
+  bearingDiagnostic.close();
   gainMonitor.stop();
   process.exit(0);
 });
