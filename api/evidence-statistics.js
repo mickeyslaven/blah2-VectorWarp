@@ -29,7 +29,10 @@ function limits(config) {
       !finite(ambiguity.delayMax) || !finite(ambiguity.dopplerMin) ||
       !finite(ambiguity.dopplerMax) || !finite(detection.minDelay)) return null;
   const kmPerBin = SPEED_OF_LIGHT_KM_S / sampleRate;
-  return {sampleRate, frequency: config.capture?.fc, kmPerBin,
+  const cpiSeconds = finite(config.process?.data?.cpi) && config.process.data.cpi > 0 ?
+    config.process.data.cpi : .5;
+  return {sampleRate, frequency: config.capture?.fc, kmPerBin, cpiSeconds,
+    dopplerResolutionHz: 1 / cpiSeconds,
     delayMinBin: ambiguity.delayMin, delayMaxBin: ambiguity.delayMax,
     delayMinKm: ambiguity.delayMin * kmPerBin,
     delayMaxKm: ambiguity.delayMax * kmPerBin,
@@ -41,6 +44,27 @@ function limits(config) {
     matchDelayKm: config.process?.bearing?.manifold_recorder?.max_delay_error_km ?? .25,
     matchDopplerHz: config.process?.bearing?.manifold_recorder?.max_doppler_error_hz ?? 5,
     maxTruthAgeS: config.process?.bearing?.manifold_recorder?.max_truth_age_s ?? 3};
+}
+
+function associationGates(span, prediction, timestamp, kind = 'detection') {
+  const age = finite(prediction?.timestamp) ?
+    Math.min(span.maxTruthAgeS, Math.max(0, timestamp / 1000 - prediction.timestamp)) :
+    span.maxTruthAgeS;
+  // A tracker estimate can lag several CPIs behind the newest measurement.
+  // Account for that bounded motion without borrowing the much tighter bearing
+  // calibration gate as the entire radar-association uncertainty model.
+  const horizon = age + span.cpiSeconds * (kind === 'tracker' ? 3 : 1);
+  const delayMotion = finite(prediction?.delay_rate_km_s) ?
+    Math.abs(prediction.delay_rate_km_s) * horizon : 0;
+  const dopplerMotion = finite(prediction?.doppler_rate_hz_s) ?
+    Math.abs(prediction.doppler_rate_hz_s) * horizon : 0;
+  const delayFloor = span.kmPerBin * (kind === 'tracker' ? 3 : 2);
+  const dopplerFloor = span.dopplerResolutionHz * (kind === 'tracker' ? 4 : 3);
+  return {
+    delayKm: Math.min(Math.max(span.matchDelayKm, delayFloor + delayMotion),
+      Math.max(1, span.kmPerBin * 8)),
+    dopplerHz: Math.min(Math.max(span.matchDopplerHz, dopplerFloor + dopplerMotion),
+      Math.max(25, span.dopplerResolutionHz * 12))};
 }
 
 function siteKey(config) {
@@ -161,15 +185,17 @@ function cells(frame, delayScale = 1) {
     {delay: item.delay * delayScale, doppler: item.doppler} : null).filter(Boolean);
 }
 
-function assignments(points, predictions, gateDelay, gateDoppler) {
+function assignments(points, predictions, gatesForPrediction) {
   const result = new Set();
   for (const point of points) {
     const candidates = predictions.map(([hex, prediction]) => {
+      const gates = gatesForPrediction(prediction);
       const delayError = Math.abs(point.delay - prediction.delay);
       const dopplerError = Math.abs(point.doppler - prediction.doppler);
-      return {hex, delayError, dopplerError,
-        score: (delayError / gateDelay) ** 2 + (dopplerError / gateDoppler) ** 2};
-    }).filter(item => item.delayError <= gateDelay && item.dopplerError <= gateDoppler)
+      return {hex, delayError, dopplerError, gates,
+        score: (delayError / gates.delayKm) ** 2 + (dopplerError / gates.dopplerHz) ** 2};
+    }).filter(item => item.delayError <= item.gates.delayKm &&
+      item.dopplerError <= item.gates.dopplerHz)
       .sort((left, right) => left.score - right.score);
     if (!candidates.length) continue;
     if (candidates.length > 1 && candidates[1].score <= candidates[0].score * 1.15 + .05) continue;
@@ -280,10 +306,10 @@ class EvidenceStatistics {
       const valid = Object.entries(predictions || {}).map(([rawHex, prediction]) =>
         [normalizeHex(rawHex), prediction]).filter(([hex, prediction]) => hex &&
           finite(prediction?.delay) && finite(prediction?.doppler));
-      const detected = assignments(detectionCells, valid, this.limits.matchDelayKm,
-        this.limits.matchDopplerHz);
-      const tracked = assignments(trackerCells, valid, this.limits.matchDelayKm,
-        this.limits.matchDopplerHz);
+      const detected = assignments(detectionCells, valid, prediction =>
+        associationGates(this.limits, prediction, timestamp, 'detection'));
+      const tracked = assignments(trackerCells, valid, prediction =>
+        associationGates(this.limits, prediction, timestamp, 'tracker'));
       for (const [hex, prediction] of valid) {
         this.observe(hex, prediction, timestamp, detected.has(hex), tracked.has(hex));
       }
@@ -518,5 +544,6 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
   return new EvidenceStatistics(config, adsbSource, dependencies);
 }
 
-module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES, limits, siteKey,
-  siteDescriptor, EvidenceStatistics, createEvidenceStatistics};
+module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
+  limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
+  createEvidenceStatistics};

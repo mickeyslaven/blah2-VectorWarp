@@ -30,7 +30,8 @@ const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
-const {createCaptureTriggerQueue} = require('./capture-trigger-queue.js');
+const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
+  require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
@@ -57,7 +58,7 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-const captureTriggerQueue = createCaptureTriggerQueue();
+const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions());
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,

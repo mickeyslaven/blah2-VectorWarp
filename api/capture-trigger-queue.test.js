@@ -4,7 +4,7 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {CaptureTriggerQueue} = require('./capture-trigger-queue');
+const {CaptureTriggerQueue, optionsFromEnvironment} = require('./capture-trigger-queue');
 const {EvidenceStatistics} = require('./evidence-statistics');
 
 const epoch = 'a'.repeat(64);
@@ -15,6 +15,15 @@ const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
 
 assert.throws(() => new CaptureTriggerQueue({preSeconds: 6, postSeconds: 5}),
   /maximum clip duration/);
+assert.deepEqual(optionsFromEnvironment({}),
+  {preSeconds: 2, postSeconds: 3, maxClipSeconds: 10});
+assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
+  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8'}),
+{preSeconds: 2, postSeconds: 8, maxClipSeconds: 10});
+assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
+  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '9'}), /ten-second clip limit/);
+assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_POST_SECONDS: 'nope'}),
+  /non-negative number/);
 const queue = new CaptureTriggerQueue({now: () => 5000});
 assert.equal(queue.acceptEligibilityEvent({...event(0, 90000), id: 'detection:0'}).accepted, false,
   'Detector-shaped input is not capture admission');

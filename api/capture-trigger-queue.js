@@ -9,6 +9,21 @@ const MAX_ID_LENGTH = 256;
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 
+function optionsFromEnvironment(environment = process.env) {
+  const read = (name, fallback) => {
+    if (environment[name] === undefined || environment[name] === '') return fallback;
+    const value = Number(environment[name]);
+    if (!finite(value) || value < 0)
+      throw new Error(`${name} must be a non-negative number.`);
+    return value;
+  };
+  const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', DEFAULT_PRE_SECONDS);
+  const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', DEFAULT_POST_SECONDS);
+  if (preSeconds + postSeconds > MAX_CLIP_SECONDS)
+    throw new Error('Capture trigger pre/post seconds exceed the native ten-second clip limit.');
+  return {preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS};
+}
+
 function validId(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_ID_LENGTH &&
     !/[\u0000-\u001f\u007f]/.test(value);
@@ -186,4 +201,5 @@ class CaptureTriggerQueue {
 function createCaptureTriggerQueue(options) { return new CaptureTriggerQueue(options); }
 
 module.exports = {DEFAULT_PRE_SECONDS, DEFAULT_POST_SECONDS, MAX_CLIP_SECONDS,
-  MAX_CLIPS, MAX_EVENT_IDS, CaptureTriggerQueue, createCaptureTriggerQueue};
+  MAX_CLIPS, MAX_EVENT_IDS, optionsFromEnvironment, CaptureTriggerQueue,
+  createCaptureTriggerQueue};

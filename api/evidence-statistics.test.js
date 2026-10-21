@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {EvidenceStatistics, limits} = require('./evidence-statistics');
+const {EvidenceStatistics, associationGates, limits} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -30,9 +30,14 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   const span = limits(config);
   assert.equal(span.delayMaxKm.toFixed(3), '62.457');
   assert.equal(span.detectionMinDelayKm.toFixed(3), '0.625');
+  assert.equal(span.dopplerResolutionHz, 2);
+  const trackerGate = associationGates(span, prediction, clock, 'tracker');
+  assert.equal(trackerGate.dopplerHz, 18.5,
+    'Doppler-rate and tracker-lag uncertainty must widen the calibration-only gate');
+  assert.ok(trackerGate.delayKm >= span.kmPerBin * 3);
   const stats = new EvidenceStatistics(config, source, {filename, now: () => clock});
   for (let index = 0; index < 3; ++index) {
-    stats.acceptTracker({timestamp: clock, data: [{delay: 10 / span.kmPerBin, doppler: 100}]});
+    stats.acceptTracker({timestamp: clock, data: [{delay: 10 / span.kmPerBin, doppler: 107}]});
     stats.acceptDetection({timestamp: clock, delay: [10.1], doppler: [102]});
     while (stats.running) await new Promise(resolve => setImmediate(resolve));
     clock += 1000;

@@ -116,6 +116,14 @@ The persistent file defaults to `evidence-statistics.json` beside the configured
 manifold-recorder corpus. `BLAH2_STATISTICS_PATH` can select another writable
 location.
 
+The default ADS-B-triggered IQ window remains two seconds before and three
+seconds after the eligibility event. Sites doing track-before-detect recovery
+can set `BLAH2_CAPTURE_TRIGGER_PRE_SECONDS` and
+`BLAH2_CAPTURE_TRIGGER_POST_SECONDS`; their sum must fit the native ten-second
+clip limit. A two-second pre-roll plus eight-second post-roll gives an eight-CPI
+bank thirteen fully accumulated decisions instead of three, at twice the
+storage per event. The status endpoint reports the applied bounds.
+
 ## Bearing evidence
 
 The same page consolidates VectorWarp's built-in bearing evidence:
