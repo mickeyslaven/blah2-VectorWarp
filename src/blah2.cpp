@@ -827,7 +827,11 @@ try
   std::string smooth,trackerAccelerationModel="hypothesis_bank";
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
-  double stationaryMaxDopplerHz=residentMode?15.0:0.0;
+  // Keep the omitted stationary-clutter default wide enough to cover a small,
+  // fixed number of Doppler rows as CPI geometry changes.  Explicit settings
+  // remain authoritative.
+  double stationaryMaxDopplerHz=residentMode?
+    std::max(15.0,10.0/ambiguity.front()->get_cpi()):0.0;
   bool trackGuidedShadow=false;
   bool trackGuidedPromote=false;
   uint32_t trackGuidedShadowMaxTracks=0;

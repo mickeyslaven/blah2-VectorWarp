@@ -126,6 +126,7 @@ add_executable(blah2
   src/capture/Capture.cpp
   src/capture/Replay.cpp
   src/capture/kraken/Kraken.cpp
+  src/capture/kraken/KrakenClipRecorder.cpp
   src/process/ambiguity/Ambiguity.cpp
   src/process/ambiguity/Acceleration.cpp
   src/process/clutter/WienerHopf.cpp

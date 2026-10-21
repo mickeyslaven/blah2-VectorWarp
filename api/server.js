@@ -30,6 +30,7 @@ const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
+const {createCaptureTriggerQueue} = require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
@@ -55,7 +56,11 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-const evidenceStatistics = createEvidenceStatistics(config, adsbSource);
+const captureTriggerQueue = createCaptureTriggerQueue();
+const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
+const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
+const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
+  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event)});
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
@@ -527,6 +532,22 @@ app.post('/api/processor/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
+  if (checked.value.input === 'live' && checked.value.clipRevision !== null &&
+      captureTriggerQueue.acknowledge(checked.value.clipRevision, checked.value.clipError,
+        {file: checked.value.clipFile, samples: checked.value.clipSamples})) {
+    const revision = checked.value.clipRevision;
+    if (checked.value.clipError === CLIP_PRE_ROLL_UNAVAILABLE) {
+      setTimeout(() => {
+        const retry = captureTriggerQueue.retryPreRollFailure(revision);
+        if (!retry)
+          evidenceStatistics.acceptCaptureEvents(
+            captureTriggerQueue.eventsForRevision(revision));
+      }, CLIP_PRE_ROLL_RETRY_DELAY_MS).unref();
+    } else {
+      evidenceStatistics.acceptCaptureEvents(
+        captureTriggerQueue.eventsForRevision(revision));
+    }
+  }
   res.status(204).end();
 });
 app.get('/api/upstream/status', async (req, res) => {
@@ -948,7 +969,8 @@ app.get('/stash/timing', (req, res) => {
 app.get('/capture', (req, res) => {
   res.send(capture);
 });
-app.get('/capture/request', (req, res) => res.json({recording: capture, revision: captureRevision}));
+app.get('/capture/request', (req, res) => res.json({recording: capture,
+  revision: captureRevision, clip: captureTriggerQueue.request()}));
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <
@@ -971,6 +993,7 @@ app.get('/capture/status', (req, res) => {
       (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null),
     requested: capture,
     revision: captureRevision,
+    clip: captureTriggerQueue.status(),
     acknowledged: acknowledged === true,
     recording,
     recordingFile: acknowledgement?.recordingFile || '',

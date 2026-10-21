@@ -55,15 +55,17 @@ int main()try{
  require(rejected,"zero hypotheses were accepted");
  const auto retirement=stationaryRetirementPolicy(true,15);
  require(retirement.samples==100&&retirement.minimumAssociated==90&&
-  retirement.maxDopplerHz==1&&retirement.maxDelaySpan==1,
+  retirement.maxDopplerHz==15&&retirement.maxDelaySpan==1,
   "stationary retirement policy is not conservative");
  const auto narrow=stationaryRetirementPolicy(true,.25);
  require(narrow.maxDopplerHz==.25,"stationary retirement widened the configured Doppler band");
+ const auto wide=stationaryRetirementPolicy(true,20);
+ require(wide.maxDopplerHz==20,"stationary retirement did not retain the learned-map band");
  const auto disabled=stationaryRetirementPolicy(false,0);
  require(disabled.samples==0&&disabled.minimumAssociated==0&&disabled.maxDopplerHz==0,
   "disabled stationary retirement retained a policy");
  rejected=false;try{stationaryRetirementPolicy(true,-1);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"invalid stationary retirement Doppler was accepted");
- std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1 stationary_retirement_conservative=1\n";
+ std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1 stationary_retirement_conservative=1 stationary_retirement_band_consistent=1\n";
  return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL gpu-tracker-admission: "<<e.what()<<'\n';return 1;}

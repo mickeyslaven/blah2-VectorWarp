@@ -50,6 +50,18 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.windows.hour.detected_passes, 1);
   assert.equal(result.windows.hour.tracked_passes, 1);
   assert.equal(result.windows.hour.tracking_yield, 1);
+  assert.equal(result.eligibility_events.length, 1,
+    'A pass must emit only one eligibility event across repeated opportunities');
+  assert.equal(result.eligibility_event_count, 1);
+  assert.equal(result.eligibility_events[0].state, 'finalized');
+  assert.equal(result.eligibility_events[0].outcome, 'tracked');
+  assert.equal(result.eligibility_events[0].predicted.delay_km, 10);
+  assert.equal(result.eligibility_events[0].truth_samples.length, 3);
+  assert.deepEqual(result.eligibility_events[0].truth_samples.map(item => item.timestamp_ms),
+    [1_800_000_000_000, 1_800_000_001_000, 1_800_000_002_000]);
+  assert.equal(result.eligibility_events[0].capture_state, 'not_integrated');
+  for (const field of ['receiver_epoch', 'config_epoch', 'site_epoch'])
+    assert.match(result.eligibility_events[0][field], /^[0-9a-f]{64}$/);
   const stored = JSON.parse(fs.readFileSync(filename, 'utf8'));
   assert.equal(stored.schema, 'vectorwarp-evidence-statistics-v2');
   assert.equal(stored.passes[0].firstTruth.altitude_geom_ft, 12000);
@@ -57,6 +69,7 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(stored.passes[0].maxAbsDopplerRateHzS, 7);
   assert.equal(stored.passes[0].azimuthSectors45[2], 3);
   assert.ok(stored.sites[stored.passes[0].siteKey]);
+  assert.equal(stored.passes[0].id, stored.eligibilityEvents[0].pass_id);
   clock += 1000;
 
   source.get = async () => ({def456: {delay: 70, doppler: 800,
@@ -87,6 +100,42 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   recovered.close();
   assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).schema,
     'vectorwarp-evidence-statistics-v2');
+
+  const outageFilename = path.join(directory, 'detector-outage.json');
+  let outageClock = 1_900_000_000_000, sampler, samplerMs, unrefCalled = false;
+  let cleared = false, emitted = 0;
+  const outageSource = {async get() { return {fedcba: {...prediction,
+    timestamp: outageClock / 1000, flight: 'OUTAGE'}}; }};
+  const outage = new EvidenceStatistics(config, outageSource, {filename: outageFilename,
+    now: () => outageClock,
+    setIntervalFn(callback, milliseconds) {
+      sampler = callback; samplerMs = milliseconds;
+      return {unref() { unrefCalled = true; }};
+    },
+    clearIntervalFn() { cleared = true; },
+    onEligibilityEvent() { emitted += 1; }});
+  assert.equal(samplerMs, 1000);
+  assert.equal(unrefCalled, true, 'The independent sampler must not hold the process open');
+  sampler();
+  while (outage.running) await new Promise(resolve => setImmediate(resolve));
+  let outageStatus = outage.status();
+  assert.equal(emitted, 1, 'ADS-B eligibility must emit while the detector is silent');
+  assert.equal(outageStatus.eligibility_events.length, 1);
+  assert.equal(outageStatus.eligibility_events[0].state, 'pending');
+  outageClock += 121000;
+  outageSource.get = async () => ({});
+  sampler();
+  while (outage.running) await new Promise(resolve => setImmediate(resolve));
+  outageStatus = outage.status();
+  assert.equal(emitted, 1, 'Pass finalization must not re-emit eligibility');
+  assert.equal(outageStatus.eligibility_events[0].state, 'finalized');
+  assert.equal(outageStatus.eligibility_events[0].outcome, 'insufficient_opportunities');
+  assert.equal(outageStatus.eligibility_events[0].eligible_frames, 1);
+  assert.equal(outageStatus.windows.lifetime.eligible_passes, 0,
+    'One captured opportunity must stay outside the three-frame denominator');
+  outage.close();
+  assert.equal(cleared, true);
+  assert.equal(JSON.parse(fs.readFileSync(outageFilename, 'utf8')).eligibilityEvents.length, 1);
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

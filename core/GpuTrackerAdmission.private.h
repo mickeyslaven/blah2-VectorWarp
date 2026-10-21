@@ -23,8 +23,10 @@ inline StationaryRetirementPolicy stationaryRetirementPolicy(bool enabled,
   throw std::invalid_argument("GPU tracker stationary-retirement policy invalid");
  // The public trail always retains 100 samples. Requiring 90 associated
  // samples across that entire window rejects startup clutter without treating
- // a brief zero-Doppler crossing as stationary.
- return {100,90,std::min(1.0,stationaryMaxDopplerHz),1.0};
+ // a brief low-Doppler crossing as stationary.  The retirement band must
+ // match the learned-map band: otherwise a persistent site at an allowed
+ // nonzero Doppler can consume an established track forever.
+ return {100,90,stationaryMaxDopplerHz,1.0};
 }
 
 inline InitiationAdmission boundInitiations(uint32_t capacity,uint32_t retained,

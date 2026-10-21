@@ -6,6 +6,8 @@ const path = require('path');
 
 const SPEED_OF_LIGHT_KM_S = 299792.458;
 const MAX_PASSES = 200000;
+const MAX_ELIGIBILITY_EVENTS = 10000;
+const MAX_EVENT_TRUTH_SAMPLES = 30;
 const PASS_GAP_MS = 120000;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
@@ -54,6 +56,17 @@ function siteKey(config) {
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
 }
 
+function digest(value) {
+  return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function configEpoch(config) { return digest(config); }
+
+function receiverEpoch(config) {
+  return digest({frequency: config.capture?.fc, sampleRate: config.capture?.fs,
+    device: config.capture?.device || null, replay: config.capture?.replay || null});
+}
+
 function siteDescriptor(config) {
   return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
     receiver: config.location?.rx || null, transmitter: config.location?.tx || null,
@@ -66,8 +79,11 @@ function siteDescriptor(config) {
     array_geometry: config.capture?.device?.array_geometry || null};
 }
 
+function passId(key, hex, at) { return digest({siteKey: key, hex, startedAt: at}); }
+
 function emptyPass(hex, flight, at, key) {
-  return {hex, flight: flight || '', siteKey: key, startedAt: at, lastAt: at,
+  return {id: passId(key, hex, at), hex, flight: flight || '', siteKey: key,
+    startedAt: at, lastAt: at,
     frames: 0, physicalEligibleFrames: 0, eligibleFrames: 0,
     detectedFrames: 0, trackedFrames: 0, belowFloorFrames: 0,
     aboveDelayFrames: 0, outsideDopplerFrames: 0, staleTruthFrames: 0,
@@ -77,6 +93,14 @@ function emptyPass(hex, flight, at, key) {
     minGroundRangeKm: null, maxGroundRangeKm: null, maxAbsDelayRateKmS: null,
     maxAbsDopplerRateHzS: null, azimuthSectors45: Array(8).fill(0),
     firstTruth: null, lastTruth: null, lastBucket: null};
+}
+
+function eligibilityOutcome(pass) {
+  if (pass.eligibleFrames < 3) return pass.physicalEligibleFrames >= 3 ?
+    'truth_unusable' : 'insufficient_opportunities';
+  if (pass.trackedFrames >= 3) return 'tracked';
+  if (pass.detectedFrames >= 3) return 'detected_not_tracked';
+  return 'no_radar_return';
 }
 
 function updateExtent(pass, delay, doppler) {
@@ -155,7 +179,9 @@ function assignments(points, predictions, gateDelay, gateDoppler) {
 }
 
 class EvidenceStatistics {
-  constructor(config, adsbSource, {filename, fileSystem = fs, now = Date.now} = {}) {
+  constructor(config, adsbSource, {filename, fileSystem = fs, now = Date.now,
+    setIntervalFn = setInterval, clearIntervalFn = clearInterval,
+    onEligibilityEvent = () => {}} = {}) {
     this.config = config;
     this.adsbSource = adsbSource;
     this.fs = fileSystem;
@@ -165,16 +191,27 @@ class EvidenceStatistics {
       path.join(recorderPath ? path.dirname(recorderPath) : '/var/lib/vectorwarp-api',
         'evidence-statistics.json');
     this.key = siteKey(config);
+    this.configEpoch = configEpoch(config);
+    this.receiverEpoch = receiverEpoch(config);
     this.limits = limits(config);
     this.state = {schema: 'vectorwarp-evidence-statistics-v2', createdAt: now(),
-      updatedAt: null, sites: {[this.key]: siteDescriptor(config)}, passes: [], active: {}, rollup: {siteKey: this.key,
+      updatedAt: null, sites: {[this.key]: siteDescriptor(config)}, passes: [], active: {},
+      eligibilityEvents: [], rollup: {siteKey: this.key,
         passes: 0, eligible: 0,
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
         truthUnusable: 0, eligibleNoRadar: 0, detectedNotTracked: 0}, error: null};
     this.latest = {detection: null, tracker: null, bearing: null};
+    this.lastDetectionFrameTimestamp = null; this.lastTrackerFrameTimestamp = null;
     this.running = false; this.queued = false; this.lastSampleBucket = null;
     this.lastPersistAt = 0; this.closed = false;
+    this.clearInterval = clearIntervalFn;
+    this.onEligibilityEvent = onEligibilityEvent;
     this.load();
+    this.sampler = null;
+    if (this.limits && this.config.truth?.adsb?.enabled === true) {
+      this.sampler = setIntervalFn(() => this.queue(this.now()), 1000);
+      if (typeof this.sampler?.unref === 'function') this.sampler.unref();
+    }
   }
 
   load() {
@@ -185,7 +222,11 @@ class EvidenceStatistics {
       if (!['vectorwarp-evidence-statistics-v1', this.state.schema].includes(value?.schema) || !Array.isArray(value.passes) ||
           !value.active || typeof value.active !== 'object') throw new Error('Statistics file has an invalid schema');
       this.state = {...this.state, ...value, schema: this.state.schema,
+        eligibilityEvents: Array.isArray(value.eligibilityEvents) ? value.eligibilityEvents : [],
         sites: {...(value.sites || {}), [this.key]: siteDescriptor(this.config)}, error: null};
+      for (const pass of [...this.state.passes, ...Object.values(this.state.active)])
+        if (!pass.id) pass.id = passId(pass.siteKey, pass.hex, pass.startedAt);
+      this.trimEligibilityEvents();
       if (this.state.rollup?.siteKey !== this.key) this.state.rollup = {
         siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
         missed: 0, outOfConfig: 0, truthUnusable: 0,
@@ -195,31 +236,39 @@ class EvidenceStatistics {
     }
   }
 
-  acceptDetection(frame) { this.latest.detection = parse(frame); this.queue(); }
+  acceptDetection(frame) {
+    this.latest.detection = parse(frame);
+    this.queue(finite(this.latest.detection?.timestamp) ? this.latest.detection.timestamp : this.now());
+  }
   acceptTracker(frame) { this.latest.tracker = parse(frame); }
   acceptBearing(frame) { this.latest.bearing = parse(frame); }
 
-  queue() {
+  queue(timestamp = this.now()) {
     if (this.closed || !this.limits || this.config.truth?.adsb?.enabled !== true) return;
-    if (this.running) { this.queued = true; return; }
-    void this.sample();
+    if (this.running) { this.queued = Math.max(this.queued || -Infinity, timestamp); return; }
+    void this.sample(timestamp);
   }
 
-  async sample() {
+  async sample(timestamp = this.now()) {
     this.running = true;
     try {
-      const timestamp = finite(this.latest.detection?.timestamp) ? this.latest.detection.timestamp : this.now();
       const bucket = Math.floor(timestamp / 1000);
       if (bucket === this.lastSampleBucket) return;
       this.lastSampleBucket = bucket;
       const predictions = await this.adsbSource.get('delayDoppler');
-      const detectionCells = cells(this.latest.detection, 1);
       const configuredCpiMs = finite(this.config.process?.data?.cpi) ?
         this.config.process.data.cpi * 1000 : 500;
+      const frameFreshnessMs = Math.max(2000, configuredCpiMs * 3);
+      const detectionTimestamp = this.latest.detection?.timestamp;
+      const useDetection = finite(detectionTimestamp) &&
+        Math.abs(timestamp - detectionTimestamp) <= frameFreshnessMs &&
+        detectionTimestamp !== this.lastDetectionFrameTimestamp;
+      const detectionCells = useDetection ? cells(this.latest.detection, 1) : [];
       const trackerTimestamp = this.latest.tracker?.timestamp;
-      const trackerCells = finite(trackerTimestamp) &&
-        Math.abs(timestamp - trackerTimestamp) <= Math.max(2000, configuredCpiMs * 3) ?
-        cells(this.latest.tracker, this.limits.kmPerBin) : [];
+      const useTracker = finite(trackerTimestamp) &&
+        Math.abs(timestamp - trackerTimestamp) <= frameFreshnessMs &&
+        trackerTimestamp !== this.lastTrackerFrameTimestamp;
+      const trackerCells = useTracker ? cells(this.latest.tracker, this.limits.kmPerBin) : [];
       const valid = Object.entries(predictions || {}).map(([rawHex, prediction]) =>
         [normalizeHex(rawHex), prediction]).filter(([hex, prediction]) => hex &&
           finite(prediction?.delay) && finite(prediction?.doppler));
@@ -230,13 +279,17 @@ class EvidenceStatistics {
       for (const [hex, prediction] of valid) {
         this.observe(hex, prediction, timestamp, detected.has(hex), tracked.has(hex));
       }
+      if (useDetection) this.lastDetectionFrameTimestamp = detectionTimestamp;
+      if (useTracker) this.lastTrackerFrameTimestamp = trackerTimestamp;
       this.expire(timestamp);
       this.state.updatedAt = this.now(); this.state.error = null;
       if (this.now() - this.lastPersistAt >= 30000) this.persist();
     } catch (error) { this.state.error = error.message; }
     finally {
       this.running = false;
-      if (this.queued) { this.queued = false; this.queue(); }
+      if (this.queued !== false) {
+        const queued = this.queued; this.queued = false; this.queue(queued);
+      }
     }
   }
 
@@ -268,14 +321,89 @@ class EvidenceStatistics {
     if (age > this.limits.maxTruthAgeS) pass.staleTruthFrames += 1;
     if (!physical || age > this.limits.maxTruthAgeS) return;
     pass.eligibleFrames += 1;
+    if (!pass.eligibilityEventId) this.emitEligibility(pass, prediction, timestamp);
+    const event = this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId);
+    if (event) {
+      if (!Array.isArray(event.truth_samples)) event.truth_samples = [];
+      event.truth_samples.push(truthSnapshot(prediction, timestamp));
+      if (event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
+        event.truth_samples.splice(0, event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
+    }
     if (detected) pass.detectedFrames += 1;
     if (tracked) pass.trackedFrames += 1;
+  }
+
+  emitEligibility(pass, prediction, timestamp) {
+    const geometry = prediction.geometry || {};
+    const event = {id: `eligibility:${pass.id}`, pass_id: pass.id, hex: pass.hex,
+      flight: pass.flight, state: 'pending', outcome: null, observed_at: timestamp,
+      finalized_at: null, receiver_epoch: this.receiverEpoch,
+      config_epoch: this.configEpoch, site_epoch: this.key,
+      receiver: {type: this.config.capture?.device?.type || null,
+        serial: this.config.capture?.device?.serial || null},
+      predicted: {delay_km: prediction.delay, doppler_hz: prediction.doppler,
+        bearing_deg_true: geometry.bearing_deg_true ?? null,
+        elevation_deg: geometry.elevation_deg ?? null,
+        ground_range_km: geometry.ground_range_km ?? null,
+        slant_range_km: geometry.slant_range_km ?? null,
+        transmitter_range_km: geometry.transmitter_range_km ?? null},
+      truth_samples: [],
+      capture_state: 'not_integrated', eligible_frames: 1,
+      detected_frames: 0, tracked_frames: 0};
+    pass.eligibilityEventId = event.id;
+    this.state.eligibilityEvents.push(event);
+    this.trimEligibilityEvents();
+    try {
+      const capture = this.onEligibilityEvent({...event});
+      if (capture?.accepted === true) {
+        event.capture_state = capture.dropped === true ? 'dropped' : 'trigger_pending';
+        if (capture.dropped === true) event.capture_failure = capture.reason || 'unspecified';
+        if (capture.clip?.clipRevision)
+          event.capture_clip_revisions = [capture.clip.clipRevision];
+      }
+    }
+    catch (error) { this.state.error = error.message; }
+  }
+
+  trimEligibilityEvents() {
+    while (this.state.eligibilityEvents.length > MAX_ELIGIBILITY_EVENTS) {
+      const finalized = this.state.eligibilityEvents.findIndex(event => event.state === 'finalized');
+      this.state.eligibilityEvents.splice(finalized >= 0 ? finalized : 0, 1);
+    }
+  }
+
+  acceptCaptureEvents(records) {
+    if (!Array.isArray(records)) return;
+    const byId = new Map(records.map(record => [record?.eventId, record]));
+    for (const event of this.state.eligibilityEvents) {
+      const record = byId.get(event.id);
+      if (!record) continue;
+      event.capture_clip_revisions = Array.isArray(record.clipRevisions) ?
+        [...record.clipRevisions] : [];
+      event.capture_state = record.state === 'acknowledged' ? 'acknowledged' :
+        record.state === 'failed' ? 'failed' :
+        record.state === 'dropped' ? 'dropped' : 'trigger_pending';
+      if (record.failure) event.capture_failure = record.failure;
+      else delete event.capture_failure;
+      if (record.file) event.capture_file = record.file;
+      else delete event.capture_file;
+      if (Number.isSafeInteger(record.samples) && record.samples > 0)
+        event.capture_samples = record.samples;
+      else delete event.capture_samples;
+    }
+    this.state.updatedAt = this.now();
+    this.persist();
   }
 
   finish(hex) {
     const pass = this.state.active[hex];
     if (!pass) return;
     delete pass.lastBucket;
+    const event = pass.eligibilityEventId && this.state.eligibilityEvents
+      .find(item => item.id === pass.eligibilityEventId);
+    if (event) Object.assign(event, {state: 'finalized', outcome: eligibilityOutcome(pass),
+      finalized_at: this.now(), eligible_frames: pass.eligibleFrames,
+      detected_frames: pass.detectedFrames, tracked_frames: pass.trackedFrames});
     this.state.passes.push(pass); delete this.state.active[hex];
     while (this.state.passes.length > MAX_PASSES) {
       const old = this.state.passes.shift(); const eligible = old.eligibleFrames >= 3;
@@ -360,6 +488,8 @@ class EvidenceStatistics {
     return {schema: this.state.schema, site_key: this.key, updated_at: this.state.updatedAt,
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, limits: this.limits,
+      eligibility_event_count: this.state.eligibilityEvents.length,
+      eligibility_events: this.state.eligibilityEvents.slice(-250),
       windows: Object.fromEntries(Object.entries(WINDOWS).map(([name, duration]) =>
         [name, this.summarize(duration, timestamp)])),
       bearing: {...bearing, live: {tracks: live.length,
@@ -368,12 +498,17 @@ class EvidenceStatistics {
         stationary: live.filter(item => item.stationary_clutter === true).length}}};
   }
 
-  close() { this.closed = true; this.expire(Infinity); this.persist(); }
+  close() {
+    this.closed = true;
+    if (this.sampler !== null) this.clearInterval(this.sampler);
+    this.sampler = null;
+    this.expire(Infinity); this.persist();
+  }
 }
 
 function createEvidenceStatistics(config, adsbSource, dependencies) {
   return new EvidenceStatistics(config, adsbSource, dependencies);
 }
 
-module.exports = {SPEED_OF_LIGHT_KM_S, limits, siteKey, siteDescriptor, EvidenceStatistics,
-  createEvidenceStatistics};
+module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES, limits, siteKey,
+  siteDescriptor, EvidenceStatistics, createEvidenceStatistics};

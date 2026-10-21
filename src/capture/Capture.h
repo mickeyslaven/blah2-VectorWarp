@@ -43,6 +43,8 @@ private:
   blah2::ReplayProgress replayProgress;
   std::string captureError;
   uint64_t recordingRequestId = 0;
+  uint64_t unsupportedClipRevision = 0;
+  std::string unsupportedClipError;
 
 public:
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
