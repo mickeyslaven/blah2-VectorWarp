@@ -142,6 +142,7 @@ function fetchHttp(url, options = {}) {
     assert.match(processorUnit, /RestartPreventExitStatus=78/);
     assert.doesNotMatch(apiUnit + processorUnit, /User=root/);
     assert.match(apiUnit, /BLAH2_CONFIG_RESTART_COMMAND=.*vectorwarp-receiver-helper.*request-restart/);
+    assert.match(apiUnit, /ReadWritePaths=.*\/var\/lib\/vectorwarp\/recordings/);
     assert.doesNotMatch(apiUnit, /\/usr\/bin\/sudo/);
     assert.match(restartUnit, /Type=oneshot/);
     assert.match(restartUnit, /ExecStart=@PREFIX@\/libexec\/vectorwarp-restart/);

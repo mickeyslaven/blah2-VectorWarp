@@ -27,7 +27,7 @@ TEST_CASE("bearing refinement follows the ambiguity-map phase convention")
     const double targetAngle = 2 * PI * target / beams;
     const double relative = waveNumber * radius *
       (std::cos(element - targetAngle) - std::cos(element - direct));
-    response[channel] = reference[channel] * std::polar(1.0, relative);
+    response[channel] = reference[channel] * std::polar(1.0, -relative);
   }
 
   uint32_t winner = 0;

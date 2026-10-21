@@ -206,7 +206,8 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
 
 // Accept the actual ABI DetectionRecord AoS directly; copy supplied GPU km
 // metadata, never convert the delay-bin field.
-template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v){
+template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v,
+ View<uint32_t> guidedWords={},double sampleRate=0){
  shape(v);
  std::vector<double>km,doppler,snr;
  km.reserve(v.count);
@@ -219,7 +220,31 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  km.push_back(v.data[i].delayKm);
  doppler.push_back(v.data[i].doppler);
  snr.push_back(v.data[i].snr);}
- return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
+ const std::string base=detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
+ if(!guidedWords.count)return base;
+ shape(guidedWords);require(guidedWords.count%6==0&&std::isfinite(sampleRate)&&sampleRate>0,
+  "Invalid guided recovery view");
+ rapidjson::Document d;d.Parse(base.c_str());
+ require(!d.HasParseError()&&d.IsObject(),"Internal guided recovery JSON parse failed");
+ auto& allocator=d.GetAllocator();rapidjson::Value records(rapidjson::kArrayType);
+ constexpr char hex[]="0123456789ABCDEF";
+ for(size_t i=0;i<guidedWords.count;i+=6){const uint32_t id=guidedWords.data[i],state=guidedWords.data[i+1];
+  require(id<65535&&state<4,"Invalid guided recovery identity/state");
+  const auto number=[&](size_t at){const uint64_t bits=uint64_t(guidedWords.data[at])|
+    (uint64_t(guidedWords.data[at+1])<<32);double value;std::memcpy(&value,&bits,8);return value;};
+  const double delay=number(i+2),dopplerValue=number(i+4);
+  finite(delay);finite(dopplerValue);char text[5]={hex[(id>>12)&15],hex[(id>>8)&15],hex[(id>>4)&15],hex[id&15],0};
+  rapidjson::Value record(rapidjson::kObjectType);
+  record.AddMember("track_id",rapidjson::Value(text,allocator),allocator);
+  record.AddMember("state",rapidjson::Value(stateName(state),allocator),allocator);
+  record.AddMember("maturity",rapidjson::Value(state<2?"tentative":"established",allocator),allocator);
+  record.AddMember("delay_bin",delay,allocator);
+  record.AddMember("delay_km",delay*(299792458.0/sampleRate)/1000.0,allocator);
+  record.AddMember("doppler_hz",dopplerValue,allocator);records.PushBack(record,allocator);
+ }
+ d.AddMember("track_guided_shadow",records,allocator);rapidjson::StringBuffer output;Writer writer(output);
+ writer.SetMaxDecimalPlaces(6);require(d.Accept(writer),"Internal guided recovery JSON write failed");
+ return {output.GetString(),output.GetSize()};
 }
 template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
@@ -239,7 +264,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(std::isfinite(coherentFraction)&&coherentFraction>=0&&
   std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
   "Invalid reference diagnostic state");
- require(bearingMethod<=1&&bearingReferenceAnchor<=1&&bearingScanBeams>=4&&
+ require(bearingMethod<=1&&bearingReferenceAnchor<=2&&bearingScanBeams>=4&&
   bearingScanBeams<=127&&bearingChannelMapping.count==channels,
   "Invalid manifold replay configuration");
  std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
@@ -255,7 +280,8 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
  w.Key("bearing_replay");w.StartObject();w.Key("method");
  w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
- w.Key("reference_anchor");w.String(bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
+ w.Key("reference_anchor");w.String(bearingReferenceAnchor==2?"fixed_site_projected":
+  bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
  w.Key("scan_beams");w.Uint(bearingScanBeams);
  w.Key("guard_radius");w.Uint(bearingGuardRadius);w.Key("training_radius");w.Uint(bearingTrainingRadius);
  w.Key("diagonal_loading");w.Double(bearingDiagonalLoading);w.Key("channel_mapping");w.StartArray();

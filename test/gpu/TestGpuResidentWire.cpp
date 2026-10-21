@@ -1,4 +1,5 @@
 #include "GpuResidentWire.h"
+#include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <iostream>
 #include <functional>
@@ -64,12 +65,21 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
- auto tbd=coherent;tbd.detector.integrationCpis=8;tbd.detector.integrationMotionBins=1;
+ auto tbd=coherent;tbd.detector.integrationCpis=8;
+ tbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4);
  const auto tbdBytes=encodeConfig(tbd);
  const auto tbdDecoded=decodeConfig(bytes(tbdBytes),bytes(d),bytes(f));
  check(encodeConfig(tbdDecoded)==tbdBytes&&tbdDecoded.detector.integrationCpis==8&&
-  tbdDecoded.detector.integrationMotionBins==1,
+  tbdDecoded.detector.integrationMotionBins==track_before_detect::encodeMotionBins(1,4),
   "Track-before-detect configuration did not round trip");
+ auto expandedTbd=tbd;
+ expandedTbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,16);
+ validateConfig(expandedTbd);
+ const auto expandedTbdBytes=encodeConfig(expandedTbd);
+ const auto expandedTbdDecoded=decodeConfig(bytes(expandedTbdBytes),bytes(d),bytes(f));
+ check(encodeConfig(expandedTbdDecoded)==expandedTbdBytes&&
+  expandedTbdDecoded.detector.integrationMotionBins==track_before_detect::encodeMotionBins(2,16),
+  "Expanded track-before-detect motion bounds did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
  auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,
@@ -108,6 +118,17 @@ void configCases(){
   "Persistent clutter initiation configuration did not round trip");
  check(wire::configHash(clutterAware)!=wire::configHash(adaptive),
   "Persistent clutter initiation is not bound to config identity");
+ auto guided=tbd;guided.tracker.trackGuidedShadow=true;guided.tracker.trackGuidedPromote=true;guided.tracker.trackGuidedShadowMaxTracks=4;
+ guided.presence|=bit(Section::guidedRecoveries);
+ const auto guidedBytes=encodeConfig(guided);
+ const auto guidedDecoded=decodeConfig(bytes(guidedBytes),bytes(d),bytes(f));
+ check(guidedDecoded.tracker.trackGuidedShadow&&
+  guidedDecoded.tracker.trackGuidedPromote&&
+  guidedDecoded.tracker.trackGuidedShadowMaxTracks==4&&
+  encodeConfig(guidedDecoded)==guidedBytes,
+  "Track-guided shadow configuration did not round trip");
+ check(wire::configHash(guided)!=wire::configHash(tbd),
+  "Track-guided shadow is not bound to config identity");
  auto whitened=coherent;
  whitened.fusion.mode=FusionMode::noiseWhitenedRegularPolygon;
  const auto whitenedBytes=encodeConfig(whitened);
@@ -127,6 +148,10 @@ void configCases(){
  mutate([](auto&v){v.tracker.initiationMode=TrackerInitiationMode(2);});
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=0;v.tracker.stationaryMaxDopplerHz=15;});
  mutate([](auto&v){v.tracker.stationaryClutter=true;v.tracker.stationaryPersistenceCpis=1;v.tracker.stationaryMaxDopplerHz=15;});
+ mutate([](auto&v){v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=1;});
+ mutate([](auto&v){v.tracker.trackGuidedPromote=true;});
+ mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=0;});
+ mutate([&](auto&v){v=tbd;v.tracker.trackGuidedShadow=true;v.tracker.trackGuidedShadowMaxTracks=v.tracker.capacity+1;});
  mutate([](auto&v){v.detector.enabled=false;});mutate([](auto&v){v.sampleRate=128000.5;});
  mutate([](auto&v){v.detector.integrationCpis=3;});
  mutate([](auto&v){v.detector.integrationCpis=6;});

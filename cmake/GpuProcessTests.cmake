@@ -160,6 +160,12 @@ target_include_directories(testTrackBeforeDetect PRIVATE ${PROJECT_ROOT})
 add_test(NAME trackBeforeDetectMath COMMAND testTrackBeforeDetect)
 set_tests_properties(trackBeforeDetectMath PROPERTIES TIMEOUT 10)
 
+add_executable(testTrackGuidedShadow ${PROJECT_ROOT}/test/gpu/TestTrackGuidedShadow.cpp)
+target_compile_features(testTrackGuidedShadow PRIVATE cxx_std_17)
+target_include_directories(testTrackGuidedShadow PRIVATE ${PROJECT_ROOT})
+add_test(NAME trackGuidedShadowMath COMMAND testTrackGuidedShadow)
+set_tests_properties(trackGuidedShadowMath PROPERTIES TIMEOUT 10)
+
 option(BLAH2_TEST_PHYSICAL_GPU "Run synthetic qualification on a real GPU (no CPU substitution)" OFF)
 set(BLAH2_TEST_GPU_DEVICE "" CACHE STRING
   "Exact Vulkan device id for resident physical tests")

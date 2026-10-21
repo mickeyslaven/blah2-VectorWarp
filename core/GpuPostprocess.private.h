@@ -8,7 +8,8 @@ struct PostprocessConfig {
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
  uint32_t integrationCpis=1;
- uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
+ uint32_t integrationDelayMotionBins=0,integrationDopplerMotionBins=0;
+ uint32_t integrationBeamTolerance=UINT32_MAX,beamCount=0;
  uint32_t bearingExclusionBins=0;
  uint32_t bearingMethod=0,bearingReferenceAnchor=0,bearingScanBeams=0,bearingCandidatePeaks=3;
  uint32_t bearingGuardRadius=1,bearingTrainingRadius=3;
@@ -83,11 +84,14 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
+ if(tbd&&l.cells>UINT32_MAX/128u)
+  throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED TBD workgroup count");
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
-    c.integrationMotionBins>1||(!tbd&&c.integrationCpis!=2&&c.integrationMotionBins)||
+    c.integrationDelayMotionBins>(tbd?2u:1u)||c.integrationDopplerMotionBins>(tbd?16u:1u)||
+    (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
     (tbd&&(!c.detection||!c.beamCount))||
     (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
-      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||
+      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
       c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
       c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
       c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
@@ -146,16 +150,16 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
  uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
   (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
- if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76];m[30]=m[77];m[31]=m[75];}
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76]|(m[93]<<16u);m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
  if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;
   if(m[77]!=0xffffffffu)angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
- if(historyReady&&m[76]!=0u){
+ if(historyReady&&(m[76]!=0u||m[93]!=0u)){
   uint row=i/m[33],column=i%m[33];prior=-1.0LF;
-  for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+  for(int dr=-int(m[93]);dr<=int(m[93]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
    int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
    uint at=uint(rr)*m[33]+uint(cc);double candidate=history[at];if(!finiteD(candidate))continue;
    if(candidate>prior)prior=candidate;
@@ -171,35 +175,56 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 const char* tbdBody=R"glsl(
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
+shared double pathBest2[64],pathBest4[64],pathBest8[64];
+void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
- double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
- if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
-  uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
-   0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
-  if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=max(0.0LF,baseline);
- }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
- // Every longer bank contains the shorter bank's prefix.  Accumulate each
- // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
- // history cells per motion hypothesis.
- for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
-  precise double sum=0.0LF;bool compatible=true;
-  for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
-   if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
-   uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
-   double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
-   if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
-   if(length==2u)best2=max(best2,sum/2.0LF);
-   else if(length==4u)best4=max(best4,sum/4.0LF);
-   else if(length==8u)best8=max(best8,sum/8.0LF);
-  }
+ if(p.a==0u){
+  if(lane!=0u)return;
+  if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
+   uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
+    0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
+   if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;
+  }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
+  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
+   tbdBanks[(bank+1u)*m[34]+i]=available>=length?0.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
+  return;
  }
- for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
-  double best=bank==0u?best2:(bank==1u?best4:best8);
-  if(available>=length){if(!finiteD(best)){reject(208u);return;}
-   tbdBanks[(bank+1u)*m[34]+i]=best;selected=max(selected,best);}
-  else tbdBanks[(bank+1u)*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));}
- if(available<2u)selected=currentPower[i];
+ // One workgroup owns one map cell. Its lanes evaluate distinct motion paths
+ // concurrently, then lane zero reduces exact 2/4/8-CPI maxima in shared
+ // memory. Large configured envelopes use ordered 128-path chunks.
+ if(p.a==1u){uint delayWidth=2u*m[76]+1u,total=(2u*m[93]+1u)*delayWidth,path=p.b+lane;
+  double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
+  if(path<total){int dr=int(path/delayWidth)-int(m[93]),dc=int(path%delayWidth)-int(m[76]);
+   precise double sum=0.0LF;bool compatible=true;
+   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
+    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
+    uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
+    double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
+    if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
+    if(length==2u)best2=sum/2.0LF;
+    else if(length==4u&&m[74]>=4u)best4=sum/4.0LF;
+    else if(length==8u&&m[74]>=8u)best8=sum/8.0LF;
+   }
+  }
+  pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;barrier();
+  // Reduce the trajectory maxima across the wavefront.  The previous lane-zero
+  // loop serialized up to 45 paths for every map cell, leaving the other lanes
+  // idle after their trajectory evaluation.  This tree preserves the same max
+  // operation (including the -1 sentinel) while taking logarithmic steps.
+  for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride){
+   pathBest2[lane]=max(pathBest2[lane],pathBest2[lane+stride]);
+   pathBest4[lane]=max(pathBest4[lane],pathBest4[lane+stride]);
+   pathBest8[lane]=max(pathBest8[lane],pathBest8[lane+stride]);}barrier();}
+  if(lane==0u){double chunkBest[3]=double[3](pathBest2[0],pathBest4[0],pathBest8[0]);
+   for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
+    if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+  }
+  return;
+ }
+ if(lane!=0u)return;
+ double selected=available<2u?currentPower[i]:max(0.0LF,tbdBanks[i]);
+ for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;if(available>=length){
+  double best=tbdBanks[(bank+1u)*m[34]+i];if(!finiteD(best)){reject(208u);return;}selected=max(selected,best);}}
  double amplitude=sqrt(max(selected,0.0LF));double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(selected)){reject(209u);return;}
  writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,selected);
@@ -268,18 +293,23 @@ const char* refineBody=R"glsl(
 vec2 cmul(vec2 a,vec2 b){return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);}
 vec2 cdiv(vec2 a,vec2 b){float d=dot(b,b);return vec2(a.x*b.x+a.y*b.y,a.y*b.x-a.x*b.y)/d;}
 float beamScore(uint beam,uint channels,uint cell,uint shifted,bool adaptive,vec2 inverse[64]){
+ float modelPower=0.0;for(uint c=0u;c<channels;++c){vec2 w=refineWeights[beam*channels+c];
+  if(any(isnan(w))||any(isinf(w)))return -1.0;modelPower+=dot(w,w);}
+ if(!(modelPower>1e-20)||isnan(modelPower)||isinf(modelPower))return -1.0;
  vec2 values[8],filtered[8];for(uint c=0u;c<channels;++c)values[c]=channelMaps[c*m[34]+cell%m[33]*m[32]+shifted];
  if(adaptive){for(uint a=0u;a<channels;++a){filtered[a]=vec2(0.0);for(uint b=0u;b<channels;++b)filtered[a]+=cmul(inverse[a*8u+b],values[b]);}}
  vec2 numerator=vec2(0.0);for(uint c=0u;c<channels;++c)numerator+=cmul(refineWeights[beam*channels+c],adaptive?filtered[c]:values[c]);
- if(!adaptive)return dot(numerator,numerator);
+ if(!adaptive){float power=dot(numerator,numerator);return isnan(power)||isinf(power)?-1.0:power;}
  vec2 denominator=vec2(0.0);for(uint a=0u;a<channels;++a){vec2 z=vec2(0.0);
   for(uint b=0u;b<channels;++b){vec2 steering=refineWeights[beam*channels+b];steering.y=-steering.y;z+=cmul(inverse[a*8u+b],steering);}
   denominator+=cmul(refineWeights[beam*channels+a],z);}
- return dot(numerator,numerator)/max(abs(denominator.x),1e-12);
+ float power=dot(numerator,numerator)/max(abs(denominator.x),1e-12);
+ return isnan(power)||isinf(power)?-1.0:power;
 }
 bool excluded(uint beam,uint selected,uint fine,uint radius){uint d=beam>selected?beam-selected:selected-beam;return min(d,fine-d)<=radius;}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
  uint row=i/m[33],column=i%m[33],factor=m[81],channels=m[82],fine=m[83];
+ s[m[86]+i]=0u;
  uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u,secondBeam=0u,thirdBeam=0u;float best=-1.0,second=-1.0,third=-1.0;
  vec2 covariance[64],inverse[64];for(uint k=0u;k<64u;++k){covariance[k]=vec2(0.0);inverse[k]=vec2(0.0);}
  bool adaptive=m[87]==1u;uint samples=0u;
@@ -299,6 +329,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==
   }
  }
  for(uint beam=0u;beam<fine;++beam){float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>best){best=power;bestBeam=beam;}}
+ if(!(best>0.0)||isnan(best)||isinf(best))return;
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
  double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
@@ -308,7 +339,8 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==
  uint ratio3=third>0.0?uint(clamp(round(31.0*third/best),0.0,31.0)):0u;
  // Versioned per-frame three-lobe evidence. Detection/tracker association
  // derives its coarse beam from the primary; legacy public track JSON ignores it.
- s[m[86]+i]=0x80000000u|(bestBeam+1u)|((secondBeam+1u)<<7u)|((thirdBeam+1u)<<14u)|(ratio2<<21u)|(ratio3<<26u);
+ uint secondCode=second>0.0?secondBeam+1u:0u,thirdCode=third>0.0?thirdBeam+1u:0u;
+ s[m[86]+i]=0x80000000u|(bestBeam+1u)|(secondCode<<7u)|(thirdCode<<14u)|(ratio2<<21u)|(ratio3<<26u);
  atomicAdd(m[15],1u);
 }
 )glsl";
@@ -400,7 +432,11 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
  const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody}};
  std::vector<std::pair<std::string,std::string>> result;
- for(const auto& b:bodies)result.emplace_back(b.first,std::string(common)+b.second);
+ for(const auto& b:bodies){std::string prefix=common;
+  if(std::string(b.first)=="tbd"){const auto at=prefix.find("layout(local_size_x=128)");
+   if(at==std::string::npos)throw std::logic_error("TBD local size declaration missing");
+   prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x=64)");}
+  result.emplace_back(b.first,prefix+b.second);}
  return result;
 }
 // Shared by the production seam and test-local binding of these same kernels.
@@ -506,7 +542,7 @@ public:
   words[73]=uint32_t(config.epoch>>32);
   words[74]=config.integrationCpis;
   words[75]=config.beamCount;
-  words[76]=config.integrationMotionBins;
+  words[76]=config.integrationDelayMotionBins;
   words[77]=config.integrationBeamTolerance;
   words[78]=tbd?1u:0u;
   words[79]=0;
@@ -521,6 +557,7 @@ public:
   words[89]=config.bearingTrainingRadius;
   words[91]=layout_.metricPartials;
   words[92]=layout_.metricPartialCount;
+  words[93]=config.integrationDopplerMotionBins;
   std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
@@ -536,7 +573,8 @@ public:
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
     for(uint32_t pass=0;pass<detectorPasses;++pass){const uint32_t cpis=tbd?(pass?track_before_detect::bankLength(pass-1u):2u):config.integrationCpis;
-     const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,config.integrationMotionBins,pass):config.pfa;
+     const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,
+      config.integrationDelayMotionBins,config.integrationDopplerMotionBins,pass):config.pfa;
      const double alpha=count?(cpis==1?count*(std::pow(pfaForPass,-1.0/count)-1):
       track_before_detect::cfarAlpha(pfaForPass,uint32_t(count),cpis)):0;
      if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
@@ -586,6 +624,8 @@ public:
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
+ Buffer& integrationBuffer(){return *integration_;} // Rolling power history; remains device resident.
+ Buffer& currentPowerBuffer(){return *currentPower_;} // Current CPI power map; remains device resident.
  void append(VkCommandBuffer command){
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;
@@ -594,7 +634,13 @@ public:
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);
-  if(tbd){kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+  if(tbd){
+   const uint32_t work=layout_.cells*128u;
+   kernels_[10]->append(command,{work,0,0,0,0});barrier(command);
+   const uint32_t trajectories=(2u*config_.integrationDelayMotionBins+1u)*(2u*config_.integrationDopplerMotionBins+1u);
+   for(uint32_t first=0;first<trajectories;first+=64u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
+   kernels_[10]->append(command,{work,2,0,0,0});barrier(command);
+  }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}
   kernels_[1]->append(command,{layout_.cells,0,0,0,0});
@@ -630,7 +676,8 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=config_.integrationMotionBins||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
+  const uint32_t motionEcho=config_.integrationDelayMotionBins|(config_.integrationDopplerMotionBins<<16u);
+  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=motionEcho||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   const bool tbd=config_.integrationCpis>2;
@@ -735,7 +782,7 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
+  <<" integration_cpis="<<s[27]<<" delay_motion_bins="<<(s[29]&0xffffu)<<" doppler_motion_bins="<<(s[29]>>16u)<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
   <<" joint_angle_tbd="<<(config_.integrationCpis>2&&config_.integrationBeamTolerance!=UINT32_MAX)
   <<" bearing_manifold="<<(config_.bearingManifoldResponses.empty()?"ideal":"measured")

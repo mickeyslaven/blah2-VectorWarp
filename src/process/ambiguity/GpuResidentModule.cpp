@@ -1,4 +1,4 @@
-// Adjacent resident ABI7 module. Older cohorts are separate targets.
+// Adjacent resident ABI9 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -55,7 +55,9 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.interpolateDelay=d.interpolateDelay;
  p.interpolateDoppler=d.interpolateDoppler;
  p.integrationCpis=d.integrationCpis;
- p.integrationMotionBins=d.integrationMotionBins;
+ const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ p.integrationDelayMotionBins=motion.delay;
+ p.integrationDopplerMotionBins=motion.doppler;
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);
@@ -77,7 +79,8 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.tracker={t.enabled,t.capacity,t.m,t.n,t.nDelete,
   t.initiationMode==resident::TrackerInitiationMode::adaptiveGate,
   t.cpi,t.maxAccInit,t.rangeRes,t.lambda,t.stationaryClutter,
-  t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,c.epoch};
+  t.stationaryPersistenceCpis,t.stationaryMaxDopplerHz,
+  t.trackGuidedShadow,t.trackGuidedPromote,t.trackGuidedShadowMaxTracks,c.epoch};
  return v;
 }
 class ResidentModule final:public resident::Backend {
@@ -297,7 +300,11 @@ class ResidentModule final:public resident::Backend {
  for(size_t i=0;i<8;++i)w.u64(32+8*i,fields[i]);
  w.u64(96,valid|32);
  w.u64(104,++event_);
- if((valid&1)&&pipeline_->tracker_)words(w,128,pipeline_->tracker_->evidenceControl());
+ if((valid&1)&&pipeline_->tracker_){const auto& status=pipeline_->tracker_->evidenceControl();
+  // The control envelope reserves exactly 64 words before timing at byte 384.
+  // New tracker-only diagnostics remain available in prepared evidence.
+  rw::require(status.size()>=64,"Resident tracker control proof is short");
+  for(size_t i=0;i<64;++i)w.u32(128+4*i,status[i]);}
  if(pipeline_&&pipeline_->tracker_){const auto&t=pipeline_->tracker_->evidenceTimes();
  if(valid&2)w.f64(384,t.observed(6));
  if(valid&4)w.f64(392,t.observed(5));
@@ -330,7 +337,9 @@ public:
  std::memcpy(pointer<double>(Section::frequencies),f.data(),f.size()*8);
  reference_=pipeline_->exportReferenceCheckpoint();
  referenceCheckpoint(p);
- if(config_.tracker.enabled)pipeline_->copyTrackerCommitted({pointer<uint32_t>(Section::tracker0),count<uint32_t>(Section::tracker0),&trackerResult_});
+ if(config_.tracker.enabled)pipeline_->copyTrackerCommitted({pointer<uint32_t>(Section::tracker0),count<uint32_t>(Section::tracker0),
+  config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
+  config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_});
  control(p,resident::Phase::idle,config_.tracker.enabled?2:0,config_.tracker.enabled?1:0);}
  bool prepareReference(const Packet& p)override{rw::require(!ready_&&!prepared_,"Resident module already owns a frame");
  outputPresence_=resident::outputPresence(config_.presence,p.diagnosticPresence);
@@ -375,7 +384,9 @@ public:
  o.detectionCellCapacity=count<uint32_t>(Section::detectionCells);
   if(config_.tracker.enabled){preparedSlot_=1-committedSlot_;
   const auto slot=preparedSlot_?Section::tracker1:Section::tracker0;
-  out.tracker={pointer<uint32_t>(slot),count<uint32_t>(slot),&trackerResult_};
+  out.tracker={pointer<uint32_t>(slot),count<uint32_t>(slot),
+   config_.tracker.trackGuidedShadow?pointer<uint32_t>(Section::guidedRecoveries):nullptr,
+   config_.tracker.trackGuidedShadow?count<uint32_t>(Section::guidedRecoveries):0,&trackerResult_};
   out.trackerTimestamp=p.frame.signalTimestampMs;
   out.consumedInputSequence=p.frame.consumedSequence;}
   if(!pipeline_->finishResidentRadar(out)){return false;}
@@ -396,6 +407,8 @@ public:
    w.u32(76,trackerResult_.noOp);
    w.u32(80,config_.stages());
    w.u32(84,config_.stages());
+   w.u32(88,trackerResult_.guidedRecoveries);
+   w.u32(92,config_.tracker.trackGuidedShadow?6:0);
    preparedEvidence(p);
    prepared_=true;
    return true;
@@ -451,7 +464,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI7 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI9 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

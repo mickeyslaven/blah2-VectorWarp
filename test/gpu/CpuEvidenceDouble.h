@@ -1,5 +1,6 @@
 #pragma once
 #include "GpuResidentProof.h"
+#include "../../core/TrackBeforeDetect.private.h"
 // Deliberately synthetic evidence for CPU transport tests only. These fields
 // exercise the real schema validator; they are never hardware qualification.
 struct CpuEvidenceDouble {
@@ -39,7 +40,8 @@ struct CpuEvidenceDouble {
   w.u32(1536+24,42);w.u32(1536+28,21);for(size_t i=1;i<=3;++i)w.u32(1600+4*i,21);
   w.u32(1600+72,uint32_t(c.epoch));w.u32(1600+76,uint32_t(c.epoch>>32));w.u32(1600+80,1);w.u32(1600+84,7);w.u32(1600+88,3);
   w.u32(1600+108,c.detector.integrationCpis);
-  w.u32(1600+116,c.detector.integrationMotionBins);w.u32(1600+120,c.detector.integrationBeamTolerance);
+  const auto motion=track_before_detect::decodeMotionBins(c.detector.integrationMotionBins);
+  w.u32(1600+116,motion.delay|(motion.doppler<<16u));w.u32(1600+120,c.detector.integrationBeamTolerance);
   w.u32(1600+124,c.fusion.mode==FusionMode::noncoherent?0:c.fusion.beams);
   w.u32(1600+16,21);w.u32(1600+48,21);w.u32(1600+92,1);w.u32(1600+96,1);w.u32(1600+100,21);w.u32(1600+104,1);
   w.u32(1728+8,2);w.u64(1728+32,17);w.u64(1728+40,p.frame.logicalId);w.u64(1728+48,p.frame.consumedSequence);w.u64(1728+56,c.epoch);w.u64(1728+64,p.frame.signalTimestampMs);w.u32(1728+96,32);

@@ -97,6 +97,12 @@ process:
       motion_bins: 1
   tracker:
     enable: true
+    # GPU-resident counterfactual only. It never changes authoritative tracks.
+    # Work is bounded to one CUT plus its small CFAR training window per track.
+    track_guided_shadow:
+      enable: false
+      promote: false
+      max_tracks: 64
     initiate:
       M: 3
       N: 5

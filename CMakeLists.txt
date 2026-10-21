@@ -335,6 +335,23 @@ set_target_properties(testKrakenMultiChannel PROPERTIES
 # TODO: Unsure if will be using CTest.
 add_test(NAME testAmbiguity COMMAND testAmbiguity)
 add_test(NAME testTracker COMMAND testTracker)
+add_executable(testBearingPhaseProjection
+  test/bearing/TestBearingPhaseProjection.cpp
+  src/process/ambiguity/Ambiguity.cpp
+  src/process/conditioning/ArrayReferenceSynthesizer.cpp
+  src/process/clutter/WienerHopf.cpp
+  src/process/meta/HammingNumber.cpp
+  src/data/IqData.cpp
+  src/data/Map.cpp)
+target_include_directories(testBearingPhaseProjection SYSTEM PRIVATE ${ARMADILLO_INCLUDE_DIRS})
+target_link_libraries(testBearingPhaseProjection PRIVATE Catch2::Catch2WithMain
+  blah2RapidJson ${ARMADILLO_LIBRARIES} ${BLAH2_FFTW3_LIBRARY}
+  ${BLAH2_FFTW3_THREADS_LIBRARY} Threads::Threads)
+set_target_properties(testBearingPhaseProjection PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+add_test(NAME bearingPhaseProjection COMMAND testBearingPhaseProjection)
+set_tests_properties(bearingPhaseProjection PROPERTIES TIMEOUT 30
+  ENVIRONMENT "VECTORWARP_FFTW_PLAN=estimate;VECTORWARP_CLUTTER_WORKERS=1;OPENBLAS_NUM_THREADS=1")
 add_executable(testSpectrum
   test/unit/process/spectrum/TestSpectrum.cpp
   src/process/spectrum/SpectrumAnalyser.cpp src/data/IqData.cpp)
