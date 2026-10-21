@@ -47,10 +47,24 @@ const commands = [];
 const config = yaml.load(fs.readFileSync(path.join(__dirname, '../config/config-kraken.yml'), 'utf8'));
 let gain = 14, expectedSavedGain = 14, recovering = false, probes = 0, child, stderr = '', rejectProbe = false;
 let gainPhasePending = false;
+let adcGeneration = 1;
+function adcHeadroom() {
+  const clipped = gain >= 14;
+  return {schema: 1, source: 'rtl2832_uint8_precalibration', sample_stride: 64,
+    center_code: 127.5, full_scale_code: 127.5,
+    channels: Array.from({length: 5}, (_, channel) => {
+      const histogram = Array(256).fill(0);
+      if (clipped) histogram[255] = 2048;
+      else { histogram[64] = 1024; histogram[191] = 1024; }
+      return {channel, generation: adcGeneration, actual_gain_db: gain, components: 131072,
+        rail_components: clipped ? 2 : 0, near_rail_components: clipped ? 2 : 0,
+        sampled_components: 2048, rms_fraction: clipped ? 1 : .5, histogram};
+    })};
+}
 const status = () => ({settings: {center_freq: config.capture.fc,
   sample_rate: config.capture.fs, gain}, num_channels: 5, max_elements: 5,
   operating_mode: 'coherent', reconfiguring: false, recovering,
-  cooldown_active: false}); // Stock Suite omits optional control calibration flags.
+  cooldown_active: false, adc_headroom: adcHeadroom()});
 function own(socket) { sockets.add(socket); socket.on('error', () => {}); socket.on('close', () => sockets.delete(socket)); }
 function send(socket, value) { if (!socket.destroyed) socket.write(JSON.stringify(value) + '\n'); }
 const suite = net.createServer(socket => {
@@ -64,7 +78,7 @@ const suite = net.createServer(socket => {
       if (command.command === 'get_scanner_status') {
         send(socket, {status: 'success', enabled: false});
       } else if (command.command === 'set_gain') {
-        gain = command.gain; gainPhasePending = true;
+        gain = command.gain; gainPhasePending = true; adcGeneration++;
         send(socket, {status: 'success', gain}); send(socket, status());
       } else if (command.command === 'reset_lag_compensation') {
         assert.equal(gainPhasePending, false,

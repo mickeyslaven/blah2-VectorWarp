@@ -88,6 +88,9 @@ def main():
     patch = work / 'heimdall-v2-macos.patch'
     shutil.copy2(ROOT / 'script/patches/heimdall-v2-macos.patch', patch)
     run(['patch', '--batch', '-p1', '-i', patch], cwd=suite)
+    channel_gain_patch = work / 'heimdall-v2-coherent-channel-gains.patch'
+    shutil.copy2(ROOT / 'script/patches/heimdall-v2-coherent-channel-gains.patch', channel_gain_patch)
+    run(['patch', '--batch', '--fuzz=0', '-p1', '-i', channel_gain_patch], cwd=suite)
     driver_source = work / 'rtlsdr'
     shutil.copytree(trees['rtlsdr'], driver_source)
     driver_patch = work / 'kraken-librtlsdr-macos.patch'
@@ -138,6 +141,7 @@ def main():
         raise ValueError('Pinned Suite is missing the statically linked pffft license')
     shutil.copy2(pffft_license, destination / 'share/heimdall/licenses/pffft-LICENSE.txt')
     receipt = dict(schema=1, sources=sources, patchSha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
+                   coherentChannelGainsPatchSha256=hashlib.sha256(channel_gain_patch.read_bytes()).hexdigest(),
                    driverPatchSha256=hashlib.sha256(driver_patch.read_bytes()).hexdigest(),
                    hardwareTested=False, suiteLicense='No repository-wide license file supplied by this pinned upstream revision.')
     (destination / 'share/heimdall/build.json').write_text(json.dumps(receipt, indent=2) + '\n')

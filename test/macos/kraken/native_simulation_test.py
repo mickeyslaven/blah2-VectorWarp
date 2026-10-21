@@ -217,6 +217,7 @@ class Frames:
                     self.count += 1
                     frame = dict(number=self.count, phase=phase, noise=noise, epoch=epoch,
                                  retuning=retuning, frequency=metadata[0], gain=metadata[1],
+                                 channelGains=list(metadata[1::2]),
                                  valid=valid, samples=samples, referenceRms=envelope)
                     self.frames.append(frame)
                     if valid:
@@ -315,13 +316,62 @@ class Control:
                 raise AssertionError(self.error)
             with self.lock:
                 messages = list(self.messages)
-            if any(m["_fixtureSequence"] > after and
-                   m.get("calibration_state") == "CONVERGED" and
-                   m.get("settings", {}).get("center_freq") == frequency and
-                   (gain is None or m.get("settings", {}).get("gain") == gain) for m in messages):
-                return
+            found = next((m.copy() for m in messages if m["_fixtureSequence"] > after and
+                          m.get("calibration_state") == "CONVERGED" and
+                          m.get("settings", {}).get("center_freq") == frequency and
+                          (gain is None or m.get("settings", {}).get("gain") == gain)), None)
+            if found:
+                return found
             time.sleep(.02)
         raise AssertionError(f"No CONVERGED control status at {frequency} after message {after}; last={messages[-2:]}")
+
+    def wait_channel_gains(self, expected, after=0, timeout=5):
+        deadline = time.monotonic() + timeout
+        messages = []
+        while time.monotonic() < deadline:
+            if self.error:
+                raise AssertionError(self.error)
+            with self.lock:
+                messages = list(self.messages)
+            found = next((m.copy() for m in messages if m["_fixtureSequence"] > after and
+                          m.get("calibration_state") == "CONVERGED" and
+                          m.get("channel_gains") == expected), None)
+            if found:
+                return found
+            time.sleep(.02)
+        raise AssertionError(f"No CONVERGED channel gains {expected} after message {after}; last={messages[-2:]}")
+
+    def wait_headroom(self, frequency, gain, after=0, timeout=5):
+        deadline = time.monotonic() + timeout
+        messages = []
+        while time.monotonic() < deadline:
+            if self.error:
+                raise AssertionError(self.error)
+            with self.lock:
+                messages = list(self.messages)
+            for message in messages:
+                raw = message.get("adc_headroom", {})
+                channels = raw.get("channels", [])
+                if (message["_fixtureSequence"] <= after or
+                    message.get("calibration_state") != "CONVERGED" or
+                    message.get("settings", {}).get("center_freq") != frequency or
+                    message.get("settings", {}).get("gain") != gain or
+                    raw.get("schema") != 1 or raw.get("source") != "rtl2832_uint8_precalibration" or
+                    raw.get("sample_stride") != 64 or len(channels) != 5):
+                    continue
+                if any(item.get("unavailable") for item in channels):
+                    continue
+                for channel, item in enumerate(channels):
+                    assert item.get("channel") == channel and not item.get("unavailable"), item
+                    assert item.get("components", 0) >= 65536, item
+                    assert item.get("sampled_components", 0) >= 1024, item
+                    assert 0 <= item.get("rail_components", -1) <= item.get("near_rail_components", -1) <= item["components"], item
+                    assert len(item.get("histogram", [])) == 256, item
+                    assert sum(item["histogram"]) == item["sampled_components"], item
+                    assert 0 <= item.get("rms_fraction", -1) <= 1, item
+                return message.copy()
+            time.sleep(.02)
+        raise AssertionError(f"No valid raw ADC headroom at {frequency}/{gain} after {after}; last={messages[-2:]}")
 
     def close(self):
         self.stopped.set()
@@ -493,7 +543,8 @@ def run_case(args, binary, work, name, fail=None, count=5):
             frames = Frames(connect(args.data_port, process))
             control = connect(args.control_port, process)
             control_reader = Control(control)
-            frames.wait(lambda f: f["valid"] and f["frequency"] == 101000000 and f["gain"] == 50,
+            frames.wait(lambda f: f["valid"] and f["frequency"] == 101000000 and
+                        math.isclose(f["gain"], 49.6, abs_tol=1e-5),
                         timeout=args.calibration_timeout)
             report["numerical"] = numerical_check(frames)
             control_reader.wait_calibrated(101000000, gain=50)
@@ -577,17 +628,47 @@ def run_case(args, binary, work, name, fail=None, count=5):
             print(json.dumps({"case": name, "stage": "retuned"}), flush=True)
 
             report["gainCalibratedFrames"] = {}
+            headroom_generations = []
+            actual_gain_db = {20: 20.7, 40: 40.2, 50: 49.6}
             for gain in (20, 40, 50):
                 mark = frames.mark()
                 control_mark = control_reader.mark()
                 command(control, {"command": "set_gain", "gain": gain})
                 invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
-                changed = frames.wait(lambda f: f["valid"] and f["gain"] == gain,
+                changed = frames.wait(lambda f: f["valid"] and
+                                      math.isclose(f["gain"], actual_gain_db[gain], abs_tol=1e-5),
                                       after=invalid["number"], timeout=args.calibration_timeout)
                 control_reader.wait_calibrated(101000000, gain=gain, after=control_mark)
+                headroom = control_reader.wait_headroom(101000000, gain, after=control_mark)
+                assert [channel["actual_gain_db"] for channel in
+                        headroom["adc_headroom"]["channels"]] == [actual_gain_db[gain]] * 5
+                headroom_generations.append([channel["generation"]
+                                             for channel in headroom["adc_headroom"]["channels"]])
                 report["gainCalibratedFrames"][str(gain)] = dict(frame=changed["number"],
                                                                numerical=numerical_check(frames))
                 print(json.dumps({"case": name, "stage": "gain_changed", "requestedGainDb": gain}), flush=True)
+            assert all(len(set(generation)) == 1 for generation in headroom_generations), headroom_generations
+            assert all(later[0] > earlier[0] for earlier, later in
+                       zip(headroom_generations, headroom_generations[1:])), headroom_generations
+            report["rawAdcHeadroomGenerations"] = headroom_generations
+
+            channel_gains = [19.7, 25.4, 22.9, 25.4, 22.9]
+            mark = frames.mark()
+            control_mark = control_reader.mark()
+            command(control, {"command": "set_channel_gains", "gains": channel_gains})
+            invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
+            channel_frame = frames.wait(
+                lambda f: f["valid"] and all(math.isclose(actual, expected, abs_tol=1e-5)
+                                              for actual, expected in zip(f["channelGains"], channel_gains)),
+                after=invalid["number"], timeout=args.calibration_timeout)
+            channel_status = control_reader.wait_channel_gains(
+                channel_gains, after=control_mark, timeout=args.calibration_timeout)
+            assert [channel["actual_gain_db"] for channel in
+                    channel_status["adc_headroom"]["channels"]] == channel_gains
+            report["coherentChannelGainsDb"] = channel_gains
+            report["coherentChannelGainMetadataFrame"] = channel_frame["number"]
+            print(json.dumps({"case": name, "stage": "channel_gains_changed",
+                              "channelGainsDb": channel_gains}), flush=True)
 
             # Auto gain must switch to its own fixed VGA index (11), and the
             # next manual command must restore index 8 before loss recovery.
@@ -607,7 +688,8 @@ def run_case(args, binary, work, name, fail=None, count=5):
             control_mark = control_reader.mark()
             command(control, {"command": "set_gain", "gain": 50})
             invalid = frames.wait(lambda f: not f["valid"], after=mark, timeout=5)
-            frames.wait(lambda f: f["valid"] and f["gain"] == 50, after=invalid["number"],
+            frames.wait(lambda f: f["valid"] and math.isclose(f["gain"], 49.6, abs_tol=1e-5),
+                        after=invalid["number"],
                         timeout=args.calibration_timeout)
             control_reader.wait_calibrated(101000000, gain=50, after=control_mark)
             assert {e["channel"] for e in driver_events(case)[before_manual:]
