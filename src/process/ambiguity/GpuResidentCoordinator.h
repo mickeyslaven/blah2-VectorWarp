@@ -87,7 +87,8 @@ public:
  Publication result;
  result.spectrum=json::spectrum({timestamp,{v.frequencies.data,v.frequencies.size},{v.spectrumDb.data,v.spectrumDb.size}});
  result.map=json::map({timestamp,config().geometry.doppler,config().geometry.delays,v.noise,v.maxPower,{v.delayKm.data,v.delayKm.size},{v.doppler.data,v.doppler.size},{v.display.data,v.display.size}});
- if(config().detector.enabled){result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size});
+ if(config().detector.enabled){result.detections=json::detectionRecords(timestamp,json::View<DetectionRecord>{v.detections.data,v.detections.size},
+   {v.guidedRecoveryWords.data,v.guidedRecoveryWords.size},config().sampleRate);
   if(publishManifoldEvidence){const auto reference=referenceState(v.referenceCheckpoint);
    result.manifoldEvidence=json::manifoldEvidence(timestamp,config().fusion.frequencyHz,
     config().sampleRate,config().geometry.doppler,config().geometry.delays,

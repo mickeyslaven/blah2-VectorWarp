@@ -131,7 +131,8 @@ try {
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
-  fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0};
+  fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0,
+    delay_motion_bins: 2, doppler_motion_bins: 16};
   fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
@@ -153,6 +154,8 @@ try {
       'process.detection.track_before_detect.enable',
       'process.detection.track_before_detect.max_cpis',
       'process.detection.track_before_detect.motion_bins',
+      'process.detection.track_before_detect.delay_motion_bins',
+      'process.detection.track_before_detect.doppler_motion_bins',
       'process.tracker.beam_tolerance']);
   const bearing = clone(fusion);
   Object.assign(bearing.capture.device.array_geometry, {
@@ -239,18 +242,21 @@ try {
   persistGroup('rsp-profile-edit', rspBase, rsp, ['capture.fs','capture.device.type','capture.device.serial']);
   // Explicit resident capacity is optional in legacy files but must persist
   // as a coherent resident-mode edit without changing unrelated settings.
-  const residentBase = shipped('config-kraken.yml'); const resident = clone(residentBase);
-  resident.process.performance.acceleration = 'gpu-resident'; resident.process.tracker.gpu_capacity = 128;
+  const residentBase = clone(fusion); const resident = clone(residentBase);
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
-  resident.process.detection.integration_cpis = 2;
-  persistGroup('resident-capacity-edit', residentBase, resident, ['process.performance.acceleration',
-    'process.tracker.gpu_capacity', 'process.tracker.initiate.acceleration_model',
+  resident.process.tracker.track_guided_shadow = {enable: true, promote: true, max_tracks: 32,
+    evidence_path: path.join(directory, 'guided-shadow.jsonl')};
+  persistGroup('resident-capacity-edit', residentBase, resident, [
+    'process.tracker.initiate.acceleration_model',
     'process.tracker.initiate.stationary_clutter.enable',
     'process.tracker.initiate.stationary_clutter.persistence_cpis',
     'process.tracker.initiate.stationary_clutter.max_doppler_hz',
-    'process.detection.integration_cpis']);
+    'process.tracker.track_guided_shadow.enable',
+    'process.tracker.track_guided_shadow.promote',
+    'process.tracker.track_guided_shadow.max_tracks',
+    'process.tracker.track_guided_shadow.evidence_path']);
   const measuredGain = clone(krakenBase);
   measuredGain.process.performance.acceleration = 'auto';
   measuredGain.capture.device.heimdall.gain_control = 'measured';

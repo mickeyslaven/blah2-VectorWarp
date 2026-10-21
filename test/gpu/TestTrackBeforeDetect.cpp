@@ -22,13 +22,22 @@ int main() try {
     "Conventional detector pass is not retained");
   check(bankLength(0) == 2 && bankLength(1) == 4 && bankLength(2) == 8,
     "Unexpected multi-timescale bank lengths");
-  check(trialCount(8, 1) == 27, "Motion-path trial correction changed");
+  check(trialCount(8, 1, 1) == 27, "Legacy motion-path trial correction changed");
+  check(trialCount(8, 1, 4) == 81, "Split Doppler-path trial correction changed");
+  check(trialCount(8, 2, 16) == 495, "Expanded motion-path trial correction changed");
+  const auto encoded = encodeMotionBins(1, 4);
+  const auto decoded = decodeMotionBins(encoded);
+  check(decoded.delay == 1 && decoded.doppler == 4,
+    "Split delay/Doppler motion encoding changed");
+  const auto expanded = decodeMotionBins(encodeMotionBins(2, 16));
+  check(expanded.delay == 2 && expanded.doppler == 16,
+    "Expanded delay/Doppler motion encoding changed");
   check(angleHistoryWords(307111, 8, UINT32_MAX) == 1,
     "Disabled angle consistency retained a production-size GPU allocation");
   check(angleHistoryWords(307111, 8, 1) == 2456888,
     "Enabled angle consistency history dimensions changed");
-  check(close(passPfa(.001, 8, 1, 0), .001) &&
-      close(passPfa(.001, 8, 1, 1), .001 / 27),
+  check(close(passPfa(.001, 8, 1, 4, 0), .001) &&
+      close(passPfa(.001, 8, 1, 4, 1), .001 / 81),
     "Conventional and motion-bank PFA separation changed");
   const uint32_t training = 12;
   const double alphaOne = 7.0;
@@ -49,7 +58,7 @@ int main() try {
   try { (void)bankCount(6); } catch (const std::invalid_argument&) { rejected = true; }
   check(rejected, "Invalid bank maximum was accepted");
   std::cout << "TRACK_BEFORE_DETECT_MATH_PASS checks=" << checks
-    << " banks=2,4,8 exact_gamma_cfar=1 motion_trials=27\n";
+    << " banks=2,4,8 exact_gamma_cfar=1 delay_bins=1 doppler_bins=4 motion_trials=81\n";
   return 0;
 } catch (const std::exception& error) {
   std::cerr << "FAIL track-before-detect math: " << error.what() << '\n';

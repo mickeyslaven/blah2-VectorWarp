@@ -527,6 +527,14 @@ function validateConfig(config, baseline = null) {
     number(trackBeforeDetect.motion_bins,
       'process.detection.track_before_detect.motion_bins',
       {integer: true, min: 0, max: 1});
+    if (trackBeforeDetect.delay_motion_bins !== undefined)
+      number(trackBeforeDetect.delay_motion_bins,
+        'process.detection.track_before_detect.delay_motion_bins',
+        {integer: true, min: 0, max: 2});
+    if (trackBeforeDetect.doppler_motion_bins !== undefined)
+      number(trackBeforeDetect.doppler_motion_bins,
+        'process.detection.track_before_detect.doppler_motion_bins',
+        {integer: true, min: 0, max: 16});
   }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
@@ -595,6 +603,41 @@ function validateConfig(config, baseline = null) {
       errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
       errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
+    let trackGuidedShadow = null;
+    if (tracker.track_guided_shadow !== undefined) {
+      trackGuidedShadow = requireObject(tracker.track_guided_shadow,
+        'process.tracker.track_guided_shadow');
+      boolean(trackGuidedShadow.enable,
+        'process.tracker.track_guided_shadow.enable');
+      if (trackGuidedShadow.promote !== undefined)
+        boolean(trackGuidedShadow.promote,
+          'process.tracker.track_guided_shadow.promote');
+      number(trackGuidedShadow.max_tracks,
+        'process.tracker.track_guided_shadow.max_tracks',
+        {integer: true, min: 1, max: 65535});
+      if (trackGuidedShadow.evidence_path !== undefined) {
+        string(trackGuidedShadow.evidence_path,
+          'process.tracker.track_guided_shadow.evidence_path');
+        if (!path.isAbsolute(trackGuidedShadow.evidence_path))
+          errors.push('process.tracker.track_guided_shadow.evidence_path must be absolute');
+      }
+      for (const [field, limits] of [['max_truth_age_s', {min: .1, max: 60}],
+        ['max_file_mb', {integer: true, min: 1, max: 1024}],
+        ['max_files', {integer: true, min: 1, max: 20}]])
+        if (trackGuidedShadow[field] !== undefined)
+          number(trackGuidedShadow[field], `process.tracker.track_guided_shadow.${field}`, limits);
+      if (trackGuidedShadow.enable === true &&
+          (!trackBeforeDetect?.enable || !tracker.enable))
+        errors.push('track-guided shadow requires enabled tracking and track-before-detect');
+      if (trackGuidedShadow.promote === true && trackGuidedShadow.enable !== true)
+        errors.push('track-guided recovery promotion requires the shadow evaluator');
+      if (trackGuidedShadow.enable === true &&
+          Number.isInteger(tracker.gpu_capacity) &&
+          trackGuidedShadow.max_tracks > tracker.gpu_capacity)
+        errors.push('process.tracker.track_guided_shadow.max_tracks cannot exceed gpu_capacity');
+    }
+    if (trackGuidedShadow?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('track-guided shadow requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');

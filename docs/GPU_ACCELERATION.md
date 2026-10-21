@@ -136,8 +136,20 @@ process:
     track_before_detect:
       enable: true
       max_cpis: 8       # 4 enables 2/4 banks; 8 enables 2/4/8 banks
-      motion_bins: 1    # search -1, 0, +1 cell per CPI on both axes
+      motion_bins: 1    # backwards-compatible common value for both axes
+      delay_motion_bins: 1
+      doppler_motion_bins: 4 # follow fast Doppler slew without wasteful delay trials
 ```
+
+The delay and Doppler axes are independently configurable up to 2 and 16 bins
+per CPI. Track-before-detect assigns one GPU workgroup to each map cell and
+evaluates as many as 64 delay-Doppler trajectories concurrently in one native
+AMD wavefront, then reduces the exact 2/4/8-CPI maxima with a parallel shared-memory
+tree. Larger envelopes use ordered 64-path chunks without a trajectory-sized scratch
+buffer. The rolling history uses the host-visible heap so it does not displace the
+resident clutter workspace from limited discrete-GPU VRAM. Select the smallest envelope that covers
+the site's physically eligible aircraft because every additional trajectory is
+included in the detector's multiple-hypothesis false-alarm correction.
 
 This path keeps the ordinary detector available as the default. When enabled,
 it retains the conventional two-CPI same-cell detector, keeps fused power maps

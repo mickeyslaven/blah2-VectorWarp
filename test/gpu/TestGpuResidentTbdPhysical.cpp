@@ -1,6 +1,7 @@
 #include "GpuResidentBackend.h"
 #include "GpuResidentProof.h"
 #include "GpuResidentWire.h"
+#include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -36,10 +37,13 @@ Config configuration(const char* device) {
   c.detector.enabled = true;
   c.detector.guard = 1;
   c.detector.train = 2;
-  c.detector.pfa = .001;
+  // Keep this tiny synthetic scene intentionally detection-rich so the
+  // physical qualification executes the guided shader with live track state,
+  // rather than merely validating its descriptor and empty dispatch path.
+  c.detector.pfa = .9;
   c.detector.centroidDopplerResolution = resolution;
   c.detector.integrationCpis = 8;
-  c.detector.integrationMotionBins = 1;
+  c.detector.integrationMotionBins = track_before_detect::encodeMotionBins(2, 4);
   c.detector.integrationBeamTolerance = 1;
   c.tracker.enabled = true;
   c.tracker.capacity = 64;
@@ -49,6 +53,9 @@ Config configuration(const char* device) {
   c.tracker.cpi = 63.0 / c.sampleRate;
   c.tracker.rangeRes = 299792458.0 / c.sampleRate;
   c.tracker.lambda = 299792458.0 / c.fusion.frequencyHz;
+  c.tracker.trackGuidedShadow = true;
+  c.tracker.trackGuidedPromote = true;
+  c.tracker.trackGuidedShadowMaxTracks = 64;
   c.bearing = {true, BearingMethod::covarianceMvdr, BearingReferenceAnchor::fixedSite,
     60, 3, 1, 3, .01,
     {0, 1, 2, 3, 4}};
@@ -70,6 +77,7 @@ int main(int argc, char** argv) try {
   options.startupMs = 60000;
   options.frameMs = 10000;
   auto session = createProcess(configuration(argv[2]), options);
+  bool sawActiveTracker = false;
   for (uint64_t frame = 1; frame <= 9; ++frame) {
     auto input = session->input();
     for (size_t i = 0; i < input.size; ++i) {
@@ -81,14 +89,18 @@ int main(int argc, char** argv) try {
     session->receiveReferenceReady();
     const auto output = session->receivePrepared();
     const auto proof = preparedProof(output.preparedEvidence);
+    sawActiveTracker = sawActiveTracker || proof.trackerStatus[54] != 0;
     const bool ready = proof.postprocessStatus[28] != 0;
     if (ready != (frame >= 8))
       throw std::runtime_error("TBD history readiness changed");
     session->commit(output.trackerToken);
     session->published();
   }
+  if (!sawActiveTracker)
+    throw std::runtime_error("Track-guided physical test did not create track state");
   std::cout << "GPU_RESIDENT_TBD_PHYSICAL_PASS frames=9 integration_cpis=8"
-    " channels=5 beams=12 history_ready_frame=8\n";
+    " channels=5 beams=12 history_ready_frame=8 delay_bins=2 doppler_bins=4 track_guided_shadow=1"
+    " guided_max_tracks=64\n";
   return 0;
 } catch (const std::exception& error) {
   std::cerr << "FAIL resident TBD physical initialization: " << error.what() << '\n';

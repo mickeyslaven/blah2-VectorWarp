@@ -611,7 +611,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI7 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI9 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -720,6 +720,8 @@ try
   bool trackBeforeDetect = false;
   uint32_t trackBeforeDetectCpis = 8;
   uint32_t trackBeforeDetectMotionBins = 1;
+  uint32_t trackBeforeDetectDelayMotionBins = 1;
+  uint32_t trackBeforeDetectDopplerMotionBins = 1;
   uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
@@ -735,7 +737,13 @@ try
     auto node = tree["process"]["detection"]["track_before_detect"];
     if (node.has_child("enable")) node["enable"] >> trackBeforeDetect;
     if (node.has_child("max_cpis")) node["max_cpis"] >> trackBeforeDetectCpis;
-    if (node.has_child("motion_bins")) node["motion_bins"] >> trackBeforeDetectMotionBins;
+    if (node.has_child("motion_bins")) {
+      node["motion_bins"] >> trackBeforeDetectMotionBins;
+      trackBeforeDetectDelayMotionBins=trackBeforeDetectMotionBins;
+      trackBeforeDetectDopplerMotionBins=trackBeforeDetectMotionBins;
+    }
+    if(node.has_child("delay_motion_bins"))node["delay_motion_bins"]>>trackBeforeDetectDelayMotionBins;
+    if(node.has_child("doppler_motion_bins"))node["doppler_motion_bins"]>>trackBeforeDetectDopplerMotionBins;
   }
   if (tree["process"]["tracker"].has_child("beam_tolerance"))
     tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
@@ -772,8 +780,8 @@ try
   if(!std::isfinite(bearingMaxRateDegPerSecond)||bearingMaxRateDegPerSecond<0||bearingMaxRateDegPerSecond>360)
     throw std::invalid_argument("Bearing max_rate_deg_s must be from 0 through 360");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
-      trackBeforeDetectMotionBins > 1))
-    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
+      trackBeforeDetectDelayMotionBins > 2 || trackBeforeDetectDopplerMotionBins > 16))
+    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8, delay_motion_bins 0 through 2, and doppler_motion_bins 0 through 16");
   if (integrationBeamTolerance != UINT32_MAX &&
       (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
     throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
@@ -781,7 +789,8 @@ try
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
   const double motionTrials = trackBeforeDetect
-    ? track_before_detect::trialCount(trackBeforeDetectCpis, trackBeforeDetectMotionBins)
+    ? track_before_detect::trialCount(trackBeforeDetectCpis,
+      trackBeforeDetectDelayMotionBins,trackBeforeDetectDopplerMotionBins)
     : (integrationMotionBins ? 9.0 : 1.0);
   // TBD adds its motion-bank correction inside the resident detector while
   // retaining the proven two-CPI baseline at this beam-corrected PFA.
@@ -799,7 +808,8 @@ try
     std::cout << "[TrackBeforeDetect] enabled=1 banks="
       << track_before_detect::bankCount(trackBeforeDetectCpis)
       << " max_cpis=" << trackBeforeDetectCpis
-      << " motion_bins=" << trackBeforeDetectMotionBins
+      << " delay_motion_bins=" << trackBeforeDetectDelayMotionBins
+      << " doppler_motion_bins=" << trackBeforeDetectDopplerMotionBins
       << " coherent_refinement_factor="
       << (bearingEnabled ? bearingScanBeams / coherentBeamCount : 0u)
       << " bearing_method=" << (bearingEnabled ? bearingMethod : "disabled") << "\n";
@@ -818,6 +828,9 @@ try
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   double stationaryMaxDopplerHz=residentMode?15.0:0.0;
+  bool trackGuidedShadow=false;
+  bool trackGuidedPromote=false;
+  uint32_t trackGuidedShadowMaxTracks=0;
   tree["process"]["tracker"]["initiate"]["M"] >> m;
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
@@ -830,6 +843,12 @@ try
     if(stationaryClutter){stationary["persistence_cpis"] >> stationaryPersistenceCpis;
       stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
     else {stationaryPersistenceCpis=0;stationaryMaxDopplerHz=0;}
+  }
+  if(tree["process"]["tracker"].has_child("track_guided_shadow")){
+    const auto& guided=tree["process"]["tracker"]["track_guided_shadow"];
+    guided["enable"] >> trackGuidedShadow;
+    if(trackGuidedShadow){guided["max_tracks"] >> trackGuidedShadowMaxTracks;
+      if(guided.has_child("promote"))guided["promote"] >> trackGuidedPromote;}
   }
   if(trackerAccelerationModel!="hypothesis_bank"&&trackerAccelerationModel!="adaptive_gate")
     throw std::invalid_argument("Tracker acceleration_model must be hypothesis_bank or adaptive_gate");
@@ -914,7 +933,8 @@ try
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
     residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,
       trackBeforeDetect?trackBeforeDetectCpis:integrationCpis,
-      trackBeforeDetect?trackBeforeDetectMotionBins:integrationMotionBins,
+      trackBeforeDetect?track_before_detect::encodeMotionBins(trackBeforeDetectDelayMotionBins,
+        trackBeforeDetectDopplerMotionBins):integrationMotionBins,
       integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;
@@ -923,7 +943,8 @@ try
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
         ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
-        stationaryPersistenceCpis,stationaryMaxDopplerHz};
+        stationaryPersistenceCpis,stationaryMaxDopplerHz,
+        trackGuidedShadow,trackGuidedPromote,trackGuidedShadowMaxTracks};
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
