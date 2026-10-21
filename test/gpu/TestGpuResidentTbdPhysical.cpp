@@ -1,6 +1,7 @@
 #include "GpuResidentBackend.h"
 #include "GpuResidentProof.h"
 #include "GpuResidentWire.h"
+#include "core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -42,7 +43,7 @@ Config configuration(const char* device) {
   c.detector.pfa = .9;
   c.detector.centroidDopplerResolution = resolution;
   c.detector.integrationCpis = 8;
-  c.detector.integrationMotionBins = 1;
+  c.detector.integrationMotionBins = track_before_detect::encodeMotionBins(1, 4);
   c.detector.integrationBeamTolerance = 1;
   c.tracker.enabled = true;
   c.tracker.capacity = 64;
@@ -98,7 +99,7 @@ int main(int argc, char** argv) try {
   if (!sawActiveTracker)
     throw std::runtime_error("Track-guided physical test did not create track state");
   std::cout << "GPU_RESIDENT_TBD_PHYSICAL_PASS frames=9 integration_cpis=8"
-    " channels=5 beams=12 history_ready_frame=8 track_guided_shadow=1"
+    " channels=5 beams=12 history_ready_frame=8 delay_bins=1 doppler_bins=4 track_guided_shadow=1"
     " guided_max_tracks=64\n";
   return 0;
 } catch (const std::exception& error) {

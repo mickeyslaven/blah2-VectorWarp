@@ -136,7 +136,9 @@ process:
     track_before_detect:
       enable: true
       max_cpis: 8       # 4 enables 2/4 banks; 8 enables 2/4/8 banks
-      motion_bins: 1    # search -1, 0, +1 cell per CPI on both axes
+      motion_bins: 1    # backwards-compatible common value for both axes
+      delay_motion_bins: 1
+      doppler_motion_bins: 4 # follow fast Doppler slew without wasteful delay trials
 ```
 
 This path keeps the ordinary detector available as the default. When enabled,

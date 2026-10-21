@@ -1,4 +1,5 @@
 #include "GpuResidentWire.h"
+#include "../../../core/TrackBeforeDetect.private.h"
 #include "GpuResidentHash.h"
 #include "GpuMemory.h"
 #include <algorithm>
@@ -58,6 +59,7 @@ void validateConfig(const Config& c){
   f.elementStepRad==0&&f.directPathAzimuthRad==0&&f.directPathNullDb==0,
   "Resident noncoherent fusion configuration invalid");
  const auto& d=c.detector;
+ const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
  const auto& b=c.bearing;
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
@@ -85,8 +87,9 @@ void validateConfig(const Config& c){
  require(c.spectrumBins==1+(g.clutterSamples-1)/decimation,"Resident spectrum shape differs");
  require(!c.tracker.enabled||d.enabled,"Resident tracker requires detection");
  if(d.enabled)require(std::isfinite(d.pfa)&&d.pfa>0&&d.pfa<1&&d.guard>=0&&d.guard<=127&&d.train>0&&d.train<=127&&d.minDelay>=INT8_MIN&&d.minDelay<=INT8_MAX&&std::isfinite(d.minDoppler)&&d.minDoppler>=0&&d.centroidDelay<=UINT16_MAX&&d.centroidDoppler<=UINT16_MAX&&std::isfinite(d.centroidDopplerResolution)&&d.centroidDopplerResolution>0&&
-  (d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&d.integrationMotionBins<=1&&
-  (d.integrationCpis==2||d.integrationCpis>2||!d.integrationMotionBins)&&(d.integrationCpis<=2||f.mode!=FusionMode::noncoherent)&&
+  (d.integrationCpis==1||d.integrationCpis==2||d.integrationCpis==4||d.integrationCpis==8)&&motion.delay<=1&&
+  motion.doppler<=(d.integrationCpis>2?4u:1u)&&
+  (d.integrationCpis==2||d.integrationCpis>2||(!motion.delay&&!motion.doppler))&&(d.integrationCpis<=2||f.mode!=FusionMode::noncoherent)&&
   (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);

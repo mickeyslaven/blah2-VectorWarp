@@ -676,6 +676,8 @@ try
   bool trackBeforeDetect = false;
   uint32_t trackBeforeDetectCpis = 8;
   uint32_t trackBeforeDetectMotionBins = 1;
+  uint32_t trackBeforeDetectDelayMotionBins = 1;
+  uint32_t trackBeforeDetectDopplerMotionBins = 1;
   uint32_t integrationBeamTolerance = UINT32_MAX;
   tree["process"]["detection"]["pfa"] >> pfa;
   tree["process"]["detection"]["nGuard"] >> nGuard;
@@ -691,7 +693,13 @@ try
     auto node = tree["process"]["detection"]["track_before_detect"];
     if (node.has_child("enable")) node["enable"] >> trackBeforeDetect;
     if (node.has_child("max_cpis")) node["max_cpis"] >> trackBeforeDetectCpis;
-    if (node.has_child("motion_bins")) node["motion_bins"] >> trackBeforeDetectMotionBins;
+    if (node.has_child("motion_bins")) {
+      node["motion_bins"] >> trackBeforeDetectMotionBins;
+      trackBeforeDetectDelayMotionBins=trackBeforeDetectMotionBins;
+      trackBeforeDetectDopplerMotionBins=trackBeforeDetectMotionBins;
+    }
+    if(node.has_child("delay_motion_bins"))node["delay_motion_bins"]>>trackBeforeDetectDelayMotionBins;
+    if(node.has_child("doppler_motion_bins"))node["doppler_motion_bins"]>>trackBeforeDetectDopplerMotionBins;
   }
   if (tree["process"]["tracker"].has_child("beam_tolerance"))
     tree["process"]["tracker"]["beam_tolerance"] >> integrationBeamTolerance;
@@ -728,8 +736,8 @@ try
   if(!std::isfinite(bearingMaxRateDegPerSecond)||bearingMaxRateDegPerSecond<0||bearingMaxRateDegPerSecond>360)
     throw std::invalid_argument("Bearing max_rate_deg_s must be from 0 through 360");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
-      trackBeforeDetectMotionBins > 1))
-    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8 and motion_bins 0 or 1");
+      trackBeforeDetectDelayMotionBins > 1 || trackBeforeDetectDopplerMotionBins > 4))
+    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8, delay_motion_bins 0 or 1, and doppler_motion_bins 0 through 4");
   if (integrationBeamTolerance != UINT32_MAX &&
       (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
     throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
@@ -737,7 +745,8 @@ try
   // Bonferroni correction so its configured false-alarm probability retains
   // the same upper bound as the single noncoherent statistic.
   const double motionTrials = trackBeforeDetect
-    ? track_before_detect::trialCount(trackBeforeDetectCpis, trackBeforeDetectMotionBins)
+    ? track_before_detect::trialCount(trackBeforeDetectCpis,
+      trackBeforeDetectDelayMotionBins,trackBeforeDetectDopplerMotionBins)
     : (integrationMotionBins ? 9.0 : 1.0);
   // TBD adds its motion-bank correction inside the resident detector while
   // retaining the proven two-CPI baseline at this beam-corrected PFA.
@@ -755,7 +764,8 @@ try
     std::cout << "[TrackBeforeDetect] enabled=1 banks="
       << track_before_detect::bankCount(trackBeforeDetectCpis)
       << " max_cpis=" << trackBeforeDetectCpis
-      << " motion_bins=" << trackBeforeDetectMotionBins
+      << " delay_motion_bins=" << trackBeforeDetectDelayMotionBins
+      << " doppler_motion_bins=" << trackBeforeDetectDopplerMotionBins
       << " coherent_refinement_factor="
       << (bearingEnabled ? bearingScanBeams / coherentBeamCount : 0u)
       << " bearing_method=" << (bearingEnabled ? bearingMethod : "disabled") << "\n";
@@ -878,7 +888,8 @@ try
     residentConfig.spectrumBins=1+(nSamples-1)/decimation;
     residentConfig.detector={isDetection,true,true,nGuard,nTrain,minDelay,nCentroid,nCentroid,detectorPfa,minDoppler,1/tCpi,
       trackBeforeDetect?trackBeforeDetectCpis:integrationCpis,
-      trackBeforeDetect?trackBeforeDetectMotionBins:integrationMotionBins,
+      trackBeforeDetect?track_before_detect::encodeMotionBins(trackBeforeDetectDelayMotionBins,
+        trackBeforeDetectDopplerMotionBins):integrationMotionBins,
       integrationBeamTolerance};
     if(isTracker){
       uint32_t capacity=0;

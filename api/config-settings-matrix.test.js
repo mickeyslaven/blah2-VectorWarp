@@ -119,7 +119,8 @@ try {
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
-  fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0};
+  fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0,
+    delay_motion_bins: 1, doppler_motion_bins: 4};
   fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',
@@ -141,6 +142,8 @@ try {
       'process.detection.track_before_detect.enable',
       'process.detection.track_before_detect.max_cpis',
       'process.detection.track_before_detect.motion_bins',
+      'process.detection.track_before_detect.delay_motion_bins',
+      'process.detection.track_before_detect.doppler_motion_bins',
       'process.tracker.beam_tolerance']);
   const bearing = clone(fusion);
   Object.assign(bearing.capture.device.array_geometry, {

@@ -8,7 +8,8 @@ struct PostprocessConfig {
  uint16_t centroidDelay=0,centroidDoppler=0;
  bool interpolateDelay=true,interpolateDoppler=true;
  uint32_t integrationCpis=1;
- uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX,beamCount=0;
+ uint32_t integrationDelayMotionBins=0,integrationDopplerMotionBins=0;
+ uint32_t integrationBeamTolerance=UINT32_MAX,beamCount=0;
  uint32_t bearingExclusionBins=0;
  uint32_t bearingMethod=0,bearingReferenceAnchor=0,bearingScanBeams=0,bearingCandidatePeaks=3;
  uint32_t bearingGuardRadius=1,bearingTrainingRadius=3;
@@ -84,7 +85,8 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
-    c.integrationMotionBins>1||(!tbd&&c.integrationCpis!=2&&c.integrationMotionBins)||
+    c.integrationDelayMotionBins>1||c.integrationDopplerMotionBins>(tbd?4u:1u)||
+    (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
     (tbd&&(!c.detection||!c.beamCount))||
     (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
       c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||
@@ -146,16 +148,16 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
  if(!finiteD(value.x)||!finiteD(value.y)){reject(201u);return;}
  uint beam=uint(value.y);bool validBeam=m[75]==0u?value.y==0.0LF:
   (value.y>=0.0LF&&value.y<double(m[75])&&double(beam)==value.y);
- if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76];m[30]=m[77];m[31]=m[75];}
+ if(i==0u){m[18]=m[72];m[19]=m[73];m[20]=m[49];m[21]=m[32];m[22]=m[33];m[27]=m[74];m[28]=m[78]!=0u?(m[79]+1u>=m[74]?1u:0u):(m[74]==2u&&finiteD(history[i])?1u:0u);m[29]=m[76]|(m[93]<<16u);m[30]=m[77];m[31]=m[75];}
  if(value.x<0.0LF||!validBeam){reject(201u);return;}
  precise double current=value.x*value.x;currentPower[i]=current;s[m[39]+i]=m[75]==0u?0u:(beam+1u)<<8u;
  if(m[78]!=0u){uint historyAt=(m[79]%m[74])*m[34]+i;history[historyAt]=current;
   if(m[77]!=0xffffffffu)angleHistory[historyAt]=m[75]==0u?0u:beam+1u;}
  double prior=history[i];
  bool historyReady=m[74]==2u&&finiteD(history[0]);
- if(historyReady&&m[76]!=0u){
+ if(historyReady&&(m[76]!=0u||m[93]!=0u)){
   uint row=i/m[33],column=i%m[33];prior=-1.0LF;
-  for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+  for(int dr=-int(m[93]);dr<=int(m[93]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
    int rr=int(row)+dr,cc=int(column)+dc;if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))continue;
    uint at=uint(rr)*m[33]+uint(cc);double candidate=history[at];if(!finiteD(candidate))continue;
    if(candidate>prior)prior=candidate;
@@ -182,7 +184,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  // Every longer bank contains the shorter bank's prefix.  Accumulate each
  // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
  // history cells per motion hypothesis.
- for(int dr=-int(m[76]);dr<=int(m[76]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+ for(int dr=-int(m[93]);dr<=int(m[93]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
   precise double sum=0.0LF;bool compatible=true;
   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
@@ -506,7 +508,7 @@ public:
   words[73]=uint32_t(config.epoch>>32);
   words[74]=config.integrationCpis;
   words[75]=config.beamCount;
-  words[76]=config.integrationMotionBins;
+  words[76]=config.integrationDelayMotionBins;
   words[77]=config.integrationBeamTolerance;
   words[78]=tbd?1u:0u;
   words[79]=0;
@@ -521,6 +523,7 @@ public:
   words[89]=config.bearingTrainingRadius;
   words[91]=layout_.metricPartials;
   words[92]=layout_.metricPartialCount;
+  words[93]=config.integrationDopplerMotionBins;
   std::memcpy(words.data()+90,&config.bearingDiagonalLoading,4);
   putD(words.data(),68,double(config.centroidDelay));
   putD(words.data(),70,config.centroidDoppler*config.centroidDopplerResolution);
@@ -536,7 +539,8 @@ public:
     words[at+3]=uint32_t(re);
     words[at+4]=uint32_t(count);
     for(uint32_t pass=0;pass<detectorPasses;++pass){const uint32_t cpis=tbd?(pass?track_before_detect::bankLength(pass-1u):2u):config.integrationCpis;
-     const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,config.integrationMotionBins,pass):config.pfa;
+     const double pfaForPass=tbd?track_before_detect::passPfa(config.pfa,config.integrationCpis,
+      config.integrationDelayMotionBins,config.integrationDopplerMotionBins,pass):config.pfa;
      const double alpha=count?(cpis==1?count*(std::pow(pfaForPass,-1.0/count)-1):
       track_before_detect::cfarAlpha(pfaForPass,uint32_t(count),cpis)):0;
      if(!std::isfinite(alpha)||alpha<0)throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED CFAR alpha");
@@ -632,7 +636,8 @@ public:
   std::memcpy(s.data(),metadata_->mapped,sizeof(s));
   evidenceStatus_=s;
   if(s[error])throw ClutterRejected("GPU postprocess numeric rejection code="+std::to_string(s[error]));
-  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=config_.integrationMotionBins||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
+  const uint32_t motionEcho=config_.integrationDelayMotionBins|(config_.integrationDopplerMotionBins<<16u);
+  if(s[18]!=uint32_t(config_.epoch)||s[19]!=uint32_t(config_.epoch>>32)||s[20]!=(config_.detection?1u:0u)||s[21]!=rows_||s[22]!=columns_||s[27]!=config_.integrationCpis||s[29]!=motionEcho||s[30]!=config_.integrationBeamTolerance||s[31]!=config_.beamCount)throw std::runtime_error("GPU postprocess configuration echo mismatch");
   if(s[levelCells]!=layout_.cells||s[metricCells]!=layout_.cells||s[displayCells]!=layout_.cells)
    throw std::runtime_error("GPU postprocess map coverage mismatch");
   const bool tbd=config_.integrationCpis>2;
@@ -737,7 +742,7 @@ public:
   <<" device_cfar_diagnostic_records="<<s[cfarDiagnosticRecords]<<" device_centroid_diagnostic_records="<<s[centroidDiagnosticRecords]
   <<" device_compact_tile_counts="<<s[compactTileCounts]<<" device_compact_prefix_tiles="<<s[compactPrefixTiles]
   <<" device_compact_scatter_cells="<<s[compactScatterCells]<<" device_compact_kinds="<<s[compactKinds]
-  <<" integration_cpis="<<s[27]<<" integration_motion_bins="<<s[29]<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
+  <<" integration_cpis="<<s[27]<<" delay_motion_bins="<<(s[29]&0xffffu)<<" doppler_motion_bins="<<(s[29]>>16u)<<" integration_beam_tolerance="<<s[30]<<" beam_count="<<s[31]
   <<" track_before_detect="<<(config_.integrationCpis>2)<<" tbd_banks="<<(config_.integrationCpis>2?track_before_detect::bankCount(config_.integrationCpis):0)
   <<" joint_angle_tbd="<<(config_.integrationCpis>2&&config_.integrationBeamTolerance!=UINT32_MAX)
   <<" bearing_manifold="<<(config_.bearingManifoldResponses.empty()?"ideal":"measured")

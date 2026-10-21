@@ -55,7 +55,9 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  p.interpolateDelay=d.interpolateDelay;
  p.interpolateDoppler=d.interpolateDoppler;
  p.integrationCpis=d.integrationCpis;
- p.integrationMotionBins=d.integrationMotionBins;
+ const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ p.integrationDelayMotionBins=motion.delay;
+ p.integrationDopplerMotionBins=motion.doppler;
  p.integrationBeamTolerance=d.integrationBeamTolerance;
  p.beamCount=c.fusion.mode==resident::FusionMode::noncoherent?0:c.fusion.beams;
  if(c.bearing.enabled){p.bearingMethod=uint32_t(c.bearing.method);

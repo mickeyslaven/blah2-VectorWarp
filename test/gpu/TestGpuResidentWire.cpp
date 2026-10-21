@@ -1,4 +1,5 @@
 #include "GpuResidentWire.h"
+#include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <iostream>
 #include <functional>
@@ -64,11 +65,12 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
- auto tbd=coherent;tbd.detector.integrationCpis=8;tbd.detector.integrationMotionBins=1;
+ auto tbd=coherent;tbd.detector.integrationCpis=8;
+ tbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4);
  const auto tbdBytes=encodeConfig(tbd);
  const auto tbdDecoded=decodeConfig(bytes(tbdBytes),bytes(d),bytes(f));
  check(encodeConfig(tbdDecoded)==tbdBytes&&tbdDecoded.detector.integrationCpis==8&&
-  tbdDecoded.detector.integrationMotionBins==1,
+  tbdDecoded.detector.integrationMotionBins==track_before_detect::encodeMotionBins(1,4),
   "Track-before-detect configuration did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
