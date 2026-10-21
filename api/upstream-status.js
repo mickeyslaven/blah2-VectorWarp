@@ -1,6 +1,7 @@
 'use strict';
 
 const net = require('net');
+const {normalizeAdcHeadroom} = require('./kraken-adc-headroom');
 const finite = value => typeof value === 'number' && Number.isFinite(value) ? value : null;
 
 function compareKrakenStatus(config, live) {
@@ -11,6 +12,9 @@ function compareKrakenStatus(config, live) {
     ...(config.capture.device.heimdall?.gain === undefined || config.capture.device.heimdall?.gain === 'keep' ? {} : {gain: config.capture.device.heimdall.gain}),
     mode: 'coherent'
   };
+  let adcHeadroom = null;
+  try { adcHeadroom = normalizeAdcHeadroom(live.adc_headroom, live.num_channels); }
+  catch (_) { adcHeadroom = {malformed: true}; }
   const actual = {
     centerFrequency: finite(live.settings?.center_freq),
     sampleRate: finite(live.settings?.sample_rate),
@@ -21,7 +25,8 @@ function compareKrakenStatus(config, live) {
     reconfiguring: live.reconfiguring === true,
     recovering: live.recovering === true,
     cooldownActive: live.cooldown_active === true,
-    calibrationState: live.calibration_state || null
+    calibrationState: live.calibration_state || null,
+    adcHeadroom
   };
   const issues = [];
   const mismatch = (field, label, wanted, found) => {
@@ -53,6 +58,9 @@ function compareKrakenStatus(config, live) {
       expected: 'ready', actual: actual.reconfiguring ? 'reconfiguring' :
         actual.recovering ? 'recovering coherence' : 'calibrating',
       severity: 'warning'});
+  if (actual.adcHeadroom?.malformed)
+    issues.push({field: 'capture.device.heimdall', label: 'Raw ADC headroom',
+      expected: 'valid telemetry', actual: 'malformed', severity: 'error'});
   const calibration = String(actual.calibrationState || '').toUpperCase();
   if (calibration && !['CALIBRATED', 'CONVERGED'].includes(calibration))
     issues.push({field: 'capture.device.heimdall', label: 'Calibration',

@@ -13,6 +13,7 @@ const rules = {
   'capture.device.heimdall.port': integer(1, 65535),
   'capture.device.heimdall.control_port': {...integer(1, 65535), optional: true},
   'capture.device.heimdall.gain': {type: 'gain', optional: true},
+  'capture.device.heimdall.channel_gains': {type: 'array', optional: true},
   'capture.device.heimdall.gain_control': {type: 'string', choices: ['fixed', 'measured'], optional: true},
   'capture.device.agcSetPoint': integer(-72, 0),
   'capture.device.bandwidthNumber': {type: 'number', choices: [0,5,50,100]},
@@ -118,7 +119,10 @@ const rules = {
 for (const group of ['ambiguity', 'clutter']) {
   for (const name of ['delayMin', 'delayMax', ...(group === 'ambiguity' ?
     ['dopplerMin', 'dopplerMax'] : [])])
-    rules[`process.${group}.${name}`] = integer(-2147483648, 2147483647);
+    rules[`process.${group}.${name}`] = {
+      ...integer(-2147483648, 2147483647),
+      ...(group === 'clutter' ? {optional: true} : {})
+    };
 }
 for (const name of ['api','map','detection','track','bearing','manifold','timestamp','timing','iqdata','config'])
   rules[`network.ports.${name}`] = {...integer(1, 65535), ...(name === 'config' ?
@@ -132,6 +136,7 @@ for (const site of ['rx','tx']) {
 }
 for (const name of ['capture.replay.state','capture.replay.loop',
   'capture.device.dabNotch','capture.device.rfNotch','process.clutter.enable',
+  'process.clutter.followAmbiguity',
   'process.detection.enable','process.tracker.enable','truth.adsb.enabled',
   'truth.ais.enabled','save.iq','save.map','save.detection','save.timing'])
   rules[name] = {type: 'boolean'};

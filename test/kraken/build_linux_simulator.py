@@ -21,8 +21,11 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 SONAME = 'libvectorwarp-simulated-rtlsdr.so'
 FAKE = ROOT / 'test/macos/kraken/fake_rtlsdr.cpp'
+LINUX_DRIVER_FLAGS = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
+                      '-DDETACH_KERNEL_DRIVER=ON', '-DWITH_RPC=OFF']
 PINS = ROOT / 'config/kraken-macos-sources.json'
 PATCHES = [ROOT / 'script/patches/heimdall-v2-macos.patch',
+           ROOT / 'script/patches/heimdall-v2-coherent-channel-gains.patch',
            ROOT / 'script/patches/kraken-librtlsdr-macos.patch']
 
 
@@ -150,19 +153,22 @@ def build(args):
     shutil.copytree(trees['uwebsockets'], native / 'uWebSockets', dirs_exist_ok=True)
     shutil.copytree(trees['usockets'], native / 'uWebSockets/uSockets', dirs_exist_ok=True)
     apply_patch(suite, PATCHES[0])
+    apply_patch(suite, PATCHES[1])
     driver = suite / 'librtlsdr'
     if driver.exists():
         shutil.rmtree(driver)
     shutil.copytree(trees['rtlsdr'], driver)
-    apply_patch(driver, PATCHES[1])
+    apply_patch(driver, PATCHES[2])
     for test in ('convergence_oracle_test.py', 'tcp_data_send_test.py',
                  'tcp_data_backpressure_test.py', 'socket_lifecycle_test.py',
                  'watchdog_oracle_test.py'):
         run([sys.executable, ROOT / 'test/macos/kraken' / test, '--source', native])
     for test in ('control_reader_test.py', 'driver_events_test.py', 'shutdown_process_test.py'):
         run([sys.executable, ROOT / 'test/macos/kraken' / test, '-v'])
-    flags = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
-             '-DDETACH_KERNEL_DRIVER=OFF', '-DWITH_RPC=OFF']
+    # A production Linux receiver must reclaim RTL2832 devices after a clean
+    # service restart. Without this option librtlsdr reports every tuner as
+    # claimed by dvb_usb_rtl28xxu and Heimdall exits before opening its ports.
+    flags = LINUX_DRIVER_FLAGS
     run(['cmake', '-S', driver, '-B', driver / 'build', '-G', 'Unix Makefiles', *flags])
     run(['cmake', '--build', driver / 'build', '--target', 'rtlsdr_static', '--parallel', args.jobs])
     run(['make', 'WITH_SSL=0', f'-j{args.jobs}'], cwd=native / 'uWebSockets/uSockets')
