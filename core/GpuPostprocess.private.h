@@ -589,11 +589,14 @@ public:
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
-  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8,
-   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-  auto* history=static_cast<double*>(integration_->mapped);
-  std::fill(history,history+layout_.cells*(tbd?config.integrationCpis:1u),std::numeric_limits<double>::quiet_NaN());
-  integration_->flush(0,integration_->bytes);
+  const uint64_t integrationBytes=uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8;
+  integration_=tbd?std::make_unique<Buffer>(context,integrationBytes,
+   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT):
+   std::make_unique<Buffer>(context,integrationBytes,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  if(!tbd){auto* history=static_cast<double*>(integration_->mapped);
+   std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
+   integration_->flush(0,integration_->bytes);}
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   const uint64_t angleWords=track_before_detect::angleHistoryWords(layout_.cells,
