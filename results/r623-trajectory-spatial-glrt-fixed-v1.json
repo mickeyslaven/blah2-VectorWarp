@@ -1,0 +1,191 @@
+{
+  "schema": "vectorwarp-spatial-glrt-v1",
+  "frames": 20,
+  "target_cells": [
+    {
+      "frame": 0,
+      "row": 12,
+      "column": 9,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 1,
+      "row": 12,
+      "column": 9,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 2,
+      "row": 12,
+      "column": 9,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 3,
+      "row": 12,
+      "column": 10,
+      "delay_km": 42.4705982166,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 4,
+      "row": 12,
+      "column": 10,
+      "delay_km": 42.4705982166,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 5,
+      "row": 12,
+      "column": 10,
+      "delay_km": 42.4705982166,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 6,
+      "row": 12,
+      "column": 11,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 7,
+      "row": 12,
+      "column": 11,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 8,
+      "row": 12,
+      "column": 11,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 9,
+      "row": 12,
+      "column": 12,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 10,
+      "row": 12,
+      "column": 12,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 11,
+      "row": 12,
+      "column": 12,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 12,
+      "row": 12,
+      "column": 13,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 13,
+      "row": 12,
+      "column": 13,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 14,
+      "row": 12,
+      "column": 13,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 15,
+      "row": 12,
+      "column": 14,
+      "delay_km": 42.9702523133,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 16,
+      "row": 12,
+      "column": 14,
+      "delay_km": 42.9702523133,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 17,
+      "row": 12,
+      "column": 15,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 18,
+      "row": 12,
+      "column": 15,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -152.0511905674
+    },
+    {
+      "frame": 19,
+      "row": 12,
+      "column": 15,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -152.0511905674
+    }
+  ],
+  "configuration": {
+    "guard_radius": 2,
+    "training_radius": 5,
+    "diagonal_loading": 0.3,
+    "beam_trials": 12,
+    "beam_policy": "fixed"
+  },
+  "target_score": 0.8112546513080983,
+  "control_p99": 1.3161869716092334,
+  "margin_over_control_p99_db": -2.1016038775166828,
+  "controls": 450,
+  "controls_exceeding_target": 279,
+  "target_beam_votes": [
+    10,
+    10,
+    3,
+    11,
+    10,
+    6,
+    3,
+    10,
+    9,
+    10,
+    9,
+    3,
+    3,
+    8,
+    10,
+    3,
+    10,
+    10,
+    3,
+    7
+  ],
+  "target_fixed_beam": 10,
+  "target_covariance_samples_per_frame": 96,
+  "trajectory": "results/r623-clip-truth.json",
+  "hex": "a1f850",
+  "truth": {
+    "flight": "",
+    "outcome": "no_radar_return",
+    "delay": 40.64460718381377,
+    "doppler": -146.48952415166036
+  },
+  "candidate_only": true
+}

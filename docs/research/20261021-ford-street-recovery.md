@@ -70,8 +70,42 @@ injector, and global-tail analyzer as the acceptance harness for longer captures
 
 The final check used the newly captured r623 clip for the newest confirmed miss,
 hex a1f850. It also has zero truth-near plots/tracks. Its calibrated 8-CPI cell is
-5.66 dB below resident CFAR, 1.73 dB below the complex-cutout control p99, and the
-20-frame exact ADS-B trajectory is only +0.22 dB over its local background. The
-blind geometric path score is 1.00 dB below matched controls. This independently
-confirms the same limiting condition in fresh IQ: there is no separable radar echo
-to recover without accepting many unrelated peaks.
+5.66 dB below resident CFAR and 1.73 dB below the complex-cutout control p99 at
+the event's initial truth cell. Those point estimates are retained as historical
+results but superseded by the signal-time trajectory correction below. The blind
+geometric path score was 1.00 dB below matched controls. The corrected trajectory
+test independently confirms the same limiting condition in fresh IQ: there is no
+separable radar echo to recover without accepting many unrelated peaks.
+
+## Acquisition loss budget and signal-time truth correction
+
+The raw-MCHQ loss audit compares r277 with r623 using identical measurements. Both
+recordings are calibrated (`phaseState=4`), have stable metadata, zero sample-lag
+span between channels, no meaningful clipping, and about 0.005–0.010 rad of
+block-to-block relative phase dispersion. The array principal component contains
+97.7% of r277 power and 96.7% of r623 power. Held-out common-signal prediction is
+27–32 dB for r277 and 27–30 dB for r623. The receiver is therefore not losing the
+miss through clipping, a sample slip, or broken array coherence.
+
+The clips contain a 2.4 MHz complex slice of a 6 MHz television channel. Complete
+ATSC waveform reconstruction is impossible from these stored samples; 60% of the
+channel was never captured. A full decoder/remodulator is therefore not a valid
+software-only recovery path for these artifacts.
+
+The retained eligibility events exposed an error in the earlier offline oracle:
+the event's initial delay/Doppler was reused throughout a later clip. New
+`vectorwarp-clip-truth-trajectory-v1` artifacts interpolate the retained ADS-B
+position samples at each CPI's signal time. For example, r12 moves from 21.44 km /
+-33.7 Hz to 22.19 km / -117.8 Hz during its ten-second clip; r623 moves from
+42.29 km / -151.4 Hz to 43.12 km / -152.1 Hz. Corrected replays use cutouts that
+cover those complete trajectories. They still produce zero truth-near plots.
+
+A migration-corrected complex trajectory search is rejected because the r277
+positive control falls 0.20 dB below its control p99, showing that target phase is
+not stable enough across CPIs. A local covariance-whitened spatial GLRT is more
+promising as a future detector: with one fixed beam across the dwell it places
+r277 11.38 dB above its control p99. However, after freezing its parameters on
+r277 and applying exact signal-time truth, r12 is -1.43 dB, r94 -1.50 dB, and
+r623 -2.10 dB. Their selected beams also vary substantially frame to frame. This
+method retains the real positive but does not recover any miss, so it remains an
+offline candidate and is not deployed.
