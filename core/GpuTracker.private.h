@@ -20,7 +20,8 @@ struct TrackerOutputs {uint32_t* checkpoint=nullptr;
 size_t wordCapacity=0;
 TrackerResult* result=nullptr;};
 namespace gpu_tracker {
-constexpr uint32_t headerWords=32,displayHistory=100,statusWords=64,workWords=12;
+constexpr uint32_t headerWords=32,displayHistory=100,statusWords=65,workWords=12,
+ clutterHeaderWords=10;
 struct Admission {uint32_t bankWords=0,recordWords=0,historyCount=0,nAcc=0,hypotheses=0;
 uint64_t stageBytes=0,totalBytes=0;
 double resolution=0;};
@@ -46,7 +47,8 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!std::isfinite(a.resolution*double(a.nAcc))||!std::isfinite(1/c.cpi))throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED derived configuration");
  a.bankWords=headerWords+a.recordWords*c.capacity;
  a.stageBytes=uint64_t(statusWords+uint64_t(workWords)*c.capacity)*4;
- a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes+(c.stationaryClutter?uint64_t(cells+4)*4:16);
+ a.totalBytes=uint64_t(a.bankWords)*8+a.stageBytes+
+  (c.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16);
  if(uint64_t(a.bankWords)*4>SIZE_MAX||a.stageBytes>SIZE_MAX){throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED host byte capacity");}
  return a;
 }
@@ -85,7 +87,7 @@ void writeM(uint at,double value){uvec2 q=unpackDouble2x32(value);m[at]=q.x;m[at
 uint historyCapacity(){return max(m[40],100u);}
 uint recordWords(){return 16u+8u*historyCapacity();}
 uint record(uint i){return 32u+recordWords()*i;}
-uint work(uint i){return 64u+12u*i;}
+uint work(uint i){return 65u+12u*i;}
 uint detectionSpatial(uint i){uint cell=s[post[41]+i],direction=s[post[86]+cell];
  if((direction&0x80000000u)!=0u)return direction;
  uint flags=s[post[39]+cell],coarse=(flags>>8u)&511u,fine=(flags>>17u)&2047u,quality=(flags>>28u)&15u;
@@ -108,16 +110,39 @@ bool bearingCompatible(uint trackSpatial,uint detectionSpatialValue){uint beams=
 bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
 uint hypothesisCount(){return m[38]&0x7fffffffu;}
 bool clutterAware(){return clutterPersistence[0]!=0u;}
+uint clutterStreak(uint bin){
+ uint packed=clutterPersistence[10u+bin],streak=packed&65535u;
+ uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
+ uint missed=age>0u?age-1u:0u;
+ return packed==0u||missed>=streak?0u:streak-missed;
+}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
  if(abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
  if(cell>=m[4]||post[33]==0u)return false;uint bin=cell%post[33];
- uint packed=clutterPersistence[4u+bin],streak=packed&65535u;
- uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
- uint missed=age>0u?age-1u:0u;
- uint effective=packed==0u||missed>=streak?0u:streak-missed;
- return effective<clutterPersistence[1];}
+ return clutterStreak(bin)<clutterPersistence[1];}
+bool retireStationaryTrack(uint r,uint match){
+ if(!clutterAware()||match==0xffffffffu)return false;
+ uint samples=clutterPersistence[4],minimumAssociated=clutterPersistence[5];
+ uint ringBits=src(r+13u),head=ringBits&255u,length=(ringBits>>8u)&255u,h=historyCapacity();
+ if(samples<2u||samples>h||length+1u<samples||minimumAssociated>samples)return false;
+ uint detectionAt=m[5]+8u*match,cell=s[post[41]+match];
+ if(cell>=m[4]||post[33]==0u)return false;
+ uint bin=cell%post[33];if(clutterStreak(bin)<clutterPersistence[1])return false;
+ double maximum=packDouble2x32(uvec2(clutterPersistence[6],clutterPersistence[7]));
+ double maximumSpan=packDouble2x32(uvec2(clutterPersistence[8],clutterPersistence[9]));
+ double newestDelay=sd(detectionAt),newestDoppler=sd(detectionAt+2u);
+ if(abs(newestDoppler)>maximum)return false;
+ double minimumDelay=newestDelay,maximumDelay=newestDelay;uint associated=1u;
+ uint first=length-(samples-1u);
+ for(uint j=first;j<length;++j){uint at=r+16u+8u*((head+j)%h);
+  double delay=sourceD(at),doppler=sourceD(at+2u);uint state=src(at+6u);
+  if(!finiteD(delay)||!finiteD(doppler)||abs(doppler)>maximum)return false;
+  minimumDelay=min(minimumDelay,delay);maximumDelay=max(maximumDelay,delay);
+  if(state==1u||state==2u)associated++;}
+ return associated>=minimumAssociated&&maximumDelay-minimumDelay<=maximumSpan;
+}
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
  put(0u,1u);put(1u,recordWords()*4u);put(2u,m[3]);put(3u,historyCapacity());put(4u,count);
@@ -192,7 +217,8 @@ void main(){uint lane=gl_LocalInvocationID.x;if(m[0]!=0u||m[2]!=2u)return;
    if(match!=0xffffffffu){precise double updated=adaptiveTentative&&src(r+10u)>0u?
      sourceD(r+6u)+(sd(m[5]+8u*match+2u)-md(w+2u))/gateTime:
      (sd(m[5]+8u*match+2u)-sourceD(r+2u))/md(50u);
-    if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;}
+    if(!finiteD(updated))reject(306u);acc=updated;s[m[6]+match]=1u;state=(state==2u||state==3u)?2u:1u;m[27]++;
+    if(retireStationaryTrack(r,match)){alive=false;m[29]++;m[64]++;}}
    else{state=state==2u?3u:(state==1u?0u:state);alive=!greater64(plusOne(pairS(r+10u)),uvec2(m[41],0u));m[28]++;if(!alive)m[29]++;}
    m[w+4u]=match;m[w+5u]=alive?m[20]++:0xffffffffu;m[w+6u]=state;m[w+7u]=alive?1u:0u;writeM(w+8u,acc);m[w+10u]=0u;m[w+11u]=0u;m[55]++;
   }
@@ -235,7 +261,7 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
  // Stationary multipath jitters between nearby zero-Doppler rows. Accumulate
  // it by delay bin so row jitter cannot continually reset site learning.
- uint index=4u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
+ uint index=10u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
  while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)return;
   uint age=(current-last)&65535u,missed=age>0u?age-1u:0u;
   uint decayed=prior==0u||missed>=streak?0u:streak-missed;
@@ -413,7 +439,7 @@ class Stage {
      uint64_t(s[33])+s[34]+s[35]+s[36]!=s[54]||s[32]!=s[34]+s[35]+s[36])throw std::runtime_error("GPU tracker snapshot coverage mismatch");
   if(s[2]==1){for(uint32_t k=26;k<=31;++k)if(s[k])throw std::runtime_error("GPU tracker no-op performed tracking work");
    if(s[55]||s[56]||s[57]||s[54]!=s[18])throw std::runtime_error("GPU tracker no-op coverage mismatch");}
- else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]>s[19]||s[21]>s[19]-s[27]||s[29]>s[28]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
+ else if(s[2]!=2||s[26]!=s[18]||s[27]+s[28]!=s[18]||s[27]>s[19]||s[21]>s[19]-s[27]||s[29]>s[18]||s[64]>s[29]||s[20]!=s[18]-s[29]||s[55]!=s[18]||
     s[57]!=s[19]||s[56]!=(s[19]+127)/128||s[30]!=s[22]||s[31]!=s[23]||s[23]!=s[20]+s[22]||s[54]!=s[23])
    throw std::runtime_error("GPU tracker executed-work coverage mismatch");
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
@@ -440,7 +466,7 @@ class Stage {
  }
  void logPrepared(const std::array<uint32_t,statusWords>& s){context_.diagnostics.stream()<<std::setprecision(12)<<"GPU_TRACKER_PREPARED transaction="<<pendingToken_.transaction<<" generation="<<pendingToken_.generation<<" consumed_sequence="<<pendingToken_.consumedSequence<<" epoch="<<config_.epoch
   <<" device_generation_low="<<s[52]<<" device_generation_high="<<s[53]<<" noop="<<(s[2]==1)<<" capacity="<<config_.capacity<<" tracks="<<s[54]<<" detections="<<s[19]<<" adaptive_gate="<<config_.adaptiveGate<<" acceleration_hypotheses="<<admission_.hypotheses<<" device_predicted="<<s[26]<<" device_associated="<<s[27]<<" device_missed="<<s[28]<<" device_removed="<<s[29]<<" device_initiated="<<s[30]
-  <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
+  <<" device_retained_history_appends="<<s[31]<<" device_published="<<s[32]<<" device_stationary_retired="<<s[64]<<" device_association_visits="<<s[55]<<" device_unmatched_tiles="<<s[56]<<" device_detection_checks="<<s[57]<<" device_validated_records="<<s[54]<<" checkpoint_words="<<s[24];
   if(s[2]==2){const auto admission=boundInitiations(config_.capacity,s[20],s[21],admission_.hypotheses);
    context_.diagnostics.stream()<<" unmatched_detections="<<admission.unmatched
     <<" stationary_clutter_suppressed="<<(s[19]-s[27]-admission.unmatched)
@@ -461,19 +487,25 @@ public:
      uint64_t(layout.keep)+cells>layout.indices||uint64_t(layout.indices)+cells>layout.candidates||
      uint64_t(layout.candidates)+cells+(uint64_t(cells)+127)/128>layout.records||uint64_t(layout.records)+uint64_t(cells)*8>layout.bytes/4||
      post.handle==scratch.handle||
-     std::max({uint64_t(admission_.bankWords)*4,admission_.stageBytes,config.stationaryClutter?uint64_t(cells+4)*4:16})>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<6||limit.maxDescriptorSetStorageBuffers<6)
+     std::max({uint64_t(admission_.bankWords)*4,admission_.stageBytes,config.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16})>limit.maxStorageBufferRange||limit.maxComputeSharedMemorySize<2048||limit.maxPerStageDescriptorStorageBuffers<6||limit.maxDescriptorSetStorageBuffers<6)
    throw std::invalid_argument("GPU_TRACKER_UNSUPPORTED buffers or device limits");
   constexpr auto host=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
   constexpr auto preferred=VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
   banks_[0]=std::make_unique<Buffer>(context,uint64_t(admission_.bankWords)*4,host,preferred);
   banks_[1]=std::make_unique<Buffer>(context,uint64_t(admission_.bankWords)*4,host,preferred);
   metadata_=std::make_unique<Buffer>(context,admission_.stageBytes,host,preferred);
-  clutterPersistence_=std::make_unique<Buffer>(context,config.stationaryClutter?uint64_t(cells+4)*4:16,host,preferred);
+  clutterPersistence_=std::make_unique<Buffer>(context,config.stationaryClutter?uint64_t(cells+clutterHeaderWords)*4:16,host,preferred);
   std::memset(clutterPersistence_->mapped,0,size_t(clutterPersistence_->bytes));
   auto* persistence=static_cast<uint32_t*>(clutterPersistence_->mapped);
   persistence[0]=config.stationaryClutter;
   persistence[1]=config.stationaryPersistenceCpis;
   std::memcpy(persistence+2,&config.stationaryMaxDopplerHz,8);
+  const auto retirement=stationaryRetirementPolicy(config.stationaryClutter,
+    config.stationaryMaxDopplerHz);
+  persistence[4]=retirement.samples;
+  persistence[5]=retirement.minimumAssociated;
+  std::memcpy(persistence+6,&retirement.maxDopplerHz,8);
+  std::memcpy(persistence+8,&retirement.maxDelaySpan,8);
   clutterPersistence_->flush(0,clutterPersistence_->bytes);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),banks_[0].get(),banks_[1].get(),&scratch_,&post_,clutterPersistence_.get()}));
