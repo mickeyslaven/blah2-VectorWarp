@@ -120,7 +120,7 @@ try {
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
   fusion.process.detection.track_before_detect = {enable: true, max_cpis: 4, motion_bins: 0,
-    delay_motion_bins: 1, doppler_motion_bins: 4};
+    delay_motion_bins: 2, doppler_motion_bins: 16};
   fusion.process.tracker.beam_tolerance = 1;
   fusion.capture.device.array_geometry = {
     shape: 'regular_polygon', units: 'm', coordinate_frame: 'array_xy_right_handed',

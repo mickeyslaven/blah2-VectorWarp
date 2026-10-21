@@ -8,14 +8,14 @@ namespace track_before_detect {
 constexpr uint32_t splitMotionFlag = 0x80000000u;
 struct MotionBins { uint32_t delay=0,doppler=0; };
 inline uint32_t encodeMotionBins(uint32_t delay,uint32_t doppler){
-  if(delay>1||doppler>4)throw std::invalid_argument("Track-before-detect motion bins invalid");
+  if(delay>2||doppler>16)throw std::invalid_argument("Track-before-detect motion bins invalid");
   return splitMotionFlag|(doppler<<8)|delay;
 }
 inline MotionBins decodeMotionBins(uint32_t value){
   if(!(value&splitMotionFlag))return {value,value};
-  if(value&~(splitMotionFlag|0x00000f01u))throw std::invalid_argument("Track-before-detect motion encoding invalid");
+  if(value&~(splitMotionFlag|0x00001f03u))throw std::invalid_argument("Track-before-detect motion encoding invalid");
   MotionBins result{value&0xffu,(value>>8)&0xffu};
-  if(result.delay>1||result.doppler>4)throw std::invalid_argument("Track-before-detect motion bins invalid");
+  if(result.delay>2||result.doppler>16)throw std::invalid_argument("Track-before-detect motion bins invalid");
   return result;
 }
 inline bool validMaximum(uint32_t value) { return value == 4 || value == 8; }

@@ -85,7 +85,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
-    c.integrationDelayMotionBins>1||c.integrationDopplerMotionBins>(tbd?4u:1u)||
+    c.integrationDelayMotionBins>(tbd?2u:1u)||c.integrationDopplerMotionBins>(tbd?16u:1u)||
     (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
     (tbd&&(!c.detection||!c.beamCount))||
     (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
@@ -175,33 +175,34 @@ bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||lef
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
- double best2=0.0LF,best4=0.0LF,best8=0.0LF,selected=0.0LF;
- if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
-  uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
-   0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
-  if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;selected=max(0.0LF,baseline);
- }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
- // Every longer bank contains the shorter bank's prefix.  Accumulate each
- // trajectory once and snapshot it at 2/4/8 CPIs instead of rereading 14
- // history cells per motion hypothesis.
- for(int dr=-int(m[93]);dr<=int(m[93]);++dr)for(int dc=-int(m[76]);dc<=int(m[76]);++dc){
+ if(p.a==0u){
+  if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
+   uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
+    0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
+   if(baseline>=0.0LF&&!finiteD(baseline)){reject(208u);return;}tbdBanks[i]=baseline;
+  }else tbdBanks[i]=packDouble2x32(uvec2(0u,0x7ff80000u));
+  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
+   tbdBanks[(bank+1u)*m[34]+i]=available>=length?0.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
+  return;
+ }
+ // One dispatch covers one motion trajectory across the entire map. The host
+ // inserts a device-memory barrier between trajectories, so every invocation
+ // can update its cell without atomics or a trajectory-sized scratch buffer.
+ if(p.a==1u){int dr=int(p.b)-int(m[93]),dc=int(p.c)-int(m[76]);
   precise double sum=0.0LF;bool compatible=true;
   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
    uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
    double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
    if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
-   if(length==2u)best2=max(best2,sum/2.0LF);
-   else if(length==4u)best4=max(best4,sum/4.0LF);
-   else if(length==8u)best8=max(best8,sum/8.0LF);
-  }
+   if((length==2u||length==4u||length==8u)&&length<=m[74]){uint bank=length==2u?0u:(length==4u?1u:2u);
+    double candidate=sum/double(length),prior=tbdBanks[(bank+1u)*m[34]+i];
+    if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+  }return;
  }
- for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;
-  double best=bank==0u?best2:(bank==1u?best4:best8);
-  if(available>=length){if(!finiteD(best)){reject(208u);return;}
-   tbdBanks[(bank+1u)*m[34]+i]=best;selected=max(selected,best);}
-  else tbdBanks[(bank+1u)*m[34]+i]=packDouble2x32(uvec2(0u,0x7ff80000u));}
- if(available<2u)selected=currentPower[i];
+ double selected=available<2u?currentPower[i]:max(0.0LF,tbdBanks[i]);
+ for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;if(available>=length){
+  double best=tbdBanks[(bank+1u)*m[34]+i];if(!finiteD(best)){reject(208u);return;}selected=max(selected,best);}}
  double amplitude=sqrt(max(selected,0.0LF));double level=amplitude<=1e-30LF?-300.0LF:10.0LF*positiveLog10(amplitude);
  if(!finiteD(level)||!finiteD(selected)){reject(209u);return;}
  writeS(m[36]+2u*i,level);writeS(m[37]+2u*i,selected);
@@ -600,7 +601,13 @@ public:
   timestamps_->begin(command,0);
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);
-  if(tbd){kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);}
+  if(tbd){
+   kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);
+   for(uint32_t dr=0;dr<=2u*config_.integrationDopplerMotionBins;++dr)
+    for(uint32_t dc=0;dc<=2u*config_.integrationDelayMotionBins;++dc){
+     kernels_[10]->append(command,{layout_.cells,1,dr,dc,0});barrier(command);}
+   kernels_[10]->append(command,{layout_.cells,2,0,0,0});barrier(command);
+  }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}
   kernels_[1]->append(command,{layout_.cells,0,0,0,0});

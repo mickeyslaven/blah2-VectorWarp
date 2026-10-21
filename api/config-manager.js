@@ -505,11 +505,11 @@ function validateConfig(config, baseline = null) {
     if (trackBeforeDetect.delay_motion_bins !== undefined)
       number(trackBeforeDetect.delay_motion_bins,
         'process.detection.track_before_detect.delay_motion_bins',
-        {integer: true, min: 0, max: 1});
+        {integer: true, min: 0, max: 2});
     if (trackBeforeDetect.doppler_motion_bins !== undefined)
       number(trackBeforeDetect.doppler_motion_bins,
         'process.detection.track_before_detect.doppler_motion_bins',
-        {integer: true, min: 0, max: 4});
+        {integer: true, min: 0, max: 16});
   }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&

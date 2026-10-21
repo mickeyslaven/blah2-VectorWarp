@@ -24,10 +24,14 @@ int main() try {
     "Unexpected multi-timescale bank lengths");
   check(trialCount(8, 1, 1) == 27, "Legacy motion-path trial correction changed");
   check(trialCount(8, 1, 4) == 81, "Split Doppler-path trial correction changed");
+  check(trialCount(8, 2, 16) == 495, "Expanded motion-path trial correction changed");
   const auto encoded = encodeMotionBins(1, 4);
   const auto decoded = decodeMotionBins(encoded);
   check(decoded.delay == 1 && decoded.doppler == 4,
     "Split delay/Doppler motion encoding changed");
+  const auto expanded = decodeMotionBins(encodeMotionBins(2, 16));
+  check(expanded.delay == 2 && expanded.doppler == 16,
+    "Expanded delay/Doppler motion encoding changed");
   check(angleHistoryWords(307111, 8, UINT32_MAX) == 1,
     "Disabled angle consistency retained a production-size GPU allocation");
   check(angleHistoryWords(307111, 8, 1) == 2456888,

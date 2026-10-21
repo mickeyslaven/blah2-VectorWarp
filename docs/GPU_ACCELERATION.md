@@ -141,6 +141,13 @@ process:
       doppler_motion_bins: 4 # follow fast Doppler slew without wasteful delay trials
 ```
 
+The delay and Doppler axes are independently configurable up to 2 and 16 bins
+per CPI. Track-before-detect evaluates each motion trajectory as a separate
+full-map GPU dispatch, retaining exact 2/4/8-CPI sums while parallelizing the
+expensive search across all map cells. Select the smallest envelope that covers
+the site's physically eligible aircraft because every additional trajectory is
+included in the detector's multiple-hypothesis false-alarm correction.
+
 This path keeps the ordinary detector available as the default. When enabled,
 it retains the conventional two-CPI same-cell detector, keeps fused power maps
 on the GPU, searches constant-velocity paths at 2-, 4-, and optionally 8-CPI

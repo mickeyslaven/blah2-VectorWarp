@@ -736,8 +736,8 @@ try
   if(!std::isfinite(bearingMaxRateDegPerSecond)||bearingMaxRateDegPerSecond<0||bearingMaxRateDegPerSecond>360)
     throw std::invalid_argument("Bearing max_rate_deg_s must be from 0 through 360");
   if (trackBeforeDetect && (!track_before_detect::validMaximum(trackBeforeDetectCpis) ||
-      trackBeforeDetectDelayMotionBins > 1 || trackBeforeDetectDopplerMotionBins > 4))
-    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8, delay_motion_bins 0 or 1, and doppler_motion_bins 0 through 4");
+      trackBeforeDetectDelayMotionBins > 2 || trackBeforeDetectDopplerMotionBins > 16))
+    throw std::invalid_argument("Track-before-detect requires max_cpis 4 or 8, delay_motion_bins 0 through 2, and doppler_motion_bins 0 through 16");
   if (integrationBeamTolerance != UINT32_MAX &&
       (!coherentFusion || integrationBeamTolerance > coherentBeamCount / 2))
     throw std::invalid_argument("Tracker beam_tolerance requires coherent fusion and at most half the beam count");
