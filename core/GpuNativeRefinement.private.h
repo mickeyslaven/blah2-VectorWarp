@@ -326,9 +326,12 @@ public:
     : context_(context),samples_(samples),bins_(bins),channels_(channels),
       hop_(bins && bins<=fft?fft-bins+1:1),blocks_(uint32_t((uint64_t(samples)+hop_-1)/hop_)) {
     const char* solver=std::getenv("BLAH2_GPU_TOEPLITZ_SOLVER");
-    if(solver && std::string(solver)=="levinson") toeplitz_=true;
-    else if(solver && *solver) throw std::invalid_argument("BLAH2_GPU_TOEPLITZ_SOLVER must be levinson");
+    const bool forceToeplitz=solver && std::string(solver)=="levinson";
+    const bool forceDense=solver && std::string(solver)=="dense";
+    if(solver && *solver && !forceToeplitz && !forceDense)
+      throw std::invalid_argument("BLAH2_GPU_TOEPLITZ_SOLVER must be levinson or dense");
     const auto& limits=context.candidate.properties.limits;
+    toeplitz_=forceToeplitz || (!forceDense && limits.maxComputeSharedMemorySize>=22*1024);
     const uint64_t needed=requiredBytes(samples,bins,channels);
     const uint32_t sharedRequired=toeplitz_?22*1024:19*1024;
     if(needed==UINT64_MAX || limits.maxComputeSharedMemorySize<sharedRequired ||
