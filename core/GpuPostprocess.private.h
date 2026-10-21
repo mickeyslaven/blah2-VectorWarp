@@ -84,6 +84,8 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
  for(uint32_t i=0;i<rows;++i)if(!std::isfinite(c.dopplerAxis[i])||(i&&!(c.dopplerAxis[i]>c.dopplerAxis[i-1])))
   throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED unordered Doppler axis");
  const bool tbd=c.integrationCpis>2;
+ if(tbd&&l.cells>UINT32_MAX/128u)
+  throw std::invalid_argument("GPU_POSTPROCESS_UNSUPPORTED TBD workgroup count");
  if((c.integrationCpis!=1&&c.integrationCpis!=2&&c.integrationCpis!=4&&c.integrationCpis!=8)||
     c.integrationDelayMotionBins>(tbd?2u:1u)||c.integrationDopplerMotionBins>(tbd?16u:1u)||
     (!tbd&&c.integrationCpis!=2&&(c.integrationDelayMotionBins||c.integrationDopplerMotionBins))||
@@ -173,9 +175,11 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 const char* tbdBody=R"glsl(
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
-void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
+shared double pathBest2[128],pathBest4[128],pathBest8[128];
+void main(){uint i=gl_WorkGroupID.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
+  if(lane!=0u)return;
   if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
    uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
     0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
@@ -185,30 +189,32 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
    tbdBanks[(bank+1u)*m[34]+i]=available>=length?0.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
   return;
  }
- // Each dispatch covers four adjacent Doppler slopes and every delay slope
- // across the full map. This keeps the expensive cell work parallel while
- // amortizing launch/barrier overhead; dispatches remain ordered so each cell
- // can merge its chunk maximum without atomics or a trajectory-sized buffer.
- if(p.a==1u){double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
-  uint dopplerWidth=2u*m[93]+1u;
-  for(uint offset=0u;offset<4u&&p.b+offset<dopplerWidth;++offset){int dr=int(p.b+offset)-int(m[93]);
-   for(int dc=-int(m[76]);dc<=int(m[76]);++dc){precise double sum=0.0LF;bool compatible=true;
-    for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
-     if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
-     uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
-     double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
-     if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
-     if(length==2u)best2=max(best2,sum/2.0LF);
-     else if(length==4u&&m[74]>=4u)best4=max(best4,sum/4.0LF);
-     else if(length==8u&&m[74]>=8u)best8=max(best8,sum/8.0LF);
-    }
+ // One workgroup owns one map cell. Its lanes evaluate distinct motion paths
+ // concurrently, then lane zero reduces exact 2/4/8-CPI maxima in shared
+ // memory. Large configured envelopes use ordered 128-path chunks.
+ if(p.a==1u){uint delayWidth=2u*m[76]+1u,total=(2u*m[93]+1u)*delayWidth,path=p.b+lane;
+  double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
+  if(path<total){int dr=int(path/delayWidth)-int(m[93]),dc=int(path%delayWidth)-int(m[76]);
+   precise double sum=0.0LF;bool compatible=true;
+   for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
+    if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
+    uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
+    double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
+    if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
+    if(length==2u)best2=sum/2.0LF;
+    else if(length==4u&&m[74]>=4u)best4=sum/4.0LF;
+    else if(length==8u&&m[74]>=8u)best8=sum/8.0LF;
    }
   }
-  double chunkBest[3]=double[3](best2,best4,best8);
-  for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
-   if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+  pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;barrier();
+  if(lane==0u){uint count=min(128u,total-p.b);double chunkBest[3]=double[3](-1.0LF,-1.0LF,-1.0LF);
+   for(uint j=0u;j<count;++j){chunkBest[0]=max(chunkBest[0],pathBest2[j]);chunkBest[1]=max(chunkBest[1],pathBest4[j]);chunkBest[2]=max(chunkBest[2],pathBest8[j]);}
+   for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
+    if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+  }
   return;
  }
+ if(lane!=0u)return;
  double selected=available<2u?currentPower[i]:max(0.0LF,tbdBanks[i]);
  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;if(available>=length){
   double best=tbdBanks[(bank+1u)*m[34]+i];if(!finiteD(best)){reject(208u);return;}selected=max(selected,best);}}
@@ -611,11 +617,11 @@ public:
   kernels_[0]->append(command,{layout_.cells,0,0,0,0});
   barrier(command);
   if(tbd){
-   kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);
-   constexpr uint32_t dopplerSlopesPerDispatch=4;
-   for(uint32_t dr=0;dr<=2u*config_.integrationDopplerMotionBins;dr+=dopplerSlopesPerDispatch){
-    kernels_[10]->append(command,{layout_.cells,1,dr,0,0});barrier(command);}
-   kernels_[10]->append(command,{layout_.cells,2,0,0,0});barrier(command);
+   const uint32_t work=layout_.cells*128u;
+   kernels_[10]->append(command,{work,0,0,0,0});barrier(command);
+   const uint32_t trajectories=(2u*config_.integrationDelayMotionBins+1u)*(2u*config_.integrationDopplerMotionBins+1u);
+   for(uint32_t first=0;first<trajectories;first+=128u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
+   kernels_[10]->append(command,{work,2,0,0,0});barrier(command);
   }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}

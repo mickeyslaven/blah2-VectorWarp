@@ -142,10 +142,10 @@ process:
 ```
 
 The delay and Doppler axes are independently configurable up to 2 and 16 bins
-per CPI. Track-before-detect evaluates Doppler slopes in bounded four-slope
-chunks and all delay hypotheses across full-map GPU dispatches, retaining exact
-2/4/8-CPI sums while keeping the expensive search parallel across map cells and
-amortizing launch barriers. Select the smallest envelope that covers
+per CPI. Track-before-detect assigns one GPU workgroup to each map cell and
+evaluates as many as 128 delay-Doppler trajectories concurrently in its lanes,
+then reduces the exact 2/4/8-CPI maxima in shared memory. Larger envelopes use
+ordered 128-path chunks without a trajectory-sized scratch buffer. Select the smallest envelope that covers
 the site's physically eligible aircraft because every additional trajectory is
 included in the detector's multiple-hypothesis false-alarm correction.
 
