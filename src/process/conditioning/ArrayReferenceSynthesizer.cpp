@@ -28,6 +28,9 @@ ArrayReferenceSynthesizer::ArrayReferenceSynthesizer(Config config)
       config.powerIterations == 0 || config.covarianceSmoothing < 0 ||
       config.covarianceSmoothing >= 1 || config.diagonalLoading < 0)
     throw std::invalid_argument("Invalid array-reference configuration");
+  for (const auto value : config.protectionRelativeSteering)
+    if (!std::isfinite(value.real()) || !std::isfinite(value.imag()))
+      throw std::invalid_argument("Invalid target-protection steering");
 }
 
 std::unique_ptr<IqData> ArrayReferenceSynthesizer::process(
@@ -63,6 +66,9 @@ void ArrayReferenceSynthesizer::process_into(
   }
 
   const std::size_t count = channels.size();
+  if (!config.protectionRelativeSteering.empty() &&
+      config.protectionRelativeSteering.size() != count)
+    throw std::invalid_argument("Target-protection steering channel count differs");
   const bool analyze = metrics.weights.size() != count ||
     frames++ % config.analysisInterval == 0;
   if (analyze)
@@ -117,6 +123,30 @@ void ArrayReferenceSynthesizer::process_into(
         weights[channel] = config.covarianceSmoothing *
           metrics.weights[channel] + (1 - config.covarianceSmoothing) *
           weights[channel];
+      normalize(weights);
+    }
+    // Constrain the reference response to zero in one predeclared candidate
+    // direction.  The target manifold is the measured direct-path manifold
+    // rotated by its geometric relative phase, avoiding an uncalibrated ideal
+    // array assumption.  This is deliberately applied before ECA/CAF, not as
+    // a second projection of post-cancellation surveillance maps.
+    if (!config.protectionRelativeSteering.empty())
+    {
+      const auto directPathWeights = weights;
+      std::vector<std::complex<double>> target(count);
+      std::complex<double> numerator{};
+      double denominator = 0;
+      for (std::size_t channel = 0; channel < count; ++channel)
+      {
+        target[channel] = directPathWeights[channel] *
+          config.protectionRelativeSteering[channel];
+        numerator += std::conj(target[channel]) * weights[channel];
+        denominator += std::norm(target[channel]);
+      }
+      if (!(denominator > 1e-30))
+        throw std::invalid_argument("Target-protection steering is degenerate");
+      for (std::size_t channel = 0; channel < count; ++channel)
+        weights[channel] -= target[channel] * numerator / denominator;
       normalize(weights);
     }
     std::vector<std::complex<double>> projected(count);

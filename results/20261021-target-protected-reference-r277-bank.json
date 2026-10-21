@@ -1,0 +1,84 @@
+{
+  "schema": "vectorwarp-target-protected-reference-v1",
+  "assumption": "pooled non-target cells across all fixed reference-null beams are the empirical whole-search control population",
+  "beam_trials": 12,
+  "per_beam": [
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b0.json",
+      "frames": 10,
+      "target_mean_power": 91.94061464594945,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b1.json",
+      "frames": 10,
+      "target_mean_power": 43.33033565176942,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b10.json",
+      "frames": 10,
+      "target_mean_power": 21.46634299875284,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b11.json",
+      "frames": 10,
+      "target_mean_power": 24.826592340038665,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b2.json",
+      "frames": 10,
+      "target_mean_power": 24.533361272082765,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b3.json",
+      "frames": 10,
+      "target_mean_power": 21.454271770543045,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b4.json",
+      "frames": 10,
+      "target_mean_power": 21.93115431300459,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b5.json",
+      "frames": 10,
+      "target_mean_power": 24.39670199139723,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b6.json",
+      "frames": 10,
+      "target_mean_power": 25.905955505977268,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b7.json",
+      "frames": 10,
+      "target_mean_power": 22.990611280229828,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b8.json",
+      "frames": 10,
+      "target_mean_power": 22.835855416587034,
+      "control_cells": 23920
+    },
+    {
+      "path": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/target-protected-ref-r277-20261021/r277-b9.json",
+      "frames": 10,
+      "target_mean_power": 21.616299358512357,
+      "control_cells": 23920
+    }
+  ],
+  "pooled_control_cells": 287040,
+  "pooled_control_p99_power": 144.44036885505324,
+  "best_truth_cell_mean_power": 91.94061464594945,
+  "best_truth_margin_over_pooled_p99_db": -1.961811860160876,
+  "accepted": false
+}

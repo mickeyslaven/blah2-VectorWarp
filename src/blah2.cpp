@@ -691,6 +691,42 @@ try
       node["covariance_smoothing"] >> referenceConfig.covarianceSmoothing;
     if (node.has_child("diagonal_loading"))
       node["diagonal_loading"] >> referenceConfig.diagonalLoading;
+    // Offline target-protected reference experiment.  A caller selects a
+    // member of a fixed, complete azimuth bank; it never consumes ADS-B truth
+    // at runtime.  The chosen direction is nulled in the reference before
+    // ECA/CAF, while the measured eigenbeam remains the direct-path anchor.
+    if (node.has_child("target_protection_beams") ||
+        node.has_child("target_protection_beam_index"))
+    {
+      if (!state)
+        throw std::invalid_argument("Target-protection reference is replay-only");
+      uint32_t beams = 0, index = 0;
+      if (node.has_child("target_protection_beams"))
+        node["target_protection_beams"] >> beams;
+      if (node.has_child("target_protection_beam_index"))
+        node["target_protection_beam_index"] >> index;
+      if (beams < 4 || beams > 360 || index >= beams ||
+          coherentPositions.empty())
+        throw std::invalid_argument("Invalid target-protection beam-bank configuration");
+      const double targetAzimuth = 2 * std::acos(-1.0) * double(index) / double(beams);
+      const double directX = std::cos(directPathAzimuthRad);
+      const double directY = std::sin(directPathAzimuthRad);
+      const double targetX = std::cos(targetAzimuth);
+      const double targetY = std::sin(targetAzimuth);
+      const double waveNumber = 2 * std::acos(-1.0) * double(fc) / 299792458.0;
+      referenceConfig.protectionRelativeSteering.reserve(coherentPositions.size());
+      for (const auto& position : coherentPositions)
+      {
+        const double relativePhase = waveNumber *
+          (position[0] * (targetX - directX) +
+           position[1] * (targetY - directY));
+        referenceConfig.protectionRelativeSteering.push_back(
+          std::polar(1.0, -relativePhase));
+      }
+      std::cout << "[ReferenceSynthesis] target_protection_beam=" << index
+        << "/" << beams << " azimuth_deg=" <<
+        targetAzimuth * 180.0 / std::acos(-1.0) << "\n";
+    }
   }
   ArrayReferenceSynthesizer referenceSynthesizer(referenceConfig);
   uint64_t reportedReferenceUpdate = 0;
