@@ -94,9 +94,13 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   const legacy = JSON.parse(fs.readFileSync(filename, 'utf8'));
   legacy.schema = 'vectorwarp-evidence-statistics-v1';
   delete legacy.sites;
+  legacy.eligibilityEvents[0].capture_state = 'trigger_pending';
   fs.writeFileSync(filename, JSON.stringify(legacy));
   const recovered = new EvidenceStatistics(config, source, {filename, now: () => clock});
   assert.equal(recovered.status().windows.lifetime.tracked_passes, 1);
+  assert.equal(recovered.status().eligibility_events[0].capture_state, 'failed');
+  assert.equal(recovered.status().eligibility_events[0].capture_failure,
+    'API restarted before capture acknowledgement');
   recovered.close();
   assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).schema,
     'vectorwarp-evidence-statistics-v2');

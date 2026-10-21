@@ -224,6 +224,14 @@ class EvidenceStatistics {
       this.state = {...this.state, ...value, schema: this.state.schema,
         eligibilityEvents: Array.isArray(value.eligibilityEvents) ? value.eligibilityEvents : [],
         sites: {...(value.sites || {}), [this.key]: siteDescriptor(this.config)}, error: null};
+      // Capture requests are intentionally process-local and bounded. After an
+      // API restart no native recorder can still acknowledge the old queue, so
+      // never leave its evidence ledger permanently claiming a pending clip.
+      for (const event of this.state.eligibilityEvents) {
+        if (event.capture_state !== 'trigger_pending') continue;
+        event.capture_state = 'failed';
+        event.capture_failure = 'API restarted before capture acknowledgement';
+      }
       for (const pass of [...this.state.passes, ...Object.values(this.state.active)])
         if (!pass.id) pass.id = passId(pass.siteKey, pass.hex, pass.startedAt);
       this.trimEligibilityEvents();
