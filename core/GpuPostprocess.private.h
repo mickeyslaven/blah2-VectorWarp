@@ -207,8 +207,15 @@ void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_
    }
   }
   pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;barrier();
-  if(lane==0u){uint count=min(64u,total-p.b);double chunkBest[3]=double[3](-1.0LF,-1.0LF,-1.0LF);
-   for(uint j=0u;j<count;++j){chunkBest[0]=max(chunkBest[0],pathBest2[j]);chunkBest[1]=max(chunkBest[1],pathBest4[j]);chunkBest[2]=max(chunkBest[2],pathBest8[j]);}
+  // Reduce the trajectory maxima across the wavefront.  The previous lane-zero
+  // loop serialized up to 45 paths for every map cell, leaving the other lanes
+  // idle after their trajectory evaluation.  This tree preserves the same max
+  // operation (including the -1 sentinel) while taking logarithmic steps.
+  for(uint stride=32u;stride>0u;stride>>=1u){if(lane<stride){
+   pathBest2[lane]=max(pathBest2[lane],pathBest2[lane+stride]);
+   pathBest4[lane]=max(pathBest4[lane],pathBest4[lane+stride]);
+   pathBest8[lane]=max(pathBest8[lane],pathBest8[lane+stride]);}barrier();}
+  if(lane==0u){double chunkBest[3]=double[3](pathBest2[0],pathBest4[0],pathBest8[0]);
    for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
     if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
   }
@@ -589,14 +596,11 @@ public:
   metadata_=std::make_unique<Buffer>(context,words.size()*4,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
   std::memcpy(metadata_->mapped,words.data(),words.size()*4);
   metadata_->flush(0,metadata_->bytes);
-  const uint64_t integrationBytes=uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8;
-  integration_=tbd?std::make_unique<Buffer>(context,integrationBytes,
-   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT):
-   std::make_unique<Buffer>(context,integrationBytes,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-  if(!tbd){auto* history=static_cast<double*>(integration_->mapped);
-   std::fill(history,history+layout_.cells,std::numeric_limits<double>::quiet_NaN());
-   integration_->flush(0,integration_->bytes);}
+  integration_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(tbd?config.integrationCpis:1u)*8,
+   VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  auto* history=static_cast<double*>(integration_->mapped);
+  std::fill(history,history+layout_.cells*(tbd?config.integrationCpis:1u),std::numeric_limits<double>::quiet_NaN());
+  integration_->flush(0,integration_->bytes);
   currentPower_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   const uint64_t angleWords=track_before_detect::angleHistoryWords(layout_.cells,

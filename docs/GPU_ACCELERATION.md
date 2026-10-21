@@ -144,9 +144,10 @@ process:
 The delay and Doppler axes are independently configurable up to 2 and 16 bins
 per CPI. Track-before-detect assigns one GPU workgroup to each map cell and
 evaluates as many as 64 delay-Doppler trajectories concurrently in one native
-AMD wavefront, then reduces the exact 2/4/8-CPI maxima in shared memory. Larger
-envelopes use ordered 64-path chunks without a trajectory-sized scratch buffer,
-and the rolling power history remains in device-local memory. Select the smallest envelope that covers
+AMD wavefront, then reduces the exact 2/4/8-CPI maxima with a parallel shared-memory
+tree. Larger envelopes use ordered 64-path chunks without a trajectory-sized scratch
+buffer. The rolling history uses the host-visible heap so it does not displace the
+resident clutter workspace from limited discrete-GPU VRAM. Select the smallest envelope that covers
 the site's physically eligible aircraft because every additional trajectory is
 included in the detector's multiple-hypothesis false-alarm correction.
 
