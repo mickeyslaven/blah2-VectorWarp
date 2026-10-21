@@ -16,7 +16,14 @@ const config = {capture: {fs: 2400000, fc: 563000000},
     clutter: {delayMax: 200}, detection: {minDelay: 5},
     bearing: {channel_mapping: [0, 1], manifold_recorder: {
       max_delay_error_km: .25, max_doppler_error_hz: 5, max_truth_age_s: 3}}}};
-const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'TEST1'};
+const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'TEST1',
+  delay_rate_km_s: .1, doppler_rate_hz_s: 7,
+  position: {latitude: 1.1, longitude: 2.1, altitude_geom_ft: 12000,
+    altitude_baro_ft: 11800, ground_speed_kt: 300, track_deg_true: 90,
+    geom_rate_fpm: 500, baro_rate_fpm: 450, category: 'A3', squawk: '1234',
+    rssi_dbfs: -18, seen_s: .2, seen_pos_s: .1},
+  geometry: {bearing_deg_true: 91, elevation_deg: 12, ground_range_km: 9,
+    slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
 
 (async () => {
@@ -43,6 +50,13 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.windows.hour.detected_passes, 1);
   assert.equal(result.windows.hour.tracked_passes, 1);
   assert.equal(result.windows.hour.tracking_yield, 1);
+  const stored = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  assert.equal(stored.schema, 'vectorwarp-evidence-statistics-v2');
+  assert.equal(stored.passes[0].firstTruth.altitude_geom_ft, 12000);
+  assert.equal(stored.passes[0].lastTruth.bearing_deg_true, 91);
+  assert.equal(stored.passes[0].maxAbsDopplerRateHzS, 7);
+  assert.equal(stored.passes[0].azimuthSectors45[2], 3);
+  assert.ok(stored.sites[stored.passes[0].siteKey]);
   clock += 1000;
 
   source.get = async () => ({def456: {delay: 70, doppler: 800,
@@ -64,9 +78,15 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.windows.hour.out_of_span.outside_doppler_span, 3);
   stats.close();
   assert(fs.existsSync(filename));
+  const legacy = JSON.parse(fs.readFileSync(filename, 'utf8'));
+  legacy.schema = 'vectorwarp-evidence-statistics-v1';
+  delete legacy.sites;
+  fs.writeFileSync(filename, JSON.stringify(legacy));
   const recovered = new EvidenceStatistics(config, source, {filename, now: () => clock});
   assert.equal(recovered.status().windows.lifetime.tracked_passes, 1);
   recovered.close();
+  assert.equal(JSON.parse(fs.readFileSync(filename, 'utf8')).schema,
+    'vectorwarp-evidence-statistics-v2');
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

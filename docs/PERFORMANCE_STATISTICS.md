@@ -44,6 +44,16 @@ stream for two minutes. The API reports active and provisionally eligible pass
 counts separately, so a newly appearing aircraft is never temporarily mislabeled
 as out of configuration or missed.
 
+Each pass retains bounded diagnostic truth: its first and last complete
+position/kinematic snapshots; geometric and barometric altitude; true bearing,
+elevation, ground/slant/transmitter ranges; ground speed, course and vertical
+rates; eight true-azimuth sector counts; and maximum observed delay and Doppler
+rates. A site-keyed descriptor preserves the exact RF, geometry, cancellation,
+detection, integration and tracking settings used for the pass. This supports
+later direction, altitude, range and fast-motion miss analysis without keeping
+an unbounded duplicate of the raw ADS-B feed. Version-1 statistics files are
+upgraded in place; geometry that was not historically recorded remains unknown.
+
 The persistent file defaults to `evidence-statistics.json` beside the configured
 manifold-recorder corpus. `BLAH2_STATISTICS_PATH` can select another writable
 location.

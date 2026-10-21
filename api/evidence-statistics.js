@@ -44,11 +44,26 @@ function limits(config) {
 function siteKey(config) {
   const relevant = {frequency: config.capture?.fc, sampleRate: config.capture?.fs,
     receiver: config.location?.rx, transmitter: config.location?.tx,
-    ambiguity: config.process?.ambiguity, detectionMinDelay: config.process?.detection?.minDelay,
+    ambiguity: config.process?.ambiguity, clutter: config.process?.clutter,
+    detection: config.process?.detection, tracker: config.process?.tracker,
+    reference: config.process?.reference_synthesis,
+    surveillanceFusion: config.process?.surveillance_fusion,
     channels: config.capture?.device?.surveillance_channels,
     mapping: config.process?.bearing?.channel_mapping,
     geometry: config.capture?.device?.array_geometry};
   return crypto.createHash('sha256').update(JSON.stringify(relevant)).digest('hex');
+}
+
+function siteDescriptor(config) {
+  return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+    receiver: config.location?.rx || null, transmitter: config.location?.tx || null,
+    ambiguity: config.process?.ambiguity || null, clutter: config.process?.clutter || null,
+    detection: config.process?.detection || null, tracker: config.process?.tracker || null,
+    reference_synthesis: config.process?.reference_synthesis || null,
+    surveillance_fusion: config.process?.surveillance_fusion || null,
+    surveillance_channels: config.capture?.device?.surveillance_channels || null,
+    channel_mapping: config.process?.bearing?.channel_mapping || null,
+    array_geometry: config.capture?.device?.array_geometry || null};
 }
 
 function emptyPass(hex, flight, at, key) {
@@ -57,7 +72,11 @@ function emptyPass(hex, flight, at, key) {
     detectedFrames: 0, trackedFrames: 0, belowFloorFrames: 0,
     aboveDelayFrames: 0, outsideDopplerFrames: 0, staleTruthFrames: 0,
     clutterCancelledFrames: 0, outsideClutterFrames: 0, minDelayKm: null, maxDelayKm: null,
-    minDopplerHz: null, maxDopplerHz: null, lastBucket: null};
+    minDopplerHz: null, maxDopplerHz: null, minAltitudeGeomFt: null,
+    maxAltitudeGeomFt: null, minElevationDeg: null, maxElevationDeg: null,
+    minGroundRangeKm: null, maxGroundRangeKm: null, maxAbsDelayRateKmS: null,
+    maxAbsDopplerRateHzS: null, azimuthSectors45: Array(8).fill(0),
+    firstTruth: null, lastTruth: null, lastBucket: null};
 }
 
 function updateExtent(pass, delay, doppler) {
@@ -65,6 +84,47 @@ function updateExtent(pass, delay, doppler) {
   pass.maxDelayKm = pass.maxDelayKm === null ? delay : Math.max(pass.maxDelayKm, delay);
   pass.minDopplerHz = pass.minDopplerHz === null ? doppler : Math.min(pass.minDopplerHz, doppler);
   pass.maxDopplerHz = pass.maxDopplerHz === null ? doppler : Math.max(pass.maxDopplerHz, doppler);
+}
+
+function extent(pass, minimum, maximum, value) {
+  if (!finite(value)) return;
+  pass[minimum] = pass[minimum] === null || pass[minimum] === undefined ? value : Math.min(pass[minimum], value);
+  pass[maximum] = pass[maximum] === null || pass[maximum] === undefined ? value : Math.max(pass[maximum], value);
+}
+
+function truthSnapshot(prediction, timestamp) {
+  const position = prediction.position || {}, geometry = prediction.geometry || {};
+  return {timestamp_ms: timestamp, position_timestamp_s: prediction.timestamp,
+    latitude: position.latitude, longitude: position.longitude,
+    altitude_geom_ft: position.altitude_geom_ft, altitude_baro_ft: position.altitude_baro_ft,
+    ground_speed_kt: position.ground_speed_kt, track_deg_true: position.track_deg_true,
+    geom_rate_fpm: position.geom_rate_fpm, baro_rate_fpm: position.baro_rate_fpm,
+    category: position.category, squawk: position.squawk, rssi_dbfs: position.rssi_dbfs,
+    seen_s: position.seen_s, seen_pos_s: position.seen_pos_s,
+    bearing_deg_true: geometry.bearing_deg_true, elevation_deg: geometry.elevation_deg,
+    ground_range_km: geometry.ground_range_km, slant_range_km: geometry.slant_range_km,
+    transmitter_range_km: geometry.transmitter_range_km,
+    delay_km: prediction.delay, doppler_hz: prediction.doppler,
+    delay_rate_km_s: prediction.delay_rate_km_s,
+    doppler_rate_hz_s: prediction.doppler_rate_hz_s};
+}
+
+function updateTruth(pass, prediction, timestamp) {
+  const snapshot = truthSnapshot(prediction, timestamp);
+  if (!pass.firstTruth) pass.firstTruth = snapshot;
+  pass.lastTruth = snapshot;
+  extent(pass, 'minAltitudeGeomFt', 'maxAltitudeGeomFt', snapshot.altitude_geom_ft);
+  extent(pass, 'minElevationDeg', 'maxElevationDeg', snapshot.elevation_deg);
+  extent(pass, 'minGroundRangeKm', 'maxGroundRangeKm', snapshot.ground_range_km);
+  if (finite(snapshot.delay_rate_km_s)) pass.maxAbsDelayRateKmS = Math.max(
+    pass.maxAbsDelayRateKmS || 0, Math.abs(snapshot.delay_rate_km_s));
+  if (finite(snapshot.doppler_rate_hz_s)) pass.maxAbsDopplerRateHzS = Math.max(
+    pass.maxAbsDopplerRateHzS || 0, Math.abs(snapshot.doppler_rate_hz_s));
+  if (finite(snapshot.bearing_deg_true)) {
+    if (!Array.isArray(pass.azimuthSectors45) || pass.azimuthSectors45.length !== 8)
+      pass.azimuthSectors45 = Array(8).fill(0);
+    pass.azimuthSectors45[Math.floor(((snapshot.bearing_deg_true % 360) + 360) % 360 / 45)] += 1;
+  }
 }
 
 function cells(frame, delayScale = 1) {
@@ -106,8 +166,8 @@ class EvidenceStatistics {
         'evidence-statistics.json');
     this.key = siteKey(config);
     this.limits = limits(config);
-    this.state = {schema: 'vectorwarp-evidence-statistics-v1', createdAt: now(),
-      updatedAt: null, passes: [], active: {}, rollup: {siteKey: this.key,
+    this.state = {schema: 'vectorwarp-evidence-statistics-v2', createdAt: now(),
+      updatedAt: null, sites: {[this.key]: siteDescriptor(config)}, passes: [], active: {}, rollup: {siteKey: this.key,
         passes: 0, eligible: 0,
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
         truthUnusable: 0, eligibleNoRadar: 0, detectedNotTracked: 0}, error: null};
@@ -122,9 +182,10 @@ class EvidenceStatistics {
       const stat = this.fs.statSync(this.filename);
       if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('Statistics file is invalid or oversized');
       const value = JSON.parse(this.fs.readFileSync(this.filename, 'utf8'));
-      if (value?.schema !== this.state.schema || !Array.isArray(value.passes) ||
+      if (!['vectorwarp-evidence-statistics-v1', this.state.schema].includes(value?.schema) || !Array.isArray(value.passes) ||
           !value.active || typeof value.active !== 'object') throw new Error('Statistics file has an invalid schema');
-      this.state = {...this.state, ...value, error: null};
+      this.state = {...this.state, ...value, schema: this.state.schema,
+        sites: {...(value.sites || {}), [this.key]: siteDescriptor(this.config)}, error: null};
       if (this.state.rollup?.siteKey !== this.key) this.state.rollup = {
         siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
         missed: 0, outOfConfig: 0, truthUnusable: 0,
@@ -190,6 +251,7 @@ class EvidenceStatistics {
     pass.lastBucket = bucket; pass.lastAt = timestamp; pass.frames += 1;
     const delay = prediction.delay, doppler = prediction.doppler;
     updateExtent(pass, delay, doppler);
+    updateTruth(pass, prediction, timestamp);
     const delayBin = delay / this.limits.kmPerBin;
     const delayInMap = delayBin >= this.limits.delayMinBin && delayBin <= this.limits.delayMaxBin;
     const aboveFloor = delayBin >= this.limits.detectionMinDelayBin;
@@ -313,5 +375,5 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
   return new EvidenceStatistics(config, adsbSource, dependencies);
 }
 
-module.exports = {SPEED_OF_LIGHT_KM_S, limits, siteKey, EvidenceStatistics,
+module.exports = {SPEED_OF_LIGHT_KM_S, limits, siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics};
