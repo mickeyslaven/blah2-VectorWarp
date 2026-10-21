@@ -12,6 +12,7 @@ const MAX_ELIGIBILITY_EVENTS = 10000;
 // with an IQ clip when an aircraft remains eligible for more than 30 seconds.
 const TRIGGER_EVENT_TRUTH_SAMPLES = 30;
 const MAX_EVENT_TRUTH_SAMPLES = 60;
+const MAX_ACTIVE_CAPTURE_TIMESTAMPS = 128;
 const PASS_GAP_MS = 120000;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
@@ -124,18 +125,74 @@ function emptyPass(hex, flight, at, key) {
     detectionTimestamps: [], trackTimestamps: [], lastBucket: null};
 }
 
-function updateCaptureWindowEvidence(event, pass) {
+function updateCaptureWindowEvidence(event, pass, detectedAt = null, trackedAt = null) {
   if (!event || !pass) return;
   event.first_detection_at = finite(pass.firstDetectionAt) ? pass.firstDetectionAt : null;
   event.first_track_at = finite(pass.firstTrackAt) ? pass.firstTrackAt : null;
-  const start = event.capture_window_start, end = event.capture_window_end;
-  if (!finite(start) || !finite(end) || end < start) return;
-  const detections = (pass.detectionTimestamps || []).filter(at => at >= start && at <= end);
-  const tracks = (pass.trackTimestamps || []).filter(at => at >= start && at <= end);
-  event.capture_detected_frames = detections.length;
-  event.capture_tracked_frames = tracks.length;
-  event.capture_first_detection_at = detections[0] ?? null;
-  event.capture_first_track_at = tracks[0] ?? null;
+  const windows = Array.isArray(event.capture_windows) ? event.capture_windows : [];
+  for (const window of windows) {
+    if (!finite(window.window_start) || !finite(window.window_end) ||
+        window.window_end < window.window_start) continue;
+    for (const [timestamp, count, first] of [[detectedAt, 'detected_frames', 'first_detection_at'],
+      [trackedAt, 'tracked_frames', 'first_track_at']]) {
+      if (!finite(timestamp) || timestamp < window.window_start || timestamp > window.window_end) continue;
+      window[count] = (window[count] || 0) + 1;
+      window[first] ??= timestamp;
+    }
+  }
+  const initial = windows.find(window => window.kind === 'initial') || windows[0];
+  if (!initial) return;
+  event.capture_window_start = initial.window_start;
+  event.capture_window_end = initial.window_end;
+  event.capture_detected_frames = initial.detected_frames || 0;
+  event.capture_tracked_frames = initial.tracked_frames || 0;
+  event.capture_first_detection_at = initial.first_detection_at ?? null;
+  event.capture_first_track_at = initial.first_track_at ?? null;
+}
+
+function upsertCaptureWindow(event, record, pass) {
+  if (!event || !record) return;
+  if (!Array.isArray(event.capture_windows)) event.capture_windows = [];
+  const index = event.capture_windows.findIndex(item => item.capture_id === record.captureId);
+  const prior = index < 0 ? {} : event.capture_windows[index];
+  const canRecount = Array.isArray(pass?.detectionTimestamps) &&
+    Array.isArray(pass?.trackTimestamps);
+  const detections = canRecount ? pass.detectionTimestamps.filter(timestamp =>
+    timestamp >= record.windowStart && timestamp <= record.windowEnd) : [];
+  const tracks = canRecount ? pass.trackTimestamps.filter(timestamp =>
+    timestamp >= record.windowStart && timestamp <= record.windowEnd) : [];
+  const window = {...prior, capture_id: record.captureId, kind: record.kind || 'initial',
+    revision: record.revision, requested_event_time: record.requestedEventTime,
+    window_start: record.windowStart, window_end: record.windowEnd,
+    state: record.state, file: record.file || '', samples: record.samples || 0,
+    failure: record.failure || null,
+    detected_frames: canRecount ? detections.length : (prior.detected_frames || 0),
+    tracked_frames: canRecount ? tracks.length : (prior.tracked_frames || 0),
+    first_detection_at: canRecount ? (detections[0] ?? null) : (prior.first_detection_at ?? null),
+    first_track_at: canRecount ? (tracks[0] ?? null) : (prior.first_track_at ?? null)};
+  if (index < 0) event.capture_windows.push(window);
+  else event.capture_windows[index] = window;
+  updateCaptureWindowEvidence(event, pass);
+}
+
+function updateLegacyCapture(event, window) {
+  if (!event || !window) return;
+  event.capture_state = window.state === 'acknowledged' ? 'acknowledged' :
+    window.state === 'failed' ? 'failed' : window.state === 'dropped' ? 'dropped' :
+      'trigger_pending';
+  if (window.failure) event.capture_failure = window.failure;
+  else delete event.capture_failure;
+  if (window.file) event.capture_file = window.file;
+  else delete event.capture_file;
+  if (Number.isSafeInteger(window.samples) && window.samples > 0)
+    event.capture_samples = window.samples;
+  else delete event.capture_samples;
+}
+
+function appendBounded(timestamps, timestamp) {
+  timestamps.push(timestamp);
+  if (timestamps.length > MAX_ACTIVE_CAPTURE_TIMESTAMPS)
+    timestamps.splice(0, timestamps.length - MAX_ACTIVE_CAPTURE_TIMESTAMPS);
 }
 
 function eligibilityOutcome(pass) {
@@ -226,7 +283,7 @@ function assignments(points, predictions, gatesForPrediction) {
 class EvidenceStatistics {
   constructor(config, adsbSource, {filename, fileSystem = fs, now = Date.now,
     setIntervalFn = setInterval, clearIntervalFn = clearInterval,
-    onEligibilityEvent = () => {}} = {}) {
+    onEligibilityEvent = () => {}, onPeriodicCapture = () => {}} = {}) {
     this.config = config;
     this.adsbSource = adsbSource;
     this.fs = fileSystem;
@@ -251,6 +308,7 @@ class EvidenceStatistics {
     this.lastPersistAt = 0; this.closed = false;
     this.clearInterval = clearIntervalFn;
     this.onEligibilityEvent = onEligibilityEvent;
+    this.onPeriodicCapture = onPeriodicCapture;
     this.load();
     this.sampler = null;
     if (this.limits && this.config.truth?.adsb?.enabled === true) {
@@ -276,6 +334,10 @@ class EvidenceStatistics {
         if (event.capture_state !== 'trigger_pending') continue;
         event.capture_state = 'failed';
         event.capture_failure = 'API restarted before capture acknowledgement';
+        for (const window of event.capture_windows || [])
+          if (window.state === 'pending') {
+            window.state = 'failed'; window.failure = event.capture_failure;
+          }
       }
       for (const pass of [...this.state.passes, ...Object.values(this.state.active)])
         if (!pass.id) pass.id = passId(pass.siteKey, pass.hex, pass.startedAt);
@@ -389,15 +451,16 @@ class EvidenceStatistics {
       pass.detectedFrames += 1;
       pass.firstDetectionAt ??= detectedAt;
       if (!Array.isArray(pass.detectionTimestamps)) pass.detectionTimestamps = [];
-      pass.detectionTimestamps.push(detectedAt);
+      appendBounded(pass.detectionTimestamps, detectedAt);
     }
     if (finite(trackedAt)) {
       pass.trackedFrames += 1;
       pass.firstTrackAt ??= trackedAt;
       if (!Array.isArray(pass.trackTimestamps)) pass.trackTimestamps = [];
-      pass.trackTimestamps.push(trackedAt);
+      appendBounded(pass.trackTimestamps, trackedAt);
     }
-    updateCaptureWindowEvidence(event, pass);
+    updateCaptureWindowEvidence(event, pass, detectedAt, trackedAt);
+    this.emitPeriodicCapture(event, pass, timestamp);
   }
 
   emitEligibility(pass, prediction, timestamp) {
@@ -415,6 +478,7 @@ class EvidenceStatistics {
         slant_range_km: geometry.slant_range_km ?? null,
         transmitter_range_km: geometry.transmitter_range_km ?? null},
       truth_samples: [],
+      capture_windows: [],
       capture_state: 'not_integrated', eligible_frames: 1,
       detected_frames: 0, tracked_frames: 0};
     pass.eligibilityEventId = event.id;
@@ -429,11 +493,34 @@ class EvidenceStatistics {
           event.capture_clip_revisions = [capture.clip.clipRevision];
           event.capture_window_start = capture.clip.windowStart;
           event.capture_window_end = capture.clip.windowEnd;
-          updateCaptureWindowEvidence(event, pass);
+          upsertCaptureWindow(event, {captureId: capture.clip.captureIds?.[event.id], kind: 'initial',
+            revision: capture.clip.clipRevision, requestedEventTime: capture.clip.requestedEventTime,
+            windowStart: capture.clip.windowStart, windowEnd: capture.clip.windowEnd,
+            state: capture.dropped === true ? 'dropped' : 'pending', failure: capture.reason || null,
+            file: '', samples: 0}, pass);
         }
       }
     }
     catch (error) { this.state.error = error.message; }
+  }
+
+  emitPeriodicCapture(event, pass, timestamp) {
+    if (!event || event.state !== 'pending') return;
+    try {
+      const capture = this.onPeriodicCapture({...event}, timestamp);
+      if (!capture?.accepted) return;
+      if (capture.dropped && capture.window) {
+        upsertCaptureWindow(event, capture.window, pass);
+        return;
+      }
+      if (!capture.clip?.clipRevision) return;
+      event.capture_clip_revisions = [...new Set([...(event.capture_clip_revisions || []),
+        capture.clip.clipRevision])];
+      upsertCaptureWindow(event, {captureId: capture.clip.captureIds?.[event.id], kind: 'periodic',
+        revision: capture.clip.clipRevision, requestedEventTime: capture.clip.requestedEventTime,
+        windowStart: capture.clip.windowStart, windowEnd: capture.clip.windowEnd,
+        state: 'pending', failure: null, file: '', samples: 0}, pass);
+    } catch (error) { this.state.error = error.message; }
   }
 
   trimEligibilityEvents() {
@@ -451,23 +538,13 @@ class EvidenceStatistics {
       if (!record) continue;
       event.capture_clip_revisions = Array.isArray(record.clipRevisions) ?
         [...record.clipRevisions] : [];
-      event.capture_state = record.state === 'acknowledged' ? 'acknowledged' :
-        record.state === 'failed' ? 'failed' :
-        record.state === 'dropped' ? 'dropped' : 'trigger_pending';
-      if (record.failure) event.capture_failure = record.failure;
-      else delete event.capture_failure;
-      if (record.file) event.capture_file = record.file;
-      else delete event.capture_file;
-      if (Number.isSafeInteger(record.samples) && record.samples > 0)
-        event.capture_samples = record.samples;
-      else delete event.capture_samples;
-      if (finite(record.windowStart) && finite(record.windowEnd)) {
-        event.capture_window_start = record.windowStart;
-        event.capture_window_end = record.windowEnd;
-      }
       const pass = Object.values(this.state.active).find(item => item.id === event.pass_id) ||
         this.state.passes.find(item => item.id === event.pass_id);
+      for (const window of record.captureWindows || []) upsertCaptureWindow(event, window, pass);
       updateCaptureWindowEvidence(event, pass);
+      const initial = (record.captureWindows || []).find(window => window.kind === 'initial');
+      if (initial) updateLegacyCapture(event, initial);
+      else updateLegacyCapture(event, record);
     }
     this.state.updatedAt = this.now();
     this.persist();
@@ -594,6 +671,6 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
 }
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
-  TRIGGER_EVENT_TRUTH_SAMPLES,
+  TRIGGER_EVENT_TRUTH_SAMPLES, MAX_ACTIVE_CAPTURE_TIMESTAMPS,
   limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics};

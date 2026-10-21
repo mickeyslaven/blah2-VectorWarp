@@ -16,10 +16,24 @@ const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
 assert.throws(() => new CaptureTriggerQueue({preSeconds: 6, postSeconds: 5}),
   /maximum clip duration/);
 assert.deepEqual(optionsFromEnvironment({}),
-  {preSeconds: 2, postSeconds: 3, maxClipSeconds: 10});
+  {preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+    periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8'}),
-{preSeconds: 2, postSeconds: 8, maxClipSeconds: 10});
+{preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
+  periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
+assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
+  BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
+{preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 3});
+assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
+  {interval_seconds: 15, max_snapshots: 2}}}),
+{preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  periodicIntervalSeconds: 15, periodicMaxSnapshots: 2});
+assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
+  BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);
+assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
+  BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '4'}), /no greater than 3/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '9'}), /ten-second clip limit/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_POST_SECONDS: 'nope'}),
@@ -40,6 +54,16 @@ assert.equal(queue.request().postSeconds, 5);
 assert.deepEqual(queue.status().recentEvents.map(item => item.clipRevisions), [[2], [2]]);
 assert.equal(queue.acceptEligibilityEvent(event(1, 100000)).reason, 'duplicate-event');
 assert.equal(queue.request().clipRevision, 2, 'A duplicate event cannot create another revision');
+
+const expanded = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3});
+expanded.acceptEligibilityEvent(event(80, 200000));
+expanded.acceptEligibilityEvent(event(81, 198000));
+const expandedInitial = expanded.status().recentEvents.find(item => item.eventId === 'eligibility:event-80')
+  .captureWindows[0];
+assert.deepEqual({revision: expandedInitial.revision, requestedEventTime: expandedInitial.requestedEventTime,
+  windowStart: expandedInitial.windowStart, windowEnd: expandedInitial.windowEnd},
+{revision: 2, requestedEventTime: 198000, windowStart: 196000, windowEnd: 203000},
+  'Coalescing an earlier event rewrites the existing child window to the physical clip bounds');
 
 accepted = queue.acceptEligibilityEvent(event(3, 300000));
 assert.equal(accepted.coalesced, false, 'A disjoint opportunity rolls to a queued clip');
@@ -103,9 +127,10 @@ assert.equal(dropped.reason, 'queue-capacity');
 assert.equal(bounded.clips.length, 2);
 assert.equal(bounded.status().droppedEvents, 1);
 assert.deepEqual(bounded.clips.map(clip => clip.revision), [1, 2]);
-assert.deepEqual(bounded.status().recentEvents.at(-1), {eventId: 'eligibility:event-12',
-  passId: 'pass-12', requestedEventTime: 20000, state: 'dropped',
-  clipRevisions: [], windowStart: null, windowEnd: null, failure: 'queue-capacity'});
+assert.deepEqual({...bounded.status().recentEvents.at(-1), captureWindows: undefined},
+  {eventId: 'eligibility:event-12', passId: 'pass-12', requestedEventTime: 20000,
+    state: 'dropped', clipRevisions: [], windowStart: null, windowEnd: null,
+    failure: 'queue-capacity', captureWindows: undefined});
 
 const capped = new CaptureTriggerQueue();
 capped.acceptEligibilityEvent(event(30, 100000));
@@ -126,6 +151,59 @@ assert.deepEqual(monotonic.clips.map(clip => clip.revision), [3, 4],
   'Extending an earlier clip must not expose a lower revision after roll');
 assert.equal(monotonic.acknowledge(3), true);
 assert.equal(monotonic.request().clipRevision, 4);
+
+const periodic = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 2, now: () => 0});
+const parent = event(40, 100000);
+assert.equal(periodic.acceptEligibilityEvent(parent).accepted, true);
+assert.equal(periodic.acceptPeriodicSnapshot(parent, 109999).reason, 'periodic-interval');
+const snapshot1 = periodic.acceptPeriodicSnapshot(parent, 110000);
+assert.equal(snapshot1.accepted, true);
+assert.equal(snapshot1.clip.clipRevision, 2);
+const snapshot2 = periodic.acceptPeriodicSnapshot(parent, 120000);
+assert.equal(snapshot2.accepted, true);
+assert.equal(periodic.acceptPeriodicSnapshot(parent, 130000).reason, 'periodic-cap');
+const periodicRecord = periodic.status().recentEvents[0];
+assert.equal(periodicRecord.captureWindows.length, 3,
+  'One parent eligibility event owns initial plus bounded child snapshots');
+assert.deepEqual(periodicRecord.captureWindows.map(item => item.kind), ['initial', 'periodic', 'periodic']);
+assert.equal(new Set(periodicRecord.captureWindows.map(item => item.captureId)).size, 3,
+  'Every capture window has a unique child capture ID');
+assert.equal(periodic.acknowledge(1, null, {file: '/clips/initial.mchq', samples: 1}), true);
+assert.equal(periodic.acknowledge(2, null, {file: '/clips/periodic-1.mchq', samples: 2}), true);
+assert.equal(periodic.acknowledge(3, 'Disk full'), true);
+assert.deepEqual(periodic.status().recentEvents[0].captureWindows.map(item => item.state),
+  ['acknowledged', 'acknowledged', 'failed']);
+
+const sharedPeriodic = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 2});
+const periodicParentA = event(50, 0), periodicParentB = event(51, 1000);
+sharedPeriodic.acceptEligibilityEvent(periodicParentA);
+sharedPeriodic.acceptEligibilityEvent(periodicParentB);
+const periodicA = sharedPeriodic.acceptPeriodicSnapshot(periodicParentA, 11000);
+const periodicB = sharedPeriodic.acceptPeriodicSnapshot(periodicParentB, 11000);
+assert.equal(periodicB.coalesced, true,
+  'Overlapping periodic requests for distinct parents reuse one physical clip');
+const sharedRecords = sharedPeriodic.status().recentEvents;
+const sharedWindows = sharedRecords.map(record => record.captureWindows.find(item => item.kind === 'periodic'));
+assert.equal(sharedWindows[0].revision, sharedWindows[1].revision);
+assert.equal(sharedWindows[0].revision, periodicB.clip.clipRevision,
+  'Both parents reference the queue revision after the coalesced request is renumbered');
+assert.notEqual(sharedWindows[0].captureId, sharedWindows[1].captureId,
+  'Shared physical clips retain separate child capture windows for each parent');
+
+const pressuredPeriodic = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8, maxClips: 1,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 2});
+const pressuredParent = event(60, 0);
+pressuredPeriodic.acceptEligibilityEvent(pressuredParent);
+const periodicDrop = pressuredPeriodic.acceptPeriodicSnapshot(pressuredParent, 10000);
+assert.equal(periodicDrop.dropped, true);
+assert.equal(periodicDrop.window.state, 'dropped');
+assert.equal(periodicDrop.window.failure, 'queue-capacity');
+assert.equal(pressuredPeriodic.acceptPeriodicSnapshot(pressuredParent, 10001).reason, 'periodic-interval',
+  'A capacity drop consumes its interval instead of retrying every sampler tick');
+assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(item =>
+  item.kind === 'periodic').length, 1);
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-capture-trigger-'));
@@ -188,5 +266,58 @@ assert.equal(monotonic.request().clipRevision, 4);
   assert.equal(completedEvent.capture_tracked_frames, 0);
   assert.equal(completedEvent.capture_first_track_at, null);
   statistics.close(); fs.rmSync(directory, {recursive: true, force: true});
+
+  const periodicDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-periodic-capture-'));
+  let periodicClock = 2_100_000_000_000, periodicSampler;
+  const periodicQueue = new CaptureTriggerQueue({periodicIntervalSeconds: 10,
+    periodicMaxSnapshots: 2, now: () => periodicClock});
+  let periodicAircraft = {abc123: {delay: 10, doppler: 100,
+    timestamp: periodicClock / 1000, flight: 'PERIODIC', geometry: {bearing_deg_true: 42}}};
+  const periodicStats = new EvidenceStatistics(config, {async get() { return periodicAircraft; }}, {
+    filename: path.join(periodicDirectory, 'statistics.json'), now: () => periodicClock,
+    setIntervalFn(callback) { periodicSampler = callback; return {unref() {}}; }, clearIntervalFn() {},
+    onEligibilityEvent: value => periodicQueue.acceptEligibilityEvent(value),
+    onPeriodicCapture: (value, timestamp) => periodicQueue.acceptPeriodicSnapshot(value, timestamp)});
+  periodicSampler();
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(periodicQueue.clips.length, 1, 'Initial ADS-B-only capture remains the first window');
+  periodicClock += 1000;
+  periodicStats.acceptDetection({timestamp: periodicClock, delay: [10], doppler: [100]});
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  periodicClock += 9000; periodicAircraft.abc123.timestamp = periodicClock / 1000;
+  periodicSampler();
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(periodicQueue.clips.length, 2,
+    'A physically eligible pass schedules the first periodic child without detector evidence');
+  periodicClock += 1000;
+  periodicStats.acceptDetection({timestamp: periodicClock, delay: [10], doppler: [100]});
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  periodicClock += 9000; periodicAircraft.abc123.timestamp = periodicClock / 1000;
+  periodicSampler();
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(periodicQueue.clips.length, 3, 'Periodic snapshots respect the configured interval');
+  periodicClock += 10000; periodicAircraft.abc123.timestamp = periodicClock / 1000;
+  periodicSampler();
+  while (periodicStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(periodicQueue.clips.length, 3, 'Periodic snapshots stop at the per-pass cap');
+  const parentEvent = periodicStats.status().eligibility_events[0];
+  assert.equal(periodicStats.status().eligibility_event_count, 1,
+    'Child captures must not inflate eligibility-event denominators');
+  assert.equal(parentEvent.capture_windows.length, 3);
+  assert.deepEqual(parentEvent.capture_windows.map(item => item.kind), ['initial', 'periodic', 'periodic']);
+  for (const clip of [...periodicQueue.clips]) {
+    periodicQueue.acknowledge(clip.revision, null,
+      {file: `/clips/${clip.revision}.mchq`, samples: clip.revision});
+    periodicStats.acceptCaptureEvents(periodicQueue.eventsForRevision(clip.revision));
+  }
+  const classified = periodicStats.status().eligibility_events[0].capture_windows;
+  assert.deepEqual(classified.map(item => item.detected_frames), [1, 1, 0],
+    'Later periodic evidence stays on its own capture window rather than the initial clip');
+  const legacy = periodicStats.status().eligibility_events[0];
+  assert.equal(legacy.capture_state, 'acknowledged');
+  assert.equal(legacy.capture_file, '/clips/1.mchq');
+  assert.equal(legacy.capture_samples, 1,
+    'Legacy capture scalars remain attached to the initial window after periodic acknowledgements');
+  periodicStats.close(); fs.rmSync(periodicDirectory, {recursive: true, force: true});
   console.log('Capture trigger queue coalescing, bounds and ADS-B-only admission tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

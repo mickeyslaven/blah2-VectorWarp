@@ -58,11 +58,12 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions());
+const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
-  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event)});
+  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
+    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp)});
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
