@@ -143,6 +143,28 @@ These results close the current software-only recovery set. None supplies
 independently qualified evidence for the missed aircraft under controlled false
 alarm accounting.
 
+## Receiver balance and spectral interference follow-up
+
+Live raw-ADC telemetry showed that channels 2 and 3 were the limiting channels:
+at the common 2.7 dB setting their p99.9 fractions were 0.678 and 0.655 and both
+had nonzero cumulative rail counts. The managed receiver transaction therefore
+changed only those channels to the next lower supported tuner step, producing
+`[2.7, 2.7, 1.4, 1.4, 2.7]` dB. The saved setting, Suite readback, coherent mode,
+converged calibration, and restarted processor were all verified. In more than
+18 million fresh sampled components per channel, all five channels had zero rail
+and near-rail components; channel 2/3 p99.9 fell to 0.427/0.412. This removes the
+overload tail without attenuating the three quieter channels.
+
+The replay-only `analyze-spectral-interference-rejection.py` experiment then
+tested blind frequency-selective rejection on r277. It removes each subband's
+stationary direct-path prediction, estimates residual interference in 24 fixed
+subbands, and sweeps three predeclared inverse-residual loadings. All CAF maps
+are charged against one pooled parameter-trial whole-map control p99. The best
+loading improved the positive-control margin by about 0.90 dB over the unweighted
+baseline, but r277 still finished 4.534 dB below the pooled threshold. It fails
+the positive gate, so miss recordings were not opened and no spectral weighting
+was deployed. See `results/r277-spectral-interference-rejection-v1.json`.
+
 ## Post-Doppler multichannel STAP replay
 
 The replay-only `analyze-post-doppler-stap.py` experiment jointly adapts the five
