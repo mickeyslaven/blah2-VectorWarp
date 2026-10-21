@@ -1,0 +1,285 @@
+{
+  "schema": "vectorwarp-calibrated-complex-replay-v1",
+  "accepted_positive_control": false,
+  "truth": {
+    "flight": "",
+    "outcome": "no_radar_return",
+    "delay": 40.64460718381377,
+    "doppler": -146.48952415166036
+  },
+  "near_detection_frames": 0,
+  "median_delay_bias_km": null,
+  "median_doppler_bias_hz": null,
+  "track_evidence": {
+    "0001": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0003": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0004": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0005": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0006": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0007": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0009": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000E": {
+      "near_samples": 0,
+      "active": true
+    },
+    "000F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0010": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0011": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0012": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0016": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0014": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0017": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001B": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0020": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0008": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0026": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0035": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0036": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0022": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0030": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0028": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0029": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002B": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0032": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0033": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0034": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0037": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0038": {
+      "near_samples": 0,
+      "active": false
+    },
+    "003A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000B": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0031": {
+      "near_samples": 0,
+      "active": false
+    },
+    "003D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "003E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0044": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0013": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0043": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0045": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0047": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0021": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0052": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0054": {
+      "near_samples": 0,
+      "active": false
+    }
+  },
+  "complex_cutout_frames": 8,
+  "complex_trace_frames": 0,
+  "applied_delay_bias_km": 0.02578255,
+  "applied_doppler_bias_hz": 7.053549,
+  "calibrated_cell_evidence": {
+    "frames": 8,
+    "control_paths": 616,
+    "selected_delay_km": 40.7218088783,
+    "selected_doppler_hz": -140.0471492068,
+    "noncoherent_margin_over_control_p99_db": -1.7315590720512888,
+    "phase_compensated_margin_over_control_p99_db": -8.106245283369045
+  },
+  "resident_tbd_cfar_evidence": {
+    "motion_trials": 135,
+    "effective_pfa_per_integrated_pass": 7.4074074074074075e-06,
+    "selected_delay_km": 40.7218088783,
+    "selected_doppler_hz": -140.0471492068,
+    "best_by_cpis": {
+      "2": {
+        "ending_frame": 1,
+        "margin_db": -9.163549435690772,
+        "target_over_mean_training_db": 0.7284642911151136,
+        "target_over_median_training_db": 0.7896168936279208,
+        "alpha": 9.754418235279193,
+        "training_cells": 12
+      },
+      "4": {
+        "ending_frame": 4,
+        "margin_db": -6.976817661292096,
+        "target_over_mean_training_db": 0.5282476907916829,
+        "target_over_median_training_db": 0.6604420930940891,
+        "alpha": 5.629975892469437,
+        "training_cells": 12
+      },
+      "8": {
+        "ending_frame": 7,
+        "margin_db": -5.661927268717211,
+        "target_over_mean_training_db": -0.014947662724851504,
+        "target_over_median_training_db": -0.006122435705897158,
+        "alpha": 3.670269549574486,
+        "training_cells": 12
+      }
+    }
+  },
+  "phase_coherence_uncompensated": null,
+  "phase_coherence_negative": null,
+  "phase_coherence_positive": null,
+  "detections": [],
+  "complex_trace": [],
+  "hex": "a1f850"
+}

@@ -1,0 +1,14 @@
+{
+  "aircraft": {
+    "a4dc43": {
+      "flight": "NWF412",
+      "outcome": "no_radar_return",
+      "predicted_delay_km": 16.075860624799763,
+      "predicted_doppler_hz": 357.3248476662042,
+      "nearby_detection_frames": [],
+      "nearby_detection_count": 0,
+      "nearby_detections": [],
+      "nearby_tracks": {}
+    }
+  }
+}

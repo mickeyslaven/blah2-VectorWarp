@@ -133,6 +133,8 @@ add_executable(blah2
   src/process/conditioning/ArrayReferenceSynthesizer.cpp
   src/process/fusion/Noncoherent.cpp
   src/process/fusion/CoherentBeamBank.cpp
+  src/process/analysis/ComplexCutoutRecorder.cpp
+  src/process/analysis/ReplayEchoInjector.cpp
   src/process/detection/CfarDetector1D.cpp
   src/process/detection/Centroid.cpp
   src/process/detection/Interpolate.cpp
@@ -370,6 +372,22 @@ target_link_libraries(testMapData PRIVATE Catch2::Catch2WithMain blah2RapidJson)
 set_target_properties(testMapData PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
 add_test(NAME testMapData COMMAND testMapData)
+add_executable(testComplexCutoutRecorder
+  test/unit/process/analysis/TestComplexCutoutRecorder.cpp
+  src/process/analysis/ComplexCutoutRecorder.cpp
+  src/data/Map.cpp)
+target_link_libraries(testComplexCutoutRecorder PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+set_target_properties(testComplexCutoutRecorder PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+add_test(NAME testComplexCutoutRecorder COMMAND testComplexCutoutRecorder)
+add_executable(testReplayEchoInjector
+  test/unit/process/analysis/TestReplayEchoInjector.cpp
+  src/process/analysis/ReplayEchoInjector.cpp
+  src/data/IqData.cpp)
+target_link_libraries(testReplayEchoInjector PRIVATE Catch2::Catch2WithMain blah2RapidJson)
+set_target_properties(testReplayEchoInjector PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+add_test(NAME testReplayEchoInjector COMMAND testReplayEchoInjector)
 add_executable(testDetectionMath test/unit/process/detection/TestDetectionMath.cpp
   src/process/detection/CfarDetector1D.cpp
   src/process/detection/Centroid.cpp src/process/detection/Interpolate.cpp

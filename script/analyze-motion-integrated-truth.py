@@ -217,6 +217,8 @@ def main():
     parser.add_argument("--train", type=int, default=6)
     parser.add_argument("--min-doppler", type=float, default=15)
     parser.add_argument("--effective-pfa", type=float, default=.001)
+    parser.add_argument("--delay-bias-km", type=float, default=0)
+    parser.add_argument("--doppler-bias-hz", type=float, default=0)
     parser.add_argument("--statistics", type=Path,
                         help="Evidence-statistics snapshot containing trigger-time truth samples")
     args = parser.parse_args()
@@ -267,8 +269,8 @@ def main():
             args.effective_pfa / motion_trials, 2 * args.train, len(frames))
     aircraft = {}
     for ident, truth in sorted(truth_document["truth"].items()):
-        delay = truth["delay"]
-        doppler = truth["doppler"]
+        delay = truth["delay"] + args.delay_bias_km
+        doppler = truth["doppler"] + args.doppler_bias_hz
         best = best_path(scores, times, delay, doppler, delay_rates, doppler_rates,
                          args.min_doppler)
         stationary = path_score(scores, times, delay, doppler, 0.0, 0.0,
@@ -347,6 +349,7 @@ def main():
                    "motion_trials": motion_trials,
                    "delay_radius_bins": args.delay_radius,
                    "doppler_radius_bins": args.doppler_radius},
+        "bias": {"delay_km": args.delay_bias_km, "doppler_hz": args.doppler_bias_hz},
         "aircraft": aircraft,
     }
     encoded = json.dumps(result, indent=2)

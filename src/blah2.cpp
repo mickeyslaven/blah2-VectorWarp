@@ -25,6 +25,8 @@
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
 #include "process/fusion/CoherentBeamBank.h"
+#include "process/analysis/ComplexCutoutRecorder.h"
+#include "process/analysis/ReplayEchoInjector.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -711,6 +713,21 @@ try
   else
     std::cout << "[SurveillanceFusion] mode=noncoherent\n";
 
+  blah2::analysis::ReplayEchoInjector::Config echoConfig;
+  if (tree["capture"]["replay"].has_child("inject_echo")) {
+    auto echo = tree["capture"]["replay"]["inject_echo"];
+    if (echo.has_child("state")) echo["state"] >> echoConfig.enabled;
+    if (echo.has_child("amplitude_db")) echo["amplitude_db"] >> echoConfig.amplitudeDb;
+    if (echo.has_child("delay_km")) echo["delay_km"] >> echoConfig.delayKm;
+    if (echo.has_child("doppler_hz")) echo["doppler_hz"] >> echoConfig.dopplerHz;
+    double targetAzimuthDeg = 0;
+    if (echo.has_child("target_azimuth_deg_array"))
+      echo["target_azimuth_deg_array"] >> targetAzimuthDeg;
+    echoConfig.targetAzimuthRad = targetAzimuthDeg * std::acos(-1.0) / 180.0;
+  }
+  blah2::analysis::ReplayEchoInjector echoInjector(echoConfig, fs, fc,
+    directPathAzimuthRad, coherentPositions, state);
+
   // set up process detection
   double pfa, minDoppler;
   int8_t nGuard, nTrain;
@@ -974,6 +991,20 @@ try
   {
     saveDetectionPath = savePath + ".detection";
   }
+  blah2::analysis::ComplexCutoutRecorder::Config complexCutoutConfig;
+  if (tree["save"].has_child("complex_cutout")) {
+    auto cutout = tree["save"]["complex_cutout"];
+    if (cutout.has_child("state")) cutout["state"] >> complexCutoutConfig.enabled;
+    if (cutout.has_child("path")) cutout["path"] >> complexCutoutConfig.path;
+    if (cutout.has_child("delay_km")) cutout["delay_km"] >> complexCutoutConfig.delayKm;
+    if (cutout.has_child("doppler_hz")) cutout["doppler_hz"] >> complexCutoutConfig.dopplerHz;
+    if (cutout.has_child("delay_radius_bins"))
+      cutout["delay_radius_bins"] >> complexCutoutConfig.delayRadiusBins;
+    if (cutout.has_child("doppler_radius_bins"))
+      cutout["doppler_radius_bins"] >> complexCutoutConfig.dopplerRadiusBins;
+    if (cutout.has_child("max_frames")) cutout["max_frames"] >> complexCutoutConfig.maxFrames;
+  }
+  blah2::analysis::ComplexCutoutRecorder complexCutout(complexCutoutConfig, fs, state);
 
   // set up output timing
   uint64_t tStart = current_time_ms();
@@ -1108,6 +1139,10 @@ try
           // later rejects it. UI publication timestamps remain wall-clock.
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
+          std::vector<IqData*> physicalChannels;
+          physicalChannels.reserve(captureData.size());
+          for (auto& channel : captureData) physicalChannels.push_back(channel.get());
+          echoInjector.apply(trackerFrame * uint64_t(nSamples), physicalChannels);
           const bool residentOracle=resident&&resident->qualifying();
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
@@ -1315,6 +1350,8 @@ try
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
           }
+          complexCutout.append(time[0]/1000, channelMaps,
+            referenceSynthesizer.get_metrics().weights);
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.
