@@ -7,7 +7,11 @@ const path = require('path');
 const SPEED_OF_LIGHT_KM_S = 299792.458;
 const MAX_PASSES = 200000;
 const MAX_ELIGIBILITY_EVENTS = 10000;
-const MAX_EVENT_TRUTH_SAMPLES = 30;
+// Keep the trigger window permanently while retaining a recent tail for pass
+// diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
+// with an IQ clip when an aircraft remains eligible for more than 30 seconds.
+const TRIGGER_EVENT_TRUTH_SAMPLES = 30;
+const MAX_EVENT_TRUTH_SAMPLES = 60;
 const PASS_GAP_MS = 120000;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
@@ -361,7 +365,8 @@ class EvidenceStatistics {
       if (!Array.isArray(event.truth_samples)) event.truth_samples = [];
       event.truth_samples.push(truthSnapshot(prediction, timestamp));
       if (event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
-        event.truth_samples.splice(0, event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
+        event.truth_samples.splice(TRIGGER_EVENT_TRUTH_SAMPLES,
+          event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
     }
     if (detected) pass.detectedFrames += 1;
     if (tracked) pass.trackedFrames += 1;
@@ -545,5 +550,6 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
 }
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
+  TRIGGER_EVENT_TRUTH_SAMPLES,
   limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics};

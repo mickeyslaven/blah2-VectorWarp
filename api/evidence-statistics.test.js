@@ -145,6 +145,28 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   outage.close();
   assert.equal(cleared, true);
   assert.equal(JSON.parse(fs.readFileSync(outageFilename, 'utf8')).eligibilityEvents.length, 1);
+
+  const retentionFilename = path.join(directory, 'trigger-truth-retention.json');
+  let retentionClock = 2_000_000_000_000;
+  const retentionSource = {async get() { return {abc123: {...prediction,
+    timestamp: retentionClock / 1000}}; }};
+  const retention = new EvidenceStatistics(config, retentionSource,
+    {filename: retentionFilename, now: () => retentionClock,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (let index = 0; index < 65; ++index) {
+    retention.acceptDetection({timestamp: retentionClock, delay: [], doppler: []});
+    while (retention.running) await new Promise(resolve => setImmediate(resolve));
+    retentionClock += 1000;
+  }
+  const retained = retention.status().eligibility_events[0].truth_samples;
+  assert.equal(retained.length, 60);
+  assert.deepEqual(retained.slice(0, 30).map(item => item.timestamp_ms),
+    Array.from({length: 30}, (_, index) => 2_000_000_000_000 + index * 1000),
+    'The clip-trigger trajectory must never roll out of the event evidence');
+  assert.deepEqual(retained.slice(30).map(item => item.timestamp_ms),
+    Array.from({length: 30}, (_, index) => 2_000_000_035_000 + index * 1000),
+    'The retained tail must continue following the aircraft');
+  retention.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });
