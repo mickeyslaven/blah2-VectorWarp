@@ -13,7 +13,8 @@ target_link_libraries(testRecording PRIVATE Threads::Threads blah2RapidJson)
 add_test(NAME recordingFormats COMMAND testRecording)
 
 add_executable(testKrakenStream ${PROJECT_ROOT}/test/capture/KrakenStreamFixture.cpp
-  ${PROJECT_ROOT}/src/capture/kraken/Kraken.cpp)
+  ${PROJECT_ROOT}/src/capture/kraken/Kraken.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/KrakenClipRecorder.cpp)
 target_compile_features(testKrakenStream PRIVATE cxx_std_17)
 target_compile_options(testKrakenStream PRIVATE -UNDEBUG)
 target_include_directories(testKrakenStream PRIVATE ${PROJECT_ROOT}/src)
@@ -28,6 +29,18 @@ else()
 endif()
 add_test(NAME krakenSocketCapture COMMAND testKrakenStream)
 set_tests_properties(krakenSocketCapture PROPERTIES TIMEOUT 30)
+
+add_executable(testKrakenClipRecorder
+  ${PROJECT_ROOT}/test/capture/KrakenClipRecorderFixture.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/KrakenClipRecorder.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp
+  ${PROJECT_ROOT}/src/capture/Recording.cpp)
+target_compile_features(testKrakenClipRecorder PRIVATE cxx_std_17)
+target_compile_options(testKrakenClipRecorder PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(testKrakenClipRecorder PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(testKrakenClipRecorder PRIVATE Threads::Threads blah2RapidJson)
+add_test(NAME krakenBoundedClipRecorder COMMAND testKrakenClipRecorder)
+set_tests_properties(krakenBoundedClipRecorder PROPERTIES TIMEOUT 30)
 
 # Getter coercion checks use a fake device and require no UHD SDK or radio.
 add_executable(testUsrpReadback ${PROJECT_ROOT}/test/capture/UsrpReadbackFixture.cpp)

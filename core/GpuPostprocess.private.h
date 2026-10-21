@@ -176,10 +176,15 @@ const char* tbdBody=R"glsl(
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 shared double pathBest2[64],pathBest4[64],pathBest8[64];
-void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
+void main(){uint lane=gl_LocalInvocationID.x;
+ uint groupCell=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x;
+ // The trajectory phase needs one workgroup per cell.  The initialize/select
+ // phases need only one invocation per cell; mapping those phases linearly
+ // avoids scheduling 63 idle lanes for every map cell.
+ uint linearCell=gl_GlobalInvocationID.x+gl_GlobalInvocationID.y*gl_NumWorkGroups.x*64u;
+ uint i=p.a==1u?groupCell:linearCell;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
-  if(lane!=0u)return;
   if(available>=2u){uint priorSlot=(m[79]+m[74]-1u)%m[74];
    uint priorAt=priorSlot*m[34]+i;double baseline=(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[priorAt]))?
     0.5LF*(currentPower[i]+history[priorAt]):-1.0LF;
@@ -221,7 +226,6 @@ void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_
   }
   return;
  }
- if(lane!=0u)return;
  double selected=available<2u?currentPower[i]:max(0.0LF,tbdBanks[i]);
  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;if(available>=length){
   double best=tbdBanks[(bank+1u)*m[34]+i];if(!finiteD(best)){reject(208u);return;}selected=max(selected,best);}}
@@ -636,10 +640,11 @@ public:
   barrier(command);
   if(tbd){
    const uint32_t work=layout_.cells*128u;
-   kernels_[10]->append(command,{work,0,0,0,0});barrier(command);
+   const uint32_t linearWork=layout_.cells*2u; // Kernel dispatch is normalized to 128 lanes; this shader uses 64.
+   kernels_[10]->append(command,{linearWork,0,0,0,0});barrier(command);
    const uint32_t trajectories=(2u*config_.integrationDelayMotionBins+1u)*(2u*config_.integrationDopplerMotionBins+1u);
    for(uint32_t first=0;first<trajectories;first+=64u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
-   kernels_[10]->append(command,{work,2,0,0,0});barrier(command);
+   kernels_[10]->append(command,{linearWork,2,0,0,0});barrier(command);
   }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
    vkCmdCopyBuffer(command,currentPower_->handle,integration_->handle,1,&powerCopy);barrier(command);}

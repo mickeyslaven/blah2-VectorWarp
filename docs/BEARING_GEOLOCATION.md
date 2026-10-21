@@ -39,8 +39,8 @@ count, angular uncertainty, and up to three persistent candidate lobes. It sets
 consistency, uncertainty, and peak-separation gates pass.
 
 When the tracker persistent-clutter option is enabled, the bearing record also
-contains `stationary_clutter` and `publishable`. A low-Doppler history must stay
-within 1.5 delay bins for the configured persistence interval before it is
+contains `stationary_clutter` and `publishable`. A history must stay within 1.5
+delay and Doppler bins for the configured persistence interval before it is
 classified as stationary. The raw `/api/bearing` and `/api/locations` records
 remain available for diagnosis, but stationary records are never marked
 resolved and `/display/locations` hides them by default. Add

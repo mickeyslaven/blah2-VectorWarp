@@ -141,6 +141,90 @@ void main() {
   for(uint row=lane;row<B;row+=128u) solution[base+row]=localSolution[row];
 }
 )glsl";
+// O(B^2) Hermitian Toeplitz alternative to the dense Cholesky factor/solve.
+// It is opt-in while physical qualification compares it with the dense path.
+const std::string toeplitzFactor = common + R"glsl(
+layout(binding=1) readonly buffer Correlations { vec2 corr[]; };
+layout(binding=2) coherent buffer Lower { dvec2 lower[]; };
+shared dvec2 alpha[1024], partial[128];
+shared double beta, scale;
+shared dvec2 gamma;
+void main() {
+ uint lane=gl_LocalInvocationID.x,B=p.b;
+ if(lane==0u) {
+  scale=(dvec2(corr[0])/double(p.a)).x; beta=scale;
+  if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) reject(2u,2u,0u,0u);
+  else { lower[0]=dvec2(beta,0); if(B>1u) alpha[0]=-(dvec2(corr[1])/double(p.a))/beta; }
+ }
+ barrier(); if(status[0]!=0u)return;
+ for(uint k=1u;k<B;++k) {
+  if(lane==0u) {
+   beta*=1.0LF-dot(alpha[k-1u],alpha[k-1u]);
+   if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF) reject(3u,2u,k,0u);
+  }
+  barrier(); if(status[0]!=0u)return;
+  for(uint j=lane;j<k;j+=128u)lower[k*B+j]=alpha[j];
+  if(lane==0u)lower[k*B+k]=dvec2(beta,0); barrier();
+  if(k+1u<B) {
+   dvec2 sum=dvec2(0); for(uint j=lane;j<k;j+=128u)
+    sum+=mul(dvec2(corr[k-j])/double(p.a),alpha[j]);
+   partial[lane]=sum; barrier();
+   if(lane==0u) {
+    dvec2 q=dvec2(corr[k+1u])/double(p.a);
+    for(uint j=0u;j<128u;++j)q+=partial[j]; gamma=-q/beta;
+    if(!finite64(gamma) || dot(gamma,gamma)>=1.0LF) reject(3u,2u,k,0u);
+   }
+   barrier(); if(status[0]!=0u)return;
+   for(uint j=lane;j<k/2u;j+=128u) {
+    uint pair=k-1u-j; dvec2 left=alpha[j],right=alpha[pair];
+    alpha[j]=left+mul(gamma,conjugate(right));
+    alpha[pair]=right+mul(gamma,conjugate(left));
+   }
+   if((k&1u)!=0u && lane==0u) { uint middle=k/2u; dvec2 value=alpha[middle];
+    alpha[middle]=value+mul(gamma,conjugate(value)); }
+   if(lane==0u)alpha[k]=gamma; barrier();
+  }
+ }
+ if(lane==0u)atomicAdd(status[12],1u);
+}
+)glsl";
+const std::string toeplitzSolve = common + R"glsl(
+layout(binding=1) readonly buffer Correlations { vec2 corr[]; };
+layout(binding=2) readonly buffer Lower { dvec2 lower[]; };
+layout(binding=3) coherent buffer Solution { dvec2 solution[]; };
+shared dvec2 localSolution[1024], partial[128];
+shared double residualPower[128], rhsPower[128];
+shared double beta, scale;
+shared dvec2 mu;
+void main() {
+ uint lane=gl_LocalInvocationID.x,ch=gl_WorkGroupID.x,B=p.b,base=ch*B;
+ if(ch>=status[11])return;
+ if(lane==0u) {
+  scale=lower[0].x; beta=scale;
+  if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) reject(2u,p.c,0u,ch);
+  else localSolution[0]=dvec2(corr[B+base])/double(p.a)/beta;
+ }
+ barrier(); if(status[0]!=0u)return;
+ for(uint k=1u;k<B;++k) {
+  if(lane==0u) { beta=lower[k*B+k].x;
+   if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF)reject(3u,p.c,k,ch); }
+  barrier(); if(status[0]!=0u)return;
+  dvec2 sum=dvec2(0); for(uint j=lane;j<k;j+=128u)
+   sum+=mul(dvec2(corr[k-j])/double(p.a),localSolution[j]);
+  partial[lane]=sum; barrier();
+  if(lane==0u) { dvec2 rhs=dvec2(corr[B+base+k])/double(p.a);
+   for(uint j=0u;j<128u;++j)rhs-=partial[j]; mu=rhs/beta;
+   if(!finite64(mu))reject(4u,p.c,k,ch); }
+  barrier(); if(status[0]!=0u)return;
+  for(uint j=lane;j<k;j+=128u)
+   localSolution[j]+=mul(mu,conjugate(lower[k*B+(k-1u-j)]));
+  if(lane==0u)localSolution[k]=mu; barrier();
+ }
+ double residual=0.0LF,rhs=0.0LF;
+ for(uint row=lane;row<B;row+=128u){ dvec2 value=dvec2(0);for(uint col=0u;col<B;++col){dvec2 matrix=row>=col?dvec2(corr[row-col]):conjugate(dvec2(corr[col-row]));value+=mul(matrix/double(p.a),localSolution[col]);}dvec2 expected=dvec2(corr[B+base+row])/double(p.a),difference=value-expected;residual+=dot(difference,difference);rhs+=dot(expected,expected);if(!finite64(localSolution[row]))reject(4u,p.c,row,ch); }
+ residualPower[lane]=residual;rhsPower[lane]=rhs;barrier();if(lane==0u){residual=0.0LF;rhs=0.0LF;for(uint i=0u;i<128u;++i){residual+=residualPower[i];rhs+=rhsPower[i];}if(isnan(residual)||isinf(residual)||isnan(rhs)||isinf(rhs)||residual>max(rhs*1e-10LF,1e-20LF))reject(5u,p.c,0u,ch);atomicAdd(status[8],1u);}barrier();for(uint row=lane;row<B;row+=128u)solution[base+row]=localSolution[row];
+}
+)glsl";
 const std::string weightPack = common + R"glsl(
 layout(binding=1) readonly buffer Initial { dvec2 initial[]; };
 layout(binding=2) writeonly buffer Weights { dvec2 weights[]; };
@@ -226,6 +310,7 @@ class Refinement {
   std::unique_ptr<Buffer> status_, cache_, work_, suffix_, baseline_, lower_, solution_, initial_, weights_;
   std::unique_ptr<NativePlan> workPlan_, weightPlan_;
   std::unique_ptr<Kernel> pack_, factor_, solve_, weightsPack_, multiply_, gather_, residual_, cast_, merge_;
+  bool toeplitz_ = false;
 public:
   static uint64_t requiredBytes(uint32_t samples,uint32_t bins,uint32_t channels) {
     if(!bins || bins>fft || !samples || bins>samples || !channels || channels>8) return UINT64_MAX;
@@ -240,9 +325,16 @@ public:
       Buffer& reference,Buffer& correlations,Buffer& originalAndEstimate,Buffer& surveillance,Buffer& rounded)
     : context_(context),samples_(samples),bins_(bins),channels_(channels),
       hop_(bins && bins<=fft?fft-bins+1:1),blocks_(uint32_t((uint64_t(samples)+hop_-1)/hop_)) {
+    const char* solver=std::getenv("BLAH2_GPU_TOEPLITZ_SOLVER");
+    const bool forceToeplitz=solver && std::string(solver)=="levinson";
+    const bool forceDense=solver && std::string(solver)=="dense";
+    if(solver && *solver && !forceToeplitz && !forceDense)
+      throw std::invalid_argument("BLAH2_GPU_TOEPLITZ_SOLVER must be levinson or dense");
     const auto& limits=context.candidate.properties.limits;
+    toeplitz_=forceToeplitz || (!forceDense && limits.maxComputeSharedMemorySize>=22*1024);
     const uint64_t needed=requiredBytes(samples,bins,channels);
-    if(needed==UINT64_MAX || limits.maxComputeSharedMemorySize<19*1024 ||
+    const uint32_t sharedRequired=toeplitz_?22*1024:19*1024;
+    if(needed==UINT64_MAX || limits.maxComputeSharedMemorySize<sharedRequired ||
         limits.maxPerStageDescriptorStorageBuffers<6 || limits.maxDescriptorSetStorageBuffers<6)
       throw std::runtime_error("GPU-native refinement capacity is unsupported");
     auto buffer=[&](uint64_t bytes) {
@@ -266,8 +358,8 @@ public:
       return std::make_unique<Kernel>(context,source.c_str(),buffers);
     };
     pack_=kernel(referencePack,{&reference,work_.get(),suffix_.get()});
-    factor_=kernel(factor,{&correlations,lower_.get()});
-    solve_=kernel(solve,{&correlations,lower_.get(),solution_.get()});
+    factor_=kernel(toeplitz_?toeplitzFactor:factor,{&correlations,lower_.get()});
+    solve_=kernel(toeplitz_?toeplitzSolve:solve,{&correlations,lower_.get(),solution_.get()});
     weightsPack_=kernel(weightPack,{initial_.get(),weights_.get()});
     multiply_=kernel(multiply,{cache_.get(),weights_.get(),work_.get()});
     gather_=kernel(gather,{work_.get(),baseline_.get()});

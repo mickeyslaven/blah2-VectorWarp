@@ -827,7 +827,9 @@ try
   std::string smooth,trackerAccelerationModel="hypothesis_bank";
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
-  double stationaryMaxDopplerHz=residentMode?15.0:0.0;
+  // Zero means the full configured ambiguity Doppler span. A positive legacy
+  // value remains an optional safety bound for installations that need one.
+  double stationaryMaxDopplerHz=0.0;
   bool trackGuidedShadow=false;
   bool trackGuidedPromote=false;
   uint32_t trackGuidedShadowMaxTracks=0;
@@ -841,7 +843,7 @@ try
     const auto& stationary=tree["process"]["tracker"]["initiate"]["stationary_clutter"];
     stationary["enable"] >> stationaryClutter;
     if(stationaryClutter){stationary["persistence_cpis"] >> stationaryPersistenceCpis;
-      stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
+      if(stationary.has_child("max_doppler_hz"))stationary["max_doppler_hz"] >> stationaryMaxDopplerHz;}
     else {stationaryPersistenceCpis=0;stationaryMaxDopplerHz=0;}
   }
   if(tree["process"]["tracker"].has_child("track_guided_shadow")){

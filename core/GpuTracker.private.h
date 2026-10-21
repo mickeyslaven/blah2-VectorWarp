@@ -128,11 +128,14 @@ bool bearingCompatible(uint trackSpatial,uint detectionSpatialValue){uint beams=
 bool adaptiveGate(){return (m[38]&0x80000000u)!=0u;}
 uint hypothesisCount(){return m[38]&0x7fffffffu;}
 bool clutterAware(){return clutterPersistence[0]!=0u;}
-uint clutterStreak(uint bin){
- uint packed=clutterPersistence[10u+bin],streak=packed&65535u;
+uint clutterStreak(uint cell){
+ uint packed=clutterPersistence[10u+cell],streak=packed&65535u;
  uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
  uint missed=age>0u?age-1u:0u;
- return packed==0u||missed>=streak?0u:streak-missed;
+ // Leaky occupancy tolerates short detector gaps without retaining isolated
+ // transients: one evidence credit is lost per four missed CPIs.
+ uint leaked=missed/4u;
+ return packed==0u||leaked>=streak?0u:streak-leaked;
 }
 uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
  while(low<high){uint middle=low+(high-low)/2u;
@@ -144,9 +147,9 @@ uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
  if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
- if(abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
- if(cell>=m[4]||post[33]==0u)return false;uint bin=cell%post[33];
- return clutterStreak(bin)<clutterPersistence[1];}
+ if(maximum>0.0LF&&abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
+ if(cell>=m[4]||post[33]==0u)return false;
+ return clutterStreak(cell)<clutterPersistence[1];}
 bool retireStationaryTrack(uint r,uint match){
  if(!clutterAware()||match==0xffffffffu)return false;
  uint samples=clutterPersistence[4],minimumAssociated=clutterPersistence[5];
@@ -154,19 +157,21 @@ bool retireStationaryTrack(uint r,uint match){
  if(samples<2u||samples>h||length+1u<samples||minimumAssociated>samples)return false;
  uint detectionAt=m[5]+8u*match,cell=s[post[41]+match];
  if(cell>=m[4]||post[33]==0u)return false;
- uint bin=cell%post[33];if(clutterStreak(bin)<clutterPersistence[1])return false;
- double maximum=packDouble2x32(uvec2(clutterPersistence[6],clutterPersistence[7]));
- double maximumSpan=packDouble2x32(uvec2(clutterPersistence[8],clutterPersistence[9]));
+ if(clutterStreak(cell)<clutterPersistence[1])return false;
+ double maximumDelaySpan=packDouble2x32(uvec2(clutterPersistence[6],clutterPersistence[7]));
+ double maximumDopplerSpan=packDouble2x32(uvec2(clutterPersistence[8],clutterPersistence[9]));
  double newestDelay=sd(detectionAt),newestDoppler=sd(detectionAt+2u);
- if(abs(newestDoppler)>maximum)return false;
- double minimumDelay=newestDelay,maximumDelay=newestDelay;uint associated=1u;
+ double minimumDelay=newestDelay,maximumDelay=newestDelay;
+ double minimumDoppler=newestDoppler,maximumDoppler=newestDoppler;uint associated=1u;
  uint first=length-(samples-1u);
  for(uint j=first;j<length;++j){uint at=r+16u+8u*((head+j)%h);
   double delay=sourceD(at),doppler=sourceD(at+2u);uint state=src(at+6u);
-  if(!finiteD(delay)||!finiteD(doppler)||abs(doppler)>maximum)return false;
+  if(!finiteD(delay)||!finiteD(doppler))return false;
   minimumDelay=min(minimumDelay,delay);maximumDelay=max(maximumDelay,delay);
+  minimumDoppler=min(minimumDoppler,doppler);maximumDoppler=max(maximumDoppler,doppler);
   if(state==1u||state==2u)associated++;}
- return associated>=minimumAssociated&&maximumDelay-minimumDelay<=maximumSpan;
+ return associated>=minimumAssociated&&maximumDelay-minimumDelay<=maximumDelaySpan&&
+  maximumDoppler-minimumDoppler<=maximumDopplerSpan;
 }
 void header(uint count,uint nextID){
  for(uint k=0u;k<32u;++k)put(k,0u);
@@ -293,16 +298,19 @@ void main(){uint i=indexOf(),lane=gl_LocalInvocationID.x,tile=i/128u,tiles=(m[19
 const char* persistenceBody=R"glsl(
 void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  if(i>=m[19])return;uint at=m[5]+8u*i;double doppler=sd(at+2u);
- double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(abs(doppler)>maximum)return;
+ double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(maximum>0.0LF&&abs(doppler)>maximum)return;
  uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
- // Stationary multipath jitters between nearby zero-Doppler rows. Accumulate
- // it by delay bin so row jitter cannot continually reset site learning.
- uint index=10u+cell%post[33],prior=clutterPersistence[index],current=m[10]&65535u;
- while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)return;
-  uint age=(current-last)&65535u,missed=age>0u?age-1u:0u;
-  uint decayed=prior==0u||missed>=streak?0u:streak-missed;
-  uint next=(current<<16u)|min(65535u,decayed+1u);
-  uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}
+ // Accumulate the exact delay-Doppler cell plus one Doppler neighbor on each
+ // side. This learns narrow ridges despite row quantization jitter, while a
+ // persistent return never suppresses the rest of its delay column.
+ uint delayBins=post[33],row=cell/delayBins,rows=post[32],delay=cell%delayBins;
+ for(int offset=-1;offset<=1;++offset){int candidate=int(row)+offset;if(candidate<0||candidate>=int(rows))continue;
+  uint index=10u+uint(candidate)*delayBins+delay,prior=clutterPersistence[index],current=m[10]&65535u;
+  while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)break;
+   uint age=(current-last)&65535u,missed=age>0u?age-1u:0u,leaked=missed/4u;
+   uint decayed=prior==0u||leaked>=streak?0u:streak-leaked;
+   uint next=(current<<16u)|min(65535u,decayed+1u);
+   uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}}
 }
 )glsl";
 const char* historyBody=R"glsl(
@@ -393,9 +401,6 @@ void main(){uint i=indexOf();if(i>=guidedRead(1u)||i>=m[18]||m[0]!=0u||m[2]!=2u)
     !finiteD(currentDelay)||!finiteD(currentDoppler)||!finiteD(priorDelay)||!finiteD(priorDoppler)){
   atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
  uint currentRow=nearestDopplerRow(currentDoppler),priorRow=nearestDopplerRow(priorDoppler),column=uint(currentColumn);
- if(clutterAware()){double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
-  if(abs(currentDoppler)<=maximum&&clutterStreak(column)>=clutterPersistence[1]){
-   atomicOr(m[guidedBase()+16u+i],4u);atomicAdd(m[guidedBase()+5u],1u);return;}}
  uint window=post[46]+post[84]*column,n=post[window+4u];if(n==0u){atomicOr(m[guidedBase()+16u+i],8u);atomicAdd(m[guidedBase()+6u],1u);return;}
  uint currentCell=currentRow*post[33]+column,priorCell=priorRow*post[33]+uint(priorColumn);
  uint priorSlot=(post[79]+post[74]-2u)%post[74];double a=currentPower[currentCell],b=integrationHistory[priorSlot*post[34]+priorCell];
@@ -605,11 +610,11 @@ public:
   persistence[1]=config.stationaryPersistenceCpis;
   std::memcpy(persistence+2,&config.stationaryMaxDopplerHz,8);
   const auto retirement=stationaryRetirementPolicy(config.stationaryClutter,
-    config.stationaryMaxDopplerHz);
+    config.cpi);
   persistence[4]=retirement.samples;
   persistence[5]=retirement.minimumAssociated;
-  std::memcpy(persistence+6,&retirement.maxDopplerHz,8);
-  std::memcpy(persistence+8,&retirement.maxDelaySpan,8);
+  std::memcpy(persistence+6,&retirement.maxDelaySpan,8);
+  std::memcpy(persistence+8,&retirement.maxDopplerSpanHz,8);
   clutterPersistence_->flush(0,clutterPersistence_->bytes);
   std::memset(metadata_->mapped,0,size_t(metadata_->bytes));
   if(config.trackGuidedShadow){auto* guided=static_cast<uint32_t*>(metadata_->mapped)+statusWords+workWords*config.capacity;

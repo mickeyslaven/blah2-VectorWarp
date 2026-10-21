@@ -36,10 +36,10 @@ For each bounded existing track, one GPU invocation:
    pays a multiple-comparison penalty for 27 motion trials; applying that same
    penalty to one tracker-predicted path removes the intended sensitivity gain.
    The shadow therefore spends one pre-registered test per bounded track, while
-   M-of-N confirmation, stationary-clutter rejection, and the kinematic gate
-   remain independent safeguards.
-5. Rejects incomplete edge windows, non-finite data, and learned persistent
-   stationary clutter.
+   M-of-N confirmation, conservative long-history clutter retirement, and the
+   kinematic gate remain independent safeguards.
+5. Rejects incomplete edge windows and non-finite data. Learned clutter blocks
+   only new hypotheses, so an existing moving track can cross a learned cell.
 
 The work is `O(min(active tracks, max_tracks) * CFAR training cells)`, not
 `O(range-Doppler map cells)`. Both power maps stay on the GPU. The only host

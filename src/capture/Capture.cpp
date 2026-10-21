@@ -4,6 +4,8 @@
 #include <iostream>
 #include <thread>
 #include <csignal>
+#include <cmath>
+#include <limits>
 #include <httplib.h>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -79,6 +81,49 @@ void Capture::process(const std::vector<IqData *>& buffers,
         recordingRequestId = revision;
       }
     };
+    auto applyClipRequest = [&](const rapidjson::Value& clip) {
+      if (!clip.IsObject() || !clip.HasMember("pending") ||
+          !clip["pending"].IsBool() || !clip["pending"].GetBool() ||
+          !clip.HasMember("clipRevision") || !clip["clipRevision"].IsUint64() ||
+          clip["clipRevision"].GetUint64() == 0)
+        return;
+      blah2::IqClipRequest value;
+      value.revision = clip["clipRevision"].GetUint64();
+      const auto integer_time = [&](const char* name, int64_t& output) {
+        if (!clip.HasMember(name) || !clip[name].IsNumber()) return false;
+        const double number = clip[name].GetDouble();
+        if (!std::isfinite(number) || number < 0 ||
+            number >= static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+            std::floor(number) != number)
+          return false;
+        output = static_cast<int64_t>(number);
+        return true;
+      };
+      const auto ids = [&](const char* name, std::vector<std::string>& output) {
+        if (!clip.HasMember(name) || !clip[name].IsArray()) return false;
+        for (const auto& item : clip[name].GetArray()) {
+          if (!item.IsString()) return false;
+          output.emplace_back(item.GetString(), item.GetStringLength());
+        }
+        return true;
+      };
+      if (!integer_time("requestedEventTime", value.requestedEventTimeMs) ||
+          !integer_time("windowStart", value.windowStartMs) ||
+          !integer_time("windowEnd", value.windowEndMs) ||
+          !ids("eventIds", value.eventIds) || !ids("passIds", value.passIds)) {
+        std::lock_guard<std::mutex> lock(statusMutex);
+        unsupportedClipRevision = value.revision;
+        unsupportedClipError = "Invalid clip request from capture API";
+        return;
+      }
+      if (auto* kraken = dynamic_cast<Kraken*>(device.get())) {
+        kraken->request_clip(value);
+      } else {
+        std::lock_guard<std::mutex> lock(statusMutex);
+        unsupportedClipRevision = value.revision;
+        unsupportedClipError = "Bounded IQ clips currently require live Kraken input";
+      }
+    };
     while (!stopping.load()) {
       if (STOP_SIGNAL) request_stop();
       if (device && inputStopped.load() && !deviceStopped) {
@@ -98,6 +143,7 @@ void Capture::process(const std::vector<IqData *>& buffers,
               payload.HasMember("revision") && payload["revision"].IsUint64()) {
             applyRecordingRequest(payload["recording"].GetBool(),
               payload["revision"].GetUint64(), true);
+            if (payload.HasMember("clip")) applyClipRequest(payload["clip"]);
           }
         } else if (request && request->status == 404) {
           const auto legacy = cli.Get("/capture");
@@ -214,6 +260,17 @@ std::string Capture::status_json() const {
   text("recordingFile",recording.file); text("recordingError",recording.error);
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);
+  blah2::IqClipStatus clip;
+  if (auto* kraken = dynamic_cast<Kraken*>(device.get()))
+    clip = kraken->clip_status();
+  else if (unsupportedClipRevision)
+    clip = {unsupportedClipRevision, true, {}, unsupportedClipError, 0};
+  if (clip.terminal && clip.revision) {
+    document.AddMember("clipRevision", clip.revision, a);
+    text("clipError", clip.error);
+    text("clipFile", clip.file);
+    document.AddMember("clipSamples", clip.samples, a);
+  }
   if (pairedCpiQueue) {
     const auto queue = pairedCpiQueue->stats();
     document.AddMember("pairedCpiQueue", pairedCpiQueueActive.load(), a);

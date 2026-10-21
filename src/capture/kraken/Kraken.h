@@ -7,6 +7,7 @@
 #include "capture/Source.h"
 #include "data/IqData.h"
 #include "HeimdallFrame.h"
+#include "KrakenClipRecorder.h"
 
 #include <array>
 #include <atomic>
@@ -24,6 +25,7 @@ private:
   uint16_t heimdallPort;
   std::atomic<bool> running{false};
   int socketFd{-1};
+  std::unique_ptr<blah2::KrakenClipRecorder> clipRecorder;
 
   void process_heimdall(const std::vector<IqData *>& buffers);
   void stream_heimdall(const std::vector<IqData *>& buffers);
@@ -40,6 +42,8 @@ public:
   void process(const std::vector<IqData *>& buffers) override;
   void start() override;
   void stop() override;
+  void request_clip(const blah2::IqClipRequest& request);
+  blah2::IqClipStatus clip_status() const;
 };
 
 #endif

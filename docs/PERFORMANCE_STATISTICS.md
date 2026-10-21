@@ -44,6 +44,64 @@ stream for two minutes. The API reports active and provisionally eligible pass
 counts separately, so a newly appearing aircraft is never temporarily mislabeled
 as out of configuration or missed.
 
+Opportunity admission is driven by a bounded, unreferenced one-second ADS-B
+sampler, not by detector output. On the first fresh prediction inside the
+physical delay/Doppler span, `/api/statistics` adds one `pending` eligibility
+event for the pass. The event has a stable pass ID, receiver/configuration/site
+epoch fingerprints, predicted delay, Doppler and geometry, and an explicit
+capture state (`not_integrated` without a trigger consumer, `trigger_pending`
+when queued, `acknowledged` with its clip path/sample count, `failed` with the
+writer error, or `dropped` with a queue failure reason). When the pass closes, the same event
+is finalized as tracked, detected-not-tracked, no-radar-return,
+truth-unusable, or insufficient-opportunities. An event can therefore record a
+single valid opportunity without adding that pass to the three-frame tracking
+denominator. Events persist with the statistics file, are bounded to 10,000 on
+disk, and the API returns the most recent 250.
+
+Each new eligibility event also enters a 64-clip API-side trigger queue with a
+conservative two-second pre-roll and three-second post-roll request. Physical
+clip windows are hard-capped at ten seconds. Pending windows overlap-coalesce
+only while their union stays within that cap; an extension that would exceed it
+rolls the event into a new clip that covers the event's complete five-second
+window. Each event remains linked to its clip revision. If all 64 slots are
+pending, the new event is retained with an explicit `dropped` state and
+`queue-capacity` failure instead of silently evicting another request.
+`GET /capture/request` and
+`GET /capture/status` expose the current request under `clip`, including its
+event/pass IDs, event time, pre/post-roll, window bounds, pending/acknowledged
+state and failure text. The legacy manual `recording` and `revision` fields and
+the `/capture` boolean remain unchanged. Live Kraken capture keeps a bounded
+compact raw-wire ring and hands complete clip jobs to a bounded low-priority
+writer without waiting on disk from the receive thread. The default request
+records two seconds before the eligibility event and three seconds after it;
+no physical clip may exceed ten seconds. Completed clips are replayable MCHQ
+files with all configured channels in Heimdall order and an adjacent JSON
+sidecar containing event/pass associations, exact window and sample bounds,
+tuning/gain metadata, and the IQ file SHA-256. A retune, synchronization loss,
+ring/writer saturation, or disk failure fails the clip explicitly through
+processor status without stopping radar. Other live receiver types acknowledge
+the request as unsupported. No detector or track result can enqueue a clip.
+
+### Cumulative recovery promotion
+
+Replay experiments are cumulative. A candidate that recovers at least one
+previously missed, physically eligible ADS-B aircraft without losing any
+baseline-matched aircraft enters an **active guarded bank**; it does not replace
+the baseline detector or tracker. The bank must also stay inside the processing
+deadline and its unmatched detection/track increase must remain within the
+declared experiment bound. The event ledger records the candidate/config
+fingerprint and the aircraft it uniquely recovered. Subsequent experiments run
+the baseline plus every retained bank and optimize only the remaining misses.
+
+One recovered recording is sufficient for guarded canary admission, not
+unconditional global promotion. Live evidence automatically retains the bank
+only while net eligible-aircraft yield is nondecreasing, previously tracked
+aircraft remain tracked, capture drops stay flat, and track fragmentation and
+stationary/unmatched output remain bounded. A violated guard removes that bank
+and restores the prior cumulative set. The target is 100% of fresh ADS-B
+aircraft whose predicted delay and Doppler are inside the configured physical
+support; out-of-span or stale-truth aircraft never enter that denominator.
+
 Each pass retains bounded diagnostic truth: its first and last complete
 position/kinematic snapshots; geometric and barometric altitude; true bearing,
 elevation, ground/slant/transmitter ranges; ground speed, course and vertical

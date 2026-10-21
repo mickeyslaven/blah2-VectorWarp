@@ -3,9 +3,10 @@
 // Histories consume completed data messages, not a second wall-clock poller.
 // Each stream owns its timestamp: a delayed stream cannot duplicate an old frame
 // simply because the processor's separate timestamp socket advanced first.
-function history(limit, valid, render, compatible = () => true) {
+function history(limit, valid, render, compatible = () => true, eager = true) {
   let frames = [];
   let output = null;
+  let dirty = false;
   return {
     update_data(message) {
       let frame;
@@ -18,9 +19,16 @@ function history(limit, valid, render, compatible = () => true) {
       frames.push(frame);
       if (limit) frames = frames.slice(-limit);
       else frames = frames.filter(item => frame.timestamp - item.timestamp <= 300000);
-      output = render(frames, frame);
+      if (eager) output = render(frames, frame);
+      else { output = null; dirty = true; }
     },
-    get_data() { return output; }
+    get_data() {
+      if (!eager && dirty) {
+        output = render(frames, frames[frames.length - 1]);
+        dirty = false;
+      }
+      return output;
+    }
   };
 }
 
@@ -30,10 +38,13 @@ const matrixValid = frame => Array.isArray(frame.delay) && Array.isArray(frame.d
     Array.isArray(row) && row.length === frame.delay.length && row.every(Number.isFinite));
 
 function maxhold() {
+  // Keep the processor-facing socket callback to validation and retention.
+  // Rendering scans every cell across 20 frames, so do it only when a client
+  // requests the stash and cache that result until the next complete frame.
   return history(20, matrixValid, (frames, frame) => ({...frame,
     data: frame.data.map((row, i) => row.map((_, j) =>
       frames.reduce((max, item) => Math.max(max, item.data[i][j]), -Infinity)))
-  }), (a, b) => JSON.stringify([a.delay, a.doppler]) === JSON.stringify([b.delay, b.doppler]));
+  }), (a, b) => JSON.stringify([a.delay, a.doppler]) === JSON.stringify([b.delay, b.doppler]), false);
 }
 
 function detection() {

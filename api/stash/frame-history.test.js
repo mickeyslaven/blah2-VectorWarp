@@ -20,6 +20,7 @@ for (let i = 1; i <= 30; i++) {
   detections.update_data({timestamp, delay: [i], doppler: [2], snr: [10]});
 }
 assert.deepEqual(map.get_data().data, [[30, -11]]);
+assert.strictEqual(map.get_data(), map.get_data(), 'An unchanged max-hold history reuses its completed output');
 assert.equal(spectrum.get_data().timestamp.length, 20);
 assert.equal(spectrum.get_data().frameTimestamp, 600);
 assert.equal(timing.get_data().timestamp.length, 20);

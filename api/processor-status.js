@@ -181,12 +181,25 @@ function status(payload) {
     recordingFile: text(payload.recordingFile, 'recordingFile', errors),
     recordingError: errorText(payload.recordingError, 'recordingError', errors),
     recordedSamples: count(payload.recordedSamples, 'recordedSamples', errors),
-    recordingRequestId: payload.recordingRequestId === undefined ? null : count(payload.recordingRequestId, 'recordingRequestId', errors)
+    recordingRequestId: payload.recordingRequestId === undefined ? null : count(payload.recordingRequestId, 'recordingRequestId', errors),
+    clipRevision: payload.clipRevision === undefined ? null : count(payload.clipRevision, 'clipRevision', errors),
+    clipError: payload.clipError === undefined ? '' : errorText(payload.clipError, 'clipError', errors),
+    clipFile: payload.clipFile === undefined ? '' : text(payload.clipFile, 'clipFile', errors),
+    clipSamples: payload.clipSamples === undefined ? 0 : count(payload.clipSamples, 'clipSamples', errors)
   };
   if (typeof payload.recording !== 'boolean') errors.push('recording must be a boolean');
   if (value.input === 'live' && value.state !== 'live' && value.state !== 'error' && value.state !== 'stopped')
     errors.push('live input has an invalid state');
   if (value.input === 'replay' && value.recording) errors.push('recording is unavailable during replay');
+  if (payload.clipRevision !== undefined && value.clipRevision === 0)
+    errors.push('clipRevision must be positive when supplied');
+  if (value.input === 'replay' && value.clipRevision !== null)
+    errors.push('clip acknowledgement is unavailable during replay');
+  if (payload.clipError !== undefined && value.clipRevision === null)
+    errors.push('clipError requires clipRevision');
+  if ((payload.clipFile !== undefined || payload.clipSamples !== undefined) &&
+      value.clipRevision === null)
+    errors.push('clipFile and clipSamples require clipRevision');
   if (value.state === 'error' && !value.error) errors.push('error state requires error text');
   if (value.positionSamples > value.totalSamples && value.totalSamples > 0)
     errors.push('positionSamples exceeds totalSamples');

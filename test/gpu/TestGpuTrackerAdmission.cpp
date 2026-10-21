@@ -19,6 +19,10 @@ static double adaptiveElapsed(double frameElapsed,unsigned inactiveFrames){
 
 int main()try{
  using gpu_tracker::boundInitiations;
+ using gpu_tracker::advancePersistentStreak;
+ using gpu_tracker::persistentCell;
+ using gpu_tracker::persistentEvidence;
+ using gpu_tracker::persistentRidgeContains;
  using gpu_tracker::stationaryRetirementPolicy;
  auto a=boundInitiations(1024,1005,33,5);
  require(a.admittedDetections==3&&a.droppedDetections==30,"live saturation case was not bounded");
@@ -53,17 +57,36 @@ int main()try{
  require(rejected,"invalid retained count was accepted");
  rejected=false;try{boundInitiations(3,0,1,0);}catch(const std::invalid_argument&){rejected=true;}
  require(rejected,"zero hypotheses were accepted");
- const auto retirement=stationaryRetirementPolicy(true,15);
+ const auto retirement=stationaryRetirementPolicy(true,.5);
  require(retirement.samples==100&&retirement.minimumAssociated==90&&
-  retirement.maxDopplerHz==1&&retirement.maxDelaySpan==1,
+  retirement.maxDelaySpan==1&&retirement.maxDopplerSpanHz==3,
   "stationary retirement policy is not conservative");
- const auto narrow=stationaryRetirementPolicy(true,.25);
- require(narrow.maxDopplerHz==.25,"stationary retirement widened the configured Doppler band");
+ require(persistentCell(7,3,10)==37,"persistent map did not retain Doppler identity");
+ require(persistentRidgeContains(37,27,10,8)&&persistentRidgeContains(37,47,10,8),
+  "adjacent Doppler jitter did not join the local ridge");
+ require(!persistentRidgeContains(37,36,10,8)&&!persistentRidgeContains(37,57,10,8),
+  "persistent ridge leaked across delay or remote Doppler cells");
+ uint32_t streak=0;uint16_t frame=1;
+ for(uint32_t observation=0;observation<60;++observation,frame+=2)
+  streak=advancePersistentStreak(streak,frame);
+ require((streak&65535u)==60,
+  "persistent cell did not learn intermittent recurring evidence");
+ const uint16_t last=uint16_t(frame-2);
+ const auto duplicate=advancePersistentStreak(streak,last);
+ require(duplicate==streak,"duplicate detections strengthened one frame twice");
+ uint32_t crossing=advancePersistentStreak(0,1);
+ crossing=advancePersistentStreak(crossing,6);
+ require((crossing&65535u)==1,
+  "isolated transient crossing accumulated recurring evidence");
+ require(persistentEvidence(streak,uint16_t(last+13))==57,
+  "bounded absence did not leak evidence deterministically");
+ require(persistentEvidence(streak,uint16_t(last+241))==0,
+  "stale persistent evidence did not expire");
  const auto disabled=stationaryRetirementPolicy(false,0);
- require(disabled.samples==0&&disabled.minimumAssociated==0&&disabled.maxDopplerHz==0,
+ require(disabled.samples==0&&disabled.minimumAssociated==0&&disabled.maxDopplerSpanHz==0,
   "disabled stationary retirement retained a policy");
- rejected=false;try{stationaryRetirementPolicy(true,-1);}catch(const std::invalid_argument&){rejected=true;}
- require(rejected,"invalid stationary retirement Doppler was accepted");
- std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1 stationary_retirement_conservative=1\n";
+ rejected=false;try{stationaryRetirementPolicy(true,0);}catch(const std::invalid_argument&){rejected=true;}
+ require(rejected,"invalid stationary retirement CPI was accepted");
+ std::cout<<"GPU_TRACKER_ADMISSION_PASS saturation_bounded=1 adaptive_single_slot=1 legacy_envelope_preserved=1 delayed_weak_target_retained=1 incompatible_corner_rejected=1 committed_preserved=1 unsaturated_unchanged=1 stationary_retirement_conservative=1 persistent_cell_locality=1 intermittent_recurrence=1 stale_expiry=1\n";
  return 0;
 }catch(const std::exception& e){std::cerr<<"FAIL gpu-tracker-admission: "<<e.what()<<'\n';return 1;}
