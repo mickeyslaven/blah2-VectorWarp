@@ -24,6 +24,43 @@ Selection is staged:
    detections, persistent tracks, multiple aircraft and sectors, and held-out
    bearing error.
 
+## Rapid no-aircraft proxy sweep
+
+`POST /api/illuminator-survey/fast-evaluate` ranks short, comparable captures
+without waiting for an aircraft. It is intended for a managed executor that
+retunes through a pinned local transmitter catalog and measures each candidate
+at its own highest safe common gain. The primary proxy is a calibrated digital
+echo-injection test: delayed and Doppler-shifted copies of the candidate's
+measured reference are injected **before** the production canceller, ambiguity
+processor and detector over a frozen delay/Doppler/amplitude grid. A binary
+search records the weakest echo/direct-path ratio recovered on the required
+fraction of trials.
+
+The rapid gate also requires ADC-derived per-channel clipping and near-rail
+fractions, CNR, occupied bandwidth, ambiguity PSLR and ISLR, direct-path and
+clutter cancellation depth, channel-power span, post-cancellation residual-floor
+excess, safe gain and off-target detection density. It does not invent live
+tracker, dropped-frame, CPI-deadline or calibrated input-noise evidence while the
+processor is stopped for the raw capture; those remain mandatory in the full
+aircraft qualification. A strong direct path is not a score. Among candidates
+passing every rapid gate, the evaluator ranks:
+
+1. weakest reliably recovered injected echo relative to the direct path;
+2. recovery fraction and usable dynamic range;
+3. lowest post-cancellation residual floor;
+4. highest safe receiver gain;
+5. ambiguity sidelobes.
+
+All candidates must share the same receiver, sample rate, processing build and
+injection grid. The result is explicitly `provisional` and
+`requires_aircraft_validation`: digital injection exercises the real received
+waveform, interference, cancellation and detector, but it occurs after the ADC
+and cannot synthesize an aircraft's propagation, RCS, polarization, antenna
+pattern or pre-ADC intermodulation. The separate clipping/headroom gates cover
+the most important pre-ADC failure mode. This is a fast, defensible way to pick
+the first operating frequency; accumulated aircraft opportunities later
+confirm or replace it using the full evaluator.
+
 Clipping, unstable spatial response, poor direct-path agreement, severe
 coherent channel imbalance, or severe frequency-dependent phase curvature is
 a hard bearing-safety rejection. A rejected signal may still be an excellent

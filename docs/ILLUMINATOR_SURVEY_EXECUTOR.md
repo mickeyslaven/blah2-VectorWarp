@@ -121,6 +121,18 @@ Capture repeated short records and reject clipping, weak CNR, instability,
 severe imbalance, direction mismatch and excessive spectral phase curvature.
 Retain at most a small predetermined shortlist (default two).
 
+When an immediate tracking-first choice is required before enough aircraft
+opportunities exist, run the rapid proxy protocol on every RF-usable candidate.
+Use a frozen delay/Doppler grid inside the configured target search region and
+inject delayed/Doppler-shifted copies of the measured reference before the
+production cancellation/CAF/detector path. Search a fixed echo/direct-path
+amplitude ladder (or bounded binary search), repeat across blocks and report the
+weakest ratio meeting the frozen recovery probability. Combine that result
+with raw-ADC clipping/near-rail gates, candidate-specific safe gain,
+input-referred noise, ambiguity PSLR/ISLR, cancellation depth and residual-map
+floor. Never treat injection as aircraft proof or use it to waive later
+opportunity-normalized validation.
+
 Alternate shortlist candidates in balanced blocks, for example ABBA then BAAB.
 Every block has a fixed valid observation budget, a bounded settling budget and
 an immutable epoch ID. Both candidates receive the same detector, cancellation,

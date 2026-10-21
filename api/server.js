@@ -32,6 +32,7 @@ const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {createCaptureTriggerQueue} = require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
+  evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
@@ -481,6 +482,15 @@ app.post('/api/illuminator-survey/evaluate', (req, res) => {
   try {
     const document = readConfig(configFile);
     res.json(evaluateIlluminatorSurvey(req.body?.candidates, document.config,
+      req.body?.limits));
+  } catch (error) {
+    res.status(422).json({ok: false, errors: [error.message]});
+  }
+});
+app.post('/api/illuminator-survey/fast-evaluate', (req, res) => {
+  try {
+    const document = readConfig(configFile);
+    res.json(evaluateFastIlluminatorSweep(req.body?.candidates, document.config,
       req.body?.limits));
   } catch (error) {
     res.status(422).json({ok: false, errors: [error.message]});
