@@ -109,3 +109,10 @@ r277 and applying exact signal-time truth, r12 is -1.43 dB, r94 -1.50 dB, and
 r623 -2.10 dB. Their selected beams also vary substantially frame to frame. This
 method retains the real positive but does not recover any miss, so it remains an
 offline candidate and is not deployed.
+
+The newest event's initial r620 capture was subsequently recovered from the live
+node and evaluated separately from the later r623 periodic capture. Its complete
+20-CPI truth trajectory overlaps the clip, but production replay still has zero
+truth-near plots and the frozen fixed-beam spatial GLRT is 2.68 dB below its
+matched-control p99, with 317 controls exceeding the target. The negative r623
+result is therefore not an artifact of choosing the later periodic window.
