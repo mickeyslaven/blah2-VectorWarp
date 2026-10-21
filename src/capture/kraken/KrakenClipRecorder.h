@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 #include <condition_variable>
 
@@ -88,6 +89,7 @@ private:
   std::deque<std::shared_ptr<Frame>> ring;
   std::unique_ptr<Active> active;
   std::deque<std::unique_ptr<Job>> jobs;
+  std::unordered_set<uint64_t> writerRevisions;
   IqClipStatus terminal;
   std::thread writer;
   bool stopping = false;
