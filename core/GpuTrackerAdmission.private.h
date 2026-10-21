@@ -49,12 +49,22 @@ inline bool persistentRidgeContains(uint32_t learnedCell,uint32_t candidateCell,
   (learnedRow>candidateRow?learnedRow-candidateRow:candidateRow-learnedRow)<=radius;
 }
 
-inline uint32_t advancePersistentStreak(uint32_t packed,uint16_t frame){
+// One credit leaks per four missed CPIs. Recurrence with short CFAR/quantizer
+// gaps therefore accumulates, while one-off occupancy is gone before it can
+// affect a later independent arrival.
+constexpr uint32_t persistentLeakCpis=4;
+
+inline uint32_t persistentEvidence(uint32_t packed,uint16_t frame){
  const uint32_t streak=packed&65535u,last=packed>>16u;
- if(packed&&last==frame)return packed;
  const uint32_t age=(uint32_t(frame)-last)&65535u;
  const uint32_t missed=age?age-1u:0u;
- const uint32_t decayed=!packed||missed>=streak?0u:streak-missed;
+ const uint32_t leaked=missed/persistentLeakCpis;
+ return !packed||leaked>=streak?0u:streak-leaked;
+}
+
+inline uint32_t advancePersistentStreak(uint32_t packed,uint16_t frame){
+ if(packed&&(packed>>16u)==frame)return packed;
+ const uint32_t decayed=persistentEvidence(packed,frame);
  return (uint32_t(frame)<<16u)|std::min(65535u,decayed+1u);
 }
 

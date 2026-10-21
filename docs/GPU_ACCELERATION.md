@@ -101,10 +101,12 @@ process:
 
 The default is 60 CPIs (30 seconds at a 500 ms CPI) across the configured
 ambiguity Doppler span. Each detection strengthens only its delay-Doppler cell
-and the immediately adjacent Doppler rows; unused cells decay. This learns
-narrow persistent ridges despite row quantization jitter without creating a
-global Doppler notch or collapsing unrelated Dopplers at the same delay. Once
-a cell reaches `persistence_cpis`, it cannot start another track. A positive
+and the immediately adjacent Doppler rows. Evidence leaks by one observation
+for every four missed CPIs, so intermittent recurring returns accumulate while
+isolated crossings expire. This learns narrow persistent ridges despite row
+quantization jitter without creating a global Doppler notch or collapsing
+unrelated Dopplers at the same delay. Once a cell reaches `persistence_cpis`,
+it cannot start another track. A positive
 optional `max_doppler_hz` retains the former bounded-band behavior for sites
 that explicitly need it; zero or omission means the full configured span.
 The same learned map also retires startup artifacts conservatively. A track must

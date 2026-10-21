@@ -132,7 +132,10 @@ uint clutterStreak(uint cell){
  uint packed=clutterPersistence[10u+cell],streak=packed&65535u;
  uint last=packed>>16u,current=m[10]&65535u,age=(current-last)&65535u;
  uint missed=age>0u?age-1u:0u;
- return packed==0u||missed>=streak?0u:streak-missed;
+ // Leaky occupancy tolerates short detector gaps without retaining isolated
+ // transients: one evidence credit is lost per four missed CPIs.
+ uint leaked=missed/4u;
+ return packed==0u||leaked>=streak?0u:streak-leaked;
 }
 uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
  while(low<high){uint middle=low+(high-low)/2u;
@@ -304,8 +307,8 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  for(int offset=-1;offset<=1;++offset){int candidate=int(row)+offset;if(candidate<0||candidate>=int(rows))continue;
   uint index=10u+uint(candidate)*delayBins+delay,prior=clutterPersistence[index],current=m[10]&65535u;
   while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)break;
-   uint age=(current-last)&65535u,missed=age>0u?age-1u:0u;
-   uint decayed=prior==0u||missed>=streak?0u:streak-missed;
+   uint age=(current-last)&65535u,missed=age>0u?age-1u:0u,leaked=missed/4u;
+   uint decayed=prior==0u||leaked>=streak?0u:streak-leaked;
    uint next=(current<<16u)|min(65535u,decayed+1u);
    uint observed=atomicCompSwap(clutterPersistence[index],prior,next);if(observed==prior)break;prior=observed;}}
 }
