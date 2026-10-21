@@ -66,6 +66,25 @@ assert.equal(startup.acknowledge(2, null,
   {file: '/clips/startup-retry.mchq', samples: 12000000}), true);
 assert.equal(startup.status().recentEvents[0].state, 'acknowledged');
 
+let orderedRetryClock = 5000;
+const orderedRetry = new CaptureTriggerQueue({preSeconds: 0, postSeconds: 1,
+  now: () => orderedRetryClock});
+orderedRetry.acceptEligibilityEvent(event(5, 4000));
+orderedRetry.acceptEligibilityEvent(event(6, 10000));
+orderedRetry.acceptEligibilityEvent(event(7, 20000));
+assert.equal(orderedRetry.acknowledge(1, 'Kraken clip pre-roll is unavailable'), true);
+orderedRetryClock = 7100;
+assert.equal(orderedRetry.retryPreRollFailure(1).clipRevision, 4);
+assert.deepEqual(orderedRetry.clips.filter(clip => clip.pending).map(clip => clip.revision),
+  [4, 5, 6], 'A startup retry keeps every later recorder request monotonic');
+assert.deepEqual(orderedRetry.status().recentEvents.map(item => item.clipRevisions),
+  [[1, 4], [5], [6]]);
+assert.equal(orderedRetry.acknowledge(4), true);
+assert.equal(orderedRetry.request().clipRevision, 5);
+assert.equal(orderedRetry.acknowledge(5), true);
+assert.equal(orderedRetry.request().clipRevision, 6);
+assert.equal(orderedRetry.acknowledge(6), true);
+
 const bounded = new CaptureTriggerQueue({preSeconds: 0, postSeconds: 1, maxClips: 2});
 for (let index = 0; index < 2; ++index)
   assert.equal(bounded.acceptEligibilityEvent(event(index + 10, index * 10000)).accepted, true);

@@ -226,6 +226,45 @@ int main()
         status.error == "test synchronization loss");
     }
 
+    // Repeated polling while the writer owns a revision is idempotent. It must
+    // not start the expired window again and briefly publish a false failure.
+    {
+      std::mutex gateMutex;
+      std::condition_variable gateCondition;
+      bool writerEntered = false, releaseWriter = false;
+      auto blocked = options;
+      blocked.ringSeconds = 0.002;
+      blocked.beforeWrite = [&] {
+        std::unique_lock<std::mutex> lock(gateMutex);
+        writerEntered = true;
+        gateCondition.notify_all();
+        gateCondition.wait(lock, [&] { return releaseWriter; });
+      };
+      blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, blocked);
+      for (unsigned sequence = 0; sequence < 4; ++sequence)
+        ingest(recorder, frame(sequence));
+      recorder.request(request(8, 1000, 1001));
+      {
+        std::unique_lock<std::mutex> lock(gateMutex);
+        assert(gateCondition.wait_for(lock, std::chrono::seconds(2),
+          [&] { return writerEntered; }));
+      }
+      for (unsigned sequence = 4; sequence < 8; ++sequence)
+        ingest(recorder, frame(sequence));
+      recorder.request(request(8, 1000, 1001));
+      assert((recorder.status().revision != 8) &&
+        "Polling must not restart a revision being written");
+      {
+        std::lock_guard<std::mutex> lock(gateMutex);
+        releaseWriter = true;
+      }
+      gateCondition.notify_all();
+      const auto status = wait(recorder);
+      assert(status.revision == 8 && status.error.empty() &&
+        !status.file.empty());
+    }
+
     // Writer queue saturation is visible and cannot block the receive side.
     {
       std::mutex gateMutex;

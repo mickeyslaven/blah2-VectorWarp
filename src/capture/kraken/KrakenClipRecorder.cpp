@@ -396,6 +396,7 @@ void KrakenClipRecorder::request(const IqClipRequest& value)
     return;
   }
   if ((active && active->request.revision == value.revision) ||
+      writerRevisions.find(value.revision) != writerRevisions.end() ||
       terminal.revision == value.revision) return;
   start_request_locked(value);
 }
@@ -490,6 +491,7 @@ void KrakenClipRecorder::finish_active_locked()
   job.frames = std::move(active->frames);
   job.sequence = ++fileSequence;
   active.reset();
+  writerRevisions.insert(job.request.revision);
   jobs.push_back(std::make_unique<Job>(std::move(job)));
   condition.notify_one();
 }
@@ -516,6 +518,7 @@ void KrakenClipRecorder::writer_loop()
     if (options.beforeWrite) options.beforeWrite();
     auto result = write_job(job);
     std::lock_guard<std::mutex> lock(mutex);
+    writerRevisions.erase(job.request.revision);
     publish_locked(std::move(result));
   }
 }

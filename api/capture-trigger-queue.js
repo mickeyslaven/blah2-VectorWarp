@@ -151,6 +151,15 @@ class CaptureTriggerQueue {
       windowEnd: requestedEventTime + this.postSeconds * 1000,
       pending: true, acknowledged: false, failure: null};
     this.clips[priorIndex] = clip;
+    // The native recorder publishes terminal results monotonically by revision.
+    // A retry replaces an earlier queue entry, so its new revision would
+    // otherwise be followed by older pending revisions that can never be
+    // acknowledged. Renumber those not-yet-exposed entries with the retry.
+    for (let index = priorIndex + 1; index < this.clips.length; ++index) {
+      if (!this.clips[index].pending) continue;
+      this.clips[index].revision = ++this.revision;
+      this.linkRevision(this.clips[index]);
+    }
     for (const event of records) {
       event.state = 'pending'; event.failure = null;
       event.clipRevisions.push(clip.revision);
