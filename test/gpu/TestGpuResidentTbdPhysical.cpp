@@ -1,7 +1,7 @@
 #include "GpuResidentBackend.h"
 #include "GpuResidentProof.h"
 #include "GpuResidentWire.h"
-#include "core/TrackBeforeDetect.private.h"
+#include "../../core/TrackBeforeDetect.private.h"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
