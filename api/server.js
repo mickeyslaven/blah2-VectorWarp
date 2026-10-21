@@ -86,7 +86,15 @@ const receiverSynchronizer = createReceiverSynchronizer({krakenOptions: {
   statusTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_STATUS_TIMEOUT_MS', 10000),
   readbackTimeoutMs: receiverTimeoutOption('BLAH2_RECEIVER_READBACK_TIMEOUT_MS', 30000)
 }});
-const automaticGain = createAutomaticGain({synchronizer: receiverSynchronizer, measureGain, waitForGainSettled});
+async function measureRawAdcHeadroom(candidate) {
+  const status = await getUpstreamStatus(candidate, {timeoutMs: 3000});
+  if (!status.available || !status.actual?.adcHeadroom)
+    throw Object.assign(new Error('Suite did not report pre-calibration ADC headroom.'),
+      {code: 'AUTOMATIC_GAIN_RAW_ADC_UNAVAILABLE'});
+  return status.actual.adcHeadroom;
+}
+const automaticGain = createAutomaticGain({synchronizer: receiverSynchronizer,
+  measureGain, waitForGainSettled, measureRawHeadroom: measureRawAdcHeadroom});
 // An interrupted gain check must not publish frames from an uncertain receiver.
 // Successful checks also remain blocked until the normal API/processor restart.
 let gainPublicationBlocked = gainRestart.publicationBlocked(receiverSyncState);

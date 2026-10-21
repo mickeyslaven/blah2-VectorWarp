@@ -25,6 +25,39 @@ const CLAIMS = Object.freeze({
   limitation: 'Corrected wire samples do not prove raw ADC headroom, receiver sensitivity, or radar performance.'
 });
 
+function validateRawAdc(raw, count) {
+  if (!raw || raw.source !== 'rtl2832_uint8_precalibration' || raw.complete !== true ||
+      !Array.isArray(raw.channels) || raw.channels.length !== count)
+    throw failure('AUTOMATIC_GAIN_RAW_ADC_UNAVAILABLE',
+      'The receiver did not provide complete pre-calibration ADC headroom telemetry.');
+  const channels = raw.channels.map(channel => {
+    if (!channel || !Number.isInteger(channel.channel) || channel.channel < 0 ||
+        channel.channel >= count || !Number.isSafeInteger(channel.components) ||
+        channel.components < 65536 || !Number.isSafeInteger(channel.sampledComponents) ||
+        channel.sampledComponents < 1024 ||
+        typeof channel.actualGainDb !== 'number' || !Number.isFinite(channel.actualGainDb) ||
+        channel.actualGainDb < -1 || channel.actualGainDb > 50 ||
+        !['railFraction', 'nearRailFraction', 'p999Fraction', 'rmsFraction'].every(key =>
+          typeof channel[key] === 'number' && Number.isFinite(channel[key]) &&
+          channel[key] >= 0 && channel[key] <= 1))
+      throw failure('AUTOMATIC_GAIN_RAW_ADC_INVALID',
+        'Pre-calibration ADC headroom telemetry is incomplete or malformed.');
+    return {channel: channel.channel, generation: channel.generation,
+      components: channel.components, sampledComponents: channel.sampledComponents,
+      actualGainDb: channel.actualGainDb,
+      railFraction: channel.railFraction, nearRailFraction: channel.nearRailFraction,
+      p999Fraction: channel.p999Fraction, rmsFraction: channel.rmsFraction};
+  }).sort((a, b) => a.channel - b.channel);
+  if (channels.some((channel, index) => channel.channel !== index))
+    throw failure('AUTOMATIC_GAIN_RAW_ADC_INVALID',
+      'Pre-calibration ADC headroom telemetry does not cover every active channel exactly once.');
+  const safe = channels.every(channel => channel.railFraction === 0 &&
+    channel.p999Fraction <= LIMITS.p999Fraction);
+  return {source: raw.source, channels, safe,
+    worstP999Fraction: Math.max(...channels.map(channel => channel.p999Fraction)),
+    railsObserved: channels.some(channel => channel.railFraction > 0)};
+}
+
 function failure(code, message, status = 409) {
   const error = new Error(message); error.code = code; error.status = status; return error;
 }
@@ -98,10 +131,13 @@ function validateProbe(probe, config) {
     railsObserved: channels.some(channel => channel.railFraction > 0)};
 }
 
-function createAutomaticGain({synchronizer, measureGain, waitForGainSettled, now = Date.now} = {}) {
+function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
+  measureRawHeadroom = null, now = Date.now} = {}) {
   if (!synchronizer || !['verify', 'synchronize', 'recalibrate'].every(key =>
     typeof synchronizer[key] === 'function') || typeof measureGain !== 'function' ||
-      typeof waitForGainSettled !== 'function' || typeof now !== 'function')
+      typeof waitForGainSettled !== 'function' ||
+      (measureRawHeadroom !== null && typeof measureRawHeadroom !== 'function') ||
+      typeof now !== 'function')
     throw new TypeError('Measured gain requires receiver verification, synchronization, stream settling, recalibration and measurement.');
 
   async function apply(previous, candidate, {increase = true} = {}) {
@@ -193,7 +229,12 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled, now
     async function probe(trial) {
       try {
         requireBudget('probe', LIMITS.probeTimeoutMs);
-        const measurement = validateProbe(await measureGain(clone(config)), config);
+        let measurement = validateProbe(await measureGain(clone(config)), config);
+        if (measureRawHeadroom) {
+          const raw = validateRawAdc(await measureRawHeadroom(clone(config)),
+            config.capture.device.channel_count);
+          measurement = {...measurement, rawAdc: raw, safe: measurement.safe && raw.safe};
+        }
         automatic.probes.push({...measurement, trial, capture: automatic.probes.length + 1});
         return measurement;
       } catch (error) {
@@ -259,6 +300,10 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled, now
             assertTuple(await stage('verify-selected', () =>
               synchronizer.verify(clone(config)), trial), config);
             automatic.status = 'verified'; automatic.selectedGainDb = trialGain;
+            if (measurement.rawAdc) {
+              automatic.claims.rawAdcClippingProven = true;
+              automatic.claims.rawAdcSource = measurement.rawAdc.source;
+            }
             automatic.selectionReason = seekingDown ? 'safe-below-measured-unsafe-setting' :
               !increase ? 'backoff-only' : trialGain === LIMITS.gainMaxDb ?
                 'maximum-requested-gain' : 'headroom-target';
@@ -291,4 +336,5 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled, now
   return {apply};
 }
 
-module.exports = {createAutomaticGain, enabled, MAX_AUTOMATIC_GAIN_MS, LIMITS, validateProbe};
+module.exports = {createAutomaticGain, enabled, MAX_AUTOMATIC_GAIN_MS, LIMITS,
+  validateProbe, validateRawAdc};

@@ -580,12 +580,27 @@ try
   // bounded batched pipeline only when filtering is enabled.
   int32_t delayMinClutter, delayMaxClutter;
   bool isClutter;
-  tree["process"]["clutter"]["delayMin"] >> delayMinClutter;
-  tree["process"]["clutter"]["delayMax"] >> delayMaxClutter;
-  tree["process"]["clutter"]["enable"] >> isClutter;
+  const auto& clutterConfig = tree["process"]["clutter"];
+  bool followAmbiguity = false;
+  if (clutterConfig.has_child("followAmbiguity"))
+    clutterConfig["followAmbiguity"] >> followAmbiguity;
+  if (followAmbiguity) {
+    // Ambiguity limits are inclusive; Wiener-Hopf consumes a half-open span.
+    // Calculate in 64 bits so a malformed boundary cannot wrap into a huge
+    // allocation before the startup checks reject it.
+    const int64_t derivedDelayMax = int64_t(delayMax) + 1;
+    if (derivedDelayMax > INT32_MAX)
+      throw std::invalid_argument("Clutter followAmbiguity range exceeds the processor delay limit");
+    delayMinClutter = delayMin;
+    delayMaxClutter = int32_t(derivedDelayMax);
+  } else {
+    clutterConfig["delayMin"] >> delayMinClutter;
+    clutterConfig["delayMax"] >> delayMaxClutter;
+  }
+  clutterConfig["enable"] >> isClutter;
   const int64_t clutterBins = int64_t(delayMaxClutter) - delayMinClutter;
-  if (isClutter && (clutterBins <= 0 || clutterBins > UINT32_MAX))
-    throw std::invalid_argument("Clutter delay range must be a non-empty half-open interval");
+  if (isClutter && (clutterBins <= 0 || clutterBins > nSamples || clutterBins > UINT32_MAX))
+    throw std::invalid_argument("Clutter delay range must be a non-empty half-open interval no longer than the CPI");
 
   std::string accelerationMode = "auto";
   if (tree["process"].has_child("performance") &&
