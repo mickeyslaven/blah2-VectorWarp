@@ -175,7 +175,7 @@ void main(){uint i=indexOf();if(i>=m[34])return;dvec2 value=fused[i];
 const char* tbdBody=R"glsl(
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
-shared double pathBest2[128],pathBest4[128],pathBest8[128];
+shared double pathBest2[64],pathBest4[64],pathBest8[64];
 void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
@@ -207,7 +207,7 @@ void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_
    }
   }
   pathBest2[lane]=best2;pathBest4[lane]=best4;pathBest8[lane]=best8;barrier();
-  if(lane==0u){uint count=min(128u,total-p.b);double chunkBest[3]=double[3](-1.0LF,-1.0LF,-1.0LF);
+  if(lane==0u){uint count=min(64u,total-p.b);double chunkBest[3]=double[3](-1.0LF,-1.0LF,-1.0LF);
    for(uint j=0u;j<count;++j){chunkBest[0]=max(chunkBest[0],pathBest2[j]);chunkBest[1]=max(chunkBest[1],pathBest4[j]);chunkBest[2]=max(chunkBest[2],pathBest8[j]);}
    for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
     if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
@@ -418,7 +418,11 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
 inline std::vector<std::pair<std::string,std::string>> shaderSources(){
  const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody}};
  std::vector<std::pair<std::string,std::string>> result;
- for(const auto& b:bodies)result.emplace_back(b.first,std::string(common)+b.second);
+ for(const auto& b:bodies){std::string prefix=common;
+  if(std::string(b.first)=="tbd"){const auto at=prefix.find("layout(local_size_x=128)");
+   if(at==std::string::npos)throw std::logic_error("TBD local size declaration missing");
+   prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x=64)");}
+  result.emplace_back(b.first,prefix+b.second);}
  return result;
 }
 // Shared by the production seam and test-local binding of these same kernels.
@@ -620,7 +624,7 @@ public:
    const uint32_t work=layout_.cells*128u;
    kernels_[10]->append(command,{work,0,0,0,0});barrier(command);
    const uint32_t trajectories=(2u*config_.integrationDelayMotionBins+1u)*(2u*config_.integrationDopplerMotionBins+1u);
-   for(uint32_t first=0;first<trajectories;first+=128u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
+   for(uint32_t first=0;first<trajectories;first+=64u){kernels_[10]->append(command,{work,1,first,0,0});barrier(command);}
    kernels_[10]->append(command,{work,2,0,0,0});barrier(command);
   }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
