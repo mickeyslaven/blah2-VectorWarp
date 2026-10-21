@@ -72,6 +72,14 @@ void configCases(){
  check(encodeConfig(tbdDecoded)==tbdBytes&&tbdDecoded.detector.integrationCpis==8&&
   tbdDecoded.detector.integrationMotionBins==track_before_detect::encodeMotionBins(1,4),
   "Track-before-detect configuration did not round trip");
+ auto expandedTbd=tbd;
+ expandedTbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(2,16);
+ validateConfig(expandedTbd);
+ const auto expandedTbdBytes=encodeConfig(expandedTbd);
+ const auto expandedTbdDecoded=decodeConfig(bytes(expandedTbdBytes),bytes(d),bytes(f));
+ check(encodeConfig(expandedTbdDecoded)==expandedTbdBytes&&
+  expandedTbdDecoded.detector.integrationMotionBins==track_before_detect::encodeMotionBins(2,16),
+  "Expanded track-before-detect motion bounds did not round trip");
  check(wire::configHash(tbd)!=wire::configHash(coherent),
   "Track-before-detect is not bound to config identity");
  auto bearing=tbd;bearing.bearing={true,BearingMethod::covarianceMvdr,
