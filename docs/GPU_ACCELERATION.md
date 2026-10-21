@@ -105,9 +105,12 @@ omitted. Each low-Doppler detection strengthens its delay bin while unused bins
 decay. Collapsing the learned site map across only the configured low-Doppler
 band makes it robust to row jitter without creating a broad Doppler notch. Once
 a bin reaches `persistence_cpis`, it cannot start another track.
-The filter is initiation-only: an existing moving track can still associate
-through zero Doppler, and detection output is unchanged. Set `enable: false` to
-retain the previous initiation behavior. Saving a changed receiver site,
+The same learned map also retires startup artifacts conservatively. A track must
+remain within 1 Hz and a one-delay-unit span for a full 100-sample history, with
+at least 90 associated samples, while occupying a delay bin already learned as
+stationary clutter. A moving aircraft can cross zero Doppler without being
+retired; raw detection output is unchanged. Set `enable: false` to retain the
+previous initiation and retirement behavior. Saving a changed receiver site,
 transmitter site, array geometry/orientation, frequency, sample rate, or channel
 mapping restarts the processor and therefore starts a fresh temporal clutter map.
 
