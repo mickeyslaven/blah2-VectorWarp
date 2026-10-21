@@ -141,6 +141,58 @@ void main() {
   for(uint row=lane;row<B;row+=128u) solution[base+row]=localSolution[row];
 }
 )glsl";
+// O(B^2) Hermitian Toeplitz alternative to the dense Cholesky factor/solve.
+// It is opt-in while physical qualification compares it with the dense path.
+const std::string toeplitzFactor = common + R"glsl(
+layout(binding=1) readonly buffer Correlations { vec2 corr[]; };
+layout(binding=2) coherent buffer Lower { dvec2 lower[]; };
+shared dvec2 alpha[1024], oldAlpha[1024];
+void main() {
+ uint lane=gl_LocalInvocationID.x,B=p.b; if(lane!=0u)return;
+ double scale=(dvec2(corr[0])/double(p.a)).x, beta=scale;
+ if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) { reject(2u,2u,0u,0u); return; }
+ if(B>1u) alpha[0]=-dvec2(corr[1])/beta;
+ for(uint k=1u;k<B;++k) {
+  beta*=1.0LF-dot(alpha[k-1u],alpha[k-1u]);
+  if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF) { reject(3u,2u,k,0u); return; }
+  if(k+1u<B) { dvec2 q=dvec2(corr[k+1u])/double(p.a);
+   for(uint j=0u;j<k;++j) q+=mul(dvec2(corr[k-j])/double(p.a),alpha[j]);
+   dvec2 gamma=-q/beta; if(!finite64(gamma) || dot(gamma,gamma)>=1.0LF) { reject(3u,2u,k,0u); return; }
+   for(uint j=0u;j<k;++j) oldAlpha[j]=alpha[j];
+   for(uint j=0u;j<k;++j) alpha[j]+=mul(gamma,conjugate(oldAlpha[k-1u-j])); alpha[k]=gamma;
+  }
+ }
+ atomicAdd(status[12],1u);
+}
+)glsl";
+const std::string toeplitzSolve = common + R"glsl(
+layout(binding=1) readonly buffer Correlations { vec2 corr[]; };
+layout(binding=2) readonly buffer Lower { dvec2 lower[]; };
+layout(binding=3) coherent buffer Solution { dvec2 solution[]; };
+shared dvec2 localSolution[1024], alpha[1024], oldAlpha[1024];
+shared double residualPower[128], rhsPower[128];
+void main() {
+ uint lane=gl_LocalInvocationID.x,ch=gl_WorkGroupID.x,B=p.b,base=ch*B;
+ if(ch>=status[11])return;
+ double scale=(dvec2(corr[0])/double(p.a)).x,beta=scale;
+ if(lane==0u) {
+  if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) reject(2u,p.c,0u,ch);
+  else { localSolution[0]=dvec2(corr[B+base])/double(p.a)/beta; if(B>1u)alpha[0]=-dvec2(corr[1])/beta;
+   for(uint k=1u;k<B;++k) { beta*=1.0LF-dot(alpha[k-1u],alpha[k-1u]);
+    if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF) { reject(3u,p.c,k,ch); break; }
+    dvec2 rhs=dvec2(corr[B+base+k])/double(p.a); for(uint j=0u;j<k;++j)rhs-=mul(dvec2(corr[k-j])/double(p.a),localSolution[j]);
+    dvec2 mu=rhs/beta; for(uint j=0u;j<k;++j)localSolution[j]+=mul(mu,conjugate(alpha[k-1u-j])); localSolution[k]=mu;
+    if(k+1u<B) { dvec2 q=dvec2(corr[k+1u])/double(p.a); for(uint j=0u;j<k;++j)q+=mul(dvec2(corr[k-j])/double(p.a),alpha[j]); dvec2 gamma=-q/beta;
+     if(!finite64(gamma)||dot(gamma,gamma)>=1.0LF){reject(3u,p.c,k,ch);break;} for(uint j=0u;j<k;++j)oldAlpha[j]=alpha[j]; for(uint j=0u;j<k;++j)alpha[j]+=mul(gamma,conjugate(oldAlpha[k-1u-j])); alpha[k]=gamma; }
+   }
+  }
+ }
+ barrier(); if(status[0]!=0u)return;
+ double residual=0.0LF,rhs=0.0LF;
+ for(uint row=lane;row<B;row+=128u){ dvec2 value=dvec2(0);for(uint col=0u;col<B;++col){dvec2 matrix=row>=col?dvec2(corr[row-col]):conjugate(dvec2(corr[col-row]));value+=mul(matrix/double(p.a),localSolution[col]);}dvec2 expected=dvec2(corr[B+base+row])/double(p.a),difference=value-expected;residual+=dot(difference,difference);rhs+=dot(expected,expected);if(!finite64(localSolution[row]))reject(4u,p.c,row,ch); }
+ residualPower[lane]=residual;rhsPower[lane]=rhs;barrier();if(lane==0u){residual=0.0LF;rhs=0.0LF;for(uint i=0u;i<128u;++i){residual+=residualPower[i];rhs+=rhsPower[i];}if(isnan(residual)||isinf(residual)||isnan(rhs)||isinf(rhs)||residual>max(rhs*1e-10LF,1e-20LF))reject(5u,p.c,0u,ch);atomicAdd(status[8],1u);}barrier();for(uint row=lane;row<B;row+=128u)solution[base+row]=localSolution[row];
+}
+)glsl";
 const std::string weightPack = common + R"glsl(
 layout(binding=1) readonly buffer Initial { dvec2 initial[]; };
 layout(binding=2) writeonly buffer Weights { dvec2 weights[]; };
@@ -226,6 +278,7 @@ class Refinement {
   std::unique_ptr<Buffer> status_, cache_, work_, suffix_, baseline_, lower_, solution_, initial_, weights_;
   std::unique_ptr<NativePlan> workPlan_, weightPlan_;
   std::unique_ptr<Kernel> pack_, factor_, solve_, weightsPack_, multiply_, gather_, residual_, cast_, merge_;
+  bool toeplitz_ = false;
 public:
   static uint64_t requiredBytes(uint32_t samples,uint32_t bins,uint32_t channels) {
     if(!bins || bins>fft || !samples || bins>samples || !channels || channels>8) return UINT64_MAX;
@@ -261,13 +314,16 @@ public:
     weights_=buffer(uint64_t(fft)*channels*16);
     workPlan_=std::make_unique<NativePlan>(context,*work_,fft,tileBlocks,true,false,true);
     weightPlan_=std::make_unique<NativePlan>(context,*weights_,fft,channels,true,false,true);
+    const char* solver=std::getenv("BLAH2_GPU_TOEPLITZ_SOLVER");
+    if(solver && std::string(solver)=="levinson") toeplitz_=true;
+    else if(solver && *solver) throw std::invalid_argument("BLAH2_GPU_TOEPLITZ_SOLVER must be levinson");
     auto kernel=[&](const std::string& source,std::vector<Buffer*> buffers) {
       buffers.insert(buffers.begin(),status_.get());
       return std::make_unique<Kernel>(context,source.c_str(),buffers);
     };
     pack_=kernel(referencePack,{&reference,work_.get(),suffix_.get()});
-    factor_=kernel(factor,{&correlations,lower_.get()});
-    solve_=kernel(solve,{&correlations,lower_.get(),solution_.get()});
+    factor_=kernel(toeplitz_?toeplitzFactor:factor,{&correlations,lower_.get()});
+    solve_=kernel(toeplitz_?toeplitzSolve:solve,{&correlations,lower_.get(),solution_.get()});
     weightsPack_=kernel(weightPack,{initial_.get(),weights_.get()});
     multiply_=kernel(multiply,{cache_.get(),weights_.get(),work_.get()});
     gather_=kernel(gather,{work_.get(),baseline_.get()});
