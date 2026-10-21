@@ -185,20 +185,29 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
    tbdBanks[(bank+1u)*m[34]+i]=available>=length?0.0LF:packDouble2x32(uvec2(0u,0x7ff80000u));}
   return;
  }
- // One dispatch covers one motion trajectory across the entire map. The host
- // inserts a device-memory barrier between trajectories, so every invocation
- // can update its cell without atomics or a trajectory-sized scratch buffer.
- if(p.a==1u){int dr=int(p.b)-int(m[93]),dc=int(p.c)-int(m[76]);
-  precise double sum=0.0LF;bool compatible=true;
-  for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
-   if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
-   uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
-   double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
-   if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
-   if((length==2u||length==4u||length==8u)&&length<=m[74]){uint bank=length==2u?0u:(length==4u?1u:2u);
-    double candidate=sum/double(length),prior=tbdBanks[(bank+1u)*m[34]+i];
-    if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
-  }return;
+ // Each dispatch covers four adjacent Doppler slopes and every delay slope
+ // across the full map. This keeps the expensive cell work parallel while
+ // amortizing launch/barrier overhead; dispatches remain ordered so each cell
+ // can merge its chunk maximum without atomics or a trajectory-sized buffer.
+ if(p.a==1u){double best2=-1.0LF,best4=-1.0LF,best8=-1.0LF;
+  uint dopplerWidth=2u*m[93]+1u;
+  for(uint offset=0u;offset<4u&&p.b+offset<dopplerWidth;++offset){int dr=int(p.b+offset)-int(m[93]);
+   for(int dc=-int(m[76]);dc<=int(m[76]);++dc){precise double sum=0.0LF;bool compatible=true;
+    for(uint age=0u;age<limit;++age){int rr=int(row)-dr*int(age),cc=int(column)-dc*int(age);
+     if(rr<0||cc<0||rr>=int(m[32])||cc>=int(m[33]))break;
+     uint slot=(m[79]+m[74]-(age%m[74]))%m[74],at=slot*m[34]+uint(rr)*m[33]+uint(cc);
+     double value=history[at];compatible=compatible&&(m[77]==0xffffffffu||angleCompatible(currentBeam,angleHistory[at]));
+     if(!compatible||!finiteD(value)||value<0.0LF)break;sum+=value;uint length=age+1u;
+     if(length==2u)best2=max(best2,sum/2.0LF);
+     else if(length==4u&&m[74]>=4u)best4=max(best4,sum/4.0LF);
+     else if(length==8u&&m[74]>=8u)best8=max(best8,sum/8.0LF);
+    }
+   }
+  }
+  double chunkBest[3]=double[3](best2,best4,best8);
+  for(uint bank=0u;bank<m[80];++bank){double candidate=chunkBest[bank],prior=tbdBanks[(bank+1u)*m[34]+i];
+   if(candidate>prior)tbdBanks[(bank+1u)*m[34]+i]=candidate;}
+  return;
  }
  double selected=available<2u?currentPower[i]:max(0.0LF,tbdBanks[i]);
  for(uint bank=0u;bank<m[80];++bank){uint length=2u<<bank;if(available>=length){
@@ -603,9 +612,9 @@ public:
   barrier(command);
   if(tbd){
    kernels_[10]->append(command,{layout_.cells,0,0,0,0});barrier(command);
-   for(uint32_t dr=0;dr<=2u*config_.integrationDopplerMotionBins;++dr)
-    for(uint32_t dc=0;dc<=2u*config_.integrationDelayMotionBins;++dc){
-     kernels_[10]->append(command,{layout_.cells,1,dr,dc,0});barrier(command);}
+   constexpr uint32_t dopplerSlopesPerDispatch=4;
+   for(uint32_t dr=0;dr<=2u*config_.integrationDopplerMotionBins;dr+=dopplerSlopesPerDispatch){
+    kernels_[10]->append(command,{layout_.cells,1,dr,0,0});barrier(command);}
    kernels_[10]->append(command,{layout_.cells,2,0,0,0});barrier(command);
   }
   else {VkBufferCopy powerCopy{0,0,integration_->bytes};
