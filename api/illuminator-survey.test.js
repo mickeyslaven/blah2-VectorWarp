@@ -1,7 +1,9 @@
 'use strict';
 
 const assert = require('assert');
-const {bandPlans, receiverCapabilities, evaluateCandidate, evaluateSurvey} =
+const {bandPlans, receiverCapabilities, deriveSyntheticEchoMetrics,
+  evaluateFastCandidate, evaluateFastSweep,
+  evaluateCandidate, evaluateSurvey} =
   require('./illuminator-survey');
 
 const plans = bandPlans();
@@ -18,6 +20,7 @@ const kraken = {capture: {device: {type: 'Kraken', channel_count: 5,
     ({daq_channel: index, position: [index, 0, 0]}))}}}};
 const rspduo = {capture: {device: {type: 'RspDuo'}}};
 assert.equal(receiverCapabilities(kraken).bearing_evidence_evaluation, true);
+assert.equal(receiverCapabilities(kraken).automatic_fast_proxy_evaluation, true);
 assert.equal(receiverCapabilities(kraken).automatic_bearing_safe_selection, false);
 assert.equal(receiverCapabilities(kraken).automatic_survey_execution, false);
 assert.equal(receiverCapabilities(rspduo).spatial_reflection_assessment, 'two-channel-limited');
@@ -63,6 +66,55 @@ assert.equal(accepted.bearing_status, 'eligible');
 assert.equal(accepted.scores.persistent_pass_rate, .5);
 assert.equal(accepted.scores.matched_pass_rate, 2 / 3);
 assert.equal(accepted.scores.signal, undefined);
+
+function fastCandidate(frequency_hz, threshold = -48) {
+  const synthetic_echo_trials_data = [threshold - 6, threshold, threshold + 6].flatMap(ratio =>
+    [10, 80].flatMap(delay => [-12, 17].flatMap(doppler => [0, 1].map(repetition => ({
+      trial_id: `${frequency_hz}-${ratio}-${delay}-${doppler}-${repetition}`,
+      echo_ratio_db: ratio, delay_bin: delay, doppler_bin: doppler,
+      detected: ratio >= threshold
+    })))));
+  return {frequency_hz, name: `fast-${frequency_hz}`,
+    comparison: {site_id: 'test-site', receiver_id: 'receiver-1',
+      protocol_id: 'fast-v1', processing_fingerprint: 'processor-abc',
+      injection_grid_id: 'fixed-delay-doppler-grid-v1', sample_rate_hz: 2400000},
+    reference: {cnr_db: 25, occupied_bandwidth_fraction: .85,
+      ambiguity_pslr_db: -17, ambiguity_islr_db: -10, cancellation_db: 31,
+      clutter_cancellation_db: 26, adc_level_source: 'raw-adc',
+      channel_clipping_fractions: [0, 0, 0, 0, 0],
+      channel_near_rail_fractions: [0, 0, 0, 0, 0]},
+    sensitivity: {gain_strategy: 'measured-highest-safe-common', selected_gain_db: 14,
+      peak_fraction: .7, input_referred_noise_db: -86},
+    dynamic_range: {injection_stage: 'pre-cancellation-digital',
+      synthetic_echo_trials_data, synthetic_echo_trials: synthetic_echo_trials_data.length,
+      synthetic_echo_threshold_db: threshold, synthetic_echo_recovery_fraction: 1,
+      usable_dynamic_range_db: 48, channel_power_span_db: 4,
+      residual_floor_excess_db: 2},
+    operations: {off_target_detection_density: .001, stationary_track_density: .001,
+      cpi_deadline_miss_fraction: 0, dropped_frame_fraction: 0}};
+}
+const fastGood = fastCandidate(503000000, -49);
+const fastStrongButWorse = fastCandidate(509000000, -38);
+fastStrongButWorse.reference.cnr_db = 70;
+assert.equal(evaluateFastCandidate(fastGood, receiverCapabilities(kraken)).status,
+  'proxy-qualified');
+const fastSweep = evaluateFastSweep([fastStrongButWorse, fastGood], kraken);
+assert.equal(fastSweep.selected.frequency_hz, 503000000);
+assert.equal(fastSweep.provisional, true);
+assert.equal(fastSweep.requires_aircraft_validation, true);
+assert.equal(deriveSyntheticEchoMetrics(fastGood.dynamic_range.synthetic_echo_trials_data)
+  .synthetic_echo_threshold_db, -49);
+const fastClipped = structuredClone(fastGood);
+fastClipped.reference.channel_clipping_fractions[2] = .01;
+assert.ok(evaluateFastCandidate(fastClipped, receiverCapabilities(kraken)).failures
+  .includes('receiver-channel-clipping'));
+const fastWeakEcho = structuredClone(fastGood);
+fastWeakEcho.dynamic_range.synthetic_echo_threshold_db = -20;
+assert.ok(evaluateFastCandidate(fastWeakEcho, receiverCapabilities(kraken)).failures
+  .includes('poor-synthetic-echo-sensitivity'));
+const incomparableFast = structuredClone(fastGood);
+incomparableFast.comparison.injection_grid_id = 'different-grid';
+assert.equal(evaluateFastSweep([fastGood, incomparableFast], kraken).selected, null);
 
 const reflected = structuredClone(complete);
 reflected.frequency_hz = 539000000;

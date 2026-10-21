@@ -81,6 +81,7 @@ function receiverCapabilities(config) {
     spatial_reflection_assessment: spatial ? 'multi-element' :
       coherent && channels === 2 ? 'two-channel-limited' : 'unavailable',
     bearing_evidence_evaluation: spatial,
+    automatic_fast_proxy_evaluation: coherent,
     automatic_survey_execution: false,
     automatic_bearing_safe_selection: false,
     limitation: spatial ? null : coherent && channels === 2 ?
@@ -89,9 +90,14 @@ function receiverCapabilities(config) {
 }
 
 const DEFAULT_LIMITS = Object.freeze({minimum_cnr_db: 8, maximum_clipping_fraction: 1e-4,
-  maximum_peak_fraction: .95,
+  maximum_near_rail_fraction: 1e-3, maximum_peak_fraction: .95,
   minimum_occupied_bandwidth_fraction: .5, minimum_ambiguity_suppression_db: 8,
-  minimum_cancellation_db: 20,
+  minimum_ambiguity_islr_suppression_db: 4, minimum_cancellation_db: 20,
+  minimum_clutter_cancellation_db: 15, minimum_usable_dynamic_range_db: 35,
+  minimum_synthetic_echo_suppression_db: 35, minimum_synthetic_echo_recovery_fraction: .9,
+  maximum_channel_power_span_db: 12, maximum_residual_floor_excess_db: 8,
+  maximum_off_target_detection_density: .01, maximum_stationary_track_density: .01,
+  maximum_cpi_deadline_miss_fraction: .01, maximum_dropped_frame_fraction: 0,
   minimum_repeat_correlation: .98, minimum_ideal_correlation: .4,
   maximum_amplitude_span_db: 6, maximum_phase_curvature_deg: 60,
   minimum_adsb_opportunities: 5, minimum_sector_opportunities: 5,
@@ -140,6 +146,203 @@ function comparisonKey(candidate) {
   return JSON.stringify([...COMPARISON_FIELDS.map(field => comparison[field]),
     [...comparison.sector_ids].sort(), [...comparison.range_bin_ids].sort(),
     candidate.bearing_required]);
+}
+
+const FAST_COMPARISON_FIELDS = ['site_id', 'receiver_id', 'protocol_id',
+  'processing_fingerprint', 'injection_grid_id'];
+
+function fastComparisonKey(candidate) {
+  const comparison = candidate?.comparison;
+  if (!comparison || FAST_COMPARISON_FIELDS.some(field => !identifier(comparison[field])) ||
+      !finite(comparison.sample_rate_hz) || comparison.sample_rate_hz <= 0) return null;
+  return JSON.stringify([...FAST_COMPARISON_FIELDS.map(field => comparison[field]),
+    comparison.sample_rate_hz]);
+}
+
+function deriveSyntheticEchoMetrics(trials, minimumRecovery = .9) {
+  if (!Array.isArray(trials) || trials.length === 0 || trials.length > 65536 ||
+      !finite(minimumRecovery) || minimumRecovery <= 0 || minimumRecovery > 1)
+    throw new Error('Synthetic echo trials and recovery target are invalid');
+  const ids = new Set(), levels = new Map();
+  for (const trial of trials) {
+    if (!trial || !identifier(trial.trial_id) || ids.has(trial.trial_id) ||
+        !finite(trial.echo_ratio_db) || trial.echo_ratio_db > 0 ||
+        !Number.isSafeInteger(trial.delay_bin) || !Number.isSafeInteger(trial.doppler_bin) ||
+        typeof trial.detected !== 'boolean')
+      throw new Error('Synthetic echo trial provenance is invalid');
+    ids.add(trial.trial_id);
+    const level = levels.get(trial.echo_ratio_db) || new Map();
+    const cellKey = JSON.stringify([trial.delay_bin, trial.doppler_bin]);
+    const cell = level.get(cellKey) || {trials: 0, detected: 0};
+    cell.trials += 1;
+    if (trial.detected) cell.detected += 1;
+    level.set(cellKey, cell);
+    levels.set(trial.echo_ratio_db, level);
+  }
+  const cellKeys = cells => [...cells.keys()].sort();
+  const expectedCells = JSON.stringify(cellKeys([...levels.values()][0]));
+  const rows = [...levels.entries()].sort((left, right) => left[0] - right[0]).map(([ratio, cells]) => {
+    if (JSON.stringify(cellKeys(cells)) !== expectedCells)
+      throw new Error('Synthetic echo grid differs between amplitude levels');
+    const rates = [...cells.values()].map(cell => cell.detected / cell.trials);
+    return {echo_ratio_db: ratio, recovery_fraction: mean(rates),
+      worst_cell_recovery_fraction: Math.min(...rates)};
+  });
+  // A usable threshold must remain usable at every stronger injected level;
+  // this rejects noisy, non-monotonic one-level wins.
+  let threshold = null;
+  for (let index = 0; index < rows.length; ++index) {
+    if (rows.slice(index).every(row => row.worst_cell_recovery_fraction >= minimumRecovery)) {
+      threshold = rows[index];
+      break;
+    }
+  }
+  return {synthetic_echo_trials: trials.length,
+    synthetic_echo_threshold_db: threshold?.echo_ratio_db ?? null,
+    synthetic_echo_recovery_fraction: threshold?.worst_cell_recovery_fraction ?? 0,
+    levels: rows};
+}
+
+// This is deliberately a proxy prescreen: weak delayed/Doppler-shifted copies
+// of the measured reference are injected before the production canceller and
+// detector. It rapidly measures the complete waveform/processing floor without
+// claiming that a digitally injected echo proves RF aircraft performance.
+function evaluateFastCandidate(candidate, capabilities, suppliedLimits = {}) {
+  const limits = limitsFrom(suppliedLimits);
+  const failures = [], missing = [];
+  const reference = candidate?.reference || {};
+  const sensitivity = candidate?.sensitivity || {};
+  const dynamic = candidate?.dynamic_range || {};
+  const operations = candidate?.operations || {};
+  const channels = capabilities?.coherent_channels || 0;
+  if (!finite(candidate?.frequency_hz) || candidate.frequency_hz <= 0)
+    failures.push('invalid-frequency');
+  if (!fastComparisonKey(candidate)) missing.push('fast-comparison-cohort');
+  if (capabilities?.rf_prescreen !== true || channels < 2)
+    failures.push('unsupported-receiver');
+
+  const finiteGate = (object, field, boundary, direction, reason) => {
+    if (!finite(object[field])) missing.push(field);
+    else if (direction === 'minimum' ? object[field] < boundary : object[field] > boundary)
+      failures.push(reason);
+  };
+  finiteGate(reference, 'cnr_db', limits.minimum_cnr_db, 'minimum', 'reference-too-weak');
+  finiteGate(reference, 'occupied_bandwidth_fraction', limits.minimum_occupied_bandwidth_fraction,
+    'minimum', 'insufficient-occupied-bandwidth');
+  finiteGate(reference, 'ambiguity_pslr_db', -limits.minimum_ambiguity_suppression_db,
+    'maximum', 'poor-ambiguity-sidelobes');
+  finiteGate(reference, 'ambiguity_islr_db', -limits.minimum_ambiguity_islr_suppression_db,
+    'maximum', 'poor-integrated-ambiguity-sidelobes');
+  finiteGate(reference, 'cancellation_db', limits.minimum_cancellation_db,
+    'minimum', 'poor-cancellation');
+  finiteGate(reference, 'clutter_cancellation_db', limits.minimum_clutter_cancellation_db,
+    'minimum', 'poor-clutter-cancellation');
+  if (!['raw-adc', 'receiver-calibrated-adc'].includes(reference.adc_level_source))
+    missing.push('adc_level_source');
+  for (const [field, boundary, reason] of [
+    ['channel_clipping_fractions', limits.maximum_clipping_fraction, 'receiver-channel-clipping'],
+    ['channel_near_rail_fractions', limits.maximum_near_rail_fraction, 'receiver-near-rail']
+  ]) {
+    const values = reference[field];
+    if (!Array.isArray(values) || values.length !== channels) missing.push(field);
+    else if (values.some(value => !finite(value) || value < 0 || value > 1))
+      failures.push(`invalid-${field.replaceAll('_', '-')}`);
+    else if (values.some(value => value > boundary)) failures.push(reason);
+  }
+
+  if (sensitivity.gain_strategy !== 'measured-highest-safe-common')
+    missing.push('gain_strategy');
+  if (!finite(sensitivity.selected_gain_db)) missing.push('selected_gain_db');
+  finiteGate(sensitivity, 'peak_fraction', limits.maximum_peak_fraction,
+    'maximum', 'insufficient-receiver-headroom');
+  if (finite(sensitivity.peak_fraction) && sensitivity.peak_fraction < 0)
+    failures.push('invalid-peak-fraction');
+  if (!finite(sensitivity.input_referred_noise_db)) missing.push('input_referred_noise_db');
+
+  if (dynamic.injection_stage !== 'pre-cancellation-digital')
+    missing.push('injection_stage');
+  let derivedEcho = null;
+  try {
+    derivedEcho = deriveSyntheticEchoMetrics(dynamic.synthetic_echo_trials_data,
+      limits.minimum_synthetic_echo_recovery_fraction);
+    if (dynamic.synthetic_echo_trials !== derivedEcho.synthetic_echo_trials ||
+        dynamic.synthetic_echo_threshold_db !== derivedEcho.synthetic_echo_threshold_db ||
+        dynamic.synthetic_echo_recovery_fraction !== derivedEcho.synthetic_echo_recovery_fraction)
+      failures.push('inconsistent-synthetic-echo-summary');
+  } catch (error) {
+    missing.push('synthetic_echo_trials_data');
+  }
+  finiteGate(dynamic, 'synthetic_echo_threshold_db',
+    -limits.minimum_synthetic_echo_suppression_db, 'maximum', 'poor-synthetic-echo-sensitivity');
+  if (finite(dynamic.synthetic_echo_threshold_db) && dynamic.synthetic_echo_threshold_db > 0)
+    failures.push('invalid-synthetic-echo-threshold');
+  finiteGate(dynamic, 'synthetic_echo_recovery_fraction',
+    limits.minimum_synthetic_echo_recovery_fraction, 'minimum', 'unreliable-synthetic-echo-recovery');
+  if (finite(dynamic.synthetic_echo_recovery_fraction) &&
+      (dynamic.synthetic_echo_recovery_fraction < 0 || dynamic.synthetic_echo_recovery_fraction > 1))
+    failures.push('invalid-synthetic-echo-recovery-fraction');
+  finiteGate(dynamic, 'usable_dynamic_range_db', limits.minimum_usable_dynamic_range_db,
+    'minimum', 'insufficient-usable-dynamic-range');
+  finiteGate(dynamic, 'channel_power_span_db', limits.maximum_channel_power_span_db,
+    'maximum', 'excessive-channel-power-span');
+  finiteGate(dynamic, 'residual_floor_excess_db', limits.maximum_residual_floor_excess_db,
+    'maximum', 'elevated-post-cancellation-floor');
+  for (const field of ['usable_dynamic_range_db', 'channel_power_span_db', 'residual_floor_excess_db'])
+    if (finite(dynamic[field]) && dynamic[field] < 0) failures.push(`invalid-${field.replaceAll('_', '-')}`);
+
+  for (const [field, boundary, reason] of [
+    ['off_target_detection_density', limits.maximum_off_target_detection_density, 'excessive-off-target-detections'],
+    ['stationary_track_density', limits.maximum_stationary_track_density, 'excessive-stationary-tracks'],
+    ['cpi_deadline_miss_fraction', limits.maximum_cpi_deadline_miss_fraction, 'cpi-deadline-regression'],
+    ['dropped_frame_fraction', limits.maximum_dropped_frame_fraction, 'dropped-frames']
+  ]) {
+    if (!finite(operations[field])) missing.push(field);
+    else if (operations[field] < 0 || operations[field] > 1)
+      failures.push(`invalid-${field.replaceAll('_', '-')}`);
+    else if (operations[field] > boundary) failures.push(reason);
+  }
+
+  return {frequency_hz: candidate?.frequency_hz, name: candidate?.name || null,
+    status: failures.length ? 'rejected' : missing.length ? 'incomplete' : 'proxy-qualified',
+    failures: [...new Set(failures)], missing: [...new Set(missing)], scores: {
+      synthetic_echo_threshold_db: finite(dynamic.synthetic_echo_threshold_db) ?
+        dynamic.synthetic_echo_threshold_db : null,
+      synthetic_echo_recovery_fraction: finite(dynamic.synthetic_echo_recovery_fraction) ?
+        dynamic.synthetic_echo_recovery_fraction : null,
+      usable_dynamic_range_db: finite(dynamic.usable_dynamic_range_db) ? dynamic.usable_dynamic_range_db : null,
+      residual_floor_excess_db: finite(dynamic.residual_floor_excess_db) ? dynamic.residual_floor_excess_db : null,
+      selected_gain_db: finite(sensitivity.selected_gain_db) ? sensitivity.selected_gain_db : null,
+      input_referred_noise_db: finite(sensitivity.input_referred_noise_db) ?
+        sensitivity.input_referred_noise_db : null,
+      ambiguity_pslr_db: finite(reference.ambiguity_pslr_db) ? reference.ambiguity_pslr_db : null
+    }};
+}
+
+function evaluateFastSweep(candidates, config, limits) {
+  if (!Array.isArray(candidates) || candidates.length === 0 || candidates.length > 4096)
+    throw new Error('Fast illuminator sweep requires candidate measurements');
+  const capabilities = receiverCapabilities(config);
+  const results = candidates.map(candidate => evaluateFastCandidate(candidate, capabilities, limits));
+  const keys = candidates.map(fastComparisonKey);
+  const comparable = keys.every(key => key !== null && key === keys[0]);
+  const eligible = comparable ? results.filter(result => result.status === 'proxy-qualified') : [];
+  const compare = (left, right) =>
+    left.scores.synthetic_echo_threshold_db - right.scores.synthetic_echo_threshold_db ||
+    right.scores.synthetic_echo_recovery_fraction - left.scores.synthetic_echo_recovery_fraction ||
+    right.scores.usable_dynamic_range_db - left.scores.usable_dynamic_range_db ||
+    left.scores.residual_floor_excess_db - right.scores.residual_floor_excess_db ||
+    right.scores.selected_gain_db - left.scores.selected_gain_db ||
+    left.scores.input_referred_noise_db - right.scores.input_referred_noise_db ||
+    left.scores.ambiguity_pslr_db - right.scores.ambiguity_pslr_db;
+  eligible.sort(compare);
+  const tied = eligible.length > 1 && compare(eligible[0], eligible[1]) === 0;
+  return {schema: 'vectorwarp-illuminator-fast-sweep-v1', capabilities, results,
+    selected: tied ? null : eligible[0] || null, provisional: true,
+    requires_aircraft_validation: true,
+    comparison_failures: comparable ? [] : ['incomparable-fast-sweep-cohorts'],
+    selection_reason: tied ? 'Proxy-qualified candidates tie; collect another bounded block.' :
+      eligible.length ? 'Lowest recoverable injected-echo/direct-path ratio, then recovery reliability, usable dynamic range, residual floor, safe gain, input-referred noise and ambiguity sidelobes.' :
+        'No candidate passed the rapid RF, waveform, cancellation, synthetic-echo and processing-health gates.'};
 }
 
 function trackingEvidence(candidate, limits, failures, missing) {
@@ -398,5 +601,5 @@ function evaluateSurvey(candidates, config, limits) {
         'Selection requires the same site, protocol, common support, sectors, baseline and explicit bearing requirement.'};
 }
 
-module.exports = {DEFAULT_LIMITS, bandPlans, receiverCapabilities,
-  evaluateCandidate, evaluateSurvey};
+module.exports = {DEFAULT_LIMITS, bandPlans, receiverCapabilities, deriveSyntheticEchoMetrics,
+  evaluateFastCandidate, evaluateFastSweep, evaluateCandidate, evaluateSurvey};
