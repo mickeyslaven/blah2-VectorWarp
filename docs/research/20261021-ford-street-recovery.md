@@ -116,3 +116,21 @@ node and evaluated separately from the later r623 periodic capture. Its complete
 truth-near plots and the frozen fixed-beam spatial GLRT is 2.68 dB below its
 matched-control p99, with 317 controls exceeding the target. The negative r623
 result is therefore not an artifact of choosing the later periodic window.
+
+## Post-Doppler multichannel STAP replay
+
+The replay-only `analyze-post-doppler-stap.py` experiment jointly adapts the five
+array channels across three adjacent post-Doppler filters (15 complex dimensions).
+It uses robust energy clipping, diagonal loading, target-excluded local covariance,
+one fixed beam across each exact signal-time trajectory, and the previously
+measured +0.0258 km / +7.05 Hz replay calibration. The eight-point grid was frozen
+on r277 before any miss was scored. Every empirical path repeats all 12 beam
+trials; the reported threshold is the stricter of the matched-delay and complete
+translated-path p99 values.
+
+The positive r277 remains 6.819 dB above that threshold. None of the held-out
+misses clears it: r12 is -3.771 dB, r94 -2.353 dB, r620 -2.189 dB, and r623
+-4.589 dB. The complete accounting is retained in
+`results/20261021-post-doppler-stap-matrix-v1.json`. This fails the predeclared
+requirement to retain r277 and recover at least one miss by +3 dB, so the method
+is rejected and was not deployed or connected to live processing.

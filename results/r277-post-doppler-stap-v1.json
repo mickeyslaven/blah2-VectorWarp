@@ -1,0 +1,248 @@
+{
+  "configuration": {
+    "doppler_radius": 1,
+    "diagonal_loading": 0.1,
+    "robust_energy_clip": 3.0,
+    "target_exclusion_radius": 1,
+    "doppler_look_offsets": [
+      0
+    ],
+    "beam_trials": 12,
+    "aggregation": "fixed_trial_mean"
+  },
+  "frames": 8,
+  "target_cells": [
+    {
+      "frame": 0,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 1,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 2,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 3,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 4,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 5,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 6,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    },
+    {
+      "frame": 7,
+      "row": 15,
+      "column": 12,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812
+    }
+  ],
+  "target_score": 13.887084054903811,
+  "target_winning_trial": {
+    "beam": 3,
+    "doppler_look_offset": 0
+  },
+  "matched_control_p99": 2.1027538746929677,
+  "whole_search_control_p99": 2.888980984240615,
+  "strict_control_p99": 2.888980984240615,
+  "margin_over_control_p99_db": 6.818663809276608,
+  "controls_exceeding_target": 0,
+  "whole_search_max": 4.998093526818789,
+  "trial_accounting": {
+    "signal_trials_per_path": 12,
+    "matched_control_paths": 22,
+    "whole_search_control_paths": 491,
+    "matched_control_signal_trials": 264,
+    "whole_search_signal_trials": 5892,
+    "parameter_grid_trials": 8
+  },
+  "covariance": [
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.40409669378667074
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.3731727130450572
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.39056411430059684
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.3487037768147805
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.41931434454586747
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.46557732697812393
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 65.7799835314674,
+      "clipped_samples": 2,
+      "dimension": 15,
+      "loading_value": 0.4645228495178493
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.49153786024417406
+    }
+  ],
+  "schema": "vectorwarp-post-doppler-stap-v1",
+  "method": "robust-loaded post-Doppler STAP adaptive matched filter",
+  "candidate_only": true,
+  "parameter_selection": {
+    "policy": "maximize r277 strict-control-p99 margin",
+    "grid_trials": 8,
+    "selected_index": 2,
+    "candidates": [
+      {
+        "parameters": {
+          "doppler_radius": 1,
+          "diagonal_loading": 0.03,
+          "robust_energy_clip": 3.0
+        },
+        "margin_over_control_p99_db": 5.665645559413997,
+        "target_score": 9.473917356748213,
+        "strict_control_p99": 2.5701888548133898
+      },
+      {
+        "parameters": {
+          "doppler_radius": 1,
+          "diagonal_loading": 0.03,
+          "robust_energy_clip": 10.0
+        },
+        "margin_over_control_p99_db": 5.662551333084348,
+        "target_score": 9.467169860436083,
+        "strict_control_p99": 2.5701888548133898
+      },
+      {
+        "parameters": {
+          "doppler_radius": 1,
+          "diagonal_loading": 0.1,
+          "robust_energy_clip": 3.0
+        },
+        "margin_over_control_p99_db": 6.818663809276608,
+        "target_score": 13.887084054903811,
+        "strict_control_p99": 2.888980984240615
+      },
+      {
+        "parameters": {
+          "doppler_radius": 1,
+          "diagonal_loading": 0.1,
+          "robust_energy_clip": 10.0
+        },
+        "margin_over_control_p99_db": 6.81315343096758,
+        "target_score": 13.869475136582704,
+        "strict_control_p99": 2.888980984240615
+      },
+      {
+        "parameters": {
+          "doppler_radius": 2,
+          "diagonal_loading": 0.03,
+          "robust_energy_clip": 3.0
+        },
+        "margin_over_control_p99_db": 2.128207119627266,
+        "target_score": 10.498805739116603,
+        "strict_control_p99": 6.431602391456271
+      },
+      {
+        "parameters": {
+          "doppler_radius": 2,
+          "diagonal_loading": 0.03,
+          "robust_energy_clip": 10.0
+        },
+        "margin_over_control_p99_db": 2.128207119627266,
+        "target_score": 10.498805739116603,
+        "strict_control_p99": 6.431602391456271
+      },
+      {
+        "parameters": {
+          "doppler_radius": 2,
+          "diagonal_loading": 0.1,
+          "robust_energy_clip": 3.0
+        },
+        "margin_over_control_p99_db": 4.5825688206830515,
+        "target_score": 14.23871595192885,
+        "strict_control_p99": 4.95694322062716
+      },
+      {
+        "parameters": {
+          "doppler_radius": 2,
+          "diagonal_loading": 0.1,
+          "robust_energy_clip": 10.0
+        },
+        "margin_over_control_p99_db": 4.5825688206830515,
+        "target_score": 14.23871595192885,
+        "strict_control_p99": 4.95694322062716
+      }
+    ]
+  },
+  "trajectory": "results/r277-clip-truth.json",
+  "replay": "results/r277-complex-wide-v1.json",
+  "replay_sha256": "f5e5aa394ae68dc65054c1c67ee74306783a1d1c8c6f811eb8b7914ff193b624",
+  "recording": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/clips/kraken-clip-r277-1792586233306383040-108.mchq",
+  "trajectory_schema": "vectorwarp-clip-truth-trajectory-v1",
+  "calibrated_signal_time_bias": {
+    "delay_km": 0.02578255,
+    "doppler_hz": 7.053549
+  }
+}
