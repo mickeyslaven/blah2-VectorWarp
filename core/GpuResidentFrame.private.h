@@ -298,6 +298,17 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
  if(nc>UINT32_MAX/2 || rc>UINT32_MAX/2 || mc>UINT32_MAX/2 || nc>SIZE_MAX/16)
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED index capacity");
  if(!supplied)gpu_reference::validate(config.reference,g.clutterSamples,g.channels,config.sampleRate);
+ if(config.postprocess.bearingReferenceAnchor==2){
+  if(config.reference.mode!=ReferenceMode::capturedArray||
+     config.reference.referenceChannels.size()!=g.channels||g.channels<2||
+     config.fusion.mode!=1||config.fusion.directPathNullDb!=0||
+     config.postprocess.bearingMethod!=1||!config.postprocess.bearingScanBeams||
+     !config.postprocess.bearingManifoldResponses.empty())
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED projected ideal bearing experiment");
+  for(uint32_t channel=0;channel<g.channels;++channel)
+   if(config.reference.referenceChannels[channel]!=channel)
+    throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED projected bearing requires every channel in order");
+ }
  if(config.postprocess.enabled)gpu_postprocess::validate(config.postprocess,g.doppler,g.delays,config.sampleRate);
  if(config.tracker.enabled){gpu_tracker::validate(config.tracker,g.doppler*g.delays);
   const double actualCpi=(double(config.correlation)*g.doppler)/config.sampleRate;
@@ -570,8 +581,9 @@ class ResidentFramePipeline {
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
    const bool bearingRefinement=&buffer==refinementWeights.get();
    const bool measured=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool projected=bearingRefinement&&config.postprocess.bearingReferenceAnchor==2;
    const bool fixedSite=bearingRefinement&&
-    config.postprocess.bearingReferenceAnchor==1;
+    (config.postprocess.bearingReferenceAnchor==1||projected);
    const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
    const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
    std::array<std::complex<double>,8> referenceAnchor{};double referenceAnchorNorm=0;
@@ -582,7 +594,7 @@ class ResidentFramePipeline {
     else{const uint32_t physical=blah2::bearing_steering::physicalElement(
       channel,config.postprocess.bearingChannelMapping);
      const double elementAngle=config.fusion.element0Rad+physical*config.fusion.elementStepRad;
-     referenceAnchor[channel]=std::polar(1.0,waveNumber*config.fusion.radiusM*
+     referenceAnchor[channel]=std::polar(1.0,-waveNumber*config.fusion.radiusM*
       std::cos(elementAngle-config.fusion.directPathAzimuthRad));}
     referenceAnchorNorm+=std::norm(referenceAnchor[channel]);
    }
@@ -606,6 +618,12 @@ class ResidentFramePipeline {
        std::conj(blah2::bearing_steering::mapCoefficient(referenceAnchor[channel],relativePhase)):
        checkpoint.weights[channel]*std::polar(1.0,-relativePhase);}
     }
+    if(projected&&!blah2::bearing_steering::normalizeModel(steering.data(),channels,
+      checkpoint.weights.data(),true)){
+     for(uint32_t channel=0;channel<channels;++channel)
+      target[uint64_t(beam)*channels+channel]={};
+     continue;
+    }
     if(nullFraction>0){
      std::complex<double> projection{};
      for(uint32_t channel=0;channel<channels;++channel)
@@ -624,7 +642,7 @@ class ResidentFramePipeline {
       throw std::runtime_error("Noise-whitened fusion produced invalid weights");
      const double combinedScale=1.0/std::sqrt(combinedNorm);
      for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else if(measured){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
+    }else if(measured||projected){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
      if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
      const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
     }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
@@ -806,7 +824,8 @@ public:
   // Tracker capacity is explicit and never retried/shrunk. All existing full-frame
   // allocations, plans and transient peaks have already been admitted.
   if(config_.tracker.enabled)tracker_=std::make_unique<gpu_tracker::Stage>(context_,config_.tracker,uint32_t(m),
-   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout());
+   work_->postprocessStage->metadataBuffer(),work_->postprocessScratch(),work_->postprocessStage->scratchLayout(),
+   work_->postprocessStage->integrationBuffer(),work_->postprocessStage->currentPowerBuffer());
   {std::lock_guard<std::mutex> lock(allocationsMutex);
   const auto& b=deviceAllocations.at(context_.device).budget;
    std::cerr<<"GPU_RESIDENT_READY channels="<<g.channels<<" samples="<<g.clutterSamples<<" capacity="<<work_->capacity

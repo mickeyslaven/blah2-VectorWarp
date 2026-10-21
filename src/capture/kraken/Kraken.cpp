@@ -33,6 +33,18 @@ Kraken::Kraken(std::string type, uint32_t fc, uint32_t fs,
   if (fs != SUITE_SAMPLE_RATE)
     throw std::invalid_argument(
       "KrakenSDR Suite V2 requires capture.fs to be 2400000");
+  clipRecorder = std::make_unique<blah2::KrakenClipRecorder>(path,
+    static_cast<uint32_t>(channelCount), fs, fc);
+}
+
+void Kraken::request_clip(const blah2::IqClipRequest& request)
+{
+  clipRecorder->request(request);
+}
+
+blah2::IqClipStatus Kraken::clip_status() const
+{
+  return clipRecorder->status();
 }
 
 void Kraken::start()
@@ -81,6 +93,7 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
       }
       if (!running) return;
       recording_discontinuity("Kraken input connection was interrupted");
+      clipRecorder->discontinuity("Kraken input connection was interrupted");
       clear_buffers(buffers);
       std::cerr << "[Kraken] " << error.what()
         << "; retrying in 1 second" << std::endl;
@@ -115,18 +128,21 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     if (frequencyChangeCounter &&
         *frequencyChangeCounter != header.frequencyChangeCounter) {
       recording_discontinuity("Kraken input retuned during recording");
+      clipRecorder->discontinuity("Kraken input retuned during clip recording");
       resetPending = true;
     }
     frequencyChangeCounter = header.frequencyChangeCounter;
     if (!HeimdallFrame::is_synchronized_data(header))
     {
       recording_discontinuity("Kraken input synchronization was lost");
+      clipRecorder->discontinuity("Kraken input synchronization was lost during clip recording");
       resetPending = true;
       continue;
     }
     if (resetPending)
     {
       recording_discontinuity("Kraken input reset before synchronized data");
+      clipRecorder->discontinuity("Kraken input reset before synchronized clip data");
       clear_buffers(buffers);
       resetPending = false;
     }
@@ -139,6 +155,8 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
       (*it)->unlock();
 
     record_block(channels);
+    clipRecorder->ingest(headerBytes, std::move(metadata), std::move(payload),
+      header);
   }
 }
 

@@ -13,8 +13,8 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=7;
-constexpr uint32_t protocol=0x42475208,packetBytes=160,configBytes=8768;
+constexpr unsigned moduleAbi=9;
+constexpr uint32_t protocol=0x42475209,packetBytes=160,configBytes=8768;
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -36,7 +36,7 @@ enum class Section:uint32_t {config=1,delayAxis=2,dopplerAxis=3,canonical=4,
  referenceCheckpoint=12,tracker0=13,tracker1=14,detections=15,filtered=16,
  tail=17,fullReference=18,levels=19,unflooredSnr=20,cfar=21,centroid=22,
  flags=23,detectionCells=24,readyEvidence=25,reason=26,device=27,
- preparedEvidence=28,controlEvidence=29};
+ preparedEvidence=28,controlEvidence=29,guidedRecoveries=30};
 constexpr uint64_t bit(Section s){return uint64_t(1)<<uint32_t(s);}
 constexpr uint64_t diagnosticMask=((uint64_t(1)<<25)-1)&~((uint64_t(1)<<16)-1);
 inline uint64_t outputPresence(uint64_t capacity,uint64_t requested){return (capacity&~diagnosticMask)|requested;}
@@ -62,7 +62,8 @@ struct DetectorConfig {
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
 enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
-enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1};
+// Value2 is an explicitly selected native-replay experiment, never a default.
+enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1,fixedSiteProjected=2};
 struct BearingConfig {
  bool enabled=false;
  BearingMethod method=BearingMethod::coherentBeamBank;
@@ -85,6 +86,9 @@ struct TrackerConfig {
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
+ bool trackGuidedShadow=false;
+ bool trackGuidedPromote=false;
+ uint32_t trackGuidedShadowMaxTracks=0;
 };
 constexpr uint32_t trackerHeaderWords=32,trackerDisplayHistory=100;
 inline uint32_t trackerHistoryCapacity(const TrackerConfig& t){
@@ -149,7 +153,7 @@ struct OutputViews {
  // Parent Session-owned immutable setup metadata; no new wire/GPU allocation.
  Span<const double> delayKm,doppler;
  Span<const DetectionRecord> detections,cfar,centroid;
- Span<const uint32_t> flags,detectionCells,trackerCheckpoint;
+ Span<const uint32_t> flags,detectionCells,trackerCheckpoint,guidedRecoveryWords;
  double noise=0,maxPower=0;
  uint64_t cfarCount=0,centroidCount=0,detectionCount=0;
  Token trackerToken{};

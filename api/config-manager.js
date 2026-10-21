@@ -527,6 +527,14 @@ function validateConfig(config, baseline = null) {
     number(trackBeforeDetect.motion_bins,
       'process.detection.track_before_detect.motion_bins',
       {integer: true, min: 0, max: 1});
+    if (trackBeforeDetect.delay_motion_bins !== undefined)
+      number(trackBeforeDetect.delay_motion_bins,
+        'process.detection.track_before_detect.delay_motion_bins',
+        {integer: true, min: 0, max: 2});
+    if (trackBeforeDetect.doppler_motion_bins !== undefined)
+      number(trackBeforeDetect.doppler_motion_bins,
+        'process.detection.track_before_detect.doppler_motion_bins',
+        {integer: true, min: 0, max: 16});
   }
   if (delayBins !== null && Number.isInteger(detection.nGuard) &&
       Number.isInteger(detection.nTrain) &&
@@ -566,9 +574,8 @@ function validateConfig(config, baseline = null) {
         'process.tracker.initiate.stationary_clutter.max_doppler_hz',
         {min: 0, max: 10000});
     if (stationaryClutter.enable === true &&
-        (!Number.isInteger(stationaryClutter.persistence_cpis) ||
-         !Number.isFinite(stationaryClutter.max_doppler_hz)))
-      errors.push('enabled persistent clutter filtering requires persistence_cpis and max_doppler_hz');
+        !Number.isInteger(stationaryClutter.persistence_cpis))
+      errors.push('enabled persistent clutter filtering requires persistence_cpis');
   }
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
@@ -595,6 +602,41 @@ function validateConfig(config, baseline = null) {
       errors.push('adaptive_gate tracker initiation requires gpu-resident acceleration');
     if (stationaryClutter?.enable && performance.acceleration !== 'gpu-resident')
       errors.push('persistent stationary-clutter initiation filtering requires gpu-resident acceleration');
+    let trackGuidedShadow = null;
+    if (tracker.track_guided_shadow !== undefined) {
+      trackGuidedShadow = requireObject(tracker.track_guided_shadow,
+        'process.tracker.track_guided_shadow');
+      boolean(trackGuidedShadow.enable,
+        'process.tracker.track_guided_shadow.enable');
+      if (trackGuidedShadow.promote !== undefined)
+        boolean(trackGuidedShadow.promote,
+          'process.tracker.track_guided_shadow.promote');
+      number(trackGuidedShadow.max_tracks,
+        'process.tracker.track_guided_shadow.max_tracks',
+        {integer: true, min: 1, max: 65535});
+      if (trackGuidedShadow.evidence_path !== undefined) {
+        string(trackGuidedShadow.evidence_path,
+          'process.tracker.track_guided_shadow.evidence_path');
+        if (!path.isAbsolute(trackGuidedShadow.evidence_path))
+          errors.push('process.tracker.track_guided_shadow.evidence_path must be absolute');
+      }
+      for (const [field, limits] of [['max_truth_age_s', {min: .1, max: 60}],
+        ['max_file_mb', {integer: true, min: 1, max: 1024}],
+        ['max_files', {integer: true, min: 1, max: 20}]])
+        if (trackGuidedShadow[field] !== undefined)
+          number(trackGuidedShadow[field], `process.tracker.track_guided_shadow.${field}`, limits);
+      if (trackGuidedShadow.enable === true &&
+          (!trackBeforeDetect?.enable || !tracker.enable))
+        errors.push('track-guided shadow requires enabled tracking and track-before-detect');
+      if (trackGuidedShadow.promote === true && trackGuidedShadow.enable !== true)
+        errors.push('track-guided recovery promotion requires the shadow evaluator');
+      if (trackGuidedShadow.enable === true &&
+          Number.isInteger(tracker.gpu_capacity) &&
+          trackGuidedShadow.max_tracks > tracker.gpu_capacity)
+        errors.push('process.tracker.track_guided_shadow.max_tracks cannot exceed gpu_capacity');
+    }
+    if (trackGuidedShadow?.enable && performance.acceleration !== 'gpu-resident')
+      errors.push('track-guided shadow requires gpu-resident acceleration');
     if ((detection.integration_cpis ?? 1) > 1 &&
         performance.acceleration !== 'gpu-resident')
       errors.push('multi-CPI detection requires gpu-resident acceleration');
@@ -721,8 +763,24 @@ function validateConfig(config, baseline = null) {
     if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
       errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
     if (bearing.reference_anchor !== undefined &&
-        !['live_eigenbeam', 'fixed_site'].includes(bearing.reference_anchor))
-      errors.push('process.bearing.reference_anchor must be live_eigenbeam or fixed_site');
+        !['live_eigenbeam', 'fixed_site', 'fixed_site_projected'].includes(bearing.reference_anchor))
+      errors.push('process.bearing.reference_anchor must be live_eigenbeam, fixed_site or fixed_site_projected');
+    if (bearing.reference_anchor === 'fixed_site_projected') {
+      const allFive = values => Array.isArray(values) && values.length === 5 &&
+        values.every((channel, index) => channel === index);
+      const reference = processConfig.reference_synthesis;
+      const fusion = processConfig.surveillance_fusion;
+      if (replay.state !== true || replay.format !== 'blah2')
+        errors.push('fixed_site_projected is experimental and requires explicit native blah2 replay');
+      if (device.type !== 'Kraken' || device.channel_count !== 5 ||
+          !allFive(device.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
+          !allFive(reference?.channels) || clutter.enable !== true ||
+          processConfig.performance?.acceleration !== 'gpu-resident' ||
+          bearing.enable !== true || bearing.method !== 'covariance_mvdr' ||
+          bearing.manifold_file !== undefined || fusion?.mode !== 'coherent_beam_bank' ||
+          (fusion.direct_path_null_db ?? 0) !== 0)
+        errors.push('fixed_site_projected requires enabled five-channel GPU-resident array-eigenbeam clutter cancellation, ideal covariance_mvdr bearing and coherent_beam_bank with direct_path_null_db: 0');
+    }
     if (bearing.scan_beams !== undefined)
       number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
     if (bearing.candidate_peaks !== undefined)

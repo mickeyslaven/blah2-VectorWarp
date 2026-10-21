@@ -251,7 +251,12 @@ function connect(port) {
     assert.equal(idleCapture.body.recording, false);
     assert.equal(idleCapture.body.elapsedSeconds, 0);
     assert.equal(idleCapture.body.available, false);
-    assert.deepEqual((await request('GET', '/capture/request')).body, {recording: false, revision: 0});
+    assert.equal(idleCapture.body.clip.clipRevision, 0);
+    assert.equal(idleCapture.body.clip.queuedClips, 0);
+    const idleRequest = (await request('GET', '/capture/request')).body;
+    assert.equal(idleRequest.recording, false); assert.equal(idleRequest.revision, 0);
+    assert.equal(idleRequest.clip.clipRevision, 0);
+    assert.equal(idleRequest.clip.pending, false);
     assert.equal((await request('POST', '/capture/toggle', undefined,
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'})).status, 409);
@@ -331,7 +336,10 @@ function connect(port) {
     assert.equal(startedCapture.body.requested, true);
     assert.equal(startedCapture.body.recording, false);
     assert.equal(startedCapture.body.revision, 1);
-    assert.deepEqual((await request('GET', '/capture/request')).body, {recording: true, revision: 1});
+    const manualRequest = (await request('GET', '/capture/request')).body;
+    assert.equal(manualRequest.recording, true); assert.equal(manualRequest.revision, 1);
+    assert.equal(manualRequest.clip.clipRevision, 0,
+      'Manual recording remains independent of ADS-B clip requests');
     assert.ok(Number.isFinite(startedCapture.body.startedAt));
     const processorCaptureFlag = await request('GET', '/capture');
     assert.equal(processorCaptureFlag.body, true,

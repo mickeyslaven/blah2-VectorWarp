@@ -486,6 +486,7 @@ endif()
         self.assertIn('request-restart', api_unit)
         self.assertNotIn('/usr/bin/sudo', api_unit)
         self.assertIn('NoNewPrivileges=yes', api_unit)
+        self.assertIn('/var/lib/vectorwarp/recordings', api_unit)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-sudoers-migrate').is_file())
         self.assertNotIn('vectorwarp-restart.service', (stage / 'etc/sudoers.d/vectorwarp').read_text())
         fresh_stage = self.temp / 'stage-management-default'

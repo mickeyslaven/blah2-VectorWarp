@@ -1,4 +1,4 @@
-d /var/lib/vectorwarp 0750 vectorwarp vectorwarp -
+d /var/lib/vectorwarp 0750 vectorwarp vectorwarp-config -
 d /var/lib/vectorwarp/recordings 0770 vectorwarp vectorwarp-config -
 d /var/lib/vectorwarp-api 0750 vectorwarp-api vectorwarp-api -
 d /var/lib/vectorwarp-adapters 0755 root root -

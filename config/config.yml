@@ -53,6 +53,13 @@ process:
       motion_bins: 1
   tracker:
     enable: false
+    track_guided_shadow:
+      enable: false
+      promote: false
+      max_tracks: 64
+      max_truth_age_s: 3
+      max_file_mb: 10
+      max_files: 3
     initiate:
       M: 3
       N: 5

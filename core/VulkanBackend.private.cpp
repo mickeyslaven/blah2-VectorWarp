@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <iomanip>
+#include <sstream>
 #include <vulkan/vulkan.h>
 #include <glslang/Include/glslang_c_interface.h>
 #if __has_include(<glslang/Public/resource_limits_c.h>)
@@ -1249,8 +1250,23 @@ private:
           status[gpu_native::residualSamples]!=surveillanceCount ||
           status[gpu_native::mergeSamples]!=surveillanceCount ||
           status[gpu_native::inputSamples]!=surveillanceCount ||
-          status[gpu_native::solves]!=2*active || status[gpu_native::weightFfts]!=active)
-        throw std::runtime_error("GPU-native batch coverage mismatch");
+          status[gpu_native::solves]!=2*active || status[gpu_native::weightFfts]!=active) {
+        std::ostringstream message;
+        message << "GPU-native batch coverage mismatch"
+          << " first_channel=" << firstChannel << " active=" << active
+          << " capacity=" << channels_
+          << " baseline_blocks=" << status[gpu_native::baselineBlocks]
+          << "/" << active*native_->blocks()
+          << " residual_samples=" << status[gpu_native::residualSamples]
+          << "/" << surveillanceCount
+          << " merge_samples=" << status[gpu_native::mergeSamples]
+          << "/" << surveillanceCount
+          << " input_samples=" << status[gpu_native::inputSamples]
+          << "/" << surveillanceCount
+          << " solves=" << status[gpu_native::solves] << "/" << 2*active
+          << " weight_ffts=" << status[gpu_native::weightFfts] << "/" << active;
+        throw std::runtime_error(message.str());
+      }
       if (!resident_) {
         Buffer& result=direct_?*estimate_:*output_;
         result.invalidate(0,result.bytes);

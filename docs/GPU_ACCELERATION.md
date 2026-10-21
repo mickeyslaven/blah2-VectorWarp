@@ -97,20 +97,25 @@ process:
       stationary_clutter:
         enable: true
         persistence_cpis: 60
-        max_doppler_hz: 15
 ```
 
-The default is 60 CPIs (30 seconds at a 500 ms CPI) at 15 Hz when the block is
-omitted. Each low-Doppler detection strengthens its delay bin while unused bins
-decay. Collapsing the learned site map across only the configured low-Doppler
-band makes it robust to row jitter without creating a broad Doppler notch. Once
-a bin reaches `persistence_cpis`, it cannot start another track.
+The default is 60 CPIs (30 seconds at a 500 ms CPI) across the configured
+ambiguity Doppler span. Each detection strengthens only its delay-Doppler cell
+and the immediately adjacent Doppler rows. Evidence leaks by one observation
+for every four missed CPIs, so intermittent recurring returns accumulate while
+isolated crossings expire. This learns narrow persistent ridges despite row
+quantization jitter without creating a global Doppler notch or collapsing
+unrelated Dopplers at the same delay. Once a cell reaches `persistence_cpis`,
+it cannot start another track. A positive
+optional `max_doppler_hz` retains the former bounded-band behavior for sites
+that explicitly need it; zero or omission means the full configured span.
 The same learned map also retires startup artifacts conservatively. A track must
-remain within 1 Hz and a one-delay-unit span for a full 100-sample history, with
-at least 90 associated samples, while occupying a delay bin already learned as
-stationary clutter. A moving aircraft can cross zero Doppler without being
-retired; raw detection output is unchanged. Set `enable: false` to retain the
-previous initiation and retirement behavior. Saving a changed receiver site,
+remain within a one-delay-unit and 1.5-Doppler-cell span for a full 100-sample
+history, with at least 90 associated samples, while occupying a learned cell.
+Association runs before this admission filter, so an established moving track
+continues through a learned cell; its motion also prevents retirement. Raw
+detection output is unchanged. Set `enable: false` to retain the previous
+initiation and retirement behavior. Saving a changed receiver site,
 transmitter site, array geometry/orientation, frequency, sample rate, or channel
 mapping restarts the processor and therefore starts a fresh temporal clutter map.
 
@@ -136,8 +141,20 @@ process:
     track_before_detect:
       enable: true
       max_cpis: 8       # 4 enables 2/4 banks; 8 enables 2/4/8 banks
-      motion_bins: 1    # search -1, 0, +1 cell per CPI on both axes
+      motion_bins: 1    # backwards-compatible common value for both axes
+      delay_motion_bins: 1
+      doppler_motion_bins: 4 # follow fast Doppler slew without wasteful delay trials
 ```
+
+The delay and Doppler axes are independently configurable up to 2 and 16 bins
+per CPI. Track-before-detect assigns one GPU workgroup to each map cell and
+evaluates as many as 64 delay-Doppler trajectories concurrently in one native
+AMD wavefront, then reduces the exact 2/4/8-CPI maxima with a parallel shared-memory
+tree. Larger envelopes use ordered 64-path chunks without a trajectory-sized scratch
+buffer. The rolling history uses the host-visible heap so it does not displace the
+resident clutter workspace from limited discrete-GPU VRAM. Select the smallest envelope that covers
+the site's physically eligible aircraft because every additional trajectory is
+included in the detector's multiple-hypothesis false-alarm correction.
 
 This path keeps the ordinary detector available as the default. When enabled,
 it retains the conventional two-CPI same-cell detector, keeps fused power maps

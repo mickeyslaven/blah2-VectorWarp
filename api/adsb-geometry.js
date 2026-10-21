@@ -5,6 +5,9 @@
 // tar1090 feed; it never accepts a converter URL or request-supplied geometry.
 const C = 299792458;
 const finite = value => typeof value === 'number' && Number.isFinite(value);
+const radians = value => value * Math.PI / 180;
+const degrees = value => value * 180 / Math.PI;
+const normalize = value => ((value % 360) + 360) % 360;
 const median = values => { const sorted = [...values].sort((a, b) => a - b); const middle = Math.floor(sorted.length / 2); return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2; };
 function ecef(latitude, longitude, altitude) {
   const rad = Math.PI / 180, a = 6378137, f = 1 / 298.257223563, esq = 2 * f - f * f;
@@ -12,6 +15,28 @@ function ecef(latitude, longitude, altitude) {
   return [(n + altitude) * Math.cos(lat) * Math.cos(lon), (n + altitude) * Math.cos(lat) * Math.sin(lon), (n * (1 - esq) + altitude) * Math.sin(lat)];
 }
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+function lookGeometry(site, aircraft) {
+  if (![site?.latitude, site?.longitude, site?.altitude, aircraft?.lat,
+    aircraft?.lon, aircraft?.alt_geom].every(finite)) return null;
+  const lat1 = radians(site.latitude), lat2 = radians(aircraft.lat);
+  const dlon = radians(aircraft.lon - site.longitude);
+  const y = Math.sin(dlon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(dlon);
+  const bearing = normalize(degrees(Math.atan2(y, x)));
+  const earth = 6371008.8;
+  const a = Math.sin((lat2 - lat1) / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2) ** 2;
+  const ground = earth * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
+  const height = aircraft.alt_geom * .3048 - site.altitude;
+  const elevation = degrees(Math.atan2(height, Math.max(ground, 1)));
+  const slant = Math.hypot(ground, height);
+  return [bearing, elevation, ground, slant].every(finite) ?
+    {bearing_deg_true: bearing, elevation_deg: elevation,
+      ground_range_km: ground / 1000, slant_range_km: slant / 1000} : null;
+}
+
+function optionalNumber(value) { return finite(value) ? value : null; }
 
 class DelayDopplerHistory {
   constructor(config) { this.history = new Map(); this.output = new Map(); this.configure(config); }
@@ -21,6 +46,7 @@ class DelayDopplerHistory {
     this.maxAge = finite(adsb.max_position_age) ? adsb.max_position_age : 30;
     this.rx = ecef(rx.latitude, rx.longitude, rx.altitude);
     this.tx = ecef(tx.latitude, tx.longitude, tx.altitude);
+    this.rxSite = {...rx}; this.txSite = {...tx};
     this.baseline = distance(this.rx, this.tx); this.frequency = config.capture.fc;
     this.valid = this.rx.every(finite) && this.tx.every(finite) && finite(this.baseline) &&
       finite(this.frequency) && this.frequency > 0;
@@ -57,8 +83,23 @@ class DelayDopplerHistory {
         if (dt > 0) slopes.push((samples[i].delay - samples[i - 1].delay) / dt);
       }
       if (!slopes.length) continue;
+      const look = lookGeometry(this.rxSite, aircraft);
+      const transmitterRange = distance(this.tx, target) / 1000;
       const result = {timestamp, flight: typeof aircraft.flight === 'string' ? aircraft.flight.trim() : '',
-        delay: delay / 1000, doppler: -median(slopes) / (C / this.frequency)};
+        delay: delay / 1000, doppler: -median(slopes) / (C / this.frequency),
+        position: {latitude: aircraft.lat, longitude: aircraft.lon,
+          altitude_geom_ft: aircraft.alt_geom, altitude_baro_ft: optionalNumber(aircraft.alt_baro),
+          ground_speed_kt: optionalNumber(aircraft.gs), track_deg_true: optionalNumber(aircraft.track),
+          geom_rate_fpm: optionalNumber(aircraft.geom_rate), baro_rate_fpm: optionalNumber(aircraft.baro_rate),
+          category: typeof aircraft.category === 'string' ? aircraft.category : null,
+          squawk: typeof aircraft.squawk === 'string' ? aircraft.squawk : null,
+          rssi_dbfs: optionalNumber(aircraft.rssi), seen_s: optionalNumber(aircraft.seen),
+          seen_pos_s: aircraft.seen_pos},
+        geometry: look ? {...look, transmitter_range_km: transmitterRange} : null};
+      const priorResult = this.output.get(aircraft.hex);
+      const rateDt = priorResult && timestamp - priorResult.timestamp;
+      result.delay_rate_km_s = rateDt > 0 ? (result.delay - priorResult.delay) / rateDt : null;
+      result.doppler_rate_hz_s = rateDt > 0 ? (result.doppler - priorResult.doppler) / rateDt : null;
       if (!finite(result.delay) || !finite(result.doppler)) continue;
       this.output.set(aircraft.hex, result); output[aircraft.hex] = result;
     }
@@ -69,4 +110,4 @@ class DelayDopplerHistory {
     return {data: output, warming};
   }
 }
-module.exports = {ecef, distance, DelayDopplerHistory};
+module.exports = {ecef, distance, lookGeometry, DelayDopplerHistory};

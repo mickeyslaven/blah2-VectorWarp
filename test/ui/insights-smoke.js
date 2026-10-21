@@ -6,7 +6,7 @@ const vm = require('vm');
 const view = process.argv[2];
 const mode = process.argv[3] || 'portable';
 if (!['portable', 'rich'].includes(mode)) throw new Error(`Unknown fixture mode: ${mode}`);
-const validViews = ['overview', 'detections', 'health', 'activity', 'site', 'locations', 'evaluation', 'tracks'];
+const validViews = ['overview', 'detections', 'health', 'activity', 'site', 'locations', 'evaluation', 'tracks', 'statistics'];
 if (!validViews.includes(view)) throw new Error(`Unknown view: ${view}`);
 
 class Element {
@@ -58,13 +58,46 @@ const portable = {
   '/api/config': {capture: {fs: 2000000, fc: 100000000, device: {type: 'Usrp', reference_channel: 0}}, location: {rx: {name: 'Receiver', latitude: 51.5, longitude: -0.1, altitude: 20}, tx: {name: 'Illuminator', latitude: 51.6, longitude: -0.2, altitude: 100}}, process: {data: {cpi: .5, overlap: 0}, ambiguity: {delayMin: 0, delayMax: 100, dopplerMin: -200, dopplerMax: 200}, detection: {enable: true, pfa: .001}, tracker: {enable: false, initiate: {M: 3, N: 5}}, spectrum: {enable: false}}, truth: {adsb: {enabled: false}, ais: {enabled: false}}},
   '/api/detection': {timestamp: Date.now(), delay: [], doppler: [], snr: []},
   '/api/tracker': null,
-  '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 5, cpi_data_ms: 500, cpi_hop_ms: 500, capture_backlog_ms: 0, ambiguity_processing: 20, detector: 1, cpi: 30}
+  '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 5, cpi_data_ms: 500, cpi_hop_ms: 500, capture_backlog_ms: 0, ambiguity_processing: 20, detector: 1, cpi: 30},
+  '/api/statistics': {schema: 'vectorwarp-evidence-statistics-v1', collecting: false,
+    limits: {detectionMinDelayKm: .75, delayMaxKm: 75, dopplerMinHz: -200, dopplerMaxHz: 200,
+      clutterMaxKm: 75, matchDelayKm: .25, matchDopplerHz: 5},
+    windows: Object.fromEntries(['hour','day','week','lifetime'].map(name => [name,
+      {passes: 0, eligible_passes: 0, detected_passes: 0, tracked_passes: 0,
+        missed_passes: 0, out_of_config_passes: 0, eligible_no_radar_return: 0,
+        detected_not_tracked: 0, detection_yield: null, tracking_yield: null,
+        out_of_span: {below_detection_floor: 0, above_delay_ceiling: 0,
+          outside_doppler_span: 0, stale_truth: 0}}])),
+    bearing: {enabled: false, calibrated: false, live: {tracks: 0, publishable: 0,
+      resolved: 0, stationary: 0}, diagnostic: {available: false}, recorder: {enabled: false},
+      automation: {state: 'disabled'}, frequency_resolved: {enabled: false}}}
 };
 const rich = {
   '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
   '/api/detection': {timestamp: Date.now(), delay: [1.25], doppler: [42], snr: [18]},
   '/api/tracker': {timestamp: Date.now(), n: 1, nTentative: 0, nAssociated: 1, nActive: 0, nCoasting: 0, data: [{id: 'T1', state: 'ASSOCIATED', delay: 10, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', 'ASSOCIATED']}]},
   '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 50, cpi_data_ms: 200, cpi_hop_ms: 100, capture_backlog_ms: 4, reference_synthesis: 4, ambiguity_processing: 20, detector: 1, tracker: .1, cpi: 35},
+  '/api/statistics': {schema: 'vectorwarp-evidence-statistics-v1', collecting: true,
+    updated_at: Date.now(), limits: {detectionMinDelayKm: .624, delayMaxKm: 62.456,
+      dopplerMinHz: -600, dopplerMaxHz: 600, clutterMaxKm: 24.98,
+      matchDelayKm: .25, matchDopplerHz: 5},
+    windows: Object.fromEntries(['hour','day','week','lifetime'].map((name, index) => [name,
+      {passes: 10 + index, eligible_passes: 8 + index, detected_passes: 5 + index,
+        tracked_passes: 4 + index, missed_passes: 4, out_of_config_passes: 2,
+        eligible_no_radar_return: 3, detected_not_tracked: 1, detection_yield: .625,
+        tracking_yield: .5, out_of_span: {below_detection_floor: 2,
+          above_delay_ceiling: 3, outside_doppler_span: 4, stale_truth: 1}}])),
+    bearing: {enabled: true, calibrated: false, live: {tracks: 3, publishable: 1,
+      resolved: 1, stationary: 1}, diagnostic: {available: true, samples: 120,
+      aircraft: 8, sectors: 6, evidence_ready: true,
+      active: {median_error_deg: 31, within_45_fraction: .7},
+      best: {median_error_deg: 22, within_45_fraction: .8},
+      global_heading_bias: {signed_correction_deg: -12, median_error_deg: 25}},
+      recorder: {enabled: true, samples: 120, unmatched: 10, staleTruth: 2,
+        elevationRejected: 3, ambiguous: 1, referenceSamples: 90,
+        maxReferencePhaseStepDeg: .2, maxReferenceAmplitudeStepDb: .01},
+      automation: {state: 'collecting', qualified: false},
+      frequency_resolved: {enabled: true, state: 'idle'}}},
   '/api/adsb': {now: Date.now() / 1000, aircraft: [{hex: 'abc123', flight: 'TEST1', lat: 40.05, lon: -80.1, alt_geom: 5000, seen_pos: 1}]},
   '/api/locations': {enabled: true, available: true, data: [
     {id: 'T1', state: 'ASSOCIATED', bearing_deg_true: 112, uncertainty_deg: 8,

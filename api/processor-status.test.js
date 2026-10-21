@@ -40,6 +40,24 @@ const live = {...replay, input: 'live', receiver: 'RspDuo', state: 'live',
   receiverStartup: startup};
 assert.equal(status(live).valid, true);
 assert.equal(status({...live, receiverStartup: undefined}).valid, true); // older module
+const clipAcknowledgement = status({...live, receiverStartup: undefined,
+  clipRevision: 7, clipError: '', clipFile: '/clips/pass.mchq',
+  clipSamples: 12000000});
+assert.equal(clipAcknowledgement.valid, true);
+assert.equal(clipAcknowledgement.value.clipRevision, 7);
+assert.equal(clipAcknowledgement.value.clipFile, '/clips/pass.mchq');
+assert.equal(clipAcknowledgement.value.clipSamples, 12000000);
+assert.equal(status({...live, receiverStartup: undefined,
+  clipRevision: 7, clipError: 'Disk full\nclip stopped'}).value.clipError,
+  'Disk full clip stopped');
+for (const invalid of [0, -1, 1.5, '1'])
+  assert.equal(status({...live, receiverStartup: undefined, clipRevision: invalid}).valid, false);
+assert.equal(status({...live, receiverStartup: undefined, clipError: 'failed'}).valid, false);
+assert.equal(status({...live, receiverStartup: undefined,
+  clipFile: '/clips/pass.mchq'}).valid, false);
+assert.equal(status({...live, receiverStartup: undefined,
+  clipSamples: 1}).valid, false);
+assert.equal(status({...replay, clipRevision: 1}).valid, false);
 assert.equal(status({...live, receiverStartup: {...startup, status: 'pending',
   sdk: {...startup.sdk, stages: {...stages, gainUpdateB: false}}}}).valid, true);
 assert.equal(status({...live, state: 'error', error: 'Update tuner B gain failed',

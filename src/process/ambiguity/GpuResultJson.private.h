@@ -206,7 +206,8 @@ require(v.published.count==v.total-v.tentative,"GPU publication count differs");
 
 // Accept the actual ABI DetectionRecord AoS directly; copy supplied GPU km
 // metadata, never convert the delay-bin field.
-template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v){
+template<class Record> inline std::string detectionRecords(uint64_t timestamp,View<Record> v,
+ View<uint32_t> guidedWords={},double sampleRate=0){
  shape(v);
  std::vector<double>km,doppler,snr;
  km.reserve(v.count);
@@ -219,7 +220,31 @@ template<class Record> inline std::string detectionRecords(uint64_t timestamp,Vi
  km.push_back(v.data[i].delayKm);
  doppler.push_back(v.data[i].doppler);
  snr.push_back(v.data[i].snr);}
- return detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
+ const std::string base=detections({timestamp,{km.data(),km.size()},{doppler.data(),doppler.size()},{snr.data(),snr.size()}});
+ if(!guidedWords.count)return base;
+ shape(guidedWords);require(guidedWords.count%6==0&&std::isfinite(sampleRate)&&sampleRate>0,
+  "Invalid guided recovery view");
+ rapidjson::Document d;d.Parse(base.c_str());
+ require(!d.HasParseError()&&d.IsObject(),"Internal guided recovery JSON parse failed");
+ auto& allocator=d.GetAllocator();rapidjson::Value records(rapidjson::kArrayType);
+ constexpr char hex[]="0123456789ABCDEF";
+ for(size_t i=0;i<guidedWords.count;i+=6){const uint32_t id=guidedWords.data[i],state=guidedWords.data[i+1];
+  require(id<65535&&state<4,"Invalid guided recovery identity/state");
+  const auto number=[&](size_t at){const uint64_t bits=uint64_t(guidedWords.data[at])|
+    (uint64_t(guidedWords.data[at+1])<<32);double value;std::memcpy(&value,&bits,8);return value;};
+  const double delay=number(i+2),dopplerValue=number(i+4);
+  finite(delay);finite(dopplerValue);char text[5]={hex[(id>>12)&15],hex[(id>>8)&15],hex[(id>>4)&15],hex[id&15],0};
+  rapidjson::Value record(rapidjson::kObjectType);
+  record.AddMember("track_id",rapidjson::Value(text,allocator),allocator);
+  record.AddMember("state",rapidjson::Value(stateName(state),allocator),allocator);
+  record.AddMember("maturity",rapidjson::Value(state<2?"tentative":"established",allocator),allocator);
+  record.AddMember("delay_bin",delay,allocator);
+  record.AddMember("delay_km",delay*(299792458.0/sampleRate)/1000.0,allocator);
+  record.AddMember("doppler_hz",dopplerValue,allocator);records.PushBack(record,allocator);
+ }
+ d.AddMember("track_guided_shadow",records,allocator);rapidjson::StringBuffer output;Writer writer(output);
+ writer.SetMaxDecimalPlaces(6);require(d.Accept(writer),"Internal guided recovery JSON write failed");
+ return {output.GetString(),output.GetSize()};
 }
 template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  double frequencyHz,double sampleRate,uint32_t rows,uint32_t columns,uint32_t channels,
@@ -239,7 +264,7 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  require(std::isfinite(coherentFraction)&&coherentFraction>=0&&
   std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
   "Invalid reference diagnostic state");
- require(bearingMethod<=1&&bearingReferenceAnchor<=1&&bearingScanBeams>=4&&
+ require(bearingMethod<=1&&bearingReferenceAnchor<=2&&bearingScanBeams>=4&&
   bearingScanBeams<=127&&bearingChannelMapping.count==channels,
   "Invalid manifold replay configuration");
  std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
@@ -255,7 +280,8 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
  w.Key("bearing_replay");w.StartObject();w.Key("method");
  w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
- w.Key("reference_anchor");w.String(bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
+ w.Key("reference_anchor");w.String(bearingReferenceAnchor==2?"fixed_site_projected":
+  bearingReferenceAnchor==1?"fixed_site":"live_eigenbeam");
  w.Key("scan_beams");w.Uint(bearingScanBeams);
  w.Key("guard_radius");w.Uint(bearingGuardRadius);w.Key("training_radius");w.Uint(bearingTrainingRadius);
  w.Key("diagonal_loading");w.Double(bearingDiagonalLoading);w.Key("channel_mapping");w.StartArray();
@@ -437,14 +463,13 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   struct Lobes{std::array<uint32_t,3> bin{};std::array<double,3> weight{};uint32_t sample=0;};
   std::vector<Lobes> frames;uint32_t count=0,current=0,currentQuality=0,legacyCount=0,stationarySamples=0;
   double minimumDelay=std::numeric_limits<double>::infinity(),maximumDelay=-std::numeric_limits<double>::infinity();
+  double minimumDoppler=std::numeric_limits<double>::infinity(),maximumDoppler=-std::numeric_limits<double>::infinity();
   std::array<uint32_t,16> legacyQuality{};
   for(uint32_t j=0;j<display;++j){const size_t at=base+16+8*((start+j)%historyCapacity);
    const uint32_t historyState=w[at+6];stateName(historyState);
    if(historyState!=1u&&historyState!=2u)continue;
    const uint32_t spatial=w[at+7];Lobes frame;frame.sample=j;
    const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);
-   if(std::abs(sampleDoppler)<=config.stationaryMaxDopplerHz){stationarySamples++;
-    minimumDelay=std::min(minimumDelay,sampleDelay);maximumDelay=std::max(maximumDelay,sampleDelay);}
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
     require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
@@ -452,6 +477,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    else{const uint32_t coarse=spatial&511u,fine=(spatial>>9u)&2047u,q=(spatial>>20u)&15u;
     require(coarse<=config.beamCount&&fine<=scanBeams&&!(coarse==0&&fine!=0),"GPU bearing spatial metadata invalid");if(!fine)continue;
     frame.bin={fine,0,0};frame.weight={1,0,0};current=fine;currentQuality=q;legacyQuality[q]++;legacyCount++;}
+   if(config.stationaryMaxDopplerHz<=0||std::abs(sampleDoppler)<=config.stationaryMaxDopplerHz){stationarySamples++;
+    minimumDelay=std::min(minimumDelay,sampleDelay);maximumDelay=std::max(maximumDelay,sampleDelay);
+    minimumDoppler=std::min(minimumDoppler,sampleDoppler);maximumDoppler=std::max(maximumDoppler,sampleDoppler);}
    for(uint32_t k=0;k<3;++k)if(frame.bin[k])histogram[frame.bin[k]-1]+=frame.weight[k];
    frames.push_back(frame);count++;
   }
@@ -492,7 +520,8 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
   const double meanLocal=normalizeDegrees(std::atan2(y,x)/radians);
   const double uncertainty=std::max({step/2.0,config.minimumUncertaintyDeg,std::min(180.0,std::sqrt(std::max(0.0,-2.0*std::log(std::max(concentration,1e-12))))/radians)});
   const bool stationaryClutter=config.stationaryPersistenceCpis&&count>=config.stationaryPersistenceCpis&&
-   stationarySamples==count&&maximumDelay-minimumDelay<=1.5;
+   stationarySamples==count&&maximumDelay-minimumDelay<=1.5&&
+   maximumDoppler-minimumDoppler<=1.5/config.cpiSeconds;
   const double runner=independent.size()>1?histogram[independent[1]]:0;
   uint32_t temporalQuality=runner>0?uint32_t(std::clamp(std::floor(10*std::log10(histogram[winner]/runner)),0.0,15.0)):15u;
   if(legacyCount==count){uint32_t seen=0;for(temporalQuality=0;temporalQuality<legacyQuality.size();++temporalQuality){seen+=legacyQuality[temporalQuality];if(seen>(count-1)/2)break;}}

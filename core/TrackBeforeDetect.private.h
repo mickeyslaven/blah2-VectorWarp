@@ -5,6 +5,19 @@
 #include <stdexcept>
 
 namespace track_before_detect {
+constexpr uint32_t splitMotionFlag = 0x80000000u;
+struct MotionBins { uint32_t delay=0,doppler=0; };
+inline uint32_t encodeMotionBins(uint32_t delay,uint32_t doppler){
+  if(delay>2||doppler>16)throw std::invalid_argument("Track-before-detect motion bins invalid");
+  return splitMotionFlag|(doppler<<8)|delay;
+}
+inline MotionBins decodeMotionBins(uint32_t value){
+  if(!(value&splitMotionFlag))return {value,value};
+  if(value&~(splitMotionFlag|0x00001f03u))throw std::invalid_argument("Track-before-detect motion encoding invalid");
+  MotionBins result{value&0xffu,(value>>8)&0xffu};
+  if(result.delay>2||result.doppler>16)throw std::invalid_argument("Track-before-detect motion bins invalid");
+  return result;
+}
 inline bool validMaximum(uint32_t value) { return value == 4 || value == 8; }
 inline uint32_t bankCount(uint32_t maximum) {
   if (!validMaximum(maximum)) throw std::invalid_argument("Track-before-detect maximum must be 4 or 8 CPIs");
@@ -15,10 +28,11 @@ inline uint32_t bankLength(uint32_t bank) {
   if (bank >= 3) throw std::invalid_argument("Track-before-detect bank index invalid");
   return 2u << bank;
 }
-inline double trialCount(uint32_t maximum, uint32_t motionBins) {
-  const double width = double(2u * motionBins + 1u);
-  return double(bankCount(maximum)) * width * width;
+inline double trialCount(uint32_t maximum, uint32_t delayBins,uint32_t dopplerBins) {
+  return double(bankCount(maximum)) * double(2u*delayBins+1u)*double(2u*dopplerBins+1u);
 }
+inline double trialCount(uint32_t maximum,uint32_t encoded){const auto m=decodeMotionBins(encoded);
+ return trialCount(maximum,m.delay,m.doppler);}
 inline uint64_t angleHistoryWords(uint64_t cells, uint32_t maximum,
     uint32_t beamTolerance) {
   if (beamTolerance == UINT32_MAX) return 1;
@@ -28,12 +42,12 @@ inline uint64_t angleHistoryWords(uint64_t cells, uint32_t maximum,
   return cells * depth;
 }
 inline double passPfa(double baselinePfa, uint32_t maximum,
-    uint32_t motionBins, uint32_t pass) {
+    uint32_t delayBins,uint32_t dopplerBins,uint32_t pass) {
   if (!pass || pass >= detectorPassCount(maximum)) {
     if (!pass) return baselinePfa;
     throw std::invalid_argument("Track-before-detect pass index invalid");
   }
-  return baselinePfa / trialCount(maximum, motionBins);
+  return baselinePfa / trialCount(maximum,delayBins,dopplerBins);
 }
 
 // Cell averaging CFAR with an L-CPI noncoherent sum has a Gamma(L) CUT and a

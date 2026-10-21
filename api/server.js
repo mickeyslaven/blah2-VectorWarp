@@ -24,10 +24,13 @@ const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
-const {createBearingDiagnostic} = require('./bearing-diagnostic.js');
+const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
+const {createEvidenceStatistics} = require('./evidence-statistics.js');
+const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
+const {createCaptureTriggerQueue} = require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
@@ -48,11 +51,18 @@ const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
 manifoldAutomation.start();
-const bearingDiagnostic = createBearingDiagnostic(config);
+const bearingDiagnostic = createBearingDiagnosticCache(config);
+bearingDiagnostic.start();
 const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
+const captureTriggerQueue = createCaptureTriggerQueue();
+const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
+const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
+const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
+  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event)});
+const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
@@ -368,8 +378,21 @@ app.get('/api/tracker/native', (req, res) => {
 app.get('/api/tracker/publication', (req, res) => {
   res.json(trackerPublication.status());
 });
+app.get('/api/statistics', (req, res) => {
+  const diagnostic = bearingDiagnostic.status();
+  const recorder = manifoldRecorder.status();
+  const automation = manifoldAutomation.status();
+  res.json(evidenceStatistics.status({enabled: config.process?.bearing?.enable === true,
+    calibrated: Boolean(config.process?.bearing?.manifold_file),
+    manifold_file: config.process?.bearing?.manifold_file || null,
+    diagnostic, recorder, automation,
+    frequency_resolved: frequencyResolvedShadow.status()}));
+});
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
+});
+app.get('/api/tracker/guided-shadow', (req, res) => {
+  res.json(trackGuidedShadowRecorder.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -518,6 +541,22 @@ app.post('/api/processor/status', (req, res) => {
       checked.value.recordingRequestId === captureRevision) {
     capture = false;
     captureStartedAt = null;
+  }
+  if (checked.value.input === 'live' && checked.value.clipRevision !== null &&
+      captureTriggerQueue.acknowledge(checked.value.clipRevision, checked.value.clipError,
+        {file: checked.value.clipFile, samples: checked.value.clipSamples})) {
+    const revision = checked.value.clipRevision;
+    if (checked.value.clipError === CLIP_PRE_ROLL_UNAVAILABLE) {
+      setTimeout(() => {
+        const retry = captureTriggerQueue.retryPreRollFailure(revision);
+        if (!retry)
+          evidenceStatistics.acceptCaptureEvents(
+            captureTriggerQueue.eventsForRevision(revision));
+      }, CLIP_PRE_ROLL_RETRY_DELAY_MS).unref();
+    } else {
+      evidenceStatistics.acceptCaptureEvents(
+        captureTriggerQueue.eventsForRevision(revision));
+    }
   }
   res.status(204).end();
 });
@@ -915,6 +954,7 @@ app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
 app.get('/api/bearing/diagnostic', (req, res) => {
+  if (req.query.refresh === 'true') void bearingDiagnostic.refresh({force: true});
   res.json(bearingDiagnostic.status());
 });
 app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
@@ -939,7 +979,8 @@ app.get('/stash/timing', (req, res) => {
 app.get('/capture', (req, res) => {
   res.send(capture);
 });
-app.get('/capture/request', (req, res) => res.json({recording: capture, revision: captureRevision}));
+app.get('/capture/request', (req, res) => res.json({recording: capture,
+  revision: captureRevision, clip: captureTriggerQueue.request()}));
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <
@@ -962,6 +1003,7 @@ app.get('/capture/status', (req, res) => {
       (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null),
     requested: capture,
     revision: captureRevision,
+    clip: captureTriggerQueue.status(),
     acknowledged: acknowledged === true,
     recording,
     recordingFile: acknowledgement?.recordingFile || '',
@@ -1078,18 +1120,24 @@ const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
+  trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
+  evidenceStatistics.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
+  evidenceStatistics.acceptTracker(trackerPublication.frame());
 });
 listenData(server_tracker, 'track');
 
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
-  const server_bearing = jsonStreamServer('bearing', frame => { bearing = frame; });
+  const server_bearing = jsonStreamServer('bearing', frame => {
+    bearing = frame;
+    evidenceStatistics.acceptBearing(frame);
+  });
   listenData(server_bearing, 'bearing');
 }
 
@@ -1173,6 +1221,8 @@ process.on('SIGTERM', () => {
   console.log('SIGTERM signal received.');
   trackerForwarder.close();
   trackerPublication.close();
+  evidenceStatistics.close();
+  bearingDiagnostic.close();
   gainMonitor.stop();
   process.exit(0);
 });
