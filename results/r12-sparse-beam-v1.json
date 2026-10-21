@@ -1,0 +1,78 @@
+{
+  "schema": "vectorwarp-sparse-beam-recovery-v1",
+  "candidate_only": true,
+  "frames": 8,
+  "configuration": {
+    "lasso_penalty": 0.5,
+    "guard_radius": 2,
+    "training_radius": 5,
+    "diagonal_loading": 0.3,
+    "beam_trials": 12
+  },
+  "target_score": 0.16649489200070836,
+  "control_p99": 0.6499338993418972,
+  "margin_over_control_p99_db": -5.914682754903321,
+  "controls": 560,
+  "controls_exceeding_target": 369,
+  "target_cells": [
+    {
+      "frame": 0,
+      "row": 0,
+      "column": 14,
+      "delay_km": 21.4851261566,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 1,
+      "row": 0,
+      "column": 14,
+      "delay_km": 21.4851261566,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 2,
+      "row": 0,
+      "column": 14,
+      "delay_km": 21.4851261566,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 3,
+      "row": 0,
+      "column": 14,
+      "delay_km": 21.4851261566,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 4,
+      "row": 0,
+      "column": 15,
+      "delay_km": 21.6100396808,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 5,
+      "row": 0,
+      "column": 15,
+      "delay_km": 21.6100396808,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 6,
+      "row": 0,
+      "column": 15,
+      "delay_km": 21.6100396808,
+      "doppler_hz": 56.0188596827
+    },
+    {
+      "frame": 7,
+      "row": 0,
+      "column": 16,
+      "delay_km": 21.734953205,
+      "doppler_hz": 56.0188596827
+    }
+  ],
+  "replay": "results/r12-complex-wide-v1.json",
+  "trajectory": "results/r12-clip-truth.json",
+  "hex": "a5299a"
+}

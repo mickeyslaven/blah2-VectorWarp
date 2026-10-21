@@ -117,6 +117,32 @@ truth-near plots and the frozen fixed-beam spatial GLRT is 2.68 dB below its
 matched-control p99, with 317 controls exceeding the target. The negative r623
 result is therefore not an artifact of choosing the later periodic window.
 
+## Four-method research follow-up
+
+Four remaining literature-derived candidates were implemented as replay-only
+experiments and rejected without deployment:
+
+- A twelve-look target-protected reference bank failed to retain r277, scoring
+  1.962 dB below a pooled 287,040-cell trial-corrected control p99. This also
+  produced excessive unrelated detections and tracks. See
+  `results/20261021-target-protected-reference-r277-bank.json`.
+- A loaded reciprocal filter swept predeclared loadings 0.01, 0.1, and 1.0.
+  The best choice remained 3.41 dB below r277's parameter-trial-aware whole-map
+  p99, so the miss matrix was not opened. See
+  `results/20261021-loaded-reciprocal-mchq-summary-v1.json`.
+- A robust fifteen-dimensional post-Doppler STAP detector retained r277 by
+  6.819 dB, but r12, r94, r620, and r623 scored -3.771, -2.353, -2.189, and
+  -4.589 dB, respectively, against the stricter matched/whole-search control
+  p99. See `results/20261021-post-doppler-stap-matrix-v1.json`.
+- Sparse complex beam recovery retained r277 by 19.327 dB over its local-cutout
+  p99, but r12, r94, r620, and r623 scored -5.915, -5.756, -5.690, and -4.838
+  dB. Since every miss fails even the local screen, no whole-map sparse test is
+  justified. See `results/20261021-sparse-beam-recovery-matrix-v1.json`.
+
+These results close the current software-only recovery set. None supplies
+independently qualified evidence for the missed aircraft under controlled false
+alarm accounting.
+
 ## Post-Doppler multichannel STAP replay
 
 The replay-only `analyze-post-doppler-stap.py` experiment jointly adapts the five
