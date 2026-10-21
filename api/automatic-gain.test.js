@@ -20,12 +20,20 @@ function measurement(config, p999 = .6, overrides = {}) {
       channel, samples: 600000, railFraction: 0, peakFraction: Math.max(.6, p999),
       p999Fraction: p999, rmsFraction: p999 / 2})), ...overrides};
 }
+function rawMeasurement(config, p999 = .6, overrides = {}) {
+  return {schemaVersion: 1, source: 'rtl2832_uint8_precalibration', complete: true,
+    channels: Array.from({length: config.capture.device.channel_count}, (_, channel) => ({
+      channel, generation: 1, actualGainDb: config.capture.device.heimdall.gain,
+      components: 1200000, sampledComponents: 18750,
+      railFraction: 0, nearRailFraction: 0, p999Fraction: p999,
+      rmsFraction: p999 / 2})), ...overrides};
+}
 function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
   syncError, calibrationError, verifyError, verifyDrift, syncBusy = false, clock, settlingError,
-  settlingProbe,
+  settlingProbe, rawProbes = null,
   calibrationFlags = {calibrationState: 'CONVERGED', phaseState: 4, noiseSource: false}} = {}) {
   const calls = []; let live = status(previous, actualGain);
-  let syncs = 0, calibrations = 0, verifies = 0, captures = 0, settles = 0;
+  let syncs = 0, calibrations = 0, verifies = 0, captures = 0, rawCaptures = 0, settles = 0;
   function receipt(operations = []) { return {status: 'synchronized', before: clone(live),
     after: clone(live), operations}; }
   function injected(code) { const error = new Error(code); error.code = code; return error; }
@@ -81,7 +89,15 @@ function fixture({previous = config(), probes = [.6, .6], actualGain = 20,
     if (settlingProbe && settles === 1) settlingProbe(result);
     return result;
   }
+  async function measureRawHeadroom(next) {
+    calls.push({stage: 'raw-probe', config: clone(next)});
+    const value = rawProbes[rawCaptures++];
+    assert.notEqual(value, undefined, 'Only expected raw ADC captures may run');
+    if (value instanceof Error) throw value;
+    return typeof value === 'function' ? value(next) : rawMeasurement(next, value);
+  }
   return {controller: createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
+    ...(rawProbes ? {measureRawHeadroom} : {}),
     ...(clock ? {now: () => clock.value} : {})}), previous,
     candidate: clone(previous), calls, live: () => clone(live), synchronizer};
 }
@@ -115,10 +131,26 @@ async function rejected(run, code) {
   assert.equal(result.receiverSync.automaticGain.claims.radarQualificationProven, false);
   assert.deepEqual(result.receiverSync.operations.map(operation => operation.automaticGainStage),
     ['trial-synchronize', 'trial-recalibrate']);
-
   assert.equal(result.receiverSync.automaticGain.settling.length, 1);
   assert.equal(result.receiverSync.automaticGain.settling[0].safe, false,
     'Clipped but coherent readiness evidence cannot substitute for safe final probes');
+
+  run = fixture({rawProbes: [.6, .6]});
+  result = await run.controller.apply(run.previous, run.candidate);
+  assert.equal(result.receiverSync.automaticGain.claims.rawAdcClippingProven, true);
+  assert.equal(result.receiverSync.automaticGain.claims.rawAdcSource,
+    'rtl2832_uint8_precalibration');
+  assert.equal(result.receiverSync.automaticGain.probes[0].rawAdc.channels.length, 5);
+  assert.deepEqual(run.calls.map(call => call.stage), ['verify', 'synchronize', 'settle',
+    'recalibrate', 'probe', 'raw-probe', 'probe', 'raw-probe', 'verify']);
+
+  // Raw ADC saturation controls the decision even when reconstructed MCHQ
+  // samples look safe.
+  run = fixture({probes: [.5, .5, .5], rawProbes: [.8, .5, .5]});
+  result = await run.controller.apply(run.previous, run.candidate);
+  assert.deepEqual(gains(run), [20, 19]);
+  assert.equal(result.receiverSync.automaticGain.selectedGainDb, 19);
+
   run = fixture({settlingError: 1});
   let settleFailure = await rejected(run, 'SETTLING_FAILED');
   assert.equal(settleFailure.receiverSync.automaticGain.rollback.status, 'restored');

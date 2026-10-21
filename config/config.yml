@@ -31,6 +31,9 @@ process:
     dopplerMax: 200
   clutter:
     enable: true
+    # Keep cancellation aligned with the complete inclusive ambiguity map.
+    # Set false to use the legacy half-open delayMin..delayMax filter interval.
+    followAmbiguity: true
     delayMin: -10
     delayMax: 400
   detection:

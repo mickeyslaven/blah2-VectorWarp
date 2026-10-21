@@ -1540,7 +1540,7 @@ index 52759e3..5e83715 100644
 +PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size, std::chrono::milliseconds deadline);
 \ No newline at end of file
 diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
-index 787ed0b..27d6649 100644
+index 787ed0b..c212645 100644
 --- a/heimdall_v2/src/net/tcp_control_server.cpp
 +++ b/heimdall_v2/src/net/tcp_control_server.cpp
 @@ -6,6 +6,7 @@
@@ -1649,7 +1649,74 @@ index 787ed0b..27d6649 100644
      // KerberosSDR support mode: manual-calibration workflow state for client UIs.
      status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
      if (kerberos_mode.load()) {
-@@ -224,16 +248,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+@@ -184,6 +208,66 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+         status_json << "]";
+     }
+ 
++    // Raw ADC headroom is measured in each RTL callback before calibration,
++    // floating-point conversion, DC removal and MCHQ uint8 requantization.
++    // Histograms are sampled 1/64 for low overhead; rail counts cover every
++    // I/Q component. Counters reset after a successful gain change.
++    status_json << ",\"adc_headroom\":{\"schema\":1,"
++                << "\"source\":\"rtl2832_uint8_precalibration\","
++                << "\"sample_stride\":" << AdcHeadroomCounters::SAMPLE_STRIDE << ","
++                << "\"center_code\":127.5,\"full_scale_code\":127.5,\"channels\":[";
++    for (int i = 0; i < num_active; ++i) {
++        if (i > 0) status_json << ",";
++        if (static_cast<size_t>(i) >= devices.size() || !devices[i]) {
++            status_json << "{\"channel\":" << i << ",\"unavailable\":true}";
++            continue;
++        }
++        const auto& counters = devices[i]->adc_headroom;
++        uint64_t generation = 0, components = 0, rails = 0, near_rails = 0;
++        uint64_t sampled = 0, squared = 0;
++        std::array<uint64_t, AdcHeadroomCounters::HISTOGRAM_BINS> histogram{};
++        bool stable = false;
++        for (int attempt = 0; attempt < 64 && !stable; ++attempt) {
++            const uint64_t before = counters.sequence.load(std::memory_order_acquire);
++            if (before & 1U) {
++                std::this_thread::sleep_for(std::chrono::microseconds(50));
++                continue;
++            }
++            generation = counters.generation.load(std::memory_order_relaxed);
++            components = counters.components.load(std::memory_order_relaxed);
++            rails = counters.rail_components.load(std::memory_order_relaxed);
++            near_rails = counters.near_rail_components.load(std::memory_order_relaxed);
++            sampled = counters.sampled_components.load(std::memory_order_relaxed);
++            squared = counters.sampled_centered_twice_squared.load(std::memory_order_relaxed);
++            for (size_t bin = 0; bin < histogram.size(); ++bin)
++                histogram[bin] = counters.histogram[bin].load(std::memory_order_relaxed);
++            const uint64_t after = counters.sequence.load(std::memory_order_acquire);
++            stable = before == after && !(after & 1U);
++            if (!stable) std::this_thread::sleep_for(std::chrono::microseconds(50));
++        }
++        if (!stable) {
++            status_json << "{\"channel\":" << i << ",\"unavailable\":true}";
++            continue;
++        }
++        const double rms_fraction = sampled == 0 ? 0.0 :
++            std::sqrt(static_cast<double>(squared) / static_cast<double>(sampled)) / 255.0;
++        status_json << "{\"channel\":" << i
++                    << ",\"actual_gain_db\":" << (devices[i]->actual_gain_tenths.load() < 0 ? -1.0f : devices[i]->actual_gain_tenths.load() / 10.0f)
++                    << ",\"generation\":" << generation
++                    << ",\"components\":" << components
++                    << ",\"rail_components\":" << rails
++                    << ",\"near_rail_components\":" << near_rails
++                    << ",\"sampled_components\":" << sampled
++                    << ",\"rms_fraction\":" << rms_fraction
++                    << ",\"histogram\":[";
++        for (size_t bin = 0; bin < AdcHeadroomCounters::HISTOGRAM_BINS; ++bin) {
++            if (bin > 0) status_json << ",";
++            status_json << histogram[bin];
++        }
++        status_json << "]}";
++    }
++    status_json << "]}";
++
+     // Add cooldown status for drag-to-scroll feature
+     if (phase_compensation) {
+         bool cooldown = phase_compensation->cooldown_active.load();
+@@ -224,16 +308,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
  }
  
  void TcpControlServer::broadcast_status() {
@@ -1671,7 +1738,7 @@ index 787ed0b..27d6649 100644
      // Send to all connected clients. Queued, never blocking: this runs on the
      // status broadcaster thread while holding clients_mutex, so a blocking
      // send() here would freeze the control loop (no accepts, no commands) and
-@@ -246,26 +270,31 @@ void TcpControlServer::broadcast_status() {
+@@ -246,26 +330,31 @@ void TcpControlServer::broadcast_status() {
  }
  
  void TcpControlServer::control_loop() {
@@ -1709,7 +1776,7 @@ index 787ed0b..27d6649 100644
                  if (client->active) {
                      FD_SET(client->socket, &read_fds);
                      // Only watch for writability while output is pending -
-@@ -281,25 +310,30 @@ void TcpControlServer::control_loop() {
+@@ -281,25 +370,30 @@ void TcpControlServer::control_loop() {
          timeval timeout{0, 100000}; // 100ms timeout
          int result = select(max_fd + 1, &read_fds, &write_fds, nullptr, &timeout);
  
@@ -1744,7 +1811,7 @@ index 787ed0b..27d6649 100644
                          clients.push_back(std::make_unique<TcpClient>(client_socket));
                          std::cout << "TCP Control: Client connected from " << inet_ntoa(client_addr.sin_addr) << std::endl;
                      }
-@@ -407,6 +441,10 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
+@@ -407,6 +501,10 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
  }
  
  std::string TcpControlServer::process_command(const std::string& json_str) {
@@ -1755,7 +1822,7 @@ index 787ed0b..27d6649 100644
      // While an element-count reconfiguration owns the devices, refuse every
      // command except get_status: most handlers touch device handles that are
      // being closed/reopened on another thread.
-@@ -509,6 +547,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+@@ -509,6 +607,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
              return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
          }
          std::thread([n]() {
@@ -1763,7 +1830,7 @@ index 787ed0b..27d6649 100644
              std::string err;
              if (!reconfigure_num_elements(n, err)) {
                  std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
-@@ -694,6 +733,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+@@ -694,6 +793,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
      // {"command":"set_if_vga","index":0-15}. Not persisted; the next gain
      // change re-applies the configured step (R820T_IF_VGA_* in config.h).
      if (json_str.find("\"set_if_vga\"") != std::string::npos) {
@@ -1772,7 +1839,7 @@ index 787ed0b..27d6649 100644
          size_t pos = json_str.find("\"index\":");
          if (pos == std::string::npos) {
              return "{\"status\":\"error\",\"message\":\"Missing index field (0-15)\"}";
-@@ -1134,4 +1175,4 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+@@ -1134,4 +1235,4 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
      }
  
      return "{\"status\":\"error\",\"message\":\"Unknown command\"}";
@@ -2151,10 +2218,56 @@ index d69a23a..dee40aa 100644
  // Save an explicit element-count choice (web UI / control port) without
  // reconfiguring - for a count that is already the live one.
 diff --git a/heimdall_v2/src/sdr/sdr_device.cpp b/heimdall_v2/src/sdr/sdr_device.cpp
-index b0d5102..b643ede 100644
+index b0d5102..cdf72fe 100644
 --- a/heimdall_v2/src/sdr/sdr_device.cpp
 +++ b/heimdall_v2/src/sdr/sdr_device.cpp
-@@ -13,6 +13,12 @@ SDRDevice::SDRDevice(int id, int idx, const std::string& serial)
+@@ -7,12 +7,58 @@ extern void signal_coherence_lost(const char* reason);
+ SDRDevice::SDRDevice(int id, int idx, const std::string& serial)
+     : device_id(id), index(idx), serial_number(serial) {}
+ 
++void AdcHeadroomCounters::observe(const unsigned char* samples, uint32_t count) {
++    if (!samples || count == 0) return;
++    sequence.fetch_add(1, std::memory_order_acq_rel);
++    if (reset_requested.exchange(false, std::memory_order_acq_rel)) {
++        generation.fetch_add(1, std::memory_order_relaxed);
++        components.store(0, std::memory_order_relaxed);
++        rail_components.store(0, std::memory_order_relaxed);
++        near_rail_components.store(0, std::memory_order_relaxed);
++        sampled_components.store(0, std::memory_order_relaxed);
++        sampled_centered_twice_squared.store(0, std::memory_order_relaxed);
++        for (auto& bin : histogram) bin.store(0, std::memory_order_relaxed);
++    }
++    uint64_t rails = 0, near_rails = 0, sampled = 0, squared = 0;
++    std::array<uint64_t, HISTOGRAM_BINS> bins{};
++    for (uint32_t i = 0; i < count; ++i) {
++        const unsigned value = samples[i];
++        rails += value == 0 || value == 255;
++        near_rails += value <= 1 || value >= 254;
++    }
++    // A rotating 1/64 sample is sufficient for distribution/RMS telemetry;
++    // exact rail counters above still inspect every component. Rotating by a
++    // coprime offset prevents a fixed waveform period from owning one phase.
++    for (uint32_t i = sample_phase; i < count; i += SAMPLE_STRIDE) {
++        const unsigned value = samples[i];
++        const int centered_twice = static_cast<int>(value) * 2 - 255;
++        ++bins[value];
++        squared += static_cast<uint64_t>(centered_twice * centered_twice);
++        ++sampled;
++    }
++    sample_phase = (sample_phase + 29) % SAMPLE_STRIDE;
++    rail_components.fetch_add(rails, std::memory_order_relaxed);
++    near_rail_components.fetch_add(near_rails, std::memory_order_relaxed);
++    sampled_centered_twice_squared.fetch_add(squared, std::memory_order_relaxed);
++    for (size_t i = 0; i < bins.size(); ++i)
++        if (bins[i] != 0) histogram[i].fetch_add(bins[i], std::memory_order_relaxed);
++    sampled_components.fetch_add(sampled, std::memory_order_release);
++    components.fetch_add(count, std::memory_order_release);
++    sequence.fetch_add(1, std::memory_order_release);
++}
++
+ // Runs on the per-device librtlsdr USB reader thread. Must be fast and strictly
+ // allocation-free: any stall here (an allocator lock, a per-device drop that
+ // desyncs the channels) corrupts coherence or overflows the RTL2832 FIFO.
  void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
      auto* sdr = static_cast<SDRDevice*>(ctx);
      if (!sdr->running || !global_running) return;
@@ -2167,7 +2280,7 @@ index b0d5102..b643ede 100644
  
      // Stamp AFTER the packet is in L1 (or dropped): clear_l1_buffer's quiet
      // point must mean "every device's latest round is already enqueued".
-@@ -52,8 +58,22 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
+@@ -52,8 +98,26 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
  
      // Reuses the pooled buffer's capacity (fixed len = NUM_SAMPLES*2), so no
      // allocation after the pool warms up.
@@ -2182,6 +2295,10 @@ index b0d5102..b643ede 100644
 +        remaining = sdr->pending_transition_callbacks.fetch_sub(1, std::memory_order_acq_rel);
 +    buffer.acquisition_epoch = (transition_before || capture_transition_active.load(std::memory_order_acquire) ||
 +        epoch_before != acquisition_epoch.load(std::memory_order_acquire) || remaining != 0) ? 0 : epoch_before;
++    // Exclude transition quarantine and calibration-noise samples. This is the
++    // unmodified tuner/ADC byte stream, before any DSP or MCHQ conversion.
++    if (buffer.acquisition_epoch != 0 && !bias_tee_enabled.load(std::memory_order_acquire))
++        sdr->adc_headroom.observe(buf, len);
 +    // Publish the count before the queue can wake its consumer.
      sdr->l1_buffer_size.fetch_add(1, std::memory_order_relaxed);
 +    if (!sdr->l1_buffer.enqueue(std::move(buffer))) {
@@ -2192,10 +2309,37 @@ index b0d5102..b643ede 100644
      stamp();
  }
 diff --git a/heimdall_v2/src/sdr/sdr_device.hpp b/heimdall_v2/src/sdr/sdr_device.hpp
-index 6f69731..bd7a002 100644
+index 6f69731..ce83fee 100644
 --- a/heimdall_v2/src/sdr/sdr_device.hpp
 +++ b/heimdall_v2/src/sdr/sdr_device.hpp
-@@ -19,6 +19,9 @@ struct SDRDevice {
+@@ -8,6 +8,26 @@
+ #include <string>
+ #include <array>
+ 
++struct AdcHeadroomCounters {
++    static constexpr size_t HISTOGRAM_BINS = 256;
++    static constexpr uint32_t SAMPLE_STRIDE = 64;
++
++    std::atomic<uint64_t> sequence{0};
++    std::atomic<bool> reset_requested{false};
++    std::atomic<uint64_t> generation{0};
++    std::atomic<uint64_t> components{0};
++    std::atomic<uint64_t> rail_components{0};
++    std::atomic<uint64_t> near_rail_components{0};
++    std::atomic<uint64_t> sampled_components{0};
++    std::atomic<uint64_t> sampled_centered_twice_squared{0};
++    std::array<std::atomic<uint64_t>, HISTOGRAM_BINS> histogram{};
++    // Owned exclusively by this device's single RTL callback thread.
++    uint32_t sample_phase = 0;
++
++    void observe(const unsigned char* samples, uint32_t count);
++    void request_reset() { reset_requested.store(true, std::memory_order_release); }
++};
++
+ struct SDRDevice {
+     rtlsdr_dev_t* dev = nullptr;
+     int device_id, index;
+@@ -19,6 +39,9 @@ struct SDRDevice {
      // Set by the USB reader thread once it is past rtlsdr_read_async (or never
      // entered it). stop_pipeline_threads() re-sends the cancel until it is set.
      std::atomic<bool> async_exited{true};
@@ -2205,8 +2349,22 @@ index 6f69731..bd7a002 100644
      std::atomic<size_t> l1_buffer_size{0}; // Track size atomically
      // steady_clock ns at which this device's most recent USB packet was
      // enqueued in L1 (or dropped) - stamped at the END of the callback. clear_l1_buffer() flushes at a
+@@ -30,6 +53,13 @@ struct SDRDevice {
+     // last-arrival times alone can't tell from the current one.
+     std::atomic<int64_t> last_arrival_ns{0};
+     std::atomic<int64_t> prev_arrival_ns{0};
++    // Raw RTL2832 uint8 statistics, measured before calibration, float
++    // conversion, DC removal or MCHQ requantization. Callback updates are
++    // allocation-free and aggregate atomics once per USB completion.
++    AdcHeadroomCounters adc_headroom;
++    // Actual tuner-table step read back after a gain write (tenths of dB).
++    // current_gain remains the requested common setting for compatibility.
++    std::atomic<int> actual_gain_tenths{-999};
+     ChannelCompensation compensation;
+     mutable std::mutex compensation_mutex;
+ 
 diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
-index 33b22e1..c9e5461 100644
+index 33b22e1..58f0f97 100644
 --- a/heimdall_v2/src/sdr/sdr_init.cpp
 +++ b/heimdall_v2/src/sdr/sdr_init.cpp
 @@ -2,6 +2,7 @@
@@ -2233,13 +2391,13 @@ index 33b22e1..c9e5461 100644
  extern void clear_l2_buffer();
  extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
  
-@@ -138,8 +141,27 @@ static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
+@@ -138,8 +141,30 @@ static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
                                                              : R820T_IF_VGA_MANUAL_IDX));
  }
  
 +// Use the fork's supported gain table and readback, retaining fixed IF VGA.
 +// A successful API return alone cannot certify all channels share live settings.
-+static bool apply_validated_gain(rtlsdr_dev_t* dev, int gain) {
++static bool apply_validated_gain(rtlsdr_dev_t* dev, int gain, int* actual_gain = nullptr) {
 +    if (rtlsdr_set_tuner_gain_mode(dev, gain < 0 ? 0 : 1) < 0) return false;
 +    if (gain >= 0) {
 +        const int count = rtlsdr_get_tuner_gains(dev, nullptr);
@@ -2249,6 +2407,9 @@ index 33b22e1..c9e5461 100644
 +        const auto it = std::lower_bound(gains.begin(), gains.end(), gain);
 +        const int applied = it == gains.end() ? gains.back() : *it;
 +        if (rtlsdr_set_tuner_gain(dev, applied) < 0 || rtlsdr_get_tuner_gain(dev) != applied) return false;
++        if (actual_gain) *actual_gain = applied;
++    } else if (actual_gain) {
++        *actual_gain = -1;
 +    }
 +    return set_fixed_if_vga(dev, gain < 0) >= 0;
 +}
@@ -2262,7 +2423,7 @@ index 33b22e1..c9e5461 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      bool ok = true;
      for (const auto& d : devices) {
-@@ -179,7 +201,7 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
+@@ -179,7 +204,7 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
          if (fatal) ok = false;
      };
  
@@ -2271,14 +2432,16 @@ index 33b22e1..c9e5461 100644
      check(rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE), "setting the sample rate", true);
      // Wideband variant: every tuner is parked at the IF for good - the RF is
      // reached by programming the downconverter LO (current_frequency stays the
-@@ -192,14 +214,18 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
+@@ -192,14 +217,20 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
                                                 : static_cast<uint32_t>(current_frequency.load())),
            "setting the center frequency", true);
      const int gain_now = current_gain.load();
 -    check(rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1), "setting the gain mode", false);
 -    if (gain_now >= 0) {
 -        check(rtlsdr_set_tuner_gain(sdr->dev, gain_now), "setting the gain", false);
-+    if (!apply_validated_gain(sdr->dev, gain_now)) ok = false;
++    int actual_gain = -999;
++    if (!apply_validated_gain(sdr->dev, gain_now, &actual_gain)) ok = false;
++    else sdr->actual_gain_tenths.store(actual_gain, std::memory_order_release);
 +    // This fork returns -2 for an already-zero correction. Do not write that
 +    // no-op; independently verify the setting after any required write.
 +    if (rtlsdr_get_freq_correction(sdr->dev) != 0)
@@ -2297,7 +2460,7 @@ index 33b22e1..c9e5461 100644
  
  #if ENABLE_BIAS_TEE
      // --kerberos: the noise source couples straight into the antenna path, so
-@@ -208,9 +234,9 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
+@@ -208,9 +239,9 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
      // the GPIO state across close/open); the add-on array's source is powered
      // from the CH0 bias tee once channel 0 is open (open_active_devices).
      if (external_noise_mode.load(std::memory_order_relaxed))
@@ -2309,7 +2472,7 @@ index 33b22e1..c9e5461 100644
  #endif
  
  #if USB_RESET_ON_INIT
-@@ -293,7 +319,7 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+@@ -293,7 +324,7 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
  
      for (int i = 0; i < num_to_open; i++) {
          init_threads.emplace_back([i, &init_results, &devices]() {
@@ -2318,7 +2481,7 @@ index 33b22e1..c9e5461 100644
          });
      }
  
-@@ -347,6 +373,9 @@ void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+@@ -347,6 +378,9 @@ void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
      // freed here; a concurrent rtlsdr_read_async on it would be use-after-free).
      for (auto& device : devices) {
          if (device && device->dev) {
@@ -2328,7 +2491,7 @@ index 33b22e1..c9e5461 100644
              rtlsdr_close(device->dev);
              device->dev = nullptr;
              device->init_success = false;
-@@ -427,21 +456,32 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
+@@ -427,21 +461,32 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
  }
  
  void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2362,7 +2525,7 @@ index 33b22e1..c9e5461 100644
      // Wideband variant: GPIO0 only powers the noise source; the RF switches
      // must also be thrown or the tuners keep looking at the antennas.
      wideband_set_noise_path(enable, devices);
-@@ -450,7 +490,17 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+@@ -450,7 +495,17 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
      // noise in via a directional coupler, not an RF switch. No-op unless the
      // switch GPIOs were claimed at startup.
      kerberos_gpio_set_noise_path(enable);
@@ -2380,7 +2543,7 @@ index 33b22e1..c9e5461 100644
      // Anchor the phase-cal settle gate to the moment the noise source comes ON. Only on
      // ENABLE: a retune turns it on just before measuring, so the gate then waits out the
      // in-flight pre-noise USB samples and the tuner AGC ramp. Startup turns the bias tee on per-device in
-@@ -472,6 +522,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+@@ -472,6 +527,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
  }
  
  void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2388,7 +2551,7 @@ index 33b22e1..c9e5461 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
      // only has GPIO0-7, so never sweep the compile-time ceiling here.
-@@ -576,6 +627,7 @@ bool rf_frequency_valid(uint64_t rf_hz) {
+@@ -576,6 +632,7 @@ bool rf_frequency_valid(uint64_t rf_hz) {
  }
  
  bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2396,7 +2559,7 @@ index 33b22e1..c9e5461 100644
      if (frequency > 0 && !rf_frequency_valid(frequency)) {
          uint64_t min_hz, max_hz;
          rf_frequency_range(min_hz, max_hz);
-@@ -586,6 +638,8 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -586,6 +643,8 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
      }
  
      std::lock_guard<std::mutex> lock(settings_mutex);
@@ -2405,7 +2568,7 @@ index 33b22e1..c9e5461 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
  
      const uint64_t prev_frequency = current_frequency.load();
-@@ -611,14 +665,32 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -611,14 +670,32 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
      else if (gain >= 0) std::cout << "Gain: " << gain/10.0 << " dB";
      std::cout << std::endl;
  
@@ -2440,7 +2603,7 @@ index 33b22e1..c9e5461 100644
      }
      const bool tune_tuners = !wb_variant && frequency > 0;
  
-@@ -634,12 +706,10 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -634,12 +711,14 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
              if (!devices[i] || !devices[i]->dev) continue;
              threads.emplace_back([i, f, g, &devices, &f_ok, &g_ok]() {
                  rtlsdr_dev_t* dev = devices[i]->dev;
@@ -2453,11 +2616,15 @@ index 33b22e1..c9e5461 100644
 +                if (f > 0 && (rtlsdr_set_center_freq(dev, static_cast<uint32_t>(f)) < 0 ||
 +                              rtlsdr_get_center_freq(dev) != static_cast<uint32_t>(f))) f_ok[i] = 0;
 +                if (rtlsdr_get_sample_rate(dev) != SAMPLE_RATE) f_ok[i] = 0;
-+                if (g != -999) g_ok[i] = apply_validated_gain(dev, g) ? 1 : 0;
++                if (g != -999) {
++                    int actual = -999;
++                    g_ok[i] = apply_validated_gain(dev, g, &actual) ? 1 : 0;
++                    if (g_ok[i]) devices[i]->actual_gain_tenths.store(actual, std::memory_order_release);
++                }
              });
          }
          for (auto& t : threads) t.join();
-@@ -663,6 +733,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -663,6 +742,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
      // previous settings instead, so the array stays coherent, and still report
      // a change so the caller recalibrates (the PLLs were rewritten).
      const std::string failed = failed_channels(f_ok, g_ok);
@@ -2465,7 +2632,7 @@ index 33b22e1..c9e5461 100644
      if (independent) {
          // No common array to keep together: record what each tuner took
          if (!failed.empty())
-@@ -695,6 +766,14 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -695,6 +775,21 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
          if (gain != -999) current_gain = gain;
          settings::note_tuning(frequency > 0 ? current_frequency.load() : 0, gain);  // saved once stable
      }
@@ -2475,12 +2642,19 @@ index 33b22e1..c9e5461 100644
 +        hardware_settings_failed.store(true, std::memory_order_release);
 +        coherence_lost.store(true, std::memory_order_release);
 +    }
++    if (all_success) {
++        // Frequency/gain changes define a new raw-headroom measurement epoch.
++        // Reset while publication is still quarantined so no old-setting
++        // samples are attributed to the new receiver tuple.
++        for (const auto& device : devices)
++            if (device && device->dev) device->adc_headroom.request_reset();
++    }
 +    complete_acquisition_transition();
 +    if (!all_success) throw std::runtime_error("partial hardware settings update; restart required");
  
      // Re-interpolate the S2P forward correction at the new center frequency so
      // the differential insertion phase tracks retunes. Cheap (a handful of
-@@ -708,6 +787,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -708,6 +803,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
  }
  
  void handle_settings_change() {
@@ -2488,7 +2662,7 @@ index 33b22e1..c9e5461 100644
      // Wideband scan / independent: no phase calibration exists to redo (the
      // phase stages skip those modes), so switching the noise source on here
      // would leave it injected. Returning to coherent recalibrates anyway.
-@@ -987,6 +1067,9 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
+@@ -987,6 +1083,9 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
  }
  
  bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2498,7 +2672,7 @@ index 33b22e1..c9e5461 100644
      // The tuner-spread scan and independent tuners need to retune individual
      // tuners, but the Wideband (downconverter) variant requires every tuner
      // parked at the IF - mutually exclusive.
-@@ -1045,6 +1128,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
+@@ -1045,6 +1144,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
  
  bool set_independent_tuner(int tuner_index, uint64_t frequency, int gain,
                             const std::vector<std::unique_ptr<SDRDevice>>& devices, std::string* err) {
@@ -2506,7 +2680,7 @@ index 33b22e1..c9e5461 100644
      auto fail = [&](const std::string& e) {
          if (err) *err = e;
          std::cerr << "Independent: " << e << std::endl;
-@@ -1099,6 +1183,7 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
+@@ -1099,6 +1199,7 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
  }
  
  void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2514,7 +2688,7 @@ index 33b22e1..c9e5461 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
          std::cerr << "Wideband: Not in wideband scan mode" << std::endl;
-@@ -1169,4 +1254,4 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
+@@ -1169,4 +1270,4 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
  
      std::cout << "Wideband: " << success_count << "/" << num_tuners << " tuners configured in parallel" << std::endl;
      std::cout << "Wideband: Total coverage = " << (num_tuners * usable_bandwidth) / 1e6 << " MHz" << std::endl;
