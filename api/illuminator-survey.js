@@ -257,8 +257,6 @@ function evaluateFastCandidate(candidate, capabilities, suppliedLimits = {}) {
     'maximum', 'insufficient-receiver-headroom');
   if (finite(sensitivity.peak_fraction) && sensitivity.peak_fraction < 0)
     failures.push('invalid-peak-fraction');
-  if (!finite(sensitivity.input_referred_noise_db)) missing.push('input_referred_noise_db');
-
   if (dynamic.injection_stage !== 'pre-cancellation-digital')
     missing.push('injection_stage');
   let derivedEcho = null;
@@ -290,11 +288,11 @@ function evaluateFastCandidate(candidate, capabilities, suppliedLimits = {}) {
   for (const field of ['usable_dynamic_range_db', 'channel_power_span_db', 'residual_floor_excess_db'])
     if (finite(dynamic[field]) && dynamic[field] < 0) failures.push(`invalid-${field.replaceAll('_', '-')}`);
 
+  // This bounded prescreen operates on a stopped-processor raw capture, so it
+  // can measure detector off-target density but not live tracker or scheduler
+  // health. Those remain mandatory in the full aircraft qualification path.
   for (const [field, boundary, reason] of [
-    ['off_target_detection_density', limits.maximum_off_target_detection_density, 'excessive-off-target-detections'],
-    ['stationary_track_density', limits.maximum_stationary_track_density, 'excessive-stationary-tracks'],
-    ['cpi_deadline_miss_fraction', limits.maximum_cpi_deadline_miss_fraction, 'cpi-deadline-regression'],
-    ['dropped_frame_fraction', limits.maximum_dropped_frame_fraction, 'dropped-frames']
+    ['off_target_detection_density', limits.maximum_off_target_detection_density, 'excessive-off-target-detections']
   ]) {
     if (!finite(operations[field])) missing.push(field);
     else if (operations[field] < 0 || operations[field] > 1)
@@ -312,8 +310,6 @@ function evaluateFastCandidate(candidate, capabilities, suppliedLimits = {}) {
       usable_dynamic_range_db: finite(dynamic.usable_dynamic_range_db) ? dynamic.usable_dynamic_range_db : null,
       residual_floor_excess_db: finite(dynamic.residual_floor_excess_db) ? dynamic.residual_floor_excess_db : null,
       selected_gain_db: finite(sensitivity.selected_gain_db) ? sensitivity.selected_gain_db : null,
-      input_referred_noise_db: finite(sensitivity.input_referred_noise_db) ?
-        sensitivity.input_referred_noise_db : null,
       ambiguity_pslr_db: finite(reference.ambiguity_pslr_db) ? reference.ambiguity_pslr_db : null
     }};
 }
@@ -332,7 +328,6 @@ function evaluateFastSweep(candidates, config, limits) {
     right.scores.usable_dynamic_range_db - left.scores.usable_dynamic_range_db ||
     left.scores.residual_floor_excess_db - right.scores.residual_floor_excess_db ||
     right.scores.selected_gain_db - left.scores.selected_gain_db ||
-    left.scores.input_referred_noise_db - right.scores.input_referred_noise_db ||
     left.scores.ambiguity_pslr_db - right.scores.ambiguity_pslr_db;
   eligible.sort(compare);
   const tied = eligible.length > 1 && compare(eligible[0], eligible[1]) === 0;
@@ -341,7 +336,7 @@ function evaluateFastSweep(candidates, config, limits) {
     requires_aircraft_validation: true,
     comparison_failures: comparable ? [] : ['incomparable-fast-sweep-cohorts'],
     selection_reason: tied ? 'Proxy-qualified candidates tie; collect another bounded block.' :
-      eligible.length ? 'Lowest recoverable injected-echo/direct-path ratio, then recovery reliability, usable dynamic range, residual floor, safe gain, input-referred noise and ambiguity sidelobes.' :
+      eligible.length ? 'Lowest recoverable injected-echo/direct-path ratio, then recovery reliability, usable dynamic range, residual floor, safe gain and ambiguity sidelobes.' :
         'No candidate passed the rapid RF, waveform, cancellation, synthetic-echo and processing-health gates.'};
 }
 

@@ -94,7 +94,17 @@ function fastCandidate(frequency_hz, threshold = -48) {
       cpi_deadline_miss_fraction: 0, dropped_frame_fraction: 0}};
 }
 const fastGood = fastCandidate(503000000, -49);
+// Raw-capture prescreens cannot honestly report live tracker/scheduler health
+// or calibrated input noise; those are full aircraft-qualification evidence.
+delete fastGood.sensitivity.input_referred_noise_db;
+delete fastGood.operations.stationary_track_density;
+delete fastGood.operations.cpi_deadline_miss_fraction;
+delete fastGood.operations.dropped_frame_fraction;
 const fastStrongButWorse = fastCandidate(509000000, -38);
+delete fastStrongButWorse.sensitivity.input_referred_noise_db;
+delete fastStrongButWorse.operations.stationary_track_density;
+delete fastStrongButWorse.operations.cpi_deadline_miss_fraction;
+delete fastStrongButWorse.operations.dropped_frame_fraction;
 fastStrongButWorse.reference.cnr_db = 70;
 assert.equal(evaluateFastCandidate(fastGood, receiverCapabilities(kraken)).status,
   'proxy-qualified');

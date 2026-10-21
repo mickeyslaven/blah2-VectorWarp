@@ -38,15 +38,17 @@ fraction of trials.
 
 The rapid gate also requires ADC-derived per-channel clipping and near-rail
 fractions, CNR, occupied bandwidth, ambiguity PSLR and ISLR, direct-path and
-clutter cancellation depth, input-referred noise, channel-power span,
-post-cancellation residual-floor excess, safe gain, CPI deadline health, frame
-drops, off-target detection density and stationary-track density. A strong direct
-path is not a score. Among candidates passing every gate, the evaluator ranks:
+clutter cancellation depth, channel-power span, post-cancellation residual-floor
+excess, safe gain and off-target detection density. It does not invent live
+tracker, dropped-frame, CPI-deadline or calibrated input-noise evidence while the
+processor is stopped for the raw capture; those remain mandatory in the full
+aircraft qualification. A strong direct path is not a score. Among candidates
+passing every rapid gate, the evaluator ranks:
 
 1. weakest reliably recovered injected echo relative to the direct path;
 2. recovery fraction and usable dynamic range;
 3. lowest post-cancellation residual floor;
-4. highest safe receiver gain and lowest input-referred noise;
+4. highest safe receiver gain;
 5. ambiguity sidelobes.
 
 All candidates must share the same receiver, sample rate, processing build and
