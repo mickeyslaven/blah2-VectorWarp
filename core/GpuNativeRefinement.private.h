@@ -151,7 +151,7 @@ void main() {
  uint lane=gl_LocalInvocationID.x,B=p.b; if(lane!=0u)return;
  double scale=(dvec2(corr[0])/double(p.a)).x, beta=scale;
  if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) { reject(2u,2u,0u,0u); return; }
- if(B>1u) alpha[0]=-dvec2(corr[1])/beta;
+ if(B>1u) alpha[0]=-(dvec2(corr[1])/double(p.a))/beta;
  for(uint k=1u;k<B;++k) {
   beta*=1.0LF-dot(alpha[k-1u],alpha[k-1u]);
   if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF) { reject(3u,2u,k,0u); return; }
@@ -177,7 +177,7 @@ void main() {
  double scale=(dvec2(corr[0])/double(p.a)).x,beta=scale;
  if(lane==0u) {
   if(!finite64(dvec2(beta,0)) || beta<=1e-30LF) reject(2u,p.c,0u,ch);
-  else { localSolution[0]=dvec2(corr[B+base])/double(p.a)/beta; if(B>1u)alpha[0]=-dvec2(corr[1])/beta;
+  else { localSolution[0]=dvec2(corr[B+base])/double(p.a)/beta; if(B>1u)alpha[0]=-(dvec2(corr[1])/double(p.a))/beta;
    for(uint k=1u;k<B;++k) { beta*=1.0LF-dot(alpha[k-1u],alpha[k-1u]);
     if(!finite64(dvec2(beta,0)) || beta<=scale*1e-8LF) { reject(3u,p.c,k,ch); break; }
     dvec2 rhs=dvec2(corr[B+base+k])/double(p.a); for(uint j=0u;j<k;++j)rhs-=mul(dvec2(corr[k-j])/double(p.a),localSolution[j]);
