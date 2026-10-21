@@ -87,7 +87,7 @@ inline Layout validate(const PostprocessConfig& c,uint32_t rows,uint32_t columns
     c.integrationMotionBins>1||(!tbd&&c.integrationCpis!=2&&c.integrationMotionBins)||
     (tbd&&(!c.detection||!c.beamCount))||
     (c.bearingScanBeams&&(!tbd||c.bearingScanBeams<c.beamCount||c.bearingScanBeams>127||
-      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||
+      c.bearingScanBeams%c.beamCount||c.bearingCandidatePeaks!=3||c.bearingMethod>1||c.bearingReferenceAnchor>2||
       c.bearingGuardRadius>3||c.bearingTrainingRadius<=c.bearingGuardRadius||
       c.bearingTrainingRadius>6||!std::isfinite(c.bearingDiagonalLoading)||
       c.bearingDiagonalLoading<=0||c.bearingDiagonalLoading>1))||
@@ -268,18 +268,23 @@ const char* refineBody=R"glsl(
 vec2 cmul(vec2 a,vec2 b){return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);}
 vec2 cdiv(vec2 a,vec2 b){float d=dot(b,b);return vec2(a.x*b.x+a.y*b.y,a.y*b.x-a.x*b.y)/d;}
 float beamScore(uint beam,uint channels,uint cell,uint shifted,bool adaptive,vec2 inverse[64]){
+ float modelPower=0.0;for(uint c=0u;c<channels;++c){vec2 w=refineWeights[beam*channels+c];
+  if(any(isnan(w))||any(isinf(w)))return -1.0;modelPower+=dot(w,w);}
+ if(!(modelPower>1e-20)||isnan(modelPower)||isinf(modelPower))return -1.0;
  vec2 values[8],filtered[8];for(uint c=0u;c<channels;++c)values[c]=channelMaps[c*m[34]+cell%m[33]*m[32]+shifted];
  if(adaptive){for(uint a=0u;a<channels;++a){filtered[a]=vec2(0.0);for(uint b=0u;b<channels;++b)filtered[a]+=cmul(inverse[a*8u+b],values[b]);}}
  vec2 numerator=vec2(0.0);for(uint c=0u;c<channels;++c)numerator+=cmul(refineWeights[beam*channels+c],adaptive?filtered[c]:values[c]);
- if(!adaptive)return dot(numerator,numerator);
+ if(!adaptive){float power=dot(numerator,numerator);return isnan(power)||isinf(power)?-1.0:power;}
  vec2 denominator=vec2(0.0);for(uint a=0u;a<channels;++a){vec2 z=vec2(0.0);
   for(uint b=0u;b<channels;++b){vec2 steering=refineWeights[beam*channels+b];steering.y=-steering.y;z+=cmul(inverse[a*8u+b],steering);}
   denominator+=cmul(refineWeights[beam*channels+a],z);}
- return dot(numerator,numerator)/max(abs(denominator.x),1e-12);
+ float power=dot(numerator,numerator)/max(abs(denominator.x),1e-12);
+ return isnan(power)||isinf(power)?-1.0:power;
 }
 bool excluded(uint beam,uint selected,uint fine,uint radius){uint d=beam>selected?beam-selected:selected-beam;return min(d,fine-d)<=radius;}
 void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==0u)return;
  uint row=i/m[33],column=i%m[33],factor=m[81],channels=m[82],fine=m[83];
+ s[m[86]+i]=0u;
  uint shifted=(row+m[32]/2u+1u)%m[32],bestBeam=0u,secondBeam=0u,thirdBeam=0u;float best=-1.0,second=-1.0,third=-1.0;
  vec2 covariance[64],inverse[64];for(uint k=0u;k<64u;++k){covariance[k]=vec2(0.0);inverse[k]=vec2(0.0);}
  bool adaptive=m[87]==1u;uint samples=0u;
@@ -299,6 +304,7 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==
   }
  }
  for(uint beam=0u;beam<fine;++beam){float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>best){best=power;bestBeam=beam;}}
+ if(!(best>0.0)||isnan(best)||isinf(best))return;
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>second){second=power;secondBeam=beam;}}
  for(uint beam=0u;beam<fine;++beam){if(excluded(beam,bestBeam,fine,m[85])||excluded(beam,secondBeam,fine,m[85]))continue;float power=beamScore(beam,channels,i,shifted,adaptive,inverse);if(power>third){third=power;thirdBeam=beam;}}
  double refined=double(sqrt(max(best,0.0))),base=fused[i].x;uint record=m[42]+6u*i;
@@ -308,7 +314,8 @@ void main(){uint i=indexOf();if(i>=m[34]||m[0]!=0u||m[78]==0u||(s[m[39]+i]&1u)==
  uint ratio3=third>0.0?uint(clamp(round(31.0*third/best),0.0,31.0)):0u;
  // Versioned per-frame three-lobe evidence. Detection/tracker association
  // derives its coarse beam from the primary; legacy public track JSON ignores it.
- s[m[86]+i]=0x80000000u|(bestBeam+1u)|((secondBeam+1u)<<7u)|((thirdBeam+1u)<<14u)|(ratio2<<21u)|(ratio3<<26u);
+ uint secondCode=second>0.0?secondBeam+1u:0u,thirdCode=third>0.0?thirdBeam+1u:0u;
+ s[m[86]+i]=0x80000000u|(bestBeam+1u)|(secondCode<<7u)|(thirdCode<<14u)|(ratio2<<21u)|(ratio3<<26u);
  atomicAdd(m[15],1u);
 }
 )glsl";

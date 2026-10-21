@@ -62,7 +62,8 @@ struct DetectorConfig {
  uint32_t integrationMotionBins=0,integrationBeamTolerance=UINT32_MAX;
 };
 enum class BearingMethod:uint32_t {coherentBeamBank=0,covarianceMvdr=1};
-enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1};
+// Value2 is an explicitly selected native-replay experiment, never a default.
+enum class BearingReferenceAnchor:uint32_t {liveEigenbeam=0,fixedSite=1,fixedSiteProjected=2};
 struct BearingConfig {
  bool enabled=false;
  BearingMethod method=BearingMethod::coherentBeamBank;

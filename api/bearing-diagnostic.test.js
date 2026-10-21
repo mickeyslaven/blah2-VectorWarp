@@ -47,7 +47,6 @@ assert.deepEqual(inverse([[[2, 0], [0, 0]], [[0, 0], [4, 0]]]),
 const unsupported = JSON.parse(JSON.stringify(config));
 unsupported.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
 assert.equal(evaluateBearing(samples, unsupported).available, false);
-
 const transmitterBearing = 0, knownMapping = mappings(channels).find(item => item.id === 'forward-3');
 function expectedReference(mapping, heading, bearing = transmitterBearing, frequency = 539000000) {
   const direct = (heading - bearing) * Math.PI / 180;
@@ -113,4 +112,15 @@ const rejectedSurvey = evaluateReferenceSurvey([{name: 'Poor reference', latitud
     .map(row => ({...row, reference_state: {coherent_fraction: .5}}))}], surveyConfig);
 assert.equal(rejectedSurvey.available, false);
 assert.match(rejectedSurvey.reason, /quality gate/i);
+
+const projectedConfig = JSON.parse(JSON.stringify(config));
+projectedConfig.process.bearing.reference_anchor = 'fixed_site_projected';
+const projectedSamples = JSON.parse(JSON.stringify(samples));
+projectedSamples[0].bearing_replay.reference_anchor = 'fixed_site_projected';
+for (const [candidate, label] of [[projectedConfig, 'configuration'],
+  [config, 'evidence']]) {
+  const evaluated = evaluateBearing(label === 'evidence' ? projectedSamples : samples, candidate);
+  assert.equal(evaluated.available, false, `${label} must remain outside ordinary diagnostics`);
+  assert.match(evaluated.reason, /experimental projected replay evidence/i);
+}
 console.log('Bearing diagnostic: complex channel permutations, exact covariance scoring, and safe shadow-only reporting passed.');

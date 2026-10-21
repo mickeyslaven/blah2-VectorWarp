@@ -721,8 +721,24 @@ function validateConfig(config, baseline = null) {
     if (bearing.method !== undefined && !['coherent_beam_bank', 'covariance_mvdr'].includes(bearing.method))
       errors.push('process.bearing.method must be coherent_beam_bank or covariance_mvdr');
     if (bearing.reference_anchor !== undefined &&
-        !['live_eigenbeam', 'fixed_site'].includes(bearing.reference_anchor))
-      errors.push('process.bearing.reference_anchor must be live_eigenbeam or fixed_site');
+        !['live_eigenbeam', 'fixed_site', 'fixed_site_projected'].includes(bearing.reference_anchor))
+      errors.push('process.bearing.reference_anchor must be live_eigenbeam, fixed_site or fixed_site_projected');
+    if (bearing.reference_anchor === 'fixed_site_projected') {
+      const allFive = values => Array.isArray(values) && values.length === 5 &&
+        values.every((channel, index) => channel === index);
+      const reference = processConfig.reference_synthesis;
+      const fusion = processConfig.surveillance_fusion;
+      if (replay.state !== true || replay.format !== 'blah2')
+        errors.push('fixed_site_projected is experimental and requires explicit native blah2 replay');
+      if (device.type !== 'Kraken' || device.channel_count !== 5 ||
+          !allFive(device.surveillance_channels) || reference?.mode !== 'array_eigenbeam' ||
+          !allFive(reference?.channels) || clutter.enable !== true ||
+          processConfig.performance?.acceleration !== 'gpu-resident' ||
+          bearing.enable !== true || bearing.method !== 'covariance_mvdr' ||
+          bearing.manifold_file !== undefined || fusion?.mode !== 'coherent_beam_bank' ||
+          (fusion.direct_path_null_db ?? 0) !== 0)
+        errors.push('fixed_site_projected requires enabled five-channel GPU-resident array-eigenbeam clutter cancellation, ideal covariance_mvdr bearing and coherent_beam_bank with direct_path_null_db: 0');
+    }
     if (bearing.scan_beams !== undefined)
       number(bearing.scan_beams, 'process.bearing.scan_beams', {integer: true, min: 4, max: 127});
     if (bearing.candidate_peaks !== undefined)
