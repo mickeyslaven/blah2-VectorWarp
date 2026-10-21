@@ -176,7 +176,7 @@ const char* tbdBody=R"glsl(
 bool angleCompatible(uint left,uint right){if(m[77]==0xffffffffu||m[75]==0u||left==0u||right==0u)return true;
  uint a=left-1u,b=right-1u,delta=a>b?a-b:b-a;return min(delta,m[75]-delta)<=m[77];}
 shared double pathBest2[128],pathBest4[128],pathBest8[128];
-void main(){uint i=gl_WorkGroupID.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
+void main(){uint i=gl_WorkGroupID.x+gl_WorkGroupID.y*gl_NumWorkGroups.x,lane=gl_LocalInvocationID.x;if(i>=m[34]||m[0]!=0u||m[78]==0u)return;
  uint row=i/m[33],column=i%m[33],available=m[79]+1u,limit=min(available,m[74]),currentBeam=uint(fused[i].y)+1u;
  if(p.a==0u){
   if(lane!=0u)return;
