@@ -105,7 +105,7 @@ assert.equal(bounded.status().droppedEvents, 1);
 assert.deepEqual(bounded.clips.map(clip => clip.revision), [1, 2]);
 assert.deepEqual(bounded.status().recentEvents.at(-1), {eventId: 'eligibility:event-12',
   passId: 'pass-12', requestedEventTime: 20000, state: 'dropped',
-  clipRevisions: [], failure: 'queue-capacity'});
+  clipRevisions: [], windowStart: null, windowEnd: null, failure: 'queue-capacity'});
 
 const capped = new CaptureTriggerQueue();
 capped.acceptEligibilityEvent(event(30, 100000));
@@ -152,11 +152,18 @@ assert.equal(monotonic.request().clipRevision, 4);
   assert.deepEqual(triggerQueue.request().eventIds,
     [statistics.status().eligibility_events[0].id]);
   assert.equal(statistics.status().eligibility_events[0].capture_state, 'trigger_pending');
-  clock += 1000; sampler();
+  clock += 1000;
+  statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100]});
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   assert.equal(triggerQueue.request().clipRevision, 1,
     'Repeated opportunities in the same pass must remain once per eligibility event');
-  clock += 20000;
+  clock += 4000;
+  aircraft.abc123.timestamp = clock / 1000;
+  statistics.acceptTracker({timestamp: clock,
+    data: [{delay: 10 / (299792.458 / 2400000), doppler: 100}]});
+  statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100]});
+  while (statistics.running) await new Promise(resolve => setImmediate(resolve));
+  clock += 16000;
   aircraft = {def456: {delay: 11, doppler: 110, timestamp: clock / 1000,
     flight: 'DROPPED', geometry: {bearing_deg_true: 84}}};
   sampler();
@@ -172,6 +179,14 @@ assert.equal(monotonic.request().clipRevision, 4);
   assert.deepEqual(completedEvent.capture_clip_revisions, [1]);
   assert.equal(completedEvent.capture_file, '/clips/eligibility-1.mchq');
   assert.equal(completedEvent.capture_samples, 12000000);
+  assert.equal(completedEvent.capture_window_start, 1_999_999_998_000);
+  assert.equal(completedEvent.capture_window_end, 2_000_000_003_000);
+  assert.equal(completedEvent.first_detection_at, 2_000_000_001_000);
+  assert.equal(completedEvent.first_track_at, 2_000_000_005_000);
+  assert.equal(completedEvent.capture_detected_frames, 1);
+  assert.equal(completedEvent.capture_first_detection_at, 2_000_000_001_000);
+  assert.equal(completedEvent.capture_tracked_frames, 0);
+  assert.equal(completedEvent.capture_first_track_at, null);
   statistics.close(); fs.rmSync(directory, {recursive: true, force: true});
   console.log('Capture trigger queue coalescing, bounds and ADS-B-only admission tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

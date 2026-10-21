@@ -60,7 +60,7 @@ class CaptureTriggerQueue {
   remember(event) {
     const record = {eventId: event.id, passId: event.pass_id,
       requestedEventTime: event.observed_at, state: 'pending',
-      clipRevisions: [], failure: null};
+      clipRevisions: [], windowStart: null, windowEnd: null, failure: null};
     this.events.set(event.id, record);
     while (this.events.size > this.maxEventIds) this.events.delete(this.events.keys().next().value);
     return record;
@@ -69,7 +69,11 @@ class CaptureTriggerQueue {
   linkRevision(clip) {
     for (const eventId of clip.eventIds) {
       const record = this.events.get(eventId);
-      if (record) record.clipRevisions = [clip.revision];
+      if (record) {
+        record.clipRevisions = [clip.revision];
+        record.windowStart = clip.windowStart;
+        record.windowEnd = clip.windowEnd;
+      }
     }
   }
 
@@ -127,6 +131,8 @@ class CaptureTriggerQueue {
       this.clips.push(clip);
     }
     eventRecord.clipRevisions = [clip.revision];
+    eventRecord.windowStart = clip.windowStart;
+    eventRecord.windowEnd = clip.windowEnd;
     return {accepted: true, coalesced: overlapping.length > 0, clip: compact(clip)};
   }
 
@@ -178,6 +184,8 @@ class CaptureTriggerQueue {
     for (const event of records) {
       event.state = 'pending'; event.failure = null;
       event.clipRevisions.push(clip.revision);
+      event.windowStart = clip.windowStart;
+      event.windowEnd = clip.windowEnd;
     }
     return compact(clip);
   }

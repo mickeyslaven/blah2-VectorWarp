@@ -60,6 +60,8 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.eligibility_event_count, 1);
   assert.equal(result.eligibility_events[0].state, 'finalized');
   assert.equal(result.eligibility_events[0].outcome, 'tracked');
+  assert.equal(result.eligibility_events[0].first_detection_at, 1_800_000_000_000);
+  assert.equal(result.eligibility_events[0].first_track_at, 1_800_000_000_000);
   assert.equal(result.eligibility_events[0].predicted.delay_km, 10);
   assert.equal(result.eligibility_events[0].truth_samples.length, 3);
   assert.deepEqual(result.eligibility_events[0].truth_samples.map(item => item.timestamp_ms),

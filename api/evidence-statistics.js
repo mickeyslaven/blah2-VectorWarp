@@ -120,7 +120,22 @@ function emptyPass(hex, flight, at, key) {
     maxAltitudeGeomFt: null, minElevationDeg: null, maxElevationDeg: null,
     minGroundRangeKm: null, maxGroundRangeKm: null, maxAbsDelayRateKmS: null,
     maxAbsDopplerRateHzS: null, azimuthSectors45: Array(8).fill(0),
-    firstTruth: null, lastTruth: null, lastBucket: null};
+    firstTruth: null, lastTruth: null, firstDetectionAt: null, firstTrackAt: null,
+    detectionTimestamps: [], trackTimestamps: [], lastBucket: null};
+}
+
+function updateCaptureWindowEvidence(event, pass) {
+  if (!event || !pass) return;
+  event.first_detection_at = finite(pass.firstDetectionAt) ? pass.firstDetectionAt : null;
+  event.first_track_at = finite(pass.firstTrackAt) ? pass.firstTrackAt : null;
+  const start = event.capture_window_start, end = event.capture_window_end;
+  if (!finite(start) || !finite(end) || end < start) return;
+  const detections = (pass.detectionTimestamps || []).filter(at => at >= start && at <= end);
+  const tracks = (pass.trackTimestamps || []).filter(at => at >= start && at <= end);
+  event.capture_detected_frames = detections.length;
+  event.capture_tracked_frames = tracks.length;
+  event.capture_first_detection_at = detections[0] ?? null;
+  event.capture_first_track_at = tracks[0] ?? null;
 }
 
 function eligibilityOutcome(pass) {
@@ -315,7 +330,9 @@ class EvidenceStatistics {
       const tracked = assignments(trackerCells, valid, prediction =>
         associationGates(this.limits, prediction, timestamp, 'tracker'));
       for (const [hex, prediction] of valid) {
-        this.observe(hex, prediction, timestamp, detected.has(hex), tracked.has(hex));
+        this.observe(hex, prediction, timestamp,
+          detected.has(hex) ? detectionTimestamp : null,
+          tracked.has(hex) ? trackerTimestamp : null);
       }
       if (useDetection) this.lastDetectionFrameTimestamp = detectionTimestamp;
       if (useTracker) this.lastTrackerFrameTimestamp = trackerTimestamp;
@@ -331,7 +348,7 @@ class EvidenceStatistics {
     }
   }
 
-  observe(hex, prediction, timestamp, detected, tracked) {
+  observe(hex, prediction, timestamp, detectedAt, trackedAt) {
     let pass = this.state.active[hex];
     if (pass && (timestamp - pass.lastAt > PASS_GAP_MS || pass.siteKey !== this.key)) {
       this.finish(hex); pass = null;
@@ -368,8 +385,19 @@ class EvidenceStatistics {
         event.truth_samples.splice(TRIGGER_EVENT_TRUTH_SAMPLES,
           event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
     }
-    if (detected) pass.detectedFrames += 1;
-    if (tracked) pass.trackedFrames += 1;
+    if (finite(detectedAt)) {
+      pass.detectedFrames += 1;
+      pass.firstDetectionAt ??= detectedAt;
+      if (!Array.isArray(pass.detectionTimestamps)) pass.detectionTimestamps = [];
+      pass.detectionTimestamps.push(detectedAt);
+    }
+    if (finite(trackedAt)) {
+      pass.trackedFrames += 1;
+      pass.firstTrackAt ??= trackedAt;
+      if (!Array.isArray(pass.trackTimestamps)) pass.trackTimestamps = [];
+      pass.trackTimestamps.push(trackedAt);
+    }
+    updateCaptureWindowEvidence(event, pass);
   }
 
   emitEligibility(pass, prediction, timestamp) {
@@ -397,8 +425,12 @@ class EvidenceStatistics {
       if (capture?.accepted === true) {
         event.capture_state = capture.dropped === true ? 'dropped' : 'trigger_pending';
         if (capture.dropped === true) event.capture_failure = capture.reason || 'unspecified';
-        if (capture.clip?.clipRevision)
+        if (capture.clip?.clipRevision) {
           event.capture_clip_revisions = [capture.clip.clipRevision];
+          event.capture_window_start = capture.clip.windowStart;
+          event.capture_window_end = capture.clip.windowEnd;
+          updateCaptureWindowEvidence(event, pass);
+        }
       }
     }
     catch (error) { this.state.error = error.message; }
@@ -429,6 +461,13 @@ class EvidenceStatistics {
       if (Number.isSafeInteger(record.samples) && record.samples > 0)
         event.capture_samples = record.samples;
       else delete event.capture_samples;
+      if (finite(record.windowStart) && finite(record.windowEnd)) {
+        event.capture_window_start = record.windowStart;
+        event.capture_window_end = record.windowEnd;
+      }
+      const pass = Object.values(this.state.active).find(item => item.id === event.pass_id) ||
+        this.state.passes.find(item => item.id === event.pass_id);
+      updateCaptureWindowEvidence(event, pass);
     }
     this.state.updatedAt = this.now();
     this.persist();
@@ -440,9 +479,14 @@ class EvidenceStatistics {
     delete pass.lastBucket;
     const event = pass.eligibilityEventId && this.state.eligibilityEvents
       .find(item => item.id === pass.eligibilityEventId);
-    if (event) Object.assign(event, {state: 'finalized', outcome: eligibilityOutcome(pass),
-      finalized_at: this.now(), eligible_frames: pass.eligibleFrames,
-      detected_frames: pass.detectedFrames, tracked_frames: pass.trackedFrames});
+    if (event) {
+      Object.assign(event, {state: 'finalized', outcome: eligibilityOutcome(pass),
+        finalized_at: this.now(), eligible_frames: pass.eligibleFrames,
+        detected_frames: pass.detectedFrames, tracked_frames: pass.trackedFrames});
+      updateCaptureWindowEvidence(event, pass);
+    }
+    delete pass.detectionTimestamps;
+    delete pass.trackTimestamps;
     this.state.passes.push(pass); delete this.state.active[hex];
     while (this.state.passes.length > MAX_PASSES) {
       const old = this.state.passes.shift(); const eligible = old.eligibleFrames >= 3;
