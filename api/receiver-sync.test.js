@@ -28,7 +28,8 @@ function status(state) {
   return {settings: {center_freq: state.frequency, sample_rate: state.sampleRate,
     ...(state.noGain ? {} : {gain: state.gain ?? 20})}, num_channels: state.channels, max_elements: state.maximum,
   reconfiguring: state.reconfiguring, recovering: state.recovering || false,
-  operating_mode: state.mode || 'coherent', cooldown_active: false};
+  operating_mode: state.mode || 'coherent', cooldown_active: false,
+  ...(state.channelGains ? {channel_gains: [...state.channelGains]} : {})};
 }
 
 async function simulatedSuite(initial, onCommand) {
@@ -121,6 +122,34 @@ async function rejected(promise, code, pattern) {
     assert.equal(gainMatrix.commands.length, 501);
     assert.equal(roundedAcks, 208);
   } finally { await gainMatrix.close(); }
+  const channelGainSuite = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false, gain: 18,
+    channelGains: [19.7, 19.7, 19.7, 19.7, 19.7]}, (command, socket, live) => {
+    assert.equal(command.command, 'set_channel_gains');
+    assert.deepEqual(command.gains, [19.7, 25.4, 22.9, 25.4, 22.9]);
+    socket.write(`${JSON.stringify({status: 'success', channel_gains: command.gains})}\n`);
+    live.channelGains = [...command.gains];
+    socket.write(`${JSON.stringify(status(live))}\n`);
+  });
+  try {
+    const candidate = config(channelGainSuite.port);
+    candidate.capture.device.heimdall.gain = 18;
+    candidate.capture.device.heimdall.channel_gains = [19.7, 25.4, 22.9, 25.4, 22.9];
+    const accepted = await createKrakenControlClient({statusTimeoutMs: 1000,
+      readbackTimeoutMs: 1000}).synchronize(candidate);
+    assert.deepEqual(accepted.after.channelGains, candidate.capture.device.heimdall.channel_gains);
+    assert.deepEqual(accepted.operations.map(item => item.operation), ['set_channel_gains']);
+  } finally { await channelGainSuite.close(); }
+  const noChannelGainSuite = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
+    channels: 5, maximum: 5, reconfiguring: false, gain: 18}, () => assert.fail('no command expected'));
+  try {
+    const candidate = config(noChannelGainSuite.port);
+    candidate.capture.device.heimdall.gain = 18;
+    candidate.capture.device.heimdall.channel_gains = [19.7, 25.4, 22.9, 25.4, 22.9];
+    await rejected(createKrakenControlClient({statusTimeoutMs: 1000,
+      readbackTimeoutMs: 1000}).synchronize(candidate),
+    'KRAKEN_CHANNEL_GAINS_NOT_REPORTED', /does not support/);
+  } finally { await noChannelGainSuite.close(); }
   const impreciseStatus = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
     channels: 5, maximum: 5, reconfiguring: false, gain: 20}, (command, socket, live) => {
     const encoded = Number(Math.fround(command.gain).toFixed(6));

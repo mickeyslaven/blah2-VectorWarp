@@ -302,6 +302,17 @@ function validateConfig(config, baseline = null) {
       errors.push('capture.device.heimdall.gain must be keep, automatic (-1), or 0 through 50 dB in 0.1 dB steps');
     if (heimdall.gain_control === 'measured' && heimdall.gain === -1)
       errors.push('capture.device.heimdall.gain must be keep or a fixed starting gain when automatic headroom selection is enabled; Suite AGC cannot provide a stable measurement.');
+    if (heimdall.channel_gains !== undefined) {
+      if (!Array.isArray(heimdall.channel_gains) || heimdall.channel_gains.length !== channelCount)
+        errors.push('capture.device.heimdall.channel_gains must contain exactly one value per configured channel');
+      else heimdall.channel_gains.forEach((value, index) => {
+        if (!(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 &&
+            Math.round(value * 10) === value * 10))
+          errors.push(`capture.device.heimdall.channel_gains[${index}] must be 0 through 50 dB in 0.1 dB steps`);
+      });
+      if (heimdall.gain_control === 'measured')
+        errors.push('capture.device.heimdall.channel_gains requires fixed gain adjustment; common automatic gain cannot preserve a channel vector');
+    }
     if (typeof heimdall.host === 'string' &&
         !net.isIP(heimdall.host) && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(heimdall.host))
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');
@@ -449,16 +460,30 @@ function validateConfig(config, baseline = null) {
     }
   }
   boolean(clutter.enable, 'process.clutter.enable');
-  const clutterMin = number(clutter.delayMin, 'process.clutter.delayMin',
+  const followsAmbiguity = clutter.followAmbiguity === undefined ? false :
+    (boolean(clutter.followAmbiguity, 'process.clutter.followAmbiguity'),
+      clutter.followAmbiguity);
+  // Existing numeric configurations retain their manual half-open interval.
+  // The opt-in default derives [ambiguity.delayMin, ambiguity.delayMax + 1),
+  // covering every inclusive ambiguity-map bin without site-specific tuning.
+  const configuredClutterMin = clutter.delayMin === undefined ? null : number(clutter.delayMin, 'process.clutter.delayMin',
     {integer: true, min: INT32_MIN, max: INT32_MAX});
-  const clutterMax = number(clutter.delayMax, 'process.clutter.delayMax',
+  const configuredClutterMax = clutter.delayMax === undefined ? null : number(clutter.delayMax, 'process.clutter.delayMax',
     {integer: true, min: INT32_MIN, max: INT32_MAX});
+  if (!followsAmbiguity && (configuredClutterMin === null || configuredClutterMax === null))
+    errors.push('process.clutter: provide delayMin and delayMax, or enable followAmbiguity');
+  if (followsAmbiguity && delayMax === INT32_MAX)
+    errors.push('process.clutter.followAmbiguity: ambiguity.delayMax must leave room for the exclusive filter endpoint');
+  const clutterMin = followsAmbiguity ? delayMin : configuredClutterMin;
+  const clutterMax = followsAmbiguity && delayMax !== null && delayMax < INT32_MAX ?
+    delayMax + 1 : (followsAmbiguity ? null : configuredClutterMax);
   if (clutterMin !== null && clutterMax !== null && clutterMin >= clutterMax)
     errors.push('process.clutter.delayMin must be smaller than process.clutter.delayMax');
   if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
       clutterMax - clutterMin > cpiSamples)
     errors.push('process.clutter.delayMax: filter delay span must fit inside the CPI sample count');
-  if (clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
+  if (clutterMin !== null && clutterMax !== null && cpiSamples !== null &&
+      clutterMax - clutterMin + cpiSamples + 1 > INT32_MAX)
     errors.push('process.clutter.delayMax: filter FFT exceeds the processor limit');
   const channels = device.type === 'Kraken' ? device.channel_count : 2;
   const paths = device.type === 'Kraken' ? device.surveillance_channels?.length : 1;

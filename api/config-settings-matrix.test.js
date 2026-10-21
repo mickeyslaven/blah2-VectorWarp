@@ -112,6 +112,18 @@ try {
   kraken.process.performance = {...kraken.process.performance, acceleration: 'cpu', surveillance_workers: 2, fft_threads: 2};
   Object.assign(kraken.network.ports, {api: 3100, map: 3101, detection: 3102, track: 3103, timestamp: 3104, timing: 3105, iqdata: 3106});
   persistGroup('kraken-coherent-edit', krakenBase, kraken, ['capture.device.channel_count','capture.device.reference_channel','capture.device.surveillance_channels','process.reference_synthesis.mode','process.reference_synthesis.channels','process.performance.acceleration','process.performance.surveillance_workers','process.performance.fft_threads','network.ports.api','network.ports.map','network.ports.detection','network.ports.track','network.ports.timestamp','network.ports.timing','network.ports.iqdata']);
+  const channelGains = clone(krakenBase);
+  channelGains.capture.device.heimdall.gain = 18;
+  channelGains.capture.device.heimdall.gain_control = 'fixed';
+  channelGains.capture.device.heimdall.channel_gains = [19.7, 25.4, 22.9, 25.4, 22.9];
+  channelGains.process.performance.acceleration = 'auto';
+  persistGroup('kraken-channel-gains', krakenBase, channelGains,
+    ['capture.device.heimdall.gain', 'capture.device.heimdall.gain_control',
+      'capture.device.heimdall.channel_gains', 'process.performance.acceleration']);
+  const badChannelGains = clone(channelGains);
+  badChannelGains.capture.device.heimdall.gain_control = 'measured';
+  assert.equal(validateConfig(badChannelGains).valid, false,
+    'measured common gain must not silently overwrite coherent channel gains');
   const fusion = clone(krakenBase);
   fusion.process.performance.acceleration = 'gpu-resident';
   fusion.process.tracker.gpu_capacity = 128;

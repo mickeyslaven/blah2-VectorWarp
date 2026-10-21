@@ -1,6 +1,7 @@
 'use strict';
 
 const net = require('net');
+const {normalizeAdcHeadroom} = require('./kraken-adc-headroom');
 
 const RECEIVER_TYPES = Object.freeze(['Kraken', 'RspDuo', 'Usrp', 'HackRF']);
 const MAX_FRAME_BYTES = 65536;
@@ -57,14 +58,21 @@ function requestedSettings(config) {
   if (config?.capture?.device?.type !== 'Kraken')
     throw receiverError('INVALID_RECEIVER_SYNC', 'Kraken synchronization requires a Kraken profile.', 422);
   const gain = config.capture.device.heimdall?.gain;
+  const channelGains = config.capture.device.heimdall?.channel_gains;
   if (gain !== undefined && gain !== 'keep' && gain !== -1 && !(typeof gain === 'number' && Number.isFinite(gain) && gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10))
     throw receiverError('INVALID_RECEIVER_SYNC', 'Kraken gain is invalid.', 422);
+  if (channelGains !== undefined && (!Array.isArray(channelGains) ||
+      channelGains.length !== config.capture.device.channel_count || channelGains.some(value =>
+        !(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 50 &&
+          Math.round(value * 10) === value * 10))))
+    throw receiverError('INVALID_RECEIVER_SYNC', 'Kraken per-channel gains are invalid.', 422);
   return {
     frequency: positiveInteger(config.capture.fc, 'capture.fc'),
     sampleRate: positiveInteger(config.capture.fs, 'capture.fs'),
     channelCount: positiveInteger(config.capture.device.channel_count,
       'capture.device.channel_count'),
-    ...(gain === undefined || gain === 'keep' ? {} : {gain})
+    ...(gain === undefined || gain === 'keep' ? {} : {gain}),
+    ...(channelGains === undefined ? {} : {channelGains: [...channelGains]})
   };
 }
 
@@ -76,7 +84,8 @@ function krakenControlValues(config) {
   return {endpoint, iqPort: config.capture.device.heimdall?.port,
     frequency: config.capture.fc, sampleRate: config.capture.fs,
     channelCount: config.capture.device.channel_count,
-    gain: config.capture.device.heimdall?.gain === 'keep' ? undefined : config.capture.device.heimdall?.gain};
+    gain: config.capture.device.heimdall?.gain === 'keep' ? undefined : config.capture.device.heimdall?.gain,
+    channelGains: config.capture.device.heimdall?.channel_gains};
 }
 
 function requiresReceiverSynchronization(previous, candidate) {
@@ -97,6 +106,7 @@ function normalizeStatus(frame) {
   const channelCount = frame.num_channels;
   const maximumChannels = frame.max_elements;
   const gain = frame.settings.gain;
+  const channelGains = frame.channel_gains;
   if (!Number.isFinite(centerFrequency) || !Number.isFinite(sampleRate) ||
       !Number.isInteger(channelCount) || !Number.isInteger(maximumChannels) ||
       channelCount < 1 || maximumChannels < channelCount || maximumChannels > 64 ||
@@ -104,13 +114,25 @@ function normalizeStatus(frame) {
       !['coherent', 'wideband', 'independent'].includes(frame.operating_mode))
     throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
       'Suite V2 status is missing tuning, channel, mode, or reconfiguration fields.', 502);
+  if (channelGains !== undefined && (!Array.isArray(channelGains) ||
+      channelGains.length !== channelCount || channelGains.some(value =>
+        !(Number.isFinite(value) && value >= 0 && value <= 50))))
+    throw receiverError('KRAKEN_PROTOCOL_MISMATCH',
+      'Suite V2 status contains malformed per-channel gain readback.', 502);
+  let adcHeadroom;
+  try { adcHeadroom = normalizeAdcHeadroom(frame.adc_headroom, channelCount); }
+  catch (error) {
+    throw receiverError('KRAKEN_PROTOCOL_MISMATCH', error.message, 502);
+  }
   return {
     centerFrequency, sampleRate, channelCount, maximumChannels,
     gain: Number.isFinite(gain) ? gain : null,
+    channelGains: channelGains === undefined ? null : [...channelGains],
     operatingMode: frame.operating_mode,
     reconfiguring: frame.reconfiguring,
     recovering: frame.recovering === true,
-    cooldownActive: frame.cooldown_active === true
+    cooldownActive: frame.cooldown_active === true,
+    adcHeadroom
   };
 }
 
@@ -144,6 +166,9 @@ function validateInitialStatus(status, wanted, {waitForRecovery = false} = {}) {
   if (wanted.gain !== undefined && status.gain === null)
     throw receiverError('KRAKEN_GAIN_NOT_REPORTED',
       'Suite V2 did not report gain, so the requested gain cannot be confirmed.', 409);
+  if (wanted.channelGains !== undefined && status.channelGains === null)
+    throw receiverError('KRAKEN_CHANNEL_GAINS_NOT_REPORTED',
+      'Suite V2 does not support coherent per-channel gain readback.', 409);
   // The inspected control contract guarantees this standard tuner range. A
   // wideband/downconverter build can expose more RF, but does not advertise a
   // machine-readable range; do not infer one from an optional status object.
@@ -182,6 +207,14 @@ function operationList(status, wanted) {
     acknowledgementField: 'num_elements',
     matches: observed => observed.channelCount === wanted.channelCount &&
       observed.reconfiguring === false
+  });
+  if (wanted.channelGains !== undefined &&
+      JSON.stringify(status.channelGains) !== JSON.stringify(wanted.channelGains)) operations.push({
+    id: 'set_channel_gains', field: 'capture.device.heimdall.channel_gains',
+    value: [...wanted.channelGains],
+    command: {command: 'set_channel_gains', gains: [...wanted.channelGains]},
+    acknowledgementField: 'channel_gains',
+    matches: observed => JSON.stringify(observed.channelGains) === JSON.stringify(wanted.channelGains)
   });
   return operations;
 }
@@ -300,7 +333,8 @@ function createKrakenControlClient(options = {}) {
           try { validateOptionalCalibrationDetails(lastFrame, true); }
           catch (error) { return fail(error); }
         }
-        if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain))
+        if (!matchesTuple(lastStatus, wanted.frequency, wanted.channelCount, wanted.gain,
+            wanted.channelGains))
           return fail(receiverError('KRAKEN_STATUS_DRIFT',
             'Suite V2 no longer reports the requested settings. The config was not saved.', 409));
         settled = true;
@@ -337,10 +371,12 @@ function createKrakenControlClient(options = {}) {
         if (current.fullResetAfterAck) validateRecoveryStatus(lastFrame, lastStatus);
         expectedReadback = {frequency: lastStatus.centerFrequency,
           channelCount: lastStatus.channelCount,
-          gain: wanted.gain === undefined && !current.fullResetAfterAck ? undefined : lastStatus.gain};
+          gain: wanted.gain === undefined && !current.fullResetAfterAck ? undefined : lastStatus.gain,
+          channelGains: lastStatus.channelGains};
         if (current.id === 'set_frequency') expectedReadback.frequency = current.value;
         if (current.id === 'set_gain') expectedReadback.gain = current.value;
         if (current.id === 'set_num_elements') expectedReadback.channelCount = current.value;
+        if (current.id === 'set_channel_gains') expectedReadback.channelGains = current.value;
         // A delayed response from an earlier command must not authorize this
         // operation. Only the exact write below establishes its ACK window.
         currentAcknowledged = false;
@@ -389,10 +425,13 @@ function createKrakenControlClient(options = {}) {
         currentAcknowledged = false;
         next();
       };
-      const matchesTuple = (observed, frequency, count, gain) => observed &&
+      const matchesTuple = (observed, frequency, count, gain, channelGains) => observed &&
         observed.operatingMode === 'coherent' && observed.sampleRate === wanted.sampleRate &&
         observed.centerFrequency === frequency && observed.channelCount === count &&
-        (gain === undefined || observed.gain === gain) && observed.reconfiguring === false;
+        (gain === undefined || observed.gain === gain) &&
+        (channelGains === undefined ||
+          JSON.stringify(observed.channelGains) === JSON.stringify(channelGains)) &&
+        observed.reconfiguring === false;
       const handleStatus = frame => {
         const observed = normalizeStatus(frame);
         statusSequence += 1;
@@ -412,7 +451,7 @@ function createKrakenControlClient(options = {}) {
             operations = [{id: 'reset_lag_compensation', field: 'calibration',
               value: 'lag-and-phase', fullResetAfterAck: true, resetOnly: true,
               matches: status => matchesTuple(status, wanted.frequency, wanted.channelCount,
-                wanted.gain ?? initialStatus.gain)}];
+                wanted.gain ?? initialStatus.gain, wanted.channelGains)}];
           } else operations = operationList(observed, wanted);
           if (readOnly && operations.length)
             return fail(receiverError('KRAKEN_STARTUP_MISMATCH',
@@ -431,7 +470,8 @@ function createKrakenControlClient(options = {}) {
         if (current?.fullResetAfterAck && resetSent) {
           validateRecoveryStatus(frame, observed);
           if (resetAcknowledged && statusSequence > acknowledgedAfterStatus && observed.recovering && current.matches(observed) &&
-              matchesTuple(observed, expectedReadback.frequency, expectedReadback.channelCount, expectedReadback.gain))
+              matchesTuple(observed, expectedReadback.frequency, expectedReadback.channelCount,
+                expectedReadback.gain, expectedReadback.channelGains))
             recoveryAfterStatus ||= statusSequence;
           if ((recoveryAfterStatus || (recalibrate && resetAcknowledged)) && frame.calibration_state === 'FAILED')
             return fail(receiverError('KRAKEN_CALIBRATION_FAILED', 'Suite full recalibration reported FAILED. The config was not saved.', 409));
@@ -447,7 +487,7 @@ function createKrakenControlClient(options = {}) {
               (frame.phase_state === undefined || frame.phase_state === 4) &&
               (frame.calibration_state === undefined || frame.calibration_state === 'CONVERGED'))) &&
             current.matches(observed) && matchesTuple(observed, expectedReadback.frequency,
-              expectedReadback.channelCount, expectedReadback.gain))
+              expectedReadback.channelCount, expectedReadback.gain, expectedReadback.channelGains))
           acceptReadback();
       };
       const handleResponse = frame => {
@@ -486,7 +526,10 @@ function createKrakenControlClient(options = {}) {
         // do not loosen subsequent full-tuple/tenth-dB status readback.
         const wireValue = current.id === 'set_gain' ?
           Number(Math.fround(current.value).toFixed(6)) : current.value;
-        if (acknowledgedValue !== current.value && acknowledgedValue !== wireValue)
+        const acknowledgementMatches = current.id === 'set_channel_gains' ?
+          JSON.stringify(acknowledgedValue) === JSON.stringify(current.value) :
+          acknowledgedValue === current.value || acknowledgedValue === wireValue;
+        if (!acknowledgementMatches)
           return fail(receiverError('KRAKEN_ACKNOWLEDGEMENT_MISMATCH',
             `Suite V2 confirmed an unexpected ${current.field} value.`, 502,
             failureReceipt()));

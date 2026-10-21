@@ -14,6 +14,10 @@ spec.loader.exec_module(builder)
 
 
 class IsolationAudit(unittest.TestCase):
+    def test_linux_production_driver_detaches_kernel_driver(self):
+        self.assertIn('-DDETACH_KERNEL_DRIVER=ON', builder.LINUX_DRIVER_FLAGS)
+        self.assertNotIn('-DDETACH_KERNEL_DRIVER=OFF', builder.LINUX_DRIVER_FLAGS)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

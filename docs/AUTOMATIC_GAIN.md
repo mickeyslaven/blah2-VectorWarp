@@ -17,6 +17,18 @@ policy and build manifest before any receiver command or configuration write.
 Automatic mode is unsupported on macOS until a trusted
 restart receipt provider is implemented.
 
+For arrays whose direct path reaches the tuners very unevenly, fixed mode also
+accepts `capture.device.heimdall.channel_gains`, with one manual 0–50 dB value
+per active coherent channel. The Suite applies the complete vector in one
+quarantined transaction, verifies every physical tuner-table readback, restores
+the previous complete vector on a partial write, and recalibrates before valid
+IQ resumes. The ordinary `gain` remains the common safe startup baseline; the
+saved vector is reapplied and read back after restart. Per-channel gains are
+incompatible with measured common-gain selection because a later common update
+would erase the vector. This feature changes analog headroom; it is not digital
+post-ADC reference attenuation and does not claim improved aircraft yield until
+the live ADS-B-correlated comparison establishes it.
+
 The controller first verifies the old receiver tuple and records its actual
 fixed gain. After applying settings it first waits for a fresh coherent MCHQ
 stream. When a receiver setting command was sent, this requires a matching-tuple
@@ -32,8 +44,14 @@ in the receipt, while malformed or failed reported flags are rejected. It then
 measures a bounded fresh 0.25-second MCHQ capture in a worker thread. Every
 captured packet must report phase state 4, noise off and no retuning, supplying
 the stream evidence that an omitted control flag cannot provide. A second
-independent capture must pass at the final gain. Measurements use separate I/Q
-histograms on all channels; the worst channel determines acceptance. No antenna
+independent capture must pass at the final gain. The patched receiver must also
+report pre-calibration RTL2832 ADC telemetry for every active channel: exact
+rail and near-rail counts plus a rotating 1/64 histogram and RMS sample. The
+telemetry is collected before calibration, DC removal, float conversion, or
+MCHQ requantization; calibration-noise and transition-quarantine callbacks are
+excluded. At least 65,536 raw components and 1,024 histogram samples per channel
+are required for each decision. Measurements use separate I/Q histograms on all
+channels; the worst channel determines acceptance. No antenna
 orientation or channel remapping is inferred from this check. Measured gain-only
 changes preserve existing physical geometry confirmations; endpoint, frequency,
 rate, role, mapping, geometry and orientation changes retain their existing
@@ -50,7 +68,9 @@ than 70%. Selection moves in 1 dB Suite requests, upward only while all channels
 have clear headroom (peak below 80% and 99.9th percentile below 60%). It stops
 near that headroom target or just below a measured unsafe setting. An unsafe
 upward trial returns to the last measured safe gain. Requests are not guaranteed
-physical tuner steps because Suite does not advertise a gain table. Clipping at
+physical tuner steps, but raw telemetry records the actual tuner-table gain read
+back on every channel so duplicate requests and physical steps remain visible in
+the evidence. Clipping at
 minimum gain fails qualification. Sixteen trials and a 15-minute selection
 deadline bound the search; up to 315 further seconds are reserved for rollback.
 These finite captures cannot guarantee the absence of later overload.
@@ -64,12 +84,13 @@ experiments and replay are excluded. `GET /api/receiver/gain` exposes the latest
 selection and monitor state. This checks calibrated wire overload, not hidden
 analog compression.
 
-The checked signal is the **calibrated uint8 wire stream**, after Suite's
-compensation and requantization. This does not independently verify analog/ADC
-headroom, reference CNR, cancellation, aircraft yield or bearing accuracy. MCHQ
-does not carry sample rate; the rate is verified separately using control status.
-Status gains are Suite's requested common dB values, not an independent
-measurement of each tuner's physical gain.
+Both the **raw pre-calibration ADC bytes** and the calibrated uint8 wire stream
+are checked. Exact raw rail counts prove observed digital clipping or its absence
+during the bounded capture; they do not prove analog linearity before the ADC,
+reference CNR, cancellation, aircraft yield, or bearing accuracy. MCHQ does not
+carry sample rate; the rate is verified separately using control status. Suite's
+common status gain remains the requested value for compatibility, while each raw
+channel reports its independently read-back physical tuner-table gain.
 
 Until verification and restart, the API suppresses radar publication, external
 tracker input and manifold recording. The in-process frequency shadow is paused.
