@@ -574,9 +574,8 @@ function validateConfig(config, baseline = null) {
         'process.tracker.initiate.stationary_clutter.max_doppler_hz',
         {min: 0, max: 10000});
     if (stationaryClutter.enable === true &&
-        (!Number.isInteger(stationaryClutter.persistence_cpis) ||
-         !Number.isFinite(stationaryClutter.max_doppler_hz)))
-      errors.push('enabled persistent clutter filtering requires persistence_cpis and max_doppler_hz');
+        !Number.isInteger(stationaryClutter.persistence_cpis))
+      errors.push('enabled persistent clutter filtering requires persistence_cpis');
   }
   if (maxAcc !== null && ambiguityCpi &&
       maxAcc * ambiguityCpi * ambiguityCpi > 65535)
