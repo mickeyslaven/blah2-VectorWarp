@@ -5,6 +5,7 @@
 #include <complex>
 #include <cstdint>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,8 @@ public:
   uint32_t frames() const { return frames_; }
   void append(uint64_t timestamp,
     const std::vector<Map<std::complex<double>>*>& maps,
-    const std::vector<std::complex<double>>& referenceWeights = {});
+    const std::vector<std::complex<double>>& referenceWeights = {},
+    std::optional<std::complex<double>> pilotReference = std::nullopt);
 
 private:
   Config config_;

@@ -53,7 +53,8 @@ ComplexCutoutRecorder::ComplexCutoutRecorder(const Config& config,
 
 void ComplexCutoutRecorder::append(uint64_t timestamp,
   const std::vector<Map<std::complex<double>>*>& maps,
-  const std::vector<std::complex<double>>& referenceWeights)
+  const std::vector<std::complex<double>>& referenceWeights,
+  std::optional<std::complex<double>> pilotReference)
 {
   if (!config_.enabled || frames_ >= config_.maxFrames) return;
   if (maps.empty() || maps.front() == nullptr)
@@ -68,6 +69,10 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
       throw std::invalid_argument("Complex cutout channel geometry changed");
   if (!referenceWeights.empty() && referenceWeights.size() != maps.size())
     throw std::invalid_argument("Complex cutout reference-weight channel count changed");
+  if (pilotReference && (!std::isfinite(pilotReference->real()) ||
+                         !std::isfinite(pilotReference->imag()) ||
+                         std::abs(*pilotReference) <= 1e-30))
+    throw std::invalid_argument("Complex cutout pilot reference is invalid");
 
   const double delayBin = config_.delayKm * 1000.0 * sampleRate_ / Constants::c;
   const size_t centerColumn = nearest(first->delay, delayBin);
@@ -104,6 +109,14 @@ void ComplexCutoutRecorder::append(uint64_t timestamp,
     writer.StartArray(); writer.Double(value.real()); writer.Double(value.imag()); writer.EndArray();
   }
   writer.EndArray();
+  // This is the normalized, pre-cancellation direct-path/reference
+  // correlation for this CPI.  It is optional to preserve v1 reader
+  // compatibility and is replay-only because this recorder is replay-only.
+  if (pilotReference) {
+    writer.Key("pilot_reference"); writer.StartArray();
+    writer.Double(pilotReference->real()); writer.Double(pilotReference->imag());
+    writer.EndArray();
+  }
   writer.Key("channels"); writer.StartArray();
   for (auto* map : maps) {
     writer.StartArray();

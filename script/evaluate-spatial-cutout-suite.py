@@ -21,6 +21,7 @@ def load(name):
 SPATIAL = load("analyze-spatial-glrt.py")
 STAP = load("analyze-post-doppler-stap.py")
 SPARSE = load("analyze-sparse-beam-recovery.py")
+PHASE = load("analyze-phase-locked-migration.py")
 METHODS = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
 
 
@@ -137,6 +138,38 @@ def package(treatment, raw_results, job, beams):
                 for row, column in aligned]}
 
 
+def merge_phase_vector(output, phase):
+    """Add a real-pilot vector and realign all methods for the stacker."""
+    method_id = "phase_locked_migration"
+    methods, vectors = output["methods"], output["score_vectors"]
+    methods[method_id] = dict(phase["methods"][method_id])
+    vectors[method_id] = phase["score_vectors"][method_id]
+    offset_maps = {
+        name: {(item["doppler_offset_bins"], item["delay_offset_bins"]): item
+               for item in vector["controls"]}
+        for name, vector in vectors.items()}
+    aligned = sorted(set.intersection(*(set(items) for items in offset_maps.values())))
+    if not aligned:
+        raise ValueError("phase vector has no controls aligned with spatial methods")
+    for name, items in offset_maps.items():
+        methods[name]["control_evidence_log10"] = [
+            items[offset]["evidence_log10"] for offset in aligned]
+        methods[name]["matched_control_count"] = len(aligned)
+    output["aligned_control_offsets"] = [
+        {"doppler_offset_bins": row, "delay_offset_bins": column}
+        for row, column in aligned]
+
+
+def phase_vector(cutouts, config, job):
+    """Only a serialized direct pilot can join the acceptance stack."""
+    try:
+        result = PHASE.analyze(cutouts, config, job, phase_source="direct",
+                               phase_gates=(.6,), delay_grid=(0,), doppler_grid=(0,))
+    except ValueError as error:
+        return {"status": "diagnostic_proxy_not_qualified", "reason": str(error)}
+    return {"status": "qualified_direct_pilot", "result": result}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--replay", required=True, type=Path)
@@ -170,6 +203,11 @@ def main():
                            job, beams) for treatment in treatments}
     # Compatibility aliases are explicitly the raw-as-acquired treatment.
     output.update(output["gain_treatments"]["raw_as_acquired"])
+    # This executes before the runner removes replay JSON.  Existing v1
+    # cutouts have no real pilot and remain explicitly diagnostic-only.
+    output["phase_locked_migration"] = phase_vector(cutouts, config, job)
+    if output["phase_locked_migration"]["status"] == "qualified_direct_pilot":
+        merge_phase_vector(output, output["phase_locked_migration"]["result"])
     raw_rms, equalized_rms = channel_rms(cutouts), channel_rms(equalized)
     output["gain_accounting"] = {
         "channel_gains_db": gains, "common_voltage_scale_gain_db": sum(gains) / len(gains),

@@ -22,7 +22,8 @@ TEST_CASE("complex cutout recorder preserves channel phase near the requested ce
   first.data[1][1] = {2, 3}; second.data[1][1] = {-4, 5};
   {
     blah2::analysis::ComplexCutoutRecorder recorder(config, 2400000, true);
-    recorder.append(1234, {&first, &second}, {{.5, .25}, {-.25, .5}});
+    recorder.append(1234, {&first, &second}, {{.5, .25}, {-.25, .5}},
+      std::complex<double>{.125, -.75});
     recorder.append(5678, {&first, &second});
     REQUIRE(recorder.frames() == 1);
   }
@@ -35,6 +36,9 @@ TEST_CASE("complex cutout recorder preserves channel phase near the requested ce
   REQUIRE(document["channels"].Size() == 2);
   REQUIRE(document["reference_weights"].Size() == 2);
   REQUIRE(document["reference_weights"][0][0].GetDouble() == Catch::Approx(.5));
+  REQUIRE(document.HasMember("pilot_reference"));
+  REQUIRE(document["pilot_reference"][0].GetDouble() == Catch::Approx(.125));
+  REQUIRE(document["pilot_reference"][1].GetDouble() == Catch::Approx(-.75));
   REQUIRE(document["channels"][0][1][1][0].GetDouble() == Catch::Approx(2));
   REQUIRE(document["channels"][0][1][1][1].GetDouble() == Catch::Approx(3));
   REQUIRE(document["channels"][1][1][1][0].GetDouble() == Catch::Approx(-4));

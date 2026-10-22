@@ -59,6 +59,7 @@
 #include <array>
 #include <cmath>
 #include <numeric>
+#include <optional>
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
@@ -136,6 +137,45 @@ bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
     for (auto& task : tasks) success = task.get() && success;
   }
   return success;
+}
+
+std::optional<std::complex<double>> direct_path_pilot(
+  const IqData& reference, const std::vector<std::unique_ptr<IqData>>& surveillance,
+  const std::vector<uint32_t>& surveillanceChannels,
+  const std::vector<uint32_t>& referenceChannels,
+  const std::vector<std::complex<double>>& referenceWeights)
+{
+  const auto& referenceSamples = reference.view_data();
+  if (referenceSamples.empty() || surveillance.size() != surveillanceChannels.size())
+    return std::nullopt;
+  std::complex<double> pilot{};
+  for (std::size_t path = 0; path < surveillance.size(); ++path)
+  {
+    const auto& samples = surveillance[path]->view_data();
+    if (samples.size() != referenceSamples.size()) return std::nullopt;
+    std::complex<double> correlation{};
+    double referenceEnergy = 0, surveillanceEnergy = 0;
+    for (std::size_t sample = 0; sample < samples.size(); ++sample)
+    {
+      correlation += samples[sample] * std::conj(referenceSamples[sample]);
+      referenceEnergy += std::norm(referenceSamples[sample]);
+      surveillanceEnergy += std::norm(samples[sample]);
+    }
+    const double normalization = std::sqrt(referenceEnergy * surveillanceEnergy);
+    if (!(normalization > 1e-30) || !std::isfinite(normalization)) continue;
+    auto weight = std::complex<double>{1, 0};
+    const auto found = std::find(referenceChannels.begin(), referenceChannels.end(),
+      surveillanceChannels[path]);
+    if (found != referenceChannels.end())
+    {
+      const std::size_t index = std::distance(referenceChannels.begin(), found);
+      if (index < referenceWeights.size()) weight = std::conj(referenceWeights[index]);
+    }
+    pilot += weight * correlation / normalization;
+  }
+  if (!std::isfinite(pilot.real()) || !std::isfinite(pilot.imag()) ||
+      std::abs(pilot) <= 1e-30) return std::nullopt;
+  return pilot;
 }
 
 int main(int argc, char **argv)
@@ -1235,6 +1275,9 @@ try
                  pathIndex < surveillanceChannels.size(); pathIndex++)
               surveillanceData[pathIndex]->replace(
                 captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
+          const auto cutoutPilot = complexCutout.enabled() ? direct_path_pilot(
+            *referenceData, surveillanceData, surveillanceChannels, referenceChannels,
+            referenceSynthesizer.get_metrics().weights) : std::nullopt;
           timing_helper(timing_name, timing_time, time,
             "reference_synthesis");
           
@@ -1387,7 +1430,7 @@ try
             channelMaps[channel] = ambiguity[channel]->result();
           }
           complexCutout.append(time[0]/1000, channelMaps,
-            referenceSynthesizer.get_metrics().weights);
+            referenceSynthesizer.get_metrics().weights, cutoutPilot);
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.

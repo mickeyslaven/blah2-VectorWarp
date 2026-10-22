@@ -39,3 +39,25 @@ def test_gain_equalization_uses_exact_voltage_scale_for_data_and_reference():
     for index, scale in enumerate(scales):
         assert changed[0]["channels"][index][0][0][0] == scale
         assert changed[0]["reference_weights"][index][0] == scale
+
+
+def test_phase_vector_realigns_existing_methods_only_when_direct_pilot_qualified():
+    output = {"methods": {
+        "spatial_glrt": {"control_evidence_log10": [1], "matched_control_count": 1}},
+        "score_vectors": {"spatial_glrt": {"controls": [
+            {"doppler_offset_bins": 1, "delay_offset_bins": 2, "evidence_log10": 1}]}}}
+    phase = {"methods": {"phase_locked_migration": {"evidence_log10": 2}},
+             "score_vectors": {"phase_locked_migration": {"controls": [
+                 {"doppler_offset_bins": 1, "delay_offset_bins": 2, "evidence_log10": 3}]}}}
+    SUITE.merge_phase_vector(output, phase)
+    assert output["methods"]["phase_locked_migration"]["matched_control_count"] == 1
+    assert output["methods"]["phase_locked_migration"]["control_evidence_log10"] == [3]
+    assert output["aligned_control_offsets"] == [{"doppler_offset_bins": 1,
+                                                   "delay_offset_bins": 2}]
+
+
+def test_phase_vector_keeps_legacy_cutout_proxy_diagnostic_only():
+    value = SUITE.phase_vector([{"reference_weights": [[1, 0]]}], {}, {
+        "trajectory": [{}]})
+    assert value["status"] == "diagnostic_proxy_not_qualified"
+    assert "direct-path/pilot" in value["reason"]

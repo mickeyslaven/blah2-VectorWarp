@@ -15,13 +15,18 @@ That same maximum is applied to controls, so those choices are charged by the
 empirical calibration; their counts are also persisted as
 `parameter_trial_count` and `internal_search_trials_per_path`.
 
-The preferred input is a per-frame complex `direct_path_reference`,
-`pilot_reference`, or `reference_component` added by a replay.  Current v1
-complex cutouts contain only `reference_weights`; the CLI's automatic fallback
-uses the first nonzero weight solely as `reference_weight_proxy` and labels it
-as such.  It must not be interpreted as evidence that direct-path phase was
-measured.  A phase-increment coherence gate rejects recordings with unstable
-pilot increments before any score is emitted.
+The replay cutout producer now writes `pilot_reference`: a normalized,
+pre-cancellation direct-path/reference correlation formed over each CPI.  It
+combines each surveillance/reference correlation using the measured array
+reference weights (or uses the dedicated reference path), so it is a physical
+direct-path phase observation rather than the old beam-weight proxy.  The
+preferred input is therefore `pilot_reference`; `direct_path_reference` and
+`reference_component` remain accepted for compatible experimental producers.
+Old v1 cutouts contain only `reference_weights`; the CLI's automatic fallback
+labels that value `reference_weight_proxy`.  The matrix suite refuses that
+fallback as `diagnostic_proxy_not_qualified`, so it cannot silently join a
+stack or acceptance result.  A phase-increment coherence gate rejects
+recordings with unstable pilot increments before any score is emitted.
 
 Example on CASS after the existing spatial replay has retained its replay JSON:
 
