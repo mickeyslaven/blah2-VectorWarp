@@ -1,6 +1,6 @@
 {
   "schema": "vectorwarp-bounded-live-capture-ledger-v1",
-  "snapshot_at": "2026-10-22T22:27:43Z",
+  "snapshot_at": "2026-10-22T22:32:21Z",
   "node": "100.126.186.65",
   "authorization_cutoff_ms": 1792707014000,
   "active_config_revision": "80aea56b3d16510aa3aa46521241c4f4c648236b8220a3b94308c35c9c236f22",
@@ -22,10 +22,10 @@
     "1d04ec3 Retain exact truth through capture post-roll"
   ],
   "snapshot": {
-    "clip_files": 32,
+    "clip_files": 37,
     "artifact_states": {
       "admitted": 6,
-      "quarantined": 26
+      "quarantined": 31
     },
     "valid_target_rows": 7,
     "independent_valid_passes": 7,
@@ -33,11 +33,11 @@
     "glimpse_passes": 1,
     "miss_passes": 5,
     "pending_passes": 3,
-    "new_iq_bytes": 3073352448,
-    "free_bytes": 807398526976,
+    "new_iq_bytes": 3553563696,
+    "free_bytes": 806810312704,
     "queue_capacity_drops": 0,
     "quarantine_reasons": {
-      "truth-bracket-missing": 32,
+      "truth-bracket-missing": 45,
       "truth-bracket-span": 2
     }
   },
