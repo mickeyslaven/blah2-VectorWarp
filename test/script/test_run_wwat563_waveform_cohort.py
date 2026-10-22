@@ -1,4 +1,6 @@
 import importlib.util
+import subprocess
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -48,3 +50,29 @@ def test_process_phase_does_not_schedule_the_next_phase():
         ("prefetch", "/recordings/miss.mchq"),
         ("process", "/recordings/miss.mchq"),
     ]
+
+
+def test_copy_requires_exact_bytes_before_atomic_rename():
+    row = {"capture": {"file": "/recordings/example.mchq"}}
+    commands = []
+
+    def ssh(host, _command, **_kwargs):
+        stdout = ("240\nabc  /recordings/example.mchq\n"
+                  if host == COHORT.RAW else "abc  /cache/example.mchq\n")
+        return subprocess.CompletedProcess([], 0, stdout=stdout)
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    with tempfile.TemporaryDirectory() as directory, \
+         patch.object(COHORT, "ssh", side_effect=ssh), \
+         patch.object(COHORT.subprocess, "run",
+                      return_value=subprocess.CompletedProcess([], 1, stdout="")), \
+         patch.object(COHORT, "run", side_effect=run):
+        assert COHORT.copy_and_verify(row, Path(directory) / "runner.log") == (
+            "/home/mickeyslaven/wwat563-cache/example.mchq", "abc")
+    pipeline = commands[0][-1]
+    assert "example.mchq.part" in pipeline
+    assert "stat -c %s" in pipeline
+    assert " = 240 && mv -f " in pipeline

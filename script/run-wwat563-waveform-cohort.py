@@ -163,7 +163,10 @@ def copy_and_verify(row, local_log):
     source = row['capture']['file']
     name = Path(source).name
     target = f'{REMOTE_CACHE}/{name}'
-    source_hash = ssh(RAW, f'sha256sum {quote(source)}', capture_output=True).stdout.split()[0]
+    source_identity = ssh(
+        RAW, f'stat -c %s {quote(source)}; sha256sum {quote(source)}',
+        capture_output=True).stdout.split()
+    source_bytes, source_hash = int(source_identity[0]), source_identity[1]
     existing = subprocess.run(
         ['ssh', '-o', 'BatchMode=yes', CASS,
          f'test -f {quote(target)} && sha256sum {quote(target)}'],
@@ -173,7 +176,9 @@ def copy_and_verify(row, local_log):
     temporary = target + '.part'
     pipeline = (f'ssh -o BatchMode=yes {quote(RAW)} "cat {quote(source)}" | '
                 f'ssh -o BatchMode=yes {quote(CASS)} '
-                f'"cat > {quote(temporary)} && mv -f {quote(temporary)} {quote(target)}"')
+                f'"cat > {quote(temporary)} && '
+                f'test \\"\\$(stat -c %s {quote(temporary)})\\" = {source_bytes} && '
+                f'mv -f {quote(temporary)} {quote(target)}"')
     with local_log.open('a') as log:
         run(['bash', '-lc', pipeline], stdout=log, stderr=subprocess.STDOUT)
     remote_hash = ssh(CASS, f'sha256sum {quote(target)}', capture_output=True).stdout.split()[0]
