@@ -34,6 +34,7 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
   const integrity = await verifyCaptureIntegrity(file,
     {revision: 7, windowStart: 0, windowEnd: 10000, samples: 10});
   assert.equal(integrity.valid, true); assert.equal(integrity.data_bytes, body.length);
+  assert.equal(integrity.data_sha256_verified_by, 'independent-read-sha256');
   const admission = await writeAdmissionSidecar(file, {state: 'admitted'});
   assert.equal(JSON.parse(fs.readFileSync(admission)).state, 'admitted');
   fs.appendFileSync(file, 'corrupt');

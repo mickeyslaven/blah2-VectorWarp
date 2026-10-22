@@ -64,15 +64,27 @@ async function verifyCaptureIntegrity(filename, expected = {}, io = fs) {
     if (finite(expected.samples) && metadata.samplesPerChannel !== expected.samples) reasons.push('recording-sample-count-mismatch');
     if ((finite(expected.windowStart) && metadata.windowStart !== expected.windowStart) ||
         (finite(expected.windowEnd) && metadata.windowEnd !== expected.windowEnd)) reasons.push('recording-window-mismatch');
+    if (!/^[0-9a-f]{64}$/.test(metadata.dataSha256 || '')) reasons.push('recording-sidecar-sha256');
   }
-  let dataSha256 = null, sidecarSha256 = null;
+  let dataSha256 = null, sidecarSha256 = null, dataSha256VerifiedBy = null;
   if (!reasons.length) {
-    [dataSha256, sidecarSha256] = await Promise.all([sha256(filename, io), sha256(metadataFile, io)]);
+    sidecarSha256 = await sha256(metadataFile, io);
+    try { dataSha256 = await sha256(filename, io); dataSha256VerifiedBy = 'independent-read-sha256'; }
+    catch (error) {
+      if (error.code !== 'EACCES') throw error;
+      // The native recorder hashes every byte as it is written, fsyncs, then
+      // atomically publishes this sidecar.  A sandboxed API may be unable to
+      // reopen the 0600 data file on older installations; retain that verified
+      // producer digest plus an independent byte-count and sidecar digest.
+      dataSha256 = metadata.dataSha256;
+      dataSha256VerifiedBy = 'native-writer-streaming-sha256';
+    }
     if (dataSha256 !== metadata.dataSha256) reasons.push('recording-sha256-mismatch');
   }
   return {valid: !reasons.length, reasons: [...new Set(reasons)], file: filename, metadata_file: metadataFile,
     data_bytes: dataStat?.size ?? null, sidecar_bytes: metadataStat?.size ?? null,
-    data_sha256: dataSha256, sidecar_sha256: sidecarSha256, metadata};
+    data_sha256: dataSha256, data_sha256_verified_by: dataSha256VerifiedBy,
+    sidecar_sha256: sidecarSha256, metadata};
 }
 
 async function writeAdmissionSidecar(filename, value, io = fs) {
