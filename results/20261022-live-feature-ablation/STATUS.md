@@ -1,6 +1,15 @@
 # Live detection and positive-control fusion A/B — 2026-10-22
 
-## Live answer
+## Metric-integrity correction
+
+The pass percentages below are retained only as provisional producer counters.
+They are not an operational catch-rate estimate and must not drive promotion or
+rollback. Independent review found that the producer does not yet guarantee a
+configuration-independent eligibility denominator, CPI-event-time truth join,
+measurement-supported stable-track criterion, complete truth audit, or nuisance
+ledger. See `docs/OPRS_CRITICAL_REVIEW.md`.
+
+## Earlier provisional live snapshot
 
 At the 15:43 EDT snapshot, 72 finalized geometry-eligible passes had usable truth:
 
@@ -12,10 +21,9 @@ At the 15:43 EDT snapshot, 72 finalized geometry-eligible passes had usable trut
   detection frame; PITT89 had one detection and one track frame; N855ME had one
   detection and two track frames.
 
-This proves the live node detects and tracks real aircraft. It also shows that
-the dominant measured loss is before robust tracker formation: most eligible
-passes do not produce three truth-associated range–Doppler detections. The
-Retina publication filter is not the aggregate bottleneck in this snapshot.
+The associated examples prove that the live node detects and tracks real
+aircraft, but the producer limitations prevent using this cohort to estimate
+the catch rate or assign the dominant loss stage.
 
 Elevation is a material separator in this limited live cohort: 13 of 54 passes
 below 10 degrees elevation were tracked, versus 0 of 18 at 10 degrees or above.
@@ -41,3 +49,20 @@ misses or fresh live shadow data with pass-disjoint controls and false-alarm
 burden measured.
 
 Machine-readable detail is in `positive-fusion-ab-analysis.json`.
+
+## Long stationary-clutter A/B status
+
+The 7,099,688,272-byte replay was staged on Strix with source/target SHA-256
+`c9513f8f48bf461ff0e00e3b66e8043c3d16f216bb708911e7d5112c620d1c59`.
+The replay launcher now reproduces the production default-on configuration and
+sets the explicit Strix GPU identity. Both the cached calibrated binary and the
+exact deployed live binary deterministically reject replay frame 2 with GPU
+tracker invariant code 316. Frame 1 completes and commits; frame 2 fails while
+validating the prior track-history record. The live receiver recorded zero
+`GPU_TRACKER_REJECT` events in the inspected hour, so this is currently a
+Strix replay/backend blocker, not evidence of a live-node failure.
+
+No stationary-clutter aircraft conclusion is valid until the replay completes.
+The next acceptance check is to identify which code-316 history/spatial
+invariant fails on Strix, repair it without weakening validation, and complete
+matched ON/OFF runs using the same recording and deployed binary revision.
