@@ -45,6 +45,15 @@ The live configuration is unchanged. This is deliberately a safe singleton
 deployment of the multi-source boundary; it does not contact a new service or
 touch replay manifests, state files, or the active 563/527 queues.
 
+Phase 2 adds backward-compatible ingestion plumbing. `truth.adsb.sources`, when
+present, is an ordered list of up to eight compatible local selections or HTTP
+base addresses; otherwise the existing `tar1090` string is the sole source.
+Reads run concurrently with an independent bounded `source_timeout`. A partial
+failure produces fused data from healthy sources and a degraded status rather
+than taking truth offline. Status preserves the legacy `source` member and adds
+per-source health, latency, freshness counts, consecutive results, and the
+latest fusion summary. No public source is configured or implicitly contacted.
+
 ## Target adapters and normalized observation
 
 Each adapter should emit the same immutable observation:
@@ -161,12 +170,15 @@ permit the chosen raw retention and derivative use.
 1. **Singleton provenance (implemented):** all fresh derived predictions and new
    `truth_samples` carry provenance; stale aircraft never enter fusion. Existing
    source, UI shape, and geometry remain compatible.
-2. **Shadow adapter:** poll one approved point/radius API no faster than its
+2. **Multi-source ingestion (implemented):** ordered compatible source lists,
+   concurrent bounded reads, partial-failure operation, per-source health and
+   freshness, fusion, and status provenance. Public feeds remain unconfigured.
+3. **Shadow adapter:** poll one approved point/radius API no faster than its
    limit, journal observations, and calculate fusion without feeding evidence.
-3. **Gated live fusion:** enable aggregator fill only after the shadow metrics
+4. **Gated live fusion:** enable aggregator fill only after the shadow metrics
    pass. Keep a runtime switch back to local-only and never change receiver
    decoder configuration.
-4. **Archive replay:** add the journal/index and v2 manifest builder; migrate old
+5. **Archive replay:** add the journal/index and v2 manifest builder; migrate old
    v1 samples as `source=legacy_unknown`, never fabricate provenance.
 
 Acceptance over a representative 24-hour run:

@@ -939,14 +939,39 @@ function validateConfig(config, baseline = null) {
   const ais = requireObject(truth.ais, 'truth.ais');
   boolean(adsb.enabled, 'truth.adsb.enabled');
   string(adsb.tar1090, 'truth.adsb.tar1090');
-  if (classifyAdsbSource(adsb.tar1090).mode === 'explicit') {
+  const validateAdsbSource = (source, key) => {
+    const classification = classifyAdsbSource(source);
+    if (classification.mode !== 'explicit') return source;
     try {
-      if (typeof adsb.tar1090 === 'string' && /^local:(?!\d+(?:\/|$))/.test(adsb.tar1090))
+      if (typeof source === 'string' && /^local:(?!\d+(?:\/|$))/.test(source))
         throw new Error('Unknown local source');
-      sourceAddress(adsb.tar1090);
+      return sourceAddress(source).href;
     }
-    catch (_) { errors.push('truth.adsb.tar1090: select a local source or enter a hostname, host:port or HTTP(S) address without credentials or a query'); }
+    catch (_) {
+      errors.push(`${key}: select a local source or enter a hostname, host:port or HTTP(S) address without credentials or a query`);
+      return null;
+    }
+  };
+  validateAdsbSource(adsb.tar1090, 'truth.adsb.tar1090');
+  if (adsb.sources !== undefined) {
+    if (!Array.isArray(adsb.sources) || adsb.sources.length < 1 || adsb.sources.length > 8)
+      errors.push('truth.adsb.sources must contain 1 to 8 source addresses');
+    else {
+      const unique = new Set();
+      adsb.sources.forEach((source, index) => {
+        string(source, `truth.adsb.sources.${index}`);
+        const identity = validateAdsbSource(source, `truth.adsb.sources.${index}`);
+        if (typeof source === 'string') {
+          if (unique.has(identity)) errors.push('truth.adsb.sources must not contain duplicates');
+          unique.add(identity);
+        }
+      });
+      if (adsb.sources.length > 1 && adsb.sources.includes('auto'))
+        errors.push('truth.adsb.sources: auto cannot be combined with explicit sources');
+    }
   }
+  if (adsb.source_timeout !== undefined) number(adsb.source_timeout,
+    'truth.adsb.source_timeout', {min: .1, max: 10});
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});

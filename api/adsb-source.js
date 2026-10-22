@@ -21,6 +21,15 @@ function aircraftUrl(config) {
   return new URL('data/aircraft.json', sourceAddress(config.truth.adsb.tar1090));
 }
 
+function configuredAircraftUrl(value) {
+  return new URL('data/aircraft.json', sourceAddress(value));
+}
+
+function configuredSources(config) {
+  const values = config.truth?.adsb?.sources;
+  return Array.isArray(values) && values.length ? [...values] : [config.truth?.adsb?.tar1090];
+}
+
 
 function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
   return new Promise((resolve, reject) => {
@@ -69,48 +78,98 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   const cache = new Map();
   const geometry = new DelayDopplerHistory(config);
   let warmup = [];
-  let discoveryEntry;
-  let explicitUrl;
-  const configured = config.truth?.adsb?.tar1090;
-  const classification = classifyAdsbSource(configured);
-  let sourceState = classification.mode === 'explicit' ?
-    {mode: 'explicit', kind: 'http', state: 'configured'} :
-    {mode: classification.mode, state: 'configured'};
+  let fusionState = null;
+  const sourceTimeoutMs = Number.isFinite(config.truth?.adsb?.source_timeout) ?
+    Math.max(100, Math.min(10000, config.truth.adsb.source_timeout * 1000)) : 1500;
+  const slots = configuredSources(config).map((configured, index) => {
+    const classification = classifyAdsbSource(configured);
+    return {configured, classification, discoveryEntry: undefined, explicitUrl: undefined,
+      state: {id: configured, mode: classification.mode,
+        ...(classification.mode === 'explicit' ? {kind: 'http'} : {}),
+        state: 'configured', healthy: null, consecutive_failures: 0,
+        consecutive_successes: 0, configured_index: index}};
+  });
   const pollMs = Number.isFinite(config.truth?.adsb?.poll_interval) ?
     Math.max(100, Math.min(60000, config.truth.adsb.poll_interval * 1000)) : 1000;
-  const discoveryOptions = {fetchJson, now, maxAgeSeconds: geometry.maxAge};
-  async function resolveSource() {
-    if (classification.mode === 'explicit') {
-      explicitUrl ||= aircraftUrl(config);
-      sourceState = {...sourceState, endpoint: explicitUrl.href};
-      return {source: sourceState, read: () => fetchJson(explicitUrl)};
+  const discoveryOptions = {fetchJson, now, maxAgeSeconds: geometry.maxAge,
+    timeoutMs: sourceTimeoutMs};
+  async function resolveSource(slot) {
+    if (slot.classification.mode === 'explicit') {
+      slot.explicitUrl ||= configuredAircraftUrl(slot.configured);
+      slot.state = {...slot.state, endpoint: slot.explicitUrl.href};
+      return {source: slot.state,
+        read: () => fetchJson(slot.explicitUrl, {timeoutMs: sourceTimeoutMs})};
     }
-    if (discoveryEntry && now() - discoveryEntry.at < discoveryCacheMs)
-      return discoveryEntry.promise;
+    if (slot.discoveryEntry && now() - slot.discoveryEntry.at < discoveryCacheMs)
+      return slot.discoveryEntry.promise;
     const entry = {at: now()};
-    sourceState = {mode: classification.mode, state: 'discovering'};
-    entry.promise = (classification.mode === 'auto' ? discover(discoveryOptions) :
-      selectLocal(configured, discoveryOptions)).then(selection => {
-      sourceState = {...selection.source, mode: classification.mode, state: 'active'};
+    slot.state = {...slot.state, state: 'discovering'};
+    entry.promise = (slot.classification.mode === 'auto' ? discover(discoveryOptions) :
+      selectLocal(slot.configured, discoveryOptions)).then(selection => {
+      slot.state = {...slot.state, ...selection.source, id: slot.configured,
+        mode: slot.classification.mode, state: 'active'};
       return selection;
     }, error => {
-      sourceState = {mode: classification.mode, state: 'error', message: error.message,
+      slot.state = {...slot.state, state: 'error', healthy: false, message: error.message,
         ...(error.sources?.length ? {candidates: error.sources} : {})};
       throw error;
     });
-    discoveryEntry = entry;
+    slot.discoveryEntry = entry;
     return entry.promise;
+  }
+  async function readSource(slot) {
+    const startedAt = now();
+    try {
+      const selection = await resolveSource(slot);
+      const data = validateAircraftData(await selection.read(),
+        {now, maxAgeSeconds: geometry.maxAge});
+      const receivedAtMs = now();
+      const ages = data.aircraft.filter(aircraft => Number.isFinite(aircraft?.lat) &&
+        Number.isFinite(aircraft?.lon) && Number.isFinite(aircraft?.seen_pos) &&
+        aircraft.seen_pos >= 0).map(aircraft => receivedAtMs / 1000 -
+          (data.now - aircraft.seen_pos)).filter(Number.isFinite);
+      const usable = ages.filter(age => age >= 0 && age <= geometry.maxAge);
+      const truthAge = Math.min(geometry.maxAge,
+        config.process?.bearing?.manifold_recorder?.max_truth_age_s ?? 3);
+      const fresh = ages.filter(age => age >= 0 && age <= truthAge);
+      const {message, candidates, ...prior} = slot.state;
+      const selectedSource = {...selection.source};
+      delete selectedSource.message; delete selectedSource.candidates;
+      slot.state = {...prior, ...selectedSource, id: slot.configured,
+        mode: slot.classification.mode, state: 'active', healthy: true,
+        consecutive_failures: 0,
+        consecutive_successes: (slot.state.consecutive_successes || 0) + 1,
+        last_success_at: receivedAtMs, latency_ms: Math.max(0, receivedAtMs - startedAt),
+        freshness: {snapshot_age_s: receivedAtMs / 1000 - data.now,
+          positioned: ages.length, usable_positions: usable.length,
+          fresh_positions: fresh.length, stale_positions: ages.length - usable.length,
+          truth_age_limit_s: truthAge, position_age_limit_s: geometry.maxAge,
+          freshest_position_age_s: fresh.length ? Math.min(...fresh) : null}};
+      return {data, source: slot.state, receivedAtMs};
+    } catch (error) {
+      const failedAt = now();
+      slot.state = {...slot.state, state: 'error', healthy: false, message: error.message,
+        consecutive_failures: (slot.state.consecutive_failures || 0) + 1,
+        consecutive_successes: 0, last_error_at: failedAt,
+        latency_ms: Math.max(0, failedAt - startedAt)};
+      throw error;
+    }
   }
   async function rawAircraft() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = resolveSource().then(async selection => {
-      const data = validateAircraftData(await selection.read(),
-        {now, maxAgeSeconds: geometry.maxAge});
-      const receivedAtMs = now();
-      return fuseAircraftData([{data, source: selection.source, receivedAtMs}],
-        {nowMs: receivedAtMs, maxPositionAgeSeconds: geometry.maxAge});
+    entry.promise = Promise.allSettled(slots.map(readSource)).then(results => {
+      const healthy = results.filter(result => result.status === 'fulfilled')
+        .map(result => result.value);
+      if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
+        `${slots[index].configured}: ${result.reason?.message || 'unavailable'}`).join('; ')}`);
+      const fusedAt = now();
+      const data = fuseAircraftData(healthy, {nowMs: fusedAt,
+        maxPositionAgeSeconds: geometry.maxAge});
+      fusionState = {...data.vectorwarp_fusion, fused_at: fusedAt,
+        healthy_sources: healthy.length, failed_sources: slots.length - healthy.length};
+      return data;
     })
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
@@ -131,25 +190,28 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     return entry.promise;
   }
   async function status() {
-    if (!config.truth?.adsb?.enabled) return {enabled: false, online: false,
-      source: {...sourceState, state: 'disabled'}};
+    if (!config.truth?.adsb?.enabled) {
+      const sources = slots.map(slot => ({...slot.state, state: 'disabled'}));
+      return {enabled: false, online: false, degraded: false,
+        source: sources[0], sources, fusion: null};
+    }
     const results = await Promise.allSettled([get('aircraft'), get('delayDoppler')]);
     const feeds = results.map(result => result.status === 'fulfilled' ? {available: true} :
       {available: false, message: result.reason.message});
     const online = feeds.every(feed => feed.available);
-    if (online) {
-      const {message, candidates, ...activeSource} = sourceState;
-      sourceState = {...activeSource, state: 'active'};
-    }
-    else if (!preview && !config.capture?.replay?.state && sourceState.state !== 'error')
-      sourceState = {...sourceState, state: 'error', message: feeds.find(feed => !feed.available)?.message};
-    else if (preview || config.capture?.replay?.state)
-      sourceState = {...sourceState, state: 'inactive', message: feeds[0].message};
-    return {enabled: true, online, source: sourceState, aircraft: feeds[0],
+    if (preview || config.capture?.replay?.state)
+      for (const slot of slots) slot.state = {...slot.state, state: 'inactive', message: feeds[0].message};
+    const sources = slots.map(slot => ({...slot.state}));
+    const degraded = online && sources.some(source => source.healthy === false);
+    return {enabled: true, online, degraded, source: sources[0], sources,
+      fusion: fusionState, aircraft: feeds[0],
       delayDoppler: {...feeds[1], warming: warmup.length,
         message: feeds[1].available && warmup.length ? 'Feed online; waiting for motion updates.' : feeds[1].message}};
   }
-  return {get, status, clear: () => { cache.clear(); geometry.clear(); discoveryEntry = undefined; }};
+  return {get, status, clear: () => {
+    cache.clear(); geometry.clear(); fusionState = null;
+    for (const slot of slots) slot.discoveryEntry = undefined;
+  }};
 }
 
-module.exports = {sourceAddress, aircraftUrl, readJson, createAdsbSource};
+module.exports = {sourceAddress, aircraftUrl, configuredSources, readJson, createAdsbSource};

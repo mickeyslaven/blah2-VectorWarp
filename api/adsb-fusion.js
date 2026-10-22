@@ -109,6 +109,9 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
       vectorwarp: {
         source_id: winner.sourceId,
         source_kind: winner.source.kind || winner.source.mode || 'http',
+        source_mode: winner.source.mode || null,
+        source_endpoint: winner.source.endpoint || null,
+        source_path: winner.source.path || null,
         received_at_ms: winner.receivedAtMs,
         snapshot_timestamp_s: winner.eventTime + winner.aircraft.seen_pos,
         position_timestamp_s: winner.eventTime,

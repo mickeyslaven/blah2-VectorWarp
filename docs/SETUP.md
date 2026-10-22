@@ -171,6 +171,32 @@ Discovery does not install or start a decoder or scan
 other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
 during replay and preview; it is never radar detection or tracking input.
 
+For an advanced redundant installation, `truth.adsb.sources` may be an ordered
+list of up to eight readsb/dump1090-compatible base addresses or local selections.
+When present and non-empty, it replaces `tar1090` as the active list; omitting it
+retains the legacy singleton behavior. Sources are read concurrently, separately
+timed out, and fused per ICAO address. `source_timeout` is seconds, from 0.1 to
+10 (default 1.5):
+
+```yaml
+truth:
+  adsb:
+    enabled: true
+    tar1090: 'localhost:8080' # legacy/default source
+    sources:
+      - 'local:readsb'
+      - 'https://approved-backup.example/tar1090'
+    source_timeout: 1.5
+```
+
+Do not combine `auto` with other list entries because discovery could rediscover
+the same receiver and manufacture false corroboration. Duplicate entries are
+also rejected. This plumbing does not add credentials or enable a public feed;
+only configure services whose access, attribution, retention, and operational
+terms have been approved. `/api/adsb/status` reports per-source health,
+latency, positions usable by geometry, positions fresh enough for evidence,
+failures, and the latest fusion summary.
+
 Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
 Stock 3lips uses an external adsb2dd service rather than this built-in converter.
 

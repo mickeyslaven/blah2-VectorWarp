@@ -203,6 +203,24 @@ for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
   value.truth.adsb.tar1090 = source;
   assert.equal(validateConfig(value).valid, false, `Reject ADS-B source: ${source}`);
 }
+{
+  const value = clone(sixChannel);
+  value.truth.adsb.sources = ['local:readsb', 'https://adsb-backup.example/tar1090'];
+  value.truth.adsb.source_timeout = .75;
+  assert.equal(validateConfig(value).valid, true, 'Accept bounded multi-source ADS-B configuration');
+}
+for (const sources of [[], Array(9).fill('local:readsb'),
+  ['local:readsb', 'local:readsb'], ['auto', 'https://adsb.example'],
+  ['receiver.example:8080', 'http://receiver.example:8080/'],
+  ['local:readsb', 'file:///etc/passwd'], ['local:readsb', 7]]) {
+  const value = clone(sixChannel); value.truth.adsb.sources = sources;
+  assert.equal(validateConfig(value).valid, false,
+    `Reject ADS-B sources: ${JSON.stringify(sources)}`);
+}
+for (const timeout of [0, 10.1, '1']) {
+  const value = clone(sixChannel); value.truth.adsb.source_timeout = timeout;
+  assert.equal(validateConfig(value).valid, false, `Reject ADS-B source timeout: ${timeout}`);
+}
 for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
   for (const mode of ['auto', 'cpu', 'gpu', 'cuda', '', 1, true, null]) {
     const value = load(name);
