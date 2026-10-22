@@ -1461,6 +1461,19 @@ try
           blah2::resident::Coordinator::Publication residentPublication;
           std::string cpuManifoldEvidence;
           if(resident){
+            auto evidenceMapping=bearingChannelMapping;
+            if(manifoldRecorderEnabled&&evidenceMapping.empty())
+              for(uint32_t i=0;i<surveillanceChannels.size();++i)evidenceMapping.push_back(i);
+            const blah2::resident::BearingConfig evidenceBearing{
+              true,
+              bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:
+                blah2::resident::BearingMethod::coherentBeamBank,
+              bearingReferenceAnchor=="fixed_site_projected"?
+                blah2::resident::BearingReferenceAnchor::fixedSiteProjected:
+                bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:
+                blah2::resident::BearingReferenceAnchor::liveEigenbeam,
+              bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,
+              bearingDiagonalLoading,std::move(evidenceMapping),{}};
             resident->receivePrepared();
             residentPublication=resident->format(time[0]/1000,
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
@@ -1468,7 +1481,8 @@ try
                bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
                ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond,
                stationaryClutter?stationaryPersistenceCpis:0u,
-               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled);
+               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled,
+               evidenceBearing);
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
