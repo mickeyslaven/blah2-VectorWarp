@@ -19,7 +19,9 @@ CASS = 'mickeyslaven@100.104.10.46'
 RAW = 'root@100.126.186.65'
 REMOTE_ROOT = '/home/mickeyslaven/wwat563-results'
 REMOTE_CACHE = '/home/mickeyslaven/wwat563-cache'
-REMOTE_ACKS = '/home/mickeyslaven/wwat563-results/acks'
+REMOTE_SPATIAL_READY = '/home/mickeyslaven/wwat563-results/spatial-ready'
+REMOTE_SPATIAL_ACK = '/home/mickeyslaven/wwat563-results/spatial-ack'
+REMOTE_WAVEFORM_VECTORS = '/home/mickeyslaven/wwat563-results/waveform-vectors'
 VENV = '/home/mickeyslaven/radar-training/venv/bin/python'
 
 
@@ -70,9 +72,44 @@ def verify_result(path):
     return value
 
 
+def publish_vector(key, raw, digest, loaded, spectral):
+    def one(method_id, document):
+        scores = document['scores']
+        selected = max(scores, key=lambda parameter:
+                       scores[parameter]['margin_over_parameter_trial_control_p99_db'])
+        score = scores[selected]
+        return {'method_id': method_id, 'selected_parameter': selected,
+                'parameter_trial_count': len(scores),
+                'matched_control_count': score['control_count'],
+                'per_frame_log_ratio_db': score['per_frame_ratio_db'],
+                'trajectory_mean_log_ratio_db': sum(score['per_frame_ratio_db']) /
+                                                len(score['per_frame_ratio_db']),
+                'matched_control_p99': score['control_p99'],
+                'parameter_trial_control_p99': document['controls']['parameter_trial_control_p99'],
+                'single_method_margin_db': score['margin_over_parameter_trial_control_p99_db'],
+                'single_method_accepted': score['margin_over_parameter_trial_control_p99_db'] >= 3.0}
+    basename = Path(raw).name
+    path = f'{REMOTE_WAVEFORM_VECTORS}/{basename}.json'
+    document = {'schema': 'vectorwarp-wwat563-waveform-vector-v1', 'clip_id': key,
+                'raw': raw, 'raw_sha256': digest,
+                'methods': {'loaded_reciprocal': one('loaded_reciprocal', loaded),
+                            'spectral_interference': one('spectral_interference', spectral)}}
+    ssh(CASS, f'cat > {quote(path + ".part")} && mv {quote(path + ".part")} {quote(path)}',
+        input=json.dumps(document) + '\n')
+    return path
+
+
 def wait_for_spatial_ack(key, raw, digest, loaded_path, spectral_path, state, state_path, poll_seconds):
     """Retain verified raw input until the spatial cohort atomically acknowledges it."""
-    ack = f'{REMOTE_ACKS}/{key}.spatial-complete.json'
+    basename = Path(raw).name
+    ready = f'{REMOTE_SPATIAL_READY}/{basename}.json'
+    ack = f'{REMOTE_SPATIAL_ACK}/{basename}.json'
+    ready_document = {'schema': 'vectorwarp-wwat563-spatial-ready-v1', 'clip_id': key,
+        'source': state['clips'][key]['recording'], 'raw': raw, 'sha256': digest,
+        'bytes': int(ssh(CASS, f'stat -c %s {quote(raw)}', capture_output=True).stdout),
+        'waveform_artifacts': [loaded_path, spectral_path]}
+    ssh(CASS, f'cat > {quote(ready + ".part")} && mv {quote(ready + ".part")} {quote(ready)}',
+        input=json.dumps(ready_document) + '\n')
     state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
         'raw': raw, 'sha256': digest, 'loaded_result': loaded_path,
         'spectral_result': spectral_path, 'ack_path': ack}
@@ -83,7 +120,7 @@ def wait_for_spatial_ack(key, raw, digest, loaded_path, spectral_path, state, st
                                text=True, capture_output=True)
         if probe.returncode == 0:
             value = json.loads(probe.stdout)
-            if value.get('clip_id') != key or value.get('status') not in ('complete', 'not_in_frozen_cohort'):
+            if value.get('status') not in ('complete', 'not_in_frozen_cohort'):
                 raise RuntimeError(f'invalid spatial acknowledgement {ack}')
             return ack, value
         time.sleep(poll_seconds)
@@ -128,12 +165,14 @@ def process(row, state, state_path, local_log):
         for command in commands:
             ssh(CASS, command, stdout=log, stderr=subprocess.STDOUT)
     loaded, spectral = verify_result(loaded_path), verify_result(spectral_path)
+    vector_path = publish_vector(key, raw, digest, loaded, spectral)
     ack_path, acknowledgement = wait_for_spatial_ack(
         key, raw, digest, loaded_path, spectral_path, state, state_path, 30)
     ssh(CASS, f'rm -f {quote(raw)}')
     state['clips'][key] = {'status': 'complete', 'role': row['role'],
         'recording': row['capture']['file'], 'event_id': row['event_id'], 'sha256': digest,
         'loaded_result': loaded_path, 'spectral_result': spectral_path,
+        'waveform_vector': vector_path,
         'spatial_ack': ack_path, 'spatial_ack_status': acknowledgement['status'],
         'loaded_best_margin_db': max(item['margin_over_parameter_trial_control_p99_db']
                                      for item in loaded['scores'].values()),
@@ -153,7 +192,7 @@ def main():
     misses = unique_rows(json.loads(args.miss_manifest.read_text()))
     state = (json.loads(args.state.read_text()) if args.state.exists() else
              {'schema': 'vectorwarp-wwat563-waveform-runner-v1', 'clips': {}})
-    ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)} {quote(REMOTE_ACKS)}')
+    ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)} {quote(REMOTE_SPATIAL_READY)} {quote(REMOTE_SPATIAL_ACK)} {quote(REMOTE_WAVEFORM_VECTORS)}')
     for source in ('analyze-loaded-reciprocal-mchq.py', 'analyze-spectral-interference-rejection.py'):
         run(['scp', '-q', str(Path(__file__).with_name(source)), f'{CASS}:{REMOTE_ROOT}/{source}'])
     for row in positives + misses:
