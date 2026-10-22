@@ -25,6 +25,8 @@ def load_harness(path):
 
 
 def load_config(path):
+    if path.suffix.lower() == ".json":
+        return json.loads(path.read_text())
     if yaml is not None:
         return yaml.safe_load(path.read_text())
     ruby = subprocess.run(

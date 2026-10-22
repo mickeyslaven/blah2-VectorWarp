@@ -140,7 +140,8 @@ def steering_vectors(frame, config, frequency, center_row, radius):
     return output
 
 
-def evaluate(cutouts, config, trajectory, parameters, exclusion=1, min_doppler=15):
+def evaluate(cutouts, config, trajectory, parameters, exclusion=1, min_doppler=15,
+             control_fraction=.99):
     if len(trajectory) < len(cutouts):
         raise ValueError("truth trajectory is shorter than the complex replay")
     if any(len(frame["channels"]) != 5 for frame in cutouts):
@@ -212,11 +213,16 @@ def evaluate(cutouts, config, trajectory, parameters, exclusion=1, min_doppler=1
         raise ValueError("exact truth trajectory is outside the scoreable cutout")
     whole_controls = [score for offset, score in paths.items()
                       if abs(offset[0]) > exclusion or abs(offset[1]) > exclusion]
+    control_score_vector = [
+        {"doppler_offset_bins": offset[0], "delay_offset_bins": offset[1],
+         "raw_score": score}
+        for offset, score in sorted(paths.items())
+        if abs(offset[0]) > exclusion or abs(offset[1]) > exclusion]
     matched_controls = [score for offset, score in paths.items()
                         if offset[0] == 0 and abs(offset[1]) > exclusion]
     target = paths[(0, 0)]
-    matched_p99 = percentile(matched_controls, .99)
-    whole_p99 = percentile(whole_controls, .99)
+    matched_p99 = percentile(matched_controls, control_fraction)
+    whole_p99 = percentile(whole_controls, control_fraction)
     strict_p99 = max(matched_p99, whole_p99)
     beams = config["process"]["surveillance_fusion"]["beams"]
     signal_trials = beams
@@ -238,6 +244,8 @@ def evaluate(cutouts, config, trajectory, parameters, exclusion=1, min_doppler=1
         "margin_over_control_p99_db": 10 * math.log10(max(target, 1e-300) /
                                                        max(strict_p99, 1e-300)),
         "controls_exceeding_target": sum(value >= target for value in whole_controls),
+        "control_score_vector": control_score_vector,
+        "control_quantile": control_fraction,
         "whole_search_max": max(whole_controls),
         "trial_accounting": {
             "signal_trials_per_path": signal_trials,

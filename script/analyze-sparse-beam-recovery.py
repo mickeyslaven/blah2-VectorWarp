@@ -88,7 +88,8 @@ def score(frame, config, row, column, penalty, guard, training, loading):
     return np.abs(coefficients) ** 2
 
 
-def analyze(cutouts, config, trajectory, penalty, guard=1, training=3, loading=.01):
+def analyze(cutouts, config, trajectory, penalty, guard=1, training=3, loading=.01,
+            control_fraction=.99):
     target_cells = [(CAL.nearest(frame["doppler_hz"], truth["doppler_hz"]),
                      CAL.nearest(frame["delay_km"], truth["delay_km"]))
                     for frame, truth in zip(cutouts, trajectory)]
@@ -120,7 +121,12 @@ def analyze(cutouts, config, trajectory, penalty, guard=1, training=3, loading=.
     target = valid[(0, 0)]
     controls = [value for key, value in valid.items()
                 if abs(key[0]) > guard or abs(key[1]) > guard]
-    control_p99 = percentile(controls, .99)
+    control_score_vector = [
+        {"doppler_offset_bins": key[0], "delay_offset_bins": key[1],
+         "raw_score": value}
+        for key, value in sorted(valid.items())
+        if abs(key[0]) > guard or abs(key[1]) > guard]
+    control_p99 = percentile(controls, control_fraction)
     return {
         "schema": "vectorwarp-sparse-beam-recovery-v1",
         "candidate_only": True,
@@ -133,7 +139,9 @@ def analyze(cutouts, config, trajectory, penalty, guard=1, training=3, loading=.
         "margin_over_control_p99_db": 10 * math.log10(max(target, 1e-300) /
                                                        max(control_p99, 1e-300)),
         "controls": len(controls),
+        "control_score_vector": control_score_vector,
         "controls_exceeding_target": sum(value >= target for value in controls),
+        "control_quantile": control_fraction,
         "target_cells": [{"frame": index, "row": row, "column": column,
                           "delay_km": cutouts[index]["delay_km"][column],
                           "doppler_hz": cutouts[index]["doppler_hz"][row]}

@@ -93,7 +93,8 @@ def percentile(items, fraction):
 
 
 def analyze_trajectory(cutouts, config, trajectory, guard=1, training=3,
-                       loading=.01, min_doppler=15, beam_policy="max_per_frame"):
+                       loading=.01, min_doppler=15, beam_policy="max_per_frame",
+                       control_fraction=.99):
     if len(trajectory) < len(cutouts):
         raise ValueError("truth trajectory is shorter than the complex replay")
     target_cells = [(CAL.nearest(frame["doppler_hz"], truth["doppler_hz"]),
@@ -154,7 +155,12 @@ def analyze_trajectory(cutouts, config, trajectory, guard=1, training=3,
         raise ValueError("target cell was not scoreable")
     controls = [value for (row_offset, column_offset), value in accumulated.items()
                 if abs(row_offset) > guard or abs(column_offset) > guard]
-    p99 = percentile(controls, .99)
+    control_score_vector = [
+        {"doppler_offset_bins": row_offset, "delay_offset_bins": column_offset,
+         "raw_score": value}
+        for (row_offset, column_offset), value in sorted(accumulated.items())
+        if abs(row_offset) > guard or abs(column_offset) > guard]
+    p99 = percentile(controls, control_fraction)
     target = accumulated[target_key]
     return {
         "schema": "vectorwarp-spatial-glrt-v1",
@@ -172,7 +178,9 @@ def analyze_trajectory(cutouts, config, trajectory, guard=1, training=3,
         "margin_over_control_p99_db": 10 * math.log10(max(target, 1e-300) /
                                                        max(p99, 1e-300)),
         "controls": len(controls),
+        "control_score_vector": control_score_vector,
         "controls_exceeding_target": sum(value >= target for value in controls),
+        "control_quantile": control_fraction,
         "target_beam_votes": beam_votes[target_key],
         "target_fixed_beam": fixed_beams.get(target_key),
         "target_covariance_samples_per_frame": covariance_samples[target_key],
@@ -180,10 +188,11 @@ def analyze_trajectory(cutouts, config, trajectory, guard=1, training=3,
 
 
 def analyze(cutouts, config, delay, doppler, guard=1, training=3,
-            loading=.01, min_doppler=15, beam_policy="max_per_frame"):
+            loading=.01, min_doppler=15, beam_policy="max_per_frame",
+            control_fraction=.99):
     trajectory = [{"delay_km": delay, "doppler_hz": doppler} for _ in cutouts]
     return analyze_trajectory(cutouts, config, trajectory, guard, training,
-                              loading, min_doppler, beam_policy)
+                              loading, min_doppler, beam_policy, control_fraction)
 
 
 def main():

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Consume verified raw clips exposed by the shared waveform runner barrier."""
+
+import argparse
+import importlib.util
+import json
+import time
+from collections import defaultdict
+from pathlib import Path
+
+
+RUNNER_PATH = Path(__file__).with_name("run-current-epoch-spatial-suite.py")
+SPEC = importlib.util.spec_from_file_location("spatial_runner", RUNNER_PATH)
+RUNNER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RUNNER)
+READY_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ready"
+ACK_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ack"
+
+
+def write_ack(basename, value):
+    path = f"{ACK_ROOT}/{basename}.json"
+    payload = json.dumps(value, separators=(",", ":")) + "\n"
+    RUNNER.ssh(RUNNER.CASS_HOST,
+               f"cat > {path}.part && mv {path}.part {path}", input=payload)
+
+
+def save(path, state):
+    temporary = path.with_suffix(path.suffix + ".part")
+    temporary.write_text(json.dumps(state, separators=(",", ":")) + "\n")
+    temporary.replace(path)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--manifest", required=True, type=Path)
+    parser.add_argument("--state", required=True, type=Path)
+    parser.add_argument("--poll-seconds", type=float, default=5)
+    args = parser.parse_args()
+    manifest = json.loads(args.manifest.read_text())
+    groups = defaultdict(list)
+    for job in manifest["jobs"]:
+        groups[job["recording"]].append(job)
+    state = json.loads(args.state.read_text()) if args.state.exists() else {
+        "schema": "vectorwarp-current-epoch-spatial-run-state-v1",
+        "config_epoch": manifest["config_epoch"],
+        "statistics_sha256": manifest["statistics_sha256"],
+        "results": {}, "recordings": {},
+    }
+    RUNNER.ssh(RUNNER.CASS_HOST,
+               f"mkdir -p {RUNNER.CASS_RESULTS} {READY_ROOT} {ACK_ROOT}")
+    expected = {job["job_id"] for job in manifest["jobs"]}
+    acknowledged = set()
+    def complete():
+        return all("aligned_control_offsets" in state["results"].get(job_id, {})
+                   for job_id in expected)
+    while not complete():
+        listing = RUNNER.ssh(RUNNER.CASS_HOST,
+            f"find {READY_ROOT} -maxdepth 1 -type f -name '*.json' -print",
+            capture_output=True).stdout.splitlines()
+        waiting = []
+        for path in listing:
+            basename = Path(path).name.removesuffix(".json")
+            if basename not in acknowledged:
+                item = json.loads(RUNNER.ssh(
+                    RUNNER.CASS_HOST, f"cat {path}", capture_output=True).stdout)
+                waiting.append((basename, item))
+        if not waiting:
+            time.sleep(args.poll_seconds)
+            continue
+        for basename, item in waiting:
+            recording = item["source"]
+            jobs = groups.get(recording, [])
+            if not jobs:
+                write_ack(basename, {"schema": "vectorwarp-wwat563-spatial-ack-v1",
+                    "status": "not_in_frozen_cohort", "spatial_jobs": []})
+                acknowledged.add(basename)
+                print(f"ack {basename}: not in frozen cohort", flush=True)
+                continue
+            raw_path = item["recording"]
+            for job in jobs:
+                existing = state["results"].get(job["job_id"], {})
+                if "aligned_control_offsets" not in existing:
+                    print(f"analyze {basename} {job['job_id']}", flush=True)
+                    state["results"][job["job_id"]] = RUNNER.process(job, raw_path)
+                    save(args.state, state)
+            state["recordings"][recording] = {
+                key: item[key] for key in ("sha256", "bytes") if key in item}
+            save(args.state, state)
+            write_ack(basename, {"schema": "vectorwarp-wwat563-spatial-ack-v1",
+                "status": "complete",
+                "spatial_jobs": [job["job_id"] for job in jobs]})
+            acknowledged.add(basename)
+            print(f"ack {basename}: {len(jobs)} job(s)", flush=True)
+    print(json.dumps({"results": len(state["results"]),
+                      "recordings": len(state["recordings"])}), flush=True)
+
+
+if __name__ == "__main__":
+    main()
