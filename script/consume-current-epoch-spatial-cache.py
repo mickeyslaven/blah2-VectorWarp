@@ -99,12 +99,16 @@ def main():
             raw_path = item.get("recording", item.get("raw"))
             if not raw_path:
                 raise ValueError(f"ready marker lacks recording/raw: {basename}")
-            exists = RUNNER.ssh(RUNNER.CASS_HOST,
-                f"if test -f {raw_path}; then printf present; fi",
-                capture_output=True).stdout
-            if exists != "present":
+            expected_bytes = str(item.get("bytes", ""))
+            identity = RUNNER.ssh(RUNNER.CASS_HOST,
+                f"if test -f {raw_path} && test \"$(stat -c %s {raw_path})\" = "
+                f"\"{expected_bytes}\"; then printf '%s\\n' {expected_bytes}; "
+                f"sha256sum {raw_path} | cut -d' ' -f1; fi",
+                capture_output=True).stdout.splitlines()
+            expected_identity = [expected_bytes, item.get("sha256", "")]
+            if identity != expected_identity:
                 if basename not in warned_missing:
-                    print(f"skip stale ready marker without raw: {basename}", flush=True)
+                    print(f"skip stale/unverified ready marker: {basename}", flush=True)
                     warned_missing.add(basename)
                 continue
             if any(job["role"] == "miss" for job in jobs) and not freeze_selection_if_ready():
