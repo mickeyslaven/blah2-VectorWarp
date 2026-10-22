@@ -64,3 +64,13 @@ def test_offline_join_requires_exact_frozen_sha(tmp_path):
     path.write_text('{"cohort_sha256":"wrong","results":[]}')
     accepted, rejected = REPORT.load_offline([path], "right")
     assert not accepted and rejected[0]["reason"] == "missing_or_wrong_frozen_cohort_sha256"
+
+
+def test_quarantined_rows_and_offline_documents_never_count(tmp_path):
+    bad = row(); bad["quarantined"] = True
+    record = REPORT.build_pass("p", [bad], cohort([bad]), "frozen", {}, {})
+    assert record["classification"] == "excluded_with_reason"
+    path = tmp_path / "offline.json"
+    path.write_text('{"cohort_sha256":"sha","quarantined":true,"results":[]}')
+    accepted, rejected = REPORT.load_offline([path], "sha")
+    assert not accepted and rejected[0]["reason"] == "quarantined_offline_input"

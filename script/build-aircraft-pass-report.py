@@ -57,6 +57,8 @@ def strict_errors(row, cohort):
     policy = cohort["policy"]["required_truth"]
     provenance = row.get("provenance_summary") or {}
     errors = []
+    if row.get("quarantined") is True or capture_quarantined(row):
+        errors.append("quarantined_input")
     if row.get("config_epoch") != cohort.get("config_epoch"):
         errors.append("config_epoch_mismatch")
     if row.get("receiver_epoch") != cohort.get("receiver_epoch"):
@@ -79,6 +81,11 @@ def strict_errors(row, cohort):
     if not row.get("trajectory"):
         errors.append("trajectory_missing")
     return errors
+
+
+def capture_quarantined(row):
+    capture = row.get("capture") or {}
+    return capture.get("quarantined") is True or row.get("status") == "quarantined"
 
 
 def load_iq(path):
@@ -104,11 +111,16 @@ def load_offline(paths, frozen_sha):
     rejected = []
     for path in paths:
         document = json.loads(Path(path).read_text())
+        if document.get("quarantined") is True or document.get("status") == "quarantined":
+            rejected.append({"path": str(path), "reason": "quarantined_offline_input"})
+            continue
         declared = document.get("cohort_sha256") or document.get("snapshot_sha256")
         if declared != frozen_sha:
             rejected.append({"path": str(path), "reason": "missing_or_wrong_frozen_cohort_sha256"})
             continue
         for item in walk(document):
+            if item.get("quarantined") is True or item.get("status") == "quarantined":
+                continue
             classification = item.get("classification")
             if classification not in ("offline_candidate", "validated_offline_recovery",
                                        "miss_unrecoverable"):
