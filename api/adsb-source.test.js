@@ -1,7 +1,8 @@
 'use strict';
 const assert = require('assert');
 const http = require('http');
-const {sourceAddress, aircraftUrl, configuredSources, readJson,
+const {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
+  normalizeAircraftSnapshot, readJson,
   createAdsbSource} = require('./adsb-source');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 
@@ -20,6 +21,13 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(configuredSources(config), ['receiver.local:8080']);
   assert.deepEqual(configuredSources({...config, truth: {adsb: {...config.truth.adsb,
     sources: ['local:readsb', 'backup.example']}}}), ['local:readsb', 'backup.example']);
+  const exchange = configuredAircraftSource(
+    'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60');
+  assert.equal(exchange.url.href, 'https://api.adsb.lol/v2/point/40.44/-80.06/60');
+  assert.equal(exchange.adapter, 'adsbx-v2');
+  assert.deepEqual(normalizeAircraftSnapshot({now: 2000000000123,
+    ac: [{hex: 'abc123', seen_pos: .5}]}, 'adsbx-v2'),
+  {now: 2000000000.123, aircraft: [{hex: 'abc123', seen_pos: .5}]});
   for (const address of ['file:///etc/passwd', 'ftp://receiver', 'http://name:password@receiver', 'receiver?url=other', 'receiver#bad', 'bad host'])
     assert.throws(() => sourceAddress(address), undefined, address);
 

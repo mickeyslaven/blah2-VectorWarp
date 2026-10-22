@@ -25,6 +25,33 @@ function configuredAircraftUrl(value) {
   return new URL('data/aircraft.json', sourceAddress(value));
 }
 
+function exchangeSource(value) {
+  if (typeof value !== 'string' || !value.startsWith('exchange:')) return null;
+  const raw = value.slice('exchange:'.length);
+  if (!raw || /[\s\\]/.test(raw)) throw new Error('Invalid ADS-B exchange endpoint');
+  const url = new URL(raw);
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username ||
+      url.password || url.search || url.hash)
+    throw new Error('Use an HTTP(S) ADS-B exchange endpoint without credentials or a query');
+  return {url, adapter: 'adsbx-v2', kind: 'exchange'};
+}
+
+function configuredAircraftSource(value) {
+  return exchangeSource(value) ||
+    {url: configuredAircraftUrl(value), adapter: 'readsb', kind: 'http'};
+}
+
+function normalizeAircraftSnapshot(data, adapter) {
+  if (adapter !== 'adsbx-v2') return data;
+  if (!Number.isFinite(data?.now) || !Array.isArray(data?.ac))
+    throw new Error('Invalid ADS-B exchange data');
+  // ADS-B Exchange-compatible APIs report epoch milliseconds while readsb
+  // reports epoch seconds. Keep per-aircraft seen_pos untouched: it is already
+  // relative to the snapshot time and therefore retains event-time freshness.
+  const now = data.now > 100000000000 ? data.now / 1000 : data.now;
+  return {now, aircraft: data.ac};
+}
+
 function configuredSources(config) {
   const values = config.truth?.adsb?.sources;
   return Array.isArray(values) && values.length ? [...values] : [config.truth?.adsb?.tar1090];
@@ -47,7 +74,8 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
     timer = setTimeout(() => finish(new Error('ADS-B source timed out')), timeoutMs);
     try {
       request = (url.protocol === 'https:' ? https : http).get(url, {
-        headers: {Accept: 'application/json', 'Accept-Encoding': 'identity'}
+        headers: {Accept: 'application/json', 'Accept-Encoding': 'identity',
+          'User-Agent': 'VectorWarp/1.0 ADS-B client'}
       }, incoming => {
         response = incoming;
         // Do not forward arbitrary redirects/credentials or accept an HTML login
@@ -83,9 +111,14 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     Math.max(100, Math.min(10000, config.truth.adsb.source_timeout * 1000)) : 1500;
   const slots = configuredSources(config).map((configured, index) => {
     const classification = classifyAdsbSource(configured);
+    const exchange = classification.mode === 'explicit' ? exchangeSource(configured) : null;
     return {configured, classification, discoveryEntry: undefined, explicitUrl: undefined,
       state: {id: configured, mode: classification.mode,
-        ...(classification.mode === 'explicit' ? {kind: 'http'} : {}),
+        ...(classification.mode === 'explicit' ? {
+          kind: exchange?.kind || 'http', adapter: exchange?.adapter || 'readsb',
+          authoritative: !exchange,
+          reliability: exchange ? .65 : Math.max(.8, 1 - index * .05)
+        } : {}),
         state: 'configured', healthy: null, consecutive_failures: 0,
         consecutive_successes: 0, configured_index: index}};
   });
@@ -95,10 +128,12 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     timeoutMs: sourceTimeoutMs};
   async function resolveSource(slot) {
     if (slot.classification.mode === 'explicit') {
-      slot.explicitUrl ||= configuredAircraftUrl(slot.configured);
+      const selected = configuredAircraftSource(slot.configured);
+      slot.explicitUrl ||= selected.url;
       slot.state = {...slot.state, endpoint: slot.explicitUrl.href};
       return {source: slot.state,
-        read: () => fetchJson(slot.explicitUrl, {timeoutMs: sourceTimeoutMs})};
+        read: async () => normalizeAircraftSnapshot(
+          await fetchJson(slot.explicitUrl, {timeoutMs: sourceTimeoutMs}), selected.adapter)};
     }
     if (slot.discoveryEntry && now() - slot.discoveryEntry.at < discoveryCacheMs)
       return slot.discoveryEntry.promise;
@@ -214,4 +249,5 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   }};
 }
 
-module.exports = {sourceAddress, aircraftUrl, configuredSources, readJson, createAdsbSource};
+module.exports = {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
+  normalizeAircraftSnapshot, readJson, createAdsbSource};

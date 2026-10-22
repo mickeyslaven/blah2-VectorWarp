@@ -101,10 +101,11 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
   const aircraft = [];
   for (const [hex, observations] of byHex) {
     const groups = cluster(observations, disagreementKm);
-    const accepted = groups[0].sort((left, right) => right.quality - left.quality ||
-      right.eventTime - left.eventTime);
-    const winner = accepted[0];
-    const rejected = groups.slice(1).flat();
+    const winner = [...observations].sort((left, right) =>
+      right.eventTime - left.eventTime || right.quality - left.quality)[0];
+    const accepted = (groups.find(group => group.includes(winner)) || [winner])
+      .sort((left, right) => right.eventTime - left.eventTime || right.quality - left.quality);
+    const rejected = observations.filter(item => !accepted.includes(item));
     aircraft.push({...winner.aircraft, hex, seen_pos: Math.max(0, nowSeconds - winner.eventTime),
       vectorwarp: {
         source_id: winner.sourceId,

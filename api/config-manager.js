@@ -945,10 +945,17 @@ function validateConfig(config, baseline = null) {
     try {
       if (typeof source === 'string' && /^local:(?!\d+(?:\/|$))/.test(source))
         throw new Error('Unknown local source');
+      if (typeof source === 'string' && source.startsWith('exchange:')) {
+        const endpoint = new URL(source.slice('exchange:'.length));
+        if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname ||
+            endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+          throw new Error('Invalid exchange endpoint');
+        return `exchange:${endpoint.href}`;
+      }
       return sourceAddress(source).href;
     }
     catch (_) {
-      errors.push(`${key}: select a local source or enter a hostname, host:port or HTTP(S) address without credentials or a query`);
+      errors.push(`${key}: select a local source, enter a readsb address, or use exchange:https://... without credentials or a query`);
       return null;
     }
   };

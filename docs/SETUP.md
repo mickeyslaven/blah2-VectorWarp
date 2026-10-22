@@ -186,6 +186,7 @@ truth:
     sources:
       - 'local:readsb'
       - 'https://approved-backup.example/tar1090'
+      - 'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60'
     source_timeout: 1.5
 ```
 
@@ -196,6 +197,14 @@ only configure services whose access, attribution, retention, and operational
 terms have been approved. `/api/adsb/status` reports per-source health,
 latency, positions usable by geometry, positions fresh enough for evidence,
 failures, and the latest fusion summary.
+
+Prefix an exact ADS-B Exchange v2-compatible endpoint with `exchange:`. These
+responses use `ac` and millisecond snapshot timestamps; VectorWarp normalizes
+them to readsb event time without changing each aircraft's `seen_pos`. Ordered
+sources are deduplicated by ICAO address and the observation with the newest
+actual position event time (`snapshot time - seen_pos`) wins. Source provenance,
+agreement, and disagreement remain attached to that single aircraft record.
+Configure only services whose usage and attribution terms fit the deployment.
 
 Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
 Stock 3lips uses an external adsb2dd service rather than this built-in converter.

@@ -34,11 +34,11 @@ const consensus = fuseAircraftData([
   snapshot(publicB, nowMs / 1000, [
     {hex: 'abc123', lat: 40.001, lon: -80, alt_geom: 10010, seen_pos: .7}])
 ], {nowMs, disagreementKm: 3});
-assert.equal(consensus.aircraft[0].lat, 40.001,
-  'two-source consensus beats a fresher but geographically impossible singleton');
-assert.deepEqual(new Set(consensus.aircraft[0].vectorwarp.agreeing_sources),
+assert.equal(consensus.aircraft[0].lat, 41,
+  'the freshest event wins even when older sources form a different consensus');
+assert.deepEqual(consensus.aircraft[0].vectorwarp.agreeing_sources, ['local-readsb']);
+assert.deepEqual(new Set(consensus.aircraft[0].vectorwarp.rejected_sources),
   new Set(['adsb-fi', 'licensed-backup']));
-assert.deepEqual(consensus.aircraft[0].vectorwarp.rejected_sources, ['local-readsb']);
 assert.equal(consensus.aircraft[0].vectorwarp.disagreement, true);
 
 const duplicate = fuseAircraftData([
@@ -48,5 +48,18 @@ const duplicate = fuseAircraftData([
     {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: .2}])
 ], {nowMs});
 assert.equal(duplicate.aircraft[0].lat, 40, 'latest observation wins within one source');
+
+const newestPreferred = fuseAircraftData([
+  snapshot({id: 'pi-zero', kind: 'http', authoritative: true, reliability: 1}, nowMs / 1000, [
+    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: .3}]),
+  snapshot({id: 'online-a', kind: 'exchange', reliability: .65}, nowMs / 1000, [
+    {hex: 'abc123', lat: 41, lon: -80, alt_geom: 10000, seen_pos: .1}]),
+  snapshot({id: 'online-b', kind: 'exchange', reliability: .65}, nowMs / 1000, [
+    {hex: 'abc123', lat: 41.001, lon: -80, alt_geom: 10000, seen_pos: .2}])
+], {nowMs, disagreementKm: 3});
+assert.equal(newestPreferred.aircraft.length, 1, 'all sources collapse to one aircraft per ICAO hex');
+assert.equal(newestPreferred.aircraft[0].lat, 41,
+  'the observation with the newest actual position timestamp wins across sources');
+assert.equal(newestPreferred.aircraft[0].vectorwarp.source_id, 'online-a');
 
 console.log('PASS ADS-B event-time normalization, freshness, deduplication and consensus fusion');
