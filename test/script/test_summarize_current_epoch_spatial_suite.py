@@ -64,6 +64,35 @@ def test_gain_selection_uses_positive_only_and_can_choose_equalized():
     assert selection["selected"] == "inverse_hardware_gain"
 
 
+def test_gain_diagnostics_report_margin_beam_and_noise_effects():
+    manifest = {"jobs": [
+        {"job_id": "p1", "event_id": "positive", "role": "positive"},
+        {"job_id": "m1", "event_id": "miss", "role": "miss"},
+    ]}
+    positive = result("p1", "positive", "positive", (1, 2, 3))
+    miss = result("m1", "miss", "miss", (-1, -2, -3))
+    for clip, delta, beams in ((positive, 1.5, (2, 4)), (miss, -.5, (3, 3))):
+        for method in SUMMARY.METHODS:
+            clip["gain_treatments"]["inverse_hardware_gain"]["methods"][method][
+                "margin_over_control_p99_db"] += delta
+        clip["gain_treatments"]["raw_as_acquired"]["methods"]["spatial_glrt"][
+            "target_fixed_beam"] = beams[0]
+        clip["gain_treatments"]["inverse_hardware_gain"]["methods"]["spatial_glrt"][
+            "target_fixed_beam"] = beams[1]
+        clip["gain_accounting"] = {
+            "raw_channel_rms": [1, 2], "equalized_channel_rms": [2, 1],
+            "noise_power_change_db": [6.020599913, -6.020599913],
+        }
+    diagnostics = SUMMARY.gain_diagnostics(
+        manifest, {"results": {"p1": positive, "m1": miss}})
+    assert diagnostics["equalized_minus_raw_margin_db"]["positive"][
+        "post_doppler_stap"]["median"] == 1.5
+    assert diagnostics["spatial_glrt_fixed_beam"]["positive"]["changed"] == 1
+    assert diagnostics["spatial_glrt_fixed_beam"]["miss"]["changed"] == 0
+    assert diagnostics["channel_rms_change_db"]["median_observed"] == [
+        6.020599913279624, -6.020599913279624]
+
+
 def test_summary_rejects_incomplete_state():
     manifest = {"config_epoch": "epoch", "statistics_sha256": "hash",
                 "jobs": [{"job_id": "missing", "event_id": "miss"}]}

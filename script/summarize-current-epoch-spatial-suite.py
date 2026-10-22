@@ -4,6 +4,7 @@
 import argparse
 import importlib.util
 import json
+import math
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -45,6 +46,75 @@ def best_event_margin(clips):
         candidates.extend(item["margin_db_equivalent"]
                           for item in stacks(clip).values())
     return max(candidates)
+
+
+def gain_diagnostics(manifest, state):
+    """Describe treatment effects without feeding miss outcomes into selection."""
+    jobs = {job["job_id"]: job for job in manifest["jobs"]}
+    margin_deltas = {role: {method: [] for method in METHODS}
+                     for role in ("positive", "miss")}
+    fixed_beam_changes = {role: 0 for role in ("positive", "miss")}
+    fixed_beam_comparisons = {role: 0 for role in ("positive", "miss")}
+    rms_changes = []
+    theoretical_noise_changes = []
+    for job_id, job in jobs.items():
+        clip = state["results"].get(job_id, {})
+        raw = treatment(clip, "raw_as_acquired")
+        equalized = treatment(clip, "inverse_hardware_gain")
+        if raw is None or equalized is None:
+            continue
+        role = job["role"]
+        for method in METHODS:
+            margin_deltas[role][method].append(
+                equalized["methods"][method]["margin_over_control_p99_db"] -
+                raw["methods"][method]["margin_over_control_p99_db"])
+        raw_beam = raw["methods"]["spatial_glrt"].get("target_fixed_beam")
+        equalized_beam = equalized["methods"]["spatial_glrt"].get("target_fixed_beam")
+        if raw_beam is not None and equalized_beam is not None:
+            fixed_beam_comparisons[role] += 1
+            fixed_beam_changes[role] += raw_beam != equalized_beam
+        accounting = clip.get("gain_accounting", {})
+        raw_rms = accounting.get("raw_channel_rms", [])
+        equalized_rms = accounting.get("equalized_channel_rms", [])
+        if len(raw_rms) == len(equalized_rms) and raw_rms:
+            rms_changes.append([20 * math.log10(max(after, 1e-300) /
+                                                max(before, 1e-300))
+                                for before, after in zip(raw_rms, equalized_rms)])
+        if accounting.get("noise_power_change_db"):
+            theoretical_noise_changes.append(accounting["noise_power_change_db"])
+    channel_count = len(rms_changes[0]) if rms_changes else 0
+    observed = [statistics.median(row[channel] for row in rms_changes)
+                for channel in range(channel_count)]
+    theoretical = ([statistics.median(row[channel]
+                                      for row in theoretical_noise_changes)
+                    for channel in range(len(theoretical_noise_changes[0]))]
+                   if theoretical_noise_changes else [])
+    return {
+        "scope": "descriptive only; excluded from positive-only treatment selection",
+        "equalized_minus_raw_margin_db": {
+            role: {method: {
+                "clips": len(values),
+                "median": statistics.median(values) if values else None,
+                "minimum": min(values) if values else None,
+                "maximum": max(values) if values else None,
+            } for method, values in methods.items()}
+            for role, methods in margin_deltas.items()
+        },
+        "spatial_glrt_fixed_beam": {
+            role: {"comparisons": fixed_beam_comparisons[role],
+                   "changed": fixed_beam_changes[role]}
+            for role in fixed_beam_changes
+        },
+        "channel_rms_change_db": {
+            "clip_count": len(rms_changes),
+            "median_observed": observed,
+            "theoretical_from_hardware_gain_scaling": theoretical,
+            "interpretation": (
+                "Positive values amplify both antenna voltage and receiver noise; "
+                "the low-gain channels receive the largest upward scaling."
+            ),
+        },
+    }
 
 
 def select_gain_treatment(manifest, state):
@@ -166,6 +236,7 @@ def summarize(manifest, state, selection=None):
             "evaluated": list(TREATMENTS),
             "selected_for_miss_decisions": selected_treatment,
             "covariance_whitening": "intrinsic in all three methods; no extra preprocessing was applied to avoid double whitening",
+            "diagnostics": gain_diagnostics(manifest, state),
         },
         "summary": {
             "misses_recovered_any": sum(row["recovered_any"] for row in misses),
