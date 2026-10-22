@@ -141,7 +141,7 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     },
     clearIntervalFn() { cleared = true; },
     onEligibilityEvent() { emitted += 1; }});
-  assert.equal(samplerMs, 1000);
+  assert.equal(samplerMs, 500);
   assert.equal(unrefCalled, true, 'The independent sampler must not hold the process open');
   sampler();
   while (outage.running) await new Promise(resolve => setImmediate(resolve));
@@ -177,13 +177,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     retentionClock += 1000;
   }
   const retained = retention.status().eligibility_events[0].truth_samples;
-  assert.equal(retained.length, 60);
-  assert.deepEqual(retained.slice(0, 30).map(item => item.timestamp_ms),
-    Array.from({length: 30}, (_, index) => 2_000_000_000_000 + index * 1000),
-    'The clip-trigger trajectory must never roll out of the event evidence');
-  assert.deepEqual(retained.slice(30).map(item => item.timestamp_ms),
-    Array.from({length: 30}, (_, index) => 2_000_000_035_000 + index * 1000),
-    'The retained tail must continue following the aircraft');
+  assert.equal(retained.length, 65);
+  assert.deepEqual(retained.map(item => item.timestamp_ms),
+    Array.from({length: 65}, (_, index) => 2_000_000_000_000 + index * 1000),
+    'The retained trajectory must remain continuous without a minute-wide middle gap');
   retention.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');

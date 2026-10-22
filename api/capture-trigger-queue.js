@@ -330,6 +330,21 @@ class CaptureTriggerQueue {
       ({...event, clipRevisions: [...event.clipRevisions]}));
   }
 
+  setAdmission(revision, admissions, integrity) {
+    let changed = false;
+    for (const event of this.events.values()) for (const window of event.captureWindows || []) {
+      if (window.revision !== revision || !admissions?.[window.captureId]) continue;
+      const truth = admissions[window.captureId];
+      window.admissionState = truth.valid && integrity?.valid ? 'admitted' : 'quarantined';
+      window.admissionReasons = [...new Set([...(truth.reasons || []), ...(integrity?.reasons || [])])];
+      window.truthSamples = truth.truth_samples;
+      window.cpiTruth = truth.cpis;
+      window.integrity = integrity;
+      changed = true;
+    }
+    return changed;
+  }
+
   current() {
     return this.clips.find(clip => clip.pending) || this.clips.at(-1) || null;
   }

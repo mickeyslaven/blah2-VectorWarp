@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {validateTruthWindow} = require('./capture-admission');
 
 const SPEED_OF_LIGHT_KM_S = 299792.458;
 const MAX_PASSES = 200000;
@@ -11,7 +12,8 @@ const MAX_ELIGIBILITY_EVENTS = 10000;
 // diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
 // with an IQ clip when an aircraft remains eligible for more than 30 seconds.
 const TRIGGER_EVENT_TRUTH_SAMPLES = 30;
-const MAX_EVENT_TRUTH_SAMPLES = 60;
+const MAX_EVENT_TRUTH_SAMPLES = 256;
+const TRUTH_SAMPLE_MS = 500;
 const MAX_ACTIVE_CAPTURE_TIMESTAMPS = 128;
 const MAX_CAPTURE_ASSOCIATIONS = 64;
 const PASS_GAP_MS = 120000;
@@ -122,7 +124,7 @@ function emptyPass(hex, flight, at, key) {
     maxAltitudeGeomFt: null, minElevationDeg: null, maxElevationDeg: null,
     minGroundRangeKm: null, maxGroundRangeKm: null, maxAbsDelayRateKmS: null,
     maxAbsDopplerRateHzS: null, azimuthSectors45: Array(8).fill(0),
-    firstTruth: null, lastTruth: null, firstDetectionAt: null, firstTrackAt: null,
+    firstTruth: null, lastTruth: null, truthHistory: [], firstDetectionAt: null, firstTrackAt: null,
     detectionTimestamps: [], trackTimestamps: [], lastBucket: null};
 }
 
@@ -193,6 +195,11 @@ function upsertCaptureWindow(event, record, pass) {
     window_start: record.windowStart, window_end: record.windowEnd,
     state: record.state, file: record.file || '', samples: record.samples || 0,
     failure: record.failure || null,
+    admission_state: record.admissionState || prior.admission_state || 'pending',
+    admission_reasons: record.admissionReasons || prior.admission_reasons || [],
+    truth_samples: record.truthSamples || prior.truth_samples || [],
+    cpi_truth: record.cpiTruth || prior.cpi_truth || [],
+    integrity: record.integrity || prior.integrity || null,
     detected_frames: canRecount ? detections.length : (prior.detected_frames || 0),
     tracked_frames: canRecount ? tracks.length : (prior.tracked_frames || 0),
     first_detection_at: canRecount ? (detections[0] ?? null) : (prior.first_detection_at ?? null),
@@ -266,6 +273,10 @@ function truthSnapshot(prediction, timestamp) {
 
 function updateTruth(pass, prediction, timestamp) {
   const snapshot = truthSnapshot(prediction, timestamp);
+  if (!Array.isArray(pass.truthHistory)) pass.truthHistory = [];
+  pass.truthHistory.push(snapshot);
+  if (pass.truthHistory.length > MAX_EVENT_TRUTH_SAMPLES)
+    pass.truthHistory.splice(0, pass.truthHistory.length - MAX_EVENT_TRUTH_SAMPLES);
   if (!pass.firstTruth) pass.firstTruth = snapshot;
   pass.lastTruth = snapshot;
   extent(pass, 'minAltitudeGeomFt', 'maxAltitudeGeomFt', snapshot.altitude_geom_ft);
@@ -349,7 +360,9 @@ class EvidenceStatistics {
       eligibilityEvents: [], rollup: {siteKey: this.key,
         passes: 0, eligible: 0,
         detected: 0, tracked: 0, missed: 0, outOfConfig: 0,
-        truthUnusable: 0, eligibleNoRadar: 0, detectedNotTracked: 0}, error: null};
+        truthUnusable: 0, eligibleNoRadar: 0, detectedNotTracked: 0},
+      captureAdmission: {checked: 0, admitted: 0, quarantined: 0,
+        missingAfterAdmission: 0, reasons: {}}, error: null};
     this.latest = {detection: null, tracker: null, bearing: null};
     this.lastDetectionFrameTimestamp = null; this.lastTrackerFrameTimestamp = null;
     this.running = false; this.queued = false; this.lastSampleBucket = null;
@@ -361,7 +374,7 @@ class EvidenceStatistics {
     this.load();
     this.sampler = null;
     if (this.limits && this.config.truth?.adsb?.enabled === true) {
-      this.sampler = setIntervalFn(() => this.queue(this.now()), 1000);
+      this.sampler = setIntervalFn(() => this.queue(this.now()), TRUTH_SAMPLE_MS);
       if (typeof this.sampler?.unref === 'function') this.sampler.unref();
     }
   }
@@ -376,6 +389,9 @@ class EvidenceStatistics {
       this.state = {...this.state, ...value, schema: this.state.schema,
         eligibilityEvents: Array.isArray(value.eligibilityEvents) ? value.eligibilityEvents : [],
         sites: {...(value.sites || {}), [this.key]: siteDescriptor(this.config)}, error: null};
+      this.state.captureAdmission ||= {checked: 0, admitted: 0, quarantined: 0,
+        missingAfterAdmission: 0, reasons: {}};
+      this.state.captureAdmission.missingAfterAdmission ||= 0;
       // Capture requests are intentionally process-local and bounded. After an
       // API restart no native recorder can still acknowledge the old queue, so
       // never leave its evidence ledger permanently claiming a pending clip.
@@ -416,7 +432,7 @@ class EvidenceStatistics {
   async sample(timestamp = this.now()) {
     this.running = true;
     try {
-      const bucket = Math.floor(timestamp / 1000);
+      const bucket = Math.floor(timestamp / TRUTH_SAMPLE_MS);
       if (bucket === this.lastSampleBucket) return;
       this.lastSampleBucket = bucket;
       const predictions = await this.adsbSource.get('delayDoppler');
@@ -466,7 +482,7 @@ class EvidenceStatistics {
       this.finish(hex); pass = null;
     }
     if (!pass) pass = this.state.active[hex] = emptyPass(hex, prediction.flight, timestamp, this.key);
-    const bucket = Math.floor(timestamp / 1000);
+    const bucket = Math.floor(timestamp / TRUTH_SAMPLE_MS);
     if (pass.lastBucket === bucket) return;
     pass.lastBucket = bucket; pass.lastAt = timestamp; pass.frames += 1;
     const delay = prediction.delay, doppler = prediction.doppler;
@@ -492,10 +508,13 @@ class EvidenceStatistics {
     const event = this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId);
     if (event) {
       if (!Array.isArray(event.truth_samples)) event.truth_samples = [];
-      event.truth_samples.push(truthSnapshot(prediction, timestamp));
+      if (event.truth_samples.at(-1)?.timestamp_ms !== timestamp)
+        event.truth_samples.push(truthSnapshot(prediction, timestamp));
       if (event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
-        event.truth_samples.splice(TRIGGER_EVENT_TRUTH_SAMPLES,
-          event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
+        event.truth_samples.splice(0, event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
+      for (const window of event.capture_windows || []) window.truth_samples =
+        event.truth_samples.filter(sample => sample.timestamp_ms >= window.window_start - 3000 &&
+          sample.timestamp_ms <= window.window_end + 3000);
     }
     const detectedAt = associationTimestamp(detectedAssociation);
     const trackedAt = associationTimestamp(trackedAssociation);
@@ -535,7 +554,7 @@ class EvidenceStatistics {
         ground_range_km: geometry.ground_range_km ?? null,
         slant_range_km: geometry.slant_range_km ?? null,
         transmitter_range_km: geometry.transmitter_range_km ?? null},
-      truth_samples: [],
+      truth_samples: (pass.truthHistory || []).slice(),
       capture_windows: [],
       capture_state: 'not_integrated', eligible_frames: 1,
       detected_frames: 0, tracked_frames: 0};
@@ -625,6 +644,47 @@ class EvidenceStatistics {
     }
     this.state.updatedAt = this.now();
     this.persist();
+  }
+
+  prepareCaptureAdmissions(records) {
+    const result = {};
+    const cpiMs = (this.limits?.cpiSeconds || .5) * 1000;
+    for (const record of records || []) for (const window of record.captureWindows || []) {
+      if (!window.captureId || result[window.captureId] || window.revision === null) continue;
+      const event = this.state.eligibilityEvents.find(item => item.id === record.eventId);
+      const truth = (event?.truth_samples || []).filter(sample =>
+        sample.timestamp_ms >= window.windowStart - 3000 && sample.timestamp_ms <= window.windowEnd + 3000);
+      result[window.captureId] = validateTruthWindow(truth, window.windowStart, window.windowEnd, {cpiMs});
+    }
+    return result;
+  }
+
+  recordCaptureAdmissions(admissions) {
+    for (const admission of Object.values(admissions || {})) {
+      this.state.captureAdmission.checked += 1;
+      if (admission.valid) this.state.captureAdmission.admitted += 1;
+      else {
+        this.state.captureAdmission.quarantined += 1;
+        for (const reason of admission.reasons || [])
+          this.state.captureAdmission.reasons[reason] = (this.state.captureAdmission.reasons[reason] || 0) + 1;
+      }
+    }
+    this.persist();
+  }
+
+  auditRetainedCaptures() {
+    for (const event of this.state.eligibilityEvents.slice(-250)) for (const window of event.capture_windows || []) {
+      if (window.admission_state !== 'admitted' || !window.file) continue;
+      if (this.fs.existsSync(window.file) && this.fs.existsSync(`${window.file}.json`) &&
+          this.fs.existsSync(`${window.file}.admission.json`)) continue;
+      window.admission_state = 'quarantined';
+      window.admission_reasons = [...new Set([...(window.admission_reasons || []),
+        'recording-missing-after-admission'])];
+      this.state.captureAdmission.missingAfterAdmission += 1;
+      this.state.captureAdmission.quarantined += 1;
+      this.state.captureAdmission.reasons['recording-missing-after-admission'] =
+        (this.state.captureAdmission.reasons['recording-missing-after-admission'] || 0) + 1;
+    }
   }
 
   finish(hex) {
@@ -720,12 +780,14 @@ class EvidenceStatistics {
   }
 
   status(bearing = {}) {
+    this.auditRetainedCaptures();
     const timestamp = this.now();
     const live = this.latest.bearing?.data || [];
     return {schema: this.state.schema, site_key: this.key, updated_at: this.state.updatedAt,
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, limits: this.limits,
       eligibility_event_count: this.state.eligibilityEvents.length,
+      capture_admission: this.state.captureAdmission,
       eligibility_events: this.state.eligibilityEvents.slice(-250),
       windows: Object.fromEntries(Object.entries(WINDOWS).map(([name, duration]) =>
         [name, this.summarize(duration, timestamp)])),
@@ -748,6 +810,6 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
 }
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
-  TRIGGER_EVENT_TRUTH_SAMPLES, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
+  TRIGGER_EVENT_TRUTH_SAMPLES, TRUTH_SAMPLE_MS, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
   limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics};

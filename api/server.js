@@ -29,6 +29,7 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
+const {verifyCaptureIntegrity, writeAdmissionSidecar} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
@@ -65,6 +66,39 @@ const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
   {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
     onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
+
+async function finalizeCaptureAdmission(revision, file, samples) {
+  const records = captureTriggerQueue.eventsForRevision(revision);
+  const admissions = evidenceStatistics.prepareCaptureAdmissions(records);
+  const first = records.flatMap(record => record.captureWindows || [])
+    .find(window => window.revision === revision);
+  let integrity;
+  try {
+    integrity = await verifyCaptureIntegrity(file, {revision, samples,
+      windowStart: first?.windowStart, windowEnd: first?.windowEnd});
+  } catch (error) { integrity = {valid: false, reasons: ['recording-integrity-error'], error: error.message}; }
+  const {metadata: _metadata, ...integritySummary} = integrity;
+  integrity = integritySummary;
+  const allTruthValid = Object.values(admissions).length > 0 &&
+    Object.values(admissions).every(item => item.valid);
+  let admissionSidecar = null;
+  const artifact = {schema: 'vectorwarp-capture-admission-v1', created_at: Date.now(), revision,
+    state: integrity.valid && allTruthValid ? 'admitted' : 'quarantined', integrity,
+    config_epoch: evidenceStatistics.configEpoch, receiver_epoch: evidenceStatistics.receiverEpoch,
+    events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
+      capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
+        .map(window => window.captureId)})), captures: admissions};
+  if (file) try { admissionSidecar = await writeAdmissionSidecar(file, artifact); }
+  catch (error) {
+    integrity = {...integrity, valid: false,
+      reasons: [...new Set([...(integrity.reasons || []), 'admission-sidecar-write'])], error: error.message};
+  }
+  integrity = {...integrity, admission_sidecar: admissionSidecar};
+  captureTriggerQueue.setAdmission(revision, admissions, integrity);
+  evidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
+    [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
+  evidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
+}
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
@@ -556,10 +590,10 @@ app.post('/api/processor/status', (req, res) => {
           evidenceStatistics.acceptCaptureEvents(
             captureTriggerQueue.eventsForRevision(revision));
       }, CLIP_PRE_ROLL_RETRY_DELAY_MS).unref();
-    } else {
-      evidenceStatistics.acceptCaptureEvents(
-        captureTriggerQueue.eventsForRevision(revision));
-    }
+    } else if (checked.value.clipError) evidenceStatistics.acceptCaptureEvents(
+      captureTriggerQueue.eventsForRevision(revision));
+    else void finalizeCaptureAdmission(revision, checked.value.clipFile, checked.value.clipSamples)
+      .catch(error => console.error(`Capture admission failed: ${error.message}`));
   }
   res.status(204).end();
 });
