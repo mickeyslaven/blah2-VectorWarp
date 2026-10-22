@@ -1,15 +1,15 @@
 {
   "schema": "vectorwarp-fresh-rolling-status-v1",
-  "updated_at_ms": 1792668671290,
+  "updated_at_ms": 1792672052063,
   "admission": {
     "status": "rolling_admission_open",
     "ledger": "results/20261022-fresh-rolling-candidate-ledger.json",
-    "candidate_clips": 193,
+    "candidate_clips": 316,
     "positive_clips": 3,
     "positive_passes": 3,
-    "miss_clips": 190,
-    "miss_passes": 80,
-    "unique_aircraft": 76,
+    "miss_clips": 313,
+    "miss_passes": 133,
+    "unique_aircraft": 127,
     "strict_truth": "bracketed event-time interpolation; no hold/fallback",
     "all_valid_positives_retained": true
   },
@@ -28,7 +28,7 @@
     "selected_gain_treatment": "raw_as_acquired"
   },
   "ordered_backend": {
-    "status": "partial_not_accepted",
+    "status": "positive_validation_in_progress",
     "real_raw_iq_smoke_test": {
       "revision": 118,
       "arm": "A",
@@ -50,9 +50,19 @@
       "rank": 168,
       "strict_native_spatial_cache": "passed"
     },
+    "r118_ordered_abcd": {
+      "status": "passed",
+      "initial_field_materialization_runtime_s": 122,
+      "cached_arm_runtime_s": [
+        7.11,
+        7.34
+      ],
+      "translated_controls_per_arm": 6400,
+      "durable_result": "results/20261022-ordered-recovery-r118-ordered-abcd.json"
+    },
     "remaining": [
-      "true ordered sequential transforms for A-D",
-      "bounded trajectory TBD/HMM rather than primitive conjunction"
+      "persistent raw-IQ staging for r120 and r234",
+      "end-to-end positive-only A-H execution on r118, r120, and r234"
     ]
   },
   "kraken_bearing_backend": {
@@ -79,7 +89,12 @@
     "api_active": true,
     "processor_active": true,
     "tracker_input_fresh": true,
-    "last_frame_at_ms": 1792668671290,
-    "frame_advancement_verified": true
+    "last_frame_at_ms": 1792672030371,
+    "frame_advancement_verified": true,
+    "heimdall_active": true,
+    "watchdog_timer_active": true,
+    "watchdog_timer_enabled": true,
+    "capture_clip_revision": 992,
+    "capture_error_latched": "Kraken clip pre-roll is unavailable"
   }
 }
