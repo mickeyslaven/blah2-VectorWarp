@@ -1,0 +1,13 @@
+{
+  "schema":"oprs-trial-output-v1","trial_id":"example-2ch-trial-1","plan_hash":"sha256:8223be707fa8c38cee233dc255987a59c2041dbae8309fd171a2f08e1943392d","evidence_layer":"pure_synthetic","partition":"evaluation","inference_truth_access":false,"site_epoch_id":"synthetic-site-v1","receiver_epoch_id":"fixture-receiver-v1","config_epoch_id":"example-config-v1","valid_radar_seconds":3600,"nuisance_new_tracks":2,
+  "opportunity_results":[
+    {"opportunity_id":"p1-c1","pass_id":"p1","cpi_id":"c1","event_time_ns":1000000000,"raw_detection":true,"track_present":true,"track_confirmed":true,"measurement_supported":true,"measurement_id":"m1","track_id":"t1"},
+    {"opportunity_id":"p1-c2","pass_id":"p1","cpi_id":"c2","event_time_ns":1500000000,"raw_detection":true,"track_present":true,"track_confirmed":true,"measurement_supported":true,"measurement_id":"m2","track_id":"t1"},
+    {"opportunity_id":"p1-c3","pass_id":"p1","cpi_id":"c3","event_time_ns":2000000000,"raw_detection":true,"track_present":true,"track_confirmed":true,"measurement_supported":true,"measurement_id":"m3","track_id":"t1"},
+    {"opportunity_id":"p2-c1","pass_id":"p2","cpi_id":"c1","event_time_ns":3000000000,"raw_detection":true,"track_present":true,"track_confirmed":true,"measurement_supported":true,"measurement_id":"m4","track_id":"t2"},
+    {"opportunity_id":"p2-c2","pass_id":"p2","cpi_id":"c2","event_time_ns":3500000000,"raw_detection":true,"track_present":true,"track_confirmed":true,"measurement_supported":true,"measurement_id":"m5","track_id":"t2"},
+    {"opportunity_id":"p2-c3","pass_id":"p2","cpi_id":"c3","event_time_ns":4000000000,"raw_detection":false,"track_present":true,"track_confirmed":true,"measurement_supported":false,"track_id":"t2"}
+  ],
+  "measurements":[{"metric_id":"valid_iq_fraction","value":1,"source":"iq_derived"},{"metric_id":"phase_stability_deg","value":2,"source":"iq_derived"},{"metric_id":"reference_snr_db","value":18,"source":"iq_derived"},{"metric_id":"target_attenuation_db","value":0.4,"source":"replay"},{"metric_id":"positive_control_retention","value":1,"source":"replay"},{"metric_id":"processing_time_ratio_p99","value":0.4,"source":"telemetry"}],
+  "evidence_hashes":{"iq":"sha256:0000000000000000000000000000000000000000000000000000000000000000","config":"sha256:1111111111111111111111111111111111111111111111111111111111111111","truth":"sha256:2222222222222222222222222222222222222222222222222222222222222222"}
+}

@@ -1,0 +1,1778 @@
+{
+  "partition_policy": {
+    "disjoint_recording_sessions_required": true,
+    "evaluation": [
+      "pure-deterministic",
+      "evaluation-background-a",
+      "evaluation-background-b"
+    ],
+    "selection": [
+      "selection-*"
+    ],
+    "training": [
+      "training-*"
+    ]
+  },
+  "profile": "REF_SURV_2CH",
+  "scenarios": [
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": true,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-blank",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "blank"
+      ],
+      "trajectory": []
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d5-f-2-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d5-f-2-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d5-f-2-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d5-f-2-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d5-f-2-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d15-f-80-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d15-f-80-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d15-f-80-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d15-f-80-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d15-f-80-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d45-f120-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d45-f120-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d45-f120-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d45-f120-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "pure-deterministic",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "pure_synthetic",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "pure-deterministic-d45-f120-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": true,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-blank",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "blank"
+      ],
+      "trajectory": []
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d5-f-2-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d5-f-2-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d5-f-2-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d5-f-2-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d5-f-2-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d15-f-80-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d15-f-80-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d15-f-80-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d15-f-80-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d15-f-80-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d45-f120-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d45-f120-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d45-f120-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d45-f120-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-a",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-a-d45-f120-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": true,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-blank",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "blank"
+      ],
+      "trajectory": []
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d5-f-2-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d5-f-2-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d5-f-2-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d5-f-2-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d5-f-2-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 5.0,
+          "doppler_hz": -2.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 6.5,
+          "doppler_hz": 6.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d15-f-80-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d15-f-80-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d15-f-80-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d15-f-80-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d15-f-80-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 15.0,
+          "doppler_hz": -80.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 16.5,
+          "doppler_hz": -72.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d45-f120-l-60",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -60,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -60,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d45-f120-l-54",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -54,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -54,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d45-f120-l-48",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -48,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -48,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d45-f120-l-42",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "evaluation-background-b-d45-f120-l-36",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 45.0,
+          "doppler_hz": 120.0,
+          "level_db_ref_rms": -36,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 0.0,
+          "delay_km": 46.5,
+          "doppler_hz": 128.0,
+          "level_db_ref_rms": -36,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "crossing-target-primary",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 30,
+          "delay_km": 12,
+          "doppler_hz": -90,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 210,
+          "delay_km": 22,
+          "doppler_hz": 90,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    },
+    {
+      "background_id": "evaluation-background-b",
+      "blank_control": false,
+      "capability_profile": "REF_SURV_2CH",
+      "evidence_layer": "background_injection",
+      "inject_into_channel_ids": [
+        "surv"
+      ],
+      "multipath": [
+        {
+          "extra_delay_km": 2.0,
+          "phase_deg": 75.0,
+          "relative_level_db": -8.0
+        }
+      ],
+      "partition": "evaluation",
+      "replay_only": true,
+      "scenario_id": "controlled-multipath",
+      "schema": "oprs-benchmark-scenario-v1",
+      "seed": 20261022,
+      "source_channel_id": "ref",
+      "tags": [
+        "time_varying",
+        "both_signs_grid",
+        "amplitude_staircase"
+      ],
+      "trajectory": [
+        {
+          "azimuth_deg": 30,
+          "delay_km": 12,
+          "doppler_hz": -90,
+          "level_db_ref_rms": -42,
+          "time_s": 0.0
+        },
+        {
+          "azimuth_deg": 210,
+          "delay_km": 22,
+          "doppler_hz": 90,
+          "level_db_ref_rms": -42,
+          "time_s": 1.0
+        }
+      ]
+    }
+  ],
+  "schema": "oprs-conformance-suite-v1",
+  "seed": 20261022,
+  "suite_version": "0.2.0"
+}

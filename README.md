@@ -2,6 +2,14 @@
 
 # VectorWarp
 
+## Open Passive Radar Scorecard
+
+The receiver-neutral Open Passive Radar Scorecard (OPRS) specification and
+reference CLI live in [docs/PASSIVE_RADAR_SCORECARD.md](docs/PASSIVE_RADAR_SCORECARD.md)
+and [docs/OPRS_RUNBOOK.md](docs/OPRS_RUNBOOK.md). OPRS keeps deterministic
+synthetic, real-background injection, and held-out aircraft evidence separate;
+it does not produce a weighted overall percentage.
+
 > **THIS IS A DEVELOPMENT BUILD. EXPECT BUGS AND REPORT VIA GITHUB ISSUES PLEASE AND THANK YOU!**
 
 VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, coherent multi-channel array processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native installation on Linux and macOS. Set up your radar, watch it run, and record or replay signals from the same interface.

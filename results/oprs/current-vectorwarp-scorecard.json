@@ -1,0 +1,23 @@
+{
+  "schema": "open-passive-radar-scorecard-v1",
+  "oprs_version": "0.2.0",
+  "system_id": "vectorwarp-current-unfrozen-live-evidence",
+  "capability_profile": "REF_PLUS_ARRAY",
+  "claim_scope": "held_out_real",
+  "overall_status": "INVALID",
+  "mission_tuple": null,
+  "domains": {
+    "evaluation_integrity": {"status":"INVALID","required":true,"metrics":[],"limitations":["The current producer derives opportunity eligibility from candidate detection/ambiguity configuration.","Detection/tracker output is not joined to immutable CPI event-time truth.","The evidence lacks unique measurement identities proving confirmed measurement-supported tracks.","Nuisance-track burden, fixed closure, and an immutable source snapshot are absent."]},
+    "acquisition_rf": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No OPRS IQ-health trial is attached."]},
+    "synchronization_calibration": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No frozen coherence/calibration evidence is attached."]},
+    "reference_quality": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No portable reference SNR/stability evidence is attached."]},
+    "cancellation_target_preservation": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No paired target-preservation control is attached."]},
+    "raw_detection": {"status":"INVALID","required":true,"metrics":[],"limitations":["The provisional snapshot reports 0 raw-detected passes among 12 admitted producer-defined passes, but the denominator is not OPRS-valid."]},
+    "tracking": {"status":"INVALID","required":true,"metrics":[],"limitations":["The sole provisional tracked pass has 3/213 associated track frames, zero raw-detection frames, and no CPI-level confirmed measurement identity; persistence versus temporal misassociation cannot be determined."]},
+    "bearing_spatial": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No held-out pass-macro bearing result under the OPRS contract is attached."]},
+    "recoverability_regression": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["Existing offline candidates do not constitute trial-corrected held-out recoveries under OPRS."]},
+    "realtime_operational": {"status":"NOT_QUALIFIED","required":true,"metrics":[],"limitations":["No same-run queue, gap, latency, resource, and recovery evidence is attached."]}
+  },
+  "evidence_summary": {"legacy_snapshot":"results/20261022-operational-scorecard/live-trial-scorecard.json","legacy_snapshot_status":"INVALID_FOR_OPERATIONAL_ACCEPTANCE"},
+  "prohibitions": ["Do not quote a VectorWarp tracking recall from this snapshot.","Do not treat unavailable metrics as zero or infer them from unrelated tests."]
+}

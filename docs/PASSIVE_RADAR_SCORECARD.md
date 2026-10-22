@@ -1,4 +1,8 @@
-# Open Passive Radar Scorecard (OPRS) v0.1
+# Open Passive Radar Scorecard (OPRS) v0.2
+
+Status: stable evidence contract for the v1 JSON schemas; reference scorer
+version 0.2.0. OPRS is an independent benchmark specification. VectorWarp is
+only the first file adapter and is not the definition of the benchmark.
 
 ## Purpose
 
@@ -195,3 +199,99 @@ The overall state is:
 
 This status model is shared by two-channel and array systems. Capability claims,
 not channel count or brand, determine which optional domains become required.
+
+## Normative anti-gaming contract
+
+Terms **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
+
+1. The evaluator MUST freeze and hash an `oprs-evaluation-plan-v1` before an
+   evaluation run. Its physical delay/Doppler envelope is independent of the
+   detector configuration. A system may decline to emit a result, but that
+   opportunity remains in the denominator and scores as a miss.
+2. Every opportunity is the unique tuple `(plan, pass_id, cpi_id,
+   event_time_ns)`. Duplicate IDs, duplicate pass/CPI truth, unknown
+   opportunities, changed CPI timestamps, missing epochs, non-finite values, or
+   cardinalities that cannot be reconstructed from individual rows invalidate
+   the evidence. Aggregate success counters are never accepted as primary data.
+3. Truth MUST be interpolated or projected to CPI event time within the frozen
+   tolerance. The trial MUST attest `inference_truth_access=false`. ADS-B and
+   synthetic truth may score output but MUST NOT enter detection, tracking,
+   cancellation, beam selection, or thresholding.
+4. A scored track CPI requires a stable `track_id`, confirmed state,
+   `measurement_supported=true`, and a unique `measurement_id`. Coasting is a
+   diagnostic and does not count as a measurement-supported track CPI. This
+   permits a legitimate internal tracker measurement below the public raw-
+   detection reporting threshold without accepting an unexplained track bit.
+5. Pass recall is pass-macro. Continuity is `measurement-supported confirmed
+   track CPIs / all planned eligible CPIs` per pass and then averaged over all
+   passes; missed passes therefore contribute zero. Fragmentation counts unique
+   qualifying track IDs per truth pass.
+6. Nuisance burden is new unassociated tracks per valid radar hour. Recall is
+   never accepted without nuisance evidence from the same run and envelope.
+7. Same-IQ paired replay is the primary comparison design. Live comparisons
+   MUST use predeclared interleaved blocks where operationally safe. Adjusted
+   comparisons MUST publish overlap exclusions, weights, maximum weight,
+   effective sample size, cluster-resampled uncertainty, and raw results. OPRS
+   rejects an adjusted superiority claim if common support or effective sample
+   size was not predeclared and met.
+8. Training, selection, and evaluation recording sessions MUST be disjoint.
+   Hashes cover background IQ, system/config, code, truth, scenarios, and seeds.
+   A blank control accompanies each injection background.
+
+An integrity violation yields `INVALID`, not `FAIL`: the performance value is
+unknown. Missing but otherwise valid evidence yields `NOT_QUALIFIED`.
+
+## Metric definitions and statistical policy
+
+All metric thresholds are mission-class policy and are frozen in the plan; OPRS
+does not hide application tradeoffs in a universal weighted score.
+
+- Proportions include numerator, denominator, and two-sided 95% Wilson interval.
+- Operational recall uses an aircraft pass as the independent unit. CPI counts
+  are diagnostics, not pseudoreplicated confidence samples.
+- Detection and tracking sensitivity use probability by injected level in dB
+  relative to measured reference RMS. `L50` and `L90` are monotone-interpolated
+  crossing levels. If the staircase does not bracket a crossing, report a
+  one-sided bound rather than extrapolating.
+- Multi-background injection uncertainty resamples recording session first,
+  then target within session. A single background cannot qualify a general
+  sensitivity claim.
+- Bearing is pass-macro within 15/30/45 degrees plus sample median/P90 absolute
+  circular error. Correct-lobe presence and selected-lobe correctness are
+  separate. Results are stratified by azimuth sector and elevation.
+- Offline recovery requires a held-out miss, positive controls, a frozen search
+  family, and Holm family-wise correction across attempted candidates. An
+  uncorrected offline candidate is never a recovered aircraft.
+- RF health is derived from normalized IQ where possible: valid seconds,
+  clipping/near-rail fractions, P99.9/peak magnitude, RMS balance, lag,
+  coherence, and phase stability. Vendor gain numbers remain provenance only.
+- Target preservation is a hard safety gate. Cancellation/null-depth gains
+  cannot compensate for unacceptable injected-target or positive-control loss.
+
+## Evidence-layer claim labels
+
+Every final scorecard has exactly one `claim_scope`:
+
+| Claim scope | What it establishes | What it cannot establish |
+|---|---|---|
+| `pure_synthetic` | conventions, math, determinism, known-signal behavior | site performance |
+| `background_injection` | sensitivity in specific hashed RF backgrounds | real-aircraft operational recall |
+| `held_out_real` | operational validity for the declared site/epochs/traffic support | absolute sensitivity below observed traffic |
+
+Separate scorecards may be shown together, but their observations MUST NOT be
+pooled into one numerator or overall status.
+
+## Versioned artifacts
+
+- `schemas/oprs/system-manifest-v1.schema.json`: receiver/capability contract.
+- `schemas/oprs/benchmark-scenario-v1.schema.json`: trajectory and injection.
+- `schemas/oprs/evaluation-plan-v1.schema.json`: frozen denominator and truth.
+- `schemas/oprs/trial-output-v1.schema.json`: system-under-test output.
+- `schemas/oprs/scorecard-v1.schema.json`: final domain status and mission tuple.
+- `oprs/`: dependency-free reference validator, scorer, injector, and IQ health
+  implementation.
+- `script/oprs`: portable command entry point.
+
+Semantic validation is stricter than JSON Schema because uniqueness, profile
+cardinality, hashes, event-time identity, and cross-file consistency require
+cross-record checks.
