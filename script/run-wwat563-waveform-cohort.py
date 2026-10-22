@@ -9,6 +9,7 @@ successful clip so rerunning the command resumes safely.
 import argparse
 import hashlib
 import json
+import math
 import shlex
 import subprocess
 import sys
@@ -23,6 +24,11 @@ REMOTE_SPATIAL_READY = '/home/mickeyslaven/wwat563-results/spatial-ready'
 REMOTE_SPATIAL_ACK = '/home/mickeyslaven/wwat563-results/spatial-ack'
 REMOTE_WAVEFORM_VECTORS = '/home/mickeyslaven/wwat563-results/waveform-vectors'
 VENV = '/home/mickeyslaven/radar-training/venv/bin/python'
+
+
+def db(value):
+    """Convert positive linear evidence to decibels for cross-method stacking."""
+    return 10.0 * math.log10(max(float(value), 1e-300))
 
 
 def run(command, **kwargs):
@@ -149,6 +155,12 @@ def copy_and_verify(row, local_log):
     name = Path(source).name
     target = f'{REMOTE_CACHE}/{name}'
     source_hash = ssh(RAW, f'sha256sum {quote(source)}', capture_output=True).stdout.split()[0]
+    existing = subprocess.run(
+        ['ssh', '-o', 'BatchMode=yes', CASS,
+         f'test -f {quote(target)} && sha256sum {quote(target)}'],
+        text=True, capture_output=True)
+    if existing.returncode == 0 and existing.stdout.split()[0] == source_hash:
+        return target, source_hash
     pipeline = (f'ssh -o BatchMode=yes {quote(RAW)} "cat {quote(source)}" | '
                 f'ssh -o BatchMode=yes {quote(CASS)} "cat > {quote(target)}"')
     with local_log.open('a') as log:
@@ -157,6 +169,14 @@ def copy_and_verify(row, local_log):
     if source_hash != remote_hash:
         raise RuntimeError(f'SHA mismatch for {name}')
     return target, source_hash
+
+
+def existing_result(path):
+    """Return a verified remote JSON result, or None when it must be rebuilt."""
+    try:
+        return verify_result(path)
+    except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError, ValueError):
+        return None
 
 
 def process(row, state, state_path, local_log):
@@ -184,10 +204,14 @@ def process(row, state, state_path, local_log):
         f'--recording {quote(raw)} --trajectory {quote(trajectory_path)} --output {quote(spectral_path)} '
         '--fft-size 1024 --max-doppler-hz 800 --max-delay-km 64',
     ]
+    loaded, spectral = existing_result(loaded_path), existing_result(spectral_path)
     with local_log.open('a') as log:
-        for command in commands:
-            ssh(CASS, command, stdout=log, stderr=subprocess.STDOUT)
-    loaded, spectral = verify_result(loaded_path), verify_result(spectral_path)
+        if loaded is None:
+            ssh(CASS, commands[0], stdout=log, stderr=subprocess.STDOUT)
+            loaded = verify_result(loaded_path)
+        if spectral is None:
+            ssh(CASS, commands[1], stdout=log, stderr=subprocess.STDOUT)
+            spectral = verify_result(spectral_path)
     vector_path = publish_vector(key, raw, digest, loaded, spectral)
     state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
         'loaded_result': loaded_path, 'spectral_result': spectral_path,
