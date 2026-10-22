@@ -21,6 +21,10 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
   };
   const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', DEFAULT_PRE_SECONDS);
   const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', DEFAULT_POST_SECONDS);
+  const enabledValue = environment.BLAH2_CAPTURE_TRIGGER_ENABLED;
+  if (enabledValue !== undefined && !['0', '1'].includes(enabledValue))
+    throw new Error('BLAH2_CAPTURE_TRIGGER_ENABLED must be 0 or 1.');
+  const enabled = enabledValue !== '0';
   const periodic = config.capture?.periodic_snapshots || {};
   const periodicIntervalSeconds = read('BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS',
     periodic.interval_seconds ?? 0);
@@ -34,7 +38,7 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
     throw new Error(`BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS must be an integer no greater than ${MAX_PERIODIC_SNAPSHOTS}.`);
   if ((periodicIntervalSeconds === 0) !== (periodicMaxSnapshots === 0))
     throw new Error('Periodic capture interval and maximum snapshots must be enabled together.');
-  return {preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS,
+  return {enabled, preSeconds, postSeconds, maxClipSeconds: MAX_CLIP_SECONDS,
     periodicIntervalSeconds, periodicMaxSnapshots};
 }
 
@@ -54,7 +58,7 @@ function compact(clip) {
 }
 
 class CaptureTriggerQueue {
-  constructor({preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
+  constructor({enabled = true, preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
     maxClipSeconds = MAX_CLIP_SECONDS, maxClips = MAX_CLIPS,
     maxEventIds = MAX_EVENT_IDS, periodicIntervalSeconds = 0,
     periodicMaxSnapshots = 0, now = Date.now} = {}) {
@@ -72,6 +76,7 @@ class CaptureTriggerQueue {
         periodicMaxSnapshots > MAX_PERIODIC_SNAPSHOTS ||
         Boolean(periodicIntervalSeconds) !== Boolean(periodicMaxSnapshots))
       throw new Error('Periodic capture settings must be disabled together or use a bounded interval and count.');
+    this.enabled = enabled !== false;
     this.preSeconds = preSeconds; this.postSeconds = postSeconds;
     this.maxClipSeconds = maxClipSeconds;
     this.maxClips = maxClips; this.maxEventIds = maxEventIds; this.now = now;
@@ -140,6 +145,7 @@ class CaptureTriggerQueue {
   }
 
   acceptEligibilityEvent(event) {
+    if (!this.enabled) return {accepted: false, reason: 'disabled'};
     if (!event || event.state !== 'pending' || !validId(event.id) ||
         !event.id.startsWith('eligibility:') || !validId(event.pass_id) ||
         !finite(event.observed_at) || event.observed_at < 0 ||
@@ -197,6 +203,7 @@ class CaptureTriggerQueue {
   }
 
   acceptSnapshot(event, requestedEventTime, kind) {
+    if (!this.enabled) return {accepted: false, reason: 'disabled'};
     if (!['periodic', 'track'].includes(kind) || !event || !validId(event.id) ||
         !finite(requestedEventTime) || requestedEventTime < 0) return {accepted: false,
       reason: 'snapshot-invalid'};
@@ -357,7 +364,8 @@ class CaptureTriggerQueue {
   }
 
   status() {
-    return {...this.request(), queuedClips: this.clips.filter(clip => clip.pending).length,
+    return {...this.request(), enabled: this.enabled,
+      queuedClips: this.clips.filter(clip => clip.pending).length,
       maximumClipSeconds: this.maxClipSeconds, droppedEvents: this.droppedEvents,
       recentEvents: [...this.events.values()].slice(-250).map(event =>
         ({...event, clipRevisions: [...event.clipRevisions]}))};

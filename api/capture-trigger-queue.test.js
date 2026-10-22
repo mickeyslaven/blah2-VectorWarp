@@ -16,19 +16,19 @@ const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
 assert.throws(() => new CaptureTriggerQueue({preSeconds: 6, postSeconds: 5}),
   /maximum clip duration/);
 assert.deepEqual(optionsFromEnvironment({}),
-  {preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  {enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
     periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8'}),
-{preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
+{enabled: true, preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
   periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
-{preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 3});
 assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
   {interval_seconds: 15, max_snapshots: 2}}}),
-{preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
   periodicIntervalSeconds: 15, periodicMaxSnapshots: 2});
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);
@@ -38,6 +38,14 @@ assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '
   BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '9'}), /ten-second clip limit/);
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_POST_SECONDS: 'nope'}),
   /non-negative number/);
+assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_ENABLED: 'false'}),
+  /must be 0 or 1/);
+const disabled = new CaptureTriggerQueue(optionsFromEnvironment({
+  BLAH2_CAPTURE_TRIGGER_ENABLED: '0'}));
+assert.equal(disabled.acceptEligibilityEvent(event(99, 100000)).reason, 'disabled');
+assert.equal(disabled.acceptPeriodicSnapshot(event(99, 100000), 110000).reason, 'disabled');
+assert.equal(disabled.status().enabled, false);
+assert.equal(disabled.status().queuedClips, 0);
 const queue = new CaptureTriggerQueue({now: () => 5000});
 assert.equal(queue.acceptEligibilityEvent({...event(0, 90000), id: 'detection:0'}).accepted, false,
   'Detector-shaped input is not capture admission');
