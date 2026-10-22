@@ -54,15 +54,21 @@ def stack(methods):
                         for index in range(control_count)]
             rows.append({"combination": list(chosen), "target": target,
                          "controls": controls, "single": size == 1})
-    all_controls = [value for row in rows for value in row["controls"]]
-    threshold = percentile(all_controls, .99)
+    # All wrappers share the same sorted control offsets.  Family-wise control
+    # is the maximum over every predeclared combination at each offset, not a
+    # pooled mixture that would undercharge the seven combination trials.
+    control_count = min(len(row["controls"]) for row in rows)
+    family_maxima = [max(row["controls"][index] for row in rows)
+                      for index in range(control_count)]
+    threshold = percentile(family_maxima, .99)
     for row in rows:
         row["control_p99_all_trials"] = threshold
         row["margin"] = row["target"] - threshold
         row["recovered"] = row["margin"] >= 0
         del row["controls"]
-    return {"trial_count": len(rows), "pooled_control_values": len(all_controls),
-            "threshold_p99": threshold, "rows": rows}
+    return {"trial_count": len(rows), "aligned_control_offsets": control_count,
+            "familywise_control_maxima": len(family_maxima),
+            "threshold_p99_fwer": threshold, "rows": rows}
 
 
 def main():
