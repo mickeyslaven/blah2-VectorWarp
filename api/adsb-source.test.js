@@ -38,6 +38,9 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   aircraft = {now: clock / 1000, aircraft: [{hex: 'abc123', flight: 'TEST', lat: 1.1, lon: 2.1, alt_geom: 1100, seen_pos: 0}]};
   const derived = await source.get('delayDoppler');
   assert.ok(Number.isFinite(derived.abc123.delay) && Number.isFinite(derived.abc123.doppler));
+  assert.equal(derived.abc123.provenance.source_id,
+    'http://receiver.local:8080/data/aircraft.json');
+  assert.equal(derived.abc123.provenance.position_age_s, 0);
   const expectedHistory = new DelayDopplerHistory(config);
   expectedHistory.update({now: 100, aircraft: [{hex: 'abc123', flight: 'TEST', lat: 1, lon: 2, alt_geom: 1000, seen_pos: 0}]});
   const expected = expectedHistory.update(aircraft).data.abc123;

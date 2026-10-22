@@ -3,6 +3,7 @@
 const http = require('http');
 const https = require('https');
 const {DelayDopplerHistory} = require('./adsb-geometry');
+const {fuseAircraftData} = require('./adsb-fusion');
 const {classifyAdsbSource, discoverLocalAdsb, selectLocalAdsb,
   validateAircraftData} = require('./adsb-discovery');
 
@@ -104,8 +105,13 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const entry = {at: now(), pending: true};
-    entry.promise = resolveSource().then(selection => selection.read()).then(data =>
-      validateAircraftData(data, {now, maxAgeSeconds: geometry.maxAge}))
+    entry.promise = resolveSource().then(async selection => {
+      const data = validateAircraftData(await selection.read(),
+        {now, maxAgeSeconds: geometry.maxAge});
+      const receivedAtMs = now();
+      return fuseAircraftData([{data, source: selection.source, receivedAtMs}],
+        {nowMs: receivedAtMs, maxPositionAgeSeconds: geometry.maxAge});
+    })
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }

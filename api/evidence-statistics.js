@@ -230,7 +230,9 @@ function truthSnapshot(prediction, timestamp) {
     transmitter_range_km: geometry.transmitter_range_km,
     delay_km: prediction.delay, doppler_hz: prediction.doppler,
     delay_rate_km_s: prediction.delay_rate_km_s,
-    doppler_rate_hz_s: prediction.doppler_rate_hz_s};
+    doppler_rate_hz_s: prediction.doppler_rate_hz_s,
+    provenance: prediction.provenance && typeof prediction.provenance === 'object' ?
+      {...prediction.provenance} : null};
 }
 
 function updateTruth(pass, prediction, timestamp) {

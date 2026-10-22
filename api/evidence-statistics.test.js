@@ -22,6 +22,8 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
     altitude_baro_ft: 11800, ground_speed_kt: 300, track_deg_true: 90,
     geom_rate_fpm: 500, baro_rate_fpm: 450, category: 'A3', squawk: '1234',
     rssi_dbfs: -18, seen_s: .2, seen_pos_s: .1},
+  provenance: {source_id: 'local-readsb', position_age_s: .1, quality_score: .9,
+    agreeing_sources: ['local-readsb'], rejected_sources: [], disagreement: false},
   geometry: {bearing_deg_true: 91, elevation_deg: 12, ground_range_km: 9,
     slant_range_km: 10, transmitter_range_km: 20}};
 const source = {async get() { return {abc123: {...prediction, timestamp: clock / 1000}}; }};
@@ -64,6 +66,8 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.eligibility_events[0].first_track_at, 1_800_000_000_000);
   assert.equal(result.eligibility_events[0].predicted.delay_km, 10);
   assert.equal(result.eligibility_events[0].truth_samples.length, 3);
+  assert.equal(result.eligibility_events[0].truth_samples[0].provenance.source_id,
+    'local-readsb');
   assert.deepEqual(result.eligibility_events[0].truth_samples.map(item => item.timestamp_ms),
     [1_800_000_000_000, 1_800_000_001_000, 1_800_000_002_000]);
   assert.equal(result.eligibility_events[0].capture_state, 'not_integrated');

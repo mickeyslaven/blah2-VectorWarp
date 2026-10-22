@@ -95,6 +95,8 @@ class DelayDopplerHistory {
           squawk: typeof aircraft.squawk === 'string' ? aircraft.squawk : null,
           rssi_dbfs: optionalNumber(aircraft.rssi), seen_s: optionalNumber(aircraft.seen),
           seen_pos_s: aircraft.seen_pos},
+        provenance: aircraft.vectorwarp && typeof aircraft.vectorwarp === 'object' ?
+          {...aircraft.vectorwarp} : null,
         geometry: look ? {...look, transmitter_range_km: transmitterRange} : null};
       const priorResult = this.output.get(aircraft.hex);
       const rateDt = priorResult && timestamp - priorResult.timestamp;
