@@ -26618,12 +26618,22 @@
         "passes_classification_final": 5,
         "unique_aircraft": 232,
         "passes_by_classification": {
-          "pending_offline_matrix": 259,
-          "tracked": 5
+          "tracked": 5,
+          "detected_not_tracked": 0,
+          "miss_unrecoverable": 0,
+          "offline_candidate": 0,
+          "validated_offline_recovery": 0,
+          "excluded_with_reason": 0,
+          "pending_offline_matrix": 259
         },
         "aircraft_by_classification": {
-          "pending_offline_matrix": 227,
-          "tracked": 5
+          "tracked": 5,
+          "detected_not_tracked": 0,
+          "miss_unrecoverable": 0,
+          "offline_candidate": 0,
+          "validated_offline_recovery": 0,
+          "excluded_with_reason": 0,
+          "pending_offline_matrix": 227
         },
         "clip_iq_integrity": {
           "passed": 6,
@@ -26633,15 +26643,29 @@
           "unavailable_historical": 594
         },
         "pass_rates_all_eligible": {
-          "pending_offline_matrix": 0.9810606060606061,
-          "tracked": 0.01893939393939394
+          "tracked": 0.01893939393939394,
+          "detected_not_tracked": 0.0,
+          "miss_unrecoverable": 0.0,
+          "offline_candidate": 0.0,
+          "validated_offline_recovery": 0.0,
+          "pending_offline_matrix": 0.9810606060606061
         },
         "pass_rates_final_only": {
-          "tracked": 1.0
+          "tracked": 1.0,
+          "detected_not_tracked": 0.0,
+          "miss_unrecoverable": 0.0,
+          "offline_candidate": 0.0,
+          "validated_offline_recovery": 0.0,
+          "excluded_with_reason": 0.0
         },
         "aircraft_rates": {
-          "pending_offline_matrix": 0.978448275862069,
-          "tracked": 0.021551724137931036
+          "tracked": 0.021551724137931036,
+          "detected_not_tracked": 0.0,
+          "miss_unrecoverable": 0.0,
+          "offline_candidate": 0.0,
+          "validated_offline_recovery": 0.0,
+          "excluded_with_reason": 0.0,
+          "pending_offline_matrix": 0.978448275862069
         }
       },
       "stratified": {
@@ -26652,12 +26676,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 13,
             "passes_by_classification": {
-              "pending_offline_matrix": 12,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 12
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 12,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 12
             },
             "clip_iq_integrity": {
               "passed": 2,
@@ -26667,15 +26701,29 @@
               "unavailable_historical": 28
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9230769230769231,
-              "tracked": 0.07692307692307693
+              "tracked": 0.07692307692307693,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9230769230769231
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9230769230769231,
-              "tracked": 0.07692307692307693
+              "tracked": 0.07692307692307693,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9230769230769231
             }
           },
           "[10,20)": {
@@ -26684,12 +26732,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 72,
             "passes_by_classification": {
-              "pending_offline_matrix": 72,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 72
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 71,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 71
             },
             "clip_iq_integrity": {
               "pending": 162
@@ -26698,15 +26756,29 @@
               "unavailable_historical": 162
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9863013698630136,
-              "tracked": 0.0136986301369863
+              "tracked": 0.0136986301369863,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9863013698630136
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9861111111111112,
-              "tracked": 0.013888888888888888
+              "tracked": 0.013888888888888888,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9861111111111112
             }
           },
           "[20,40)": {
@@ -26715,9 +26787,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 141,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 155
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 141
             },
             "clip_iq_integrity": {
@@ -26728,10 +26812,28 @@
               "unavailable_historical": 352
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -26741,12 +26843,22 @@
             "passes_classification_final": 3,
             "unique_aircraft": 22,
             "passes_by_classification": {
-              "pending_offline_matrix": 20,
-              "tracked": 3
+              "tracked": 3,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 20
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 19,
-              "tracked": 3
+              "tracked": 3,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 19
             },
             "clip_iq_integrity": {
               "passed": 2,
@@ -26756,15 +26868,29 @@
               "unavailable_historical": 52
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.8695652173913043,
-              "tracked": 0.13043478260869565
+              "tracked": 0.13043478260869565,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.8695652173913043
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.8636363636363636,
-              "tracked": 0.13636363636363635
+              "tracked": 0.13636363636363635,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.8636363636363636
             }
           }
         },
@@ -26775,12 +26901,22 @@
             "passes_classification_final": 3,
             "unique_aircraft": 62,
             "passes_by_classification": {
-              "pending_offline_matrix": 78,
-              "tracked": 3
+              "tracked": 3,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 78
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 59,
-              "tracked": 3
+              "tracked": 3,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 59
             },
             "clip_iq_integrity": {
               "passed": 3,
@@ -26790,15 +26926,29 @@
               "unavailable_historical": 183
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9629629629629629,
-              "tracked": 0.037037037037037035
+              "tracked": 0.037037037037037035,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9629629629629629
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9516129032258065,
-              "tracked": 0.04838709677419355
+              "tracked": 0.04838709677419355,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9516129032258065
             }
           },
           "[10,20)": {
@@ -26807,9 +26957,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 30,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 30
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 30
             },
             "clip_iq_integrity": {
@@ -26819,10 +26981,28 @@
               "unavailable_historical": 70
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -26832,12 +27012,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 51,
             "passes_by_classification": {
-              "pending_offline_matrix": 55,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 55
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 50,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 50
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -26847,15 +27037,29 @@
               "unavailable_historical": 132
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9821428571428571,
-              "tracked": 0.017857142857142856
+              "tracked": 0.017857142857142856,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9821428571428571
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9803921568627451,
-              "tracked": 0.0196078431372549
+              "tracked": 0.0196078431372549,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9803921568627451
             }
           },
           "[20,45)": {
@@ -26864,12 +27068,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 57,
             "passes_by_classification": {
-              "pending_offline_matrix": 56,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 56
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 56,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 56
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -26879,15 +27093,29 @@
               "unavailable_historical": 118
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9824561403508771,
-              "tracked": 0.017543859649122806
+              "tracked": 0.017543859649122806,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9824561403508771
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9824561403508771,
-              "tracked": 0.017543859649122806
+              "tracked": 0.017543859649122806,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9824561403508771
             }
           },
           "[45,90)": {
@@ -26896,9 +27124,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 35,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 35
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 35
             },
             "clip_iq_integrity": {
@@ -26909,10 +27149,28 @@
               "unavailable_historical": 79
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -26922,9 +27180,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 4,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 5
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 4
             },
             "clip_iq_integrity": {
@@ -26934,10 +27204,28 @@
               "unavailable_historical": 12
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           }
@@ -26949,12 +27237,22 @@
             "passes_classification_final": 4,
             "unique_aircraft": 44,
             "passes_by_classification": {
-              "pending_offline_matrix": 57,
-              "tracked": 4
+              "tracked": 4,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 57
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 40,
-              "tracked": 4
+              "tracked": 4,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 40
             },
             "clip_iq_integrity": {
               "passed": 3,
@@ -26964,15 +27262,29 @@
               "unavailable_historical": 135
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9344262295081968,
-              "tracked": 0.06557377049180328
+              "tracked": 0.06557377049180328,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9344262295081968
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9090909090909091,
-              "tracked": 0.09090909090909091
+              "tracked": 0.09090909090909091,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9090909090909091
             }
           },
           "[10000,18000)": {
@@ -26981,9 +27293,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 3,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 3
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 3
             },
             "clip_iq_integrity": {
@@ -26993,10 +27317,28 @@
               "unavailable_historical": 8
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27006,9 +27348,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 6,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 6
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 6
             },
             "clip_iq_integrity": {
@@ -27019,10 +27373,28 @@
               "unavailable_historical": 14
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27032,9 +27404,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 69,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 78
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 69
             },
             "clip_iq_integrity": {
@@ -27045,10 +27429,28 @@
               "unavailable_historical": 184
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27058,12 +27460,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 116,
             "passes_by_classification": {
-              "pending_offline_matrix": 115,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 115
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 115,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 115
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27073,15 +27485,29 @@
               "unavailable_historical": 253
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9913793103448276,
-              "tracked": 0.008620689655172414
+              "tracked": 0.008620689655172414,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9913793103448276
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9913793103448276,
-              "tracked": 0.008620689655172414
+              "tracked": 0.008620689655172414,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9913793103448276
             }
           }
         },
@@ -27092,9 +27518,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 12,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 12
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 12
             },
             "clip_iq_integrity": {
@@ -27104,10 +27542,28 @@
               "unavailable_historical": 29
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27117,12 +27573,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 64,
             "passes_by_classification": {
-              "pending_offline_matrix": 73,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 73
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 63,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 63
             },
             "clip_iq_integrity": {
               "pending": 162
@@ -27131,15 +27597,29 @@
               "unavailable_historical": 162
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9864864864864865,
-              "tracked": 0.013513513513513514
+              "tracked": 0.013513513513513514,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9864864864864865
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.984375,
-              "tracked": 0.015625
+              "tracked": 0.015625,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.984375
             }
           },
           "[180,225)": {
@@ -27148,9 +27628,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 17,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 17
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 17
             },
             "clip_iq_integrity": {
@@ -27161,10 +27653,28 @@
               "unavailable_historical": 42
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27174,9 +27684,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 19,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 21
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 19
             },
             "clip_iq_integrity": {
@@ -27186,10 +27708,28 @@
               "unavailable_historical": 48
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27199,9 +27739,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 58,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 59
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 58
             },
             "clip_iq_integrity": {
@@ -27212,10 +27764,28 @@
               "unavailable_historical": 136
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27225,9 +27795,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 23,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 23
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 23
             },
             "clip_iq_integrity": {
@@ -27238,10 +27820,28 @@
               "unavailable_historical": 51
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27251,12 +27851,22 @@
             "passes_classification_final": 2,
             "unique_aircraft": 21,
             "passes_by_classification": {
-              "pending_offline_matrix": 22,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 22
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 19,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 19
             },
             "clip_iq_integrity": {
               "passed": 2,
@@ -27266,15 +27876,29 @@
               "unavailable_historical": 57
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9166666666666666,
-              "tracked": 0.08333333333333333
+              "tracked": 0.08333333333333333,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9166666666666666
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9047619047619048,
-              "tracked": 0.09523809523809523
+              "tracked": 0.09523809523809523,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9047619047619048
             }
           },
           "[90,135)": {
@@ -27283,12 +27907,22 @@
             "passes_classification_final": 2,
             "unique_aircraft": 34,
             "passes_by_classification": {
-              "pending_offline_matrix": 32,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 32
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 32,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 32
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27298,15 +27932,29 @@
               "unavailable_historical": 69
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9411764705882353,
-              "tracked": 0.058823529411764705
+              "tracked": 0.058823529411764705,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9411764705882353
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9411764705882353,
-              "tracked": 0.058823529411764705
+              "tracked": 0.058823529411764705,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9411764705882353
             }
           }
         },
@@ -27317,10 +27965,22 @@
             "passes_classification_final": 2,
             "unique_aircraft": 2,
             "passes_by_classification": {
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 0
             },
             "aircraft_by_classification": {
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 0
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27330,13 +27990,29 @@
               "unavailable_historical": 3
             },
             "pass_rates_all_eligible": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.0
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.0
             }
           },
           "[10,20)": {
@@ -27345,9 +28021,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 36,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 37
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 36
             },
             "clip_iq_integrity": {
@@ -27358,10 +28046,28 @@
               "unavailable_historical": 82
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27371,10 +28077,22 @@
             "passes_classification_final": 2,
             "unique_aircraft": 2,
             "passes_by_classification": {
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 0
             },
             "aircraft_by_classification": {
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 0
             },
             "clip_iq_integrity": {
               "passed": 2
@@ -27383,13 +28101,29 @@
               "unavailable_historical": 2
             },
             "pass_rates_all_eligible": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.0
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.0
             }
           },
           "[20,40)": {
@@ -27398,12 +28132,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 80,
             "passes_by_classification": {
-              "pending_offline_matrix": 80,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 80
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 79,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 79
             },
             "clip_iq_integrity": {
               "pending": 180
@@ -27412,15 +28156,29 @@
               "unavailable_historical": 180
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9876543209876543,
-              "tracked": 0.012345679012345678
+              "tracked": 0.012345679012345678,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9876543209876543
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9875,
-              "tracked": 0.0125
+              "tracked": 0.0125,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9875
             }
           },
           "[40,inf)": {
@@ -27429,9 +28187,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 128,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 140
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 128
             },
             "clip_iq_integrity": {
@@ -27442,10 +28212,28 @@
               "unavailable_historical": 321
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27455,9 +28243,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 2,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 2
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 2
             },
             "clip_iq_integrity": {
@@ -27467,10 +28267,28 @@
               "unavailable_historical": 6
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           }
@@ -27482,12 +28300,22 @@
             "passes_classification_final": 2,
             "unique_aircraft": 21,
             "passes_by_classification": {
-              "pending_offline_matrix": 23,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 23
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 19,
-              "tracked": 2
+              "tracked": 2,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 19
             },
             "clip_iq_integrity": {
               "passed": 2,
@@ -27497,15 +28325,29 @@
               "unavailable_historical": 49
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.92,
-              "tracked": 0.08
+              "tracked": 0.08,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.92
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9047619047619048,
-              "tracked": 0.09523809523809523
+              "tracked": 0.09523809523809523,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9047619047619048
             }
           },
           "[-250,-100)": {
@@ -27514,12 +28356,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 35,
             "passes_by_classification": {
-              "pending_offline_matrix": 35,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 35
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 34,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 34
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27529,15 +28381,29 @@
               "unavailable_historical": 87
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9722222222222222,
-              "tracked": 0.027777777777777776
+              "tracked": 0.027777777777777776,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9722222222222222
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9714285714285714,
-              "tracked": 0.02857142857142857
+              "tracked": 0.02857142857142857,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9714285714285714
             }
           },
           "[-500,-250)": {
@@ -27546,9 +28412,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 26,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 26
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 26
             },
             "clip_iq_integrity": {
@@ -27558,10 +28436,28 @@
               "unavailable_historical": 57
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27571,12 +28467,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 22,
             "passes_by_classification": {
-              "pending_offline_matrix": 22,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 22
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 21,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 21
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27586,15 +28492,29 @@
               "unavailable_historical": 54
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9565217391304348,
-              "tracked": 0.043478260869565216
+              "tracked": 0.043478260869565216,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9565217391304348
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9545454545454546,
-              "tracked": 0.045454545454545456
+              "tracked": 0.045454545454545456,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9545454545454546
             }
           },
           "[100,250)": {
@@ -27603,9 +28523,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 52,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 53
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 52
             },
             "clip_iq_integrity": {
@@ -27616,10 +28548,28 @@
               "unavailable_historical": 127
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           },
@@ -27629,12 +28579,22 @@
             "passes_classification_final": 1,
             "unique_aircraft": 89,
             "passes_by_classification": {
-              "pending_offline_matrix": 89,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 89
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 88,
-              "tracked": 1
+              "tracked": 1,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 88
             },
             "clip_iq_integrity": {
               "passed": 1,
@@ -27644,15 +28604,29 @@
               "unavailable_historical": 202
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9888888888888889,
-              "tracked": 0.011111111111111112
+              "tracked": 0.011111111111111112,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9888888888888889
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.9887640449438202,
-              "tracked": 0.011235955056179775
+              "tracked": 0.011235955056179775,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.9887640449438202
             }
           },
           "[500,inf)": {
@@ -27661,9 +28635,21 @@
             "passes_classification_final": 0,
             "unique_aircraft": 11,
             "passes_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 11
             },
             "aircraft_by_classification": {
+              "tracked": 0,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
               "pending_offline_matrix": 11
             },
             "clip_iq_integrity": {
@@ -27673,10 +28659,28 @@
               "unavailable_historical": 18
             },
             "pass_rates_all_eligible": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
               "pending_offline_matrix": 1.0
             },
-            "pass_rates_final_only": {},
+            "pass_rates_final_only": {
+              "tracked": null,
+              "detected_not_tracked": null,
+              "miss_unrecoverable": null,
+              "offline_candidate": null,
+              "validated_offline_recovery": null,
+              "excluded_with_reason": null
+            },
             "aircraft_rates": {
+              "tracked": 0.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
               "pending_offline_matrix": 1.0
             }
           }
@@ -27688,12 +28692,22 @@
             "passes_classification_final": 5,
             "unique_aircraft": 232,
             "passes_by_classification": {
-              "pending_offline_matrix": 259,
-              "tracked": 5
+              "tracked": 5,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 259
             },
             "aircraft_by_classification": {
-              "pending_offline_matrix": 227,
-              "tracked": 5
+              "tracked": 5,
+              "detected_not_tracked": 0,
+              "miss_unrecoverable": 0,
+              "offline_candidate": 0,
+              "validated_offline_recovery": 0,
+              "excluded_with_reason": 0,
+              "pending_offline_matrix": 227
             },
             "clip_iq_integrity": {
               "passed": 6,
@@ -27703,15 +28717,29 @@
               "unavailable_historical": 594
             },
             "pass_rates_all_eligible": {
-              "pending_offline_matrix": 0.9810606060606061,
-              "tracked": 0.01893939393939394
+              "tracked": 0.01893939393939394,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "pending_offline_matrix": 0.9810606060606061
             },
             "pass_rates_final_only": {
-              "tracked": 1.0
+              "tracked": 1.0,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0
             },
             "aircraft_rates": {
-              "pending_offline_matrix": 0.978448275862069,
-              "tracked": 0.021551724137931036
+              "tracked": 0.021551724137931036,
+              "detected_not_tracked": 0.0,
+              "miss_unrecoverable": 0.0,
+              "offline_candidate": 0.0,
+              "validated_offline_recovery": 0.0,
+              "excluded_with_reason": 0.0,
+              "pending_offline_matrix": 0.978448275862069
             }
           }
         }
@@ -27726,13 +28754,51 @@
         "passes_eligible": 0,
         "passes_classification_final": 0,
         "unique_aircraft": 0,
-        "passes_by_classification": {},
-        "aircraft_by_classification": {},
+        "passes_by_classification": {
+          "tracked": 0,
+          "detected_not_tracked": 0,
+          "miss_unrecoverable": 0,
+          "offline_candidate": 0,
+          "validated_offline_recovery": 0,
+          "excluded_with_reason": 0,
+          "pending_offline_matrix": 0
+        },
+        "aircraft_by_classification": {
+          "tracked": 0,
+          "detected_not_tracked": 0,
+          "miss_unrecoverable": 0,
+          "offline_candidate": 0,
+          "validated_offline_recovery": 0,
+          "excluded_with_reason": 0,
+          "pending_offline_matrix": 0
+        },
         "clip_iq_integrity": {},
         "clip_association_provenance": {},
-        "pass_rates_all_eligible": {},
-        "pass_rates_final_only": {},
-        "aircraft_rates": {}
+        "pass_rates_all_eligible": {
+          "tracked": null,
+          "detected_not_tracked": null,
+          "miss_unrecoverable": null,
+          "offline_candidate": null,
+          "validated_offline_recovery": null,
+          "pending_offline_matrix": null
+        },
+        "pass_rates_final_only": {
+          "tracked": null,
+          "detected_not_tracked": null,
+          "miss_unrecoverable": null,
+          "offline_candidate": null,
+          "validated_offline_recovery": null,
+          "excluded_with_reason": null
+        },
+        "aircraft_rates": {
+          "tracked": null,
+          "detected_not_tracked": null,
+          "miss_unrecoverable": null,
+          "offline_candidate": null,
+          "validated_offline_recovery": null,
+          "excluded_with_reason": null,
+          "pending_offline_matrix": null
+        }
       },
       "stratified": {
         "range_km": {},

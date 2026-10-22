@@ -251,18 +251,21 @@ def counts(records):
     iq_status = Counter(clip["iq_integrity"]["status"] for row in records for clip in row["clips"])
     association_status = Counter(clip["association_provenance"]["status"]
                                  for row in records for clip in row["clips"])
+    categories = (*CLASSIFICATIONS, "pending_offline_matrix")
+    pass_counts = {key: by_class.get(key, 0) for key in categories}
+    aircraft_counts = {key: aircraft_class.get(key, 0) for key in categories}
     return {"passes_total": len(records), "passes_eligible": len(eligible),
         "passes_classification_final": len(final), "unique_aircraft": len(aircraft),
-        "passes_by_classification": dict(sorted(by_class.items())),
-        "aircraft_by_classification": dict(sorted(aircraft_class.items())),
+        "passes_by_classification": pass_counts,
+        "aircraft_by_classification": aircraft_counts,
         "clip_iq_integrity": dict(sorted(iq_status.items())),
         "clip_association_provenance": dict(sorted(association_status.items())),
-        "pass_rates_all_eligible": {key: value / len(eligible) if eligible else None
-                                    for key, value in sorted(by_class.items()) if key != "excluded_with_reason"},
-        "pass_rates_final_only": {key: value / len(final) if final else None
-                                  for key, value in sorted(final_class.items())},
-        "aircraft_rates": {key: value / len(aircraft) if aircraft else None
-                           for key, value in sorted(aircraft_class.items())}}
+        "pass_rates_all_eligible": {key: pass_counts[key] / len(eligible) if eligible else None
+                                    for key in categories if key != "excluded_with_reason"},
+        "pass_rates_final_only": {key: final_class.get(key, 0) / len(final) if final else None
+                                  for key in CLASSIFICATIONS},
+        "aircraft_rates": {key: aircraft_counts[key] / len(aircraft) if aircraft else None
+                           for key in categories}}
 
 
 def stratify(records):
