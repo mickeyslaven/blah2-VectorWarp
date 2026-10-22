@@ -1,0 +1,10 @@
+{
+  "observed_at_ms": 1792664803544,
+  "config_revision_sha256": "9d690eeedacb9553c92140d9a8a8cf7de0f606f6b7f9076ff17ad7801c491197",
+  "loaded_revision_sha256": "9d690eeedacb9553c92140d9a8a8cf7de0f606f6b7f9076ff17ad7801c491197",
+  "frequency_hz": 563000000,
+  "sample_rate_hz": 2400000,
+  "gain_index": 2,
+  "gain_control": "fixed",
+  "channel_gains_db": [19.7, 25.4, 20.7, 25.4, 22.9]
+}

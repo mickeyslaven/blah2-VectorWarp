@@ -1,0 +1,62 @@
+{
+  "schema": "vectorwarp-fresh-rolling-status-v1",
+  "updated_at_ms": 1792666906177,
+  "admission": {
+    "status": "rolling_admission_open",
+    "ledger": "results/20261022-fresh-rolling-candidate-ledger.json",
+    "candidate_clips": 145,
+    "positive_clips": 3,
+    "positive_passes": 3,
+    "miss_clips": 142,
+    "miss_passes": 60,
+    "unique_aircraft": 58,
+    "strict_truth": "bracketed event-time interpolation; no hold/fallback",
+    "all_valid_positives_retained": true
+  },
+  "execution": {
+    "status": "blocked_until_native_backends_and_atomic_freeze",
+    "misses_executed": 0,
+    "atomic_snapshot_created": false,
+    "launch_marker": null
+  },
+  "existing_positive_regression": {
+    "revisions": [118, 120, 234],
+    "waveform_complete": 3,
+    "spatial_complete": 3,
+    "loaded_reciprocal_margin_db": [-2.415297589422962, -2.102719791606539, -1.9182483289748296],
+    "spectral_margin_db": [-1.6484791802693655, -1.4234556843226582, -2.0796964296536458],
+    "selected_gain_treatment": "raw_as_acquired"
+  },
+  "ordered_backend": {
+    "status": "partial_not_accepted",
+    "real_raw_iq_smoke_test": {
+      "revision": 118,
+      "arm": "A",
+      "runtime_s": 117,
+      "raw_target_score": 0.5350726448992345,
+      "translated_controls": 6400,
+      "rank": 4582,
+      "measured_direct_path_phasors": 20,
+      "phase_circular_std_rad": 0.00875217,
+      "amplitude_cv": 4.38e-08,
+      "phasor_gate": "passed"
+    },
+    "remaining": [
+      "native complex-cutout spatial cache binding for E-H",
+      "true ordered sequential operators for A-H",
+      "bounded trajectory TBD/HMM rather than primitive conjunction"
+    ]
+  },
+  "live_integrity": {
+    "frequency_hz": 563000000,
+    "sample_rate_hz": 2400000,
+    "gain_index": 2,
+    "channel_gains_db": [19.7, 25.4, 20.7, 25.4, 22.9],
+    "config_sha256": "9d690eeedacb9553c92140d9a8a8cf7de0f606f6b7f9076ff17ad7801c491197",
+    "rf_changed": false,
+    "api_active": true,
+    "processor_active": true,
+    "tracker_input_fresh": true,
+    "tracker_frames_observed": 22252
+  }
+}
