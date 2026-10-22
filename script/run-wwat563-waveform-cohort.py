@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Resumable Mac-to-CASS serial runner for the current 563 MHz waveform cohort.
+"""Resumable, bounded Mac-to-CASS runner for the current 563 MHz cohort.
 
-Processes positives before misses.  Each retained MCHQ is streamed once from the
-read-only recorder to CASS, SHA-verified, scored by both raw waveform methods
-at low priority, verified as JSON, then evicted.  State is written after every
-successful clip so rerunning the command resumes safely.
+Processes positives before misses. Each retained MCHQ is streamed from the
+read-only recorder to CASS, SHA-verified, scored by both waveform methods at low
+priority, verified as JSON, then evicted. At most one next clip is prefetched
+while the current clip is scored. State is written after every successful clip
+so rerunning the command resumes safely.
 """
 import argparse
 import hashlib
@@ -14,6 +15,7 @@ import shlex
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CASS = 'mickeyslaven@100.104.10.46'
@@ -110,16 +112,23 @@ def publish_vector(key, raw, digest, loaded, spectral):
     return path
 
 
-def publish_spatial_ready(key, raw, digest, state):
+def publish_spatial_ready(key, raw, digest, source):
     """Make verified raw available before waveform work, so spatial can overlap it."""
     basename = Path(raw).name
     ready = f'{REMOTE_SPATIAL_READY}/{basename}.json'
     ready_document = {'schema': 'vectorwarp-wwat563-spatial-ready-v1', 'clip_id': key,
-        'source': state['clips'][key]['recording'], 'raw': raw, 'sha256': digest,
+        'source': source, 'raw': raw, 'sha256': digest,
         'bytes': int(ssh(CASS, f'stat -c %s {quote(raw)}', capture_output=True).stdout)}
     ssh(CASS, f'cat > {quote(ready + ".part")} && mv {quote(ready + ".part")} {quote(ready)}',
         input=json.dumps(ready_document) + '\n')
     return ready
+
+
+def prefetch_and_publish(row, local_log):
+    """Verify one raw and expose it immediately to the spatial consumer."""
+    raw, digest = copy_and_verify(row, local_log)
+    ready = publish_spatial_ready(clip_id(row), raw, digest, row['capture']['file'])
+    return raw, digest, ready
 
 
 def wait_for_cass_headroom(local_log):
@@ -161,8 +170,10 @@ def copy_and_verify(row, local_log):
         text=True, capture_output=True)
     if existing.returncode == 0 and existing.stdout.split()[0] == source_hash:
         return target, source_hash
+    temporary = target + '.part'
     pipeline = (f'ssh -o BatchMode=yes {quote(RAW)} "cat {quote(source)}" | '
-                f'ssh -o BatchMode=yes {quote(CASS)} "cat > {quote(target)}"')
+                f'ssh -o BatchMode=yes {quote(CASS)} '
+                f'"cat > {quote(temporary)} && mv -f {quote(temporary)} {quote(target)}"')
     with local_log.open('a') as log:
         run(['bash', '-lc', pipeline], stdout=log, stderr=subprocess.STDOUT)
     remote_hash = ssh(CASS, f'sha256sum {quote(target)}', capture_output=True).stdout.split()[0]
@@ -189,15 +200,17 @@ def complete_after_spatial_ack(key, raw, state, state_path, **fields):
     state_path.write_text(json.dumps(state, indent=2) + '\n')
 
 
-def process(row, state, state_path, local_log):
+def process(row, state, state_path, local_log, prepared=None):
     key = clip_id(row)
     if state['clips'].get(key, {}).get('status') == 'complete':
         return
     state['clips'][key] = {'status': 'running', 'role': row['role'],
                            'recording': row['capture']['file'], 'event_id': row['event_id']}
     state_path.write_text(json.dumps(state, indent=2) + '\n')
-    raw, digest = copy_and_verify(row, local_log)
-    ready_path = publish_spatial_ready(key, raw, digest, state)
+    if prepared is None:
+        raw, digest, ready_path = prefetch_and_publish(row, local_log)
+    else:
+        raw, digest, ready_path = prepared
     state['clips'][key] = {**state['clips'][key], 'status': 'waveform_scoring',
         'raw': raw, 'sha256': digest, 'spatial_ready': ready_path}
     state_path.write_text(json.dumps(state, indent=2) + '\n')
@@ -277,8 +290,21 @@ def main():
     ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)} {quote(REMOTE_SPATIAL_READY)} {quote(REMOTE_SPATIAL_ACK)} {quote(REMOTE_WAVEFORM_VECTORS)}')
     for source in ('analyze-loaded-reciprocal-mchq.py', 'analyze-spectral-interference-rejection.py'):
         run(['scp', '-q', str(Path(__file__).with_name(source)), f'{CASS}:{REMOTE_ROOT}/{source}'])
-    for row in positives + misses:
-        process(row, state, args.state, args.log)
+    pending = [row for row in positives + misses
+               if state['clips'].get(clip_id(row), {}).get('status') != 'complete']
+    # Keep exactly one future raw in flight. This overlaps the network-bound
+    # bridge with current low-priority scoring while bounding CASS residency to
+    # the current and next recordings. The verified next recording is exposed
+    # immediately so its spatial analysis can also overlap current waveform work.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        prefetched = (pool.submit(prefetch_and_publish, pending[0], args.log)
+                      if pending else None)
+        for index, row in enumerate(pending):
+            prepared = prefetched.result()
+            prefetched = (pool.submit(prefetch_and_publish, pending[index + 1],
+                                      args.log)
+                          if index + 1 < len(pending) else None)
+            process(row, state, args.state, args.log, prepared=prepared)
 
 
 if __name__ == '__main__':
