@@ -61,12 +61,21 @@ def stop(process):
             process.wait(10)
 
 
+def set_stationary_clutter(config, state):
+    """Override only tracker admission/retirement filtering for replay A/B."""
+    if state is None:
+        return
+    initiate = config["process"]["tracker"]["initiate"]
+    settings = initiate.setdefault("stationary_clutter", {})
+    settings["enable"] = state == "on"
+
+
 def run_arm(harness, binary, source, recording, mode, timeout, reference_channel=None,
             pfa=None, label=None, direct_path_null_db=None, capture_maps=False,
             enable_tbd=False, tracker_m=None, tracker_n=None, tracker_max_acc=None,
             acceleration="cpu", complex_cutout=None, tbd_delay_motion_bins=None,
             tbd_doppler_motion_bins=None, tracker_beam_tolerance=None,
-            disable_tracker=False):
+            disable_tracker=False, stationary_clutter=None):
     label = label or (mode if reference_channel is None else f"dedicated_ch{reference_channel}")
     class CapturingSinks(harness.SinkGroup):
         def __init__(self):
@@ -147,6 +156,7 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                 initiate["maxAcc"] = tracker_max_acc
             if tracker_beam_tolerance is not None:
                 config["process"]["tracker"]["beam_tolerance"] = tracker_beam_tolerance
+            set_stationary_clutter(config, stationary_clutter)
             if disable_tracker:
                 config["process"]["tracker"]["enable"] = False
             if pfa is not None:
@@ -260,6 +270,8 @@ def main():
                         help="Require TBD history to remain within this many coarse beams")
     parser.add_argument("--disable-tracker", action="store_true",
                         help="Disable tracking for detector-only replay diagnostics")
+    parser.add_argument("--stationary-clutter", choices=("on", "off"),
+                        help="Override only resident tracker stationary-clutter admission/retirement")
     parser.add_argument("--modes", type=str,
                         help="Comma-separated arm labels to run from the selected sweep")
     parser.add_argument("--complex-cutout-delay-km", type=float,
@@ -338,7 +350,8 @@ def main():
             args.capture_maps, args.enable_tbd, args.tracker_m, args.tracker_n,
             args.tracker_max_acc, args.acceleration, complex_cutout,
             args.tbd_delay_motion_bins, args.tbd_doppler_motion_bins,
-            args.tracker_beam_tolerance, args.disable_tracker)
+            args.tracker_beam_tolerance, args.disable_tracker,
+            args.stationary_clutter)
     args.output.write_text(json.dumps(result, separators=(",", ":")))
     print(json.dumps({mode: {"detection_frames": len(arm["detections"]),
                              "track_frames": len(arm["tracks"]),
