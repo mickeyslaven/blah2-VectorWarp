@@ -179,6 +179,16 @@ def existing_result(path):
         return None
 
 
+def complete_after_spatial_ack(key, raw, state, state_path, **fields):
+    """Release a verified raw only after spatial has had its independent turn."""
+    ack_path, acknowledgement = wait_for_spatial_ack(raw, state, state_path, 30)
+    ssh(CASS, f'rm -f {quote(raw)}')
+    state['clips'][key] = {**state['clips'][key], 'status': 'complete',
+        **fields, 'spatial_ack': ack_path,
+        'spatial_ack_status': acknowledgement['status'], 'completed_at': int(time.time())}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
+
+
 def process(row, state, state_path, local_log):
     key = clip_id(row)
     if state['clips'].get(key, {}).get('status') == 'complete':
@@ -201,12 +211,8 @@ def process(row, state, state_path, local_log):
         state['clips'][key] = {**state['clips'][key],
             'status': 'spatial_wait', 'waveform_status': 'unscoreable_no_truth'}
         state_path.write_text(json.dumps(state, indent=2) + '\n')
-        ack_path, acknowledgement = wait_for_spatial_ack(raw, state, state_path, 30)
-        ssh(CASS, f'rm -f {quote(raw)}')
-        state['clips'][key] = {**state['clips'][key], 'status': 'complete',
-            'spatial_ack': ack_path, 'spatial_ack_status': acknowledgement['status'],
-            'completed_at': int(time.time())}
-        state_path.write_text(json.dumps(state, indent=2) + '\n')
+        complete_after_spatial_ack(key, raw, state, state_path,
+                                   waveform_status='unscoreable_no_truth')
         return
     loaded_path = f'{REMOTE_ROOT}/{key}-loaded-reciprocal.json'
     spectral_path = f'{REMOTE_ROOT}/{key}-spectral-interference.json'
@@ -220,13 +226,24 @@ def process(row, state, state_path, local_log):
         '--fft-size 1024 --max-doppler-hz 800 --max-delay-km 64',
     ]
     loaded, spectral = existing_result(loaded_path), existing_result(spectral_path)
-    with local_log.open('a') as log:
-        if loaded is None:
-            ssh(CASS, commands[0], stdout=log, stderr=subprocess.STDOUT)
-            loaded = verify_result(loaded_path)
-        if spectral is None:
-            ssh(CASS, commands[1], stdout=log, stderr=subprocess.STDOUT)
-            spectral = verify_result(spectral_path)
+    try:
+        with local_log.open('a') as log:
+            if loaded is None:
+                ssh(CASS, commands[0], stdout=log, stderr=subprocess.STDOUT)
+                loaded = verify_result(loaded_path)
+            if spectral is None:
+                ssh(CASS, commands[1], stdout=log, stderr=subprocess.STDOUT)
+                spectral = verify_result(spectral_path)
+    except (subprocess.CalledProcessError, RuntimeError, ValueError) as error:
+        # Do not turn a waveform limitation (for example a short capture) into
+        # a spatial-cohort stall.  The raw was already SHA-verified and ready.
+        state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
+            'waveform_status': 'unscoreable_waveform', 'waveform_error': str(error)}
+        state_path.write_text(json.dumps(state, indent=2) + '\n')
+        complete_after_spatial_ack(key, raw, state, state_path,
+                                   waveform_status='unscoreable_waveform',
+                                   waveform_error=str(error))
+        return
     vector_path = publish_vector(key, raw, digest, loaded, spectral)
     state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
         'loaded_result': loaded_path, 'spectral_result': spectral_path,
