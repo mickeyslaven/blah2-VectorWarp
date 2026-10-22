@@ -158,7 +158,7 @@ class CaptureTriggerQueue {
     const eventStart = event.observed_at - this.preSeconds * 1000;
     const eventEnd = event.observed_at + this.postSeconds * 1000;
     const maximumMs = this.maxClipSeconds * 1000;
-    const overlapping = this.clips.filter(clip => clip.pending &&
+    const overlapping = this.clips.filter(clip => clip.pending && !clip.exposed &&
       eventStart <= clip.windowEnd && eventEnd >= clip.windowStart &&
       Math.max(eventEnd, clip.windowEnd) - Math.min(eventStart, clip.windowStart) <= maximumMs);
     let clip;
@@ -222,7 +222,7 @@ class CaptureTriggerQueue {
       return {accepted: false, reason: 'periodic-interval'};
     const start = requestedEventTime - this.preSeconds * 1000;
     const end = requestedEventTime + this.postSeconds * 1000;
-    const clip = this.clips.find(item => item.pending && start <= item.windowEnd &&
+    const clip = this.clips.find(item => item.pending && !item.exposed && start <= item.windowEnd &&
       end >= item.windowStart && Math.max(end, item.windowEnd) - Math.min(start, item.windowStart) <=
         this.maxClipSeconds * 1000);
     if (clip) {
@@ -307,16 +307,11 @@ class CaptureTriggerQueue {
       windowStart: requestedEventTime - this.preSeconds * 1000,
       windowEnd: requestedEventTime + this.postSeconds * 1000,
       pending: true, acknowledged: false, failure: null};
-    this.clips[priorIndex] = clip;
-    // The native recorder publishes terminal results monotonically by revision.
-    // A retry replaces an earlier queue entry, so its new revision would
-    // otherwise be followed by older pending revisions that can never be
-    // acknowledged. Renumber those not-yet-exposed entries with the retry.
-    for (let index = priorIndex + 1; index < this.clips.length; ++index) {
-      if (!this.clips[index].pending) continue;
-      this.clips[index].revision = ++this.revision;
-      this.linkRevision(this.clips[index]);
-    }
+    // Append retries after every already-issued request. Once the recorder has
+    // observed a revision its identity is immutable; renumbering it would make
+    // the eventual terminal acknowledgement impossible to match.
+    this.clips.splice(priorIndex, 1);
+    this.clips.push(clip);
     for (let index = 0; index < records.length; ++index) {
       const event = records[index];
       event.state = 'pending'; event.failure = null;
@@ -356,15 +351,17 @@ class CaptureTriggerQueue {
     return this.clips.find(clip => clip.pending) || this.clips.at(-1) || null;
   }
 
-  request() {
-    return compact(this.current()) || {clipRevision: 0, eventIds: [], passIds: [],
+  request(expose = false) {
+    const clip = this.current();
+    if (expose && clip?.pending) clip.exposed = true;
+    return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],
       requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
       windowStart: null, windowEnd: null, pending: false, acknowledged: false,
       failure: null, file: '', samples: 0};
   }
 
   status() {
-    return {...this.request(), enabled: this.enabled,
+    return {...this.request(false), enabled: this.enabled,
       queuedClips: this.clips.filter(clip => clip.pending).length,
       maximumClipSeconds: this.maxClipSeconds, droppedEvents: this.droppedEvents,
       recentEvents: [...this.events.values()].slice(-250).map(event =>

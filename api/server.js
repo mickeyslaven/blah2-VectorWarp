@@ -1023,7 +1023,7 @@ app.get('/capture', (req, res) => {
   res.send(capture);
 });
 app.get('/capture/request', (req, res) => res.json({recording: capture,
-  revision: captureRevision, clip: captureTriggerQueue.request()}));
+  revision: captureRevision, clip: captureTriggerQueue.request(true)}));
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <

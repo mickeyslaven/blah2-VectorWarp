@@ -136,14 +136,14 @@ assert.equal(orderedRetry.acknowledge(1, 'Kraken clip pre-roll is unavailable'),
 orderedRetryClock = 7100;
 assert.equal(orderedRetry.retryPreRollFailure(1).clipRevision, 4);
 assert.deepEqual(orderedRetry.clips.filter(clip => clip.pending).map(clip => clip.revision),
-  [4, 5, 6], 'A startup retry keeps every later recorder request monotonic');
+  [2, 3, 4], 'A startup retry is appended without renumbering later recorder requests');
 assert.deepEqual(orderedRetry.status().recentEvents.map(item => item.clipRevisions),
-  [[1, 4], [5], [6]]);
+  [[1, 4], [2], [3]]);
+assert.equal(orderedRetry.acknowledge(2), true);
+assert.equal(orderedRetry.request().clipRevision, 3);
+assert.equal(orderedRetry.acknowledge(3), true);
+assert.equal(orderedRetry.request().clipRevision, 4);
 assert.equal(orderedRetry.acknowledge(4), true);
-assert.equal(orderedRetry.request().clipRevision, 5);
-assert.equal(orderedRetry.acknowledge(5), true);
-assert.equal(orderedRetry.request().clipRevision, 6);
-assert.equal(orderedRetry.acknowledge(6), true);
 
 const bounded = new CaptureTriggerQueue({preSeconds: 0, postSeconds: 1, maxClips: 2});
 for (let index = 0; index < 2; ++index)
@@ -178,6 +178,37 @@ assert.deepEqual(monotonic.clips.map(clip => clip.revision), [3, 4],
   'Extending an earlier clip must not expose a lower revision after roll');
 assert.equal(monotonic.acknowledge(3), true);
 assert.equal(monotonic.request().clipRevision, 4);
+
+const inFlight = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 3});
+inFlight.acceptEligibilityEvent(event(23, 100000));
+assert.equal(inFlight.status().clipRevision, 1, 'Status inspection does not claim a recorder request');
+assert.equal(inFlight.request(true).clipRevision, 1, 'Recorder polling claims the current revision');
+const afterClaim = inFlight.acceptEligibilityEvent(event(24, 102000));
+assert.equal(afterClaim.coalesced, false,
+  'An overlapping event cannot mutate a revision already issued to the recorder');
+assert.equal(afterClaim.clip.clipRevision, 2);
+assert.equal(inFlight.acknowledge(1, null,
+  {file: '/clips/in-flight-1.mchq', samples: 12000000}), true,
+  'The issued revision remains acknowledgeable after another event arrives');
+assert.equal(inFlight.request(true).clipRevision, 2);
+assert.equal(inFlight.acknowledge(2, null,
+  {file: '/clips/in-flight-2.mchq', samples: 12000000}), true);
+
+let claimedRetryClock = 5000;
+const claimedRetry = new CaptureTriggerQueue({preSeconds: 0, postSeconds: 1,
+  now: () => claimedRetryClock});
+claimedRetry.acceptEligibilityEvent(event(25, 4000));
+claimedRetry.request(true);
+claimedRetry.acceptEligibilityEvent(event(26, 10000));
+assert.equal(claimedRetry.acknowledge(1, 'Kraken clip pre-roll is unavailable'), true);
+claimedRetryClock = 7100;
+assert.equal(claimedRetry.retryPreRollFailure(1).clipRevision, 3);
+assert.deepEqual(claimedRetry.clips.filter(clip => clip.pending).map(clip => clip.revision),
+  [2, 3], 'A retry is appended without renumbering a later issued revision');
+assert.equal(claimedRetry.request(true).clipRevision, 2);
+assert.equal(claimedRetry.acknowledge(2), true);
+assert.equal(claimedRetry.request(true).clipRevision, 3);
+assert.equal(claimedRetry.acknowledge(3), true);
 
 const periodic = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 2, now: () => 0});
