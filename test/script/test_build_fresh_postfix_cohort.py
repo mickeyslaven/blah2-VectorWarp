@@ -88,3 +88,15 @@ def test_exact_in_window_detection_is_positive_without_track_overlap():
     assert result["admitted"][0]["radar_window_overlap"] == {
         "track": False, "detection": True,
     }
+
+
+def test_capture_cutoff_applies_to_window_not_pass_observation_time():
+    row = event()
+    row["observed_at"] = 0
+    accepted = FRESH.build({"eligibility_events": [row]}, POLICY, 1000, [7], {})
+    assert accepted["summary"]["positives"] == 1
+    row["capture_windows"][0]["window_start"] = 999
+    rejected = FRESH.build({"eligibility_events": [row]}, POLICY, 1000, [7], {})
+    assert rejected["summary"]["rejected"] == 1
+    assert any("predates minimum capture" in reason
+               for reason in rejected["rejected"][0]["reasons"])

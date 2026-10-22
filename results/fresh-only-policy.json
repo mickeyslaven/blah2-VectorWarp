@@ -1,7 +1,7 @@
 {
   "schema": "vectorwarp-fresh-only-recovery-policy-v1",
   "effective_utc": "2026-10-22T03:07:52Z",
-  "minimum_capture_timestamp_ms": 1792638472000,
+  "minimum_capture_timestamp_ms": 1792686940348,
   "decision": "All earlier WWAT captures and replay outputs are quarantined from recovery and frequency-comparison decisions because their aircraft truth can be stale or spatially unbounded.",
   "authoritative_recordings_deleted": false,
   "temporary_replay_copies_deleted": true,

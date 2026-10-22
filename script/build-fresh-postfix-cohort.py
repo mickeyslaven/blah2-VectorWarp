@@ -113,13 +113,14 @@ def build(statistics, policy_document, cutoff_ms, revisions, rf):
     admitted, rejected = [], []
     selected = set(revisions)
     for event in statistics.get("eligibility_events", []):
-        if event.get("observed_at", 0) < max(cutoff_ms,
-                                              policy_document["minimum_capture_timestamp_ms"]):
-            continue
         for window in event.get("capture_windows", []):
             if selected and window.get("revision") not in selected:
                 continue
             reasons = []
+            minimum_capture_ms = max(
+                cutoff_ms, policy_document["minimum_capture_timestamp_ms"])
+            if window.get("window_start", 0) < minimum_capture_ms:
+                reasons.append("capture predates minimum capture timestamp")
             if event.get("state") != "finalized": reasons.append("event not finalized")
             if window.get("state") != "acknowledged" or not window.get("file"):
                 reasons.append("capture not acknowledged")
