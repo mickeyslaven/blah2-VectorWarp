@@ -423,6 +423,8 @@ try
   uint32_t coherentBeamCount = 12;
   double effectiveBeamTrials = 0;
   double directPathNullDb = 0;
+  std::string surveillanceManifoldFile;
+  bool surveillanceManifoldConfigured = false;
   std::vector<std::array<double, 3>> coherentPositions;
   double directPathAzimuthRad = 0,xAxisBearingDeg = 0,bearingUncertaintyFloorDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
@@ -434,6 +436,10 @@ try
       fusion["effective_beam_trials"] >> effectiveBeamTrials;
     if (fusion.has_child("direct_path_null_db"))
       fusion["direct_path_null_db"] >> directPathNullDb;
+    if (fusion.has_child("manifold_file")) {
+      surveillanceManifoldConfigured = true;
+      fusion["manifold_file"] >> surveillanceManifoldFile;
+    }
   }
   if (surveillanceFusionMode != "noncoherent" &&
       surveillanceFusionMode != "coherent_beam_bank" &&
@@ -650,6 +656,12 @@ try
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
   const bool residentMode=accelerationMode=="gpu-resident";
+  if (surveillanceManifoldConfigured &&
+      surveillanceManifoldFile.find_first_not_of(" \t\r\n") == std::string::npos)
+    throw std::invalid_argument("Measured surveillance manifold_file must be a non-empty path");
+  if (surveillanceManifoldConfigured &&
+      (surveillanceFusionMode != "coherent_beam_bank" || residentMode))
+    throw std::invalid_argument("Measured surveillance manifold requires non-resident coherent_beam_bank fusion");
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
@@ -775,15 +787,24 @@ try
   std::unique_ptr<CoherentBeamBank> coherentMapFusion;
   if (coherentFusion)
   {
+    std::vector<std::complex<double>> surveillanceManifold;
+    if (surveillanceManifoldConfigured)
+    {
+      const auto loaded = blah2::bearing_manifold::load(surveillanceManifoldFile,
+        double(fc), coherentBeamCount, uint32_t(coherentPositions.size()));
+      surveillanceManifold.assign(loaded.responses.begin(), loaded.responses.end());
+    }
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        directPathAzimuthRad, directPathNullDb});
+        directPathAzimuthRad, directPathNullDb, surveillanceManifold});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
     std::cout << " direct_path_azimuth_deg=" <<
       directPathAzimuthRad * 180.0 / std::acos(-1.0);
     std::cout << " effective_beam_trials=" << effectiveBeamTrials
       << " direct_path_null_db=" << directPathNullDb;
+    if (surveillanceManifoldConfigured)
+      std::cout << " measured_manifold=" << surveillanceManifoldFile;
     std::cout << "\n";
   }
   else

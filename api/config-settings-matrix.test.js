@@ -157,6 +157,16 @@ try {
       'process.detection.track_before_detect.delay_motion_bins',
       'process.detection.track_before_detect.doppler_motion_bins',
       'process.tracker.beam_tolerance']);
+  const measuredFusion = clone(fusion);
+  measuredFusion.process.performance.acceleration = 'cpu';
+  measuredFusion.process.detection.integration_cpis = 1;
+  measuredFusion.process.detection.integration_motion_bins = 0;
+  measuredFusion.process.detection.track_before_detect = {
+    enable: false, max_cpis: 8, motion_bins: 1};
+  measuredFusion.process.surveillance_fusion.manifold_file =
+    '/etc/vectorwarp/detection-manifold.json';
+  persistGroup('kraken-measured-fusion', fusion, measuredFusion,
+    ['process.surveillance_fusion.manifold_file']);
   const bearing = clone(fusion);
   Object.assign(bearing.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true

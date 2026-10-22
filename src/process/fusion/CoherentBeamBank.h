@@ -19,6 +19,8 @@ public:
     std::vector<std::array<double, 3>> positionsM;
     double directPathAzimuthRad = 0;
     double directPathNullDb = 0;
+    // Optional row-major measured responses: beams x positionsM.size().
+    std::vector<std::complex<double>> measuredResponses;
   };
 
   explicit CoherentBeamBank(const Config& config);
@@ -33,6 +35,8 @@ private:
   double directPathAzimuthRad_ = 0;
   double directPathNullDb_ = 0;
   std::vector<std::array<double, 3>> positionsM_;
+  std::vector<std::complex<double>> measuredResponses_;
+  std::size_t measuredDirectBeam_ = 0;
   std::vector<std::vector<std::complex<double>>> weights_;
 };
 

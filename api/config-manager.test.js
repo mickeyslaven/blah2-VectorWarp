@@ -60,12 +60,31 @@ coherentFusion.capture.device.array_geometry = {
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const measuredFusion = clone(coherentFusion);
+measuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
+assert.equal(validateConfig(measuredFusion).valid, true,
+  'coherent beam-bank fusion accepts a distinct detection manifold path');
+for (const manifold of ['', '   ', 7, null]) {
+  const invalid = clone(coherentFusion);
+  invalid.process.surveillance_fusion.manifold_file = manifold;
+  assert.equal(validateConfig(invalid).valid, false,
+    `reject invalid detection manifold path ${JSON.stringify(manifold)}`);
+}
+const noncoherentMeasuredFusion = clone(measuredFusion);
+noncoherentMeasuredFusion.process.surveillance_fusion.mode = 'noncoherent';
+assert.equal(validateConfig(noncoherentMeasuredFusion).valid, false,
+  'detection manifold cannot be attached to noncoherent fusion');
 const whitenedFusion = clone(coherentFusion);
 whitenedFusion.process.performance.acceleration = 'gpu-resident';
 whitenedFusion.process.tracker.gpu_capacity = 1024;
 whitenedFusion.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
 assert.equal(validateConfig(whitenedFusion).valid, true,
   'noise-whitened beam-bank fusion accepts resident Kraken geometry');
+const residentMeasuredFusion = clone(whitenedFusion);
+residentMeasuredFusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+residentMeasuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
+assert.equal(validateConfig(residentMeasuredFusion).valid, false,
+  'detection manifold fails closed on the resident GPU path that cannot consume it');
 const nonresidentWhitenedFusion = clone(whitenedFusion);
 nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,

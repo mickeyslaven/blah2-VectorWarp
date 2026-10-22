@@ -111,6 +111,7 @@ const rules = {
   'process.surveillance_fusion.beams': {...integer(4, 360), optional: true},
   'process.surveillance_fusion.effective_beam_trials': {...numeric(1, 360), optional: true},
   'process.surveillance_fusion.direct_path_null_db': {...numeric(0, 40), optional: true},
+  'process.surveillance_fusion.manifold_file': {type: 'string', optional: true},
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},

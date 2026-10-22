@@ -683,6 +683,13 @@ function validateConfig(config, baseline = null) {
     if (fusion.direct_path_null_db !== undefined)
       number(fusion.direct_path_null_db,
         'process.surveillance_fusion.direct_path_null_db', {min: 0, max: 40});
+    if (fusion.manifold_file !== undefined &&
+        (typeof fusion.manifold_file !== 'string' || !fusion.manifold_file.trim()))
+      errors.push('process.surveillance_fusion.manifold_file must be a non-empty path');
+    if (fusion.manifold_file !== undefined &&
+        (fusion.mode !== 'coherent_beam_bank' ||
+         processConfig.performance?.acceleration === 'gpu-resident'))
+      errors.push('process.surveillance_fusion.manifold_file requires non-resident coherent_beam_bank fusion');
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
       if (device.type !== 'Kraken')
