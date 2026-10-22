@@ -37,7 +37,12 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(trackerGate.dopplerHz, 18.5,
     'Doppler-rate and tracker-lag uncertainty must widen the calibration-only gate');
   assert.ok(trackerGate.delayKm >= span.kmPerBin * 3);
-  const stats = new EvidenceStatistics(config, source, {filename, now: () => clock});
+  const trackCaptures = [];
+  const stats = new EvidenceStatistics(config, source, {filename, now: () => clock,
+    onTrackCapture(event, timestamp) {
+      trackCaptures.push({event, timestamp});
+      return {accepted: false};
+    }});
   for (let index = 0; index < 3; ++index) {
     stats.acceptTracker({timestamp: clock, data: [{delay: 10 / span.kmPerBin, doppler: 107}]});
     stats.acceptDetection({timestamp: clock, delay: [10.1], doppler: [102]});
@@ -64,6 +69,8 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.eligibility_events[0].outcome, 'tracked');
   assert.equal(result.eligibility_events[0].first_detection_at, 1_800_000_000_000);
   assert.equal(result.eligibility_events[0].first_track_at, 1_800_000_000_000);
+  assert.equal(trackCaptures.length, 1, 'Only the first matched track frame triggers a capture');
+  assert.equal(trackCaptures[0].timestamp, 1_800_000_000_000);
   assert.equal(result.eligibility_events[0].predicted.delay_km, 10);
   assert.equal(result.eligibility_events[0].truth_samples.length, 3);
   assert.equal(result.eligibility_events[0].truth_samples[0].provenance.source_id,

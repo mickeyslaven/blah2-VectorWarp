@@ -285,7 +285,8 @@ function assignments(points, predictions, gatesForPrediction) {
 class EvidenceStatistics {
   constructor(config, adsbSource, {filename, fileSystem = fs, now = Date.now,
     setIntervalFn = setInterval, clearIntervalFn = clearInterval,
-    onEligibilityEvent = () => {}, onPeriodicCapture = () => {}} = {}) {
+    onEligibilityEvent = () => {}, onPeriodicCapture = () => {},
+    onTrackCapture = () => {}} = {}) {
     this.config = config;
     this.adsbSource = adsbSource;
     this.fs = fileSystem;
@@ -311,6 +312,7 @@ class EvidenceStatistics {
     this.clearInterval = clearIntervalFn;
     this.onEligibilityEvent = onEligibilityEvent;
     this.onPeriodicCapture = onPeriodicCapture;
+    this.onTrackCapture = onTrackCapture;
     this.load();
     this.sampler = null;
     if (this.limits && this.config.truth?.adsb?.enabled === true) {
@@ -455,6 +457,7 @@ class EvidenceStatistics {
       if (!Array.isArray(pass.detectionTimestamps)) pass.detectionTimestamps = [];
       appendBounded(pass.detectionTimestamps, detectedAt);
     }
+    const firstTrack = finite(trackedAt) && !finite(pass.firstTrackAt);
     if (finite(trackedAt)) {
       pass.trackedFrames += 1;
       pass.firstTrackAt ??= trackedAt;
@@ -462,6 +465,7 @@ class EvidenceStatistics {
       appendBounded(pass.trackTimestamps, trackedAt);
     }
     updateCaptureWindowEvidence(event, pass, detectedAt, trackedAt);
+    if (firstTrack) this.emitTrackCapture(event, pass, trackedAt);
     this.emitPeriodicCapture(event, pass, timestamp);
   }
 
@@ -519,6 +523,25 @@ class EvidenceStatistics {
       event.capture_clip_revisions = [...new Set([...(event.capture_clip_revisions || []),
         capture.clip.clipRevision])];
       upsertCaptureWindow(event, {captureId: capture.clip.captureIds?.[event.id], kind: 'periodic',
+        revision: capture.clip.clipRevision, requestedEventTime: capture.clip.requestedEventTime,
+        windowStart: capture.clip.windowStart, windowEnd: capture.clip.windowEnd,
+        state: 'pending', failure: null, file: '', samples: 0}, pass);
+    } catch (error) { this.state.error = error.message; }
+  }
+
+  emitTrackCapture(event, pass, timestamp) {
+    if (!event || event.state !== 'pending') return;
+    try {
+      const capture = this.onTrackCapture({...event}, timestamp);
+      if (!capture?.accepted) return;
+      if (capture.dropped && capture.window) {
+        upsertCaptureWindow(event, capture.window, pass);
+        return;
+      }
+      if (!capture.clip?.clipRevision) return;
+      event.capture_clip_revisions = [...new Set([...(event.capture_clip_revisions || []),
+        capture.clip.clipRevision])];
+      upsertCaptureWindow(event, {captureId: capture.clip.captureIds?.[event.id], kind: 'track',
         revision: capture.clip.clipRevision, requestedEventTime: capture.clip.requestedEventTime,
         windowStart: capture.clip.windowStart, windowEnd: capture.clip.windowEnd,
         state: 'pending', failure: null, file: '', samples: 0}, pass);

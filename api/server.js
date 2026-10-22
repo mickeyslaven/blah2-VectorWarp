@@ -63,7 +63,8 @@ const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
   {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
-    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp)});
+    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
+    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);

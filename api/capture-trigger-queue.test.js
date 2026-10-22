@@ -182,17 +182,23 @@ assert.equal(snapshot1.clip.clipRevision, 2);
 const snapshot2 = periodic.acceptPeriodicSnapshot(parent, 120000);
 assert.equal(snapshot2.accepted, true);
 assert.equal(periodic.acceptPeriodicSnapshot(parent, 130000).reason, 'periodic-cap');
+const trackSnapshot = periodic.acceptTrackSnapshot(parent, 130000);
+assert.equal(trackSnapshot.accepted, true,
+  'The first matched track gets one capture even after periodic snapshots are exhausted');
+assert.equal(periodic.acceptTrackSnapshot(parent, 131000).reason, 'track-cap');
 const periodicRecord = periodic.status().recentEvents[0];
-assert.equal(periodicRecord.captureWindows.length, 3,
-  'One parent eligibility event owns initial plus bounded child snapshots');
-assert.deepEqual(periodicRecord.captureWindows.map(item => item.kind), ['initial', 'periodic', 'periodic']);
-assert.equal(new Set(periodicRecord.captureWindows.map(item => item.captureId)).size, 3,
+assert.equal(periodicRecord.captureWindows.length, 4,
+  'One parent eligibility event owns initial, periodic, and one track-triggered snapshot');
+assert.deepEqual(periodicRecord.captureWindows.map(item => item.kind),
+  ['initial', 'periodic', 'periodic', 'track']);
+assert.equal(new Set(periodicRecord.captureWindows.map(item => item.captureId)).size, 4,
   'Every capture window has a unique child capture ID');
 assert.equal(periodic.acknowledge(1, null, {file: '/clips/initial.mchq', samples: 1}), true);
 assert.equal(periodic.acknowledge(2, null, {file: '/clips/periodic-1.mchq', samples: 2}), true);
 assert.equal(periodic.acknowledge(3, 'Disk full'), true);
+assert.equal(periodic.acknowledge(4, null, {file: '/clips/track.mchq', samples: 4}), true);
 assert.deepEqual(periodic.status().recentEvents[0].captureWindows.map(item => item.state),
-  ['acknowledged', 'acknowledged', 'failed']);
+  ['acknowledged', 'acknowledged', 'failed', 'acknowledged']);
 
 const sharedPeriodic = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 2});

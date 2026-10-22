@@ -196,16 +196,22 @@ class CaptureTriggerQueue {
     return {accepted: true, coalesced: overlapping.length > 0, clip: compact(clip)};
   }
 
-  acceptPeriodicSnapshot(event, requestedEventTime = this.now()) {
-    if (!this.periodicMaxSnapshots || !event || !validId(event.id) ||
+  acceptSnapshot(event, requestedEventTime, kind) {
+    if (!['periodic', 'track'].includes(kind) || !event || !validId(event.id) ||
         !finite(requestedEventTime) || requestedEventTime < 0) return {accepted: false,
-      reason: 'periodic-disabled-or-invalid'};
+      reason: 'snapshot-invalid'};
+    if (kind === 'periodic' && !this.periodicMaxSnapshots)
+      return {accepted: false, reason: 'periodic-disabled-or-invalid'};
     const record = this.events.get(event.id);
     if (!record || record.passId !== event.pass_id) return {accepted: false, reason: 'unknown-parent'};
-    const periodic = record.captureWindows.filter(item => item.kind === 'periodic');
-    if (periodic.length >= this.periodicMaxSnapshots) return {accepted: false, reason: 'periodic-cap'};
+    const sameKind = record.captureWindows.filter(item => item.kind === kind);
+    if (kind === 'periodic' && sameKind.length >= this.periodicMaxSnapshots)
+      return {accepted: false, reason: 'periodic-cap'};
+    if (kind === 'track' && sameKind.length)
+      return {accepted: false, reason: 'track-cap'};
     const last = record.captureWindows.at(-1);
-    if (last && requestedEventTime - last.requestedEventTime < this.periodicIntervalMs)
+    if (kind === 'periodic' && last &&
+        requestedEventTime - last.requestedEventTime < this.periodicIntervalMs)
       return {accepted: false, reason: 'periodic-interval'};
     const start = requestedEventTime - this.preSeconds * 1000;
     const end = requestedEventTime + this.postSeconds * 1000;
@@ -225,7 +231,7 @@ class CaptureTriggerQueue {
         this.clips[index].revision = ++this.revision;
         this.linkRevision(this.clips[index]);
       }
-      this.addWindow(record, clip, 'periodic');
+      this.addWindow(record, clip, kind);
       return {accepted: true, coalesced: true, clip: compact(clip)};
     }
     while (this.clips.length >= this.maxClips) {
@@ -234,15 +240,23 @@ class CaptureTriggerQueue {
       this.clips.splice(completed, 1);
     }
     if (this.clips.length >= this.maxClips) {
-      const window = this.addDroppedWindow(record, 'periodic', requestedEventTime, 'queue-capacity');
+      const window = this.addDroppedWindow(record, kind, requestedEventTime, 'queue-capacity');
       this.droppedEvents += 1;
       return {accepted: true, dropped: true, reason: 'queue-capacity', window};
     }
     const next = {revision: ++this.revision, eventIds: [event.id], passIds: [event.pass_id], captureIds: {},
       requestedEventTime, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
       windowStart: start, windowEnd: end, pending: true, acknowledged: false, failure: null};
-    this.clips.push(next); this.addWindow(record, next, 'periodic');
+    this.clips.push(next); this.addWindow(record, next, kind);
     return {accepted: true, coalesced: false, clip: compact(next)};
+  }
+
+  acceptPeriodicSnapshot(event, requestedEventTime = this.now()) {
+    return this.acceptSnapshot(event, requestedEventTime, 'periodic');
+  }
+
+  acceptTrackSnapshot(event, requestedEventTime = this.now()) {
+    return this.acceptSnapshot(event, requestedEventTime, 'track');
   }
 
   acknowledge(revision, failure = null, {file = '', samples = 0} = {}) {
