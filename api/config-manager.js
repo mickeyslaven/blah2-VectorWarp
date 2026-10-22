@@ -185,7 +185,12 @@ function validateConfig(config, baseline = null) {
     if (rule.type === 'number') number(value, key, rule);
     if (rule.choices && !(rule.type === 'autoBoolean' && typeof value === 'boolean'))
       oneOf(value, key, rule.choices);
-    if (rule.readOnly && baseline && previous !== undefined && previous !== value)
+    // Arrays and objects returned by GET are distinct JavaScript references
+    // when submitted back through Apply.  Read-only means value equality, not
+    // object identity; otherwise an unchanged ordered ADS-B source list makes
+    // every unrelated live configuration change impossible.
+    if (rule.readOnly && baseline && previous !== undefined &&
+        JSON.stringify(previous) !== JSON.stringify(value))
       errors.push(`${key} is read-only: ${rule.readOnly}`);
   };
   inspectFields(root);

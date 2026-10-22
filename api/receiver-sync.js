@@ -374,7 +374,14 @@ function createKrakenControlClient(options = {}) {
           gain: wanted.gain === undefined && !current.fullResetAfterAck ? undefined : lastStatus.gain,
           channelGains: lastStatus.channelGains};
         if (current.id === 'set_frequency') expectedReadback.frequency = current.value;
-        if (current.id === 'set_gain') expectedReadback.gain = current.value;
+        if (current.id === 'set_gain') {
+          expectedReadback.gain = current.value;
+          // Suite applies a common gain by replacing every physical channel
+          // gain with the nearest hardware step.  Do not require the old
+          // vector while confirming this intermediate operation; a requested
+          // final vector is checked by the following set_channel_gains step.
+          expectedReadback.channelGains = undefined;
+        }
         if (current.id === 'set_num_elements') expectedReadback.channelCount = current.value;
         if (current.id === 'set_channel_gains') expectedReadback.channelGains = current.value;
         // A delayed response from an earlier command must not authorize this

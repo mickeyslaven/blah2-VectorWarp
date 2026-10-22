@@ -140,6 +140,31 @@ async function rejected(promise, code, pattern) {
     assert.deepEqual(accepted.after.channelGains, candidate.capture.device.heimdall.channel_gains);
     assert.deepEqual(accepted.operations.map(item => item.operation), ['set_channel_gains']);
   } finally { await channelGainSuite.close(); }
+  const commonThenChannelSuite = await simulatedSuite({frequency: 204640000,
+    sampleRate: 2400000, channels: 5, maximum: 5, reconfiguring: false, gain: 6,
+    channelGains: [7.7, 7.7, 7.7, 7.7, 7.7]}, (command, socket, live) => {
+    if (command.command === 'set_gain') {
+      socket.write(`${JSON.stringify({status: 'success', gain: command.gain})}\n`);
+      live.gain = command.gain;
+      live.channelGains = [2.7, 2.7, 2.7, 2.7, 2.7];
+    } else {
+      assert.equal(command.command, 'set_channel_gains');
+      socket.write(`${JSON.stringify({status: 'success', channel_gains: command.gains})}\n`);
+      live.channelGains = [...command.gains];
+    }
+    socket.write(`${JSON.stringify(status(live))}\n`);
+  });
+  try {
+    const candidate = config(commonThenChannelSuite.port);
+    candidate.capture.device.heimdall.gain = 2;
+    candidate.capture.device.heimdall.channel_gains = [19.7, 25.4, 20.7, 25.4, 22.9];
+    const accepted = await createKrakenControlClient({statusTimeoutMs: 1000,
+      readbackTimeoutMs: 1000}).synchronize(candidate);
+    assert.deepEqual(accepted.operations.map(item => item.operation),
+      ['set_gain', 'set_channel_gains']);
+    assert.deepEqual(accepted.after.channelGains,
+      candidate.capture.device.heimdall.channel_gains);
+  } finally { await commonThenChannelSuite.close(); }
   const noChannelGainSuite = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
     channels: 5, maximum: 5, reconfiguring: false, gain: 18}, () => assert.fail('no command expected'));
   try {

@@ -227,6 +227,13 @@ for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
   value.truth.adsb.sources = ['local:readsb', 'https://adsb-backup.example/tar1090'];
   value.truth.adsb.source_timeout = .75;
   assert.equal(validateConfig(value).valid, true, 'Accept bounded multi-source ADS-B configuration');
+
+  const unchanged = clone(value);
+  assert.equal(validateConfig(unchanged, value).valid, true,
+    'An unchanged read-only ADS-B source array must survive an unrelated Apply');
+  unchanged.truth.adsb.sources[1] = 'https://different.example/tar1090';
+  assert.equal(validateConfig(unchanged, value).valid, false,
+    'A changed read-only ADS-B source array must still be rejected');
 }
 for (const sources of [[], Array(9).fill('local:readsb'),
   ['local:readsb', 'local:readsb'], ['auto', 'https://adsb.example'],
