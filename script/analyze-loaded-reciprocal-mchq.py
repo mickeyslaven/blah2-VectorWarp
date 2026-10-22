@@ -145,7 +145,9 @@ def score(maps, doppler_axis, trajectory, loadings, guard, training, controls_st
             controls.append(float(np.mean(values)))
         per_loading[str(loading)] = {'target': float(np.mean(target_values)), 'control_p99': p99(controls),
             'margin_db': db(np.mean(target_values) / p99(controls)), 'per_frame_ratio_db': [db(value) for value in target_values],
-            'control_count': len(controls)}
+            # Retain the matched off-trajectory evidence distribution so a
+            # later cross-family stack can calibrate its own look-elsewhere tail.
+            'control_log_ratio_db': [db(value) for value in controls], 'control_count': len(controls)}
     for index, (row_offset, column_offset) in enumerate(offsets):
         all_trial_controls.append(max(
             np.mean([local_ratio(surface, row + row_offset, column + column_offset, guard, training)

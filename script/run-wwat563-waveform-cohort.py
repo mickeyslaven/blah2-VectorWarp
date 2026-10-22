@@ -81,6 +81,11 @@ def publish_vector(key, raw, digest, loaded, spectral):
         return {'method_id': method_id, 'selected_parameter': selected,
                 'parameter_trial_count': len(scores),
                 'matched_control_count': score['control_count'],
+                # The stacker calibrates cross-family combinations from this
+                # unthresholded matched-control population, rather than from a
+                # single-method p99 decision.
+                'evidence_log10': db(score['target']),
+                'control_evidence_log10': score['control_log_ratio_db'],
                 'per_frame_log_ratio_db': score['per_frame_ratio_db'],
                 'trajectory_mean_log_ratio_db': sum(score['per_frame_ratio_db']) /
                                                 len(score['per_frame_ratio_db']),

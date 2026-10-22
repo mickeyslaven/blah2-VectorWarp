@@ -1,0 +1,12 @@
+{
+  "schema": "vectorwarp-wwat563-waveform-runner-v1",
+  "clips": {
+    "r110-c5f7f633ae29": {
+      "status": "retry",
+      "role": "positive",
+      "recording": "/var/lib/vectorwarp/recordings/kraken-clip-r110-1792628756957079815-53.mchq",
+      "event_id": "eligibility:c4f6597440c3077b7e875673aeb9e7e93eca0f7b47576292d71c6bd74c408cf8",
+      "retry_reason": "partial raw transfer terminated before waveform scoring"
+    }
+  }
+}
