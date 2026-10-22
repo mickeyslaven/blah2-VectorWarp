@@ -99,6 +99,25 @@ assert.equal(startup.acknowledge(2, null,
   {file: '/clips/startup-retry.mchq', samples: 12000000}), true);
 assert.equal(startup.status().recentEvents[0].state, 'acknowledged');
 
+let periodicRetryClock = 121000;
+const periodicRetry = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 8,
+  periodicIntervalSeconds: 10, periodicMaxSnapshots: 2, now: () => periodicRetryClock});
+const periodicRetryEvent = event(40, 100000);
+periodicRetry.acceptEligibilityEvent(periodicRetryEvent);
+assert.equal(periodicRetry.acknowledge(1, null,
+  {file: '/clips/initial.mchq', samples: 1}), true);
+periodicRetry.acceptPeriodicSnapshot(periodicRetryEvent, 120000);
+assert.equal(periodicRetry.acknowledge(2, 'Kraken clip pre-roll is unavailable'), true);
+const retriedPeriodic = periodicRetry.retryPreRollFailure(2);
+assert.equal(retriedPeriodic.clipRevision, 3,
+  'A periodic window retries even when its event already has an initial capture');
+assert.equal(retriedPeriodic.requestedEventTime, 121000);
+assert.equal(periodicRetry.retryPreRollFailure(2), null,
+  'The failed periodic revision cannot be retried twice');
+assert.equal(periodicRetry.acknowledge(3, 'Kraken clip pre-roll is unavailable'), true);
+assert.equal(periodicRetry.retryPreRollFailure(3), null,
+  'The replacement periodic window receives only one fresh-time retry');
+
 let orderedRetryClock = 5000;
 const orderedRetry = new CaptureTriggerQueue({preSeconds: 0, postSeconds: 1,
   now: () => orderedRetryClock});

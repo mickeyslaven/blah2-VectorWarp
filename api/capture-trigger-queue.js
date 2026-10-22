@@ -113,7 +113,8 @@ class CaptureTriggerQueue {
     clip.captureIds[record.eventId] = captureId;
     record.captureWindows.push({captureId, kind, revision: clip.revision,
       requestedEventTime: clip.requestedEventTime, windowStart: clip.windowStart,
-      windowEnd: clip.windowEnd, state: 'pending', failure: null, file: '', samples: 0});
+      windowEnd: clip.windowEnd, state: 'pending', failure: null, file: '', samples: 0,
+      preRollRetries: 0});
     record.clipRevisions = [...new Set(record.captureWindows.map(item => item.revision))];
     record.windowStart = clip.windowStart; record.windowEnd = clip.windowEnd;
   }
@@ -273,7 +274,12 @@ class CaptureTriggerQueue {
     if (!prior || prior.failure !== 'Kraken clip pre-roll is unavailable' ||
         !finite(requestedEventTime) || requestedEventTime < 0) return null;
     const records = prior.eventIds.map(id => this.events.get(id)).filter(Boolean);
-    if (!records.length || records.some(event => event.clipRevisions.length !== 1)) return null;
+    const windows = records.map(event => event.captureWindows.find(item =>
+      item.captureId === prior.captureIds[event.eventId] && item.revision === revision));
+    // Retry each physical capture window once. Events can legitimately have an
+    // earlier acknowledged initial window plus a later periodic window, so the
+    // event-wide revision count cannot be used as the retry guard.
+    if (!records.length || windows.some(window => !window || window.preRollRetries >= 1)) return null;
     const clip = {revision: ++this.revision, eventIds: [...prior.eventIds], captureIds: {...prior.captureIds},
       passIds: [...prior.passIds], requestedEventTime,
       preSeconds: this.preSeconds, postSeconds: this.postSeconds,
@@ -290,11 +296,13 @@ class CaptureTriggerQueue {
       this.clips[index].revision = ++this.revision;
       this.linkRevision(this.clips[index]);
     }
-    for (const event of records) {
+    for (let index = 0; index < records.length; ++index) {
+      const event = records[index];
       event.state = 'pending'; event.failure = null;
-      const window = event.captureWindows.find(item => item.captureId === clip.captureIds[event.eventId]);
+      const window = windows[index];
       if (window) Object.assign(window, {revision: clip.revision, requestedEventTime,
-        windowStart: clip.windowStart, windowEnd: clip.windowEnd, state: 'pending', failure: null});
+        windowStart: clip.windowStart, windowEnd: clip.windowEnd, state: 'pending', failure: null,
+        preRollRetries: window.preRollRetries + 1});
       event.clipRevisions = [...new Set([...event.clipRevisions, clip.revision])];
       event.windowStart = clip.windowStart;
       event.windowEnd = clip.windowEnd;
