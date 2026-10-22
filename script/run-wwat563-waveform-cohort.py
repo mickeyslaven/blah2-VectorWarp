@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Resumable Mac-to-CASS serial runner for the current 563 MHz waveform cohort.
+
+Processes positives before misses.  Each retained MCHQ is streamed once from the
+read-only recorder to CASS, SHA-verified, scored by both raw waveform methods
+at low priority, verified as JSON, then evicted.  State is written after every
+successful clip so rerunning the command resumes safely.
+"""
+import argparse
+import hashlib
+import json
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CASS = 'mickeyslaven@100.104.10.46'
+RAW = 'root@100.126.186.65'
+REMOTE_ROOT = '/home/mickeyslaven/wwat563-results'
+REMOTE_CACHE = '/home/mickeyslaven/wwat563-cache'
+VENV = '/home/mickeyslaven/radar-training/venv/bin/python'
+
+
+def run(command, **kwargs):
+    return subprocess.run(command, check=True, text=True, **kwargs)
+
+
+def ssh(host, command, **kwargs):
+    return run(['ssh', '-o', 'BatchMode=yes', host, command], **kwargs)
+
+
+def quote(value):
+    return shlex.quote(str(value))
+
+
+def unique_rows(manifest):
+    result = {}
+    for row in manifest['rows']:
+        path = row['capture']['file']
+        if path not in result:
+            result[path] = row
+    return [result[path] for path in sorted(result)]
+
+
+def clip_id(row):
+    digest = hashlib.sha256(row['capture']['file'].encode()).hexdigest()[:12]
+    return f"r{row['capture']['revision']}-{digest}"
+
+
+def trajectory(row):
+    return {'schema': 'vectorwarp-clip-truth-trajectory-v1',
+            'clip_revision': row['capture']['revision'], 'clip': row['capture']['file'],
+            'window_start_ms': row['capture']['window_start'],
+            'window_end_ms': row['capture']['window_end'], 'cpi_s': .5,
+            'event_id': row['event_id'], 'hex': row.get('hex'), 'flight': row.get('flight'),
+            'outcome': row.get('outcome'), 'trajectory': row['replay_trajectory']}
+
+
+def remote_json(path):
+    completed = ssh(CASS, f'cat {quote(path)}', capture_output=True)
+    return json.loads(completed.stdout)
+
+
+def verify_result(path):
+    value = remote_json(path)
+    if value.get('frames', 0) < 1 or not value.get('scores'):
+        raise RuntimeError(f'incomplete result {path}')
+    return value
+
+
+def copy_and_verify(row, local_log):
+    source = row['capture']['file']
+    name = Path(source).name
+    target = f'{REMOTE_CACHE}/{name}'
+    source_hash = ssh(RAW, f'sha256sum {quote(source)}', capture_output=True).stdout.split()[0]
+    pipeline = (f'ssh -o BatchMode=yes {quote(RAW)} "cat {quote(source)}" | '
+                f'ssh -o BatchMode=yes {quote(CASS)} "cat > {quote(target)}"')
+    with local_log.open('a') as log:
+        run(['bash', '-lc', pipeline], stdout=log, stderr=subprocess.STDOUT)
+    remote_hash = ssh(CASS, f'sha256sum {quote(target)}', capture_output=True).stdout.split()[0]
+    if source_hash != remote_hash:
+        raise RuntimeError(f'SHA mismatch for {name}')
+    return target, source_hash
+
+
+def process(row, state, state_path, local_log):
+    key = clip_id(row)
+    if state['clips'].get(key, {}).get('status') == 'complete':
+        return
+    state['clips'][key] = {'status': 'running', 'role': row['role'],
+                           'recording': row['capture']['file'], 'event_id': row['event_id']}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
+    raw, digest = copy_and_verify(row, local_log)
+    trajectory_path = f'{REMOTE_ROOT}/{key}-trajectory.json'
+    ssh(CASS, f'cat > {quote(trajectory_path)}', input=json.dumps(trajectory(row)) + '\n')
+    loaded_path = f'{REMOTE_ROOT}/{key}-loaded-reciprocal.json'
+    spectral_path = f'{REMOTE_ROOT}/{key}-spectral-interference.json'
+    commands = [
+        f'nice -n 19 {quote(VENV)} {quote(REMOTE_ROOT + "/analyze-loaded-reciprocal-mchq.py")} '
+        f'--recording {quote(raw)} --trajectory {quote(trajectory_path)} --output {quote(loaded_path)} '
+        '--fft-size 1024 --max-doppler-hz 800 --max-delay-km 64',
+        f'nice -n 19 {quote(VENV)} {quote(REMOTE_ROOT + "/analyze-spectral-interference-rejection.py")} '
+        f'--recording {quote(raw)} --trajectory {quote(trajectory_path)} --output {quote(spectral_path)} '
+        '--fft-size 1024 --max-doppler-hz 800 --max-delay-km 64',
+    ]
+    with local_log.open('a') as log:
+        for command in commands:
+            ssh(CASS, command, stdout=log, stderr=subprocess.STDOUT)
+    loaded, spectral = verify_result(loaded_path), verify_result(spectral_path)
+    ssh(CASS, f'rm -f {quote(raw)}')
+    state['clips'][key] = {'status': 'complete', 'role': row['role'],
+        'recording': row['capture']['file'], 'event_id': row['event_id'], 'sha256': digest,
+        'loaded_result': loaded_path, 'spectral_result': spectral_path,
+        'loaded_best_margin_db': max(item['margin_over_parameter_trial_control_p99_db']
+                                     for item in loaded['scores'].values()),
+        'spectral_selected_margin_db': spectral['selected_margin_db'],
+        'completed_at': int(time.time())}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--positive-manifest', required=True, type=Path)
+    parser.add_argument('--miss-manifest', required=True, type=Path)
+    parser.add_argument('--state', required=True, type=Path)
+    parser.add_argument('--log', required=True, type=Path)
+    args = parser.parse_args()
+    positives = unique_rows(json.loads(args.positive_manifest.read_text()))
+    misses = unique_rows(json.loads(args.miss_manifest.read_text()))
+    state = (json.loads(args.state.read_text()) if args.state.exists() else
+             {'schema': 'vectorwarp-wwat563-waveform-runner-v1', 'clips': {}})
+    ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)}')
+    for source in ('analyze-loaded-reciprocal-mchq.py', 'analyze-spectral-interference-rejection.py'):
+        run(['scp', '-q', str(Path(__file__).with_name(source)), f'{CASS}:{REMOTE_ROOT}/{source}'])
+    for row in positives + misses:
+        process(row, state, args.state, args.log)
+
+
+if __name__ == '__main__':
+    main()
