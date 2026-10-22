@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
-  captureArtifactState} = require('./capture-admission');
+  captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission');
 
 (async () => {
   const provenance = offset => ({projection_model: 'constant_velocity_ground_track',
@@ -24,6 +24,10 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
     'admitted', 'one valid target must retain a shared clip without admitting invalid targets');
   assert.equal(captureArtifactState({valid: true}, {bad: {valid: false}}), 'quarantined');
   assert.equal(captureArtifactState({valid: false}, {good: {valid: true}}), 'quarantined');
+  assert.equal(admissionsNeedTruthSettlement({one: {valid: false,
+    reasons: ['truth-bracket-missing']}}), true);
+  assert.equal(admissionsNeedTruthSettlement({one: {valid: false,
+    reasons: ['truth-raw-offset']}, two: {valid: true, reasons: []}}), false);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-admission-'));
   const file = path.join(directory, 'clip.mchq'), body = Buffer.from('bounded-iq');

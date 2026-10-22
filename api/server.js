@@ -30,7 +30,7 @@ const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar,
-  captureArtifactState} = require('./capture-admission.js');
+  captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
@@ -63,6 +63,8 @@ const trackerPublication = createTrackerPublication(config);
 const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
+const CAPTURE_TRUTH_SETTLE_MS = 3500;
+const CAPTURE_TRUTH_SETTLE_POLL_MS = 250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
   {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
@@ -70,7 +72,12 @@ const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
-  const admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  let admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  const truthDeadline = Date.now() + CAPTURE_TRUTH_SETTLE_MS;
+  while (admissionsNeedTruthSettlement(admissions) && Date.now() < truthDeadline) {
+    await new Promise(resolve => setTimeout(resolve, CAPTURE_TRUTH_SETTLE_POLL_MS));
+    admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  }
   const first = records.flatMap(record => record.captureWindows || [])
     .find(window => window.revision === revision);
   let integrity;

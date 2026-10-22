@@ -96,5 +96,9 @@ function captureArtifactState(integrity, admissions) {
   return integrity?.valid && Object.values(admissions || {}).some(item => item?.valid) ?
     'admitted' : 'quarantined';
 }
+function admissionsNeedTruthSettlement(admissions) {
+  return Object.values(admissions || {}).some(item => item?.valid === false &&
+    (item.reasons || []).includes('truth-bracket-missing'));
+}
 module.exports = {rawOffset, validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
-  captureArtifactState};
+  captureArtifactState, admissionsNeedTruthSettlement};
