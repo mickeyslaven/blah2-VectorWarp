@@ -27,14 +27,16 @@ def main():
  p=argparse.ArgumentParser();p.add_argument('--cohort',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
  raw=a.cohort.read_bytes(); x=json.loads(raw)
  positives=[job(r,'positive') for r in x['positives']]
- pos_files={j['recording'] for j in positives}; seen=set(); misses=[]
+ pos_files={j['recording'] for j in positives}; misses=[]
  for r in x['misses']:
-  if r['capture']['file'] in pos_files or r['capture']['file'] in seen: continue
-  seen.add(r['capture']['file']); misses.append(job(r,'miss'))
+  # Preserve every aircraft/event label.  The runner caches replay by
+  # recording path, but a shared clip can validly contain multiple targets.
+  if r['capture']['file'] in pos_files: continue
+  misses.append(job(r,'miss'))
  out={'schema':'vectorwarp-associated-production-coherent-matrix-v1',
   'cohort_sha256':hashlib.sha256(raw).hexdigest(),'status':'positive_calibration_pending',
   'production_method':'coherent_beam_bank_complex_cutouts', 'familywise_trial_count':FAMILY_TRIALS,
   'jobs':positives,'deferred_clean_misses':misses,
-  'acceptance':'Leave-one-pass-out calibration over seven positive passes must show useful held-out discrimination before deferred misses execute.'}
+  'acceptance':f"Leave-one-pass-out calibration over {len({j['pass_id'] for j in positives})} independent positive passes must show useful held-out discrimination before deferred misses execute."}
  a.output.write_text(json.dumps(out,indent=2)+'\n'); print(json.dumps({'positives':len(positives),'passes':len({j['pass_id'] for j in positives}),'clean_misses':len(misses)}))
 if __name__=='__main__': main()

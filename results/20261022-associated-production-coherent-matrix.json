@@ -17008,6 +17008,681 @@
       }
     },
     {
+      "job_id": "dd5574ad096801135115",
+      "event_id": "eligibility:8b1f43e124dbfcb6a40f2f07f94953d795eed2c75e0782a7010de9149bedf981",
+      "pass_id": "8b1f43e124dbfcb6a40f2f07f94953d795eed2c75e0782a7010de9149bedf981",
+      "hex": "a3621e",
+      "flight": "AAL2337",
+      "outcome": "no_radar_return",
+      "role": "miss",
+      "revision": 563,
+      "kind": "periodic",
+      "recording": "/var/lib/vectorwarp/recordings/kraken-clip-r563-1792683639254806962-150.mchq",
+      "truth_source": "associated_bracketed_event_time_interpolation",
+      "trajectory": [
+        {
+          "latitude": 40.52742216273201,
+          "longitude": -80.0252959383204,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 483.7,
+          "track_deg_true": 97.13,
+          "bearing_deg_true": 15.61555308809244,
+          "elevation_deg": 50.157804101460094,
+          "ground_range_km": 9.859532245040716,
+          "slant_range_km": 15.389280222476017,
+          "transmitter_range_km": 15.760682990714379,
+          "delay_km": 23.266535554273492,
+          "doppler_hz": 180.86245738922364,
+          "delay_rate_km_s": -0.09630763882883751,
+          "doppler_rate_hz_s": -3.388144139028443,
+          "timestamp_ms": 1792683629514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683629360,
+            1792683631361
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.15799999237060547
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.03931617502392768,
+          "frame": 0
+        },
+        {
+          "latitude": 40.52742216273201,
+          "longitude": -80.0252959383204,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 483.7,
+          "track_deg_true": 97.13,
+          "bearing_deg_true": 15.61555308809244,
+          "elevation_deg": 50.157804101460094,
+          "ground_range_km": 9.859532245040716,
+          "slant_range_km": 15.389280222476017,
+          "transmitter_range_km": 15.760682990714379,
+          "delay_km": 23.266535554273492,
+          "doppler_hz": 180.86245738922364,
+          "delay_rate_km_s": -0.09630763882883751,
+          "doppler_rate_hz_s": -3.388144139028443,
+          "timestamp_ms": 1792683630014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683629360,
+            1792683631361
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.15799999237060547
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.03931617502392768,
+          "frame": 1
+        },
+        {
+          "latitude": 40.52742216273201,
+          "longitude": -80.0252959383204,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 483.7,
+          "track_deg_true": 97.13,
+          "bearing_deg_true": 15.61555308809244,
+          "elevation_deg": 50.157804101460094,
+          "ground_range_km": 9.859532245040716,
+          "slant_range_km": 15.389280222476017,
+          "transmitter_range_km": 15.760682990714379,
+          "delay_km": 23.266535554273492,
+          "doppler_hz": 180.86245738922364,
+          "delay_rate_km_s": -0.09630763882883751,
+          "doppler_rate_hz_s": -3.388144139028443,
+          "timestamp_ms": 1792683630514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683629360,
+            1792683631361
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.15799999237060547
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.03931617502392768,
+          "frame": 2
+        },
+        {
+          "latitude": 40.52742216273201,
+          "longitude": -80.0252959383204,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 483.7,
+          "track_deg_true": 97.13,
+          "bearing_deg_true": 15.61555308809244,
+          "elevation_deg": 50.157804101460094,
+          "ground_range_km": 9.859532245040716,
+          "slant_range_km": 15.389280222476017,
+          "transmitter_range_km": 15.760682990714379,
+          "delay_km": 23.266535554273492,
+          "doppler_hz": 180.86245738922364,
+          "delay_rate_km_s": -0.09630763882883751,
+          "doppler_rate_hz_s": -3.388144139028443,
+          "timestamp_ms": 1792683631014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683629360,
+            1792683631361
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.15799999237060547
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.03931617502392768,
+          "frame": 3
+        },
+        {
+          "latitude": 40.52729089253295,
+          "longitude": -80.02394982837437,
+          "altitude_geom_ft": 39928.813559322036,
+          "ground_speed_kt": 483.54745762711866,
+          "track_deg_true": 97.1315254237288,
+          "bearing_deg_true": 16.266685161080254,
+          "elevation_deg": 50.10133680380105,
+          "ground_range_km": 9.880375517835489,
+          "slant_range_km": 15.403575769566078,
+          "transmitter_range_km": 15.717830671462501,
+          "delay_km": 23.238143470769057,
+          "doppler_hz": 171.04046672559423,
+          "delay_rate_km_s": -0.09107751676222568,
+          "doppler_rate_hz_s": -6.144214330659436,
+          "timestamp_ms": 1792683631514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683631361,
+            1792683632364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.03930377605218742,
+          "frame": 4
+        },
+        {
+          "latitude": 40.526861904954345,
+          "longitude": -80.01955077626316,
+          "altitude_geom_ft": 39941.276171485544,
+          "ground_speed_kt": 483.04895314057825,
+          "track_deg_true": 97.13651046859421,
+          "bearing_deg_true": 18.394567752543693,
+          "elevation_deg": 49.916803151320494,
+          "ground_range_km": 9.948490788406644,
+          "slant_range_km": 15.450293243716606,
+          "transmitter_range_km": 15.577790412469433,
+          "delay_km": 23.145358884153246,
+          "doppler_hz": 138.94245802092297,
+          "delay_rate_km_s": -0.07398561458375563,
+          "doppler_rate_hz_s": -15.150979662786861,
+          "timestamp_ms": 1792683632014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683631361,
+            1792683632364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.15799999237060547,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.039263256536696337,
+          "frame": 5
+        },
+        {
+          "latitude": 40.526561613649314,
+          "longitude": -80.01647143978532,
+          "altitude_geom_ft": 39950.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 19.884085566568103,
+          "elevation_deg": 49.787629594584104,
+          "ground_range_km": 9.996171477806453,
+          "slant_range_km": 15.482995475621976,
+          "transmitter_range_km": 15.479762231174286,
+          "delay_km": 23.080409673522183,
+          "doppler_hz": 116.47385192765312,
+          "delay_rate_km_s": -0.06202128305882661,
+          "doppler_rate_hz_s": -21.455715395276062,
+          "timestamp_ms": 1792683632514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683632364,
+            1792683634365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 6
+        },
+        {
+          "latitude": 40.526561613649314,
+          "longitude": -80.01647143978532,
+          "altitude_geom_ft": 39950.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 19.884085566568103,
+          "elevation_deg": 49.787629594584104,
+          "ground_range_km": 9.996171477806453,
+          "slant_range_km": 15.482995475621976,
+          "transmitter_range_km": 15.479762231174286,
+          "delay_km": 23.080409673522183,
+          "doppler_hz": 116.47385192765312,
+          "delay_rate_km_s": -0.06202128305882661,
+          "doppler_rate_hz_s": -21.455715395276062,
+          "timestamp_ms": 1792683633014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683632364,
+            1792683634365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 7
+        },
+        {
+          "latitude": 40.526561613649314,
+          "longitude": -80.01647143978532,
+          "altitude_geom_ft": 39950.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 19.884085566568103,
+          "elevation_deg": 49.787629594584104,
+          "ground_range_km": 9.996171477806453,
+          "slant_range_km": 15.482995475621976,
+          "transmitter_range_km": 15.479762231174286,
+          "delay_km": 23.080409673522183,
+          "doppler_hz": 116.47385192765312,
+          "delay_rate_km_s": -0.06202128305882661,
+          "doppler_rate_hz_s": -21.455715395276062,
+          "timestamp_ms": 1792683633514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683632364,
+            1792683634365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 8
+        },
+        {
+          "latitude": 40.526561613649314,
+          "longitude": -80.01647143978532,
+          "altitude_geom_ft": 39950.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 19.884085566568103,
+          "elevation_deg": 49.787629594584104,
+          "ground_range_km": 9.996171477806453,
+          "slant_range_km": 15.482995475621976,
+          "transmitter_range_km": 15.479762231174286,
+          "delay_km": 23.080409673522183,
+          "doppler_hz": 116.47385192765312,
+          "delay_rate_km_s": -0.06202128305882661,
+          "doppler_rate_hz_s": -21.455715395276062,
+          "timestamp_ms": 1792683634014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683632364,
+            1792683634365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            0.005000114440917969
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 9
+        },
+        {
+          "latitude": 40.52646115367134,
+          "longitude": -80.01541236180046,
+          "altitude_geom_ft": 39948.13656828414,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 20.372968361477156,
+          "elevation_deg": 49.71651923164816,
+          "ground_range_km": 10.021199793881333,
+          "slant_range_km": 15.498882765471054,
+          "transmitter_range_km": 15.450173608372523,
+          "delay_km": 23.066873433648816,
+          "doppler_hz": 112.87836295431426,
+          "delay_rate_km_s": -0.060106717380266815,
+          "doppler_rate_hz_s": -20.57585053545639,
+          "timestamp_ms": 1792683634514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683634365,
+            1792683636364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 10
+        },
+        {
+          "latitude": 40.5261240396513,
+          "longitude": -80.01185840883115,
+          "altitude_geom_ft": 39941.88344172086,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 22.01351465311827,
+          "elevation_deg": 49.47789385266846,
+          "ground_range_km": 10.105187431716502,
+          "slant_range_km": 15.55219581865588,
+          "transmitter_range_km": 15.350882927829696,
+          "delay_km": 23.021449809912678,
+          "doppler_hz": 100.81296371492213,
+          "delay_rate_km_s": -0.05368200033811987,
+          "doppler_rate_hz_s": -17.623283891766214,
+          "timestamp_ms": 1792683635014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683634365,
+            1792683636364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 11
+        },
+        {
+          "latitude": 40.525786925631266,
+          "longitude": -80.00830445586183,
+          "altitude_geom_ft": 39935.63031515758,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 23.654060944759387,
+          "elevation_deg": 49.23926847368877,
+          "ground_range_km": 10.18917506955167,
+          "slant_range_km": 15.605508871840707,
+          "transmitter_range_km": 15.251592247286867,
+          "delay_km": 22.976026186176544,
+          "doppler_hz": 88.74756447553,
+          "delay_rate_km_s": -0.04725728329597293,
+          "doppler_rate_hz_s": -14.670717248076038,
+          "timestamp_ms": 1792683635514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683634365,
+            1792683636364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 12
+        },
+        {
+          "latitude": 40.525449811611225,
+          "longitude": -80.0047505028925,
+          "altitude_geom_ft": 39929.3771885943,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 25.294607236400502,
+          "elevation_deg": 49.00064309470907,
+          "ground_range_km": 10.273162707386838,
+          "slant_range_km": 15.658821925025531,
+          "transmitter_range_km": 15.15230156674404,
+          "delay_km": 22.93060256244041,
+          "doppler_hz": 76.68216523613788,
+          "delay_rate_km_s": -0.04083256625382599,
+          "doppler_rate_hz_s": -11.71815060438586,
+          "timestamp_ms": 1792683636014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683634365,
+            1792683636364
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.005000114440917969,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0012416390122112274,
+          "frame": 13
+        },
+        {
+          "latitude": 40.525213831797195,
+          "longitude": -80.00226273581399,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 26.442989640549285,
+          "elevation_deg": 48.833605329423285,
+          "ground_range_km": 10.331954053871456,
+          "slant_range_km": 15.69614106225491,
+          "transmitter_range_km": 15.08279809036406,
+          "delay_km": 22.898806025825113,
+          "doppler_hz": 68.23638576856338,
+          "delay_rate_km_s": -0.03633526432432312,
+          "doppler_rate_hz_s": -9.651353953802737,
+          "timestamp_ms": 1792683636514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683636364,
+            1792683637960
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0007449715664053916,
+          "frame": 14
+        },
+        {
+          "latitude": 40.525213831797195,
+          "longitude": -80.00226273581399,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 26.442989640549285,
+          "elevation_deg": 48.833605329423285,
+          "ground_range_km": 10.331954053871456,
+          "slant_range_km": 15.69614106225491,
+          "transmitter_range_km": 15.08279809036406,
+          "delay_km": 22.898806025825113,
+          "doppler_hz": 68.23638576856338,
+          "delay_rate_km_s": -0.03633526432432312,
+          "doppler_rate_hz_s": -9.651353953802737,
+          "timestamp_ms": 1792683637014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683636364,
+            1792683637960
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0007449715664053916,
+          "frame": 15
+        },
+        {
+          "latitude": 40.525213831797195,
+          "longitude": -80.00226273581399,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 26.442989640549285,
+          "elevation_deg": 48.833605329423285,
+          "ground_range_km": 10.331954053871456,
+          "slant_range_km": 15.69614106225491,
+          "transmitter_range_km": 15.08279809036406,
+          "delay_km": 22.898806025825113,
+          "doppler_hz": 68.23638576856338,
+          "delay_rate_km_s": -0.03633526432432312,
+          "doppler_rate_hz_s": -9.651353953802737,
+          "timestamp_ms": 1792683637514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683636364,
+            1792683637960
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0007449715664053916,
+          "frame": 16
+        },
+        {
+          "latitude": 40.525213831797195,
+          "longitude": -80.00226273581399,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 26.442989640549285,
+          "elevation_deg": 48.833605329423285,
+          "ground_range_km": 10.331954053871456,
+          "slant_range_km": 15.69614106225491,
+          "transmitter_range_km": 15.08279809036406,
+          "delay_km": 22.898806025825113,
+          "doppler_hz": 68.23638576856338,
+          "delay_rate_km_s": -0.03633526432432312,
+          "doppler_rate_hz_s": -9.651353953802737,
+          "timestamp_ms": 1792683638014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683637960,
+            1792683638366
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            -0.003000020980834961
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.0007449715664053916,
+          "frame": 17
+        },
+        {
+          "latitude": 40.52513078922343,
+          "longitude": -80.00135966717212,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 26.837761690627925,
+          "elevation_deg": 48.75874653779496,
+          "ground_range_km": 10.359408087670237,
+          "slant_range_km": 15.71430376070898,
+          "transmitter_range_km": 15.062134025045156,
+          "delay_km": 22.896470910503442,
+          "doppler_hz": 60.30468332677536,
+          "delay_rate_km_s": -0.03211170380718585,
+          "doppler_rate_hz_s": -12.159807096002387,
+          "timestamp_ms": 1792683638514.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683638366,
+            1792683639365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            0.8969998359680176
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.22274489983083057,
+          "frame": 18
+        },
+        {
+          "latitude": 40.52485023998776,
+          "longitude": -79.99830875959827,
+          "altitude_geom_ft": 39925.0,
+          "ground_speed_kt": 482.7,
+          "track_deg_true": 97.14,
+          "bearing_deg_true": 28.171451049001714,
+          "elevation_deg": 48.505845214726314,
+          "ground_range_km": 10.45215820185531,
+          "slant_range_km": 15.775664228459213,
+          "transmitter_range_km": 14.992322993562373,
+          "delay_km": 22.888582007389683,
+          "doppler_hz": 33.50839129370773,
+          "delay_rate_km_s": -0.017842918276316698,
+          "doppler_rate_hz_s": -20.634310954784993,
+          "timestamp_ms": 1792683639014.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792683638366,
+            1792683639365
+          ],
+          "source_ids": [
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            -0.003000020980834961,
+            0.8969998359680176
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.013124172219859636,
+          "maximum_constant_velocity_projection_distance_km": 0.22274489983083057,
+          "frame": 19
+        }
+      ],
+      "association_anchor": null,
+      "family_trials": 15,
+      "control_quantile": 0.9993333333333333,
+      "cutout": {
+        "delay_km": 23.077558780831588,
+        "doppler_hz": 107.18542434146568,
+        "delay_radius_bins": 10,
+        "doppler_radius_bins": 54,
+        "max_frames": 24
+      }
+    },
+    {
       "job_id": "9becb265a9c5fc018518",
       "event_id": "eligibility:b959e299c29e0cb8e4c99df4970528eaaa4c4cfa97da89fdaba0e7e4f8e0322c",
       "pass_id": "b959e299c29e0cb8e4c99df4970528eaaa4c4cfa97da89fdaba0e7e4f8e0322c",
@@ -20375,6 +21050,680 @@
         "doppler_hz": 77.9638258285578,
         "delay_radius_bins": 10,
         "doppler_radius_bins": 18,
+        "max_frames": 24
+      }
+    },
+    {
+      "job_id": "1e7825beea621d7ad404",
+      "event_id": "eligibility:fb5dbcd1c7b7660e4e3a7cd44b8c3aff9f8220b6dd73f777442251a21ba815b0",
+      "pass_id": "fb5dbcd1c7b7660e4e3a7cd44b8c3aff9f8220b6dd73f777442251a21ba815b0",
+      "hex": "a6ebc6",
+      "flight": "JIA5039",
+      "outcome": "no_radar_return",
+      "role": "miss",
+      "revision": 732,
+      "kind": "initial",
+      "recording": "/var/lib/vectorwarp/recordings/kraken-clip-r732-1792685402717953577-209.mchq",
+      "truth_source": "associated_bracketed_event_time_interpolation",
+      "trajectory": [
+        {
+          "latitude": 40.42714379911155,
+          "longitude": -79.93465638610125,
+          "altitude_geom_ft": 28968.78879928589,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 99.06517324328547,
+          "elevation_deg": 39.01856189629854,
+          "ground_range_km": 10.4608219743745,
+          "slant_range_km": 13.464095655805297,
+          "transmitter_range_km": 9.087061707252733,
+          "delay_km": 14.69397495826366,
+          "doppler_hz": 486.35975480251466,
+          "delay_rate_km_s": -0.25898221379133796,
+          "doppler_rate_hz_s": -2.4620723387389063,
+          "timestamp_ms": 1792685392972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685392088,
+            1792685393901
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.6470000743865967
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 0
+        },
+        {
+          "latitude": 40.42714379911155,
+          "longitude": -79.93465638610125,
+          "altitude_geom_ft": 28968.78879928589,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 99.06517324328547,
+          "elevation_deg": 39.01856189629854,
+          "ground_range_km": 10.4608219743745,
+          "slant_range_km": 13.464095655805297,
+          "transmitter_range_km": 9.087061707252733,
+          "delay_km": 14.69397495826366,
+          "doppler_hz": 486.35975480251466,
+          "delay_rate_km_s": -0.25898221379133796,
+          "doppler_rate_hz_s": -2.4620723387389063,
+          "timestamp_ms": 1792685393472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685392088,
+            1792685393901
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.6470000743865967
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 1
+        },
+        {
+          "latitude": 40.42714379911155,
+          "longitude": -79.93465638610125,
+          "altitude_geom_ft": 28968.78879928589,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 99.06517324328547,
+          "elevation_deg": 39.01856189629854,
+          "ground_range_km": 10.4608219743745,
+          "slant_range_km": 13.464095655805297,
+          "transmitter_range_km": 9.087061707252733,
+          "delay_km": 14.69397495826366,
+          "doppler_hz": 486.35975480251466,
+          "delay_rate_km_s": -0.25898221379133796,
+          "doppler_rate_hz_s": -2.4620723387389063,
+          "timestamp_ms": 1792685393972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685393901,
+            1792685394088
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.6470000743865967
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 2
+        },
+        {
+          "latitude": 40.42714379911155,
+          "longitude": -79.93465638610125,
+          "altitude_geom_ft": 28968.78879928589,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 99.06517324328547,
+          "elevation_deg": 39.01856189629854,
+          "ground_range_km": 10.4608219743745,
+          "slant_range_km": 13.464095655805297,
+          "transmitter_range_km": 9.087061707252733,
+          "delay_km": 14.69397495826366,
+          "doppler_hz": 486.35975480251466,
+          "delay_rate_km_s": -0.25898221379133796,
+          "doppler_rate_hz_s": -2.4620723387389063,
+          "timestamp_ms": 1792685394472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685394088,
+            1792685395085
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.6470000743865967
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 3
+        },
+        {
+          "latitude": 40.42714379911155,
+          "longitude": -79.93465638610125,
+          "altitude_geom_ft": 28968.78879928589,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 99.06517324328547,
+          "elevation_deg": 39.01856189629854,
+          "ground_range_km": 10.4608219743745,
+          "slant_range_km": 13.464095655805297,
+          "transmitter_range_km": 9.087061707252733,
+          "delay_km": 14.69397495826366,
+          "doppler_hz": 486.35975480251466,
+          "delay_rate_km_s": -0.25898221379133796,
+          "doppler_rate_hz_s": -2.4620723387389063,
+          "timestamp_ms": 1792685394972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685394088,
+            1792685395085
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.6470000743865967
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 4
+        },
+        {
+          "latitude": 40.42860803102464,
+          "longitude": -79.93805675368662,
+          "altitude_geom_ft": 28949.068237202,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 98.38298087720968,
+          "elevation_deg": 39.86371876897809,
+          "ground_range_km": 10.1525688769067,
+          "slant_range_km": 13.224437392558201,
+          "transmitter_range_km": 8.978575670492162,
+          "delay_km": 14.344877979296738,
+          "doppler_hz": 463.17522147851395,
+          "delay_rate_km_s": -0.24663665742759874,
+          "doppler_rate_hz_s": -7.328591568400786,
+          "timestamp_ms": 1792685395472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685395085,
+            1792685396088
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 5
+        },
+        {
+          "latitude": 40.430499803522174,
+          "longitude": -79.94244999346101,
+          "altitude_geom_ft": 28923.589474819713,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.50159539132362,
+          "elevation_deg": 40.95565271300851,
+          "ground_range_km": 9.75430906105683,
+          "slant_range_km": 12.914801393530947,
+          "transmitter_range_km": 8.838412832300211,
+          "delay_km": 13.893848290708982,
+          "doppler_hz": 433.22104405732443,
+          "delay_rate_km_s": -0.23068632620829743,
+          "doppler_rate_hz_s": -13.616084113183577,
+          "timestamp_ms": 1792685395972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685395085,
+            1792685396088
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.6470000743865967,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.14039415018373202,
+          "frame": 6
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685396472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685396088,
+            1792685397901
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 7
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685396972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685396088,
+            1792685397901
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 8
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685397472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685396088,
+            1792685397901
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 9
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685397972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685397901,
+            1792685398088
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 10
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685398472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685398088,
+            1792685399085
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 11
+        },
+        {
+          "latitude": 40.4309386947416,
+          "longitude": -79.94346922508866,
+          "altitude_geom_ft": 28917.67840194702,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 97.29711395859806,
+          "elevation_deg": 41.20898138802357,
+          "ground_range_km": 9.661912783779659,
+          "slant_range_km": 12.842965841756623,
+          "transmitter_range_km": 8.805895053839677,
+          "delay_km": 13.789209402956624,
+          "doppler_hz": 426.27167489560844,
+          "delay_rate_km_s": -0.22698584936541952,
+          "doppler_rate_hz_s": -15.074782383573185,
+          "timestamp_ms": 1792685398972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685398088,
+            1792685399085
+          ],
+          "source_ids": [
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.623999834060669
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 12
+        },
+        {
+          "latitude": 40.43225324071765,
+          "longitude": -79.94647126066867,
+          "altitude_geom_ft": 28900.187440154088,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 96.57870710909876,
+          "elevation_deg": 42.01458373174518,
+          "ground_range_km": 9.393006459987832,
+          "slant_range_km": 12.640310517835394,
+          "transmitter_range_km": 8.734341441143616,
+          "delay_km": 13.51415367912295,
+          "doppler_hz": 405.92645003313555,
+          "delay_rate_km_s": -0.21615219932974747,
+          "doppler_rate_hz_s": -14.934436825421539,
+          "timestamp_ms": 1792685399472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685399085,
+            1792685400089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 13
+        },
+        {
+          "latitude": 40.43395162053167,
+          "longitude": -79.95034985960925,
+          "altitude_geom_ft": 28877.58929830275,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.65053288493947,
+          "elevation_deg": 43.055413633194284,
+          "ground_range_km": 9.04558226904232,
+          "slant_range_km": 12.378481933957838,
+          "transmitter_range_km": 8.64189491311253,
+          "delay_km": 13.15878452688306,
+          "doppler_hz": 379.64062979738253,
+          "delay_rate_km_s": -0.20215523545937014,
+          "doppler_rate_hz_s": -14.753111814889698,
+          "timestamp_ms": 1792685399972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685399085,
+            1792685400089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080",
+            "http://100.90.37.77/tar1090"
+          ],
+          "raw_observation_offsets_s": [
+            0.623999834060669,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.13540327101321317,
+          "frame": 14
+        },
+        {
+          "latitude": 40.434349041408154,
+          "longitude": -79.95125745176135,
+          "altitude_geom_ft": 28872.30133310954,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.43334011648619,
+          "elevation_deg": 43.29896783013338,
+          "ground_range_km": 8.96428500836107,
+          "slant_range_km": 12.31721404533049,
+          "transmitter_range_km": 8.620262425553257,
+          "delay_km": 13.075628145258927,
+          "doppler_hz": 373.4897478622163,
+          "delay_rate_km_s": -0.19887994591370184,
+          "doppler_rate_hz_s": -14.710681762425247,
+          "timestamp_ms": 1792685400472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685400089,
+            1792685402089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.23000001907348633,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.049908274354803085,
+          "frame": 15
+        },
+        {
+          "latitude": 40.434349041408154,
+          "longitude": -79.95125745176135,
+          "altitude_geom_ft": 28872.30133310954,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.43334011648619,
+          "elevation_deg": 43.29896783013338,
+          "ground_range_km": 8.96428500836107,
+          "slant_range_km": 12.31721404533049,
+          "transmitter_range_km": 8.620262425553257,
+          "delay_km": 13.075628145258927,
+          "doppler_hz": 373.4897478622163,
+          "delay_rate_km_s": -0.19887994591370184,
+          "doppler_rate_hz_s": -14.710681762425247,
+          "timestamp_ms": 1792685400972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685400089,
+            1792685402089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.23000001907348633,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.049908274354803085,
+          "frame": 16
+        },
+        {
+          "latitude": 40.434349041408154,
+          "longitude": -79.95125745176135,
+          "altitude_geom_ft": 28872.30133310954,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.43334011648619,
+          "elevation_deg": 43.29896783013338,
+          "ground_range_km": 8.96428500836107,
+          "slant_range_km": 12.31721404533049,
+          "transmitter_range_km": 8.620262425553257,
+          "delay_km": 13.075628145258927,
+          "doppler_hz": 373.4897478622163,
+          "delay_rate_km_s": -0.19887994591370184,
+          "doppler_rate_hz_s": -14.710681762425247,
+          "timestamp_ms": 1792685401472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685400089,
+            1792685402089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.23000001907348633,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.049908274354803085,
+          "frame": 17
+        },
+        {
+          "latitude": 40.434349041408154,
+          "longitude": -79.95125745176135,
+          "altitude_geom_ft": 28872.30133310954,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.43334011648619,
+          "elevation_deg": 43.29896783013338,
+          "ground_range_km": 8.96428500836107,
+          "slant_range_km": 12.31721404533049,
+          "transmitter_range_km": 8.620262425553257,
+          "delay_km": 13.075628145258927,
+          "doppler_hz": 373.4897478622163,
+          "delay_rate_km_s": -0.19887994591370184,
+          "doppler_rate_hz_s": -14.710681762425247,
+          "timestamp_ms": 1792685401972.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685400089,
+            1792685402089
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.23000001907348633,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.049908274354803085,
+          "frame": 18
+        },
+        {
+          "latitude": 40.434349041408154,
+          "longitude": -79.95125745176135,
+          "altitude_geom_ft": 28872.30133310954,
+          "ground_speed_kt": 421.8,
+          "track_deg_true": 299.54,
+          "bearing_deg_true": 95.43334011648619,
+          "elevation_deg": 43.29896783013338,
+          "ground_range_km": 8.96428500836107,
+          "slant_range_km": 12.31721404533049,
+          "transmitter_range_km": 8.620262425553257,
+          "delay_km": 13.075628145258927,
+          "doppler_hz": 373.4897478622163,
+          "delay_rate_km_s": -0.19887994591370184,
+          "doppler_rate_hz_s": -14.710681762425247,
+          "timestamp_ms": 1792685402472.0,
+          "truth_mode": "bracketed_event_time_interpolation",
+          "bracket_timestamp_ms": [
+            1792685402089,
+            1792685403088
+          ],
+          "source_ids": [
+            "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60",
+            "http://100.127.124.29:8080"
+          ],
+          "raw_observation_offsets_s": [
+            0.23000001907348633,
+            0.23000001907348633
+          ],
+          "maximum_pairwise_projected_disagreement_km": 0.012571372789413338,
+          "maximum_constant_velocity_projection_distance_km": 0.049908274354803085,
+          "frame": 19
+        }
+      ],
+      "association_anchor": null,
+      "family_trials": 15,
+      "control_quantile": 0.9993333333333333,
+      "cutout": {
+        "delay_km": 13.884801551761292,
+        "doppler_hz": 429.9247513323655,
+        "delay_radius_bins": 15,
+        "doppler_radius_bins": 45,
         "max_frames": 24
       }
     },
@@ -28469,5 +29818,5 @@
       }
     }
   ],
-  "acceptance": "Leave-one-pass-out calibration over seven positive passes must show useful held-out discrimination before deferred misses execute."
+  "acceptance": "Leave-one-pass-out calibration over 2 independent positive passes must show useful held-out discrimination before deferred misses execute."
 }

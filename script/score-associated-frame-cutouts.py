@@ -13,7 +13,10 @@ def score(frame,delay,doppler):
  power=sum(abs(x)**2 for x in z); glrt=beam/max(power,1e-12)
  stap=beam/max(sum(abs(x-sum(z)/len(z))**2 for x in z),1e-12)
  sparse=sum(sorted((abs(x)**2 for x in z),reverse=True)[:max(1,len(z)//2)])
- return {'coherent_beam':beam,'spatial_glrt':glrt,'post_doppler_stap':stap,'sparse_beam':sparse}
+ # These are one-frame algebraic diagnostics only.  Full GLRT/STAP/sparse
+ # labels are reserved for evaluate-spatial-cutout-suite.py's 20-CPI methods.
+ return {'diagnostic_coherent_beam':beam,'diagnostic_normalized_beam':glrt,
+         'diagnostic_residual_ratio':stap,'diagnostic_top_channel_power':sparse}
 def main():
  p=argparse.ArgumentParser();p.add_argument('--cohort',type=Path,required=True);p.add_argument('--replay-dir',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args(); cohort=json.loads(a.cohort.read_text()); rows=[]
  for job in cohort['positives']:
