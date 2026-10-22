@@ -30,6 +30,12 @@ class TrackerAblationTest(unittest.TestCase):
         self.assertEqual(config["process"]["tracker"]["initiate"][
             "stationary_clutter"], {"enable": True, "persistence_cpis": 91})
 
+    def test_stationary_clutter_on_preserves_native_default_when_block_missing(self):
+        config = {"process": {"tracker": {"initiate": {"M": 3, "N": 5}}}}
+        MODULE.set_stationary_clutter(config, "on")
+        self.assertNotIn("stationary_clutter",
+                         config["process"]["tracker"]["initiate"])
+
 
 if __name__ == "__main__":
     unittest.main()

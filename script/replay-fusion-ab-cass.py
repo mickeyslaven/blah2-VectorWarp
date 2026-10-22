@@ -67,6 +67,10 @@ def set_stationary_clutter(config, state):
     if state is None:
         return
     initiate = config["process"]["tracker"]["initiate"]
+    if state == "on" and "stationary_clutter" not in initiate:
+        # In resident mode an absent block is the production default-on path.
+        # Preserve it verbatim so the ON arm reproduces the deployed config.
+        return
     settings = initiate.setdefault("stationary_clutter", {})
     settings["enable"] = state == "on"
     if state == "on":
