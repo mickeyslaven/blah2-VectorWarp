@@ -17,7 +17,11 @@ class TrackerAblationTest(unittest.TestCase):
             "M": 3, "N": 5, "stationary_clutter": {"enable": False}}}}})
         MODULE.set_stationary_clutter(config, "on")
         self.assertEqual(config["process"]["tracker"]["initiate"][
-            "stationary_clutter"], {"enable": True})
+            "stationary_clutter"], {
+                "enable": True,
+                "persistence_cpis": 60,
+                "max_doppler_hz": 15.0,
+            })
 
     def test_stationary_clutter_none_preserves_config(self):
         config = {"process": {"tracker": {"initiate": {"stationary_clutter": {

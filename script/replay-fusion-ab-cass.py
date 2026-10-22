@@ -69,6 +69,12 @@ def set_stationary_clutter(config, state):
     initiate = config["process"]["tracker"]["initiate"]
     settings = initiate.setdefault("stationary_clutter", {})
     settings["enable"] = state == "on"
+    if state == "on":
+        # The native config reader requires both parameters when the block is
+        # explicitly enabled. Production defaults apply only when the entire
+        # block is absent.
+        settings.setdefault("persistence_cpis", 60)
+        settings.setdefault("max_doppler_hz", 15.0)
 
 
 def parse_tracker_diagnostics(output):
