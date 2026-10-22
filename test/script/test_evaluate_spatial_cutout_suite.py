@@ -61,3 +61,21 @@ def test_phase_vector_keeps_legacy_cutout_proxy_diagnostic_only():
         "trajectory": [{}]})
     assert value["status"] == "diagnostic_proxy_not_qualified"
     assert "direct-path/pilot" in value["reason"]
+
+
+def test_uncertainty_maximum_is_applied_to_each_translated_control():
+    grid = [(-4, -20, []), (4, 20, [])]
+    first = {"target_score": 2.0, "control_quantile": .99,
+             "control_score_vector": [
+                 {"doppler_offset_bins": 1, "delay_offset_bins": 2, "raw_score": 1.0},
+                 {"doppler_offset_bins": 3, "delay_offset_bins": 4, "raw_score": 3.0}]}
+    second = {"target_score": 4.0, "control_quantile": .99,
+              "control_score_vector": [
+                  {"doppler_offset_bins": 1, "delay_offset_bins": 2, "raw_score": 5.0},
+                  {"doppler_offset_bins": 3, "delay_offset_bins": 4, "raw_score": 2.0}]}
+    result = SUITE.maximize_uncertainty_results([first, second], grid)
+    assert result["target_score"] == 4.0
+    assert [item["raw_score"] for item in result["control_score_vector"]] == [5.0, 3.0]
+    assert result["adsb_uncertainty"]["trials_per_path"] == 2
+    assert result["adsb_uncertainty"]["target_selected"] == {"delay_bins": 4,
+                                                                  "doppler_hz": 20}

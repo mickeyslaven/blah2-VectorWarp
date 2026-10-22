@@ -23,6 +23,11 @@ STAP = load("analyze-post-doppler-stap.py")
 SPARSE = load("analyze-sparse-beam-recovery.py")
 PHASE = load("analyze-phase-locked-migration.py")
 METHODS = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
+# Fixed before scoring: local/ADS-B replay disagreement was bounded at four
+# delay bins and 20 Hz.  Every target and translated control receives all 45
+# hypotheses, so this is a charged nuisance-parameter search, not a target fit.
+DELAY_BIN_OFFSETS = tuple(range(-4, 5))
+DOPPLER_HZ_OFFSETS = (-20.0, -10.0, 0.0, 10.0, 20.0)
 
 
 def compact(result):
@@ -51,7 +56,72 @@ def run_method(method, cutouts, config, trajectory, fraction):
     raise ValueError(method)
 
 
-def calibrated_vector(method, treatment, result, job, beams):
+def nearest(axis, value):
+    return min(range(len(axis)), key=lambda index: abs(axis[index] - value))
+
+
+def offset_trajectory(cutouts, trajectory, delay_bins, doppler_hz):
+    """Express the fixed ADS-B uncertainty grid in each frame's actual axes."""
+    shifted = []
+    for frame, truth in zip(cutouts, trajectory):
+        delay_axis, doppler_axis = frame["delay_km"], frame["doppler_hz"]
+        column = nearest(delay_axis, truth["delay_km"]) + delay_bins
+        if not 0 <= column < len(delay_axis):
+            raise ValueError("ADS-B delay uncertainty leaves the retained cutout")
+        row = nearest(doppler_axis, truth["doppler_hz"] + doppler_hz)
+        shifted.append({**truth, "delay_km": delay_axis[column],
+                        "doppler_hz": doppler_axis[row]})
+    return shifted
+
+
+def uncertainty_grid(cutouts, trajectory):
+    return [(delay_bins, doppler_hz,
+             offset_trajectory(cutouts, trajectory, delay_bins, doppler_hz))
+            for delay_bins in DELAY_BIN_OFFSETS
+            for doppler_hz in DOPPLER_HZ_OFFSETS]
+
+
+def maximize_uncertainty_results(results, grid):
+    """Maximize the same fixed offset grid for target and each control path."""
+    if len(results) != len(grid):
+        raise ValueError("uncertainty result/grid mismatch")
+    common = set.intersection(*(
+        {(item["doppler_offset_bins"], item["delay_offset_bins"])
+         for item in result["control_score_vector"]} for result in results))
+    if not common:
+        raise ValueError("no translated controls survive every uncertainty trial")
+    target_index = max(range(len(results)), key=lambda index: results[index]["target_score"])
+    output = dict(results[target_index])
+    output["target_score"] = results[target_index]["target_score"]
+    controls = []
+    for offset in sorted(common):
+        candidates = [next(item for item in result["control_score_vector"]
+                           if (item["doppler_offset_bins"], item["delay_offset_bins"]) == offset)
+                      for result in results]
+        controls.append(max(candidates, key=lambda item: item["raw_score"]))
+    values = [item["raw_score"] for item in controls]
+    fraction = output.get("control_quantile", .99)
+    p99 = sorted(values)[min(len(values) - 1, math.ceil(fraction * len(values)) - 1)]
+    output.update({"control_score_vector": controls, "controls": len(controls),
+                   "control_p99": p99,
+                   "margin_over_control_p99_db": 10 * math.log10(
+                       max(output["target_score"], 1e-300) / max(p99, 1e-300)),
+                   "adsb_uncertainty": {"delay_bin_offsets": list(DELAY_BIN_OFFSETS),
+                                        "doppler_hz_offsets": list(DOPPLER_HZ_OFFSETS),
+                                        "trials_per_path": len(grid),
+                                        "target_selected": {"delay_bins": grid[target_index][0],
+                                                            "doppler_hz": grid[target_index][1]}}})
+    return output
+
+
+def run_method_with_adsb_uncertainty(method, cutouts, config, trajectory, fraction):
+    grid = uncertainty_grid(cutouts, trajectory)
+    results = [run_method(method, cutouts, config, shifted, fraction)
+               for _, _, shifted in grid]
+    return maximize_uncertainty_results(results, grid), len(grid)
+
+
+def calibrated_vector(method, treatment, result, job, beams, parameter_choices=1):
     controls = result["control_score_vector"]
     values = [item["raw_score"] for item in controls]
 
@@ -72,7 +142,8 @@ def calibrated_vector(method, treatment, result, job, beams):
         "method_id": method, "gain_treatment": treatment, "job_id": job["job_id"],
         "event_id": job["event_id"], "recording": job["recording"],
         "trial_family_count": job["family_trials"],
-        "parameter_grid_choices": 1, "internal_search_trials_per_path": beams,
+        "parameter_grid_choices": parameter_choices,
+        "internal_search_trials_per_path": beams * parameter_choices,
         "target": record("target", result["target_score"], 0, 0),
         "controls": [record("control", item["raw_score"],
                             item["doppler_offset_bins"], item["delay_offset_bins"], True)
@@ -111,13 +182,13 @@ def channel_rms(cutouts):
     return [math.sqrt(total / count) for total, count in zip(sums, counts)]
 
 
-def package(treatment, raw_results, job, beams):
+def package(treatment, raw_results, job, beams, parameter_choices=1):
     methods = {method: compact(raw_results[method]) for method in METHODS}
     for item in methods.values():
         item["beam_trials"] = beams
-        item["path_beam_trials"] = item["controls"] * beams
+        item["path_beam_trials"] = item["controls"] * beams * parameter_choices
     vectors = {method: calibrated_vector(method, treatment, raw_results[method],
-                                         job, beams) for method in METHODS}
+                                         job, beams, parameter_choices) for method in METHODS}
     offset_maps = {
         method: {(item["doppler_offset_bins"], item["delay_offset_bins"]): item
                  for item in vectors[method]["controls"]}
@@ -190,9 +261,11 @@ def main():
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=6, mp_context=multiprocessing.get_context("fork")) as executor:
         futures = {(treatment, method): executor.submit(
-            run_method, method, values, config, trajectory, fraction)
+            run_method_with_adsb_uncertainty, method, values, config, trajectory, fraction)
             for treatment, values in treatments.items() for method in METHODS}
-        results = {key: future.result() for key, future in futures.items()}
+        evaluated = {key: future.result() for key, future in futures.items()}
+    results = {key: value[0] for key, value in evaluated.items()}
+    parameter_choices = next(iter(evaluated.values()))[1]
     output = {key: job[key] for key in ("job_id", "event_id", "hex", "flight", "outcome",
               "role", "revision", "kind", "recording", "truth_source", "family_trials",
               "control_quantile")}
@@ -200,7 +273,7 @@ def main():
     output["gain_treatments"] = {
         treatment: package(treatment,
                            {method: results[(treatment, method)] for method in METHODS},
-                           job, beams) for treatment in treatments}
+                           job, beams, parameter_choices) for treatment in treatments}
     # Compatibility aliases are explicitly the raw-as-acquired treatment.
     output.update(output["gain_treatments"]["raw_as_acquired"])
     # This executes before the runner removes replay JSON.  Existing v1
