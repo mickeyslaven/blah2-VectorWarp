@@ -64,7 +64,9 @@ def stack(methods):
     for row in rows:
         row["control_p99_all_trials"] = threshold
         row["margin"] = row["target"] - threshold
-        row["recovered"] = row["margin"] >= 0
+        # Evidence is -log10(p); 0.3 evidence units are 3 dB-equivalent.
+        row["margin_db_equivalent"] = 10 * row["margin"]
+        row["recovered"] = row["margin"] >= .3
         del row["controls"]
     return {"trial_count": len(rows), "aligned_control_offsets": control_count,
             "familywise_control_maxima": len(family_maxima),

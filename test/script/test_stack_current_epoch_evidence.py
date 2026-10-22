@@ -21,3 +21,11 @@ def test_familywise_control_uses_per_offset_maximum_across_combinations():
     assert result["aligned_control_offsets"] == 2
     assert result["threshold_p99_fwer"] >= max(
         row["target"] for row in result["rows"] if row["combination"] == ["b"])
+
+
+def test_recovery_requires_three_db_equivalent_evidence_margin():
+    methods = {"a": {"target": 0, "controls": [0, 0, 0]}}
+    result = STACK.stack(methods)
+    row = result["rows"][0]
+    assert row["margin_db_equivalent"] == 0
+    assert not row["recovered"]
