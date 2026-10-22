@@ -193,6 +193,21 @@ def process(row, state, state_path, local_log):
     state_path.write_text(json.dumps(state, indent=2) + '\n')
     trajectory_path = f'{REMOTE_ROOT}/{key}-trajectory.json'
     ssh(CASS, f'cat > {quote(trajectory_path)}', input=json.dumps(trajectory(row)) + '\n')
+    if not row.get('replay_trajectory'):
+        # A valid raw clip can outlive the truth rows available in a refreshed
+        # API snapshot.  Keep it available to the independent spatial consumer,
+        # but do not misreport the waveform analyzer's empty-trajectory failure
+        # as a malformed or incomplete MCHQ recording.
+        state['clips'][key] = {**state['clips'][key],
+            'status': 'spatial_wait', 'waveform_status': 'unscoreable_no_truth'}
+        state_path.write_text(json.dumps(state, indent=2) + '\n')
+        ack_path, acknowledgement = wait_for_spatial_ack(raw, state, state_path, 30)
+        ssh(CASS, f'rm -f {quote(raw)}')
+        state['clips'][key] = {**state['clips'][key], 'status': 'complete',
+            'spatial_ack': ack_path, 'spatial_ack_status': acknowledgement['status'],
+            'completed_at': int(time.time())}
+        state_path.write_text(json.dumps(state, indent=2) + '\n')
+        return
     loaded_path = f'{REMOTE_ROOT}/{key}-loaded-reciprocal.json'
     spectral_path = f'{REMOTE_ROOT}/{key}-spectral-interference.json'
     wait_for_cass_headroom(local_log)
