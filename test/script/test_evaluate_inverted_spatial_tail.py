@@ -10,7 +10,8 @@ SPEC.loader.exec_module(INVERTED)
 
 def job(job_id, event_id, role, timestamp):
     return {"job_id": job_id, "event_id": event_id, "hex": event_id,
-            "role": role, "trajectory": [{"timestamp_ms": timestamp}]}
+            "role": role, "trajectory": [{"timestamp_ms": timestamp,
+                                             "doppler_hz": -timestamp}]}
 
 
 def result(target, controls):
@@ -37,6 +38,8 @@ def test_hypothesis_event_is_excluded_and_failed_gate_keeps_misses_closed():
     assert output["frozen_for_misses"] is False
     assert output["misses_scored"] is False
     assert "misses" not in output
+    assert output["hypothesis_doppler"]["median_abs_hz"] == 0
+    assert "direct-path/low-Doppler" in output["interpretation"]
 
 
 def test_fisher_probability_decreases_for_small_probabilities():

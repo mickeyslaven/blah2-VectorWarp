@@ -4,6 +4,7 @@
 import argparse
 import json
 import math
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -76,6 +77,9 @@ def evaluate(manifest, state, hypothesis_job):
     if hypothesis_job not in state["results"] or "score_vectors" not in state["results"][hypothesis_job]:
         raise ValueError("hypothesis job has not been scored")
     hypothesis = score(jobs[hypothesis_job], state["results"][hypothesis_job], 1)
+    hypothesis_dopplers = [abs(float(row["doppler_hz"]))
+                           for row in jobs[hypothesis_job].get("trajectory", [])
+                           if row.get("doppler_hz") is not None]
     positive_events = defaultdict(list)
     for job in manifest["jobs"]:
         if job["role"] != "positive" or job["event_id"] == hypothesis_event:
@@ -96,6 +100,12 @@ def evaluate(manifest, state, hypothesis_job):
         "hypothesis_job": hypothesis_job,
         "hypothesis_event_excluded": hypothesis_event,
         "hypothesis_generation": hypothesis,
+        "hypothesis_doppler": {
+            "median_abs_hz": (statistics.median(hypothesis_dopplers)
+                              if hypothesis_dopplers else None),
+            "minimum_abs_hz": min(hypothesis_dopplers) if hypothesis_dopplers else None,
+            "maximum_abs_hz": max(hypothesis_dopplers) if hypothesis_dopplers else None,
+        },
         "trial_accounting": {"variant_trials": VARIANT_TRIALS,
                              "alpha": ALPHA,
                              "minimum_notch_margin_db": MINIMUM_MARGIN_DB},
@@ -118,6 +128,12 @@ def evaluate(manifest, state, hypothesis_job):
         output["rejection_reason"] = (
             "The predeclared positive-control qualification and held-out validation "
             "did not both support a corrected target-induced low-tail notch.")
+        output["interpretation"] = (
+            "The inversion is not validated as a target detector. The r110 value "
+            "remains hypothesis-generating only and is consistent with suppression "
+            "near the direct-path/low-Doppler region rather than a demonstrated "
+            "target-induced notch."
+        )
     return output
 
 
