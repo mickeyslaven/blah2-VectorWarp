@@ -13,6 +13,10 @@ RUNNER_PATH = Path(__file__).with_name("run-current-epoch-spatial-suite.py")
 SPEC = importlib.util.spec_from_file_location("spatial_runner", RUNNER_PATH)
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+SUMMARY_PATH = Path(__file__).with_name("summarize-current-epoch-spatial-suite.py")
+SUMMARY_SPEC = importlib.util.spec_from_file_location("spatial_summary", SUMMARY_PATH)
+SUMMARY = importlib.util.module_from_spec(SUMMARY_SPEC)
+SUMMARY_SPEC.loader.exec_module(SUMMARY)
 READY_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ready"
 ACK_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ack"
 FROZEN_COMPLETE = "/home/mickeyslaven/wwat563-results/rolling/frozen-complete"
@@ -35,6 +39,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--state", required=True, type=Path)
+    parser.add_argument("--gain-selection", required=True, type=Path)
     parser.add_argument("--poll-seconds", type=float, default=5)
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
@@ -51,9 +56,23 @@ def main():
                f"mkdir -p {RUNNER.CASS_RESULTS} {READY_ROOT} {ACK_ROOT}")
     expected = {job["job_id"] for job in manifest["jobs"]}
     acknowledged = set()
+    warned_missing = set()
+    def gain_complete(result):
+        return set(result.get("gain_treatments", {})) == {
+            "raw_as_acquired", "inverse_hardware_gain"}
     def complete():
-        return all("aligned_control_offsets" in state["results"].get(job_id, {})
+        return all(gain_complete(state["results"].get(job_id, {}))
                    for job_id in expected)
+    def freeze_selection_if_ready():
+        if args.gain_selection.exists():
+            return True
+        try:
+            selection = SUMMARY.select_gain_treatment(manifest, state)
+        except ValueError:
+            return False
+        save(args.gain_selection, selection)
+        print(f"froze gain treatment {selection['selected']} from positives", flush=True)
+        return True
     while not complete():
         listing = RUNNER.ssh(RUNNER.CASS_HOST,
             f"find {READY_ROOT} -maxdepth 1 -type f -name '*.json' -print",
@@ -80,12 +99,22 @@ def main():
             raw_path = item.get("recording", item.get("raw"))
             if not raw_path:
                 raise ValueError(f"ready marker lacks recording/raw: {basename}")
+            exists = RUNNER.ssh(RUNNER.CASS_HOST, f"test -f {raw_path}", check=False)
+            if exists.returncode:
+                if basename not in warned_missing:
+                    print(f"skip stale ready marker without raw: {basename}", flush=True)
+                    warned_missing.add(basename)
+                continue
+            if any(job["role"] == "miss" for job in jobs) and not freeze_selection_if_ready():
+                print(f"hold miss {basename}: positive-only gain selection not frozen", flush=True)
+                continue
             for job in jobs:
                 existing = state["results"].get(job["job_id"], {})
-                if "aligned_control_offsets" not in existing:
+                if not gain_complete(existing):
                     print(f"analyze {basename} {job['job_id']}", flush=True)
                     state["results"][job["job_id"]] = RUNNER.process(job, raw_path)
                     save(args.state, state)
+            freeze_selection_if_ready()
             state["recordings"][recording] = {
                 key: item[key] for key in ("sha256", "bytes") if key in item}
             save(args.state, state)

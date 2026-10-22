@@ -13,7 +13,9 @@ SPEC = importlib.util.spec_from_file_location(
     "truth", Path(__file__).with_name("extract-clip-truth.py"))
 TRUTH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(TRUTH)
-TRIAL_VARIANTS = 7  # three singles, three pairs, and the all-three stack
+# Seven single/stack hypotheses under each of two gain treatments, plus the
+# separately gated signed inversion hypothesis.
+TRIAL_VARIANTS = 15
 
 
 def trajectory(event, window, cpi=.5):

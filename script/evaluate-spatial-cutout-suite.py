@@ -21,12 +21,14 @@ def load(name):
 SPATIAL = load("analyze-spatial-glrt.py")
 STAP = load("analyze-post-doppler-stap.py")
 SPARSE = load("analyze-sparse-beam-recovery.py")
+METHODS = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
 
 
 def compact(result):
     return {key: result[key] for key in (
         "frames", "target_score", "margin_over_control_p99_db",
-        "controls_exceeding_target", "control_quantile") if key in result} | {
+        "controls_exceeding_target", "control_quantile", "target_fixed_beam",
+        "target_beam_votes") if key in result} | {
         "control_p99": result.get("control_p99", result.get("strict_control_p99")),
         "controls": result.get("controls", result.get("trial_accounting", {}).get(
             "whole_search_control_paths")),
@@ -48,7 +50,7 @@ def run_method(method, cutouts, config, trajectory, fraction):
     raise ValueError(method)
 
 
-def calibrated_vector(method, result, job, beams):
+def calibrated_vector(method, treatment, result, job, beams):
     controls = result["control_score_vector"]
     values = [item["raw_score"] for item in controls]
 
@@ -66,7 +68,7 @@ def calibrated_vector(method, result, job, beams):
 
     return {
         "schema": "vectorwarp-calibrated-trajectory-score-vector-v1",
-        "method_id": method, "job_id": job["job_id"],
+        "method_id": method, "gain_treatment": treatment, "job_id": job["job_id"],
         "event_id": job["event_id"], "recording": job["recording"],
         "trial_family_count": job["family_trials"],
         "parameter_grid_choices": 1, "internal_search_trials_per_path": beams,
@@ -75,6 +77,64 @@ def calibrated_vector(method, result, job, beams):
                             item["doppler_offset_bins"], item["delay_offset_bins"], True)
                      for item in controls],
     }
+
+
+def gain_equalized(cutouts, gains):
+    common = sum(gains) / len(gains)
+    scales = [10 ** ((common - gain) / 20) for gain in gains]
+    output = []
+    for frame in cutouts:
+        changed = dict(frame)
+        changed["channels"] = [
+            [[[value[0] * scale, value[1] * scale] for value in row]
+             for row in channel]
+            for channel, scale in zip(frame["channels"], scales)]
+        # Express both observations and the measured reference manifold in the
+        # same common antenna-voltage coordinates after x' = scale*x.
+        changed["reference_weights"] = [
+            [value[0] * scale, value[1] * scale]
+            for value, scale in zip(frame["reference_weights"], scales)]
+        output.append(changed)
+    return output, scales
+
+
+def channel_rms(cutouts):
+    sums = [0.0] * len(cutouts[0]["channels"])
+    counts = [0] * len(sums)
+    for frame in cutouts:
+        for channel_index, channel in enumerate(frame["channels"]):
+            for row in channel:
+                for real, imaginary in row:
+                    sums[channel_index] += real * real + imaginary * imaginary
+                    counts[channel_index] += 1
+    return [math.sqrt(total / count) for total, count in zip(sums, counts)]
+
+
+def package(treatment, raw_results, job, beams):
+    methods = {method: compact(raw_results[method]) for method in METHODS}
+    for item in methods.values():
+        item["beam_trials"] = beams
+        item["path_beam_trials"] = item["controls"] * beams
+    vectors = {method: calibrated_vector(method, treatment, raw_results[method],
+                                         job, beams) for method in METHODS}
+    offset_maps = {
+        method: {(item["doppler_offset_bins"], item["delay_offset_bins"]): item
+                 for item in vectors[method]["controls"]}
+        for method in METHODS}
+    aligned = sorted(set.intersection(*(set(items) for items in offset_maps.values())))
+    for method in METHODS:
+        vector = vectors[method]
+        methods[method].update({
+            "evidence_log10": vector["target"]["evidence_log10"],
+            "control_evidence_log10": [offset_maps[method][offset]["evidence_log10"]
+                                       for offset in aligned],
+            "parameter_trial_count": vector["parameter_grid_choices"],
+            "matched_control_count": len(aligned),
+        })
+    return {"methods": methods, "score_vectors": vectors,
+            "aligned_control_offsets": [
+                {"doppler_offset_bins": row, "delay_offset_bins": column}
+                for row, column in aligned]}
 
 
 def main():
@@ -90,40 +150,36 @@ def main():
     cutouts = replay["arms"]["coherent_beam_bank"]["complex_cutouts"]
     trajectory = job["trajectory"]
     fraction = job["control_quantile"]
-    methods = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
+    gains = config["capture"]["device"]["heimdall"]["channel_gains"]
+    equalized, scales = gain_equalized(cutouts, gains)
+    treatments = {"raw_as_acquired": cutouts,
+                  "inverse_hardware_gain": equalized}
     with concurrent.futures.ProcessPoolExecutor(
-            max_workers=3, mp_context=multiprocessing.get_context("fork")) as executor:
-        futures = {method: executor.submit(run_method, method, cutouts, config,
-                                           trajectory, fraction) for method in methods}
-        raw_results = {method: future.result() for method, future in futures.items()}
+            max_workers=6, mp_context=multiprocessing.get_context("fork")) as executor:
+        futures = {(treatment, method): executor.submit(
+            run_method, method, values, config, trajectory, fraction)
+            for treatment, values in treatments.items() for method in METHODS}
+        results = {key: future.result() for key, future in futures.items()}
     output = {key: job[key] for key in ("job_id", "event_id", "hex", "flight", "outcome",
               "role", "revision", "kind", "recording", "truth_source", "family_trials",
               "control_quantile")}
-    output["methods"] = {method: compact(raw_results[method]) for method in methods}
-    for item in output["methods"].values():
-        item["beam_trials"] = config["process"]["surveillance_fusion"]["beams"]
-        item["path_beam_trials"] = item["controls"] * item["beam_trials"]
-    output["score_vectors"] = {
-        method: calibrated_vector(method, raw_results[method], job,
-                                  config["process"]["surveillance_fusion"]["beams"])
-        for method in methods}
-    offset_maps = {
-        method: {(item["doppler_offset_bins"], item["delay_offset_bins"]): item
-                 for item in output["score_vectors"][method]["controls"]}
-        for method in methods}
-    aligned_offsets = sorted(set.intersection(*(set(items) for items in offset_maps.values())))
-    output["aligned_control_offsets"] = [
-        {"doppler_offset_bins": row, "delay_offset_bins": column}
-        for row, column in aligned_offsets]
-    for method in methods:
-        vector = output["score_vectors"][method]
-        output["methods"][method].update({
-            "evidence_log10": vector["target"]["evidence_log10"],
-            "control_evidence_log10": [offset_maps[method][offset]["evidence_log10"]
-                                       for offset in aligned_offsets],
-            "parameter_trial_count": vector["parameter_grid_choices"],
-            "matched_control_count": len(aligned_offsets),
-        })
+    beams = config["process"]["surveillance_fusion"]["beams"]
+    output["gain_treatments"] = {
+        treatment: package(treatment,
+                           {method: results[(treatment, method)] for method in METHODS},
+                           job, beams) for treatment in treatments}
+    # Compatibility aliases are explicitly the raw-as-acquired treatment.
+    output.update(output["gain_treatments"]["raw_as_acquired"])
+    raw_rms, equalized_rms = channel_rms(cutouts), channel_rms(equalized)
+    output["gain_accounting"] = {
+        "channel_gains_db": gains, "common_voltage_scale_gain_db": sum(gains) / len(gains),
+        "inverse_gain_amplitude_scales": scales,
+        "raw_channel_rms": raw_rms, "equalized_channel_rms": equalized_rms,
+        "noise_power_change_db": [20 * math.log10(scale) for scale in scales],
+        "covariance_whitening": {
+            method: "intrinsic local full-covariance whitening; no extra preprocessing to avoid double whitening"
+            for method in METHODS},
+    }
     args.output.write_text(json.dumps(output, separators=(",", ":")) + "\n")
     print(json.dumps({"job_id": job["job_id"], "methods": output["methods"]}, indent=2))
 

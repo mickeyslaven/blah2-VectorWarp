@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 METHOD = "sparse_beam"
-VARIANT_TRIALS = 8  # three singles, four stacks, and this signed inversion
+VARIANT_TRIALS = 15  # seven combinations under two gain treatments + inversion
 ALPHA = .01
 MINIMUM_MARGIN_DB = 3.0
 

@@ -4,16 +4,22 @@
 import argparse
 import importlib.util
 import json
+import statistics
 from collections import defaultdict
 from pathlib import Path
 
 
 METHODS = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
+TREATMENTS = ("raw_as_acquired", "inverse_hardware_gain")
 THRESHOLD_DB = 3.0
 STACK_PATH = Path(__file__).with_name("stack-current-epoch-evidence.py")
 STACK_SPEC = importlib.util.spec_from_file_location("stack_evidence", STACK_PATH)
 STACK = importlib.util.module_from_spec(STACK_SPEC)
 STACK_SPEC.loader.exec_module(STACK)
+
+
+def treatment(clip, name):
+    return clip.get("gain_treatments", {}).get(name)
 
 
 def stacks(clip):
@@ -31,15 +37,64 @@ def stacks(clip):
             } for row in result["rows"] if not row["single"]}
 
 
-def summarize(manifest, state):
+def best_event_margin(clips):
+    candidates = []
+    for clip in clips:
+        candidates.extend(item["margin_over_control_p99_db"]
+                          for item in clip["methods"].values())
+        candidates.extend(item["margin_db_equivalent"]
+                          for item in stacks(clip).values())
+    return max(candidates)
+
+
+def select_gain_treatment(manifest, state):
+    """Freeze one treatment using positive controls only."""
+    positive_jobs = [job for job in manifest["jobs"] if job["role"] == "positive"]
+    missing = [job["job_id"] for job in positive_jobs
+               if not all(treatment(state["results"].get(job["job_id"], {}), name)
+                          for name in TREATMENTS)]
+    if missing:
+        raise ValueError(f"positive gain evaluation incomplete: {len(missing)} jobs")
+    events = defaultdict(list)
+    for job in positive_jobs:
+        events[job["event_id"]].append(state["results"][job["job_id"]])
+    rows = {}
+    for name in TREATMENTS:
+        margins = [best_event_margin([treatment(clip, name) for clip in clips])
+                   for clips in events.values()]
+        rows[name] = {
+            "positive_events_retained": sum(value >= THRESHOLD_DB for value in margins),
+            "median_best_margin_db": statistics.median(margins),
+            "event_best_margins_db": margins,
+        }
+    # Stable final tie-break deliberately favors current raw behavior.
+    selected = max(TREATMENTS, key=lambda name: (
+        rows[name]["positive_events_retained"], rows[name]["median_best_margin_db"],
+        name == "raw_as_acquired"))
+    return {
+        "schema": "vectorwarp-current-epoch-gain-selection-v1",
+        "config_epoch": manifest["config_epoch"],
+        "selection_scope": "positive controls only; miss results were not inspected",
+        "rule": "maximize retained positive events at +3 dB; tie by median best event margin; final tie raw",
+        "selected": selected, "treatments": rows,
+    }
+
+
+def summarize(manifest, state, selection=None):
     expected = {job["job_id"] for job in manifest["jobs"]}
     present = set(state["results"])
     if missing := sorted(expected - present):
         raise ValueError(f"incomplete run: {len(missing)} jobs missing; first={missing[0]}")
+    selection = selection or select_gain_treatment(manifest, state)
+    selected_treatment = selection["selected"]
     events = defaultdict(list)
     jobs = {job["job_id"]: job for job in manifest["jobs"]}
     for job_id in sorted(expected):
-        events[jobs[job_id]["event_id"]].append(state["results"][job_id])
+        raw = state["results"][job_id]
+        selected = treatment(raw, selected_treatment)
+        if selected is None:
+            raise ValueError(f"job lacks selected gain treatment: {job_id}")
+        events[jobs[job_id]["event_id"]].append({**raw, **selected})
     rows = []
     for event_id, clips in sorted(events.items()):
         first = clips[0]
@@ -84,6 +139,7 @@ def summarize(manifest, state):
         "schema": "vectorwarp-current-epoch-spatial-adaptive-matrix-v1",
         "config_epoch": manifest["config_epoch"],
         "statistics_sha256": manifest["statistics_sha256"],
+        "gain_selection": selection,
         "scope": {"events": len(rows), "jobs": len(expected),
                   "unique_recordings": len(state["recordings"]),
                   "miss_events": len(misses),
@@ -93,7 +149,7 @@ def summarize(manifest, state):
         "decision": {"minimum_margin_db": THRESHOLD_DB,
                      "event_rule": "any clip at or above threshold",
                      "familywise_alpha": .01,
-                     "correction": "Bonferroni across 3 singles + 3 pairs + all-three stack times event clip count",
+                     "correction": "Bonferroni across 7 combinations under each of 2 gain treatments plus signed inversion, times event clip count",
                      "empirical_controls": "target-excluded translated exact-time trajectories; all paths counted"},
         "methods": {
             "spatial_glrt": {"beam_policy": "fixed", "guard": 1,
@@ -105,6 +161,11 @@ def summarize(manifest, state):
                                   "minimum_abs_doppler_hz": 0},
             "sparse_beam": {"lasso_penalty": .5, "guard": 2,
                             "training": 5, "diagonal_loading": .3},
+        },
+        "gain_accounting": {
+            "evaluated": list(TREATMENTS),
+            "selected_for_miss_decisions": selected_treatment,
+            "covariance_whitening": "intrinsic in all three methods; no extra preprocessing was applied to avoid double whitening",
         },
         "summary": {
             "misses_recovered_any": sum(row["recovered_any"] for row in misses),
@@ -128,9 +189,11 @@ def main():
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--state", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--gain-selection", type=Path)
     args = parser.parse_args()
+    selection = json.loads(args.gain_selection.read_text()) if args.gain_selection else None
     result = summarize(json.loads(args.manifest.read_text()),
-                       json.loads(args.state.read_text()))
+                       json.loads(args.state.read_text()), selection)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result["summary"], indent=2))
 
