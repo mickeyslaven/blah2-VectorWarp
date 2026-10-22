@@ -1,0 +1,12 @@
+{
+  "schema": "vectorwarp-associated-exact-frame-calibration-blocker-v1",
+  "status": "blocked_before_miss_scoring",
+  "reason": "Production coherent-beam replay cutout timestamps are not in the retained association timestamp domain. The r8 replay frame-0 timestamp is 1792690528114 while its exact association is 1792686943760, an unexplained offset of 3584354 ms.",
+  "trajectory_quarantine": {
+    "maximum_bracket_span_ms": 3000,
+    "invalid_positive_labels": 6,
+    "invalid_miss_labels": 63,
+    "r90_example": "stored association 5.02 km / 19.4 Hz versus stale trajectory 16.83 km / 370 Hz"
+  },
+  "safe_next_step": "Persist or recover a recording-time to coherent-replay-frame clock transform, then score each exact detector-association frame/cell only. Do not use wide-bracket trajectories or score misses first."
+}
