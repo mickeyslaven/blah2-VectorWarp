@@ -1,5 +1,7 @@
 {
   "schema": "vectorwarp-operational-scorecard-v1",
+  "evaluation_status": "INVALID_FOR_OPERATIONAL_ACCEPTANCE",
+  "critical_review": "docs/OPRS_CRITICAL_REVIEW.md",
   "metric_contract": {
     "independent_unit": "finalized aircraft pass",
     "minimum_opportunity_frames": 3,

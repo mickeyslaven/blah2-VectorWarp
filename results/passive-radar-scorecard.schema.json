@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vectorwarp.local/schema/open-passive-radar-scorecard-v1.json",
+  "title": "Open Passive Radar Scorecard",
+  "type": "object",
+  "required": ["schema", "benchmark", "profile", "overall_status", "domains"],
+  "properties": {
+    "schema": {"const": "open-passive-radar-scorecard-v1"},
+    "benchmark": {
+      "type": "object",
+      "required": ["id", "version", "created_at", "evidence_hashes"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "evidence_hashes": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": ["name", "channel_count", "channels", "sample_rate_hz", "center_frequency_hz", "synchronization"],
+      "properties": {
+        "name": {"enum": ["REF_SURV_2CH", "SURV_ARRAY_NCH", "REF_PLUS_ARRAY", "SINGLE_CHANNEL_REPLAY"]},
+        "channel_count": {"type": "integer", "minimum": 1},
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "roles"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "roles": {"type": "array", "items": {"enum": ["reference", "surveillance"]}, "minItems": 1, "uniqueItems": true}
+            }
+          }
+        },
+        "sample_rate_hz": {"type": "number", "exclusiveMinimum": 0},
+        "center_frequency_hz": {"type": "number", "exclusiveMinimum": 0},
+        "usable_bandwidth_hz": {"type": ["number", "null"], "exclusiveMinimum": 0},
+        "sample_format": {"type": ["string", "null"]},
+        "synchronization": {"enum": ["shared_clock_and_time", "shared_clock", "disciplined_independent", "independent", "unknown"]},
+        "bearing_claimed": {"type": "boolean"},
+        "array_geometry": {"type": ["object", "null"]}
+      }
+    },
+    "overall_status": {"enum": ["INVALID", "FAIL", "NOT_QUALIFIED", "QUALIFIED", "IMPROVED"]},
+    "mission_tuple": {
+      "type": "object",
+      "properties": {
+        "tracking_pass_recall": {"$ref": "#/$defs/metric"},
+        "raw_detection_pass_recall": {"$ref": "#/$defs/metric"},
+        "nuisance_tracks_per_hour": {"$ref": "#/$defs/metric"},
+        "bearing_within_30deg": {"$ref": "#/$defs/metric"}
+      }
+    },
+    "domains": {
+      "type": "object",
+      "required": ["evaluation_integrity", "acquisition_rf", "reference_cancellation", "detection", "tracking", "bearing_spatial", "recoverability", "realtime_operational"],
+      "additionalProperties": {"$ref": "#/$defs/domain"}
+    }
+  },
+  "$defs": {
+    "status": {"enum": ["PASS", "WARN", "FAIL", "INVALID", "N/A", "NOT_QUALIFIED"]},
+    "metric": {
+      "type": "object",
+      "required": ["status", "applicable", "name"],
+      "properties": {
+        "name": {"type": "string"},
+        "status": {"$ref": "#/$defs/status"},
+        "applicable": {"type": "boolean"},
+        "value": {"type": ["number", "string", "boolean", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "numerator": {"type": ["number", "null"]},
+        "denominator": {"type": ["number", "null"]},
+        "interval_95": {"type": ["array", "null"], "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+        "threshold": {"type": ["object", "null"]},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "domain": {
+      "type": "object",
+      "required": ["status", "required", "metrics"],
+      "properties": {
+        "status": {"$ref": "#/$defs/status"},
+        "required": {"type": "boolean"},
+        "metrics": {"type": "array", "items": {"$ref": "#/$defs/metric"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

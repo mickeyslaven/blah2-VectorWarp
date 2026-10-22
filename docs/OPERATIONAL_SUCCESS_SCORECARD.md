@@ -1,4 +1,15 @@
-# VectorWarp operational success scorecard
+# VectorWarp operational aircraft-pass scorecard
+
+This document defines the real-aircraft mission-outcome component of the broader
+[Open Passive Radar Scorecard](PASSIVE_RADAR_SCORECARD.md). It is not, by itself,
+a complete passive-radar qualification.
+
+> **Status: rejected for operational acceptance.** The first implementation at
+> commit `aeaf62e` exposed useful counters but the current producer does not yet
+> guarantee a fixed denominator, CPI-event-time joins, stable measurement-backed
+> tracks, complete truth coverage, or nuisance accounting. See
+> [OPRS_CRITICAL_REVIEW.md](OPRS_CRITICAL_REVIEW.md). Generated results are
+> provisional diagnostics until those blockers are resolved.
 
 ## Decision metric
 

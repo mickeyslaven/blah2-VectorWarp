@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Score live VectorWarp performance at the independent-aircraft-pass level.
+"""PROVISIONAL: summarize producer counters at aircraft-pass level.
 
-This scorer intentionally does not use frame count as the headline metric.  A
-configuration is compared by the fraction of finalized, truth-valid aircraft
-passes that form an ADS-B-associated radar track, with raw detection and track
-formation reported separately.  Records are never pooled across config epochs.
+Do not use this first-pass scorer for operational acceptance. The current live
+producer does not yet guarantee a detector-independent denominator, CPI-time
+truth joins, or measurement-supported stable tracks. See
+docs/OPRS_CRITICAL_REVIEW.md. Records are kept separate by config epoch so the
+output remains useful while the evidence contract is replaced.
 """
 
 import argparse
@@ -275,6 +276,8 @@ def main():
                             hashlib.sha256(payload).hexdigest()))
     output = {
         "schema": SCHEMA,
+        "evaluation_status": "INVALID_FOR_OPERATIONAL_ACCEPTANCE",
+        "critical_review": "docs/OPRS_CRITICAL_REVIEW.md",
         "metric_contract": {
             "independent_unit": "finalized aircraft pass",
             "minimum_opportunity_frames": MIN_OPPORTUNITY_FRAMES,
