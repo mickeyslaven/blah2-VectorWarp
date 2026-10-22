@@ -1,0 +1,36 @@
+{
+  "schema": "vectorwarp-track-trigger-positive-capture-v1",
+  "deployed_at": "2026-10-22T10:41:00-04:00",
+  "purpose": "Capture one bounded ten-second IQ clip at the first ADS-B-associated tracker frame for each eligible pass, independent of the periodic snapshot cap.",
+  "rf_changed": false,
+  "receiver_config_sha256": "9d690eeedacb9553c92140d9a8a8cf7de0f606f6b7f9076ff17ad7801c491197",
+  "live_readback": {
+    "frequency_hz": 563000000,
+    "sample_rate_hz": 2400000,
+    "channel_count": 5,
+    "operating_mode": "coherent",
+    "channel_gains_db": [19.7, 25.4, 20.7, 25.4, 22.9],
+    "frames_advanced_after_restart": true
+  },
+  "production_validation": {
+    "flight": "GJS4602",
+    "hex": "a650d9",
+    "capture_kind": "track",
+    "revision": 26,
+    "state": "acknowledged",
+    "samples": 24000000,
+    "file": "/var/lib/vectorwarp/recordings/kraken-clip-r26-1792680117478041096-3.mchq",
+    "failure": null
+  },
+  "deployment": {
+    "commit": "42cee11",
+    "remote_backup": "/var/lib/vectorwarp-api/deploy-backups/track-trigger-positive-20261022",
+    "tests": [
+      "node api/capture-trigger-queue.test.js",
+      "node api/evidence-statistics.test.js",
+      "node --check api/capture-trigger-queue.js",
+      "node --check api/evidence-statistics.js",
+      "node --check api/server.js"
+    ]
+  }
+}
