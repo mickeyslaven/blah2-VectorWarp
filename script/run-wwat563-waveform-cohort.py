@@ -276,6 +276,25 @@ def process(row, state, state_path, local_log, prepared=None):
     state_path.write_text(json.dumps(state, indent=2) + '\n')
 
 
+def process_phase(rows, state, state_path, local_log):
+    """Drain one cohort phase without prefetching across its boundary."""
+    pending = [row for row in rows
+               if state['clips'].get(clip_id(row), {}).get('status') != 'complete']
+    # Keep exactly one future raw in flight. This overlaps the network-bound
+    # bridge with current low-priority scoring while bounding CASS residency to
+    # the current and next recordings. The verified next recording is exposed
+    # immediately so its spatial analysis can also overlap current waveform work.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        prefetched = (pool.submit(prefetch_and_publish, pending[0], local_log)
+                      if pending else None)
+        for index, row in enumerate(pending):
+            prepared = prefetched.result()
+            prefetched = (pool.submit(prefetch_and_publish, pending[index + 1],
+                                      local_log)
+                          if index + 1 < len(pending) else None)
+            process(row, state, state_path, local_log, prepared=prepared)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--positive-manifest', required=True, type=Path)
@@ -284,27 +303,17 @@ def main():
     parser.add_argument('--log', required=True, type=Path)
     args = parser.parse_args()
     positives = unique_rows(json.loads(args.positive_manifest.read_text()))
-    misses = unique_rows(json.loads(args.miss_manifest.read_text()))
     state = (json.loads(args.state.read_text()) if args.state.exists() else
              {'schema': 'vectorwarp-wwat563-waveform-runner-v1', 'clips': {}})
     ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)} {quote(REMOTE_SPATIAL_READY)} {quote(REMOTE_SPATIAL_ACK)} {quote(REMOTE_WAVEFORM_VECTORS)}')
     for source in ('analyze-loaded-reciprocal-mchq.py', 'analyze-spectral-interference-rejection.py'):
         run(['scp', '-q', str(Path(__file__).with_name(source)), f'{CASS}:{REMOTE_ROOT}/{source}'])
-    pending = [row for row in positives + misses
-               if state['clips'].get(clip_id(row), {}).get('status') != 'complete']
-    # Keep exactly one future raw in flight. This overlaps the network-bound
-    # bridge with current low-priority scoring while bounding CASS residency to
-    # the current and next recordings. The verified next recording is exposed
-    # immediately so its spatial analysis can also overlap current waveform work.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        prefetched = (pool.submit(prefetch_and_publish, pending[0], args.log)
-                      if pending else None)
-        for index, row in enumerate(pending):
-            prepared = prefetched.result()
-            prefetched = (pool.submit(prefetch_and_publish, pending[index + 1],
-                                      args.log)
-                          if index + 1 < len(pending) else None)
-            process(row, state, args.state, args.log, prepared=prepared)
+    process_phase(positives, state, args.state, args.log)
+    # This is a deliberate trajectory-correction barrier: no miss is even
+    # prefetched until every positive has drained, and the miss manifest is read
+    # only now so an atomic replacement during the positive phase takes effect.
+    misses = unique_rows(json.loads(args.miss_manifest.read_text()))
+    process_phase(misses, state, args.state, args.log)
 
 
 if __name__ == '__main__':

@@ -20,3 +20,31 @@ def test_prefetch_verifies_then_publishes_spatial_ready():
     copy.assert_called_once_with(row, Path("runner.log"))
     publish.assert_called_once_with(COHORT.clip_id(row), "/cache/example.mchq",
                                     "abc", "/recordings/example.mchq")
+
+
+def test_process_phase_does_not_schedule_the_next_phase():
+    positive = {"capture": {"revision": 1, "file": "/recordings/positive.mchq"}}
+    miss = {"capture": {"revision": 2, "file": "/recordings/miss.mchq"}}
+    calls = []
+
+    def prefetch(row, _log):
+        calls.append(("prefetch", row["capture"]["file"]))
+        return "/cache/raw", "digest", "/ready/raw.json"
+
+    def process(row, *_args, **_kwargs):
+        calls.append(("process", row["capture"]["file"]))
+
+    with patch.object(COHORT, "prefetch_and_publish", side_effect=prefetch), \
+         patch.object(COHORT, "process", side_effect=process):
+        COHORT.process_phase([positive], {"clips": {}}, Path("state.json"),
+                             Path("runner.log"))
+        assert calls == [
+            ("prefetch", "/recordings/positive.mchq"),
+            ("process", "/recordings/positive.mchq"),
+        ]
+        COHORT.process_phase([miss], {"clips": {}}, Path("state.json"),
+                             Path("runner.log"))
+    assert calls[-2:] == [
+        ("prefetch", "/recordings/miss.mchq"),
+        ("process", "/recordings/miss.mchq"),
+    ]
