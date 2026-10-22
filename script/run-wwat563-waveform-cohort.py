@@ -19,6 +19,7 @@ CASS = 'mickeyslaven@100.104.10.46'
 RAW = 'root@100.126.186.65'
 REMOTE_ROOT = '/home/mickeyslaven/wwat563-results'
 REMOTE_CACHE = '/home/mickeyslaven/wwat563-cache'
+REMOTE_ACKS = '/home/mickeyslaven/wwat563-results/acks'
 VENV = '/home/mickeyslaven/radar-training/venv/bin/python'
 
 
@@ -69,6 +70,25 @@ def verify_result(path):
     return value
 
 
+def wait_for_spatial_ack(key, raw, digest, loaded_path, spectral_path, state, state_path, poll_seconds):
+    """Retain verified raw input until the spatial cohort atomically acknowledges it."""
+    ack = f'{REMOTE_ACKS}/{key}.spatial-complete.json'
+    state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
+        'raw': raw, 'sha256': digest, 'loaded_result': loaded_path,
+        'spectral_result': spectral_path, 'ack_path': ack}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
+    while True:
+        probe = subprocess.run(['ssh', '-o', 'BatchMode=yes', CASS,
+                                f'test -f {quote(ack)} && cat {quote(ack)}'],
+                               text=True, capture_output=True)
+        if probe.returncode == 0:
+            value = json.loads(probe.stdout)
+            if value.get('clip_id') != key or value.get('status') not in ('complete', 'not_in_frozen_cohort'):
+                raise RuntimeError(f'invalid spatial acknowledgement {ack}')
+            return ack, value
+        time.sleep(poll_seconds)
+
+
 def copy_and_verify(row, local_log):
     source = row['capture']['file']
     name = Path(source).name
@@ -108,10 +128,13 @@ def process(row, state, state_path, local_log):
         for command in commands:
             ssh(CASS, command, stdout=log, stderr=subprocess.STDOUT)
     loaded, spectral = verify_result(loaded_path), verify_result(spectral_path)
+    ack_path, acknowledgement = wait_for_spatial_ack(
+        key, raw, digest, loaded_path, spectral_path, state, state_path, 30)
     ssh(CASS, f'rm -f {quote(raw)}')
     state['clips'][key] = {'status': 'complete', 'role': row['role'],
         'recording': row['capture']['file'], 'event_id': row['event_id'], 'sha256': digest,
         'loaded_result': loaded_path, 'spectral_result': spectral_path,
+        'spatial_ack': ack_path, 'spatial_ack_status': acknowledgement['status'],
         'loaded_best_margin_db': max(item['margin_over_parameter_trial_control_p99_db']
                                      for item in loaded['scores'].values()),
         'spectral_selected_margin_db': spectral['selected_margin_db'],
@@ -130,7 +153,7 @@ def main():
     misses = unique_rows(json.loads(args.miss_manifest.read_text()))
     state = (json.loads(args.state.read_text()) if args.state.exists() else
              {'schema': 'vectorwarp-wwat563-waveform-runner-v1', 'clips': {}})
-    ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)}')
+    ssh(CASS, f'mkdir -p {quote(REMOTE_ROOT)} {quote(REMOTE_CACHE)} {quote(REMOTE_ACKS)}')
     for source in ('analyze-loaded-reciprocal-mchq.py', 'analyze-spectral-interference-rejection.py'):
         run(['scp', '-q', str(Path(__file__).with_name(source)), f'{CASS}:{REMOTE_ROOT}/{source}'])
     for row in positives + misses:
