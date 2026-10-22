@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const {separationKm, fuseAircraftData} = require('./adsb-fusion');
+const {separationKm, projectAircraft, fuseAircraftData} = require('./adsb-fusion');
 
 const nowMs = 2_000_000_000_000;
 const snapshot = (source, now, aircraft) => ({source, receivedAtMs: nowMs, data: {now, aircraft}});
@@ -10,15 +10,23 @@ const publicA = {id: 'adsb-fi', kind: 'http', reliability: .75};
 const publicB = {id: 'licensed-backup', kind: 'http', authenticated: true};
 
 assert.ok(separationKm({lat: 40, lon: -80}, {lat: 40.01, lon: -80}) > 1);
+const projected = projectAircraft({lat: 40, lon: -80, gs: 360, track: 90,
+  alt_geom: 10000, geom_rate: 600}, 2);
+assert.equal(projected.projected, true);
+assert.ok(projected.aircraft.lon > -80 && Math.abs(projected.aircraft.lat - 40) < 1e-9);
+assert.equal(projected.aircraft.alt_geom, 10020);
 
 const single = fuseAircraftData([snapshot(local, nowMs / 1000 - .2, [
-  {hex: 'ABC123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: 1.5, nic: 9}
+  {hex: 'ABC123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90,
+    seen_pos: 1.5, nic: 9}
 ])], {nowMs});
 assert.equal(single.now, nowMs / 1000);
-assert.ok(Math.abs(single.aircraft[0].seen_pos - 1.7) < 1e-6,
-  'snapshot transport age is included in normalized position age');
-assert.ok(Math.abs(single.aircraft[0].vectorwarp.position_timestamp_s -
+assert.equal(single.aircraft[0].seen_pos, 0,
+  'a moving observation is propagated to fused CPI time');
+assert.ok(Math.abs(single.aircraft[0].vectorwarp.observation_position_timestamp_s -
   (nowMs / 1000 - 1.7)) < 1e-6);
+assert.ok(Math.abs(single.aircraft[0].vectorwarp.observation_position_age_s - 1.7) < 1e-6);
+assert.equal(single.aircraft[0].vectorwarp.position_timestamp_s, nowMs / 1000);
 assert.deepEqual(single.aircraft[0].vectorwarp.agreeing_sources, ['local-readsb']);
 
 const stale = fuseAircraftData([snapshot(local, nowMs / 1000, [

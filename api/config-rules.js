@@ -114,6 +114,8 @@ const rules = {
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},
+  'truth.adsb.association_lag_cpis': {...integer(0, 8), optional: true,
+    readOnly: 'Advanced ADS-B event-time alignment setting; edit YAML or the configuration API.'},
   'truth.adsb.source_timeout': {...numeric(.1, 10), optional: true,
     readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
   'truth.adsb.sources': {type: 'array', optional: true,

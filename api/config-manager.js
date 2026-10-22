@@ -982,6 +982,8 @@ function validateConfig(config, baseline = null) {
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
+  if (adsb.association_lag_cpis !== undefined) number(adsb.association_lag_cpis,
+    'truth.adsb.association_lag_cpis', {integer: true, min: 0, max: 8});
   if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,

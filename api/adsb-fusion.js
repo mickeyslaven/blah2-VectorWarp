@@ -16,6 +16,27 @@ function separationKm(left, right) {
   return earthKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
 }
 
+function projectAircraft(aircraft, seconds) {
+  if (!finite(seconds) || Math.abs(seconds) < 1e-6) return {aircraft, projected: false};
+  const speed = finite(aircraft?.gs) ? aircraft.gs * .514444 : null;
+  const track = finite(aircraft?.track) ? radians(aircraft.track) : null;
+  if (!finite(speed) || (!finite(track) && speed > .5))
+    return {aircraft, projected: false};
+  const heading = finite(track) ? track : 0;
+  const north = speed * Math.cos(heading) * seconds;
+  const east = speed * Math.sin(heading) * seconds;
+  const latitude = aircraft.lat + north / 111320;
+  const longitudeScale = 111320 * Math.max(.01, Math.cos(radians(aircraft.lat)));
+  const projected = {...aircraft, lat: latitude, lon: aircraft.lon + east / longitudeScale};
+  const verticalRate = finite(aircraft.geom_rate) ? aircraft.geom_rate : aircraft.baro_rate;
+  if (finite(verticalRate)) {
+    if (finite(projected.alt_geom)) projected.alt_geom += verticalRate * seconds / 60;
+    if (finite(projected.alt_baro) && typeof projected.alt_baro === 'number')
+      projected.alt_baro += verticalRate * seconds / 60;
+  }
+  return {aircraft: projected, projected: true};
+}
+
 function sourceId(source, index) {
   for (const value of [source?.id, source?.value, source?.endpoint, source?.path])
     if (typeof value === 'string' && value) return value;
@@ -106,7 +127,11 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const accepted = (groups.find(group => group.includes(winner)) || [winner])
       .sort((left, right) => right.eventTime - left.eventTime || right.quality - left.quality);
     const rejected = observations.filter(item => !accepted.includes(item));
-    aircraft.push({...winner.aircraft, hex, seen_pos: Math.max(0, nowSeconds - winner.eventTime),
+    const observationOffset = nowSeconds - winner.eventTime;
+    const observationAge = Math.max(0, observationOffset);
+    const projection = projectAircraft(winner.aircraft, observationOffset);
+    const effectiveEventTime = projection.projected ? nowSeconds : winner.eventTime;
+    aircraft.push({...projection.aircraft, hex, seen_pos: Math.max(0, nowSeconds - effectiveEventTime),
       vectorwarp: {
         source_id: winner.sourceId,
         source_kind: winner.source.kind || winner.source.mode || 'http',
@@ -115,8 +140,13 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
         source_path: winner.source.path || null,
         received_at_ms: winner.receivedAtMs,
         snapshot_timestamp_s: winner.eventTime + winner.aircraft.seen_pos,
-        position_timestamp_s: winner.eventTime,
-        position_age_s: Math.max(0, nowSeconds - winner.eventTime),
+        observation_position_timestamp_s: winner.eventTime,
+        observation_position_age_s: observationAge,
+        observation_time_offset_s: observationOffset,
+        position_timestamp_s: effectiveEventTime,
+        position_age_s: Math.max(0, nowSeconds - effectiveEventTime),
+        projected_seconds: projection.projected ? observationOffset : 0,
+        projection_model: projection.projected ? 'constant_velocity_ground_track' : null,
         quality_score: winner.quality,
         agreeing_sources: [...new Set(accepted.map(item => item.sourceId))],
         rejected_sources: [...new Set(rejected.map(item => item.sourceId))],
@@ -129,4 +159,4 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     observations: rows.length, aircraft: aircraft.length}};
 }
 
-module.exports = {separationKm, fuseAircraftData};
+module.exports = {separationKm, projectAircraft, fuseAircraftData};

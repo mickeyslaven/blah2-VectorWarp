@@ -188,6 +188,7 @@ truth:
       - 'https://approved-backup.example/tar1090'
       - 'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60'
     source_timeout: 1.5
+    association_lag_cpis: 4 # two seconds when CPI is 0.5 s
 ```
 
 Do not combine `auto` with other list entries because discovery could rediscover
@@ -203,7 +204,13 @@ responses use `ac` and millisecond snapshot timestamps; VectorWarp normalizes
 them to readsb event time without changing each aircraft's `seen_pos`. Ordered
 sources are deduplicated by ICAO address and the observation with the newest
 actual position event time (`snapshot time - seen_pos`) wins. Source provenance,
-agreement, and disagreement remain attached to that single aircraft record.
+agreement, and disagreement remain attached to that single aircraft record. A
+fresh moving observation is propagated to the fusion/CPI timestamp using its
+ground speed, track, and vertical rate; provenance retains both the original
+observation age and the bounded projection interval.
+`association_lag_cpis` delays ADS-B association—not RF capture or detector
+processing—then projects the newly arrived observation backward or forward to
+the held CPI timestamp.
 Configure only services whose usage and attribution terms fit the deployment.
 
 Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).

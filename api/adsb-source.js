@@ -124,6 +124,10 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   });
   const pollMs = Number.isFinite(config.truth?.adsb?.poll_interval) ?
     Math.max(100, Math.min(60000, config.truth.adsb.poll_interval * 1000)) : 1000;
+  const cpiMs = Number.isFinite(config.process?.data?.cpi) ?
+    Math.max(1, config.process.data.cpi * 1000) : 500;
+  const associationLagMs = Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
+    Math.max(0, Math.min(8, config.truth.adsb.association_lag_cpis)) * cpiMs : 0;
   const discoveryOptions = {fetchJson, now, maxAgeSeconds: geometry.maxAge,
     timeoutMs: sourceTimeoutMs};
   async function resolveSource(slot) {
@@ -190,16 +194,16 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       throw error;
     }
   }
-  async function rawAircraft() {
+  async function rawAircraft(targetAtMs = now()) {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
-    const entry = {at: now(), pending: true};
+    const entry = {at: now(), pending: true, targetAtMs};
     entry.promise = Promise.allSettled(slots.map(readSource)).then(results => {
       const healthy = results.filter(result => result.status === 'fulfilled')
         .map(result => result.value);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
         `${slots[index].configured}: ${result.reason?.message || 'unavailable'}`).join('; ')}`);
-      const fusedAt = now();
+      const fusedAt = targetAtMs;
       const data = fuseAircraftData(healthy, {nowMs: fusedAt,
         maxPositionAgeSeconds: geometry.maxAge});
       fusionState = {...data.vectorwarp_fusion, fused_at: fusedAt,
@@ -215,8 +219,11 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
     const previous = cache.get(kind);
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
-    const entry = {at: now(), pending: true};
-    entry.promise = rawAircraft().then(data => {
+    const requestedAt = now();
+    const entry = {at: requestedAt, pending: true};
+    const ready = associationLagMs ? new Promise(resolve =>
+      setTimeout(resolve, associationLagMs)) : Promise.resolve();
+    entry.promise = ready.then(() => rawAircraft(requestedAt)).then(data => {
       if (kind === 'aircraft') return data;
       const result = geometry.update(data); warmup = result.warming; return result.data;
     })
@@ -239,7 +246,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const sources = slots.map(slot => ({...slot.state}));
     const degraded = online && sources.some(source => source.healthy === false);
     return {enabled: true, online, degraded, source: sources[0], sources,
-      fusion: fusionState, aircraft: feeds[0],
+      fusion: fusionState, association_lag_cpis: associationLagMs / cpiMs,
+      association_lag_ms: associationLagMs, aircraft: feeds[0],
       delayDoppler: {...feeds[1], warming: warmup.length,
         message: feeds[1].available && warmup.length ? 'Feed online; waiting for motion updates.' : feeds[1].message}};
   }
