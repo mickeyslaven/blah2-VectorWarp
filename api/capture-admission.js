@@ -80,4 +80,9 @@ async function writeAdmissionSidecar(filename, value, io = fs) {
   await io.promises.writeFile(temporary, `${JSON.stringify(value)}\n`, {mode: 0o640});
   await io.promises.rename(temporary, output); return output;
 }
-module.exports = {rawOffset, validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar};
+function captureArtifactState(integrity, admissions) {
+  return integrity?.valid && Object.values(admissions || {}).some(item => item?.valid) ?
+    'admitted' : 'quarantined';
+}
+module.exports = {rawOffset, validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
+  captureArtifactState};

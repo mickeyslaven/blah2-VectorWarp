@@ -29,7 +29,8 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
-const {verifyCaptureIntegrity, writeAdmissionSidecar} = require('./capture-admission.js');
+const {verifyCaptureIntegrity, writeAdmissionSidecar,
+  captureArtifactState} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
@@ -84,15 +85,15 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   } catch (error) { integrity = {valid: false, reasons: ['recording-integrity-error'], error: error.message}; }
   const {metadata: _metadata, ...integritySummary} = integrity;
   integrity = integritySummary;
-  const allTruthValid = Object.values(admissions).length > 0 &&
-    Object.values(admissions).every(item => item.valid);
   let admissionSidecar = null;
   const artifact = {schema: 'vectorwarp-capture-admission-v1', created_at: Date.now(), revision,
-    state: integrity.valid && allTruthValid ? 'admitted' : 'quarantined', integrity,
+    state: captureArtifactState(integrity, admissions), integrity,
     config_epoch: evidenceStatistics.configEpoch, receiver_epoch: evidenceStatistics.receiverEpoch,
     events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
       capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
-        .map(window => window.captureId)})), captures: admissions};
+        .map(window => window.captureId)})), captures: Object.fromEntries(Object.entries(admissions)
+      .map(([id, truth]) => [id, {...truth,
+        admission_state: truth.valid && integrity.valid ? 'admitted' : 'quarantined'}]))};
   if (file) try { admissionSidecar = await writeAdmissionSidecar(file, artifact); }
   catch (error) {
     integrity = {...integrity, valid: false,

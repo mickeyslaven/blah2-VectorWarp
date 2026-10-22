@@ -4,7 +4,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar} = require('./capture-admission');
+const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
+  captureArtifactState} = require('./capture-admission');
 
 (async () => {
   const provenance = offset => ({projection_model: 'constant_velocity_ground_track',
@@ -19,6 +20,10 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar} = req
   assert.deepEqual(validateTruthWindow(stale, 0, 10000).reasons, ['truth-raw-offset']);
   const held = structuredClone(samples); held[1].provenance.projection_model = 'nearest';
   assert.deepEqual(validateTruthWindow(held, 0, 10000).reasons, ['truth-hold-or-fallback']);
+  assert.equal(captureArtifactState({valid: true}, {bad: {valid: false}, good: {valid: true}}),
+    'admitted', 'one valid target must retain a shared clip without admitting invalid targets');
+  assert.equal(captureArtifactState({valid: true}, {bad: {valid: false}}), 'quarantined');
+  assert.equal(captureArtifactState({valid: false}, {good: {valid: true}}), 'quarantined');
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-admission-'));
   const file = path.join(directory, 'clip.mchq'), body = Buffer.from('bounded-iq');
