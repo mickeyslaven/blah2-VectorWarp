@@ -94,6 +94,13 @@ def trajectory(event, window, cpi_ms, policy):
                       if sample["timestamp_ms"] > timestamp), None)
         if left is None or right is None:
             return None, [f"CPI {frame} lacks bracketing event-time truth"]
+        maximum_span_s = policy.get("maximum_truth_bracket_span_s")
+        span_s = (right["timestamp_ms"] - left["timestamp_ms"]) / 1000
+        if isinstance(maximum_span_s, (int, float)) and span_s > maximum_span_s:
+            return None, [
+                f"CPI {frame} truth bracket spans {span_s:.3f}s, exceeding "
+                f"{maximum_span_s:.3f}s policy"
+            ]
         point = interpolate(left, right, timestamp)
         point["frame"] = frame
         output.append(point)
@@ -125,7 +132,11 @@ def build(statistics, policy_document, cutoff_ms, revisions, rf):
                                  isinstance(first_detection, (int, float)) and
                                  window["window_start"] <= first_detection <= window["window_end"])
             role = None
-            if event.get("outcome") == "tracked" and overlap_track:
+            # A target-specific detector association is a radar catch even if
+            # the tracker did not acquire enough consecutive cells inside this
+            # particular recording window.  Requiring overlap_track alone
+            # silently discarded valid detector-positive controls.
+            if event.get("outcome") == "tracked" and (overlap_track or overlap_detection):
                 role = "positive"
             elif (event.get("outcome") == "no_radar_return" and
                   not overlap_track and not overlap_detection):

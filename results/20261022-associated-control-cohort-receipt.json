@@ -1,0 +1,19 @@
+{
+  "schema": "vectorwarp-associated-control-cohort-receipt-v1",
+  "cohort": "results/20261022-associated-control-cohort.json",
+  "cohort_sha256": "933ba7c557e6f69359d9556a064e60dbf142fa6d8c389a3485f576eb4e1ce83b",
+  "source": "root@100.126.186.65:/var/lib/vectorwarp-api/calibration/evidence-statistics.json",
+  "source_sha256": "f74b051ada2b7d74c936b724cc4bcc5563192f6fa4ed2b6ff74e619bc7dfa383",
+  "summary": {
+    "positive_labels": 3,
+    "positive_unique_clips": 3,
+    "positive_passes": 2,
+    "miss_labels": 45,
+    "miss_unique_clips": 41,
+    "miss_passes": 41,
+    "positive_miss_clip_overlap": 2,
+    "rejected": 845
+  },
+  "clean_nonoverlap_miss_labels": 41,
+  "clean_nonoverlap_miss_clips": 39
+}

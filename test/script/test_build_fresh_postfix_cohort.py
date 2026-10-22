@@ -11,6 +11,7 @@ SPEC.loader.exec_module(FRESH)
 POLICY = {"minimum_capture_timestamp_ms": 1000, "required_truth": {
     "association_lag_cpis": 4, "association_lag_ms": 2000,
     "maximum_absolute_raw_observation_offset_s": 1.0,
+    "maximum_truth_bracket_span_s": 3.0,
     "maximum_dual_source_horizontal_disagreement_km": .5,
 }}
 
@@ -66,3 +67,24 @@ def test_clean_no_return_is_miss_but_endpoint_hold_is_forbidden():
     rejected = FRESH.build({"eligibility_events": [miss]}, POLICY, 1000, [7], {})
     assert rejected["summary"]["rejected"] == 1
     assert "lacks bracketing" in rejected["rejected"][0]["reasons"][0]
+
+
+def test_rejects_widely_separated_truth_brackets():
+    miss = event(outcome="no_radar_return", tracked=0, first_track=None)
+    miss["truth_samples"] = [sample(0), sample(5000)]
+    rejected = FRESH.build({"eligibility_events": [miss]}, POLICY, 1000, [7], {})
+    assert rejected["summary"]["rejected"] == 1
+    assert "truth bracket spans" in rejected["rejected"][0]["reasons"][0]
+
+
+def test_exact_in_window_detection_is_positive_without_track_overlap():
+    detected = event(tracked=0, first_track=None)
+    window = detected["capture_windows"][0]
+    window.update({"detected_frames": 1, "first_detection_at": 1500})
+    result = FRESH.build({"eligibility_events": [detected]}, POLICY, 1000, [7], {})
+    assert result["summary"] == {
+        "positives": 1, "geometry_eligible_misses": 0, "rejected": 0,
+    }
+    assert result["admitted"][0]["radar_window_overlap"] == {
+        "track": False, "detection": True,
+    }

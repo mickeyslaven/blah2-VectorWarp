@@ -1,0 +1,41 @@
+{
+  "schema": "vectorwarp-production-positive-replay-v1",
+  "job_id": "26261b6cd7e943fa137c",
+  "pass_id": "873baa5103762da02e26af37f9ee5e8f922a00c18e99afd7905157dd51ea7066",
+  "hex": "a9cecf",
+  "recording": "/root/ordered-recovery-benchmark/associated/kraken-clip-r90-1792687890445611405-23.mchq",
+  "association_count": 1,
+  "reproduced_associations": 0,
+  "all_associations_reproduced": false,
+  "detection_frames": 20,
+  "matches": [
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687882948,
+        "cell_index": 32,
+        "measured_delay_raw": 5.11,
+        "measured_delay_km": 5.11,
+        "measured_doppler_hz": 19.77,
+        "measured_snr_db": 8.32,
+        "tracker": null,
+        "predicted_delay_km": 5.0231740443562,
+        "predicted_doppler_hz": 19.393980592677423,
+        "delay_residual_km": 0.08682595564380069,
+        "doppler_residual_hz": 0.3760194073225769,
+        "gate_delay_km": 0.2654313297507593,
+        "gate_doppler_hz": 25,
+        "normalized_gate_score": 0.10722893533000673
+      },
+      "replay": {
+        "frame_index": 5,
+        "delay_km": 3.6,
+        "doppler_hz": 6.23,
+        "snr_db": 5.54,
+        "delay_residual_km": 1.5100000000000002,
+        "doppler_residual_hz": 13.54,
+        "matched": false
+      }
+    }
+  ]
+}
