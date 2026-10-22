@@ -165,6 +165,31 @@ baseline, but r277 still finished 4.534 dB below the pooled threshold. It fails
 the positive gate, so miss recordings were not opened and no spectral weighting
 was deployed. See `results/r277-spectral-interference-rejection-v1.json`.
 
+## Live 563 MHz detection trial
+
+A bounded detection/tracking-only WWAT-CD RF29 trial began on 2026-10-21 after
+the 527 MHz configuration was copied to
+`/var/lib/vectorwarp-api/calibration/wwat-563-trial-20261021/wpxi-restore.yml`
+(revision/SHA-256
+`00738fa006e393fdfe2806c9029de611df40b1b2f429a37e9befe67a10adb87b`).
+The managed receiver path changed the centre frequency to 563 MHz, installed the
+survey coordinates 40.446167, -79.963944, 349 m, disabled bearing/manifold
+collection for the unqualified frequency, and completed coherent calibration.
+
+Raw headroom at a conservative 8.7 dB/channel confirmed the sweep's strong
+channel imbalance without any clipping. Two bounded per-channel steps selected
+`[19.7, 25.4, 20.7, 25.4, 22.9]` dB. After 3.08 million sampled components per
+channel, every channel still had zero rail and near-rail components; p99.9 was
+0.459--0.584 and observed peak was 0.639--0.851. The synthesized reference was
+stable at 0.977 coherent fraction and 6.89 dB coherent gain. No further upward
+step is allowed because channels 0 and 4 exceed the 0.80 upward-probe peak gate.
+
+The trial remains open until enough completed ADS-B-eligible passes accumulate.
+Its first eight completed eligible passes had no confirmed track, which is too
+small and includes restart/calibration transients; it is not an acceptance or
+rejection result. Restore WPXI through the managed configuration path if the
+receiver becomes unsafe or the opportunity-normalized trial fails.
+
 ## Post-Doppler multichannel STAP replay
 
 The replay-only `analyze-post-doppler-stap.py` experiment jointly adapts the five
