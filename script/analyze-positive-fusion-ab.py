@@ -26,9 +26,7 @@ def gates(truth, sample_rate, cpi, track=False):
     return delay, doppler
 
 
-def score(path, positive, sample_rate, cpi):
-    document = json.loads(path.read_text())
-    arm_name, arm = next(iter(document["arms"].items()))
+def score(path, positive, arm_name, arm, sample_rate, cpi):
     trajectory = positive["trajectory"]
     target_detection_frames = []
     target_snrs = []
@@ -91,7 +89,9 @@ def main():
     for path in sorted(args.input.glob("*.json")):
         match = next((row for stem, row in positives.items() if stem in path.name), None)
         if match is not None:
-            rows.append(score(path, match, args.sample_rate, args.cpi))
+            document = json.loads(path.read_text())
+            for arm_name, arm in document.get("arms", {}).items():
+                rows.append(score(path, match, arm_name, arm, args.sample_rate, args.cpi))
     aggregates = {}
     for arm in sorted({row["arm"] for row in rows}):
         selected = [row for row in rows if row["arm"] == arm]

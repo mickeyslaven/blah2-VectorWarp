@@ -268,6 +268,9 @@ def main():
     parser.add_argument("--reference-covariance-smoothing", type=float)
     parser.add_argument("--null-sweep", type=str,
                         help="Comma-separated coherent direct-path null depths in dB")
+    parser.add_argument("--null-sweep-mode", choices=("coherent_beam_bank",
+                        "noise_whitened_beam_bank"), default="coherent_beam_bank",
+                        help="Fusion arm used by --null-sweep")
     parser.add_argument("--capture-maps", action="store_true",
                         help="Retain full map frames for offline truth-cell diagnostics")
     parser.add_argument("--enable-tbd", action="store_true",
@@ -327,7 +330,8 @@ def main():
                 for channel in range(5)]
     elif args.null_sweep:
         depths = [float(value) for value in args.null_sweep.split(",")]
-        arms = [(f"coherent_null_{depth:g}db", "coherent_beam_bank", None, depth)
+        prefix = "coherent" if args.null_sweep_mode == "coherent_beam_bank" else "whitened"
+        arms = [(f"{prefix}_null_{depth:g}db", args.null_sweep_mode, None, depth)
                 for depth in depths]
     else:
         arms = [("coherent_beam_bank", "coherent_beam_bank", None, None),
