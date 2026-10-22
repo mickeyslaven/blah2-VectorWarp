@@ -50,19 +50,23 @@ burden measured.
 
 Machine-readable detail is in `positive-fusion-ab-analysis.json`.
 
-## Long stationary-clutter A/B status
+## Long stationary-clutter A/B result
 
 The 7,099,688,272-byte replay was staged on Strix with source/target SHA-256
 `c9513f8f48bf461ff0e00e3b66e8043c3d16f216bb708911e7d5112c620d1c59`.
-The replay launcher now reproduces the production default-on configuration and
-sets the explicit Strix GPU identity. Both the cached calibrated binary and the
-exact deployed live binary deterministically reject replay frame 2 with GPU
-tracker invariant code 316. Frame 1 completes and commits; frame 2 fails while
-validating the prior track-history record. The live receiver recorded zero
-`GPU_TRACKER_REJECT` events in the inspected hour, so this is currently a
-Strix replay/backend blocker, not evidence of a live-node failure.
+The prior cached and copied deployed binaries rejected frame 2 with tracker
+invariant code 316. A clean native build on Strix completed all 147 frames in
+both matched GPU-resident arms without weakening validation. This localizes the
+old rejection to the stale/copied replay build path rather than the recording.
 
-No stationary-clutter aircraft conclusion is valid until the replay completes.
-The next acceptance check is to identify which code-316 history/spatial
-invariant fails on Strix, repair it without weakening validation, and complete
-matched ON/OFF runs using the same recording and deployed binary revision.
+The stationary-clutter filter suppressed 1 of 1,048 otherwise admitted
+unmatched initiations (0.095%). ON and OFF produced the same 3,028 detector
+cells, 3,553 published track-frame instances, 450 unique published track IDs,
+and peak population of 183. Only the final internal population differed by one;
+the number of published instances did not. This recording has no attached
+exact ADS-B truth, so it is not an aircraft-recall estimate, but it rules out
+this filter as a broad track-loss mechanism in the sampled workload.
+
+Machine-readable results and the two full replay artifacts are in
+`stationary-clutter-long-ab-summary.json`, `stationary-clutter-on-gpu.json`, and
+`stationary-clutter-off-gpu.json`.

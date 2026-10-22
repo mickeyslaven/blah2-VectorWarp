@@ -1,0 +1,49 @@
+{
+  "schema": "vectorwarp-stationary-clutter-long-ab-v1",
+  "recording": {
+    "path": "/root/vectorwarp-ablation-results/20261020-161745-563mhz-coherent-ab-prefix.blah2iq",
+    "bytes": 7099688272,
+    "sha256": "c9513f8f48bf461ff0e00e3b66e8043c3d16f216bb708911e7d5112c620d1c59"
+  },
+  "execution": {
+    "host": "strix",
+    "gpu": "4098:5510:0",
+    "frames_per_arm": 147,
+    "acceleration": "gpu-resident",
+    "track_before_detect": true,
+    "fusion": "coherent_beam_bank",
+    "fresh_native_build": true,
+    "prior_code_316_reproduced": false,
+    "qualification": "matched feature ablation; no ADS-B aircraft truth attached"
+  },
+  "on": {
+    "artifact": "stationary-clutter-on-gpu.json",
+    "sha256": "2083e70ff47d7f8654d80a178884527cadbdceab469ea4f185a691b07799b400",
+    "detection_cells": 3028,
+    "unmatched_detections": 1047,
+    "stationary_clutter_suppressed": 1,
+    "admitted_detections": 1047,
+    "track_frame_instances": 3553,
+    "unique_published_track_ids": 450,
+    "peak_tracker_population": 183
+  },
+  "off": {
+    "artifact": "stationary-clutter-off-gpu.json",
+    "sha256": "f1be0ea2c98c3b0071df072bcf83d18c0246a468ea40f62993517a3e3a1b2f7a",
+    "detection_cells": 3028,
+    "unmatched_detections": 1048,
+    "stationary_clutter_suppressed": 0,
+    "admitted_detections": 1048,
+    "track_frame_instances": 3553,
+    "unique_published_track_ids": 450,
+    "peak_tracker_population": 183
+  },
+  "comparison": {
+    "normalized_detection_frames_identical": true,
+    "published_track_frames_differing": 1,
+    "published_track_instances_delta_on_minus_off": 0,
+    "unique_published_track_ids_delta_on_minus_off": 0,
+    "suppression_fraction_of_off_unmatched": 0.0009541984732824427,
+    "conclusion": "The default stationary-clutter initiation filter suppressed one of 1048 unmatched initiations and did not reduce published track instances or unique published track IDs in this recording. It is not the broad aircraft-loss mechanism suspected."
+  }
+}
