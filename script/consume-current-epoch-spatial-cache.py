@@ -15,6 +15,7 @@ RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
 READY_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ready"
 ACK_ROOT = "/home/mickeyslaven/wwat563-results/spatial-ack"
+FROZEN_COMPLETE = "/home/mickeyslaven/wwat563-results/rolling/frozen-complete"
 
 
 def write_ack(basename, value):
@@ -95,6 +96,10 @@ def main():
             print(f"ack {basename}: {len(jobs)} job(s)", flush=True)
     print(json.dumps({"results": len(state["results"]),
                       "recordings": len(state["recordings"])}), flush=True)
+    RUNNER.ssh(RUNNER.CASS_HOST,
+        f"mkdir -p {Path(FROZEN_COMPLETE).parent} && "
+        f"printf complete > {FROZEN_COMPLETE}.part && "
+        f"mv {FROZEN_COMPLETE}.part {FROZEN_COMPLETE}")
 
 
 if __name__ == "__main__":

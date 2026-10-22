@@ -36,11 +36,12 @@ def compact(result):
 def run_method(method, cutouts, config, trajectory, fraction):
     if method == "spatial_glrt":
         return SPATIAL.analyze_trajectory(cutouts, config, trajectory, guard=1,
-            training=3, loading=.01, beam_policy="fixed", control_fraction=fraction)
+            training=3, loading=.01, min_doppler=0, beam_policy="fixed",
+            control_fraction=fraction)
     if method == "post_doppler_stap":
         return STAP.evaluate(cutouts, config, trajectory,
             {"doppler_radius": 1, "diagonal_loading": .1, "robust_energy_clip": 3.0},
-            control_fraction=fraction)
+            min_doppler=0, control_fraction=fraction)
     if method == "sparse_beam":
         return SPARSE.analyze(cutouts, config, trajectory, .5, guard=2,
             training=5, loading=.3, control_fraction=fraction)
