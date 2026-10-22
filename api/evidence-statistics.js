@@ -501,11 +501,27 @@ class EvidenceStatistics {
       pass.clutterCancelledFrames += 1;
     else if (physical) pass.outsideClutterFrames += 1;
     const age = finite(prediction.timestamp) ? Math.max(0, timestamp / 1000 - prediction.timestamp) : Infinity;
+    // Once a capture has been triggered, retain fresh event-time truth through
+    // its full raw-IQ window even if the target crosses a delay/Doppler boundary.
+    // Eligibility still controls scoring; this only prevents the recorder's
+    // post-roll from becoming unverifiable at the edge of the processing map.
+    let event = pass.eligibilityEventId ?
+      this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId) : null;
+    if (event && age <= this.limits.maxTruthAgeS) {
+      if (!Array.isArray(event.truth_samples)) event.truth_samples = [];
+      if (event.truth_samples.at(-1)?.timestamp_ms !== timestamp)
+        event.truth_samples.push(truthSnapshot(prediction, timestamp));
+      if (event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
+        event.truth_samples.splice(0, event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
+      for (const window of event.capture_windows || []) window.truth_samples =
+        event.truth_samples.filter(sample => sample.timestamp_ms >= window.window_start - 3000 &&
+          sample.timestamp_ms <= window.window_end + 3000);
+    }
     if (age > this.limits.maxTruthAgeS) pass.staleTruthFrames += 1;
     if (!physical || age > this.limits.maxTruthAgeS) return;
     pass.eligibleFrames += 1;
     if (!pass.eligibilityEventId) this.emitEligibility(pass, prediction, timestamp);
-    const event = this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId);
+    event = this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId);
     if (event) {
       if (!Array.isArray(event.truth_samples)) event.truth_samples = [];
       if (event.truth_samples.at(-1)?.timestamp_ms !== timestamp)

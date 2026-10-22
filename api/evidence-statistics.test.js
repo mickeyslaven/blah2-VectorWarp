@@ -112,6 +112,26 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(result.windows.hour.out_of_config_passes, 1);
   assert.equal(result.windows.hour.out_of_span.above_delay_ceiling, 3);
   assert.equal(result.windows.hour.out_of_span.outside_doppler_span, 3);
+
+  // A target which was eligible when capture began must keep exact truth
+  // through post-roll after crossing the configured processing boundary.
+  clock += 1000;
+  source.get = async () => ({ed9e12: {...prediction, delay: 10, doppler: 100,
+    timestamp: clock / 1000, flight: 'EDGE'}});
+  stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
+  while (stats.running) await new Promise(resolve => setImmediate(resolve));
+  const edgeEvent = stats.state.eligibilityEvents.at(-1);
+  edgeEvent.capture_windows = [{window_start: clock - 2000, window_end: clock + 2000}];
+  clock += 500;
+  source.get = async () => ({ed9e12: {...prediction, delay: 70, doppler: 700,
+    timestamp: clock / 1000, flight: 'EDGE'}});
+  stats.acceptDetection({timestamp: clock, delay: [], doppler: []});
+  while (stats.running) await new Promise(resolve => setImmediate(resolve));
+  const edgeTruthTimes = edgeEvent.truth_samples.slice(-2).map(item => item.timestamp_ms);
+  assert.deepEqual(edgeTruthTimes, [clock - 500, clock],
+    `Fresh truth must continue through capture post-roll outside the map: ${edgeTruthTimes}`);
+  assert.equal(edgeEvent.eligible_frames, 1,
+    'Post-roll truth retention must not enlarge the radar eligibility denominator');
   stats.close();
   assert(fs.existsSync(filename));
   const legacy = JSON.parse(fs.readFileSync(filename, 'utf8'));
