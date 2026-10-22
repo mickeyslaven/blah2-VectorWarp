@@ -99,8 +99,10 @@ def main():
             raw_path = item.get("recording", item.get("raw"))
             if not raw_path:
                 raise ValueError(f"ready marker lacks recording/raw: {basename}")
-            exists = RUNNER.ssh(RUNNER.CASS_HOST, f"test -f {raw_path}", check=False)
-            if exists.returncode:
+            exists = RUNNER.ssh(RUNNER.CASS_HOST,
+                f"if test -f {raw_path}; then printf present; fi",
+                capture_output=True).stdout
+            if exists != "present":
                 if basename not in warned_missing:
                     print(f"skip stale ready marker without raw: {basename}", flush=True)
                     warned_missing.add(basename)
