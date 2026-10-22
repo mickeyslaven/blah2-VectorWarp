@@ -278,6 +278,8 @@ else
 fi
 run mkdir -p "$ARTIFACT_TMP/libexec"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libexec/vectorwarp-restart"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-health-watchdog.js" "$ARTIFACT_TMP/libexec/vectorwarp-health-watchdog.js"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-config-guard.js" "$ARTIFACT_TMP/libexec/vectorwarp-config-guard.js"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/libexec/vectorwarp-activate-web"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp" "$ARTIFACT_TMP/libexec/vectorwarp"
 run install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$ARTIFACT_TMP/libexec/vectorwarp-quiesce"

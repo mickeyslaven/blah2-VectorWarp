@@ -40,7 +40,8 @@ function fetchHttp(url, options = {}) {
     if (unavailable) { res.writeHead(503); return res.end('{}'); }
     res.end(JSON.stringify(req.url.startsWith('/api/dd') ?
       {abc123: {timestamp: Date.now() / 1000, delay: 1, doppler: 2}} :
-      {now: Date.now() / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2, seen_pos: 0}]}));
+      {now: Date.now() / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        gs: 0, track: 0, seen_pos: 0}]}));
   });
   await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
   const config = setupDefaults();
@@ -140,6 +141,9 @@ function fetchHttp(url, options = {}) {
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);
     assert.doesNotMatch(processorUnit, /ExecStartPre=.*receiver-start-check\.js/);
     assert.match(processorUnit, /RestartPreventExitStatus=78/);
+    assert.match(processorUnit, /PartOf=vectorwarp-api\.service/,
+      'API stop/restart must quiesce its processor socket consumer');
+    assert.match(processorUnit, /After=.*vectorwarp-api\.service/);
     assert.doesNotMatch(apiUnit + processorUnit, /User=root/);
     assert.match(apiUnit, /BLAH2_CONFIG_RESTART_COMMAND=.*vectorwarp-receiver-helper.*request-restart/);
     assert.match(apiUnit, /ReadWritePaths=.*\/var\/lib\/vectorwarp\/recordings/);

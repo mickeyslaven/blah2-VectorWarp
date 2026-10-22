@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch VectorWarp configuration revision
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+
+[Path]
+PathChanged=@SYSCONFDIR@/config.yml
+Unit=vectorwarp-config-guard.service
+
+[Install]
+WantedBy=multi-user.target

@@ -19,7 +19,7 @@ assert.equal(projected.aircraft.alt_geom, 10020);
 const single = fuseAircraftData([snapshot(local, nowMs / 1000 - .2, [
   {hex: 'ABC123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90,
     seen_pos: 1.5, nic: 9}
-])], {nowMs});
+])], {nowMs, maxObservationOffsetSeconds: 2});
 assert.equal(single.now, nowMs / 1000);
 assert.equal(single.aircraft[0].seen_pos, 0,
   'a moving observation is propagated to fused CPI time');
@@ -36,11 +36,11 @@ assert.deepEqual(stale.aircraft, [], 'stale individual positions are rejected de
 
 const consensus = fuseAircraftData([
   snapshot(local, nowMs / 1000, [
-    {hex: 'abc123', lat: 41, lon: -80, alt_geom: 10000, seen_pos: .1}]),
+    {hex: 'abc123', lat: 41, lon: -80, alt_geom: 10000, gs: 0, track: 0, seen_pos: .1}]),
   snapshot(publicA, nowMs / 1000, [
-    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10020, seen_pos: .5}]),
+    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10020, gs: 0, track: 0, seen_pos: .5}]),
   snapshot(publicB, nowMs / 1000, [
-    {hex: 'abc123', lat: 40.001, lon: -80, alt_geom: 10010, seen_pos: .7}])
+    {hex: 'abc123', lat: 40.001, lon: -80, alt_geom: 10010, gs: 0, track: 0, seen_pos: .7}])
 ], {nowMs, disagreementKm: 3});
 assert.equal(consensus.aircraft[0].lat, 41,
   'the freshest event wins even when older sources form a different consensus');
@@ -51,23 +51,28 @@ assert.equal(consensus.aircraft[0].vectorwarp.disagreement, true);
 
 const duplicate = fuseAircraftData([
   snapshot(publicA, nowMs / 1000 - 1, [
-    {hex: 'abc123', lat: 39, lon: -80, alt_geom: 9000, seen_pos: 1}]),
+    {hex: 'abc123', lat: 39, lon: -80, alt_geom: 9000, gs: 0, track: 0, seen_pos: 1}]),
   snapshot(publicA, nowMs / 1000, [
-    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: .2}])
+    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 0, track: 0, seen_pos: .2}])
 ], {nowMs});
 assert.equal(duplicate.aircraft[0].lat, 40, 'latest observation wins within one source');
 
 const newestPreferred = fuseAircraftData([
   snapshot({id: 'pi-zero', kind: 'http', authoritative: true, reliability: 1}, nowMs / 1000, [
-    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, seen_pos: .3}]),
+    {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 0, track: 0, seen_pos: .3}]),
   snapshot({id: 'online-a', kind: 'exchange', reliability: .65}, nowMs / 1000, [
-    {hex: 'abc123', lat: 41, lon: -80, alt_geom: 10000, seen_pos: .1}]),
+    {hex: 'abc123', lat: 41, lon: -80, alt_geom: 10000, gs: 0, track: 0, seen_pos: .1}]),
   snapshot({id: 'online-b', kind: 'exchange', reliability: .65}, nowMs / 1000, [
-    {hex: 'abc123', lat: 41.001, lon: -80, alt_geom: 10000, seen_pos: .2}])
+    {hex: 'abc123', lat: 41.001, lon: -80, alt_geom: 10000, gs: 0, track: 0, seen_pos: .2}])
 ], {nowMs, disagreementKm: 3});
 assert.equal(newestPreferred.aircraft.length, 1, 'all sources collapse to one aircraft per ICAO hex');
 assert.equal(newestPreferred.aircraft[0].lat, 41,
   'the observation with the newest actual position timestamp wins across sources');
 assert.equal(newestPreferred.aircraft[0].vectorwarp.source_id, 'online-a');
+
+const bounded = fuseAircraftData([snapshot(local, nowMs / 1000 + 1.1, [
+  {hex: 'abc123', lat: 40, lon: -80, alt_geom: 10000, gs: 100, track: 90, seen_pos: 0}
+])], {nowMs});
+assert.deepEqual(bounded.aircraft, [], 'raw observations outside the absolute one-second policy are rejected');
 
 console.log('PASS ADS-B event-time normalization, freshness, deduplication and consensus fusion');

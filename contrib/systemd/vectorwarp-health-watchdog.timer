@@ -1,0 +1,12 @@
+[Unit]
+Description=Check VectorWarp advancing-frame liveness
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15s
+RandomizedDelaySec=2s
+AccuracySec=1s
+Unit=vectorwarp-health-watchdog.service
+
+[Install]
+WantedBy=timers.target

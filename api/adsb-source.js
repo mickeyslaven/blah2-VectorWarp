@@ -221,9 +221,13 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const requestedAt = now();
     const entry = {at: requestedAt, pending: true};
+    // Acquire the event-time snapshot at request time, then hold association
+    // for the configured CPI lag. Fetching after the delay makes every raw
+    // observation appear to come from the future relative to the target CPI.
+    const raw = rawAircraft(requestedAt);
     const ready = associationLagMs ? new Promise(resolve =>
       setTimeout(resolve, associationLagMs)) : Promise.resolve();
-    entry.promise = ready.then(() => rawAircraft(requestedAt)).then(data => {
+    entry.promise = Promise.all([raw, ready]).then(([data]) => {
       if (kind === 'aircraft') return data;
       const result = geometry.update(data); warmup = result.warming; return result.data;
     })

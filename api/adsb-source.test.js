@@ -141,7 +141,7 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
       await bothStarted;
       if (url.hostname === 'primary.example') throw new Error('primary unavailable');
       return {now: clock / 1000, aircraft: [{hex: 'def456', lat: 1.2, lon: 2.2,
-        alt_geom: 1200, seen_pos: .5}]};
+        alt_geom: 1200, gs: 0, track: 0, seen_pos: .5}]};
     }});
   const multiAircraft = await multi.get('aircraft');
   assert.deepEqual(started, new Set(['primary.example', 'backup.example']),

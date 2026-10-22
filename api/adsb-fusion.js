@@ -56,7 +56,7 @@ function positionQuality(aircraft) {
   return .75;
 }
 
-function candidates(snapshots, nowSeconds, maxPositionAgeSeconds) {
+function candidates(snapshots, nowSeconds, maxPositionAgeSeconds, maxObservationOffsetSeconds) {
   const output = [];
   snapshots.forEach((snapshot, index) => {
     const data = snapshot?.data;
@@ -72,11 +72,14 @@ function candidates(snapshots, nowSeconds, maxPositionAgeSeconds) {
           !finite(aircraft.seen_pos) || aircraft.seen_pos < 0) continue;
       const eventTime = data.now - aircraft.seen_pos;
       const age = nowSeconds - eventTime;
-      if (!finite(eventTime) || age < -maxPositionAgeSeconds || age > maxPositionAgeSeconds) continue;
+      if (!finite(eventTime) || Math.abs(age) > maxObservationOffsetSeconds ||
+          age < -maxPositionAgeSeconds || age > maxPositionAgeSeconds) continue;
+      const projection = projectAircraft(aircraft, age);
+      if (!projection.projected && Math.abs(age) >= 1e-6) continue;
       const quality = sourceReliability(source) * positionQuality(aircraft) *
         Math.exp(-Math.max(0, age) / Math.max(1, maxPositionAgeSeconds));
-      output.push({hex, aircraft, source, sourceId: id, receivedAtMs, eventTime, age,
-        quality, reliability});
+      output.push({hex, aircraft, projectedAircraft: projection.aircraft, source,
+        sourceId: id, receivedAtMs, eventTime, age, quality, reliability});
     }
   });
   return output;
@@ -86,7 +89,7 @@ function cluster(rows, disagreementKm) {
   const groups = [];
   for (const row of rows) {
     let group = groups.find(candidate => candidate.some(item =>
-      separationKm(item.aircraft, row.aircraft) <= disagreementKm));
+      separationKm(item.projectedAircraft, row.projectedAircraft) <= disagreementKm));
     if (!group) { group = []; groups.push(group); }
     group.push(row);
   }
@@ -105,9 +108,10 @@ function cluster(rows, disagreementKm) {
  * the returned local `now`, so consumers retain the true position age.
  */
 function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds = 30,
-  disagreementKm = 3} = {}) {
+  maxObservationOffsetSeconds = 1, disagreementKm = .5} = {}) {
   const nowSeconds = nowMs / 1000;
-  const rows = candidates(snapshots, nowSeconds, maxPositionAgeSeconds);
+  const rows = candidates(snapshots, nowSeconds, maxPositionAgeSeconds,
+    maxObservationOffsetSeconds);
   const byAircraft = new Map();
   for (const row of rows) {
     const key = `${row.hex}:${row.sourceId}`;
@@ -129,9 +133,11 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
     const rejected = observations.filter(item => !accepted.includes(item));
     const observationOffset = nowSeconds - winner.eventTime;
     const observationAge = Math.max(0, observationOffset);
-    const projection = projectAircraft(winner.aircraft, observationOffset);
-    const effectiveEventTime = projection.projected ? nowSeconds : winner.eventTime;
-    aircraft.push({...projection.aircraft, hex, seen_pos: Math.max(0, nowSeconds - effectiveEventTime),
+    const effectiveEventTime = nowSeconds;
+    const pairwise = [];
+    for (let i = 0; i < accepted.length; i++) for (let j = i + 1; j < accepted.length; j++)
+      pairwise.push(separationKm(accepted[i].projectedAircraft, accepted[j].projectedAircraft));
+    aircraft.push({...winner.projectedAircraft, hex, seen_pos: 0,
       vectorwarp: {
         source_id: winner.sourceId,
         source_kind: winner.source.kind || winner.source.mode || 'http',
@@ -145,11 +151,18 @@ function fuseAircraftData(snapshots, {nowMs = Date.now(), maxPositionAgeSeconds 
         observation_time_offset_s: observationOffset,
         position_timestamp_s: effectiveEventTime,
         position_age_s: Math.max(0, nowSeconds - effectiveEventTime),
-        projected_seconds: projection.projected ? observationOffset : 0,
-        projection_model: projection.projected ? 'constant_velocity_ground_track' : null,
+        projected_seconds: observationOffset,
+        projection_model: Math.abs(observationOffset) < 1e-6 ? 'identity' :
+          'constant_velocity_ground_track',
         quality_score: winner.quality,
         agreeing_sources: [...new Set(accepted.map(item => item.sourceId))],
         rejected_sources: [...new Set(rejected.map(item => item.sourceId))],
+        maximum_pairwise_projected_disagreement_km: pairwise.length ? Math.max(...pairwise) : null,
+        source_observations: observations.map(item => ({source_id: item.sourceId,
+          event_time_s: item.eventTime, observation_time_offset_s: item.age,
+          projected_latitude: item.projectedAircraft.lat,
+          projected_longitude: item.projectedAircraft.lon,
+          accepted: accepted.includes(item)})),
         disagreement: rejected.length > 0
       }});
   }

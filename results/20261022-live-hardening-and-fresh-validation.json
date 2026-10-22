@@ -1,0 +1,65 @@
+{
+  "schema": "vectorwarp-live-hardening-validation-v1",
+  "cutoff_ms": 1792638472000,
+  "incident": {
+    "unsafe_config_install_ms": 1792636328000,
+    "receiver_reset_ms": 1792636330000,
+    "recovery_started_ms": 1792638697000,
+    "processor_recovered_ms": 1792638805000,
+    "failure": "API-only restart reset the Heimdall output socket; BLAH2 stopped input but stayed alive, while an unsettled config revision blocked later startup"
+  },
+  "rf_unchanged": {
+    "config_sha256": "9d690eeedacb9553c92140d9a8a8cf7de0f606f6b7f9076ff17ad7801c491197",
+    "frequency_hz": 563000000,
+    "sample_rate_hz": 2400000,
+    "gain": 2,
+    "channel_gains_db": [19.7, 25.4, 20.7, 25.4, 22.9]
+  },
+  "live_safeguards": {
+    "watchdog_timer": "active",
+    "config_guard_path": "active",
+    "processor_part_of_api": true,
+    "watchdog_state": "healthy",
+    "watchdog_reason": "advancing",
+    "maximum_attempts_per_15_minutes": 2,
+    "cooldown_ms": 120000
+  },
+  "fresh_policy": {
+    "association_lag_cpis": 4,
+    "association_lag_ms": 2000,
+    "maximum_absolute_raw_observation_offset_s": 1.0,
+    "maximum_dual_source_disagreement_km": 0.5,
+    "nearest_sample_hold": false,
+    "legacy_fallback": false
+  },
+  "qualified": {
+    "positive_controls": 0,
+    "geometry_eligible_misses": 1,
+    "admission_blocker": "No provenance-qualified event has a strict delay/Doppler matched radar frame; native ASSOCIATED is radar-to-radar temporal state, not ADS-B association"
+  },
+  "miss": {
+    "hex": "a3c246",
+    "flight": "DAL2416",
+    "event_id": "eligibility:6af931eb8cf22e861dcd590e3dfc2e0a0fc312dbb74e227e43fdc4218a2b0c78",
+    "pass_id": "6af931eb8cf22e861dcd590e3dfc2e0a0fc312dbb74e227e43fdc4218a2b0c78",
+    "clip": "/var/lib/vectorwarp/recordings/kraken-clip-r2-1792639622882874876-1.mchq",
+    "clip_sha256": "f50add664a6ce378ad555a23ad8848fda7897f9d7a226d68df639bd068c7667c",
+    "samples_per_channel": 24000000,
+    "channels": 5,
+    "altitude_geom_ft": 36050,
+    "ground_speed_kt": 484.4,
+    "elevation_deg": 16.43823701062957,
+    "slant_range_km": 37.58185121798872,
+    "bistatic_delay_km": 62.095571634916986,
+    "doppler_hz": 110.16027104783625,
+    "maximum_absolute_raw_observation_offset_s": 0.9010000228881836,
+    "maximum_projected_source_disagreement_km": 0.026136185028592655,
+    "detected_frames": 0,
+    "tracked_frames": 0,
+    "classification": "geometry-eligible-miss"
+  },
+  "replay": {
+    "performed": false,
+    "reason": "No qualified positive exists; reporting a peak or echo margin for an unmatched miss would be a false positive claim"
+  }
+}

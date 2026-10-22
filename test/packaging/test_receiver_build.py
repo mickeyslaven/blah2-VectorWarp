@@ -287,11 +287,14 @@ endif()
         for name in ("config.yml", "config-kraken.yml", "config-usrp.yml", "config-hackrf.yml"):
             shutil.copy2(ROOT / "config" / name, artifact / "config-examples" / name)
         for name in ("vectorwarp-api.service.in", "vectorwarp-processor.service.in",
-                     "vectorwarp-restart.service.in", "vectorwarp.sysusers",
+                     "vectorwarp-restart.service.in", "vectorwarp-health-watchdog.service.in",
+                     "vectorwarp-health-watchdog.timer", "vectorwarp-config-guard.service.in",
+                     "vectorwarp-config-guard.path.in", "vectorwarp.sysusers",
                      "vectorwarp.tmpfiles", "vectorwarp.sudoers.in",
                      "72-vectorwarp-hackrf.rules"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
+        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-health-watchdog.js",
+                     "vectorwarp-config-guard.js", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
                      "vectorwarp-sudoers-migrate.py"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         (artifact / 'libexec/vectorwarp').chmod(0o755)

@@ -103,7 +103,8 @@ fi
 %preun
 if [ "$1" -eq 0 ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-restart.service vectorwarp-health-watchdog.timer \
+    vectorwarp-config-guard.path vectorwarp-sdrplay-build.service \
     vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 
@@ -113,10 +114,16 @@ fi
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
 /usr/lib/systemd/system/vectorwarp-restart.service
+/usr/lib/systemd/system/vectorwarp-health-watchdog.service
+/usr/lib/systemd/system/vectorwarp-health-watchdog.timer
+/usr/lib/systemd/system/vectorwarp-config-guard.service
+/usr/lib/systemd/system/vectorwarp-config-guard.path
 /usr/lib/systemd/system/vectorwarp-sdrplay-build.service
 /usr/lib/systemd/system/vectorwarp-receiver.service
 /usr/lib/systemd/system/vectorwarp-receiver.socket
 /usr/lib/systemd/system/vectorwarp-api.service.wants
+/usr/lib/systemd/system/vectorwarp-processor.service.wants
+/usr/lib/systemd/system/multi-user.target.wants
 /usr/lib/sysusers.d/vectorwarp.conf
 /usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules
 /usr/lib/tmpfiles.d/vectorwarp.conf
