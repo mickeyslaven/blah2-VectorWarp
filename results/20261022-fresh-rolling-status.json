@@ -1,15 +1,15 @@
 {
   "schema": "vectorwarp-fresh-rolling-status-v1",
-  "updated_at_ms": 1792679011544,
+  "updated_at_ms": 1792679549726,
   "admission": {
     "status": "rolling_admission_open",
     "ledger": "results/20261022-fresh-rolling-candidate-ledger.json",
-    "candidate_clips": 564,
+    "candidate_clips": 594,
     "positive_clips": 6,
     "positive_passes": 5,
-    "miss_clips": 558,
-    "miss_passes": 247,
-    "unique_aircraft": 221,
+    "miss_clips": 588,
+    "miss_passes": 259,
+    "unique_aircraft": 232,
     "strict_truth": "bracketed event-time interpolation; no hold/fallback",
     "all_valid_positives_retained": true
   },
@@ -63,13 +63,13 @@
     "resumable_staging": {
       "status": "in_progress",
       "r120": "verified",
-      "r234": "destination_size_complete_sha_verification_pending",
-      "r1196": "strict_truth_valid_spatial_cache_pending",
+      "r234": "verified",
+      "r1196": "transferring_100335616_of_240105552_bytes_then_sha_verify",
       "r1610_r1612": "new_positive_pass_queued"
     },
     "latest_acceptance_issue": "r118 full-batch comparison was trial-dependent; backend fixed to use a trial-invariant loaded-versus-spatial comparison and clean restart is required",
     "remaining": [
-      "SHA-verified raw-IQ staging for r234, r1196, and the N544ME positive pass",
+      "SHA-verified raw-IQ staging for r1196 and the N544ME positive pass",
       "spatial cache generation for newly admitted positive passes",
       "full 92-trial positive batch runner",
       "end-to-end positive-only A-H execution on all five positive passes"
@@ -99,12 +99,12 @@
     "api_active": true,
     "processor_active": true,
     "tracker_input_fresh": true,
-    "last_frame_at_ms": 1792679008706,
+    "last_frame_at_ms": 1792679471998,
     "frame_advancement_verified": true,
     "heimdall_active": true,
     "watchdog_timer_active": true,
     "watchdog_timer_enabled": true,
-    "capture_clip_revision": 1836,
-    "capture_error_latched": ""
+    "capture_clip_revision": 1914,
+    "capture_error_latched": "intermittent pre-roll failures followed by acknowledged full clips"
   }
 }
