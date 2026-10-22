@@ -256,7 +256,7 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
     [statistics.status().eligibility_events[0].id]);
   assert.equal(statistics.status().eligibility_events[0].capture_state, 'trigger_pending');
   clock += 1000;
-  statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100]});
+  statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100], snr: [9.25]});
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   assert.equal(triggerQueue.request().clipRevision, 1,
     'Repeated opportunities in the same pass must remain once per eligibility event');
@@ -290,6 +290,10 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   assert.equal(completedEvent.capture_first_detection_at, 2_000_000_001_000);
   assert.equal(completedEvent.capture_tracked_frames, 0);
   assert.equal(completedEvent.capture_first_track_at, null);
+  assert.equal(completedEvent.capture_windows[0].detection_associations.length, 1);
+  assert.equal(completedEvent.capture_windows[0].detection_associations[0].measured_snr_db, 9.25);
+  assert.equal(completedEvent.capture_windows[0].detection_associations[0].predicted_delay_km, 10);
+  assert.equal(completedEvent.capture_windows[0].detection_associations[0].normalized_gate_score, 0);
   statistics.close(); fs.rmSync(directory, {recursive: true, force: true});
 
   const periodicDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-periodic-capture-'));

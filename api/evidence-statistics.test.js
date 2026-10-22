@@ -44,8 +44,9 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
       return {accepted: false};
     }});
   for (let index = 0; index < 3; ++index) {
-    stats.acceptTracker({timestamp: clock, data: [{delay: 10 / span.kmPerBin, doppler: 107}]});
-    stats.acceptDetection({timestamp: clock, delay: [10.1], doppler: [102]});
+    stats.acceptTracker({timestamp: clock, data: [{id: 'track-1', state: 'ACTIVE', source: 'unassisted',
+      confidence: 'primary', n: 7, delay: 10 / span.kmPerBin, doppler: 107}]});
+    stats.acceptDetection({timestamp: clock, delay: [10.1], doppler: [102], snr: [8.5]});
     while (stats.running) await new Promise(resolve => setImmediate(resolve));
     clock += 1000;
   }
@@ -88,6 +89,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(stored.passes[0].azimuthSectors45[2], 3);
   assert.ok(stored.sites[stored.passes[0].siteKey]);
   assert.equal(stored.passes[0].id, stored.eligibilityEvents[0].pass_id);
+  assert.equal(stored.passes[0].detectionAssociations[0].measured_snr_db, 8.5);
+  assert.equal(stored.passes[0].detectionAssociations[0].delay_residual_km.toFixed(1), '0.1');
+  assert.equal(stored.passes[0].trackerAssociations[0].tracker.id, 'track-1');
+  assert.equal(stored.passes[0].trackerAssociations[0].measured_delay_km.toFixed(3), '10.000');
   clock += 1000;
 
   source.get = async () => ({def456: {delay: 70, doppler: 800,

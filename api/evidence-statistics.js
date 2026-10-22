@@ -13,6 +13,7 @@ const MAX_ELIGIBILITY_EVENTS = 10000;
 const TRIGGER_EVENT_TRUTH_SAMPLES = 30;
 const MAX_EVENT_TRUTH_SAMPLES = 60;
 const MAX_ACTIVE_CAPTURE_TIMESTAMPS = 128;
+const MAX_CAPTURE_ASSOCIATIONS = 64;
 const PASS_GAP_MS = 120000;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
@@ -125,7 +126,21 @@ function emptyPass(hex, flight, at, key) {
     detectionTimestamps: [], trackTimestamps: [], lastBucket: null};
 }
 
-function updateCaptureWindowEvidence(event, pass, detectedAt = null, trackedAt = null) {
+function associationTimestamp(value) {
+  return finite(value?.frame_timestamp_ms) ? value.frame_timestamp_ms :
+    finite(value) ? value : null;
+}
+
+function appendAssociation(values, association) {
+  if (!association || !finite(association.frame_timestamp_ms)) return;
+  const duplicate = values.some(value => value.frame_timestamp_ms === association.frame_timestamp_ms &&
+    value.cell_index === association.cell_index && value.kind === association.kind);
+  if (!duplicate) values.push(association);
+  if (values.length > MAX_CAPTURE_ASSOCIATIONS)
+    values.splice(0, values.length - MAX_CAPTURE_ASSOCIATIONS);
+}
+
+function updateCaptureWindowEvidence(event, pass, detected = null, tracked = null) {
   if (!event || !pass) return;
   event.first_detection_at = finite(pass.firstDetectionAt) ? pass.firstDetectionAt : null;
   event.first_track_at = finite(pass.firstTrackAt) ? pass.firstTrackAt : null;
@@ -133,11 +148,17 @@ function updateCaptureWindowEvidence(event, pass, detectedAt = null, trackedAt =
   for (const window of windows) {
     if (!finite(window.window_start) || !finite(window.window_end) ||
         window.window_end < window.window_start) continue;
-    for (const [timestamp, count, first] of [[detectedAt, 'detected_frames', 'first_detection_at'],
-      [trackedAt, 'tracked_frames', 'first_track_at']]) {
+    for (const [association, count, first, samples] of
+      [[detected, 'detected_frames', 'first_detection_at', 'detection_associations'],
+        [tracked, 'tracked_frames', 'first_track_at', 'tracker_associations']]) {
+      const timestamp = associationTimestamp(association);
       if (!finite(timestamp) || timestamp < window.window_start || timestamp > window.window_end) continue;
       window[count] = (window[count] || 0) + 1;
       window[first] ??= timestamp;
+      if (association && typeof association === 'object') {
+        if (!Array.isArray(window[samples])) window[samples] = [];
+        appendAssociation(window[samples], association);
+      }
     }
   }
   const initial = windows.find(window => window.kind === 'initial') || windows[0];
@@ -161,6 +182,12 @@ function upsertCaptureWindow(event, record, pass) {
     timestamp >= record.windowStart && timestamp <= record.windowEnd) : [];
   const tracks = canRecount ? pass.trackTimestamps.filter(timestamp =>
     timestamp >= record.windowStart && timestamp <= record.windowEnd) : [];
+  const detectionAssociations = Array.isArray(pass?.detectionAssociations) ?
+    pass.detectionAssociations.filter(value => value.frame_timestamp_ms >= record.windowStart &&
+      value.frame_timestamp_ms <= record.windowEnd) : (prior.detection_associations || []);
+  const trackerAssociations = Array.isArray(pass?.trackerAssociations) ?
+    pass.trackerAssociations.filter(value => value.frame_timestamp_ms >= record.windowStart &&
+      value.frame_timestamp_ms <= record.windowEnd) : (prior.tracker_associations || []);
   const window = {...prior, capture_id: record.captureId, kind: record.kind || 'initial',
     revision: record.revision, requested_event_time: record.requestedEventTime,
     window_start: record.windowStart, window_end: record.windowEnd,
@@ -169,7 +196,9 @@ function upsertCaptureWindow(event, record, pass) {
     detected_frames: canRecount ? detections.length : (prior.detected_frames || 0),
     tracked_frames: canRecount ? tracks.length : (prior.tracked_frames || 0),
     first_detection_at: canRecount ? (detections[0] ?? null) : (prior.first_detection_at ?? null),
-    first_track_at: canRecount ? (tracks[0] ?? null) : (prior.first_track_at ?? null)};
+    first_track_at: canRecount ? (tracks[0] ?? null) : (prior.first_track_at ?? null),
+    detection_associations: detectionAssociations.slice(-MAX_CAPTURE_ASSOCIATIONS),
+    tracker_associations: trackerAssociations.slice(-MAX_CAPTURE_ASSOCIATIONS)};
   if (index < 0) event.capture_windows.push(window);
   else event.capture_windows[index] = window;
   updateCaptureWindowEvidence(event, pass);
@@ -258,13 +287,17 @@ function cells(frame, delayScale = 1) {
   if (!value) return [];
   if (Array.isArray(value.delay)) return value.delay.map((delay, index) =>
     finite(delay) && finite(value.doppler?.[index]) ?
-      {delay: delay * delayScale, doppler: value.doppler[index]} : null).filter(Boolean);
-  return (value.data || []).map(item => finite(item?.delay) && finite(item?.doppler) ?
-    {delay: item.delay * delayScale, doppler: item.doppler} : null).filter(Boolean);
+      {index, rawDelay: delay, delay: delay * delayScale, doppler: value.doppler[index],
+        snr: finite(value.snr?.[index]) ? value.snr[index] : null} : null).filter(Boolean);
+  return (value.data || []).map((item, index) => finite(item?.delay) && finite(item?.doppler) ?
+    {index, rawDelay: item.delay, delay: item.delay * delayScale, doppler: item.doppler,
+      tracker: {id: item.id ?? null, state: item.state ?? null, source: item.source ?? null,
+        confidence: item.confidence ?? null, associations: item.n ?? null}} : null).filter(Boolean);
 }
 
-function assignments(points, predictions, gatesForPrediction) {
-  const result = new Set();
+function assignments(points, predictions, gatesForPrediction, kind, frameTimestamp) {
+  const result = new Map();
+  const predictionByHex = new Map(predictions);
   for (const point of points) {
     const candidates = predictions.map(([hex, prediction]) => {
       const gates = gatesForPrediction(prediction);
@@ -277,7 +310,19 @@ function assignments(points, predictions, gatesForPrediction) {
       .sort((left, right) => left.score - right.score);
     if (!candidates.length) continue;
     if (candidates.length > 1 && candidates[1].score <= candidates[0].score * 1.15 + .05) continue;
-    result.add(candidates[0].hex);
+    const selected = candidates[0], prediction = predictionByHex.get(selected.hex);
+    const prior = result.get(selected.hex);
+    if (prior && prior.normalized_gate_score <= selected.score) continue;
+    result.set(selected.hex, {kind, frame_timestamp_ms: frameTimestamp,
+      cell_index: point.index, measured_delay_raw: point.rawDelay,
+      measured_delay_km: point.delay, measured_doppler_hz: point.doppler,
+      measured_snr_db: point.snr ?? null, tracker: point.tracker ?? null,
+      predicted_delay_km: prediction?.delay ?? null,
+      predicted_doppler_hz: prediction?.doppler ?? null,
+      delay_residual_km: point.delay - (prediction?.delay ?? point.delay),
+      doppler_residual_hz: point.doppler - (prediction?.doppler ?? point.doppler),
+      gate_delay_km: selected.gates.delayKm, gate_doppler_hz: selected.gates.dopplerHz,
+      normalized_gate_score: selected.score});
   }
   return result;
 }
@@ -392,13 +437,14 @@ class EvidenceStatistics {
         [normalizeHex(rawHex), prediction]).filter(([hex, prediction]) => hex &&
           finite(prediction?.delay) && finite(prediction?.doppler));
       const detected = assignments(detectionCells, valid, prediction =>
-        associationGates(this.limits, prediction, timestamp, 'detection'));
+        associationGates(this.limits, prediction, timestamp, 'detection'),
+      'detection', detectionTimestamp);
       const tracked = assignments(trackerCells, valid, prediction =>
-        associationGates(this.limits, prediction, timestamp, 'tracker'));
+        associationGates(this.limits, prediction, timestamp, 'tracker'),
+      'tracker', trackerTimestamp);
       for (const [hex, prediction] of valid) {
         this.observe(hex, prediction, timestamp,
-          detected.has(hex) ? detectionTimestamp : null,
-          tracked.has(hex) ? trackerTimestamp : null);
+          detected.get(hex) || null, tracked.get(hex) || null);
       }
       if (useDetection) this.lastDetectionFrameTimestamp = detectionTimestamp;
       if (useTracker) this.lastTrackerFrameTimestamp = trackerTimestamp;
@@ -414,7 +460,7 @@ class EvidenceStatistics {
     }
   }
 
-  observe(hex, prediction, timestamp, detectedAt, trackedAt) {
+  observe(hex, prediction, timestamp, detectedAssociation, trackedAssociation) {
     let pass = this.state.active[hex];
     if (pass && (timestamp - pass.lastAt > PASS_GAP_MS || pass.siteKey !== this.key)) {
       this.finish(hex); pass = null;
@@ -451,11 +497,15 @@ class EvidenceStatistics {
         event.truth_samples.splice(TRIGGER_EVENT_TRUTH_SAMPLES,
           event.truth_samples.length - MAX_EVENT_TRUTH_SAMPLES);
     }
+    const detectedAt = associationTimestamp(detectedAssociation);
+    const trackedAt = associationTimestamp(trackedAssociation);
     if (finite(detectedAt)) {
       pass.detectedFrames += 1;
       pass.firstDetectionAt ??= detectedAt;
       if (!Array.isArray(pass.detectionTimestamps)) pass.detectionTimestamps = [];
       appendBounded(pass.detectionTimestamps, detectedAt);
+      if (!Array.isArray(pass.detectionAssociations)) pass.detectionAssociations = [];
+      appendAssociation(pass.detectionAssociations, detectedAssociation);
     }
     const firstTrack = finite(trackedAt) && !finite(pass.firstTrackAt);
     if (finite(trackedAt)) {
@@ -463,8 +513,10 @@ class EvidenceStatistics {
       pass.firstTrackAt ??= trackedAt;
       if (!Array.isArray(pass.trackTimestamps)) pass.trackTimestamps = [];
       appendBounded(pass.trackTimestamps, trackedAt);
+      if (!Array.isArray(pass.trackerAssociations)) pass.trackerAssociations = [];
+      appendAssociation(pass.trackerAssociations, trackedAssociation);
     }
-    updateCaptureWindowEvidence(event, pass, detectedAt, trackedAt);
+    updateCaptureWindowEvidence(event, pass, detectedAssociation, trackedAssociation);
     if (firstTrack) this.emitTrackCapture(event, pass, trackedAt);
     this.emitPeriodicCapture(event, pass, timestamp);
   }
@@ -696,6 +748,6 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
 }
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
-  TRIGGER_EVENT_TRUTH_SAMPLES, MAX_ACTIVE_CAPTURE_TIMESTAMPS,
+  TRIGGER_EVENT_TRUTH_SAMPLES, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
   limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics};
