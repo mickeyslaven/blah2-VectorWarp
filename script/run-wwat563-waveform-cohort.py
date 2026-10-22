@@ -104,21 +104,34 @@ def publish_vector(key, raw, digest, loaded, spectral):
     return path
 
 
-def wait_for_spatial_ack(key, raw, digest, loaded_path, spectral_path, state, state_path, poll_seconds):
-    """Retain verified raw input until the spatial cohort atomically acknowledges it."""
+def publish_spatial_ready(key, raw, digest, state):
+    """Make verified raw available before waveform work, so spatial can overlap it."""
     basename = Path(raw).name
     ready = f'{REMOTE_SPATIAL_READY}/{basename}.json'
-    ack = f'{REMOTE_SPATIAL_ACK}/{basename}.json'
     ready_document = {'schema': 'vectorwarp-wwat563-spatial-ready-v1', 'clip_id': key,
         'source': state['clips'][key]['recording'], 'raw': raw, 'sha256': digest,
-        'bytes': int(ssh(CASS, f'stat -c %s {quote(raw)}', capture_output=True).stdout),
-        'waveform_artifacts': [loaded_path, spectral_path]}
+        'bytes': int(ssh(CASS, f'stat -c %s {quote(raw)}', capture_output=True).stdout)}
     ssh(CASS, f'cat > {quote(ready + ".part")} && mv {quote(ready + ".part")} {quote(ready)}',
         input=json.dumps(ready_document) + '\n')
-    state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
-        'raw': raw, 'sha256': digest, 'loaded_result': loaded_path,
-        'spectral_result': spectral_path, 'ack_path': ack}
-    state_path.write_text(json.dumps(state, indent=2) + '\n')
+    return ready
+
+
+def wait_for_cass_headroom(local_log):
+    """Avoid starting another low-priority waveform replay on a saturated CASS."""
+    while True:
+        fields = ssh(CASS, "nproc; cut -d' ' -f1 /proc/loadavg", capture_output=True).stdout.split()
+        cpus, load = int(fields[0]), float(fields[1])
+        if load <= max(8.0, cpus * 0.9):
+            return
+        with local_log.open('a') as log:
+            log.write(f'waiting for CASS headroom: load={load:.2f}, cpus={cpus}\n')
+        time.sleep(30)
+
+
+def wait_for_spatial_ack(raw, state, state_path, poll_seconds):
+    """Retain raw until the already-published spatial job atomically acknowledges it."""
+    basename = Path(raw).name
+    ack = f'{REMOTE_SPATIAL_ACK}/{basename}.json'
     while True:
         probe = subprocess.run(['ssh', '-o', 'BatchMode=yes', CASS,
                                 f'test -f {quote(ack)} && cat {quote(ack)}'],
@@ -154,10 +167,15 @@ def process(row, state, state_path, local_log):
                            'recording': row['capture']['file'], 'event_id': row['event_id']}
     state_path.write_text(json.dumps(state, indent=2) + '\n')
     raw, digest = copy_and_verify(row, local_log)
+    ready_path = publish_spatial_ready(key, raw, digest, state)
+    state['clips'][key] = {**state['clips'][key], 'status': 'waveform_scoring',
+        'raw': raw, 'sha256': digest, 'spatial_ready': ready_path}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
     trajectory_path = f'{REMOTE_ROOT}/{key}-trajectory.json'
     ssh(CASS, f'cat > {quote(trajectory_path)}', input=json.dumps(trajectory(row)) + '\n')
     loaded_path = f'{REMOTE_ROOT}/{key}-loaded-reciprocal.json'
     spectral_path = f'{REMOTE_ROOT}/{key}-spectral-interference.json'
+    wait_for_cass_headroom(local_log)
     commands = [
         f'nice -n 19 {quote(VENV)} {quote(REMOTE_ROOT + "/analyze-loaded-reciprocal-mchq.py")} '
         f'--recording {quote(raw)} --trajectory {quote(trajectory_path)} --output {quote(loaded_path)} '
@@ -171,8 +189,11 @@ def process(row, state, state_path, local_log):
             ssh(CASS, command, stdout=log, stderr=subprocess.STDOUT)
     loaded, spectral = verify_result(loaded_path), verify_result(spectral_path)
     vector_path = publish_vector(key, raw, digest, loaded, spectral)
-    ack_path, acknowledgement = wait_for_spatial_ack(
-        key, raw, digest, loaded_path, spectral_path, state, state_path, 30)
+    state['clips'][key] = {**state['clips'][key], 'status': 'spatial_wait',
+        'loaded_result': loaded_path, 'spectral_result': spectral_path,
+        'waveform_vector': vector_path}
+    state_path.write_text(json.dumps(state, indent=2) + '\n')
+    ack_path, acknowledgement = wait_for_spatial_ack(raw, state, state_path, 30)
     ssh(CASS, f'rm -f {quote(raw)}')
     state['clips'][key] = {'status': 'complete', 'role': row['role'],
         'recording': row['capture']['file'], 'event_id': row['event_id'], 'sha256': digest,
