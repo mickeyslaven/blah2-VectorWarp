@@ -136,6 +136,8 @@ function fetchHttp(url, options = {}) {
     const installer = fs.readFileSync(path.resolve(__dirname,
       '../../script/install-native.sh'), 'utf8');
     assert.match(apiUnit, /User=vectorwarp-api/);
+    assert.match(apiUnit, /SupplementaryGroups=.*vectorwarp-config.*vectorwarp/,
+      'API needs read-only processor-group access to hash completed IQ captures');
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);

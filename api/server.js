@@ -69,13 +69,18 @@ const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
-  const admissions = evidenceStatistics.prepareCaptureAdmissions(records);
+  const admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
   const first = records.flatMap(record => record.captureWindows || [])
     .find(window => window.revision === revision);
   let integrity;
   try {
-    integrity = await verifyCaptureIntegrity(file, {revision, samples,
-      windowStart: first?.windowStart, windowEnd: first?.windowEnd});
+    for (let attempt = 0; attempt < 5; ++attempt) {
+      integrity = await verifyCaptureIntegrity(file, {revision, samples,
+        windowStart: first?.windowStart, windowEnd: first?.windowEnd});
+      if (integrity.valid || !(integrity.reasons || []).some(reason =>
+        ['recording-sidecar-invalid', 'recording-size-mismatch'].includes(reason))) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   } catch (error) { integrity = {valid: false, reasons: ['recording-integrity-error'], error: error.message}; }
   const {metadata: _metadata, ...integritySummary} = integrity;
   integrity = integritySummary;

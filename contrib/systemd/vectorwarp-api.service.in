@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=vectorwarp-api
 Group=vectorwarp-api
-SupplementaryGroups=vectorwarp-config
+SupplementaryGroups=vectorwarp-config vectorwarp
 WorkingDirectory=@PREFIX@/current
 Environment=NODE_ENV=production
 Environment="BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@"

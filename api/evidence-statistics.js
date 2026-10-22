@@ -646,11 +646,12 @@ class EvidenceStatistics {
     this.persist();
   }
 
-  prepareCaptureAdmissions(records) {
+  prepareCaptureAdmissions(records, revision = null) {
     const result = {};
     const cpiMs = (this.limits?.cpiSeconds || .5) * 1000;
     for (const record of records || []) for (const window of record.captureWindows || []) {
-      if (!window.captureId || result[window.captureId] || window.revision === null) continue;
+      if (!window.captureId || result[window.captureId] || window.revision === null ||
+          (revision !== null && window.revision !== revision)) continue;
       const event = this.state.eligibilityEvents.find(item => item.id === record.eventId);
       const truth = (event?.truth_samples || []).filter(sample =>
         sample.timestamp_ms >= window.windowStart - 3000 && sample.timestamp_ms <= window.windowEnd + 3000);

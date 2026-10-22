@@ -152,8 +152,10 @@ public:
   explicit OutputFile(const std::string& path, Sha256* digest = nullptr)
     : digest(digest)
   {
+    // The processor group owns published captures.  Read-only group access lets
+    // the separately sandboxed API verify the native SHA before admission.
     descriptor = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
-      0600);
+      0640);
     if (descriptor < 0) throw std::runtime_error(system_error("Cannot create clip"));
   }
   ~OutputFile() { if (descriptor >= 0) ::close(descriptor); }
