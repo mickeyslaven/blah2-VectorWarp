@@ -10,6 +10,7 @@ import signal
 import subprocess
 import tempfile
 import time
+import re
 
 try:
     import yaml
@@ -68,6 +69,21 @@ def set_stationary_clutter(config, state):
     initiate = config["process"]["tracker"]["initiate"]
     settings = initiate.setdefault("stationary_clutter", {})
     settings["enable"] = state == "on"
+
+
+def parse_tracker_diagnostics(output):
+    """Aggregate resident-tracker admission diagnostics over the entire replay."""
+    totals = {}
+    frames = 0
+    for line in output.splitlines():
+        if "GPU_TRACKER_PREPARED" not in line:
+            continue
+        frames += 1
+        for key, raw in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)=(-?\d+)", line):
+            if key in {"frame", "generation", "transaction"}:
+                continue
+            totals[key] = totals.get(key, 0) + int(raw)
+    return {"frames": frames, "totals": totals}
 
 
 def run_arm(harness, binary, source, recording, mode, timeout, reference_channel=None,
@@ -216,6 +232,7 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                 "tracks": decode_many(sinks.payloads["track"]),
                 "statuses": states,
                 "bytes": sinks.bytes,
+                "tracker_diagnostics": parse_tracker_diagnostics(output),
                 "log_tail": output[-12000:],
             }
             if capture_maps:
