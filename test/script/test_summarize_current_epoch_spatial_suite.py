@@ -14,7 +14,9 @@ def result(job_id, event_id, role, margins):
         "flight": "TST", "role": role,
         "outcome": "tracked" if role == "positive" else "no_radar_return",
         "revision": 1, "family_trials": 6, "control_quantile": .998,
-        "methods": {method: {"margin_over_control_p99_db": margin}
+        "methods": {method: {"margin_over_control_p99_db": margin,
+                             "evidence_log10": max(0.0, margin / 10),
+                             "control_evidence_log10": [0.0, .1, .2, .3]}
                     for method, margin in zip(SUMMARY.METHODS, margins)},
     }
 
@@ -37,6 +39,7 @@ def test_summary_uses_best_clip_and_three_db_threshold():
     miss = next(row for row in output["events"] if row["role"] == "miss")
     assert miss["methods"]["spatial_glrt"] == {
         "best_margin_db": 3.0, "best_job_id": "m2", "recovered": True}
+    assert len(miss["stacks"]) == 4
 
 
 def test_summary_rejects_incomplete_state():

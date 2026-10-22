@@ -2,6 +2,7 @@
 """Create the compact event matrix for the frozen current-epoch cohort."""
 
 import argparse
+import importlib.util
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -9,6 +10,25 @@ from pathlib import Path
 
 METHODS = ("spatial_glrt", "post_doppler_stap", "sparse_beam")
 THRESHOLD_DB = 3.0
+STACK_PATH = Path(__file__).with_name("stack-current-epoch-evidence.py")
+STACK_SPEC = importlib.util.spec_from_file_location("stack_evidence", STACK_PATH)
+STACK = importlib.util.module_from_spec(STACK_SPEC)
+STACK_SPEC.loader.exec_module(STACK)
+
+
+def stacks(clip):
+    source = {method: {
+        "target": clip["methods"][method]["evidence_log10"],
+        "controls": clip["methods"][method]["control_evidence_log10"],
+    } for method in METHODS}
+    result = STACK.stack(source)
+    return {"+".join(row["combination"]): {
+                "margin_evidence": row["margin"],
+                "margin_db_equivalent": 10 * row["margin"],
+                "recovered": 10 * row["margin"] >= THRESHOLD_DB,
+                "target": row["target"],
+                "familywise_control_p99": row["control_p99_all_trials"],
+            } for row in result["rows"] if not row["single"]}
 
 
 def summarize(manifest, state):
@@ -30,16 +50,32 @@ def summarize(manifest, state):
             margin, job_id = ranked[-1]
             methods[method] = {"best_margin_db": margin, "best_job_id": job_id,
                                "recovered": margin >= THRESHOLD_DB}
+        clip_stacks = {clip["job_id"]: stacks(clip) for clip in clips}
+        stack_names = sorted(next(iter(clip_stacks.values())))
+        stacked = {}
+        for name in stack_names:
+            job_id, best = max(((job_id, values[name])
+                                for job_id, values in clip_stacks.items()),
+                               key=lambda item: item[1]["margin_db_equivalent"])
+            stacked[name] = {"best_margin_db_equivalent":
+                             best["margin_db_equivalent"],
+                             "best_job_id": job_id,
+                             "recovered": best["recovered"]}
         rows.append({
             "event_id": event_id, "hex": first["hex"], "flight": first["flight"],
             "role": first["role"], "outcome": first["outcome"],
             "clip_count": len(clips), "family_trials": first["family_trials"],
             "control_quantile": first["control_quantile"], "methods": methods,
-            "recovered_any": any(item["recovered"] for item in methods.values()),
+            "stacks": stacked,
+            "recovered_any": any(item["recovered"] for item in methods.values()) or
+                             any(item["recovered"] for item in stacked.values()),
             "clips": [{"job_id": clip["job_id"], "revision": clip["revision"],
                        "margins_db": {method: clip["methods"][method]
                                       ["margin_over_control_p99_db"]
-                                      for method in METHODS}}
+                                      for method in METHODS},
+                       "stack_margins_db_equivalent": {
+                           name: item["margin_db_equivalent"]
+                           for name, item in clip_stacks[clip["job_id"]].items()}}
                       for clip in sorted(clips, key=lambda item: item["job_id"])],
         })
     misses = [row for row in rows if row["role"] == "miss"]
@@ -77,6 +113,11 @@ def summarize(manifest, state):
                 "misses_recovered": sum(row["methods"][method]["recovered"] for row in misses),
                 "positive_events_retained": sum(row["methods"][method]["recovered"] for row in positives),
             } for method in METHODS},
+            "by_stack": {name: {
+                "misses_recovered": sum(row["stacks"][name]["recovered"] for row in misses),
+                "positive_events_retained": sum(row["stacks"][name]["recovered"]
+                                                for row in positives),
+            } for name in (sorted(rows[0]["stacks"]) if rows else [])},
         },
         "events": rows,
     }
