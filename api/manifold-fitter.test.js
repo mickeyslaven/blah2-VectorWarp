@@ -31,6 +31,10 @@ const filtered = fitManifold([...samples, contaminated],
 assert.equal(filtered.calibration.supplied_samples, 121);
 assert.equal(filtered.calibration.input_samples, 120);
 assert.equal(filtered.calibration.rejected_samples.elevation, 1);
+const noInternalHoldout = fitManifold(samples, {beams: 12, minSamples: 3,
+  minCoverage: 1, maxGapDeg: 45, holdoutPredicate: () => false});
+assert.equal(noInternalHoldout.calibration.holdout_bins, 0);
+assert.ok(noInternalHoldout.calibration.bins.every(row => row.holdout_samples === 0));
 assert.throws(() => fitManifold([...samples, {...samples[0], config_fingerprint: 'other'}],
   {beams: 12, minSamples: 3}), /different frequencies, channel layouts, or site configurations/);
 console.log('Manifold fitter: common-phase removal, bin fitting, holdout validation, and config isolation passed.');

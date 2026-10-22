@@ -1,0 +1,358 @@
+{
+  "schema": "vectorwarp-manifold-lopo-evaluation-v1",
+  "generated_at": "2026-10-22T19:03:58.210Z",
+  "beams": 30,
+  "samples": 114,
+  "passes": 22,
+  "successful_folds": 21,
+  "failed_folds": 1,
+  "ideal": {
+    "passes": 21,
+    "median_error_deg": 69.85402312619999,
+    "within_15_fraction": 0.09523809523809523,
+    "within_30_fraction": 0.14285714285714285,
+    "within_45_fraction": 0.23809523809523808
+  },
+  "measured": {
+    "passes": 21,
+    "median_error_deg": 46.92042844232208,
+    "within_15_fraction": 0.09523809523809523,
+    "within_30_fraction": 0.2857142857142857,
+    "within_45_fraction": 0.47619047619047616
+  },
+  "by_support_distance_deg": {
+    "6": {
+      "ideal": {
+        "passes": 20,
+        "median_error_deg": 70.83872267672692,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.15,
+        "within_45_fraction": 0.2
+      },
+      "measured": {
+        "passes": 20,
+        "median_error_deg": 52.246941770057546,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.3,
+        "within_45_fraction": 0.45
+      }
+    },
+    "15": {
+      "ideal": {
+        "passes": 20,
+        "median_error_deg": 70.83872267672692,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.15,
+        "within_45_fraction": 0.2
+      },
+      "measured": {
+        "passes": 20,
+        "median_error_deg": 52.246941770057546,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.3,
+        "within_45_fraction": 0.45
+      }
+    },
+    "30": {
+      "ideal": {
+        "passes": 20,
+        "median_error_deg": 70.83872267672692,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.15,
+        "within_45_fraction": 0.2
+      },
+      "measured": {
+        "passes": 20,
+        "median_error_deg": 52.246941770057546,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.3,
+        "within_45_fraction": 0.45
+      }
+    },
+    "45": {
+      "ideal": {
+        "passes": 20,
+        "median_error_deg": 70.83872267672692,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.15,
+        "within_45_fraction": 0.2
+      },
+      "measured": {
+        "passes": 20,
+        "median_error_deg": 52.246941770057546,
+        "within_15_fraction": 0.1,
+        "within_30_fraction": 0.3,
+        "within_45_fraction": 0.45
+      }
+    },
+    "90": {
+      "ideal": {
+        "passes": 21,
+        "median_error_deg": 69.85402312619999,
+        "within_15_fraction": 0.09523809523809523,
+        "within_30_fraction": 0.14285714285714285,
+        "within_45_fraction": 0.23809523809523808
+      },
+      "measured": {
+        "passes": 21,
+        "median_error_deg": 46.92042844232208,
+        "within_15_fraction": 0.09523809523809523,
+        "within_30_fraction": 0.2857142857142857,
+        "within_45_fraction": 0.47619047619047616
+      }
+    },
+    "180": {
+      "ideal": {
+        "passes": 21,
+        "median_error_deg": 69.85402312619999,
+        "within_15_fraction": 0.09523809523809523,
+        "within_30_fraction": 0.14285714285714285,
+        "within_45_fraction": 0.23809523809523808
+      },
+      "measured": {
+        "passes": 21,
+        "median_error_deg": 46.92042844232208,
+        "within_15_fraction": 0.09523809523809523,
+        "within_30_fraction": 0.2857142857142857,
+        "within_45_fraction": 0.47619047619047616
+      }
+    }
+  },
+  "folds": [
+    {
+      "pass_id": "a69061:1",
+      "icao": "a69061",
+      "samples": 9,
+      "local_azimuth_deg": 39.07074143755034,
+      "support_distance_deg": 3.8590640768552475,
+      "ideal_error_deg": 82.72913752300701,
+      "measured_error_deg": 34.72913752300701,
+      "observed_bins": 9,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a68a06:1",
+      "icao": "a68a06",
+      "samples": 10,
+      "local_azimuth_deg": 341.43366440532316,
+      "support_distance_deg": 0.410519549705441,
+      "ideal_error_deg": 69.85402312619999,
+      "measured_error_deg": 29.835750248821682,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "ac33a3:1",
+      "icao": "ac33a3",
+      "samples": 4,
+      "local_azimuth_deg": 318.2857395068426,
+      "support_distance_deg": 0.5434224408093087,
+      "ideal_error_deg": 49.39705442486337,
+      "measured_error_deg": 82.09146827348945,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "ac011d:1",
+      "icao": "ac011d",
+      "samples": 3,
+      "local_azimuth_deg": 302.0064201931784,
+      "support_distance_deg": 3.7448319109564636,
+      "ideal_error_deg": 9.993579806821572,
+      "measured_error_deg": 72.15318465087927,
+      "observed_bins": 9,
+      "largest_gap_deg": 228
+    },
+    {
+      "pass_id": "a9cecf:1",
+      "icao": "a9cecf",
+      "samples": 2,
+      "local_azimuth_deg": 327.22122396981865,
+      "support_distance_deg": 0.18702772392305178,
+      "ideal_error_deg": 122.77877603018135,
+      "measured_error_deg": 44.22276155178645,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a6f326:1",
+      "icao": "a6f326",
+      "samples": 6,
+      "local_azimuth_deg": 32.761396126171235,
+      "support_distance_deg": 0.6555505903518224,
+      "ideal_error_deg": 78.24421216574888,
+      "measured_error_deg": 57.573455097793016,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a188ba:1",
+      "icao": "a188ba",
+      "samples": 1,
+      "local_azimuth_deg": 34.19485878568884,
+      "support_distance_deg": 0.2557079590479816,
+      "ideal_error_deg": 82.1948587856889,
+      "measured_error_deg": 82.1948587856889,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a23bfb:1",
+      "icao": "a23bfb",
+      "samples": 3,
+      "local_azimuth_deg": 32.10584553581941,
+      "support_distance_deg": 0.6555505903518224,
+      "ideal_error_deg": 57.89415446418059,
+      "measured_error_deg": 69.81384923873134,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a761fc:1",
+      "icao": "a761fc",
+      "samples": 12,
+      "local_azimuth_deg": 342.6690673820068,
+      "support_distance_deg": 0.06324139355308489,
+      "ideal_error_deg": 106.18452345521183,
+      "measured_error_deg": 59.45774943412772,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a5d408:1",
+      "icao": "a5d408",
+      "samples": 4,
+      "local_azimuth_deg": 315.7251090123376,
+      "support_distance_deg": 0.5913114735546969,
+      "ideal_error_deg": 4.509990398176285,
+      "measured_error_deg": 7.490009601823715,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "abf7f8:1",
+      "icao": "abf7f8",
+      "samples": 4,
+      "local_azimuth_deg": 339.6126886480886,
+      "support_distance_deg": 0.12893458350447418,
+      "ideal_error_deg": 71.82342222725384,
+      "measured_error_deg": 39.17657777274616,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a00570:1",
+      "icao": "a00570",
+      "samples": 10,
+      "local_azimuth_deg": 158.93077225787943,
+      "support_distance_deg": 73.28449311878762,
+      "ideal_error_deg": 34.471839084380065,
+      "measured_error_deg": 36.03972615595228,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a68a06:2",
+      "icao": "a68a06",
+      "samples": 2,
+      "local_azimuth_deg": 1.1847417817815824,
+      "support_distance_deg": 0.5794195926029033,
+      "ideal_error_deg": 121.81525821821845,
+      "measured_error_deg": 73.18474178178155,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a765cb:1",
+      "icao": "a765cb",
+      "samples": 7,
+      "local_azimuth_deg": 357.0626848067553,
+      "support_distance_deg": 1.4670250365787751,
+      "ideal_error_deg": 45.06268480675533,
+      "measured_error_deg": 21.986804755244407,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a81755:1",
+      "icao": "a81755",
+      "samples": 10,
+      "local_azimuth_deg": 346.3875934213288,
+      "support_distance_deg": 0.9326250423005149,
+      "ideal_error_deg": 102.54673653668465,
+      "measured_error_deg": 46.92042844232208,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a22f60:1",
+      "icao": "a22f60",
+      "samples": 2,
+      "local_azimuth_deg": 351.46522894247545,
+      "support_distance_deg": 0.6814047248319639,
+      "ideal_error_deg": 69,
+      "measured_error_deg": 27.465228942475505,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "ab9384:1",
+      "icao": "ab9384",
+      "samples": 8,
+      "local_azimuth_deg": 343.3072998050712,
+      "support_distance_deg": 0.046813962778514906,
+      "ideal_error_deg": 32.487548836061876,
+      "measured_error_deg": 9.256172089885467,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a5688f:1",
+      "icao": "a5688f",
+      "samples": 5,
+      "local_azimuth_deg": 312.38085288501327,
+      "support_distance_deg": 0.3893058903020119,
+      "ideal_error_deg": 90.38085288501327,
+      "measured_error_deg": 66.24874789586511,
+      "observed_bins": 9,
+      "largest_gap_deg": 228
+    },
+    {
+      "pass_id": "aaa062:1",
+      "icao": "aaa062",
+      "samples": 5,
+      "local_azimuth_deg": 25.60726527418251,
+      "support_distance_deg": 3.9902116661403397,
+      "ideal_error_deg": 90.92980551440553,
+      "measured_error_deg": 69.73095115016451,
+      "observed_bins": 9,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "aca3e6:1",
+      "icao": "aca3e6",
+      "samples": 2,
+      "local_azimuth_deg": 340.51392325212385,
+      "support_distance_deg": 0.09616184534354488,
+      "ideal_error_deg": 28.51392325212379,
+      "measured_error_deg": 25.486076747876183,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    },
+    {
+      "pass_id": "a68a06:3",
+      "error": "Largest unsupported azimuth gap is 264.0 degrees"
+    },
+    {
+      "pass_id": "a43ff0:1",
+      "icao": "a43ff0",
+      "samples": 3,
+      "local_azimuth_deg": 5.571526329373171,
+      "support_distance_deg": 0.4801405889295438,
+      "ideal_error_deg": 48.281750798598296,
+      "measured_error_deg": 64.86539753942986,
+      "observed_bins": 10,
+      "largest_gap_deg": 216
+    }
+  ]
+}
