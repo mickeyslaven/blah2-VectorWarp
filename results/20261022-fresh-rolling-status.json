@@ -1,15 +1,15 @@
 {
   "schema": "vectorwarp-fresh-rolling-status-v1",
-  "updated_at_ms": 1792666906177,
+  "updated_at_ms": 1792668671290,
   "admission": {
     "status": "rolling_admission_open",
     "ledger": "results/20261022-fresh-rolling-candidate-ledger.json",
-    "candidate_clips": 145,
+    "candidate_clips": 193,
     "positive_clips": 3,
     "positive_passes": 3,
-    "miss_clips": 142,
-    "miss_passes": 60,
-    "unique_aircraft": 58,
+    "miss_clips": 190,
+    "miss_passes": 80,
+    "unique_aircraft": 76,
     "strict_truth": "bracketed event-time interpolation; no hold/fallback",
     "all_valid_positives_retained": true
   },
@@ -41,11 +41,33 @@
       "amplitude_cv": 4.38e-08,
       "phasor_gate": "passed"
     },
+    "real_spatial_fusion_smoke_test": {
+      "revision": 118,
+      "arm": "H",
+      "runtime_s": 2.68,
+      "raw_target_score": 0.5221482245,
+      "translated_controls": 395,
+      "rank": 168,
+      "strict_native_spatial_cache": "passed"
+    },
     "remaining": [
-      "native complex-cutout spatial cache binding for E-H",
-      "true ordered sequential operators for A-H",
+      "true ordered sequential transforms for A-D",
       "bounded trajectory TBD/HMM rather than primitive conjunction"
     ]
+  },
+  "kraken_bearing_backend": {
+    "status": "positive_calibrated_rejected_for_miss_scoring",
+    "geometry_mode": "unconfirmed_geometry_hypothesis",
+    "positive_replay_runtime_s": {
+      "r118": 28.842,
+      "r120": 29.076,
+      "r234": 28.825
+    },
+    "charged_trials_per_path": 1080,
+    "leave_event_out_median_prominence_db": 0.01327,
+    "required_prominence_db": 3.0,
+    "useful_for_miss_scoring": false,
+    "misses_executed": 0
   },
   "live_integrity": {
     "frequency_hz": 563000000,
@@ -57,6 +79,7 @@
     "api_active": true,
     "processor_active": true,
     "tracker_input_fresh": true,
-    "tracker_frames_observed": 22252
+    "last_frame_at_ms": 1792668671290,
+    "frame_advancement_verified": true
   }
 }
