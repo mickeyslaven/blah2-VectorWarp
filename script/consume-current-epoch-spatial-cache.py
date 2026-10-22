@@ -76,7 +76,9 @@ def main():
                 acknowledged.add(basename)
                 print(f"ack {basename}: not in frozen cohort", flush=True)
                 continue
-            raw_path = item["recording"]
+            raw_path = item.get("recording", item.get("raw"))
+            if not raw_path:
+                raise ValueError(f"ready marker lacks recording/raw: {basename}")
             for job in jobs:
                 existing = state["results"].get(job["job_id"], {})
                 if "aligned_control_offsets" not in existing:
