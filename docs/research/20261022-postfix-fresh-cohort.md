@@ -53,13 +53,41 @@ The read-only live observation recorded config and loaded revision
 563 MHz, 2.4 MS/s, fixed gain index 2, and channel gains
 19.7/25.4/20.7/25.4/22.9 dB.  No RF or service setting was changed.
 
-Raw replay is not claimed complete.  The only raw-recording transport is SSH,
-and this task's Tailscale SSH session requires interactive browser
-reauthorization.  Consequently the existing baseline/spatial/HDR replay matrix
-was not run and no peak offset or per-channel echo margin is fabricated here.
-The exact admitted recording paths and per-CPI trajectories are durable in
-`results/20261022-postfix-fresh-cohort.json`; replay must begin with r27 or r56
-as the positive calibration gate before evaluating either miss.
+Tailscale SSH was subsequently reauthorized.  All four files were streamed to
+the CASS compute host, and their byte counts and SHA-256 identities matched the
+recorder sidecars.  The existing frozen replay families were run against the
+exact trajectories.  The compact, auditable matrix (including source-output
+hashes, unthresholded ranks and margins) is
+`results/20261022-postfix-fresh-replay-matrix.json`.
+
+| clip | role | best loaded reciprocal | best noisy GLRT | HDR | best spatial | calibrated spatial stack |
+|---|---|---:|---:|---:|---:|---:|
+| r27 / N445ME | positive | -2.689 dB | -2.073 dB | -1.732 dB | -2.219 dB | -23.330 dB-eq |
+| r56 / N520ME | positive | +2.663 dB | -1.256 dB | -1.529 dB | +2.369 dB | **+12.166 dB-eq** |
+| r63 / N448CH | miss | -1.664 dB | -3.201 dB | -1.870 dB | -3.749 dB | -27.975 dB-eq |
+| r69 / N307ME | miss | -2.471 dB | -0.261 dB | -1.456 dB | -1.786 dB | -15.654 dB-eq |
+
+Margins are against each family's charged control p99; the stack margin is a
+dB-equivalent empirical family-wise margin.  The r56 three-method spatial
+stack opened the positive-control gate at +12.166 dB-equivalent.  Only then
+were the two miss clips scored.  Neither miss is recovered by an individual
+method or stack.  The r56 loaded-reciprocal target is +3.358 dB over the
+single-loading p99 but +2.663 dB after the three-loading trial correction, so
+it is not independently labeled +3 dB.
+
+The strongest global noisy-GLRT/HDR peaks do not land in the predicted cell:
+r27 is at (-13 delay, +79 Doppler) bins, r56 at (-8, +35), r63 at (-368, +4),
+and r69's two families disagree at (-6, -235) and (-374, -107).  Sparse
+delay-Doppler ranks are 246/324 (r27), 80/232 (r56), and 172/594 (r63); these
+are not recoveries.  r69 cannot fit the method's full symmetric +/-4-delay-bin
+corridor because its predicted delay is at the configured maximum-delay
+boundary; no easier one-sided search was substituted.
+
+The HDR output retains held-out-channel clipping and likelihood diagnostics,
+but it does not define a separately calibrated per-channel echo margin.  Its
+fixed five-channel/four-subband consensus margins above are the qualified
+channel-integrity result; no post-hoc best-channel selection was performed.
+All replay was offline.  Live RF and services were not changed.
 
 The builder is deterministic and rejects stale provenance, missing event
 times, dual-source disagreement, unbracketed CPI truth, non-final events, and
