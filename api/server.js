@@ -61,7 +61,11 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
+// The native recorder copies roughly 96 MB for each four-second five-channel
+// clip.  Space physical claims so a burst of simultaneously eligible aircraft
+// coalesces instead of saturating the one-copy raw ring.
+const captureTriggerQueue = createCaptureTriggerQueue({...captureTriggerOptions(process.env, config),
+  minimumExposureIntervalMs: 5000});
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 // A failed native request can reset the bounded raw ring.  Give it materially
 // more than the configured two-second pre-roll before issuing the one retry.

@@ -66,6 +66,19 @@ assert.deepEqual({requestedEventTime: claimedFresh.requestedEventTime,
   'A queued clip is re-centered exactly when the native recorder claims it');
 assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 109000,
   'Fresh physical bounds propagate to admission provenance');
+let spacedClock = 100000;
+const spaced = new CaptureTriggerQueue({preSeconds: 2, postSeconds: 2,
+  minimumExposureIntervalMs: 5000, now: () => spacedClock});
+spaced.acceptEligibilityEvent(event(72, 100000), 100000);
+assert.equal(spaced.request(true).clipRevision, 1);
+spaced.acknowledge(1, null, {file: '/clips/one.mchq', samples: 1});
+spaced.acceptEligibilityEvent(event(73, 101000), 101000);
+spacedClock = 104999;
+assert.equal(spaced.request(true).clipRevision, 0,
+  'The native recorder is not exposed to a second copy before the ring drains');
+spacedClock = 105000;
+assert.equal(spaced.request(true).clipRevision, 2,
+  'The queued clip is exposed and freshly centered after the bounded interval');
 let accepted = queue.acceptEligibilityEvent(event(1, 100000));
 assert.equal(accepted.accepted, true);
 assert.equal(accepted.clip.clipRevision, 1);

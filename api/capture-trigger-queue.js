@@ -61,7 +61,7 @@ class CaptureTriggerQueue {
   constructor({enabled = true, preSeconds = DEFAULT_PRE_SECONDS, postSeconds = DEFAULT_POST_SECONDS,
     maxClipSeconds = MAX_CLIP_SECONDS, maxClips = MAX_CLIPS,
     maxEventIds = MAX_EVENT_IDS, periodicIntervalSeconds = 0,
-    periodicMaxSnapshots = 0, now = Date.now} = {}) {
+    periodicMaxSnapshots = 0, minimumExposureIntervalMs = 0, now = Date.now} = {}) {
     if (!finite(preSeconds) || preSeconds < 0 || !finite(postSeconds) || postSeconds < 0)
       throw new Error('Capture trigger pre/post seconds must be non-negative.');
     if (!finite(maxClipSeconds) || maxClipSeconds <= 0 ||
@@ -70,6 +70,8 @@ class CaptureTriggerQueue {
     if (!Number.isInteger(maxClips) || maxClips < 1 ||
         !Number.isInteger(maxEventIds) || maxEventIds < 1)
       throw new Error('Capture trigger bounds must be positive integers.');
+    if (!finite(minimumExposureIntervalMs) || minimumExposureIntervalMs < 0)
+      throw new Error('Capture trigger exposure interval must be non-negative.');
     if (!finite(periodicIntervalSeconds) || periodicIntervalSeconds < 0 ||
         (periodicIntervalSeconds && periodicIntervalSeconds < MIN_PERIODIC_INTERVAL_SECONDS) ||
         !Number.isInteger(periodicMaxSnapshots) || periodicMaxSnapshots < 0 ||
@@ -80,6 +82,8 @@ class CaptureTriggerQueue {
     this.preSeconds = preSeconds; this.postSeconds = postSeconds;
     this.maxClipSeconds = maxClipSeconds;
     this.maxClips = maxClips; this.maxEventIds = maxEventIds; this.now = now;
+    this.minimumExposureIntervalMs = minimumExposureIntervalMs;
+    this.nextExposureAt = 0;
     this.periodicIntervalMs = periodicIntervalSeconds * 1000;
     this.periodicMaxSnapshots = periodicMaxSnapshots;
     this.revision = 0; this.clips = []; this.events = new Map();
@@ -358,6 +362,11 @@ class CaptureTriggerQueue {
 
   request(expose = false) {
     const clip = this.current();
+    if (expose && clip?.pending && !clip.exposed && this.now() < this.nextExposureAt)
+      return {clipRevision: 0, eventIds: [], passIds: [],
+        requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
+        windowStart: null, windowEnd: null, pending: false, acknowledged: false,
+        failure: null, file: '', samples: 0};
     if (expose && clip?.pending && !clip.exposed) {
       // Pending clips can wait behind an in-flight four-second recording.  A
       // window fixed when eligibility settled may therefore be older than the
@@ -369,6 +378,7 @@ class CaptureTriggerQueue {
       clip.windowEnd = clip.requestedEventTime + clip.postSeconds * 1000;
       clip.exposed = true;
       this.linkRevision(clip);
+      this.nextExposureAt = clip.requestedEventTime + this.minimumExposureIntervalMs;
     }
     return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],
       requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
