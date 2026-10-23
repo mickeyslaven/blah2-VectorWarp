@@ -46,6 +46,21 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(Object.keys(convertedData), [], 'One position is motion warmup, not a Doppler result');
   assert.equal(status.online, true);
   assert.equal(status.delayDoppler.warming, 1, 'Duplicate first-position polls remain in motion warmup');
+
+  let exactReads = 0;
+  const exactProjection = createAdsbSource(config, {now: () => 100000,
+    fetchJson: async () => {
+      exactReads += 1;
+      return {now: 100, aircraft: [{hex: 'fed123', flight: 'EXACT', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 360, track: 90, seen_pos: 0}]};
+    }});
+  const [atFirstCpi, atSecondCpi] = await Promise.all([
+    exactProjection.getAt('aircraft', 100000), exactProjection.getAt('aircraft', 100500)]);
+  assert.equal(exactReads, 1, 'Distinct CPI projections must share raw ADS-B I/O');
+  assert.equal(atFirstCpi.now, 100);
+  assert.equal(atSecondCpi.now, 100.5);
+  assert.notEqual(atFirstCpi.aircraft[0].lon, atSecondCpi.aircraft[0].lon,
+    'Each CPI must receive its own event-time projection, not a cached fused position');
   clock += 1001;
   aircraft = {now: clock / 1000, aircraft: [{hex: 'abc123', flight: 'TEST', lat: 1.1, lon: 2.1, alt_geom: 1100, seen_pos: 0}]};
   const derived = await source.get('delayDoppler');

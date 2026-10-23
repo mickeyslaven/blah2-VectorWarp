@@ -194,24 +194,41 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       throw error;
     }
   }
-  async function rawAircraft(targetAtMs = now()) {
+  async function rawSnapshots() {
     const previous = cache.get('raw');
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
-    const entry = {at: now(), pending: true, targetAtMs};
+    const entry = {at: now(), pending: true};
     entry.promise = Promise.allSettled(slots.map(readSource)).then(results => {
       const healthy = results.filter(result => result.status === 'fulfilled')
         .map(result => result.value);
       if (!healthy.length) throw new Error(`All ADS-B sources failed: ${results.map((result, index) =>
         `${slots[index].configured}: ${result.reason?.message || 'unavailable'}`).join('; ')}`);
-      const fusedAt = targetAtMs;
-      const data = fuseAircraftData(healthy, {nowMs: fusedAt,
-        maxPositionAgeSeconds: geometry.maxAge});
-      fusionState = {...data.vectorwarp_fusion, fused_at: fusedAt,
-        healthy_sources: healthy.length, failed_sources: slots.length - healthy.length};
-      return data;
+      return {healthy, failed: slots.length - healthy.length};
     })
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
+  }
+  async function rawAircraft(targetAtMs = now()) {
+    const {healthy, failed} = await rawSnapshots();
+    const data = fuseAircraftData(healthy, {nowMs: targetAtMs,
+      maxPositionAgeSeconds: geometry.maxAge});
+    fusionState = {...data.vectorwarp_fusion, fused_at: targetAtMs,
+      healthy_sources: healthy.length, failed_sources: failed};
+    return data;
+  }
+  async function getAt(kind, targetAtMs) {
+    if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
+    if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
+    if (!Number.isFinite(targetAtMs)) throw new Error('ADS-B target time is invalid');
+    // Capture the raw observations immediately, then wait before publishing the
+    // event-time projection. Distinct CPI targets share I/O, never fused output.
+    const raw = rawAircraft(targetAtMs);
+    const ready = associationLagMs ? new Promise(resolve =>
+      setTimeout(resolve, associationLagMs)) : Promise.resolve();
+    const [data] = await Promise.all([raw, ready]);
+    if (kind === 'aircraft') return data;
+    const result = geometry.update(data); warmup = result.warming; return result.data;
   }
   async function get(kind) {
     if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
@@ -255,7 +272,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       delayDoppler: {...feeds[1], warming: warmup.length,
         message: feeds[1].available && warmup.length ? 'Feed online; waiting for motion updates.' : feeds[1].message}};
   }
-  return {get, status, clear: () => {
+  return {get, getAt, status, clear: () => {
     cache.clear(); geometry.clear(); fusionState = null;
     for (const slot of slots) slot.discoveryEntry = undefined;
   }};

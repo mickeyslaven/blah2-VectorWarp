@@ -279,8 +279,12 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
       clutter: {delayMax: 200}, detection: {minDelay: 5},
       bearing: {manifold_recorder: {max_truth_age_s: 3}}}};
   const triggerQueue = new CaptureTriggerQueue({maxClips: 1});
+  const exactProvenance = {observation_time_offset_s: .1,
+    projection_model: 'constant_velocity_ground_track',
+    maximum_pairwise_projected_disagreement_km: .1};
   let aircraft = {abc123: {delay: 10, doppler: 100,
-    timestamp: clock / 1000, flight: 'SILENT', geometry: {bearing_deg_true: 42}}};
+    timestamp: clock / 1000, flight: 'SILENT', provenance: exactProvenance,
+    geometry: {bearing_deg_true: 42}}};
   const source = {async get() { return aircraft; }};
   const statistics = new EvidenceStatistics(config, source, {
     filename: path.join(directory, 'statistics.json'), now: () => clock,
@@ -302,12 +306,13 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   clock += 4000;
   aircraft.abc123.timestamp = clock / 1000;
   statistics.acceptTracker({timestamp: clock,
-    data: [{delay: 10 / (299792.458 / 2400000), doppler: 100}]});
+    data: [{id: 'stable-track', state: 'ACTIVE', n: 3,
+      delay: 10 / (299792.458 / 2400000), doppler: 100}]});
   statistics.acceptDetection({timestamp: clock, delay: [10], doppler: [100]});
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   clock += 16000;
   aircraft = {def456: {delay: 11, doppler: 110, timestamp: clock / 1000,
-    flight: 'DROPPED', geometry: {bearing_deg_true: 84}}};
+    flight: 'DROPPED', provenance: exactProvenance, geometry: {bearing_deg_true: 84}}};
   sampler();
   while (statistics.running) await new Promise(resolve => setImmediate(resolve));
   const droppedEvent = statistics.status().eligibility_events.at(-1);
@@ -340,7 +345,8 @@ assert.equal(pressuredPeriodic.status().recentEvents[0].captureWindows.filter(it
   const periodicQueue = new CaptureTriggerQueue({periodicIntervalSeconds: 10,
     periodicMaxSnapshots: 2, now: () => periodicClock});
   let periodicAircraft = {abc123: {delay: 10, doppler: 100,
-    timestamp: periodicClock / 1000, flight: 'PERIODIC', geometry: {bearing_deg_true: 42}}};
+    timestamp: periodicClock / 1000, flight: 'PERIODIC', provenance: exactProvenance,
+    geometry: {bearing_deg_true: 42}}};
   const periodicStats = new EvidenceStatistics(config, {async get() { return periodicAircraft; }}, {
     filename: path.join(periodicDirectory, 'statistics.json'), now: () => periodicClock,
     setIntervalFn(callback) { periodicSampler = callback; return {unref() {}}; }, clearIntervalFn() {},

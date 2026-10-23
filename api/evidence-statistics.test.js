@@ -22,7 +22,9 @@ const prediction = {delay: 10, doppler: 100, timestamp: clock / 1000, flight: 'T
     altitude_baro_ft: 11800, ground_speed_kt: 300, track_deg_true: 90,
     geom_rate_fpm: 500, baro_rate_fpm: 450, category: 'A3', squawk: '1234',
     rssi_dbfs: -18, seen_s: .2, seen_pos_s: .1},
-  provenance: {source_id: 'local-readsb', position_age_s: .1, quality_score: .9,
+  provenance: {source_id: 'local-readsb', position_age_s: 0,
+    observation_time_offset_s: .1, projection_model: 'constant_velocity_ground_track',
+    maximum_pairwise_projected_disagreement_km: .1, quality_score: .9,
     agreeing_sources: ['local-readsb'], rejected_sources: [], disagreement: false},
   geometry: {bearing_deg_true: 91, elevation_deg: 12, ground_range_km: 9,
     slant_range_km: 10, transmitter_range_km: 20}};
@@ -225,6 +227,54 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.deepEqual(timingAdmissions['timing-clip'].cpis.map(item => item.timestamp_ms),
     [250, 750, 1250]);
   timingStats.close();
+
+  // Synthetic delayed truth: all CPI identities must survive concurrent four-CPI
+  // association waits. Resolve them out of order to catch accidental latest-frame joins.
+  const exactFilename = path.join(directory, 'exact-delayed-cpi.json');
+  const delayed = new Map();
+  let exactNow = 2_100_000_000_000;
+  const exactSource = {getAt(_kind, targetAt) {
+    return new Promise(resolve => delayed.set(targetAt, resolve));
+  }};
+  const exact = new EvidenceStatistics(config, exactSource, {filename: exactFilename,
+    now: () => exactNow,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const exactTimes = Array.from({length: 4}, (_, index) => 2_100_000_000_000 + index * 500);
+  for (const [index, timestamp] of exactTimes.entries()) {
+    exact.acceptTracker({timestamp, data: [{id: 'exact-track', state: 'ACTIVE',
+      n: index ? 4 : 2, delay: 10 / limits(config).kmPerBin, doppler: 100}]});
+    exact.acceptDetection({timestamp, delay: [10], doppler: [100], snr: [7]});
+    exact.acceptTiming({timestamp: timestamp + 2, captureSamplePositionAvailable: true,
+      captureEpoch: 12, captureFirstEpochSample: index * 1200000,
+      captureEndEpochSample: (index + 1) * 1200000, captureDroppedSamples: [0, 0, 0, 0, 0]});
+  }
+  assert.equal(exact.running, 4, 'The association wait must retain every CPI, not only the newest');
+  for (const timestamp of [...exactTimes].reverse()) delayed.get(timestamp + 2)({abc123: {
+    ...prediction, timestamp: (timestamp + 2) / 1000,
+    provenance: {...prediction.provenance, observation_time_offset_s: .2}}});
+  while (exact.running) await new Promise(resolve => setImmediate(resolve));
+  const exactPass = exact.state.active.abc123;
+  assert.equal(exactPass.eligibleFrames, 4);
+  assert.equal(exactPass.detectedFrames, 4);
+  assert.equal(exactPass.trackedFrames, 3,
+    'Tentative/under-supported tracker cells must not receive stable-track credit');
+  assert.deepEqual(exactPass.cpiAudit.map(item => item.timestamp_ms),
+    exactTimes.map(timestamp => timestamp + 2));
+  assert.deepEqual(exactPass.cpiAudit.map(item => item.timing.epoch), [12, 12, 12, 12]);
+  assert.equal(exact.liveStatus().data_quality.missing_timing_cpis, 0);
+
+  const invalidAt = exactTimes.at(-1) + 500;
+  exact.acceptDetection({timestamp: invalidAt, delay: [10], doppler: [100]});
+  exact.acceptTiming({timestamp: invalidAt + 2, captureSamplePositionAvailable: true,
+    captureEpoch: 12, captureFirstEpochSample: 4800000,
+    captureEndEpochSample: 6000000, captureDroppedSamples: [0, 0, 0, 0, 0]});
+  delayed.get(invalidAt + 2)({abc123: {...prediction, timestamp: (invalidAt + 2) / 1000,
+    provenance: {...prediction.provenance, projection_model: 'nearest_hold'}}});
+  while (exact.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(exactPass.eligibleFrames, 4,
+    'Held/fallback truth must be audited but never scored as a radar miss');
+  assert.equal(exactPass.cpiAudit.at(-1).truth_reason, 'invalid-projection');
+  exact.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

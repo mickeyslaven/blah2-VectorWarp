@@ -29,6 +29,7 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
+const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
@@ -69,6 +70,8 @@ const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
   {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
     onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
+const oprsEventRecorder = createOprsEventRecorder(config,
+  {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -439,6 +442,9 @@ app.get('/api/statistics', (req, res) => {
     manifold_file: config.process?.bearing?.manifold_file || null,
     diagnostic, recorder, automation,
     frequency_resolved: frequencyResolvedShadow.status()}));
+});
+app.get('/api/live-scorecard', (req, res) => {
+  res.json(evidenceStatistics.liveStatus());
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -1175,13 +1181,16 @@ const server_detection = jsonStreamServer('detection', frame => {
   trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
   evidenceStatistics.acceptDetection(frame);
+  oprsEventRecorder.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
-  evidenceStatistics.acceptTracker(trackerPublication.frame());
+  const published = trackerPublication.frame();
+  evidenceStatistics.acceptTracker(published);
+  oprsEventRecorder.acceptTracker(published);
 });
 listenData(server_tracker, 'track');
 
@@ -1239,6 +1248,7 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionEligible(connection)) return;
     activeTimingConnection = connection.id;
     timing = frame;
+    oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
@@ -1275,6 +1285,7 @@ process.on('SIGTERM', () => {
   trackerForwarder.close();
   trackerPublication.close();
   evidenceStatistics.close();
+  oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();
   process.exit(0);
