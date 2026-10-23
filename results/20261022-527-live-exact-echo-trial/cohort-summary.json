@@ -1,0 +1,267 @@
+{
+  "schema": "vectorwarp-527-live-exact-echo-cohort-v1",
+  "config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd",
+  "passes": 5,
+  "rows": [
+    {
+      "recording": "kraken-clip-r41-1792724418089818898-18",
+      "pass_id": "5efcb4ebc33b5aad3378d174bb32dee2e5eca86e63e5359152cfa6b4a764f1d0",
+      "overlapping_frames": 6,
+      "truth_inside_cutout_frames": 6,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -2.075479205268328,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.6325483589365266
+        },
+        {
+          "channel": 1,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.4710233245371906
+        },
+        {
+          "channel": 2,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.9453694220059763
+        },
+        {
+          "channel": 3,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -0.4893106895871282
+        },
+        {
+          "channel": 4,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.341099954794445
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r43-1792724500589597422-19",
+      "pass_id": "87fd9ec630b167cc2b825c7b231c419a057053384dc65e75f60c7e5b45792492",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 1,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 1,
+      "sum_best_margin_p99_db": 0.35327896624064525,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.6143513265766267
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 1.311902441415549
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -0.9787009165239148
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 2.1198228285488545
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.0001913970560989462
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r48-1792724586087656953-22",
+      "pass_id": "8c0f7db7966fecd0c259a5b499a788fea7baa935b635f25ec69b125cf2c15270",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 1,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 1,
+      "sum_best_margin_p99_db": 1.773097985576047,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.3401284210760911
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.577733568765483
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.0204242581254985
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 1.9213752420886583
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.6865751359425945
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r49-1792724628726656041-23",
+      "pass_id": "8b9f562cc18f4f5c1183d468f560864d885212ba25b6169b0e21a67c148a47ac",
+      "overlapping_frames": 6,
+      "truth_inside_cutout_frames": 6,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -0.46808554383600787,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.7675733221391616
+        },
+        {
+          "channel": 1,
+          "frames": 6,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.7987715097547237
+        },
+        {
+          "channel": 2,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -4.389018869902792
+        },
+        {
+          "channel": 3,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -4.461211380979088
+        },
+        {
+          "channel": 4,
+          "frames": 6,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.3367714837867664
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r51-1792724723380803944-24",
+      "pass_id": "2ab58d888f8ca4f3623f27e5247e186ccb71e4dede067ea38bf65728f78f0ed9",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -0.8613372983035892,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.790380829323671
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.8743274851032883
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.14764125667106
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -0.3090605851596977
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.0877926584454192
+        }
+      ]
+    }
+  ]
+}
