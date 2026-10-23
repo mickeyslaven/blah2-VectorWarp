@@ -25,8 +25,10 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
+            node_arch: arm64
           - runner: macos-15-intel
             arch: x86_64
+            node_arch: x64
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
@@ -48,12 +50,12 @@ jobs:
         run: |
           set -euo pipefail
           source packaging/node-runtime.env
-          case "${{ matrix.arch }}" in
+          case "${{ matrix.node_arch }}" in
             arm64) node_sha="$NODE_DARWIN_ARM64_SHA256" ;;
-            x86_64) node_sha="$NODE_DARWIN_X64_SHA256" ;;
+            x64) node_sha="$NODE_DARWIN_X64_SHA256" ;;
             *) exit 2 ;;
           esac
-          archive="node-v${NODE_VERSION}-darwin-${{ matrix.arch }}.tar.gz"
+          archive="node-v${NODE_VERSION}-darwin-${{ matrix.node_arch }}.tar.gz"
           curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/$archive" --output "$RUNNER_TEMP/$archive"
           printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/$archive" | shasum -a 256 --check
           tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/$archive"
