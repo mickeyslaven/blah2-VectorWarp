@@ -37,9 +37,26 @@ class OprsEventRecorder {
       {encoding: 'utf8', mode: 0o600});
   }
 
+  exactEventTime(frame, stream) {
+    const value = frame?.eventTime;
+    // Backward compatibility for inactive receivers: only an explicit
+    // provenance claim is adjudicated here. Kraken now always supplies one.
+    if (value === undefined) return true;
+    if (value && value.exact === true && value.uncertaintyBounded === true &&
+        value.uncertaintyNs === 0) return true;
+    const source = typeof value?.source === 'string' ? value.source.slice(0, 128) : 'invalid';
+    const reason = typeof value?.reason === 'string' ? value.reason.slice(0, 240) :
+      'Event-time provenance is missing or not exact';
+    this.append({kind: 'event_time_rejection', run_id: this.runId, stream,
+      reported_time_ms: finite(frame?.timestamp) ? Math.trunc(frame.timestamp) : null,
+      source, reason});
+    return false;
+  }
+
   acceptDetection(frame) {
     if (!this.enabled || !finite(frame?.timestamp) || !Array.isArray(frame.delay) ||
         !Array.isArray(frame.doppler)) return;
+    if (!this.exactEventTime(frame, 'detection')) return;
     const timestamp = Math.trunc(frame.timestamp);
     const count = Math.min(frame.delay.length, frame.doppler.length);
     this.append({kind: 'detection_frame', run_id: this.runId, event_time_ms: timestamp,
@@ -54,6 +71,7 @@ class OprsEventRecorder {
 
   acceptTracker(frame) {
     if (!this.enabled || !finite(frame?.timestamp) || !Array.isArray(frame.data)) return;
+    if (!this.exactEventTime(frame, 'tracker')) return;
     const timestamp = Math.trunc(frame.timestamp);
     this.append({kind: 'tracker_frame', run_id: this.runId, event_time_ms: timestamp,
       output_count: frame.data.length});
@@ -88,6 +106,7 @@ class OprsEventRecorder {
 
   acceptTiming(frame) {
     if (!this.enabled || !finite(frame?.timestamp)) return;
+    if (!this.exactEventTime(frame, 'timing')) return;
     const fields = {};
     for (const [name, value] of Object.entries(frame))
       if (name !== 'timestamp' && finite(value)) fields[name] = value;

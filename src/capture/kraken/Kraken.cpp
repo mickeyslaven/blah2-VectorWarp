@@ -51,7 +51,8 @@ Kraken::SamplePosition Kraken::sample_position() const
 {
   return {samplePositionAvailable.load(std::memory_order_acquire),
     sampleEpoch.load(std::memory_order_relaxed),
-    nextEpochSample.load(std::memory_order_relaxed)};
+    nextEpochSample.load(std::memory_order_relaxed),
+    sampleEpochEstimateNanoseconds.load(std::memory_order_relaxed)};
 }
 
 void Kraken::start()
@@ -169,6 +170,8 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     {
       sampleEpoch.store(position.epoch, std::memory_order_relaxed);
       nextEpochSample.store(position.nextSample, std::memory_order_relaxed);
+      sampleEpochEstimateNanoseconds.store(position.epochEstimateNanoseconds,
+        std::memory_order_relaxed);
       samplePositionAvailable.store(true, std::memory_order_release);
     }
     else samplePositionAvailable.store(false, std::memory_order_release);

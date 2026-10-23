@@ -52,6 +52,7 @@ public:
     bool available = false;
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
+    int64_t epochEstimateNanoseconds = 0;
   };
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
@@ -109,6 +110,12 @@ public:
   // module supports it. Older modules retain the normal FIFO contract.
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
   SamplePosition live_sample_position() const;
+  bool requires_kraken_time_provenance() const {
+    // Replay retains the configured receiver identity, but the recording
+    // format has no stored RF-time epoch. Mark it inexact too instead of
+    // letting wall-clock playback time masquerade as sample time.
+    return type == "Kraken";
+  }
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

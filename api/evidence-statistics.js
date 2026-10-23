@@ -324,6 +324,14 @@ function timingAt(history, timestamp) {
   return distance <= 100 ? nearest : null;
 }
 
+function exactEventTime(frame) {
+  const value = frame?.eventTime;
+  // Receivers not yet migrated retain their prior behavior. An explicit
+  // provenance object must prove zero uncertainty or exact scoring is refused.
+  return value === undefined || Boolean(value && value.exact === true &&
+    value.uncertaintyBounded === true && value.uncertaintyNs === 0);
+}
+
 function updateTruth(pass, prediction, timestamp) {
   const snapshot = truthSnapshot(prediction, timestamp);
   if (!Array.isArray(pass.truthHistory)) pass.truthHistory = [];
@@ -421,6 +429,8 @@ class EvidenceStatistics {
     this.latest = {detection: null, tracker: null, bearing: null};
     this.detectionHistory = new Map(); this.trackerHistory = new Map();
     this.lastTimingObservedAt = null;
+    this.eventTimeRejections = 0;
+    this.lastEventTimeRejection = null;
     this.recentTiming = [];
     this.lastDetectionFrameTimestamp = null; this.lastTrackerFrameTimestamp = null;
     this.running = 0; this.pendingBuckets = new Set(); this.completedBuckets = new Set();
@@ -499,6 +509,17 @@ class EvidenceStatistics {
 
   acceptTiming(frame) {
     const value = parse(frame);
+    if (value?.eventTime !== undefined && !exactEventTime(value)) {
+      this.eventTimeRejections += 1;
+      this.lastEventTimeRejection = {
+        timestamp_ms: finite(value?.timestamp) ? value.timestamp : null,
+        source: typeof value?.eventTime?.source === 'string' ?
+          value.eventTime.source.slice(0, 128) : 'invalid',
+        reason: typeof value?.eventTime?.reason === 'string' ?
+          value.eventTime.reason.slice(0, 240) :
+          'Event-time provenance is missing or not exact'};
+      return;
+    }
     if (!finite(value?.timestamp) || value.captureSamplePositionAvailable !== true ||
         !Number.isSafeInteger(value.captureEpoch) ||
         !Number.isSafeInteger(value.captureFirstEpochSample) ||
@@ -928,6 +949,8 @@ class EvidenceStatistics {
       error: this.state.error, limits: this.limits,
       eligibility_event_count: this.state.eligibilityEvents.length,
       capture_admission: this.state.captureAdmission,
+      event_time: {rejections: this.eventTimeRejections,
+        last_rejection: this.lastEventTimeRejection},
       eligibility_events: this.state.eligibilityEvents.slice(-250),
       windows: Object.fromEntries(Object.entries(WINDOWS).map(([name, duration]) =>
         [name, this.summarize(duration, timestamp)])),
@@ -989,7 +1012,10 @@ class EvidenceStatistics {
         exact_timed_aircraft_cpis: exactTiming,
         unique_cpi_frames: joinFrames.size,
         exact_timed_cpi_frames: [...joinFrames.values()].filter(item => item.exact_timing).length,
-        pending_delayed_cpis: this.running, nuisance_accounting: 'not-qualified',
+        pending_delayed_cpis: this.running,
+        event_time_rejections: this.eventTimeRejections,
+        last_event_time_rejection: this.lastEventTimeRejection,
+        nuisance_accounting: 'not-qualified',
         recent_cpi_joins: [...joinFrames.values()].sort((left, right) =>
           left.timestamp_ms - right.timestamp_ms).slice(-20)},
       active_passes: active, recent_finalized_passes: finalized};

@@ -228,6 +228,23 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     [250, 750, 1250]);
   timingStats.close();
 
+  let uncertainTruthCalls = 0;
+  const uncertainStats = new EvidenceStatistics(config, {getAt() {
+    uncertainTruthCalls += 1; return Promise.resolve({});
+  }}, {filename: path.join(directory, 'uncertain-event-time.json'),
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  uncertainStats.acceptTiming({timestamp: 1500, captureSamplePositionAvailable: true,
+    captureEpoch: 1, captureFirstEpochSample: 0, captureEndEpochSample: 1200000,
+    eventTime: {source: 'kraken_heimdall_host_arrival_estimate', exact: false,
+      uncertaintyBounded: false, uncertaintyNs: null,
+      reason: 'Heimdall V2 has no device timestamp'}});
+  assert.equal(uncertainTruthCalls, 0,
+    'inexact Kraken host-arrival time must not request exact ADS-B truth');
+  assert.equal(uncertainStats.liveStatus().data_quality.event_time_rejections, 1);
+  assert.equal(uncertainStats.liveStatus().data_quality.last_event_time_rejection.source,
+    'kraken_heimdall_host_arrival_estimate');
+  uncertainStats.close();
+
   // Synthetic delayed truth: all CPI identities must survive concurrent four-CPI
   // association waits. Resolve them out of order to catch accidental latest-frame joins.
   const exactFilename = path.join(directory, 'exact-delayed-cpi.json');

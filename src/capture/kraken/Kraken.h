@@ -29,6 +29,7 @@ private:
   std::atomic<bool> samplePositionAvailable{false};
   std::atomic<uint64_t> sampleEpoch{0};
   std::atomic<uint64_t> nextEpochSample{0};
+  std::atomic<int64_t> sampleEpochEstimateNanoseconds{0};
 
   void process_heimdall(const std::vector<IqData *>& buffers);
   void stream_heimdall(const std::vector<IqData *>& buffers);
@@ -43,6 +44,7 @@ public:
     bool available = false;
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
+    int64_t epochEstimateNanoseconds = 0;
   };
   Kraken(std::string type, uint32_t fc, uint32_t fs, std::string path,
     bool *saveIq, std::size_t channelCount, std::string heimdallHost,

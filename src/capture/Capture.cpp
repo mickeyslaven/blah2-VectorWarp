@@ -32,7 +32,8 @@ Capture::SamplePosition Capture::live_sample_position() const
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
   if (!kraken) return {};
   const auto value = kraken->sample_position();
-  return {value.available, value.epoch, value.nextSample};
+  return {value.available, value.epoch, value.nextSample,
+    value.epochEstimateNanoseconds};
 }
 
 void Capture::process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 

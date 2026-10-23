@@ -8,6 +8,7 @@
 #include "data/Map.h"
 #include "data/Detection.h"
 #include "data/meta/Timing.h"
+#include "data/meta/EventTime.h"
 #include "data/Track.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
@@ -1138,6 +1139,7 @@ try
         bool captureSamplePositionAvailable = false;
         uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
           captureEndEpochSample = 0;
+        int64_t captureEpochEstimateNanoseconds = 0;
 #ifdef VECTORWARP_MIXED_AUTO
         blah2::mixed::Choice mixedChoice = blah2::mixed::Choice::cpu;
         bool mixedChoiceMade = false, mixedInputPrepared = false;
@@ -1218,6 +1220,8 @@ try
                 captureBacklogSamples.front() >= nSamples) {
               captureSamplePositionAvailable = true;
               captureEpoch = position.epoch;
+              captureEpochEstimateNanoseconds =
+                position.epochEstimateNanoseconds;
               captureFirstEpochSample = position.nextSample -
                 captureBacklogSamples.front();
               captureEndEpochSample = captureFirstEpochSample + nSamples;
@@ -1233,6 +1237,18 @@ try
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
           time.push_back(captureStartUs ? captureStartUs : current_time_us());
+          auto eventTime = capture->requires_kraken_time_provenance() ?
+            blah2::kraken_event_time_unavailable() :
+            blah2::EventTimeProvenance{};
+          if (captureSamplePositionAvailable)
+            eventTime = blah2::kraken_cpi_midpoint_time(
+              captureEpochEstimateNanoseconds, captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
+          const uint64_t frameTimestampMs = blah2::event_time_milliseconds(
+            eventTime, time[0] / 1000);
+          const auto attachEventTime = [&](std::string json) {
+            return blah2::annotate_event_time(std::move(json), eventTime);
+          };
           const uint64_t nextReplayGeneration = capture->replayGeneration.load();
           if (nextReplayGeneration != replayGeneration)
           {
@@ -1260,7 +1276,7 @@ try
           const bool residentOracle=resident&&resident->qualifying();
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
-            const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:time[0]/1000;
+            const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:frameTimestampMs;
             resident->begin(captureData,{++residentLogical,++residentConsumed,signalTime});
           }
           // This block is the unchanged CPU route, or its bounded startup oracle.
@@ -1467,7 +1483,7 @@ try
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
           }
-          complexCutout.append(time[0]/1000, channelMaps,
+          complexCutout.append(frameTimestampMs, channelMaps,
             referenceSynthesizer.get_metrics().weights, cutoutPilot);
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
@@ -1490,7 +1506,7 @@ try
           if (isTracker)
           {
             const uint64_t trackerTime = state ? tStart +
-              (trackerFrame * uint64_t(nSamples) * 1000) / fs : time[0]/1000;
+              (trackerFrame * uint64_t(nSamples) * 1000) / fs : frameTimestampMs;
             track = tracker->process(detection.get(), trackerTime);
             timing_helper(timing_name, timing_time, time, "tracker");
           }
@@ -1513,7 +1529,7 @@ try
               bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,
               bearingDiagonalLoading,std::move(evidenceMapping),{}};
             resident->receivePrepared();
-            residentPublication=resident->format(time[0]/1000,
+            residentPublication=resident->format(frameTimestampMs,
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
                bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
@@ -1525,15 +1541,18 @@ try
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
           else if(manifoldRecorderEnabled)
-            cpuManifoldEvidence=blah2::manifold_evidence::cpu(time[0]/1000,double(fc),double(fs),
+            cpuManifoldEvidence=blah2::manifold_evidence::cpu(frameTimestampMs,double(fc),double(fs),
               *detection,channelMaps,referenceSynthesizer.get_metrics().weights);
 
           // output IqData meta data
-          jsonIqData = resident ? std::move(residentPublication.spectrum) : referenceData->to_json(time[0]/1000);
+          jsonIqData = attachEventTime(resident ?
+            std::move(residentPublication.spectrum) :
+            referenceData->to_json(frameTimestampMs));
           socket_iqdata->sendData(jsonIqData);
 
           // output map data
-          mapJson = resident ? std::move(residentPublication.map) : map->to_json_km(time[0]/1000, fs);
+          mapJson = attachEventTime(resident ? std::move(residentPublication.map) :
+            map->to_json_km(frameTimestampMs, fs));
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
@@ -1543,10 +1562,13 @@ try
           // output detection data
           if (isDetection)
           {
-            detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
+            detectionJson = attachEventTime(resident ?
+              std::move(residentPublication.detections) :
+              detection->to_json_km(frameTimestampMs, fs));
             socket_detection->sendData(detectionJson);
-            if(manifoldRecorderEnabled)socket_manifold->sendData(resident?
-              residentPublication.manifoldEvidence:cpuManifoldEvidence);
+            if(manifoldRecorderEnabled)socket_manifold->sendData(attachEventTime(
+              resident ? std::move(residentPublication.manifoldEvidence) :
+              std::move(cpuManifoldEvidence)));
           }
           if (saveDetection && isDetection)
           {
@@ -1556,9 +1578,12 @@ try
           // output tracker data
           if (isTracker)
           {
-            jsonTracker = resident ? std::move(residentPublication.tracks) : track->to_json(time[0]/1000);
+            jsonTracker = attachEventTime(resident ?
+              std::move(residentPublication.tracks) :
+              track->to_json(frameTimestampMs));
             socket_track->sendData(jsonTracker);
-            if(bearingEnabled)socket_bearing->sendData(residentPublication.bearing);
+            if(bearingEnabled)socket_bearing->sendData(attachEventTime(
+              std::move(residentPublication.bearing)));
           }
 
           // output radar data timer
@@ -1597,7 +1622,7 @@ try
 #endif
 
           // output timing data
-          timing->update(time[0]/1000, timing_time, timing_name);
+          timing->update(frameTimestampMs, timing_time, timing_name);
           timing->set_capture_queues(captureBacklogSamples,captureDroppedSamples);
           timing->set_capture_sample_position(captureSamplePositionAvailable,
             captureEpoch, captureFirstEpochSample, captureEndEpochSample);
@@ -1629,13 +1654,13 @@ try
             disabled.reason = "Clutter filtering is disabled";
             timing->set_clutter_acceleration(disabled, false, false);
           }
-          jsonTiming = timing->to_json();
+          jsonTiming = attachEventTime(timing->to_json());
           socket_timing->sendData(jsonTiming);
           timing_time.clear();
           timing_name.clear();
 
           // output CPI timestamp for updating data
-          std::string t0_string = std::to_string(time[0]/1000);
+          std::string t0_string = std::to_string(frameTimestampMs);
           socket_timestamp->sendData(t0_string);
           if(resident){
             // sendData is a completed local TCP write, not a browser/application
@@ -1643,7 +1668,7 @@ try
             resident->published();
             const auto residentWholeEnd=std::chrono::steady_clock::now();
             const double wholeMs=std::chrono::duration<double,std::milli>(residentWholeEnd-residentWholeStart).count();
-            std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<time[0]/1000
+            std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<frameTimestampMs
               <<" startup_cpu_oracle="<<residentOracle<<" whole_ms="<<wholeMs
               <<" whole_start_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeStart.time_since_epoch()).count()
               <<" whole_end_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeEnd.time_since_epoch()).count()<<" includes_fifo=1 includes_pack_ipc=1 includes_json=1 includes_all_socket_writes=1 backlog=";

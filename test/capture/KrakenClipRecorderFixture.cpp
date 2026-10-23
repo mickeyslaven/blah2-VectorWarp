@@ -1,6 +1,7 @@
 #include "capture/Recording.h"
 #include "capture/kraken/HeimdallFrame.h"
 #include "capture/kraken/KrakenClipRecorder.h"
+#include "data/meta/EventTime.h"
 
 #include <atomic>
 #include <cassert>
@@ -120,6 +121,44 @@ int main()
     options.ringSeconds = 0.02;
     options.clockNanoseconds = [&] { return clock; };
 
+    // Heimdall has no RF timestamp. Identical samples arriving 100 ms later
+    // retain identical sample positions but necessarily move the host-derived
+    // UTC estimate by 100 ms. The provenance must expose that estimate as
+    // inexact with unbounded uncertainty instead of inventing device precision.
+    {
+      blah2::KrakenClipRecorder first(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, options);
+      ingest(first, frame(0));
+      const auto firstPosition = first.position();
+      assert(firstPosition.available && firstPosition.nextSample == FRAME_SAMPLES &&
+        firstPosition.epochEstimateNanoseconds == 999000000LL);
+      const auto firstTime = blah2::kraken_cpi_midpoint_time(
+        firstPosition.epochEstimateNanoseconds, firstPosition.epoch, 0,
+        FRAME_SAMPLES, SAMPLE_RATE);
+      assert(firstTime.present && firstTime.estimateAvailable &&
+        firstTime.estimateNanoseconds == 999500000LL);
+
+      clock += 100000000LL;
+      blah2::KrakenClipRecorder delayed(directory.string(), CHANNELS,
+        SAMPLE_RATE, FREQUENCY, options);
+      ingest(delayed, frame(0));
+      const auto delayedPosition = delayed.position();
+      const auto delayedTime = blah2::kraken_cpi_midpoint_time(
+        delayedPosition.epochEstimateNanoseconds, delayedPosition.epoch, 0,
+        FRAME_SAMPLES, SAMPLE_RATE);
+      assert(delayedPosition.nextSample == firstPosition.nextSample &&
+        delayedTime.estimateNanoseconds - firstTime.estimateNanoseconds ==
+          100000000LL);
+      const auto annotated = blah2::annotate_event_time(
+        "{\"timestamp\":999}", delayedTime);
+      rapidjson::Document document;
+      document.Parse(annotated.c_str());
+      assert(!document.HasParseError() && document["eventTime"]["exact"] == false &&
+        document["eventTime"]["uncertaintyBounded"] == false &&
+        document["eventTime"]["uncertaintyNs"].IsNull());
+      clock = 1000000000LL;
+    }
+
     // The requested 2 ms pre/3 ms post window is sample exact. The completed
     // MCHQ artifact goes through the production RecordingReader used by replay.
     {
@@ -170,6 +209,12 @@ int main()
         metadata["channelGains"].Size() == CHANNELS);
       assert(metadata["eventIds"][0] == "eligibility:event-1" &&
         metadata["passIds"][0] == "pass-1");
+      assert(metadata["eventTime"].IsObject() &&
+        metadata["eventTime"]["source"] ==
+          "kraken_heimdall_host_arrival_estimate" &&
+        metadata["eventTime"]["exact"] == false &&
+        metadata["eventTime"]["uncertaintyBounded"] == false &&
+        metadata["eventTime"]["uncertaintyNs"].IsNull());
     }
 
     // Millisecond clip bounds normally cut through Heimdall frames. Both end
@@ -334,7 +379,7 @@ int main()
     }
 
     std::filesystem::remove_all(directory);
-    std::cout << "Kraken bounded clips: exact pre/post samples, five-channel replay/order, overlap revision, discontinuity, queue saturation and async disk failure passed.\n";
+    std::cout << "Kraken bounded clips: explicit arrival-time uncertainty, exact pre/post samples, five-channel replay/order, overlap revision, discontinuity, queue saturation and async disk failure passed.\n";
   }
   catch (...)
   {

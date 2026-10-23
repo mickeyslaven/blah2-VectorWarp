@@ -22,6 +22,15 @@ recorder.acceptTracker({timestamp: 3000, data: [
   {id: 'a', state: 'ACTIVE', n: 1, delay: 82, doppler: -76},
 ]});
 recorder.acceptTiming({timestamp: 3000, cpi: 200, capture_backlog_ms: 5});
+const inexactKrakenTime = {source: 'kraken_heimdall_host_arrival_estimate',
+  exact: false, uncertaintyBounded: false, uncertaintyNs: null,
+  reason: 'Heimdall V2 has no device timestamp'};
+recorder.acceptDetection({timestamp: 4000, delay: [12], doppler: [-80],
+  eventTime: inexactKrakenTime});
+recorder.acceptTracker({timestamp: 4000, data: [
+  {id: 'uncertain', state: 'ACTIVE', n: 3, delay: 80, doppler: -80}],
+  eventTime: inexactKrakenTime});
+recorder.acceptTiming({timestamp: 4000, cpi: 200, eventTime: inexactKrakenTime});
 recorder.close();
 
 const rows = fs.readFileSync(filename, 'utf8').trim().split('\n').map(JSON.parse);
@@ -34,6 +43,10 @@ const starts = rows.filter(row => row.kind === 'track_initiation');
 assert.equal(starts.length, 2, 'an association-count reset starts a new lifecycle');
 assert.notEqual(starts[0].track_id, starts[1].track_id);
 assert.equal(rows.find(row => row.kind === 'timing_frame').cpi_duration_ms, null);
+assert.equal(rows.filter(row => row.kind === 'event_time_rejection').length, 3,
+  'explicitly inexact Kraken time must never enter exact OPRS evidence');
+assert(!rows.some(row => row.event_time_ms === 4000),
+  'rejected Kraken time must not be relabelled as an exact event time');
 assert(rows.find(row => row.kind === 'track_measurement').delay_km > 0);
 assert.equal(rows.at(-1).kind, 'run_end');
 assert.deepEqual(rows.map(row => row.sequence), rows.map((_row, index) => index));

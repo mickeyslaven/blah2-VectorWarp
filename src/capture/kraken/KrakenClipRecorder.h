@@ -48,6 +48,7 @@ public:
     bool available = false;
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
+    int64_t epochEstimateNanoseconds = 0;
   };
   struct Options
   {

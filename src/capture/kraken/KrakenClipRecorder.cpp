@@ -1,4 +1,5 @@
 #include "KrakenClipRecorder.h"
+#include "data/meta/EventTime.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -206,6 +207,7 @@ struct KrakenClipRecorder::Active
 {
   IqClipRequest request;
   uint64_t epoch = 0;
+  int64_t epochEstimateNanoseconds = 0;
   uint64_t firstSample = 0;
   uint64_t endSample = 0;
   std::vector<std::shared_ptr<Frame>> frames;
@@ -215,6 +217,7 @@ struct KrakenClipRecorder::Job
 {
   IqClipRequest request;
   uint64_t epoch = 0;
+  int64_t epochEstimateNanoseconds = 0;
   uint64_t firstSample = 0;
   uint64_t endSample = 0;
   uint64_t sequence = 0;
@@ -367,14 +370,15 @@ bool KrakenClipRecorder::ingest(
       active->frames.push_back(frame);
     if (nextSample >= active->endSample) finish_active_locked();
   }
-  if (position) *position = {haveEpoch, epoch, nextSample};
+  if (position) *position = {haveEpoch, epoch, nextSample,
+    haveEpoch ? epochNanoseconds : 0};
   return true;
 }
 
 KrakenClipRecorder::Position KrakenClipRecorder::position() const
 {
   std::lock_guard<std::mutex> lock(mutex);
-  return {haveEpoch, epoch, nextSample};
+  return {haveEpoch, epoch, nextSample, haveEpoch ? epochNanoseconds : 0};
 }
 
 void KrakenClipRecorder::request(const IqClipRequest& value)
@@ -439,6 +443,7 @@ void KrakenClipRecorder::start_request_locked(const IqClipRequest& value)
   auto next = std::make_unique<Active>();
   next->request = value;
   next->epoch = epoch;
+  next->epochEstimateNanoseconds = epochNanoseconds;
   next->firstSample = static_cast<uint64_t>(first);
   next->endSample = static_cast<uint64_t>(end);
   if (retainedEpoch != epoch) retained.clear();
@@ -495,6 +500,7 @@ void KrakenClipRecorder::finish_active_locked()
   Job job;
   job.request = std::move(active->request);
   job.epoch = active->epoch;
+  job.epochEstimateNanoseconds = active->epochEstimateNanoseconds;
   job.firstSample = active->firstSample;
   job.endSample = active->endSample;
   job.frames = std::move(active->frames);
@@ -603,6 +609,10 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
     document.AddMember("epoch", job.epoch, allocator);
     document.AddMember("firstEpochSample", job.firstSample, allocator);
     document.AddMember("endEpochSample", job.endSample, allocator);
+    const auto eventTime = kraken_cpi_midpoint_time(
+      job.epochEstimateNanoseconds, job.epoch, job.firstSample,
+      job.endSample, sampleRate);
+    document.AddMember("eventTime", event_time_json(eventTime, allocator), allocator);
     document.AddMember("frequencyChangeCounter",
       firstHeader.frequencyChangeCounter, allocator);
     document.AddMember("groupIndex", firstHeader.currentGroupIndex, allocator);

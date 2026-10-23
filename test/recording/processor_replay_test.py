@@ -272,7 +272,7 @@ def assert_finite_numbers(value, name="map.data"):
         raise AssertionError(f"{name} is not a finite numeric map value")
 
 
-def assert_processor_outputs(sinks):
+def assert_processor_outputs(sinks, receiver):
     if not all(sinks.bytes[name] for name in ("map", "timestamp", "timing")):
         raise AssertionError("processor did not produce map, timestamp and timing output")
     map_json = first_json(sinks.payloads["map"], "map")
@@ -292,6 +292,28 @@ def assert_processor_outputs(sinks):
     if not all(isinstance(timing_json["clutterAcceleration"].get(field), bool)
                for field in ("gpuExecuted", "cpuExecuted")):
         raise AssertionError("timing output does not distinguish clutter GPU work from CPU validation")
+    if receiver == "Kraken":
+        expected = {
+            "schema": "vectorwarp-event-time-v1",
+            "source": "kraken_heimdall_host_arrival_estimate",
+            "exact": False,
+            "uncertaintyBounded": False,
+            "uncertaintyNs": None,
+            "estimateAvailable": False,
+            "estimateNs": None,
+            "epochEstimateNs": None,
+        }
+        for output_name, payload in (("map", map_json), ("timing", timing_json)):
+            provenance = payload.get("eventTime")
+            if not isinstance(provenance, dict):
+                raise AssertionError(f"Kraken replay {output_name} has no event-time provenance")
+            for key, value in expected.items():
+                if provenance.get(key) != value:
+                    raise AssertionError(
+                        f"Kraken replay {output_name} eventTime.{key} was "
+                        f"{provenance.get(key)!r}, expected {value!r}")
+    elif "eventTime" in map_json or "eventTime" in timing_json:
+        raise AssertionError(f"{receiver} replay unexpectedly received Kraken event-time provenance")
     timestamp = bytes(sinks.payloads["timestamp"]).strip()
     if not timestamp or not timestamp.isdigit():
         raise AssertionError("timestamp output is not numeric")
@@ -365,7 +387,7 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                                      any(item.get("state") == "complete" for item in states))
                 if not progress_observed:
                     raise AssertionError(f"{receiver}/{channels} never reported {required_state}")
-                assert_processor_outputs(sinks)
+                assert_processor_outputs(sinks, receiver)
             return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
                     "sample_rate": sample_rate, "cpi_seconds": cpi, "clutter": clutter,
                     "states": sorted({item.get("state") for item in states}),

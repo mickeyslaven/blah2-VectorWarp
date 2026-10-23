@@ -1,0 +1,121 @@
+#pragma once
+
+#include <cstdint>
+#include <limits>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace blah2
+{
+// Heimdall V2 supplies a coherent sample sequence but no RF/device timestamp.
+// Preserve that useful relative timing while explicitly refusing to describe the
+// host-arrival-derived epoch as exact UTC.
+struct EventTimeProvenance
+{
+  bool present = false;
+  bool estimateAvailable = false;
+  int64_t estimateNanoseconds = 0;
+  int64_t epochEstimateNanoseconds = 0;
+  uint64_t epoch = 0;
+  uint64_t firstSample = 0;
+  uint64_t endSample = 0;
+  uint32_t sampleRate = 0;
+  std::string reason;
+};
+
+inline EventTimeProvenance kraken_event_time_unavailable(
+  std::string reason = "Kraken sample-time epoch is unavailable")
+{
+  EventTimeProvenance value;
+  value.present = true;
+  value.reason = std::move(reason);
+  return value;
+}
+
+inline EventTimeProvenance kraken_cpi_midpoint_time(int64_t epochNanoseconds,
+  uint64_t epoch, uint64_t firstSample, uint64_t endSample,
+  uint32_t sampleRate)
+{
+  auto value = kraken_event_time_unavailable();
+  value.epochEstimateNanoseconds = epochNanoseconds;
+  value.epoch = epoch;
+  value.firstSample = firstSample;
+  value.endSample = endSample;
+  value.sampleRate = sampleRate;
+  if (epochNanoseconds <= 0 || endSample <= firstSample || sampleRate == 0)
+    return value;
+  const __int128 sampleNumerator = static_cast<__int128>(firstSample) +
+    static_cast<__int128>(endSample);
+  const __int128 offset = sampleNumerator * 1000000000LL /
+    (static_cast<__int128>(sampleRate) * 2);
+  const __int128 estimate = static_cast<__int128>(epochNanoseconds) + offset;
+  if (estimate <= 0 || estimate > std::numeric_limits<int64_t>::max())
+    return value;
+  value.estimateAvailable = true;
+  value.estimateNanoseconds = static_cast<int64_t>(estimate);
+  value.reason = "Heimdall V2 has no device timestamp; UTC is estimated from host arrival with unbounded transport latency";
+  return value;
+}
+
+inline uint64_t event_time_milliseconds(const EventTimeProvenance& value,
+  uint64_t fallback)
+{
+  return value.estimateAvailable ?
+    static_cast<uint64_t>(value.estimateNanoseconds / 1000000LL) : fallback;
+}
+
+inline rapidjson::Value event_time_json(const EventTimeProvenance& value,
+  rapidjson::Document::AllocatorType& allocator)
+{
+  rapidjson::Value result(rapidjson::kObjectType);
+  result.AddMember("schema", "vectorwarp-event-time-v1", allocator);
+  result.AddMember("source", "kraken_heimdall_host_arrival_estimate", allocator);
+  result.AddMember("exact", false, allocator);
+  result.AddMember("uncertaintyBounded", false, allocator);
+  result.AddMember("uncertaintyNs", rapidjson::Value(rapidjson::kNullType), allocator);
+  result.AddMember("estimateAvailable", value.estimateAvailable, allocator);
+  const auto text = [&](int64_t number) {
+    const auto serialized = std::to_string(number);
+    return rapidjson::Value(serialized.c_str(), allocator);
+  };
+  const auto unsignedText = [&](uint64_t number) {
+    const auto serialized = std::to_string(number);
+    return rapidjson::Value(serialized.c_str(), allocator);
+  };
+  if (value.estimateAvailable)
+    result.AddMember("estimateNs", text(value.estimateNanoseconds), allocator);
+  else result.AddMember("estimateNs", rapidjson::Value(rapidjson::kNullType), allocator);
+  if (value.epochEstimateNanoseconds > 0)
+    result.AddMember("epochEstimateNs", text(value.epochEstimateNanoseconds), allocator);
+  else result.AddMember("epochEstimateNs", rapidjson::Value(rapidjson::kNullType), allocator);
+  result.AddMember("epoch", unsignedText(value.epoch), allocator);
+  result.AddMember("firstSample", unsignedText(value.firstSample), allocator);
+  result.AddMember("endSample", unsignedText(value.endSample), allocator);
+  result.AddMember("sampleRateHz", value.sampleRate, allocator);
+  result.AddMember("reason", rapidjson::Value(value.reason.c_str(), allocator), allocator);
+  return result;
+}
+
+inline std::string annotate_event_time(std::string json,
+  const EventTimeProvenance& value)
+{
+  if (!value.present || json.empty()) return json;
+  rapidjson::Document document;
+  document.Parse(json.c_str());
+  if (document.HasParseError() || !document.IsObject())
+    throw std::runtime_error("Cannot attach event-time provenance to invalid JSON");
+  if (document.HasMember("eventTime"))
+    throw std::runtime_error("Published JSON already contains event-time provenance");
+  document.AddMember("eventTime", event_time_json(value, document.GetAllocator()),
+    document.GetAllocator());
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  writer.SetMaxDecimalPlaces(2);
+  document.Accept(writer);
+  return {buffer.GetString(), buffer.GetSize()};
+}
+}
