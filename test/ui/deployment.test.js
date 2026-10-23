@@ -136,6 +136,7 @@ function fetchHttp(url, options = {}) {
       '../../script/install-native.sh'), 'utf8');
     assert.match(apiUnit, /User=vectorwarp-api/);
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
+    assert.match(apiUnit, /ExecCondition=\/usr\/bin\/node @PREFIX@\/libexec\/vectorwarp-check-node-version/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);
     assert.doesNotMatch(processorUnit, /ExecStartPre=.*receiver-start-check\.js/);

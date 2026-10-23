@@ -71,7 +71,7 @@ script/package-native.sh \
   --distro ubuntu24.04 \
   --version 1.0.0 \
   --artifact build/native/artifact \
-  --node-runtime /path/to/node-v24.21.0-linux-x64 \
+  --node-runtime /path/to/node-v24.22.1-linux-x64 \
   --output-dir dist
 ```
 

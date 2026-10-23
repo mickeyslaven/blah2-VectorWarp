@@ -157,6 +157,7 @@ assert.match(packageSmoke, /localBuildable/);
 assert.match(packageSmoke, /\/display\/configuration\//);
 assert.doesNotMatch(packageSmoke, /systemctl|vectorwarp-processor/);
 const releaseWorkflow = read('.github/workflows/release-packages.yml');
+const standaloneWorkflow = read('.github/workflows/macos-standalone.yml');
 const releaseCommands = releaseWorkflow.replace(/\\\n\s*/g, ' ').split('\n');
 const debHackrfInstalls = releaseCommands.filter(line => /apt-get install/.test(line) && /\blibhackrf-dev\b/.test(line));
 const rpmHackrfInstalls = releaseCommands.filter(line => /dnf --assumeyes install/.test(line) && /\bhackrf-devel\b/.test(line));
@@ -313,9 +314,26 @@ assert.match(publishWorkflow, /--expected-version .*--expected-source-commit .*-
 assert.match(publishWorkflow, /cmp packages\/vectorwarp-archive-key\.asc packaging\/keys\/vectorwarp\.asc/);
 assert.match(publishWorkflow, /gpgv --keyring .*SHA256SUMS\.asc packages\/SHA256SUMS/s);
 
-assert.match(nodePin, /^NODE_VERSION=24\.21\.0$/m);
+assert.match(nodePin, /^NODE_VERSION=24\.22\.1$/m);
 assert.match(nodePin, /^NODE_X64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_ARM64_SHA256=[0-9a-f]{64}$/m);
+assert.match(nodePin, /^NODE_DARWIN_X64_SHA256=[0-9a-f]{64}$/m);
+assert.match(nodePin, /^NODE_DARWIN_ARM64_SHA256=[0-9a-f]{64}$/m);
+const nodeRuntime = Object.fromEntries(nodePin.split('\n').filter(line => /^NODE_[A-Z0-9_]+=/.test(line))
+  .map(line => line.split(/=(.*)/s).slice(0, 2)));
+assert.ok(releaseWorkflow.includes(`node-version: ${nodeRuntime.NODE_VERSION}`));
+assert.ok(releaseWorkflow.includes(`node-v${nodeRuntime.NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz`));
+assert.ok(releaseWorkflow.includes(`https://nodejs.org/dist/v${nodeRuntime.NODE_VERSION}/\${archive}`));
+for (const checksum of [nodeRuntime.NODE_X64_SHA256, nodeRuntime.NODE_ARM64_SHA256]) {
+  assert.ok(releaseWorkflow.includes(checksum), 'Release workflow checksum must match node-runtime.env');
+}
+assert.ok(standaloneWorkflow.includes('source packaging/node-runtime.env'));
+assert.ok(standaloneWorkflow.includes('NODE_DARWIN_ARM64_SHA256'));
+assert.ok(standaloneWorkflow.includes('NODE_DARWIN_X64_SHA256'));
+assert.ok(standaloneWorkflow.includes('VECTORWARP_STANDALONE_NODE'));
+assert.doesNotMatch(standaloneWorkflow, /brew --prefix node@24/,
+  'Standalone packages must use the checksum-pinned official Node runtime');
+assert.match(read('script/check-node-version.js'), /22\.23\.4\+, 24\.22\.1\+, or 26\.12\.1\+/);
 assert.match(buildScript, /build_os_id=/);
 assert.match(buildScript, /build_os_version=/);
 assert.match(buildScript, /build_arch=/);

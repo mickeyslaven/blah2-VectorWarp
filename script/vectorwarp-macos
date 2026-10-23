@@ -15,4 +15,18 @@ if [ -z "${VECTORWARP_MACOS_NODE:-}" ] && command -v brew >/dev/null 2>&1; then
   node=$(brew --prefix node@24 2>/dev/null || true)/bin/node
   [ -x "$node" ] && export VECTORWARP_MACOS_NODE=$node
 fi
+node=${VECTORWARP_MACOS_NODE:-}
+case "$node" in
+  */*) ;;
+  *) node=$(command -v "$node" 2>/dev/null || true) ;;
+esac
+if [ ! -x "$node" ]; then
+  echo 'vectorwarp-macos: install or upgrade Homebrew node@24' >&2
+  exit 1
+fi
+export VECTORWARP_MACOS_NODE=$node
+"$node" "$directory/check-node-version.js" || {
+  echo 'vectorwarp-macos: run brew update && brew upgrade node@24' >&2
+  exit 1
+}
 exec /usr/bin/env python3 "$directory/vectorwarp-macos.py" "$@"

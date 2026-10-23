@@ -206,8 +206,8 @@ if $WITH_SYSTEMD; then
 fi
 if [[ -z $DESTDIR ]]; then
   [[ -x /usr/bin/node ]] || die 'native services require Node.js at /usr/bin/node'
-  node_major=$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])')
-  ((node_major >= 22)) || die 'native services require Node.js 22 or newer at /usr/bin/node'
+  /usr/bin/node "$SOURCE_DIR/script/check-node-version.js" ||
+    die 'native services require a patched supported Node.js release at /usr/bin/node'
   if ldd "$ARTIFACT/bin/blah2" 2>&1 | grep -q 'not found'; then
     ldd "$ARTIFACT/bin/blah2" >&2
     die 'processor runtime libraries are missing; install SDK libraries and run ldconfig'

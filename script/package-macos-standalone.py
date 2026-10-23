@@ -262,6 +262,8 @@ def stage(args):
     artifact = args.artifact.resolve(strict=True)
     if (artifact / 'bin/heimdall').exists() or any(artifact.glob('bin/*rspduo*.dylib')):
         raise ValueError('use a fresh open-SDK artifact without Heimdall or SDRplay binaries')
+    run(args.node, ROOT / 'script/check-node-version.js')
+    node_version = run(args.node, '-p', 'process.versions.node')
     python_info = json.loads(run(args.python, '-I', '-c',
         'import json,sys,sysconfig;print(json.dumps({"prefix":sys.base_prefix,"stdlib":sysconfig.get_path("stdlib"),"version":f"{sys.version_info.major}.{sys.version_info.minor}"}))'))
     separate_output(args.output, [artifact, Path(python_info['prefix']), args.node.parent])
@@ -322,7 +324,8 @@ def stage(args):
         'source_revision': revision, 'source_dirty': dirty,
         'minimum_os': args.minimum_os, 'distribution': 'local-development-only',
         'redistribution_status': 'not-reviewed-not-approved', 'signing': 'ad-hoc',
-        'native_files': count, 'dependencies': components, 'files': files_manifest(root)}
+        'node_version': node_version, 'native_files': count,
+        'dependencies': components, 'files': files_manifest(root)}
     (root / 'standalone.json').write_text(json.dumps(metadata, indent=2, sort_keys=True) + '\n')
     print(json.dumps({key: metadata[key] for key in ('arch', 'source_id', 'native_files', 'signing')}))
 

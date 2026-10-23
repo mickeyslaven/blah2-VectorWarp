@@ -23,7 +23,7 @@ Build a distro-native VectorWarp release package from a native artifact.
   --distro NAME           ubuntu22.04, ubuntu24.04, ubuntu26.04, debian12, debian13 or fedora44
   --version X.Y.Z         Stable release version (without v)
   --artifact PATH         Artifact made by build-native.sh
-  --node-runtime PATH     Extracted official Node.js 24.21.0 Linux archive
+  --node-runtime PATH     Extracted official Node.js 24.22.1 Linux archive
   --output-dir PATH       Destination for package and manifest (default: dist)
   --test-only             Package only an open-test artifact; never for publication
   --preflight             Validate all inputs and tools, then stop
@@ -156,7 +156,7 @@ esac
 [[ -x $NODE_RUNTIME/bin/node && -f $NODE_RUNTIME/LICENSE ]] ||
   die 'Node runtime must contain executable bin/node and LICENSE'
 node_version=$($NODE_RUNTIME/bin/node --version 2>/dev/null || true)
-[[ $node_version == v24.21.0 ]] || die "Node runtime must be v24.21.0 (found ${node_version:-unusable})"
+[[ $node_version == v24.22.1 ]] || die "Node runtime must be v24.22.1 (found ${node_version:-unusable})"
 node_file=$(file -Lb "$NODE_RUNTIME/bin/node")
 case "$NODE_ARCH" in
   x64) [[ $node_file == *x86-64* || $node_file == *x86_64* ]] || die 'Node runtime architecture mismatch' ;;
@@ -356,7 +356,7 @@ manifest="$WORK_DIR/$ASSET.manifest.json"
   if $TEST_ONLY; then printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": [],\n'; else printf '  "compiled_receivers": ["Usrp", "HackRF", "Kraken"],\n  "local_build_receivers": ["RspDuo"],\n'; fi
   printf '  "test_only": %s,\n' "$TEST_ONLY"
   printf '  "gpu": "auto",\n'
-  printf '  "node_version": "24.21.0"\n'
+  printf '  "node_version": "24.22.1"\n'
   printf '}\n'
 } >"$manifest"
 

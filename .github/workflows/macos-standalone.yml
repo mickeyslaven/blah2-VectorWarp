@@ -37,17 +37,32 @@ jobs:
           persist-credentials: false
       - name: Install build-host dependencies
         run: |
-          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb node@24 vulkan-loader vulkan-headers glslang molten-vk
+          brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb vulkan-loader vulkan-headers glslang molten-vk
           # Intel runners already link python.org's 3.12 into /usr/local/bin.
           # Staging uses the explicit Homebrew path and needs no global links.
           brew install --skip-link python@3.12
           mkdir -p build/standalone-provenance
           brew list --versions asio cpp-httplib eigen rapidjson vulkan-headers > build/standalone-provenance/header-input-versions.txt
           cp "$(brew --prefix cpp-httplib)/.brew/cpp-httplib.rb" build/standalone-provenance/cpp-httplib-formula.rb
-      - name: Select Node 24 and build CPU, GPU, and open receiver adapters
+      - name: Verify and select patched Node 24
         run: |
-          echo "$(brew --prefix node@24)/bin" >> "$GITHUB_PATH"
-          export PATH="$(brew --prefix node@24)/bin:$PATH"
+          set -euo pipefail
+          source packaging/node-runtime.env
+          case "${{ matrix.arch }}" in
+            arm64) node_sha="$NODE_DARWIN_ARM64_SHA256" ;;
+            x86_64) node_sha="$NODE_DARWIN_X64_SHA256" ;;
+            *) exit 2 ;;
+          esac
+          archive="node-v${NODE_VERSION}-darwin-${{ matrix.arch }}.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 "$NODE_BASE_URL/$archive" --output "$RUNNER_TEMP/$archive"
+          printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/$archive" | shasum -a 256 --check
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/$archive"
+          node_root="$RUNNER_TEMP/${archive%.tar.gz}"
+          "$node_root/bin/node" script/check-node-version.js
+          echo "$node_root/bin" >> "$GITHUB_PATH"
+          echo "VECTORWARP_STANDALONE_NODE=$node_root/bin/node" >> "$GITHUB_ENV"
+      - name: Build CPU, GPU, and open receiver adapters
+        run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
           git init build/VkFFT
           git -C build/VkFFT fetch --depth 1 https://github.com/DTolm/VkFFT.git 066a17c17068c0f11c9298d848c2976c71fad1c1
@@ -55,7 +70,7 @@ jobs:
           VKFFT_ROOT="$GITHUB_WORKSPACE/build/VkFFT" script/build-macos.sh --backend all --gpu on --test --jobs 3
       - name: Stage and audit standalone runtime
         run: |
-          node="$(brew --prefix node@24)/bin/node"
+          node="$VECTORWARP_STANDALONE_NODE"
           python="$(brew --prefix python@3.12)/bin/python3.12"
           python3 script/package-macos-standalone.py stage --artifact build/macos/artifact --node "$node" --python "$python" --moltenvk "$(brew --prefix molten-vk)/lib/libMoltenVK.dylib" --arch "${{ matrix.arch }}" --source-id "${{ github.sha }}" --output 'build/standalone runtime'
           provenance="$GITHUB_WORKSPACE/build/standalone-provenance"

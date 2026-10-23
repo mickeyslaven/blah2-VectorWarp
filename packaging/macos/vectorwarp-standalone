@@ -17,4 +17,5 @@ fi
 # UHD images remain an explicit user-managed prerequisite, never an installer
 # download or a fallback to the build host's Homebrew tree.
 export UHD_IMAGES_DIR="${UHD_IMAGES_DIR:-${VECTORWARP_MACOS_STATE:-$HOME/Library/Application Support/VectorWarp}/uhd-images}"
+"$runtime/bin/node" "$directory/check-node-version.js"
 exec "$runtime/python/bin/python3" -B -s -P "$directory/vectorwarp-macos.py" "$@"
