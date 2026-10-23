@@ -358,7 +358,18 @@ class CaptureTriggerQueue {
 
   request(expose = false) {
     const clip = this.current();
-    if (expose && clip?.pending) clip.exposed = true;
+    if (expose && clip?.pending && !clip.exposed) {
+      // Pending clips can wait behind an in-flight four-second recording.  A
+      // window fixed when eligibility settled may therefore be older than the
+      // native raw ring by the time the recorder claims it.  Re-center once,
+      // atomically at exposure, and propagate the physical bounds to every
+      // linked admission record.  The original truth CPI remains on the event.
+      clip.requestedEventTime = this.now();
+      clip.windowStart = clip.requestedEventTime - clip.preSeconds * 1000;
+      clip.windowEnd = clip.requestedEventTime + clip.postSeconds * 1000;
+      clip.exposed = true;
+      this.linkRevision(clip);
+    }
     return compact(clip) || {clipRevision: 0, eventIds: [], passIds: [],
       requestedEventTime: null, preSeconds: this.preSeconds, postSeconds: this.postSeconds,
       windowStart: null, windowEnd: null, pending: false, acknowledged: false,

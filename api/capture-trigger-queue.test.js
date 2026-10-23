@@ -55,6 +55,17 @@ assert.equal(delayedAccepted.clip.requestedEventTime, 104000,
   'Delayed truth keeps its CPI time but records a fresh live window');
 assert.equal(delayed.status().recentEvents[0].requestedEventTime, 100000,
   'The eligibility ledger preserves the original exact CPI time');
+let claimClock = 104000;
+const claimFresh = new CaptureTriggerQueue({now: () => claimClock});
+claimFresh.acceptEligibilityEvent(event(71, 100000), 104000);
+claimClock = 111000;
+const claimedFresh = claimFresh.request(true);
+assert.deepEqual({requestedEventTime: claimedFresh.requestedEventTime,
+  windowStart: claimedFresh.windowStart, windowEnd: claimedFresh.windowEnd},
+{requestedEventTime: 111000, windowStart: 109000, windowEnd: 114000},
+  'A queued clip is re-centered exactly when the native recorder claims it');
+assert.equal(claimFresh.status().recentEvents[0].captureWindows[0].windowStart, 109000,
+  'Fresh physical bounds propagate to admission provenance');
 let accepted = queue.acceptEligibilityEvent(event(1, 100000));
 assert.equal(accepted.accepted, true);
 assert.equal(accepted.clip.clipRevision, 1);
