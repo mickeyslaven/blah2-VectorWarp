@@ -163,7 +163,7 @@ const CONFIG_META = {
   'network.ports.config': ['Configuration port', 'Reserved for configuration control; it must remain unique.'],
   'truth.adsb': ['ADS-B', 'Aircraft overlay and radar comparison'],
   'truth.adsb.enabled': ['Show ADS-B', 'Display aircraft from the ADS-B feed'],
-  'truth.adsb.tar1090': ['ADS-B source', 'Local decoder or server base address; data/aircraft.json is added automatically.'],
+  'truth.adsb.tar1090': ['ADS-B sources', 'Add local receivers or public exchanges; the newest fresh source wins without blending.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
@@ -692,34 +692,191 @@ function arrayInput(value, path) {
   return wrapper;
 }
 
+const ADSB_PUBLIC_EXCHANGES = [
+  {id: 'adsb-fi', label: 'adsb.fi', host: 'opendata.adsb.fi',
+    description: 'Public exchange · best effort and rate limited'},
+  {id: 'adsb-lol', label: 'adsb.lol', host: 'api.adsb.lol',
+    description: 'Public exchange · best effort and rate limited'}
+];
+
+function adsbExchangeId(source) {
+  if (typeof source !== 'string' || !source.startsWith('exchange:')) return null;
+  try {
+    const host = new URL(source.slice('exchange:'.length)).hostname;
+    return ADSB_PUBLIC_EXCHANGES.find(exchange => exchange.host === host)?.id || null;
+  } catch (_) { return null; }
+}
+
+function adsbPublicSource(id, config = activeConfig) {
+  const latitude = Number(config.location?.rx?.latitude);
+  const longitude = Number(config.location?.rx?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (id === 'adsb-fi')
+    return `exchange:https://opendata.adsb.fi/api/v3/lat/${latitude}/lon/${longitude}/dist/60`;
+  if (id === 'adsb-lol')
+    return `exchange:https://api.adsb.lol/v2/point/${latitude}/${longitude}/60`;
+  return null;
+}
+
+function adsbSourcesInput(legacyValue, path) {
+  const configured = activeConfig.truth?.adsb?.sources;
+  let sources = Array.isArray(configured) && configured.length ?
+    configured.map(value => String(value)) : [String(legacyValue ?? 'auto')];
+  const wrapper = document.createElement('div');
+  wrapper.className = 'adsb-source-editor';
+
+  const writeSources = next => {
+    sources = [...new Set(next)].slice(0, 8);
+    const firstLocal = sources.find(source => !source.startsWith('exchange:'));
+    if (firstLocal) activeConfig.truth.adsb.tar1090 = firstLocal;
+    setValue(['truth', 'adsb', 'sources'], sources);
+  };
+
+  const commit = () => {
+    const next = [...wrapper.querySelectorAll('[data-adsb-source]')]
+      .map(input => input.value.trim()).filter(Boolean);
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const toggle = wrapper.querySelector(`[data-adsb-exchange="${exchange.id}"]`);
+      if (!toggle?.checked) continue;
+      const existing = sources.find(source => adsbExchangeId(source) === exchange.id);
+      const generated = adsbPublicSource(exchange.id);
+      if (existing || generated) next.push(existing || generated);
+    }
+    writeSources(next);
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const toggle = wrapper.querySelector(`[data-adsb-exchange="${exchange.id}"]`);
+      if (!toggle) continue;
+      toggle.checked = sources.some(source => adsbExchangeId(source) === exchange.id);
+      toggle.disabled = !toggle.checked && sources.length >= 8;
+    }
+    const add = wrapper.querySelector('.adsb-source-add');
+    if (add) add.disabled = sources.length >= 8;
+  };
+
+  const sourceRow = (source, type) => {
+    const row = document.createElement('div');
+    row.className = 'adsb-source-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = source;
+    input.dataset.adsbSource = type;
+    input.placeholder = type === 'local' ?
+      'http://192.168.1.50/tar1090' : 'exchange:https://example/api';
+    input.setAttribute('aria-label', type === 'local' ? 'Local ADS-B source' : 'Custom ADS-B exchange');
+    input.addEventListener('input', () => {
+      const index = Number(input.dataset.sourceIndex);
+      sources[index] = input.value;
+      const next = sources.filter(Boolean);
+      const firstLocal = next.find(value => !value.startsWith('exchange:'));
+      if (firstLocal) activeConfig.truth.adsb.tar1090 = firstLocal;
+      setValue(path, next);
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'button-secondary adsb-source-remove';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${type} ADS-B source`);
+    remove.disabled = sources.length <= 1;
+    remove.addEventListener('click', () => {
+      sources.splice(Number(input.dataset.sourceIndex), 1);
+      writeSources(sources);
+      renderRows();
+    });
+    row.append(input, remove);
+    return {row, input};
+  };
+
+  const renderRows = () => {
+    wrapper.replaceChildren();
+    const intro = document.createElement('p');
+    intro.className = 'adsb-source-note';
+    intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
+    wrapper.appendChild(intro);
+
+    const localHeading = document.createElement('strong');
+    localHeading.textContent = 'Local receivers';
+    wrapper.appendChild(localHeading);
+    sources.forEach((source, index) => {
+      if (source.startsWith('exchange:')) return;
+      const {row, input} = sourceRow(source, 'local');
+      input.dataset.sourceIndex = index;
+      wrapper.appendChild(row);
+    });
+    const addLocal = document.createElement('button');
+    addLocal.type = 'button';
+    addLocal.className = 'button-secondary adsb-source-add';
+    addLocal.textContent = 'Add local source';
+    addLocal.disabled = sources.length >= 8;
+    addLocal.addEventListener('click', () => {
+      sources.push('http://');
+      writeSources(sources);
+      renderRows();
+      const inputs = wrapper.querySelectorAll('[data-adsb-source="local"]');
+      inputs[inputs.length - 1]?.focus();
+    });
+    wrapper.appendChild(addLocal);
+
+    const exchangeHeading = document.createElement('strong');
+    exchangeHeading.textContent = 'Online sources';
+    wrapper.appendChild(exchangeHeading);
+    const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const row = document.createElement('div');
+      row.className = 'adsb-exchange-row';
+      const copy = document.createElement('span');
+      const title = document.createElement('b');
+      title.textContent = exchange.label;
+      const detail = document.createElement('small');
+      detail.textContent = exchange.description;
+      copy.append(title, detail);
+      const label = document.createElement('label');
+      label.className = 'switch';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.dataset.adsbExchange = exchange.id;
+      input.checked = sources.some(source => adsbExchangeId(source) === exchange.id);
+      input.disabled = !hasSite || (!input.checked && sources.length >= 8);
+      input.setAttribute('aria-label', `Use ${exchange.label}`);
+      input.addEventListener('change', commit);
+      label.append(input, document.createElement('span'));
+      row.append(copy, label);
+      wrapper.appendChild(row);
+    }
+
+    const custom = sources.map((source, index) => ({source, index}))
+      .filter(({source}) => source.startsWith('exchange:') && !adsbExchangeId(source));
+    if (custom.length) {
+      const customHeading = document.createElement('strong');
+      customHeading.textContent = 'Custom online sources';
+      wrapper.appendChild(customHeading);
+      for (const {source, index} of custom) {
+        const {row, input} = sourceRow(source, 'custom');
+        input.dataset.sourceIndex = index;
+        wrapper.appendChild(row);
+      }
+    }
+    if (!hasSite) {
+      const warning = document.createElement('p');
+      warning.className = 'adsb-source-note warning';
+      warning.textContent = 'Set the receiver latitude and longitude before enabling an online source.';
+      wrapper.appendChild(warning);
+    }
+    const controls = wrapper.querySelectorAll('input, select');
+    for (const [index, control] of Array.from(controls).entries()) {
+      control.id = `config-truth-adsb-tar1090-${index}`;
+      control.setAttribute('aria-describedby', 'config-truth-adsb-tar1090-0-help');
+    }
+  };
+
+  renderRows();
+  return wrapper;
+}
+
 function typedInput(value, path) {
   const key = path.join('.');
   const rule = capabilities.fieldRules?.[key] || {};
   if (key === 'truth.adsb.tar1090' && Array.isArray(rule.sourceChoices)) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'config-source-input';
-    const local = rule.sourceChoices.some(item => item.value === value);
-    let serverAddress = local ? '' : String(value ?? '');
-    const endpoint = document.createElement('input');
-    endpoint.type = 'text';
-    endpoint.value = serverAddress;
-    endpoint.placeholder = 'http://192.168.1.50/tar1090';
-    endpoint.setAttribute('aria-label', 'ADS-B server address');
-    endpoint.hidden = local;
-    endpoint.required = !local;
-    const mode = selectInput([...rule.sourceChoices,
-      {value: 'server', label: 'Server endpoint'}], local ? value : 'server', selected => {
-      endpoint.hidden = selected !== 'server';
-      endpoint.required = selected === 'server';
-      setValue(path, selected === 'server' ? serverAddress : selected);
-    });
-    mode.setAttribute('aria-label', 'ADS-B source');
-    endpoint.addEventListener('input', () => {
-      serverAddress = endpoint.value;
-      if (mode.value === 'server') setValue(path, serverAddress);
-    });
-    wrapper.append(mode, endpoint);
-    return wrapper;
+    return adsbSourcesInput(value, ['truth', 'adsb', 'sources']);
   }
   if (key === 'capture.device.heimdall.gain') {
     const wrapper = document.createElement('div');
@@ -2033,6 +2190,6 @@ function accelerationSummary(value, radar) {
 }
 
 if (typeof module !== 'undefined')
-  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels,
+  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};
