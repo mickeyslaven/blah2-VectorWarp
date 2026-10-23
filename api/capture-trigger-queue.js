@@ -144,19 +144,24 @@ class CaptureTriggerQueue {
       file: clip.file, samples: clip.samples});
   }
 
-  acceptEligibilityEvent(event) {
+  acceptEligibilityEvent(event, requestedEventTime = event?.observed_at) {
     if (!this.enabled) return {accepted: false, reason: 'disabled'};
     if (!event || event.state !== 'pending' || !validId(event.id) ||
         !event.id.startsWith('eligibility:') || !validId(event.pass_id) ||
         !finite(event.observed_at) || event.observed_at < 0 ||
+        !finite(requestedEventTime) || requestedEventTime < 0 ||
         !finite(event.predicted?.delay_km) || !finite(event.predicted?.doppler_hz) ||
         !validId(event.receiver_epoch) || !validId(event.config_epoch) ||
         !validId(event.site_epoch)) return {accepted: false, reason: 'invalid-event'};
     if (this.events.has(event.id)) return {accepted: false, reason: 'duplicate-event'};
     const eventRecord = this.remember(event);
 
-    const eventStart = event.observed_at - this.preSeconds * 1000;
-    const eventEnd = event.observed_at + this.postSeconds * 1000;
+    // Eligibility is deliberately settled after the ADS-B association lag.  The
+    // truth CPI remains event.observed_at, but a live recorder request must be
+    // centred on issuance time or it asks the finite raw ring for history that
+    // has already expired.
+    const eventStart = requestedEventTime - this.preSeconds * 1000;
+    const eventEnd = requestedEventTime + this.postSeconds * 1000;
     const maximumMs = this.maxClipSeconds * 1000;
     const overlapping = this.clips.filter(clip => clip.pending && !clip.exposed &&
       eventStart <= clip.windowEnd && eventEnd >= clip.windowStart &&
@@ -166,7 +171,7 @@ class CaptureTriggerQueue {
       clip = overlapping[0];
       clip.eventIds.push(event.id); clip.passIds.push(event.pass_id);
       clip.eventIds = [...new Set(clip.eventIds)]; clip.passIds = [...new Set(clip.passIds)];
-      clip.requestedEventTime = Math.min(clip.requestedEventTime, event.observed_at);
+      clip.requestedEventTime = Math.min(clip.requestedEventTime, requestedEventTime);
       clip.windowStart = Math.min(clip.windowStart, eventStart);
       clip.windowEnd = Math.max(clip.windowEnd, eventEnd);
       clip.preSeconds = (clip.requestedEventTime - clip.windowStart) / 1000;
@@ -193,7 +198,7 @@ class CaptureTriggerQueue {
           reason: 'queue-capacity', event: {...eventRecord}};
       }
       clip = {revision: ++this.revision, eventIds: [event.id], passIds: [event.pass_id], captureIds: {},
-        requestedEventTime: event.observed_at, preSeconds: this.preSeconds,
+        requestedEventTime, preSeconds: this.preSeconds,
         postSeconds: this.postSeconds, windowStart: eventStart, windowEnd: eventEnd,
         pending: true, acknowledged: false, failure: null};
       this.clips.push(clip);

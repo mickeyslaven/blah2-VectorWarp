@@ -33,6 +33,11 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
     {cpiTimestampsMs: [250, 750, 1250]});
   assert.equal(timed.valid, true); assert.deepEqual(timed.cpis.map(cpi => cpi.timestamp_ms),
     [250, 750, 1250]);
+  const exactTimed = validateTruthWindow(samples, 0, 10000,
+    {cpiTimestampsMs: [500, 1000, 1500]});
+  assert.equal(exactTimed.valid, true,
+    'An exact event-time projection is valid without a second interpolation endpoint');
+  assert.deepEqual(exactTimed.cpis.map(cpi => cpi.bracket_span_ms), [0, 0, 0]);
   const ranged = validateProcessorSampleRanges({...timed, processor_cpis: [
     {timestamp_ms: 250, epoch: 9, first_epoch_sample: 100, end_epoch_sample: 200}]},
   {epoch: 9, firstEpochSample: 0, endEpochSample: 1000});

@@ -28,7 +28,12 @@ function validateTruthWindow(samples, windowStart, windowEnd,
   if (!reasons.length) for (const at of schedule) {
     const left = [...ordered].reverse().find(sample => sample.timestamp_ms <= at);
     const right = ordered.find(sample => sample.timestamp_ms >= at);
-    if (!left || !right || left === right) { reasons.push('truth-bracket-missing'); break; }
+    // A projected observation evaluated at this exact processor CPI is stronger
+    // provenance than interpolation between two observations.  Treat it as a
+    // zero-span bracket instead of quarantining a perfectly aligned truth row.
+    if (!left || !right || (left === right && left.timestamp_ms !== at)) {
+      reasons.push('truth-bracket-missing'); break;
+    }
     const bracketMs = right.timestamp_ms - left.timestamp_ms;
     if (bracketMs > maxBracketMs) { reasons.push('truth-bracket-span'); break; }
     const offsets = [rawOffset(left), rawOffset(right)];

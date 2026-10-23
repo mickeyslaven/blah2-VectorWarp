@@ -49,6 +49,12 @@ assert.equal(disabled.status().queuedClips, 0);
 const queue = new CaptureTriggerQueue({now: () => 5000});
 assert.equal(queue.acceptEligibilityEvent({...event(0, 90000), id: 'detection:0'}).accepted, false,
   'Detector-shaped input is not capture admission');
+const delayed = new CaptureTriggerQueue({now: () => 104000});
+const delayedAccepted = delayed.acceptEligibilityEvent(event(70, 100000), 104000);
+assert.equal(delayedAccepted.clip.requestedEventTime, 104000,
+  'Delayed truth keeps its CPI time but records a fresh live window');
+assert.equal(delayed.status().recentEvents[0].requestedEventTime, 100000,
+  'The eligibility ledger preserves the original exact CPI time');
 let accepted = queue.acceptEligibilityEvent(event(1, 100000));
 assert.equal(accepted.accepted, true);
 assert.equal(accepted.clip.clipRevision, 1);

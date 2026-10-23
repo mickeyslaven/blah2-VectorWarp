@@ -63,11 +63,15 @@ const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
 const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
-const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
-const CAPTURE_TRUTH_SETTLE_MS = 3500;
+// A failed native request can reset the bounded raw ring.  Give it materially
+// more than the configured two-second pre-roll before issuing the one retry.
+const CLIP_PRE_ROLL_RETRY_DELAY_MS = 5000;
+// Exact-CPI truth is intentionally delayed by four CPIs, and the final CPI may
+// still need the next ADS-B observation.  This is bounded, but must cover both.
+const CAPTURE_TRUTH_SETTLE_MS = 8000;
 const CAPTURE_TRUTH_SETTLE_POLL_MS = 250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
-  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event),
+  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
     onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
 const oprsEventRecorder = createOprsEventRecorder(config,
