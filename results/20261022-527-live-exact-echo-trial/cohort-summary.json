@@ -1,8 +1,164 @@
 {
   "schema": "vectorwarp-527-live-exact-echo-cohort-v1",
   "config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd",
-  "passes": 5,
+  "passes": 14,
   "rows": [
+    {
+      "recording": "kraken-clip-r113-1792726515073538912-53",
+      "pass_id": "81bfe9b64570c71628bd3c652dc680cf824c93c2c8945a4bd5b83458897085b2",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -2.8492003305623577,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.3455909980225202
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -0.035569608071119266
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.803846384823986
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -4.185910325918208
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.7869021797866793
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r115-1792726658823079510-54",
+      "pass_id": "12720ab2875bc78752d6b5a749d21c082ade84f6ae27697b35a8ad5c25f7d73e",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -1.9621545011670174,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.0302724910857766
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.4066618539009665
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -5.018809341583054
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -5.559720813992765
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.10447482771415
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r119-1792726712515084192-56",
+      "pass_id": "ff7c6b0a1c6887b46b39f0ff95d9732c70d5da6257d0a4d48a1fd8230aacb710",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -1.4382328076085316,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.262018359241368
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.6058156458057087
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.9936532144488486
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -5.550713536445961
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 0,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 0.8874616629977401
+        }
+      ]
+    },
     {
       "recording": "kraken-clip-r41-1792724418089818898-18",
       "pass_id": "5efcb4ebc33b5aad3378d174bb32dee2e5eca86e63e5359152cfa6b4a764f1d0",
@@ -260,6 +416,318 @@
           "three_db_frames": 0,
           "longest_positive_run": 0,
           "best_margin_p99_db": -1.0877926584454192
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r72-1792725163210898412-33",
+      "pass_id": "59a2d678aaa7fcb101f7ca8626f3c2dbabb52756f578228ef5ad4a41e7549df1",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -4.04691351183205,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.9810912408855907
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.2787547827048638
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -6.608266200657052
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.433591635694807
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -6.284317944248022
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r80-1792725437397381533-38",
+      "pass_id": "a1209b32007987be82534dc95ffbe0d9f7716a7d6d87ba1e0af9f59b22e1a4bc",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -0.6691892855271274,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.603358959871684
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.1439658731895377
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.35982091169392
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.6737029230575455
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -1.5079325237831
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r85-1792725562667743419-40",
+      "pass_id": "9c8bf7537b565057311eba2bfb591c4ee8be2eec2382f2e01c90046f342adb85",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 7,
+      "sum_positive_frames": 2,
+      "sum_three_db_frames": 1,
+      "sum_longest_positive_run": 1,
+      "sum_best_margin_p99_db": 17.26522712645004,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 7,
+          "positive_frames": 2,
+          "three_db_frames": 1,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 19.174385906098777
+        },
+        {
+          "channel": 1,
+          "frames": 7,
+          "positive_frames": 2,
+          "three_db_frames": 1,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 9.264613651453192
+        },
+        {
+          "channel": 2,
+          "frames": 7,
+          "positive_frames": 2,
+          "three_db_frames": 1,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 14.391898862260405
+        },
+        {
+          "channel": 3,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 1,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 6.554283436405593
+        },
+        {
+          "channel": 4,
+          "frames": 7,
+          "positive_frames": 1,
+          "three_db_frames": 1,
+          "longest_positive_run": 1,
+          "best_margin_p99_db": 10.244601476964847
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r95-1792725912651976222-44",
+      "pass_id": "217bf1b490d56365e5b5c3268daac44f24a31e996d09c7fc806ff33a1fc66e9a",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 2,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -5.435149789926557,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -6.916263804773277
+        },
+        {
+          "channel": 1,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -9.148007282075932
+        },
+        {
+          "channel": 2,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -4.4693870204914985
+        },
+        {
+          "channel": 3,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -8.260562554257145
+        },
+        {
+          "channel": 4,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -5.975670737838015
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r97-1792725928606267410-45",
+      "pass_id": "0717bcd0001454b68f465736211c21d2bee8294d9fab27d537b387be575ec0b9",
+      "overlapping_frames": 7,
+      "truth_inside_cutout_frames": 2,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -1.8031767907216176,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -4.646903993402764
+        },
+        {
+          "channel": 1,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -11.233135993762593
+        },
+        {
+          "channel": 2,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -2.96684994510303
+        },
+        {
+          "channel": 3,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -7.578436025111241
+        },
+        {
+          "channel": 4,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -0.8050133661259545
+        }
+      ]
+    },
+    {
+      "recording": "kraken-clip-r99-1792725959782968187-46",
+      "pass_id": "e88e3bd726c0cccd5fbdd31dc59ad31e5bae6cc1f27bd8ccdd5ae9d081f5a581",
+      "overlapping_frames": 6,
+      "truth_inside_cutout_frames": 2,
+      "sum_positive_frames": 0,
+      "sum_three_db_frames": 0,
+      "sum_longest_positive_run": 0,
+      "sum_best_margin_p99_db": -5.014162905016704,
+      "channels": [
+        {
+          "channel": 0,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -6.468491258900744
+        },
+        {
+          "channel": 1,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -3.435155611816625
+        },
+        {
+          "channel": 2,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -5.6078916343737495
+        },
+        {
+          "channel": 3,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -7.885960167509854
+        },
+        {
+          "channel": 4,
+          "frames": 2,
+          "positive_frames": 0,
+          "three_db_frames": 0,
+          "longest_positive_run": 0,
+          "best_margin_p99_db": -9.390966547367478
         }
       ]
     }
