@@ -56,6 +56,18 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.equal((await delayedStatus.status()).online, true);
   assert.ok(Date.now() - statusStarted < 250,
     'Health status must not inherit the two-second CPI association hold');
+  const scheduledAssociationWaits = [];
+  const associationOrder = [];
+  const delayedAssociation = createAdsbSource(delayedStatusConfig, {now: () => clock,
+    fetchJson: async () => { associationOrder.push('fetch'); return aircraft; },
+    setTimeoutFn: (callback, delay) => {
+      scheduledAssociationWaits.push(delay); associationOrder.push('wait'); callback();
+    }});
+  await delayedAssociation.getAt('aircraft', clock);
+  assert.deepEqual(scheduledAssociationWaits, [2000],
+    'Four 500 ms CPIs must create exactly a two-second scoring wait');
+  assert.deepEqual(associationOrder, ['wait', 'fetch'],
+    'The catch-up wait must precede acquisition of the newest ADS-B snapshot');
 
   let exactReads = 0;
   const exactProjection = createAdsbSource(config, {now: () => 100000,

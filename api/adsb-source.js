@@ -102,7 +102,7 @@ function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
 
 function createAdsbSource(config, {preview = false, fetchJson = readJson, now = Date.now,
   discover = discoverLocalAdsb, selectLocal = selectLocalAdsb,
-  discoveryCacheMs = 30000} = {}) {
+  discoveryCacheMs = 30000, setTimeoutFn = setTimeout} = {}) {
   const cache = new Map();
   const geometry = new DelayDopplerHistory(config);
   let warmup = [];
@@ -221,12 +221,14 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
     if (!Number.isFinite(targetAtMs)) throw new Error('ADS-B target time is invalid');
-    // Capture the raw observations immediately, then wait before publishing the
-    // event-time projection. Distinct CPI targets share I/O, never fused output.
-    const raw = rawAircraft(targetAtMs);
+    // Wait for delayed feeder reports to arrive, then acquire the newest raw
+    // observation and project it back to this exact CPI event time. Merely
+    // delaying publication of a snapshot captured now would not let ADS-B
+    // catch up at all.
     const ready = associationLagMs ? new Promise(resolve =>
-      setTimeout(resolve, associationLagMs)) : Promise.resolve();
-    const [data] = await Promise.all([raw, ready]);
+      setTimeoutFn(resolve, associationLagMs)) : Promise.resolve();
+    await ready;
+    const data = await rawAircraft(targetAtMs);
     if (kind === 'aircraft') return data;
     const result = geometry.update(data); warmup = result.warming; return result.data;
   }
@@ -238,13 +240,11 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (previous && (previous.pending || now() - previous.at < pollMs)) return previous.promise;
     const requestedAt = now();
     const entry = {at: requestedAt, pending: true};
-    // Acquire the event-time snapshot at request time, then hold association
-    // for the configured CPI lag. Fetching after the delay makes every raw
-    // observation appear to come from the future relative to the target CPI.
-    const raw = rawAircraft(requestedAt);
+    // Hold association so delayed feeder reports can arrive, then fetch and
+    // project the newest observation back to requestedAt.
     const ready = associationLagMs ? new Promise(resolve =>
-      setTimeout(resolve, associationLagMs)) : Promise.resolve();
-    entry.promise = Promise.all([raw, ready]).then(([data]) => {
+      setTimeoutFn(resolve, associationLagMs)) : Promise.resolve();
+    entry.promise = ready.then(() => rawAircraft(requestedAt)).then(data => {
       if (kind === 'aircraft') return data;
       const result = geometry.update(data); warmup = result.warming; return result.data;
     })

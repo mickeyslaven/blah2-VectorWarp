@@ -1,5 +1,6 @@
 #include "HeimdallFrame.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -95,6 +96,25 @@ std::vector<std::vector<std::complex<float>>> HeimdallFrame::decode_payload(
 {
   if (bytes.size() != payload_size(header))
     throw std::runtime_error("Incomplete Heimdall V2 payload");
+  if (header.gains.size() != header.numChannels)
+    throw std::runtime_error("Heimdall V2 gain metadata is unavailable");
+
+  // Suite reports the actual tuner gain for every channel.  Refer all IQ
+  // amplitudes to the least-amplified channel so covariance, reference
+  // synthesis and beamforming see antenna voltage rather than a deterministic
+  // tuner-gain bias.  Attenuating to the minimum avoids inventing ADC bits or
+  // digitally amplifying the noisier channels.
+  const float referenceGain = *std::min_element(
+    header.gains.begin(), header.gains.end());
+  std::vector<float> gainScales(header.numChannels);
+  for (uint32_t channel = 0; channel < header.numChannels; ++channel)
+  {
+    gainScales[channel] = std::pow(10.0F,
+      (referenceGain - header.gains[channel]) / 20.0F);
+    if (!std::isfinite(gainScales[channel]) || gainScales[channel] <= 0 ||
+        gainScales[channel] > 1.00001F)
+      throw std::runtime_error("Invalid Heimdall V2 gain equalization");
+  }
 
   std::vector<std::vector<std::complex<float>>> channels(
     header.numChannels,
@@ -115,8 +135,10 @@ std::vector<std::vector<std::complex<float>>> HeimdallFrame::decode_payload(
     for (uint32_t sample = 0; sample < header.samplesPerChannel; sample++)
     {
       channels[channel][sample] = {
-        static_cast<float>((bytes[start + sample * 2] - meanI) / 127.5),
-        static_cast<float>((bytes[start + sample * 2 + 1] - meanQ) / 127.5)};
+        static_cast<float>((bytes[start + sample * 2] - meanI) / 127.5) *
+          gainScales[channel],
+        static_cast<float>((bytes[start + sample * 2 + 1] - meanQ) / 127.5) *
+          gainScales[channel]};
     }
   }
   return channels;

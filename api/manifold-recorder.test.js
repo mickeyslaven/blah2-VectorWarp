@@ -63,6 +63,12 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   changedGainConfig.capture.device.heimdall.gain = 1;
   assert.notEqual(siteFingerprint(fixedGainConfig), siteFingerprint(changedGainConfig),
     'Qualification cannot carry across requested gain changes');
+  const vectorGainConfig = JSON.parse(JSON.stringify(fixedGainConfig));
+  vectorGainConfig.capture.device.heimdall.channel_gains = [14, 12];
+  const changedVectorGainConfig = JSON.parse(JSON.stringify(vectorGainConfig));
+  changedVectorGainConfig.capture.device.heimdall.channel_gains = [14, 11];
+  assert.notEqual(siteFingerprint(vectorGainConfig), siteFingerprint(changedVectorGainConfig),
+    'Qualification cannot carry across per-channel gain-vector changes');
   const firstGainRecorder = new ManifoldRecorder(fixedGainConfig, source);
   await firstGainRecorder.record(frame);
   const nextGainRecorder = new ManifoldRecorder(changedGainConfig, source);
@@ -74,6 +80,8 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   assert.equal(newGainRows.length, 1);
   assert.equal(oldGainRows[0].config_fingerprint, firstGainRecorder.fingerprint);
   assert.equal(newGainRows[0].config_fingerprint, nextGainRecorder.fingerprint);
+  assert.deepEqual(newGainRows[0].receiver_gain_v2,
+    {requested_common_gain: 1, requested_channel_gains: null});
   assert.notEqual(oldGainRows[0].config_fingerprint, newGainRows[0].config_fingerprint,
     'Old and new gain evidence must not mix in the active collection');
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));

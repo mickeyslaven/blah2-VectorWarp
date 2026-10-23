@@ -83,8 +83,11 @@ function automaticallyEligible(config) {
 
 function fingerprintDescriptor(config) {
   const options = config.process?.bearing?.manifold_recorder || {};
+  const heimdall = config.capture?.device?.heimdall || {};
   return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
-    receiver_gain_v1: {requested_common_gain: config.capture?.device?.heimdall?.gain ?? 'keep'},
+    receiver_gain_v2: {requested_common_gain: heimdall.gain ?? 'keep',
+      requested_channel_gains: Array.isArray(heimdall.channel_gains) ?
+        [...heimdall.channel_gains] : null},
     surveillance_channels: config.capture?.device?.surveillance_channels,
     array_geometry: config.capture?.device?.array_geometry,
     receiver: config.location?.rx, transmitter: config.location?.tx,
@@ -252,7 +255,9 @@ class ManifoldRecorder {
     const record = {schema: 'vectorwarp-reference-drift-v1',
       recorded_at: new Date().toISOString(), radar_timestamp_ms: frame.timestamp,
       frequency_hz: frame.frequency_hz, sample_rate_hz: frame.sample_rate_hz,
-      config_fingerprint: this.fingerprint, reference_state: state,
+      config_fingerprint: this.fingerprint,
+      receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2,
+      reference_state: state,
       relative_eigenvector: relative,
       change_from_previous: {max_phase_step_deg: maxPhaseStep,
         max_amplitude_step_db: maxAmplitudeStep}};
@@ -331,7 +336,9 @@ class ManifoldRecorder {
       records.push({schema: 'vectorwarp-manifold-sample-v1', recorded_at: new Date().toISOString(),
         radar_timestamp_ms: frame.timestamp, frequency_hz: frame.frequency_hz,
         sample_rate_hz: frame.sample_rate_hz, channels: frame.channels,
-        config_fingerprint: this.fingerprint, icao: candidate.icao,
+        config_fingerprint: this.fingerprint,
+        receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2,
+        icao: candidate.icao,
         flight: typeof candidate.aircraft.flight === 'string' ? candidate.aircraft.flight.trim() : '',
         truth: {bearing_deg_true: candidate.direction.bearingDeg,
           elevation_deg: candidate.direction.elevationDeg,

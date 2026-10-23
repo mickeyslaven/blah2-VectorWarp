@@ -21,6 +21,10 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
   assert.deepEqual(validateTruthWindow(stale, 0, 10000).reasons, ['truth-raw-offset']);
   const held = structuredClone(samples); held[1].provenance.projection_model = 'nearest';
   assert.deepEqual(validateTruthWindow(held, 0, 10000).reasons, ['truth-hold-or-fallback']);
+  const disagreement = structuredClone(samples);
+  disagreement[1].provenance.maximum_pairwise_projected_disagreement_km = .501;
+  assert.deepEqual(validateTruthWindow(disagreement, 0, 10000).reasons,
+    ['truth-source-disagreement']);
   assert.equal(captureArtifactState({valid: true}, {bad: {valid: false}, good: {valid: true}}),
     'admitted', 'one valid target must retain a shared clip without admitting invalid targets');
   assert.equal(captureArtifactState({valid: true}, {bad: {valid: false}}), 'quarantined');

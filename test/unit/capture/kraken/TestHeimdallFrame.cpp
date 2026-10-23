@@ -49,11 +49,11 @@ TEST_CASE("Heimdall V2 five-channel frames decode")
   for (uint32_t channel = 0; channel < 5; channel++)
   {
     append_le_float(metadata, 527000000.0F);
-    append_le_float(metadata, 15.0F + channel);
+    append_le_float(metadata, 15.0F);
   }
   HeimdallFrame::decode_metadata(header, metadata);
   REQUIRE(header.frequencies[4] == 527000000.0F);
-  REQUIRE(header.gains[4] == 19.0F);
+  REQUIRE(header.gains[4] == 15.0F);
 
   std::vector<uint8_t> payload;
   for (uint32_t channel = 0; channel < 5; channel++)
@@ -69,6 +69,36 @@ TEST_CASE("Heimdall V2 five-channel frames decode")
   REQUIRE(channels[4][1].real() == 1.0F);
   REQUIRE(channels[4][0].imag() == Catch::Approx(-64.0 / 127.5));
   REQUIRE(channels[4][1].imag() == Catch::Approx(64.0 / 127.5));
+}
+
+TEST_CASE("Heimdall V2 removes deterministic per-channel gain bias")
+{
+  auto bytes = valid_header();
+  write_be_u32(bytes, 4, 2);
+  write_be_u32(bytes, 8, 4);
+  auto header = HeimdallFrame::decode_header(bytes);
+  std::vector<uint8_t> metadata;
+  for (const float gain : {0.0F, 6.0205999F})
+  {
+    append_le_float(metadata, 527000000.0F);
+    append_le_float(metadata, gain);
+  }
+  HeimdallFrame::decode_metadata(header, metadata);
+
+  // The second ADC sees twice the voltage solely because its tuner has 6.02 dB
+  // more gain.  The decoded antenna-referred waveforms must be identical.
+  const std::vector<uint8_t> payload = {
+    108, 118, 148, 138, 108, 118, 148, 138,
+     88, 108, 168, 148,  88, 108, 168, 148};
+  const auto channels = HeimdallFrame::decode_payload(header, payload);
+  REQUIRE(channels.size() == 2);
+  for (std::size_t sample = 0; sample < 4; ++sample)
+  {
+    REQUIRE(channels[1][sample].real() ==
+      Catch::Approx(channels[0][sample].real()).margin(1e-5));
+    REQUIRE(channels[1][sample].imag() ==
+      Catch::Approx(channels[0][sample].imag()).margin(1e-5));
+  }
 }
 
 TEST_CASE("Heimdall V2 accepts supported channel counts")
