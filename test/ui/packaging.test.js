@@ -16,6 +16,8 @@ const debPostinst = read('packaging/deb/postinst');
 const debPrerm = read('packaging/deb/prerm');
 const rpmSpec = read('packaging/rpm/vectorwarp.spec.in');
 const nodePin = read('packaging/node-runtime.env');
+const nodeRuntime = Object.fromEntries(nodePin.split('\n').filter(line => /^NODE_[A-Z0-9_]+=/.test(line))
+  .map(line => line.split(/=(.*)/s).slice(0, 2)));
 
 assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
@@ -124,7 +126,8 @@ assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Architecture/);
 assert.match(packageScript, /rpm -qp --qf/);
 assert.match(packageScript, /install-native\.sh.*--artifact.*--destdir/s);
 assert.match(packageScript, /visudo -cf/);
-assert.match(packageScript, /v24\.21\.0/);
+assert.ok(packageScript.includes(`v${nodeRuntime.NODE_VERSION}`),
+  'Native package validation must match the pinned Node runtime version');
 assert.match(packageScript, /Node runtime architecture mismatch/);
 assert.match(packageScript,
   /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
@@ -319,8 +322,6 @@ assert.match(nodePin, /^NODE_X64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_ARM64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_DARWIN_X64_SHA256=[0-9a-f]{64}$/m);
 assert.match(nodePin, /^NODE_DARWIN_ARM64_SHA256=[0-9a-f]{64}$/m);
-const nodeRuntime = Object.fromEntries(nodePin.split('\n').filter(line => /^NODE_[A-Z0-9_]+=/.test(line))
-  .map(line => line.split(/=(.*)/s).slice(0, 2)));
 assert.ok(releaseWorkflow.includes(`node-version: ${nodeRuntime.NODE_VERSION}`));
 assert.ok(releaseWorkflow.includes(`node-v${nodeRuntime.NODE_VERSION}-linux-\${NODE_ARCH}.tar.xz`));
 assert.ok(releaseWorkflow.includes(`https://nodejs.org/dist/v${nodeRuntime.NODE_VERSION}/\${archive}`));
