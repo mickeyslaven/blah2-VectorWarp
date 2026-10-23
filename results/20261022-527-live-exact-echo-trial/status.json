@@ -1,10 +1,29 @@
 {
   "schema": "vectorwarp-527-live-exact-echo-status-v1",
   "config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd",
-  "independent_passes": 29,
-  "passes_with_fused_positive_frame": 6,
-  "passes_with_fused_three_db_frame": 2,
-  "passes_with_fused_multicpi_run": 1,
+  "independent_passes": 79,
+  "passes_with_fused_positive_frame": 10,
+  "passes_with_fused_three_db_frame": 3,
+  "passes_with_fused_multicpi_run": 2,
+  "passes_with_fused_three_db_multicpi_run": 1,
+  "wilson_95_percent_intervals": {
+    "positive_frame_pass_rate": [
+      0.07023263469675515,
+      0.2175635866650352
+    ],
+    "three_db_frame_pass_rate": [
+      0.012998086889435871,
+      0.10580062767684709
+    ],
+    "multicpi_positive_run_pass_rate": [
+      0.006970367306584818,
+      0.08768584628891137
+    ],
+    "three_db_multicpi_run_pass_rate": [
+      0.0022379938550498787,
+      0.06827571876965955
+    ]
+  },
   "best_fused_margin_db": 17.26522712645004,
   "best_pass_id": "9c8bf7537b565057311eba2bfb591c4ee8be2eec2382f2e01c90046f342adb85",
   "credible_multicpi_candidate": {
@@ -15,7 +34,28 @@
     "sum_longest_positive_run": 2,
     "sum_best_margin_p99_db": 5.1270421910171615
   },
-  "interpretation": "At 29 independent exact-provenance passes, one pass remains a credible two-adjacent-CPI +3 dB echo candidate. No second multi-CPI candidate yet; one more independent pass is needed to reach the predeclared preliminary 30-pass threshold.",
+  "secondary_multicpi_candidate": {
+    "recording": "kraken-clip-r940-1792765274125894162-304",
+    "pass_id": "f8760999966d1c2dadc3bdbb504de5d1929bd33cce7c2d870b537b7536148043",
+    "sum_positive_frames": 3,
+    "sum_three_db_frames": 0,
+    "sum_longest_positive_run": 2,
+    "sum_best_margin_p99_db": 1.517674956249284
+  },
+  "alignment_audit": {
+    "clips": 79,
+    "cpi_rows": 537,
+    "max_raw_observation_offset_seconds": 1.0,
+    "max_truth_bracket_span_ms": 2224,
+    "max_delay_grid_residual_km": 0.062041,
+    "max_doppler_grid_residual_hz": 0.998279
+  },
+  "authoritative_remote_summary": {
+    "host": "strix",
+    "path": "/root/wwat527-live-exact/cohort-summary.json",
+    "sha256": "f6d236fe0116d280ed825e564b409b9394b8a74c0313bc87e38e907cfdbf62cb"
+  },
+  "interpretation": "The preliminary threshold is met with 79 independent exact-provenance passes. Ten passes (12.66%) contain at least one fused frame above local p99, three (3.80%) contain a +3 dB frame, two (2.53%) contain a multi-CPI above-p99 run, and one (1.27%) contains a persistent two-CPI +3 dB candidate. Alignment stayed within the admission contract, so the low recovery fraction is not explained by ADS-B timing or sampled-bin mismatch. These are exploratory local-threshold results, not familywise-corrected validated recoveries.",
   "temporary_transfer_service_stopped": true,
   "headroom_snapshot": {
     "rail_components": [
