@@ -130,8 +130,8 @@ assert.ok(packageScript.includes(`v${nodeRuntime.NODE_VERSION}`),
   'Native package validation must match the pinned Node runtime version');
 assert.match(packageScript, /Node runtime architecture mismatch/);
 assert.match(packageScript,
-  /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
-  'Binary packages must bind the receiver readiness condition to their private Node runtime.');
+  /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-api\.service[\s\S]*ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-processor\.service/,
+  'Binary packages must bind API and receiver conditions to their private Node runtime.');
 assert.doesNotMatch(packageScript,
   /ExecStartPre=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
   'Packaging must not restore the retired restart-looping receiver pre-check.');
