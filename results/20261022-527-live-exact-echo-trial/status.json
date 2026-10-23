@@ -1,12 +1,20 @@
 {
   "schema": "vectorwarp-527-live-exact-echo-status-v1",
   "config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd",
-  "independent_passes": 14,
-  "passes_with_fused_positive_frame": 3,
-  "passes_with_fused_three_db_frame": 1,
-  "passes_with_fused_multicpi_run": 0,
+  "independent_passes": 27,
+  "passes_with_fused_positive_frame": 6,
+  "passes_with_fused_three_db_frame": 2,
+  "passes_with_fused_multicpi_run": 1,
   "best_fused_margin_db": 17.26522712645004,
   "best_pass_id": "9c8bf7537b565057311eba2bfb591c4ee8be2eec2382f2e01c90046f342adb85",
-  "interpretation": "Descriptive only: one large isolated single-CPI candidate is not a credible multi-CPI aircraft echo; no validated recovery yet.",
+  "credible_multicpi_candidate": {
+    "recording": "kraken-clip-r215-1792731215247357310-107",
+    "pass_id": "bb021b24813d38dc329e145338521639a7335c61860a004e2ee521579116c53e",
+    "sum_positive_frames": 2,
+    "sum_three_db_frames": 2,
+    "sum_longest_positive_run": 2,
+    "sum_best_margin_p99_db": 5.1270421910171615
+  },
+  "interpretation": "One exact-provenance pass now has two adjacent fused CPIs above the local P99 threshold and +3 dB, following the predicted delay/Doppler cell. This is a credible audited aircraft echo candidate, but not yet a defensible population catch rate or proof of a stable live track.",
   "temporary_transfer_service_stopped": true
 }
