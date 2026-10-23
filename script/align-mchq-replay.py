@@ -9,6 +9,7 @@ this converter drops only the prefix needed to reach the next CPI boundary.
 
 import argparse
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -32,6 +33,11 @@ def main():
     channels = int(metadata["channels"])
     sample_rate = int(metadata["sampleRate"])
     frequency = int(metadata["frequency"])
+    expected_gains = metadata.get("channelGains")
+    if (not isinstance(expected_gains, list) or len(expected_gains) != channels or
+            not all(isinstance(value, (int, float)) and math.isfinite(value)
+                    for value in expected_gains)):
+        raise ValueError("recording metadata has no valid per-channel gain vector")
     first_epoch_sample = int(metadata["firstEpochSample"])
     if args.admission is not None:
         admission = json.loads(args.admission.read_text())
@@ -79,14 +85,25 @@ def main():
             channel_metadata = source.read(channels * 8)
             if len(channel_metadata) != channels * 8:
                 raise ValueError("truncated MCHQ metadata")
+            metadata_values = struct.unpack(f"<{channels * 2}f", channel_metadata)
+            frequencies = np.asarray(metadata_values[0::2], dtype=np.float64)
+            gains = np.asarray(metadata_values[1::2], dtype=np.float64)
+            if (not np.all(np.isfinite(frequencies)) or not np.all(np.isfinite(gains)) or
+                    not np.allclose(frequencies, frequency, rtol=0, atol=1) or
+                    not np.allclose(gains, expected_gains, rtol=0, atol=1e-4)):
+                raise ValueError("MCHQ packet RF metadata differs from recording sidecar")
             raw = source.read(samples * channels * 2)
             if len(raw) != samples * channels * 2:
                 raise ValueError("truncated MCHQ payload")
             values = np.frombuffer(raw, dtype=np.uint8).reshape(channels, samples, 2)
             # Match HeimdallFrame::decode_payload exactly: remove each packet's
-            # component mean and normalize unsigned 8-bit samples by 127.5.
+            # component mean, normalize unsigned 8-bit samples by 127.5, and
+            # refer every channel to the packet's minimum tuner gain.  Offline
+            # replay must not silently reintroduce the live gain-vector bias.
             decoded = ((values.astype(np.float32) - values.mean(axis=1, keepdims=True,
                                                                 dtype=np.float64)) / 127.5)
+            gain_scales = np.power(10.0, (np.min(gains) - gains) / 20.0)
+            decoded *= gain_scales[:, None, None]
             if remaining_skip:
                 drop = min(remaining_skip, samples)
                 decoded = decoded[:, drop:, :]
