@@ -258,19 +258,37 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       return {enabled: false, online: false, degraded: false,
         source: sources[0], sources, fusion: null};
     }
-    const results = await Promise.allSettled([get('aircraft'), get('delayDoppler')]);
-    const feeds = results.map(result => result.status === 'fulfilled' ? {available: true} :
-      {available: false, message: result.reason.message});
-    const online = feeds.every(feed => feed.available);
-    if (preview || config.capture?.replay?.state)
-      for (const slot of slots) slot.state = {...slot.state, state: 'inactive', message: feeds[0].message};
+    if (preview || config.capture?.replay?.state) {
+      const message = preview ? 'Preview: no live ADS-B connection' :
+        'Replay: no live ADS-B connection';
+      for (const slot of slots) slot.state = {...slot.state, state: 'inactive',
+        healthy: false, message};
+      const sources = slots.map(slot => ({...slot.state}));
+      return {enabled: true, online: false, degraded: false, source: sources[0],
+        sources, fusion: fusionState, association_lag_cpis: associationLagMs / cpiMs,
+        association_lag_ms: associationLagMs,
+        aircraft: {available: false, message},
+        delayDoppler: {available: false, warming: warmup.length, message}};
+    }
+    // Status is an operator-health query, not an event-time association. Do not
+    // put the intentional CPI publication delay on this endpoint: the browser's
+    // health timeout is shorter than a normal four-CPI association hold. Keep
+    // source states warm in the background whenever at least one source is
+    // already known-good; only the initial/all-down probe waits for I/O.
+    const refresh = rawSnapshots();
+    if (!slots.some(slot => slot.state.healthy === true)) {
+      try { await refresh; } catch (_) { /* Source states contain the failure. */ }
+    } else void refresh.catch(() => {});
     const sources = slots.map(slot => ({...slot.state}));
+    const online = sources.some(source => source.healthy === true);
     const degraded = online && sources.some(source => source.healthy === false);
     return {enabled: true, online, degraded, source: sources[0], sources,
       fusion: fusionState, association_lag_cpis: associationLagMs / cpiMs,
-      association_lag_ms: associationLagMs, aircraft: feeds[0],
-      delayDoppler: {...feeds[1], warming: warmup.length,
-        message: feeds[1].available && warmup.length ? 'Feed online; waiting for motion updates.' : feeds[1].message}};
+      association_lag_ms: associationLagMs,
+      aircraft: {available: online, ...(!online ? {message: 'No healthy ADS-B source'} : {})},
+      delayDoppler: {available: online, warming: warmup.length,
+        message: online && warmup.length ? 'Feed online; waiting for motion updates.' :
+          !online ? 'No healthy ADS-B source' : undefined}};
   }
   return {get, getAt, status, clear: () => {
     cache.clear(); geometry.clear(); fusionState = null;

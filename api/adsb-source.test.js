@@ -45,7 +45,17 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.equal(positions.aircraft.length, 1);
   assert.deepEqual(Object.keys(convertedData), [], 'One position is motion warmup, not a Doppler result');
   assert.equal(status.online, true);
-  assert.equal(status.delayDoppler.warming, 1, 'Duplicate first-position polls remain in motion warmup');
+  assert.equal((await source.status()).delayDoppler.warming, 1,
+    'Completed first-position conversion remains visible as motion warmup');
+
+  const delayedStatusConfig = {...config, process: {data: {cpi: .5}},
+    truth: {adsb: {...config.truth.adsb, association_lag_cpis: 4}}};
+  const delayedStatus = createAdsbSource(delayedStatusConfig, {now: () => clock,
+    fetchJson: async () => aircraft});
+  const statusStarted = Date.now();
+  assert.equal((await delayedStatus.status()).online, true);
+  assert.ok(Date.now() - statusStarted < 250,
+    'Health status must not inherit the two-second CPI association hold');
 
   let exactReads = 0;
   const exactProjection = createAdsbSource(config, {now: () => 100000,
