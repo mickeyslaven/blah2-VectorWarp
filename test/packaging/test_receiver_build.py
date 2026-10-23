@@ -474,7 +474,7 @@ endif()
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-activate-web').is_file())
         node_check = stage / 'opt/vectorwarp/libexec/vectorwarp-check-node-version'
         self.assertTrue(node_check.is_file())
-        self.assertEqual(node_check.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(node_check.stat().st_mode & 0o777, 0o644)
         launcher = (stage / 'usr/bin/vectorwarp').read_text()
         self.assertIn('PREFIX = Path(\'/opt/vectorwarp\')', launcher)
         self.assertIn("CONFIG = Path('/etc/vectorwarp')", launcher)

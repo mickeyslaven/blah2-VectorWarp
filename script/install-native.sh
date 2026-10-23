@@ -184,7 +184,7 @@ if $WITH_SYSTEMD; then
     die 'restart helpers are missing'
   [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
   [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing'
-  [[ -x $ARTIFACT/libexec/vectorwarp-check-node-version ]] || die 'Node version check helper is missing'
+  [[ -f $ARTIFACT/libexec/vectorwarp-check-node-version ]] || die 'Node version check helper is missing'
   [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
     die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
@@ -328,7 +328,10 @@ if $WITH_SYSTEMD; then
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
-  run install -m 0755 "$ARTIFACT/libexec/vectorwarp-check-node-version" "$target_prefix/libexec/vectorwarp-check-node-version"
+  # The unit invokes this script through the private Node binary. Keeping it
+  # non-executable also prevents RPM BRP from rewriting its env-node shebang
+  # and inferring a false /usr/bin/node dependency.
+  run install -m 0644 "$ARTIFACT/libexec/vectorwarp-check-node-version" "$target_prefix/libexec/vectorwarp-check-node-version"
   if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
     run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
   fi
