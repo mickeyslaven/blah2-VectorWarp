@@ -16,6 +16,8 @@ const MAX_EVENT_TRUTH_SAMPLES = 256;
 const TRUTH_SAMPLE_MS = 500;
 const MAX_ACTIVE_CAPTURE_TIMESTAMPS = 128;
 const MAX_CAPTURE_ASSOCIATIONS = 64;
+const MAX_TIMING_FRAMES = 2048;
+const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
@@ -364,6 +366,7 @@ class EvidenceStatistics {
       captureAdmission: {checked: 0, admitted: 0, quarantined: 0,
         missingAfterAdmission: 0, reasons: {}}, error: null};
     this.latest = {detection: null, tracker: null, bearing: null};
+    this.recentTiming = [];
     this.lastDetectionFrameTimestamp = null; this.lastTrackerFrameTimestamp = null;
     this.running = false; this.queued = false; this.lastSampleBucket = null;
     this.lastPersistAt = 0; this.closed = false;
@@ -422,6 +425,27 @@ class EvidenceStatistics {
   }
   acceptTracker(frame) { this.latest.tracker = parse(frame); }
   acceptBearing(frame) { this.latest.bearing = parse(frame); }
+
+  acceptTiming(frame) {
+    const value = parse(frame);
+    if (!finite(value?.timestamp) || value.captureSamplePositionAvailable !== true ||
+        !Number.isSafeInteger(value.captureEpoch) ||
+        !Number.isSafeInteger(value.captureFirstEpochSample) ||
+        !Number.isSafeInteger(value.captureEndEpochSample) ||
+        value.captureEndEpochSample <= value.captureFirstEpochSample) return;
+    const item = {timestamp_ms: value.timestamp, epoch: value.captureEpoch,
+      first_epoch_sample: value.captureFirstEpochSample,
+      end_epoch_sample: value.captureEndEpochSample,
+      capture_dropped_samples: Array.isArray(value.captureDroppedSamples) ?
+        value.captureDroppedSamples.filter(Number.isSafeInteger) : []};
+    const duplicate = this.recentTiming.some(existing =>
+      existing.timestamp_ms === item.timestamp_ms && existing.epoch === item.epoch &&
+      existing.first_epoch_sample === item.first_epoch_sample);
+    if (!duplicate) this.recentTiming.push(item);
+    const cutoff = value.timestamp - TIMING_RETENTION_MS;
+    this.recentTiming = this.recentTiming.filter(existing => existing.timestamp_ms >= cutoff)
+      .slice(-MAX_TIMING_FRAMES);
+  }
 
   queue(timestamp = this.now()) {
     if (this.closed || !this.limits || this.config.truth?.adsb?.enabled !== true) return;
@@ -671,7 +695,17 @@ class EvidenceStatistics {
       const event = this.state.eligibilityEvents.find(item => item.id === record.eventId);
       const truth = (event?.truth_samples || []).filter(sample =>
         sample.timestamp_ms >= window.windowStart - 3000 && sample.timestamp_ms <= window.windowEnd + 3000);
-      result[window.captureId] = validateTruthWindow(truth, window.windowStart, window.windowEnd, {cpiMs});
+      const processorCpis = this.recentTiming.filter(item =>
+        item.timestamp_ms >= window.windowStart && item.timestamp_ms <= window.windowEnd);
+      const admission = validateTruthWindow(truth, window.windowStart, window.windowEnd,
+        {cpiMs, cpiTimestampsMs: processorCpis.map(item => item.timestamp_ms)});
+      result[window.captureId] = {...admission, processor_cpis: processorCpis.map(item => {
+        const bracket = admission.cpis.find(cpi => cpi.timestamp_ms === item.timestamp_ms) || {};
+        return {...item, truth_left_timestamp_ms: bracket.left_timestamp_ms ?? null,
+          truth_right_timestamp_ms: bracket.right_timestamp_ms ?? null,
+          truth_bracket_span_ms: bracket.bracket_span_ms ?? null,
+          max_raw_observation_offset_s: bracket.max_raw_observation_offset_s ?? null};
+      })};
     }
     return result;
   }

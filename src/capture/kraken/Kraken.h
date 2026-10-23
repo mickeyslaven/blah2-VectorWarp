@@ -26,6 +26,9 @@ private:
   std::atomic<bool> running{false};
   int socketFd{-1};
   std::unique_ptr<blah2::KrakenClipRecorder> clipRecorder;
+  std::atomic<bool> samplePositionAvailable{false};
+  std::atomic<uint64_t> sampleEpoch{0};
+  std::atomic<uint64_t> nextEpochSample{0};
 
   void process_heimdall(const std::vector<IqData *>& buffers);
   void stream_heimdall(const std::vector<IqData *>& buffers);
@@ -35,6 +38,12 @@ private:
   static void clear_buffers(const std::vector<IqData *>& buffers);
 
 public:
+  struct SamplePosition
+  {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+  };
   Kraken(std::string type, uint32_t fc, uint32_t fs, std::string path,
     bool *saveIq, std::size_t channelCount, std::string heimdallHost,
     uint16_t heimdallPort);
@@ -44,6 +53,7 @@ public:
   void stop() override;
   void request_clip(const blah2::IqClipRequest& request);
   blah2::IqClipStatus clip_status() const;
+  SamplePosition sample_position() const;
 };
 
 #endif

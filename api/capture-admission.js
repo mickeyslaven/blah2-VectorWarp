@@ -11,14 +11,21 @@ function rawOffset(sample) {
 }
 
 function validateTruthWindow(samples, windowStart, windowEnd,
-  {cpiMs = 500, maxBracketMs = 3000, maxRawOffsetS = 1, maxDisagreementKm = .5} = {}) {
+  {cpiMs = 500, maxBracketMs = 3000, maxRawOffsetS = 1, maxDisagreementKm = .5,
+    cpiTimestampsMs = null} = {}) {
   const ordered = (samples || []).filter(sample => finite(sample?.timestamp_ms))
     .sort((a, b) => a.timestamp_ms - b.timestamp_ms)
     .filter((sample, index, values) => !index || sample.timestamp_ms !== values[index - 1].timestamp_ms);
   const reasons = [], cpis = [];
   if (!finite(windowStart) || !finite(windowEnd) || windowEnd <= windowStart || !finite(cpiMs) || cpiMs <= 0)
     reasons.push('invalid-window');
-  if (!reasons.length) for (let at = windowStart + cpiMs / 2; at < windowEnd; at += cpiMs) {
+  const timestamps = Array.isArray(cpiTimestampsMs) ? [...new Set(cpiTimestampsMs
+    .filter(at => finite(at) && at >= windowStart && at <= windowEnd))].sort((a, b) => a - b) : null;
+  if (Array.isArray(cpiTimestampsMs) && !timestamps.length) reasons.push('processor-cpi-sample-provenance-missing');
+  const schedule = timestamps || (!reasons.length ? Array.from(
+    {length: Math.max(0, Math.ceil((windowEnd - windowStart - cpiMs / 2) / cpiMs))},
+    (_, index) => windowStart + cpiMs / 2 + index * cpiMs).filter(at => at < windowEnd) : []);
+  if (!reasons.length) for (const at of schedule) {
     const left = [...ordered].reverse().find(sample => sample.timestamp_ms <= at);
     const right = ordered.find(sample => sample.timestamp_ms >= at);
     if (!left || !right || left === right) { reasons.push('truth-bracket-missing'); break; }
@@ -43,6 +50,51 @@ function validateTruthWindow(samples, windowStart, windowEnd,
   return {valid: !reasons.length, reasons: [...new Set(reasons)], cpi_ms: cpiMs, cpis,
     truth_samples: ordered, maximum_bracket_span_ms: cpis.length ? Math.max(...cpis.map(x => x.bracket_span_ms)) : null,
     maximum_raw_observation_offset_s: cpis.length ? Math.max(...cpis.map(x => x.max_raw_observation_offset_s)) : null};
+}
+
+function validateProcessorSampleRanges(admission, metadata) {
+  const reasons = [];
+  const ranges = Array.isArray(admission?.processor_cpis) ? admission.processor_cpis : [];
+  if (!ranges.length) reasons.push('processor-cpi-sample-provenance-missing');
+  const epoch = metadata?.epoch, first = metadata?.firstEpochSample,
+    end = metadata?.endEpochSample;
+  if (![epoch, first, end].every(Number.isSafeInteger) || end <= first)
+    reasons.push('recording-sample-provenance-missing');
+  const malformed = ranges.some(range => !Number.isSafeInteger(range?.epoch) ||
+    !Number.isSafeInteger(range?.first_epoch_sample) ||
+    !Number.isSafeInteger(range?.end_epoch_sample) ||
+    range.end_epoch_sample <= range.first_epoch_sample);
+  if (malformed) reasons.push('processor-cpi-sample-provenance-invalid');
+  const contained = !reasons.length ? ranges.filter(range => range.epoch === epoch &&
+    range.first_epoch_sample >= first && range.end_epoch_sample <= end) : [];
+  if (ranges.length && !contained.length && !reasons.length)
+    reasons.push('processor-cpi-outside-recording');
+  if (ranges.some(range => Number.isSafeInteger(range?.epoch) && range.epoch !== epoch))
+    reasons.push('processor-cpi-epoch-mismatch');
+
+  // A recorder clip starts at an arbitrary sample, while live CPIs are aligned
+  // to the processor stream.  It is normal for one CPI at either clip edge to
+  // overlap but not be fully replayable.  Admit only complete contained CPIs
+  // and re-run truth validation for exactly that replayable schedule.
+  if (!reasons.length) {
+    const timestamps = contained.map(range => range.timestamp_ms).filter(finite);
+    const truth = validateTruthWindow(admission?.truth_samples || [],
+      Math.min(...timestamps) - 1, Math.max(...timestamps) + 1,
+      {cpiMs: admission?.cpi_ms || 500, cpiTimestampsMs: timestamps});
+    const truthByTimestamp = new Map(truth.cpis.map(cpi => [cpi.timestamp_ms, cpi]));
+    return {...truth,
+      processor_cpis: contained.map(range => {
+        const cpi = truthByTimestamp.get(range.timestamp_ms);
+        return {...range,
+          truth_left_timestamp_ms: cpi?.left_timestamp_ms ?? null,
+          truth_right_timestamp_ms: cpi?.right_timestamp_ms ?? null,
+          truth_bracket_span_ms: cpi?.bracket_span_ms ?? null,
+          max_raw_observation_offset_s: cpi?.max_raw_observation_offset_s ?? null};
+      }),
+      excluded_processor_cpis: ranges.length - contained.length};
+  }
+  return {...admission, valid: false, reasons: [...new Set(reasons)],
+    processor_cpis: contained, excluded_processor_cpis: ranges.length - contained.length};
 }
 
 async function sha256(filename, io = fs) {
@@ -100,5 +152,6 @@ function admissionsNeedTruthSettlement(admissions) {
   return Object.values(admissions || {}).some(item => item?.valid === false &&
     (item.reasons || []).includes('truth-bracket-missing'));
 }
-module.exports = {rawOffset, validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
-  captureArtifactState, admissionsNeedTruthSettlement};
+module.exports = {rawOffset, validateTruthWindow, validateProcessorSampleRanges,
+  verifyCaptureIntegrity, writeAdmissionSidecar, captureArtifactState,
+  admissionsNeedTruthSettlement};

@@ -132,6 +132,8 @@ int main()
         if (sequence >= 1) expected.push_back(value.decoded);
         ingest(recorder, std::move(value));
       }
+      const auto position = recorder.position();
+      assert(position.available && position.nextSample == 4ULL * FRAME_SAMPLES);
       recorder.request(request(1, 1000, 1005));
       for (unsigned sequence = 4; sequence < 6; ++sequence)
       {

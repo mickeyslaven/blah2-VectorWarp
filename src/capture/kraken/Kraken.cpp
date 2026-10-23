@@ -47,6 +47,13 @@ blah2::IqClipStatus Kraken::clip_status() const
   return clipRecorder->status();
 }
 
+Kraken::SamplePosition Kraken::sample_position() const
+{
+  return {samplePositionAvailable.load(std::memory_order_acquire),
+    sampleEpoch.load(std::memory_order_relaxed),
+    nextEpochSample.load(std::memory_order_relaxed)};
+}
+
 void Kraken::start()
 {
   running = true;
@@ -94,6 +101,7 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
       if (!running) return;
       recording_discontinuity("Kraken input connection was interrupted");
       clipRecorder->discontinuity("Kraken input connection was interrupted");
+      samplePositionAvailable.store(false, std::memory_order_release);
       clear_buffers(buffers);
       std::cerr << "[Kraken] " << error.what()
         << "; retrying in 1 second" << std::endl;
@@ -129,6 +137,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
         *frequencyChangeCounter != header.frequencyChangeCounter) {
       recording_discontinuity("Kraken input retuned during recording");
       clipRecorder->discontinuity("Kraken input retuned during clip recording");
+      samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
     }
     frequencyChangeCounter = header.frequencyChangeCounter;
@@ -136,6 +145,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     {
       recording_discontinuity("Kraken input synchronization was lost");
       clipRecorder->discontinuity("Kraken input synchronization was lost during clip recording");
+      samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
       continue;
     }
@@ -143,6 +153,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     {
       recording_discontinuity("Kraken input reset before synchronized data");
       clipRecorder->discontinuity("Kraken input reset before synchronized clip data");
+      samplePositionAvailable.store(false, std::memory_order_release);
       clear_buffers(buffers);
       resetPending = false;
     }
@@ -151,12 +162,20 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     for (auto *buffer : buffers) buffer->lock();
     for (std::size_t channel = 0; channel < channels.size(); channel++)
       buffers[channel]->append_unlocked(channels[channel]);
+    blah2::KrakenClipRecorder::Position position;
+    const bool recorded = clipRecorder->ingest(headerBytes, std::move(metadata),
+      std::move(payload), header, &position);
+    if (recorded && position.available)
+    {
+      sampleEpoch.store(position.epoch, std::memory_order_relaxed);
+      nextEpochSample.store(position.nextSample, std::memory_order_relaxed);
+      samplePositionAvailable.store(true, std::memory_order_release);
+    }
+    else samplePositionAvailable.store(false, std::memory_order_release);
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
       (*it)->unlock();
 
     record_block(channels);
-    clipRecorder->ingest(headerBytes, std::move(metadata), std::move(payload),
-      header);
   }
 }
 

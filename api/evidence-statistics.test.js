@@ -202,6 +202,29 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     Array.from({length: 65}, (_, index) => 2_000_000_000_000 + index * 1000),
     'The retained trajectory must remain continuous without a minute-wide middle gap');
   retention.close();
+
+  const timingFilename = path.join(directory, 'timing-provenance.json');
+  const timingStats = new EvidenceStatistics(config, source, {filename: timingFilename,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const truthProvenance = {projection_model: 'constant_velocity_ground_track',
+    observation_time_offset_s: .2, maximum_pairwise_projected_disagreement_km: .1};
+  timingStats.state.eligibilityEvents.push({id: 'timing-event', truth_samples:
+    Array.from({length: 6}, (_, index) =>
+      ({timestamp_ms: index * 500, provenance: truthProvenance}))});
+  for (const [timestamp, first] of [[250, 100], [750, 200], [1250, 300]])
+    timingStats.acceptTiming({timestamp, captureSamplePositionAvailable: true,
+      captureEpoch: 7, captureFirstEpochSample: first,
+      captureEndEpochSample: first + 100, captureDroppedSamples: [0, 0, 0, 0, 0]});
+  const timingAdmissions = timingStats.prepareCaptureAdmissions([{eventId: 'timing-event',
+    captureWindows: [{captureId: 'timing-clip', revision: 4,
+      windowStart: 0, windowEnd: 1500}]}], 4);
+  assert.equal(timingAdmissions['timing-clip'].valid, true);
+  assert.deepEqual(timingAdmissions['timing-clip'].processor_cpis.map(item =>
+    [item.timestamp_ms, item.epoch, item.first_epoch_sample, item.end_epoch_sample]),
+  [[250, 7, 100, 200], [750, 7, 200, 300], [1250, 7, 300, 400]]);
+  assert.deepEqual(timingAdmissions['timing-clip'].cpis.map(item => item.timestamp_ms),
+    [250, 750, 1250]);
+  timingStats.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

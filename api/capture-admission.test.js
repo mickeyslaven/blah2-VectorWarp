@@ -5,7 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
-  captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission');
+  captureArtifactState, admissionsNeedTruthSettlement,
+  validateProcessorSampleRanges} = require('./capture-admission');
 
 (async () => {
   const provenance = offset => ({projection_model: 'constant_velocity_ground_track',
@@ -28,6 +29,29 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
     reasons: ['truth-bracket-missing']}}), true);
   assert.equal(admissionsNeedTruthSettlement({one: {valid: false,
     reasons: ['truth-raw-offset']}, two: {valid: true, reasons: []}}), false);
+  const timed = validateTruthWindow(samples, 0, 10000,
+    {cpiTimestampsMs: [250, 750, 1250]});
+  assert.equal(timed.valid, true); assert.deepEqual(timed.cpis.map(cpi => cpi.timestamp_ms),
+    [250, 750, 1250]);
+  const ranged = validateProcessorSampleRanges({...timed, processor_cpis: [
+    {timestamp_ms: 250, epoch: 9, first_epoch_sample: 100, end_epoch_sample: 200}]},
+  {epoch: 9, firstEpochSample: 0, endEpochSample: 1000});
+  assert.equal(ranged.valid, true);
+  const edgeClipped = validateProcessorSampleRanges({...timed, processor_cpis: [
+    {timestamp_ms: 250, epoch: 9, first_epoch_sample: -100, end_epoch_sample: 100},
+    {timestamp_ms: 750, epoch: 9, first_epoch_sample: 100, end_epoch_sample: 200},
+    {timestamp_ms: 1250, epoch: 9, first_epoch_sample: 200, end_epoch_sample: 300}]},
+  {epoch: 9, firstEpochSample: 0, endEpochSample: 1000});
+  assert.equal(edgeClipped.valid, true);
+  assert.equal(edgeClipped.excluded_processor_cpis, 1);
+  assert.deepEqual(edgeClipped.processor_cpis.map(cpi => cpi.timestamp_ms), [750, 1250]);
+  assert.deepEqual(validateProcessorSampleRanges({...timed, processor_cpis: []},
+    {epoch: 9, firstEpochSample: 0, endEpochSample: 1000}).reasons,
+  ['processor-cpi-sample-provenance-missing']);
+  assert.deepEqual(validateProcessorSampleRanges({...timed, processor_cpis: [
+    {epoch: 8, first_epoch_sample: 100, end_epoch_sample: 200}]},
+  {epoch: 9, firstEpochSample: 0, endEpochSample: 1000}).reasons,
+  ['processor-cpi-outside-recording', 'processor-cpi-epoch-mismatch']);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-admission-'));
   const file = path.join(directory, 'clip.mchq'), body = Buffer.from('bounded-iq');

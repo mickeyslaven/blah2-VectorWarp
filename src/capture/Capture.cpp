@@ -27,6 +27,14 @@ Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _pat
   saveIq = false;
 }
 
+Capture::SamplePosition Capture::live_sample_position() const
+{
+  const auto* kraken = dynamic_cast<const Kraken*>(device.get());
+  if (!kraken) return {};
+  const auto value = kraken->sample_position();
+  return {value.available, value.epoch, value.nextSample};
+}
+
 void Capture::process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 
   std::string ip_capture, uint16_t port_capture)
 {

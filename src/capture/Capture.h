@@ -47,6 +47,12 @@ private:
   std::string unsupportedClipError;
 
 public:
+  struct SamplePosition
+  {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+  };
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
@@ -102,6 +108,7 @@ public:
   // Optional receiver extension, installed before start when the loaded
   // module supports it. Older modules retain the normal FIFO contract.
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
+  SamplePosition live_sample_position() const;
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

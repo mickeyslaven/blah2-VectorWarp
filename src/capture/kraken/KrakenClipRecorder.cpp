@@ -317,7 +317,7 @@ void KrakenClipRecorder::discontinuity(const std::string& reason)
 bool KrakenClipRecorder::ingest(
   const std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE>& fixed,
   std::vector<uint8_t> metadata, std::vector<uint8_t> payload,
-  const HeimdallFrame::Header& header)
+  const HeimdallFrame::Header& header, Position* position)
 {
   if (!mutex.try_lock())
   {
@@ -367,7 +367,14 @@ bool KrakenClipRecorder::ingest(
       active->frames.push_back(frame);
     if (nextSample >= active->endSample) finish_active_locked();
   }
+  if (position) *position = {haveEpoch, epoch, nextSample};
   return true;
+}
+
+KrakenClipRecorder::Position KrakenClipRecorder::position() const
+{
+  std::lock_guard<std::mutex> lock(mutex);
+  return {haveEpoch, epoch, nextSample};
 }
 
 void KrakenClipRecorder::request(const IqClipRequest& value)

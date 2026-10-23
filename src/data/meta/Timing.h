@@ -37,6 +37,10 @@ private:
   bool clutterCpuExecuted = false;
   std::vector<uint64_t> captureBacklogSamples;
   std::vector<uint64_t> captureDroppedSamples;
+  bool captureSamplePositionAvailable = false;
+  uint64_t captureEpoch = 0;
+  uint64_t captureFirstEpochSample = 0;
+  uint64_t captureEndEpochSample = 0;
 
 public:
   /// @brief Constructor.
@@ -65,6 +69,13 @@ public:
     std::vector<uint64_t> dropped) {
     captureBacklogSamples = std::move(backlog);
     captureDroppedSamples = std::move(dropped);
+  }
+  void set_capture_sample_position(bool available, uint64_t epoch,
+    uint64_t first, uint64_t end) {
+    captureSamplePositionAvailable = available;
+    captureEpoch = epoch;
+    captureFirstEpochSample = first;
+    captureEndEpochSample = end;
   }
 
   /// @brief Append the map to a save file.

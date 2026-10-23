@@ -1135,6 +1135,9 @@ try
         bool ready = false;
         uint64_t captureStartUs = 0;
         std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
+        bool captureSamplePositionAvailable = false;
+        uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
+          captureEndEpochSample = 0;
 #ifdef VECTORWARP_MIXED_AUTO
         blah2::mixed::Choice mixedChoice = blah2::mixed::Choice::cpu;
         bool mixedChoiceMade = false, mixedInputPrepared = false;
@@ -1204,6 +1207,20 @@ try
             for (auto* buffer : captureBuffers) {
               captureBacklogSamples.push_back(buffer->get_length());
               captureDroppedSamples.push_back(buffer->get_dropped_samples());
+            }
+            const auto position = capture->live_sample_position();
+            if (position.available && !captureBacklogSamples.empty() &&
+                std::all_of(captureBacklogSamples.begin(),
+                  captureBacklogSamples.end(), [&](uint64_t value) {
+                    return value == captureBacklogSamples.front();
+                  }) &&
+                position.nextSample >= captureBacklogSamples.front() &&
+                captureBacklogSamples.front() >= nSamples) {
+              captureSamplePositionAvailable = true;
+              captureEpoch = position.epoch;
+              captureFirstEpochSample = position.nextSample -
+                captureBacklogSamples.front();
+              captureEndEpochSample = captureFirstEpochSample + nSamples;
             }
             for (std::size_t channel = 0; channel < captureChannelCount; channel++)
               captureData[channel]->replace(captureBuffers[channel]->drain_front(nSamples));
@@ -1582,6 +1599,8 @@ try
           // output timing data
           timing->update(time[0]/1000, timing_time, timing_name);
           timing->set_capture_queues(captureBacklogSamples,captureDroppedSamples);
+          timing->set_capture_sample_position(captureSamplePositionAvailable,
+            captureEpoch, captureFirstEpochSample, captureEndEpochSample);
           timing->set_acceleration(
 #ifdef VECTORWARP_MIXED_AUTO
             mixedAuto ? mixedStatus :

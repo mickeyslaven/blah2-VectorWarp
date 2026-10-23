@@ -29,7 +29,7 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
-const {verifyCaptureIntegrity, writeAdmissionSidecar,
+const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
@@ -90,8 +90,10 @@ async function finalizeCaptureAdmission(revision, file, samples) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   } catch (error) { integrity = {valid: false, reasons: ['recording-integrity-error'], error: error.message}; }
-  const {metadata: _metadata, ...integritySummary} = integrity;
+  const {metadata: integrityMetadata, ...integritySummary} = integrity;
   integrity = integritySummary;
+  admissions = Object.fromEntries(Object.entries(admissions).map(([id, admission]) =>
+    [id, validateProcessorSampleRanges(admission, integrityMetadata)]));
   let admissionSidecar = null;
   const artifact = {schema: 'vectorwarp-capture-admission-v1', created_at: Date.now(), revision,
     state: captureArtifactState(integrity, admissions), integrity,
@@ -1237,6 +1239,7 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionEligible(connection)) return;
     activeTimingConnection = connection.id;
     timing = frame;
+    evidenceStatistics.acceptTiming(frame);
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
