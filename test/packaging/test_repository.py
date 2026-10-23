@@ -629,7 +629,7 @@ class ManifestTests(unittest.TestCase):
                           filename=self.package.name, size=self.package.stat().st_size,
                           sha256=repository.sha256(self.package), backend="all", gpu="auto",
                           compiled_receivers=["Usrp", "HackRF", "Kraken"], local_build_receivers=["RspDuo"],
-                          node_version="24.21.0")
+                          node_version="24.22.1")
         self.manifest = self.root / "manifest.json"
 
     def load(self, entries=None, document=None):
@@ -885,7 +885,7 @@ class SignedRepositoryTests(unittest.TestCase):
         result = dict(name="vectorwarp", version="1.2.3", release="1.fc44" if format == "rpm" else "1",
                       format=format, distro=distro, distro_version=version, arch=arch,
                       filename=file.name, sha256=repository.sha256(file), size=file.stat().st_size,
-                      backend="all", gpu="auto", node_version="24.21.0",
+                      backend="all", gpu="auto", node_version="24.22.1",
                       compiled_receivers=["Usrp", "HackRF", "Kraken"], local_build_receivers=["RspDuo"])
         if codename:
             result["codename"] = codename

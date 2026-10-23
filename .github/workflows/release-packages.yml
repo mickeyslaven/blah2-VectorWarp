@@ -104,7 +104,7 @@ jobs:
       - name: Set up Node 24 for API tests
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.21.0
+          node-version: 24.22.1
           package-manager-cache: false
       - name: Install CPU build dependencies
         run: |
@@ -115,8 +115,8 @@ jobs:
       - name: Bootstrap pinned vcpkg manifest dependencies
         run: |
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git build/ci-deps/vcpkg
-          git -C build/ci-deps/vcpkg fetch --depth=1 origin c8696863d371ab7f46e213d8f5ca923c4aef2a00
-          git -C build/ci-deps/vcpkg checkout --detach c8696863d371ab7f46e213d8f5ca923c4aef2a00
+          git -C build/ci-deps/vcpkg fetch --depth=1 origin b45fe136ff576ad06105fed78245e765ab35ad16
+          git -C build/ci-deps/vcpkg checkout --detach b45fe136ff576ad06105fed78245e765ab35ad16
           build/ci-deps/vcpkg/bootstrap-vcpkg.sh -disableMetrics
           mkdir -p build/ci-manifest
           cp lib/vcpkg-kraken.json build/ci-manifest/vcpkg.json
@@ -234,8 +234,8 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -244,9 +244,9 @@ jobs:
             libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
           sha_var="NODE_SHA_${NODE_ARCH^^}"
           node_sha=${!sha_var}
-          archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+          archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
           curl --fail --location --proto '=https' --tlsv1.2 \
-            "https://nodejs.org/dist/v24.21.0/${archive}" --output "$RUNNER_TEMP/${archive}"
+            "https://nodejs.org/dist/v24.22.1/${archive}" --output "$RUNNER_TEMP/${archive}"
           printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
           node_root="$RUNNER_TEMP/${archive%.tar.xz}"
@@ -260,8 +260,8 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
@@ -275,9 +275,9 @@ jobs:
                 build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
                 libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
-              archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
-                "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+                "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
@@ -291,8 +291,8 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
@@ -303,9 +303,9 @@ jobs:
               dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
-              archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
+              archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
-                "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+                "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
@@ -319,16 +319,16 @@ jobs:
         env:
           VERSION: 0.0.0
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
             libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
-          sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
-          curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "$RUNNER_TEMP/${archive}"
+          sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "$RUNNER_TEMP/${archive}"
           printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"; node_root="$RUNNER_TEMP/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
           script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
@@ -338,8 +338,8 @@ jobs:
         if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
         env:
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
@@ -348,8 +348,8 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install --yes --no-install-recommends build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
               script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
@@ -360,16 +360,16 @@ jobs:
         if: github.event_name == 'pull_request' && matrix.format == 'rpm'
         env:
           NODE_ARCH: ${{ matrix.node_arch }}
-          NODE_SHA_X64: fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-          NODE_SHA_ARM64: 6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+          NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+          NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
             -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel
-              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.21.0-linux-${NODE_ARCH}.tar.xz"
-              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.21.0/${archive}" --output "/tmp/${archive}"
+              sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
+              curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
               script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
@@ -379,7 +379,7 @@ jobs:
       - name: Set up browser-test Node (test runner only)
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 24.21.0
+          node-version: 24.22.1
           package-manager-cache: false
       - name: Install isolated browser-test dependencies (not packaged)
         env:

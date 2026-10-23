@@ -5,15 +5,15 @@
       { "name": "catch2", "version>=": "3.4.0" },
       { "name": "rapidjson", "version>=": "2023-07-17" },
       { "name": "asio", "version>=": "1.28.0" },
-      { "name": "cpp-httplib", "version>=": "0.12.2" },
-      { "name": "ryml", "version>=": "0.5.0" }
+      { "name": "cpp-httplib", "version>=": "0.54.1" },
+      { "name": "ryml", "version>=": "0.16.0" }
   ],
-  "builtin-baseline": "c8696863d371ab7f46e213d8f5ca923c4aef2a00",
+  "builtin-baseline": "b45fe136ff576ad06105fed78245e765ab35ad16",
   "overrides": [
     { "name": "catch2", "version": "3.4.0" },
     { "name": "rapidjson", "version-date": "2023-07-17" },
     { "name": "asio", "version": "1.28.0" },
-    { "name": "cpp-httplib", "version": "0.12.2" },
-    { "name": "ryml", "version": "0.5.0" }
+    { "name": "cpp-httplib", "version": "0.54.1" },
+    { "name": "ryml", "version": "0.16.0" }
   ]
 }

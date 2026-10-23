@@ -10,7 +10,6 @@ class Vectorwarp < Formula
   depends_on :macos
   depends_on "cmake" => :build
   depends_on "ninja" => :build
-  depends_on "node@24"
   depends_on "python@3.12"
   depends_on "armadillo"
   depends_on "asio"
@@ -32,13 +31,29 @@ class Vectorwarp < Formula
     sha256 "b61055393adb3adc79009fe12401cbfbbdfba584e665e9c35fcbf4b32fb31f30"
   end
 
+  resource "node-runtime" do
+    version "24.22.1"
+    on_arm do
+      url "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-arm64.tar.gz"
+      sha256 "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7"
+    end
+    on_intel do
+      url "https://nodejs.org/dist/v24.22.1/node-v24.22.1-darwin-x64.tar.gz"
+      sha256 "d132557e7ee2b85af08b0c8c34338e65c6430f2238d01f727728ef42dc83b035"
+    end
+  end
+
   def install
     resource("vkfft").stage buildpath/"vkfft"
-    system "env", "PATH=#{Formula['node@24'].opt_bin}:#{ENV.fetch('PATH')}",
+    resource("node-runtime").stage buildpath/"node-runtime"
+    node_runtime = buildpath/"node-runtime"
+    system node_runtime/"bin/node", "script/check-node-version.js"
+    system "env", "PATH=#{node_runtime/"bin"}:#{ENV.fetch('PATH')}",
            "VECTORWARP_MACOS_BREW_PREFIX=#{HOMEBREW_PREFIX}",
            "VKFFT_ROOT=#{buildpath/"vkfft"}", "script/build-macos.sh", "--backend", "all", "--gpu", "on",
            "--jobs", ENV.make_jobs.to_s,
            "--output-dir", "#{libexec}"
+    (libexec/"runtime").install node_runtime => "node"
     bin.install_symlink libexec/"script/vectorwarp-macos" => "vectorwarp"
     # Keep the Kraken-specific driver private to its companion formula.
     kraken = Formula["vectorwarp/local/vectorwarp-heimdall"].opt_libexec
@@ -63,7 +78,7 @@ class Vectorwarp < Formula
     keep_alive true
     working_dir HOMEBREW_PREFIX
     environment_variables PATH: "#{Formula['python@3.12'].opt_libexec/'bin'}:#{std_service_path_env}",
-                          VECTORWARP_MACOS_NODE: Formula["node@24"].opt_bin/"node",
+                          VECTORWARP_MACOS_NODE: opt_libexec/"runtime/node/bin/node",
                           VECTORWARP_MACOS_STATE: "#{Dir.home}/Library/Application Support/VectorWarp"
     log_path var/"log/vectorwarp.log"
     error_log_path var/"log/vectorwarp.log"
@@ -71,6 +86,7 @@ class Vectorwarp < Formula
 
   test do
     assert_match "VectorWarp", shell_output("#{bin}/vectorwarp help")
+    assert_equal "v24.22.1", shell_output("#{libexec}/runtime/node/bin/node --version").strip
     status = JSON.parse(shell_output("#{libexec}/bin/blah2 --receiver-status"))
     assert_equal false, status.fetch("hardwareProbed")
     %w[Usrp HackRF].each do |name|
