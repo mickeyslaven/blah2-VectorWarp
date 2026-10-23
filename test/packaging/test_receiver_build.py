@@ -292,8 +292,11 @@ endif()
                      "72-vectorwarp-hackrf.rules"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
         for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
-                     "vectorwarp-sudoers-migrate.py"):
+                     "vectorwarp-sudoers-migrate.py", "check-node-version.js"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
+        (artifact / "libexec/check-node-version.js").rename(
+            artifact / "libexec/vectorwarp-check-node-version")
+        (artifact / "libexec/vectorwarp-check-node-version").chmod(0o755)
         (artifact / 'libexec/vectorwarp').chmod(0o755)
         shutil.copy2(ROOT / 'packaging/deb/preinst', artifact / 'libexec/vectorwarp-quiesce')
         (artifact / 'libexec/vectorwarp-quiesce').chmod(0o755)
@@ -469,6 +472,9 @@ endif()
         self.assertEqual(policy_dir.stat().st_mode & 0o777, 0o755)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-helper').is_file())
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-activate-web').is_file())
+        node_check = stage / 'opt/vectorwarp/libexec/vectorwarp-check-node-version'
+        self.assertTrue(node_check.is_file())
+        self.assertEqual(node_check.stat().st_mode & 0o777, 0o755)
         launcher = (stage / 'usr/bin/vectorwarp').read_text()
         self.assertIn('PREFIX = Path(\'/opt/vectorwarp\')', launcher)
         self.assertIn("CONFIG = Path('/etc/vectorwarp')", launcher)
