@@ -1019,6 +1019,24 @@ app.get('/api/bearing/manifold-recorder', (req, res) => {
 app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
+app.get('/api/bearing/manifold-progress', (req, res) => {
+  // Evaluation is signature-cached and runs off the API thread. Polling this
+  // view refreshes a changed corpus promptly without loading the radar
+  // processor or repeatedly fitting unchanged data.
+  void manifoldAutomation.evaluate();
+  const automation = manifoldAutomation.status();
+  res.json({schema: 'vectorwarp-manifold-campaign-status-v1', generated_at: Date.now(),
+    frequency_hz: config.capture?.fc || null,
+    active_model: config.process?.bearing?.manifold_file || null,
+    recorder: manifoldRecorder.status(),
+    automation: {enabled: automation.enabled, state: automation.state,
+      running: automation.running, qualified: automation.qualified,
+      failures: automation.failures || [], error: automation.error,
+      last_evaluation_at: automation.lastEvaluationAt || null,
+      promotion: automation.promotion || null},
+    progress: automation.progress,
+    frequency_resolved: frequencyResolvedShadow.status()});
+});
 app.get('/api/bearing/diagnostic', (req, res) => {
   if (req.query.refresh === 'true') void bearingDiagnostic.refresh({force: true});
   res.json(bearingDiagnostic.status());

@@ -662,7 +662,55 @@
     statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 
-  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics};
+  async function renderCalibration() {
+    setupPlotScaffold('insight-content-wide');
+    const campaign = await apiJson('/api/bearing/manifold-progress');
+    const progress = campaign?.progress || {};
+    const automation = campaign?.automation || {};
+    const recorder = campaign?.recorder || {};
+    const sectors = array(progress.sectors);
+    const requirements = array(progress.requirements);
+    const completion = finite(progress.evidence_completion_fraction) ?? 0;
+    document.getElementById('view-summary').innerHTML =
+      `${card(percent(completion, 0), 'Collection gate progress', progress.collection_ready ? 'good' : 'warning')}` +
+      `${card(integer(progress.independent_passes), 'Independent passes')}` +
+      `${card(integer(progress.unique_aircraft), 'Unique aircraft')}` +
+      `${card(`${integer(progress.covered_sectors)}/${integer(progress.required_covered_sectors)}`, 'Covered sectors')}`;
+    const requirementRows = requirements.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${item.comparison === 'at_most' ? `≤ ${number(item.required, 1)}` : integer(item.required)}</td><td>${item.comparison === 'at_most' ? number(item.current, 1) : integer(item.current)}</td><td><span class="state-pill ${item.complete ? 'active' : 'coasting'}">${item.complete ? 'Ready' : 'Collecting'}</span></td></tr>`);
+    const sectorRows = sectors.map(item => `<tr><td>${integer(item.from_deg)}–${integer(item.to_deg)}°</td><td>${integer(item.samples)}</td><td>${integer(item.passes)}</td><td>${integer(item.aircraft)}</td><td><span class="state-pill ${item.ready ? 'active' : 'coasting'}">${item.ready ? 'Covered' : `${integer(item.passes_needed)} passes / ${integer(item.aircraft_needed)} aircraft needed`}</span></td></tr>`);
+    const blockers = array(progress.next_actions);
+    const failureText = array(automation.failures).filter(Boolean);
+    const active = Boolean(campaign.active_model);
+    const frequencyHz = finite(campaign.frequency_hz);
+    document.getElementById('view-detail').innerHTML = `<div class="overview-grid">
+      <section class="info-card"><h2>Campaign state</h2><dl>
+        <div><dt>Frequency</dt><dd>${frequencyHz === null ? '—' : `${number(frequencyHz / 1e6, 3)} MHz`}</dd></div>
+        <div><dt>Recorder</dt><dd>${recorder.enabled ? 'Collecting automatically' : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
+        <div><dt>Fitter</dt><dd>${escapeHtml(humanize(automation.state))}${automation.running ? ' · running now' : ''}</dd></div>
+        <div><dt>Candidate</dt><dd>${automation.qualified ? 'Qualified on held-out passes' : 'Not qualified'}</dd></div>
+        <div><dt>Live manifold</dt><dd>${active ? escapeHtml(campaign.active_model) : 'Ideal steering remains active'}</dd></div>
+        <div><dt>Last sample</dt><dd>${progress.last_sample_at ? escapeHtml(timeLabel(progress.last_sample_at)) : 'Waiting for accepted evidence'}</dd></div>
+      </dl><p class="view-note">${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></section>
+      <section class="info-card"><h2>Next evidence needed</h2>${blockers.length ? `<ul class="calibration-blockers">${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="view-note">Collection gates are complete. Held-out performance gates determine whether the candidate can activate.</p>'}${failureText.length ? `<p class="view-note evaluation-note">Latest fit: ${escapeHtml(failureText.join(' '))}</p>` : ''}</section>
+      <section class="info-card"><h2>Reference stability</h2><dl>
+        <div><dt>Reference samples</dt><dd>${integer(recorder.referenceSamples)}</dd></div>
+        <div><dt>Latest phase step</dt><dd>${number(recorder.maxReferencePhaseStepDeg, 2)}°</dd></div>
+        <div><dt>Latest amplitude step</dt><dd>${number(recorder.maxReferenceAmplitudeStepDb, 2)} dB</dd></div>
+        <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
+      </dl></section>
+    </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
+    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`;
+    const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
+    await Plotly.react('data', [
+      {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},
+      {x: labels, y: sectors.map(item => item.aircraft), name: 'Unique aircraft', type: 'bar', marker: {color: colors[1]}}
+    ], {...plotBase, barmode: 'group', xaxis: {title: 'Local array azimuth sector', gridcolor: '#47362e'}, yaxis: {title: 'Independent evidence', rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
+    const tone = recorder.error || automation.error ? 'bad' : automation.qualified ? 'good' : 'warning';
+    setState(recorder.error || automation.error ? `Calibration warning · ${recorder.error || automation.error}` :
+      automation.qualified ? 'Qualified measured manifold' : `Collecting · ${percent(completion, 0)} of minimum evidence gates`, tone);
+  }
+
+  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};
 
   async function refresh() {
     if (refreshing || !renderers[view]) return;

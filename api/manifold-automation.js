@@ -3,7 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const {Worker} = require('worker_threads');
-const {fitManifold, labelPasses, passIsHoldout, summarizeCoverage} = require('./manifold-fitter');
+const {fitManifold, labelPasses, passIsHoldout, summarizeCoverage,
+  validateSample} = require('./manifold-fitter');
 const {bestBearing, bestMeasuredBearing, circularError} = require('./bearing-diagnostic');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -17,6 +18,114 @@ const DEFAULT_GATES = Object.freeze({minIndependentPasses: 40, minUniqueAircraft
   minCoveredSectors: 6, minPassesPerSector: 5, minAircraftPerSector: 3,
   minHoldoutPasses: 12, minHoldoutSectors: 4, minimumImprovementDeg: 5,
   maximumErrorRatio: .85, maximumMedianErrorDeg: 45, maximumSectorRegressionDeg: 8});
+
+const boundedRatio = (value, required) => required > 0 ? Math.min(1, value / required) : 1;
+
+// Report collection readiness before a manifold can be fitted. The fitter is
+// intentionally strict and used to return only an error such as "insufficient
+// azimuth bins" during the part of a campaign when progress matters most.
+function summarizeManifoldProgress(rawSamples, config, options = {}) {
+  const gates = {...DEFAULT_GATES, ...(options.gates || {})};
+  const beams = options.beams || config.process?.bearing?.scan_beams || 60;
+  const minSamples = options.minSamples || 8, minPasses = options.minPasses || 3;
+  const minCoverage = options.minCoverage || .6, maxGapDeg = options.maxGapDeg || 90;
+  const invalid = [];
+  const validated = [];
+  for (const sample of rawSamples) try { validated.push(validateSample(sample)); }
+  catch (error) { invalid.push(error.message); }
+  // A site file is archived when its fingerprint changes. Still isolate the
+  // newest fingerprint here so an interrupted archive cannot make old
+  // evidence look like current progress.
+  const fingerprint = validated.at(-1)?.config_fingerprint || null;
+  const samples = fingerprint ? validated.filter(sample =>
+    sample.config_fingerprint === fingerprint) : [];
+  const ignoredFingerprintSamples = validated.length - samples.length;
+  const labelled = labelPasses(samples);
+  const passIds = new Set(labelled.map(sample => sample._pass_id));
+  const aircraft = new Set(samples.map(sample => typeof sample.icao === 'string' ?
+    sample.icao.trim().toLowerCase() : '').filter(Boolean));
+  const coverage = samples.length ? summarizeCoverage(samples) :
+    Array.from({length: 8}, (_, sector) => ({from_deg: sector * 45,
+      to_deg: (sector + 1) * 45, samples: 0, passes: 0, aircraft: 0}));
+  const sectors = coverage.map(row => ({...row,
+    ready: row.passes >= gates.minPassesPerSector && row.aircraft >= gates.minAircraftPerSector,
+    passes_needed: Math.max(0, gates.minPassesPerSector - row.passes),
+    aircraft_needed: Math.max(0, gates.minAircraftPerSector - row.aircraft)}));
+  const coveredSectors = sectors.filter(row => row.ready).length;
+  const holdoutRows = labelled.filter(sample => passIsHoldout(sample._pass_id));
+  const holdoutPasses = new Set(holdoutRows.map(sample => sample._pass_id));
+  const holdoutSectors = new Set(holdoutRows.map(sample =>
+    Math.floor(normalize(sample.truth.local_azimuth_deg) / 45) % 8));
+  const step = 360 / beams;
+  const bins = Array.from({length: beams}, (_, bin) => ({bin,
+    from_deg: bin * step, to_deg: (bin + 1) * step, samples: 0,
+    training_samples: 0, training_passes: new Set()}));
+  for (const sample of labelled) {
+    const bin = Math.round(normalize(sample.truth.local_azimuth_deg) / step) % beams;
+    ++bins[bin].samples;
+    if (!passIsHoldout(sample._pass_id)) {
+      ++bins[bin].training_samples;
+      bins[bin].training_passes.add(sample._pass_id);
+    }
+  }
+  const binProgress = bins.map(row => ({...row, training_passes: row.training_passes.size,
+    ready: row.training_samples >= minSamples && row.training_passes.size >= minPasses}));
+  const observed = binProgress.filter(row => row.ready).map(row => row.bin);
+  let largestGapDeg = 360;
+  if (observed.length > 1) {
+    largestGapDeg = 0;
+    for (let index = 0; index < observed.length; ++index) {
+      const gap = (observed[(index + 1) % observed.length] - observed[index] + beams) % beams;
+      largestGapDeg = Math.max(largestGapDeg, gap * step);
+    }
+  }
+  const requiredObservedBins = Math.ceil(beams * minCoverage);
+  const collectionRequirements = [
+    {id: 'independent_passes', label: 'Independent passes', current: passIds.size,
+      required: gates.minIndependentPasses},
+    {id: 'unique_aircraft', label: 'Unique aircraft', current: aircraft.size,
+      required: gates.minUniqueAircraft},
+    {id: 'covered_sectors', label: 'Covered 45-degree sectors', current: coveredSectors,
+      required: gates.minCoveredSectors},
+    {id: 'holdout_passes', label: 'Withheld passes', current: holdoutPasses.size,
+      required: gates.minHoldoutPasses},
+    {id: 'holdout_sectors', label: 'Withheld sectors', current: holdoutSectors.size,
+      required: gates.minHoldoutSectors},
+    {id: 'observed_bins', label: `Fit-ready ${beams}-beam bins`, current: observed.length,
+      required: requiredObservedBins}
+  ].map(row => ({...row, complete: row.current >= row.required,
+    fraction: boundedRatio(row.current, row.required)}));
+  const gapRequirement = {id: 'maximum_gap', label: 'Largest unsupported azimuth gap',
+    current: largestGapDeg, required: maxGapDeg, comparison: 'at_most',
+    complete: largestGapDeg <= maxGapDeg,
+    fraction: largestGapDeg <= maxGapDeg ? 1 : Math.min(1, maxGapDeg / largestGapDeg)};
+  collectionRequirements.push(gapRequirement);
+  const evidenceCompletion = collectionRequirements.length ?
+    Math.min(...collectionRequirements.map(row => row.fraction)) : 0;
+  const nextActions = [];
+  for (const row of collectionRequirements.filter(row => !row.complete)) {
+    if (row.comparison === 'at_most')
+      nextActions.push(`Reduce the unsupported azimuth gap from ${row.current.toFixed(1)} to ${row.required} degrees or less.`);
+    else nextActions.push(`Collect ${Math.max(0, row.required - row.current)} more ${row.label.toLowerCase()}.`);
+  }
+  const timestamps = samples.map(sample => sample.radar_timestamp_ms).filter(finite);
+  return {schema: 'vectorwarp-manifold-progress-v1', frequency_hz: samples.at(-1)?.frequency_hz ||
+      config.capture?.fc || null, config_fingerprint: fingerprint, scan_beams: beams,
+    samples: samples.length, invalid_samples: invalid.length,
+    ignored_fingerprint_samples: ignoredFingerprintSamples,
+    independent_passes: passIds.size, unique_aircraft: aircraft.size,
+    covered_sectors: coveredSectors, required_covered_sectors: gates.minCoveredSectors,
+    holdout_passes: holdoutPasses.size, holdout_sectors: holdoutSectors.size,
+    observed_bins: observed.length, required_observed_bins: requiredObservedBins,
+    largest_unsupported_gap_deg: largestGapDeg, maximum_gap_deg: maxGapDeg,
+    evidence_completion_fraction: evidenceCompletion,
+    collection_ready: collectionRequirements.every(row => row.complete),
+    requirements: collectionRequirements, sectors, bins: binProgress,
+    first_sample_at: timestamps.length ? Math.min(...timestamps) : null,
+    last_sample_at: timestamps.length ? Math.max(...timestamps) : null,
+    next_actions: nextActions,
+    limitation: 'Collection readiness is not production qualification. A candidate must still beat ideal steering on pass-disjoint held-out evidence without sector regression.'};
+}
 
 function passBalancedComparison(samples, config, manifold) {
   const mapping = config.process?.bearing?.channel_mapping ||
@@ -116,7 +225,7 @@ class ManifoldAutomation {
     this.state = {enabled: Boolean(this.samplePath && recorder.status().enabled),
       state: this.samplePath && recorder.status().enabled ? 'collecting' : 'disabled',
       candidatePath: this.candidatePath, qualifiedPath: this.qualifiedPath,
-      qualified: false, error: null};
+      qualified: false, error: null, progress: summarizeManifoldProgress([], config)};
   }
 
   status() { return {...this.state, running: this.running}; }
@@ -182,4 +291,4 @@ function createManifoldAutomation(config, recorder, dependencies) {
 }
 
 module.exports = {DEFAULT_GATES, passBalancedComparison, evaluateManifoldCandidate,
-  ManifoldAutomation, createManifoldAutomation};
+  summarizeManifoldProgress, ManifoldAutomation, createManifoldAutomation};

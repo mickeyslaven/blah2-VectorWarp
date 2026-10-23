@@ -206,6 +206,14 @@ required. `/api/bearing/manifold-automation` reports `collecting`, `evaluating`,
 worker writes `<path>.candidate.json`; it promotes only a qualified model to
 `<path>.qualified.json`.
 
+`/display/calibration` is the operator-facing campaign view. It reports the
+current frequency/site-fingerprint corpus, accepted samples, independent
+passes, aircraft, per-sector coverage, fit-ready angular bins, held-out
+evidence, unsupported azimuth gap and every remaining collection or validation
+gate. Its JSON contract is `/api/bearing/manifold-progress`. Opening the view
+requests a signature-cached background refresh; fitting unchanged data is not
+repeated and no work runs in the radar processor.
+
 Promotion is deliberately pass-balanced. Frames from the same aircraft pass
 share one vote, and complete passes are withheld from fitting. The candidate
 and VectorWarp's default free-space model are replayed on exactly those unseen
