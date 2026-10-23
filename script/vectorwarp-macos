@@ -11,6 +11,10 @@ while [ -L "$script" ]; do
   esac
 done
 directory=$(CDPATH= cd -P -- "$(dirname -- "$script")" && pwd)
+if [ -z "${VECTORWARP_MACOS_NODE:-}" ] && [ -x "$directory/../runtime/node/bin/node" ]; then
+  VECTORWARP_MACOS_NODE=$directory/../runtime/node/bin/node
+  export VECTORWARP_MACOS_NODE
+fi
 if [ -z "${VECTORWARP_MACOS_NODE:-}" ] && command -v brew >/dev/null 2>&1; then
   node=$(brew --prefix node@24 2>/dev/null || true)/bin/node
   [ -x "$node" ] && export VECTORWARP_MACOS_NODE=$node
@@ -21,12 +25,12 @@ case "$node" in
   *) node=$(command -v "$node" 2>/dev/null || true) ;;
 esac
 if [ ! -x "$node" ]; then
-  echo 'vectorwarp-macos: install or upgrade Homebrew node@24' >&2
+  echo 'vectorwarp-macos: bundled or supported Node runtime is unavailable' >&2
   exit 1
 fi
 export VECTORWARP_MACOS_NODE=$node
 "$node" "$directory/check-node-version.js" || {
-  echo 'vectorwarp-macos: run brew update && brew upgrade node@24' >&2
+  echo 'vectorwarp-macos: Node runtime does not include required security updates' >&2
   exit 1
 }
 exec /usr/bin/env python3 "$directory/vectorwarp-macos.py" "$@"
