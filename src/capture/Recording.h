@@ -28,6 +28,7 @@ struct RecordingProvenance {
   std::string receiver, backend, timeSource, reason;
   std::string configurationFingerprint, codeFingerprint, json;
   std::string clockSource, deviceTimeSource, motherboard, subdevices;
+  std::vector<double> perChannelGainDb;
   uint64_t epoch = 0, firstSample = 0, endSample = 0, sourceFirstSample = 0;
   int64_t deviceTimeEpochTick = 0;
   bool sourceSampleAvailable = false, deviceTimeAvailable = false;

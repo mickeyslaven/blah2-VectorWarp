@@ -429,6 +429,10 @@ try
   double directPathNullDb = 0;
   std::string surveillanceManifoldFile;
   bool surveillanceManifoldConfigured = false;
+  std::vector<std::complex<float>> surveillanceManifoldResponses;
+  std::vector<std::complex<float>> surveillanceManifoldDirectResponse;
+  std::optional<blah2::bearing_manifold::Calibration> surveillanceManifoldCalibration,
+    bearingManifoldCalibration;
   std::vector<std::array<double, 3>> coherentPositions;
   double directPathAzimuthRad = 0,xAxisBearingDeg = 0,bearingUncertaintyFloorDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
@@ -456,7 +460,8 @@ try
     throw std::invalid_argument("Effective beam trials must be from 1 through the beam count");
   if (!std::isfinite(directPathNullDb) || directPathNullDb < 0 || directPathNullDb > 40)
     throw std::invalid_argument("Direct-path null depth must be from 0 through 40 dB");
-  if (!coherentFusion && (effectiveBeamTrials != coherentBeamCount || directPathNullDb != 0))
+  if (!coherentFusion && (effectiveBeamTrials != coherentBeamCount || directPathNullDb != 0 ||
+      surveillanceManifoldConfigured))
     throw std::invalid_argument("Beam trial/null controls require coherent surveillance fusion");
   if (coherentFusion)
   {
@@ -664,12 +669,13 @@ try
       surveillanceManifoldFile.find_first_not_of(" \t\r\n") == std::string::npos)
     throw std::invalid_argument("Measured surveillance manifold_file must be a non-empty path");
   if (surveillanceManifoldConfigured &&
-      (surveillanceFusionMode != "coherent_beam_bank" || residentMode))
-    throw std::invalid_argument("Measured surveillance manifold requires non-resident coherent_beam_bank fusion");
+      surveillanceFusionMode != "coherent_beam_bank" &&
+      surveillanceFusionMode != "noise_whitened_beam_bank")
+    throw std::invalid_argument("Measured surveillance manifold requires coherent surveillance fusion");
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI9 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI11 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -789,18 +795,74 @@ try
   uint64_t replayProcessedFrames = 0;
   Noncoherent mapFusion;
   std::unique_ptr<CoherentBeamBank> coherentMapFusion;
+  blah2::bearing_manifold::Identity manifoldIdentity;
+  if (coherentFusion && (surveillanceManifoldConfigured || !bearingManifoldFile.empty()))
+  {
+    auto device=tree["capture"]["device"];
+    auto geometry=device["array_geometry"];
+    bool mappingConfirmed=false,geometryConfirmed=false,orientationConfirmed=false;
+    if(geometry.has_child("mapping_confirmed"))geometry["mapping_confirmed"]>>mappingConfirmed;
+    if(geometry.has_child("geometry_confirmed"))geometry["geometry_confirmed"]>>geometryConfirmed;
+    if(geometry.has_child("orientation_confirmed"))geometry["orientation_confirmed"]>>orientationConfirmed;
+    if(!mappingConfirmed||!geometryConfirmed||!orientationConfirmed)
+      throw std::invalid_argument("Measured manifold requires confirmed channel mapping, geometry, and orientation");
+    manifoldIdentity.channelMapping = surveillanceChannels;
+    manifoldIdentity.positionsM = coherentPositions;
+    manifoldIdentity.frequencyHz = double(fc);
+    manifoldIdentity.sampleRateHz = double(fs);
+    manifoldIdentity.xAxisBearingDeg = xAxisBearingDeg;
+    manifoldIdentity.directPathAzimuthDeg=std::fmod(std::fmod(
+      directPathAzimuthRad*180.0/std::acos(-1.0),360.0)+360.0,360.0);
+    auto receiver=tree["location"]["rx"],transmitter=tree["location"]["tx"];
+    receiver["latitude"]>>manifoldIdentity.receiverLocation[0];
+    receiver["longitude"]>>manifoldIdentity.receiverLocation[1];
+    receiver["altitude"]>>manifoldIdentity.receiverLocation[2];
+    transmitter["latitude"]>>manifoldIdentity.transmitterLocation[0];
+    transmitter["longitude"]>>manifoldIdentity.transmitterLocation[1];
+    transmitter["altitude"]>>manifoldIdentity.transmitterLocation[2];
+    auto heimdall=device["heimdall"];
+    if(heimdall.has_child("gain_control")){
+      std::string gainControl;heimdall["gain_control"]>>gainControl;
+      if(gainControl!="fixed")
+        throw std::invalid_argument("Measured manifold requires fixed gain control");
+    }
+    std::vector<double> captureGains;
+    if(heimdall.has_child("channel_gains"))
+      for(auto value:heimdall["channel_gains"].children()){double gain=0;value>>gain;captureGains.push_back(gain);}
+    else if(heimdall.has_child("gain")){
+      std::string gainText;heimdall["gain"]>>gainText;size_t consumed=0;double gain=0;
+      try{gain=std::stod(gainText,&consumed);}catch(...){consumed=0;}
+      if(consumed!=gainText.size()||!std::isfinite(gain)||gain<0)
+        throw std::invalid_argument("Measured manifold requires an explicit fixed requested gain");
+      captureGains.assign(captureChannelCount,gain);
+    }
+    if(captureGains.size()!=captureChannelCount)
+      throw std::invalid_argument("Measured manifold requested gain vector differs from capture channels");
+    for(uint32_t channel:surveillanceChannels){
+      const double gain=captureGains[channel];
+      if(!std::isfinite(gain)||gain<0||gain>50)
+        throw std::invalid_argument("Measured manifold requested gain is invalid");
+      manifoldIdentity.requestedGainDb.push_back(gain);
+    }
+  }
   if (coherentFusion)
   {
-    std::vector<std::complex<double>> surveillanceManifold;
     if (surveillanceManifoldConfigured)
     {
-      const auto loaded = blah2::bearing_manifold::load(surveillanceManifoldFile,
-        double(fc), coherentBeamCount, uint32_t(coherentPositions.size()));
-      surveillanceManifold.assign(loaded.responses.begin(), loaded.responses.end());
+      surveillanceManifoldCalibration=blah2::bearing_manifold::loadDetection(surveillanceManifoldFile,
+        double(fc),coherentBeamCount,uint32_t(coherentPositions.size()),manifoldIdentity,
+        blah2::bearing_manifold::DetectionUse::liveProduction);
+      surveillanceManifoldResponses = surveillanceManifoldCalibration->responses;
+      surveillanceManifoldDirectResponse = surveillanceManifoldCalibration->directResponse;
     }
+    const std::vector<std::complex<double>> surveillanceManifold(
+      surveillanceManifoldResponses.begin(), surveillanceManifoldResponses.end());
+    const std::vector<std::complex<double>> surveillanceDirect(
+      surveillanceManifoldDirectResponse.begin(), surveillanceManifoldDirectResponse.end());
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        directPathAzimuthRad, directPathNullDb, surveillanceManifold});
+        directPathAzimuthRad, directPathNullDb, surveillanceManifold,
+        surveillanceDirect});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
     std::cout << " direct_path_azimuth_deg=" <<
@@ -1039,10 +1101,13 @@ try
         : blah2::resident::FusionMode::coherentRegularPolygon;
       residentConfig.fusion={fusionMode,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
-        directPathNullDb};
+        directPathNullDb,surveillanceManifoldResponses,
+        surveillanceManifoldDirectResponse};
       if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
        std::vector<std::complex<float>> manifold;
-       if(!bearingManifoldFile.empty())manifold=blah2::bearing_manifold::load(bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size())).responses;
+       if(!bearingManifoldFile.empty()){bearingManifoldCalibration=blah2::bearing_manifold::loadBearing(
+        bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size()),manifoldIdentity);
+        manifold=bearingManifoldCalibration->responses;}
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,
         bearingReferenceAnchor=="fixed_site_projected"?blah2::resident::BearingReferenceAnchor::fixedSiteProjected:
         bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:blah2::resident::BearingReferenceAnchor::liveEigenbeam,
@@ -1256,6 +1321,17 @@ try
           // Keep ReplayPlayer's EOF/loop drain from observing an empty queue
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
+          const auto captureGainDb=capture->input_gain_db();
+          std::vector<double> surveillanceGainDb;
+          if(manifoldRecorderEnabled||surveillanceManifoldCalibration||bearingManifoldCalibration){
+            if(captureGainDb.size()!=captureChannelCount)
+              throw std::runtime_error("Measured manifold requires per-channel actual gain metadata");
+            for(uint32_t channel:surveillanceChannels)surveillanceGainDb.push_back(captureGainDb[channel]);
+            if(surveillanceManifoldCalibration)
+              blah2::bearing_manifold::validateActualGains(*surveillanceManifoldCalibration,surveillanceGainDb);
+            if(bearingManifoldCalibration)
+              blah2::bearing_manifold::validateActualGains(*bearingManifoldCalibration,surveillanceGainDb);
+          }
           time.push_back(captureStartUs ? captureStartUs : current_time_us());
           auto eventTime = capture->requires_kraken_time_provenance() ?
             blah2::kraken_event_time_unavailable() :
@@ -1576,13 +1652,13 @@ try
                ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond,
                stationaryClutter?stationaryPersistenceCpis:0u,
                stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled,
-               evidenceBearing);
+               evidenceBearing,{surveillanceGainDb.data(),surveillanceGainDb.size()});
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
           else if(manifoldRecorderEnabled)
             cpuManifoldEvidence=blah2::manifold_evidence::cpu(frameTimestampMs,double(fc),double(fs),
-              *detection,channelMaps,referenceSynthesizer.get_metrics().weights);
+              *detection,channelMaps,referenceSynthesizer.get_metrics().weights,surveillanceGainDb);
 
           // output IqData meta data
           jsonIqData = attachEventTime(resident ?

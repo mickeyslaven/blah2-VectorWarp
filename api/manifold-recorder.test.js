@@ -4,13 +4,18 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprint} = require('./manifold-recorder');
+const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDescriptor,
+  siteFingerprint} = require('./manifold-recorder');
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-manifold-'));
   const filename = path.join(directory, 'samples.jsonl');
   const config = {capture: {fc: 539000000, fs: 2400000, device: {
-    surveillance_channels: [0, 1], array_geometry: {x_axis_bearing_deg_true: 80}}},
+    channel_count: 2, surveillance_channels: [0, 1],
+    heimdall: {gain: 14, gain_control: 'fixed'},
+    array_geometry: {x_axis_bearing_deg_true: 80, elements: [
+      {daq_channel: 0, position: [0, 0, 0]},
+      {daq_channel: 1, position: [.1, 0, 0]}]}}},
   location: {rx: {latitude: 40, longitude: -80, altitude: 300},
     tx: {latitude: 40.1, longitude: -80, altitude: 400}},
   process: {bearing: {manifold_recorder: {enabled: true, path: filename,
@@ -23,6 +28,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   const recorder = new ManifoldRecorder(config, source);
   const frame = validateEvidence({schema: 'vectorwarp-manifold-evidence-v1', timestamp: 100000,
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
+    actual_gain_db: [14.2, 14.1],
     reference_weights: [[1, 0], [0, 1]], data: [{cell: 5, delay_km: 10.5,
       doppler_hz: 18, snr_db: 9, response: [[1, 2], [3, 4]]}]});
   await recorder.record(frame);
@@ -34,6 +40,15 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   assert.ok(Math.abs(rows[0].truth.local_azimuth_deg - 350) < .1);
   assert.ok(Number.isFinite(rows[0].direct_path_local_azimuth_deg));
   assert.deepEqual(rows[0].response, [[1, 2], [3, 4]]);
+  assert.equal(rows[0].schema, 'vectorwarp-manifold-sample-v2');
+  assert.deepEqual(rows[0].manifold_identity.actual_gain_db, [14.2, 14.1]);
+  assert.equal(rows[0].manifold_identity.sample_rate_hz, 2400000);
+  assert.match(rows[0].manifold_identity.compatibility_fingerprint, /^fnv1a64:[a-f0-9]{16}$/);
+  assert.deepEqual(rows[0].manifold_identity.transmitter_location, [40.1, -80, 400]);
+  assert.equal(rows[0].configuration.config_fingerprint, rows[0].config_fingerprint);
+  assert.equal(rows[0].configuration.frequency_hz, 539000000);
+  assert.equal(rows[0].support.adsb_label_only, true);
+  assert.ok(Number.isFinite(rows[0].uncertainty.truth_age_s));
   assert.equal(recorder.status().samples, 1);
   const stale = JSON.parse(JSON.stringify(frame)); stale.timestamp = 110000;
   await recorder.record(stale);
@@ -69,6 +84,13 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   changedVectorGainConfig.capture.device.heimdall.channel_gains = [14, 11];
   assert.notEqual(siteFingerprint(vectorGainConfig), siteFingerprint(changedVectorGainConfig),
     'Qualification cannot carry across per-channel gain-vector changes');
+  const subsetGainConfig = JSON.parse(JSON.stringify(vectorGainConfig));
+  subsetGainConfig.capture.device.channel_count = 5;
+  subsetGainConfig.capture.device.surveillance_channels = [1, 3, 4];
+  subsetGainConfig.capture.device.heimdall.channel_gains = [10, 11, 12, 13, 14];
+  assert.deepEqual(fingerprintDescriptor(subsetGainConfig).receiver_gain_v2,
+    {requested_common_gain: 14, requested_channel_gains: [11, 13, 14],
+      requested_capture_channel_gains: [10, 11, 12, 13, 14]});
   const firstGainRecorder = new ManifoldRecorder(fixedGainConfig, source);
   await firstGainRecorder.record(frame);
   const nextGainRecorder = new ManifoldRecorder(changedGainConfig, source);
@@ -78,12 +100,11 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   const newGainRows = fs.readFileSync(gainPath, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(oldGainRows.length, 1);
   assert.equal(newGainRows.length, 1);
-  assert.equal(oldGainRows[0].config_fingerprint, firstGainRecorder.fingerprint);
-  assert.equal(newGainRows[0].config_fingerprint, nextGainRecorder.fingerprint);
+  assert.notEqual(oldGainRows[0].config_fingerprint, newGainRows[0].config_fingerprint);
   assert.deepEqual(newGainRows[0].receiver_gain_v2,
-    {requested_common_gain: 1, requested_channel_gains: null});
-  assert.notEqual(oldGainRows[0].config_fingerprint, newGainRows[0].config_fingerprint,
-    'Old and new gain evidence must not mix in the active collection');
+    {requested_common_gain: 1, requested_channel_gains: null,
+      actual_channel_gains_db: [14.2, 14.1]});
+  assert.deepEqual(newGainRows[0].manifold_identity.requested_gain_db, [1, 1]);
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
   changedSite.location.rx.longitude = -80.01;
   const second = new ManifoldRecorder(changedSite, source);
@@ -92,7 +113,8 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   assert.ok(fs.existsSync(`${filename}.site-previous`),
     'A site fingerprint change must archive the previous active collection');
   const current = fs.readFileSync(filename, 'utf8').trim().split('\n').map(JSON.parse);
-  assert.ok(current.length === 1 && current[0].config_fingerprint === second.fingerprint,
+  assert.ok(current.length === 1 &&
+    current[0].manifold_identity.receiver_location[1] === -80.01,
     'A site fingerprint change must begin a clean active collection');
   assert.ok(second.status().siteResetAt,
     'Site reset must be visible in recorder health');
@@ -105,6 +127,7 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
     'Site archives plus the active collection must obey max_files');
   const adaptive = validateEvidence({schema: 'vectorwarp-manifold-evidence-v2', timestamp: 100000,
     frequency_hz: 539000000, sample_rate_hz: 2400000, channels: 2,
+    actual_gain_db: [14.2, 14.1],
     reference_weights: [[1, 0], [0, 1]], bearing_replay: {method: 'covariance_mvdr',
       reference_anchor: 'fixed_site',
       scan_beams: 60, guard_radius: 0, training_radius: 1, diagonal_loading: .01,
@@ -128,6 +151,22 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, siteFingerprin
   assert.equal(adaptiveRow.bearing_replay.reference_anchor, 'fixed_site');
   assert.deepEqual(adaptiveRow.covariance, adaptive.data[0].covariance);
   assert.equal(adaptiveRow.reference_state.updates, 2);
+  assert.deepEqual(adaptiveRow.local_context.covariance, adaptive.data[0].covariance);
+  assert.equal(adaptiveRow.local_context.covariance_samples, 8);
+  const detectionEvidence = JSON.parse(JSON.stringify(adaptive));
+  detectionEvidence.schema = 'vectorwarp-manifold-evidence-v3';
+  detectionEvidence.data[0].detection_context = {same_iq: true, target: {baseline_statistic: 3,
+    baseline_detected: true}, nuisance: [{response: [[0, 1], [1, 0]],
+      baseline_statistic: .2, baseline_detected: false}],
+    cfar: {pfa: .01, training_cells: 16, effective_trials: 4,
+      baseline_threshold: 9.5}};
+  const detectionFile = path.join(directory, 'detection-context.jsonl');
+  const detectionConfig = JSON.parse(JSON.stringify(config));
+  detectionConfig.process.bearing.manifold_recorder.path = detectionFile;
+  await new ManifoldRecorder(detectionConfig, source).record(validateEvidence(detectionEvidence));
+  const detectionRow = JSON.parse(fs.readFileSync(detectionFile, 'utf8').trim());
+  assert.deepEqual(detectionRow.local_context.detection, detectionEvidence.data[0].detection_context);
+  assert.equal(detectionRow.support.local_nuisance_cells, 1);
   const referenceFile = `${adaptiveFile}.reference.jsonl`;
   let referenceRows = fs.readFileSync(referenceFile, 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(referenceRows.length, 1);

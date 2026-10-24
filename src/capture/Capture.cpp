@@ -52,6 +52,14 @@ Capture::SamplePosition Capture::live_sample_position() const
     value.timeSource, value.motherboard, value.subdevices};
 }
 
+std::vector<double> Capture::input_gain_db() const
+{
+  if(replay){std::lock_guard<std::mutex> lock(statusMutex);
+    return replayProgress.provenance.perChannelGainDb;}
+  const auto* kraken=dynamic_cast<const Kraken*>(device.get());
+  return kraken?kraken->actual_gain_db():std::vector<double>{};
+}
+
 void Capture::process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 
   std::string ip_capture, uint16_t port_capture)
 {

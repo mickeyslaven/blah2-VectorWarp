@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const {spawn} = require('child_process');
-const yaml = require('js-yaml');
+const yaml = require('./api-require')('js-yaml');
 const {setupDefaults} = require('../../api/config-store');
 
 function fetchHttp(url, options = {}) {

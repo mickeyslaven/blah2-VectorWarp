@@ -13,9 +13,9 @@ int main(int argc, char** argv) {
     const int result=blah2::resident::runWorker([&](const blah2::resident::Config& config,const blah2::resident::Mapping& mapping){
       if(module)throw std::runtime_error("Resident module already loaded");
       module=dlopen(blah2::gpuSiblingPath("blah2-gpu-resident-vulkan.so").c_str(),RTLD_NOW|RTLD_LOCAL);
-      if(!module)throw std::runtime_error("Resident ABI9 module or its Vulkan loader is unavailable; no CPU fallback");
+      if(!module)throw std::runtime_error("Resident ABI11 module or its Vulkan loader is unavailable; no CPU fallback");
       const auto create=reinterpret_cast<blah2::resident::Create>(dlsym(module,"blah2_gpu_create_resident"));
-      if(!create)throw std::runtime_error("Resident worker/module ABI9 cohort mismatch");
+      if(!create)throw std::runtime_error("Resident worker/module ABI11 cohort mismatch");
       return std::unique_ptr<blah2::resident::Backend>(create(blah2::resident::moduleAbi,&config,&mapping));
     });
     if(module)dlclose(module);

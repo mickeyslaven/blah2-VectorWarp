@@ -2,6 +2,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -42,6 +43,13 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
       -waveNumber * position[0]));
   fusion.calibrate(direct);
   const auto result = fusion.process(maps);
+  const auto bank = fusion.powerBankAt(maps, 0, 0);
+  REQUIRE(bank.size() == config.beams);
+  REQUIRE(*std::max_element(bank.begin(), bank.end()) ==
+    Catch::Approx(std::norm(result->data[0][0])).epsilon(1e-12));
+  std::vector<std::complex<double>> sameIq;
+  for (const auto& map : storage) sameIq.push_back(map.data[0][0]);
+  REQUIRE(fusion.powerBank(sameIq) == bank);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
   REQUIRE(result->data[0][0].imag() == 0.0);
 }
@@ -148,6 +156,7 @@ TEST_CASE("coherent beam bank uses measured target to direct ratios")
   for (std::size_t channel = 0; channel < config.positionsM.size(); ++channel)
     config.measuredResponses[targetBeam * config.positionsM.size() + channel] =
       rowPhase * directManifold[channel] * targetRatio[channel];
+  config.measuredDirectResponse.assign(directManifold.begin(), directManifold.end());
 
   std::vector<std::complex<double>> direct;
   std::vector<Map<std::complex<double>>> storage;
@@ -181,6 +190,23 @@ TEST_CASE("coherent beam bank rejects a mismatched measured manifold")
   REQUIRE_THROWS_AS(CoherentBeamBank(config), std::invalid_argument);
 }
 
+TEST_CASE("measured target at direct azimuth remains distinct from direct anchor")
+{
+  CoherentBeamBank::Config config;
+  config.frequencyHz=563000000;config.beams=4;
+  config.positionsM={{0,0,0},{.1,0,0}};
+  config.measuredDirectResponse={{1,0},{1,0}};
+  config.measuredResponses.assign(8,{1,0});
+  config.measuredResponses[0]={1,0};
+  config.measuredResponses[1]={0,1};
+  const std::vector<std::complex<double>> direct{{1/std::sqrt(2.0),0},
+    {1/std::sqrt(2.0),0}};
+  CoherentBeamBank fusion(config);fusion.calibrate(direct);
+  const auto powers=fusion.powerBank({{1,0},{0,1}});
+  REQUIRE(powers[0]==Catch::Approx(2.0).epsilon(1e-12));
+  REQUIRE(powers[0]>powers[1]);
+}
+
 TEST_CASE("measured coherent beam bank preserves the soft direct-path null")
 {
   CoherentBeamBank::Config config;
@@ -195,6 +221,7 @@ TEST_CASE("measured coherent beam bank preserves the soft direct-path null")
     for (std::size_t channel = 0; channel < config.positionsM.size(); ++channel)
       config.measuredResponses[beam * config.positionsM.size() + channel] =
         std::polar(1.0, .17 * beam) * measuredDirect[channel];
+  config.measuredDirectResponse.assign(measuredDirect.begin(), measuredDirect.end());
 
   std::vector<std::complex<double>> direct;
   std::vector<Map<std::complex<double>>> storage;

@@ -13,8 +13,10 @@
 
 // Adjacent, explicitly admitted ABI; never reinterpret an older object/mapping.
 namespace blah2::resident {
-constexpr unsigned moduleAbi=9;
-constexpr uint32_t protocol=0x42475209,packetBytes=160,configBytes=8768;
+constexpr unsigned moduleAbi=11;
+constexpr uint32_t protocol=0x4247520b,packetBytes=160,configBytes=32768;
+static_assert(configBytes>=640+(360+127+1)*8*sizeof(std::complex<float>),
+ "Resident config cannot carry maximum fusion and bearing manifolds");
 constexpr uint64_t sharedLimit=512ULL<<20;
 constexpr uint32_t readyEvidenceBytes=4096,preparedEvidenceBytes=61888,
  deviceEvidenceBytes=512,controlEvidenceBytes=512;
@@ -52,6 +54,11 @@ struct FusionConfig {
  uint32_t beams=0;
  double frequencyHz=0,radiusM=0,element0Rad=0,elementStepRad=0,directPathAzimuthRad=0,
   directPathNullDb=0;
+ // Optional measured complex response, scan-major then logical channel.
+ // Empty retains the ideal regular-polygon manifold.
+ std::vector<std::complex<float>> manifoldResponses;
+ // Fixed-transmitter response, kept separate from aircraft azimuth beams.
+ std::vector<std::complex<float>> directResponse;
 };
 struct DetectorConfig {
  bool enabled=false,interpolateDelay=true,interpolateDoppler=true;

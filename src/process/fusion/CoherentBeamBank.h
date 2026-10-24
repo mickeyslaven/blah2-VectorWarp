@@ -21,6 +21,8 @@ public:
     double directPathNullDb = 0;
     // Optional row-major measured responses: beams x positionsM.size().
     std::vector<std::complex<double>> measuredResponses;
+    // Fixed-transmitter response is out-of-band from the aircraft beam bank.
+    std::vector<std::complex<double>> measuredDirectResponse;
   };
 
   explicit CoherentBeamBank(const Config& config);
@@ -30,13 +32,22 @@ public:
   std::unique_ptr<Map<std::complex<double>>> process(
     const std::vector<Map<std::complex<double>> *>& maps) const;
 
+  // Offline diagnostics may retain the complete bank, while the production
+  // map path below continues to expose only the maximum. Both paths use the
+  // exact calibrated weights held by this object.
+  std::vector<double> powerBankAt(
+    const std::vector<Map<std::complex<double>> *>& maps,
+    uint32_t row, uint32_t column) const;
+  std::vector<double> powerBank(
+    const std::vector<std::complex<double>>& channels) const;
+
 private:
   double waveNumber_ = 0;
   double directPathAzimuthRad_ = 0;
   double directPathNullDb_ = 0;
   std::vector<std::array<double, 3>> positionsM_;
   std::vector<std::complex<double>> measuredResponses_;
-  std::size_t measuredDirectBeam_ = 0;
+  std::vector<std::complex<double>> measuredDirectResponse_;
   std::vector<std::vector<std::complex<double>>> weights_;
 };
 
