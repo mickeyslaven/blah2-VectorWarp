@@ -2,6 +2,7 @@
 #include "../../../core/TrackBeforeDetect.private.h"
 #include "GpuResidentHash.h"
 #include "GpuMemory.h"
+#include "process/analysis/ProductionReplayContract.h"
 #include <algorithm>
 #include <cmath>
 #include <climits>
@@ -72,6 +73,8 @@ void validateConfig(const Config& c){
    std::norm(value)>1e-12f,"Resident surveillance direct-anchor response invalid");
  const auto& d=c.detector;
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ production_replay::temporal(d.integrationCpis,motion.delay,motion.doppler,
+  f.mode!=FusionMode::noncoherent);
  const auto& b=c.bearing;
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
