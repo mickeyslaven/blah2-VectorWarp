@@ -101,7 +101,8 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
             enable_tbd=False, tracker_m=None, tracker_n=None, tracker_max_acc=None,
             acceleration="cpu", complex_cutout=None, tbd_delay_motion_bins=None,
             tbd_doppler_motion_bins=None, tracker_beam_tolerance=None,
-            disable_tracker=False, stationary_clutter=None):
+            disable_tracker=False, stationary_clutter=None,
+            surveillance_channel=None):
     label = label or (mode if reference_channel is None else f"dedicated_ch{reference_channel}")
     class CapturingSinks(harness.SinkGroup):
         def __init__(self):
@@ -161,6 +162,19 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                     channel for channel in channels if channel != reference_channel]
                 config["process"]["reference_synthesis"] = {
                     "mode": "dedicated", "channels": [reference_channel]}
+            if surveillance_channel is not None:
+                channel_count = config["capture"]["device"]["channel_count"]
+                if not 0 <= surveillance_channel < channel_count:
+                    raise ValueError("surveillance channel is outside the recording")
+                reference_channels = [channel for channel in range(channel_count)
+                                      if channel != surveillance_channel]
+                if not reference_channels:
+                    raise ValueError("leave-one-out reference requires at least two channels")
+                config["capture"]["device"]["reference_channel"] = reference_channels[0]
+                config["capture"]["device"]["surveillance_channels"] = [surveillance_channel]
+                config["process"]["reference_synthesis"] = {
+                    "mode": "array_eigenbeam" if len(reference_channels) > 1 else "dedicated",
+                    "channels": reference_channels}
             config["process"]["detection"]["track_before_detect"]["enable"] = enable_tbd
             if tbd_delay_motion_bins is not None:
                 config["process"]["detection"]["track_before_detect"][

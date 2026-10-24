@@ -34,6 +34,7 @@ const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
+const {IntegrationShadowQueue} = require('./integration-shadow-queue.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
@@ -91,6 +92,7 @@ const provisionalEvidenceStatistics = createEvidenceStatistics(config, adsbSourc
   timingPolicy: 'provisional'});
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
+const integrationShadowQueue = new IntegrationShadowQueue(config);
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -135,6 +137,10 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   evidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
   evidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
+  // Bind shadow work to the exact immutable admission document written above.
+  // Later in-memory bookkeeping adds admission_sidecar to `integrity`; that
+  // field is deliberately not allowed to change the queued sidecar digest.
+  if (admissionSidecar) integrationShadowQueue.accept(file, artifact, revision);
 }
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
@@ -473,6 +479,9 @@ app.get('/api/tracker-forward', (req, res) => {
 });
 app.get('/api/tracker/guided-shadow', (req, res) => {
   res.json(trackGuidedShadowRecorder.status());
+});
+app.get('/api/detection/integration-shadow', (req, res) => {
+  res.json(integrationShadowQueue.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
