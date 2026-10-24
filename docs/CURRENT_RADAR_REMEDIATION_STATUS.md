@@ -14,11 +14,15 @@ risk are recorded here.
 - Receiver: five coherent Kraken channels
 - Physical gains: `[2.7, 2.7, 1.4, 1.4, 3.7]` dB
 - Config revision: `54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd`
-- Deployed release: `/opt/vectorwarp/releases/20261023T200500Z-gain-adsb-v1`
+- Deployed release: `/opt/vectorwarp/releases/20261024T005000Z-eventtime-provisional-v2`
 - Deployed correction: per-channel gain normalization before covariance,
   reference synthesis, clutter cancellation, and beamforming
 - Deployed correction: ADS-B association now waits four CPIs, fetches the
   newest snapshot, and projects it back to the CPI time
+- Deployed correction: Kraken publishes coherent epoch/sample ranges and
+  explicit inexact event-time provenance. Authoritative scoring rejects those
+  CPIs; `/api/live-scorecard/provisional` retains clearly non-decision-grade
+  operational visibility.
 - RF, gain, mapping, detector, tracker, and null configuration were not changed
   by those software corrections.
 
@@ -38,18 +42,19 @@ Commit `096e7e4` is the fail-closed correction:
 - ADS-B/OPRS consumers that require exact event time reject it.
 - Playback wall time is no longer silently presented as RF time.
 
-This commit is tested but is **not deployed** on the live node yet. Deploying it
-without a separate provisional mode would intentionally stop authoritative live
-ADS-B scoring. The current live association remains useful operational evidence,
-but must be labeled provisional rather than hardware-time-exact.
+This correction is deployed. The authoritative scorecard is now fail-closed and
+reports `decision_grade:false`; the separate provisional endpoint and UI remain
+available but cannot be used for acceptance decisions. Live validation observed
+the expected coherent sample range and `exact:false`, `uncertaintyBounded:false`
+provenance while the radar continued processing at the unchanged RF settings.
 
 ## Serial remediation ledger
 
 | Order | Finding | State | Evidence / next acceptance check |
 | --- | --- | --- | --- |
-| 1 | Kraken/F1/F5: dequeue/TCP-arrival time presented as exact RF time | Code and tests complete; deployment decision pending | `096e7e4`; add an explicitly provisional UI/scoring lane before live deployment, or add independently qualified time hardware/protocol support |
-| 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | In progress | Require fixed gain for scored coherent operation; deterministic GainChange discontinuity test |
-| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Pending after RSPduo | Reject missing/jumping device time; attest clock/time source and supported topology |
+| 1 | Kraken/F1/F5: dequeue/TCP-arrival time presented as exact RF time | Deployed with fail-closed authoritative lane | `096e7e4`, `b02ba18`, `ccbef6b`; exact acceptance remains blocked until Heimdall supplies qualified RF time |
+| 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | Code and tests complete | `87952c3`; every GainChange creates a hard epoch boundary, invalidates stale work, and stops recording. Residual boundary is callback-aligned (`sampleAligned:false`) because SDRplay supplies no sample counter |
+| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | In progress | Reject missing/jumping device time; attest clock/time source and supported topology |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Pending after USRP | Any unequal drop/progression must invalidate both channels and restart a qualified epoch |
 | 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Pending after backend fixes | Versioned manifest/header with replay round-trip tests |
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Pending after recording | Fedora then Debian/Ubuntu/Pi package tests with the actual service restrictions |
@@ -67,10 +72,18 @@ but must be labeled provisional rather than hardware-time-exact.
 - Kraken timestamp-provenance change passed three Node suites, two Kraken
   recorder/socket CTests, a native processor build, and the complete 18-case
   offline replay matrix.
+- Live exact/provisional separation passed its API regression and deployment
+  checks. The exact endpoint rejected inexact Kraken timing and the provisional
+  endpoint remained explicitly `decision_grade:false`.
+- RSPduo gain-boundary changes passed mocked SDK, paired-queue, API schema, SDRplay
+  3.15-header, and full processor build checks. This backend is not deployed on
+  or exercised against the live Kraken node.
 
 ## Supporting artifacts
 
 - `docs/SDR_OS_PIPELINE_ADVERSARIAL_AUDIT_20261023.md`
 - `results/20261023-gain-adsb-deployment.json`
-- Commits `37e1bf4`, `aba2e45`, `5e4abac`, `096e7e4`
+- `results/20261024-eventtime-provisional-deployment.json`
+- Commits `37e1bf4`, `aba2e45`, `5e4abac`, `096e7e4`, `b02ba18`,
+  `ccbef6b`, `87952c3`
 
