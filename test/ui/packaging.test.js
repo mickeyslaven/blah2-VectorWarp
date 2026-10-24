@@ -136,8 +136,8 @@ assert.match(packageScript,
   /ExecStart=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-health-watchdog\.service[\s\S]*vectorwarp-config-guard\.service/,
   'Binary packages must bind watchdog and config-guard services to their private Node runtime.');
 assert.match(packageScript,
-  /find "\$STAGE\/opt\/vectorwarp\/libexec" -maxdepth 1 -type f -name '\*\.js' -exec chmod 0644/,
-  'Every packaged Node helper must be excluded from executable RPM dependency scanning.');
+  /case \$first_line in '#!'\*node\*\) run chmod 0644 "\$helper"/,
+  'Every packaged Node-shebang helper must be excluded from executable RPM dependency scanning.');
 assert.match(packageScript, /packaged helper is missing/);
 assert.match(packageScript, /does not use its stable integration helper/);
 assert.match(packageScript, /points into the removed release libexec directory/);

@@ -238,11 +238,16 @@ run rm -rf "$STAGE/opt/vectorwarp/current/systemd" \
   "$STAGE/opt/vectorwarp/current/libexec" \
   "$STAGE/opt/vectorwarp/current/api/node_modules/.bin"
 run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-x '{}' +
-# Packaged JavaScript helpers are data for the pinned private Node runtime, not
-# host executables.  Apply this to the entire integration directory so a future
-# helper cannot silently reintroduce an RPM /usr/bin/node or /usr/bin/env
-# dependency merely by carrying an executable shebang.
-run find "$STAGE/opt/vectorwarp/libexec" -maxdepth 1 -type f -name '*.js' -exec chmod 0644 '{}' +
+# Node-backed helpers are data for the pinned private runtime, not host
+# executables. Detect their interpreter shebang instead of trusting a filename
+# suffix (the bearing diagnostic intentionally has none), so future helpers
+# cannot silently reintroduce an RPM /usr/bin/node or /usr/bin/env dependency.
+for helper in "$STAGE/opt/vectorwarp/libexec/"*; do
+  [[ -f $helper ]] || continue
+  first_line=
+  IFS= read -r first_line <"$helper" || true
+  case $first_line in '#!'*node*) run chmod 0644 "$helper" ;; esac
+done
 for helper in vectorwarp-health-watchdog.js vectorwarp-config-guard.js; do
   [[ -f $STAGE/opt/vectorwarp/libexec/$helper ]] || die "packaged helper is missing: $helper"
   unit=${helper%.js}.service
