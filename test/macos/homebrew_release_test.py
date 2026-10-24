@@ -74,6 +74,14 @@ class HomebrewReleaseTest(unittest.TestCase):
         self.assertIn(COMMIT, manifest)
         self.assertIn(checksum, manifest)
 
+    def test_accepts_the_complete_current_git_archive_layout(self):
+        prefix = f"blah2-VectorWarp-{COMMIT}/"
+        subprocess.run(["git", "archive", "--format=tar.gz", f"--prefix={prefix}",
+                        f"--output={self.archive}", "HEAD"], cwd=ROOT, check=True)
+        output = self.root / "current-tree"
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+
     def test_public_core_header_is_allowed_without_admitting_private_or_binary_paths(self):
         header = ROOT / "core/GpuReferenceSpectrum.private.h"
         self.write_archive("core/GpuReferenceSpectrum.private.h", header.read_bytes())
