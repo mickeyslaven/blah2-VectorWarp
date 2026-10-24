@@ -70,8 +70,7 @@ else
   die 'Homebrew is required; install it, then rerun'
 fi
 for command in cmake ninja node npm python3 rsync; do command -v "$command" >/dev/null || die "missing $command; install it, then rerun"; done
-node_major=$(node -p 'process.versions.node.split(".")[0]')
-[[ $node_major =~ ^[0-9]+$ && $node_major -ge 22 ]] || die 'Node.js 22 or newer is required'
+node "$SOURCE_DIR/script/check-node-version.js" || die 'a patched supported Node.js release is required'
 
 BUILD_DIR=$(normalize_path "$BUILD_DIR")
 [[ -n $OUTPUT_DIR ]] || OUTPUT_DIR="$BUILD_DIR/artifact"
@@ -151,6 +150,7 @@ rm -f "$OUTPUT_DIR/vectorwarp-macos"
 install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos" "$OUTPUT_DIR/script/vectorwarp-macos"
 install -m 0755 "$SOURCE_DIR/script/vectorwarp-macos.py" "$OUTPUT_DIR/script/vectorwarp-macos.py"
 install -m 0755 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$OUTPUT_DIR/script/vectorwarp-kraken-macos.py"
+install -m 0755 "$SOURCE_DIR/script/check-node-version.js" "$OUTPUT_DIR/script/check-node-version.js"
 if [[ $LOCAL_RSPDUO == ON ]]; then
   kit_parent="$OUTPUT_DIR/receiver-source"
   mkdir -p "$kit_parent"

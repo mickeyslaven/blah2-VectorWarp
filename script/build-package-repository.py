@@ -468,7 +468,7 @@ def load_manifest(file, packages):
         if entry.get("test_only", False) is not False:
             raise ValueError(f"Test-only packages cannot be published: {filename}")
         if (entry.get("backend"), entry.get("gpu"), entry.get("node_version")) != (
-                "all", "auto", "24.21.0"):
+                "all", "auto", "24.22.1"):
             raise ValueError(f"Unexpected package build profile: {filename}")
         if (entry.get("compiled_receivers") != ["Usrp", "HackRF", "Kraken"] or
                 entry.get("local_build_receivers") != ["RspDuo"]):

@@ -139,6 +139,7 @@ function fetchHttp(url, options = {}) {
     assert.match(apiUnit, /SupplementaryGroups=.*vectorwarp-config.*vectorwarp/,
       'API needs read-only processor-group access to hash completed IQ captures');
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
+    assert.match(apiUnit, /ExecCondition=\/usr\/bin\/node @PREFIX@\/libexec\/vectorwarp-check-node-version/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);
     assert.doesNotMatch(processorUnit, /ExecStartPre=.*receiver-start-check\.js/);

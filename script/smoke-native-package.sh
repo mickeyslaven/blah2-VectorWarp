@@ -55,7 +55,7 @@ node=/opt/vectorwarp/runtime/node/bin/node
 api=/opt/vectorwarp/current/api/server.js
 config=/etc/vectorwarp/config.yml
 [[ -x $node && -f $api && -f $config ]] || die 'installed package lacks its private runtime, API, or config'
-[[ $($node --version) == v24.21.0 ]] || die 'installed private Node runtime is not v24.21.0'
+[[ $($node --version) == v24.22.1 ]] || die 'installed private Node runtime is not v24.22.1'
 # Run the actual private Node under the installed socket-family allowlist. A
 # direct API launch alone cannot catch a service-only interface-query failure.
 # This check applies only child-local seccomp; no system service is started.

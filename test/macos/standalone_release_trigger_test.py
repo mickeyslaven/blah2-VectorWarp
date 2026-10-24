@@ -13,8 +13,18 @@ class StandaloneReleaseTriggerTest(unittest.TestCase):
         source = WORKFLOW.read_text()
         triggers = source.split("permissions:", 1)[0]
         self.assertRegex(triggers, r"(?m)^  push:\n    branches: \[main\]\n    tags: \['v\*'\]$")
-        self.assertIn("runner: macos-15\n            arch: arm64", source)
-        self.assertIn("runner: macos-15-intel\n            arch: x86_64", source)
+        self.assertIn(
+            "runner: macos-15\n            arch: arm64\n            node_arch: arm64",
+            source,
+        )
+        self.assertIn(
+            "runner: macos-15-intel\n            arch: x86_64\n            node_arch: x64",
+            source,
+        )
+        self.assertIn(
+            'archive="node-v${NODE_VERSION}-darwin-${{ matrix.node_arch }}.tar.gz"',
+            source,
+        )
         self.assertNotRegex(source, r"(?i)runs-on:.*self.hosted")
 
     def test_release_transfer_remains_encrypted_and_conditional(self):

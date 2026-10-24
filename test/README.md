@@ -33,7 +33,8 @@ Use the actual configured output path if it differs from `bin/blah2`.
 
 ## API and browser fixtures
 
-Node.js 22 or newer is required. Install the locked development dependencies;
+A patched supported Node.js release is required: 22.23.4+, 24.22.1+, or
+26.12.1+ within that release line. Install the locked development dependencies;
 the DOM test uses the pinned jsdom dependency.
 
 ```bash

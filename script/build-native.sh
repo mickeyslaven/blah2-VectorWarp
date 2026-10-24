@@ -13,7 +13,7 @@ PREFLIGHT_ONLY=false
 SDRPLAY_INCLUDE_DIR=${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}
 SDRPLAY_LIBRARY=${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}
 
-VCPKG_COMMIT=c8696863d371ab7f46e213d8f5ca923c4aef2a00
+VCPKG_COMMIT=b45fe136ff576ad06105fed78245e765ab35ad16
 VKFFT_COMMIT=066a17c17068c0f11c9298d848c2976c71fad1c1
 
 usage() {
@@ -91,8 +91,7 @@ BUILD_ARCH=$(uname -m)
   die 'build and dependency directories must not replace the source tree'
 
 for command in cmake git node npm curl tar zip unzip pkg-config cc c++ ninja python3; do need_command "$command"; done
-node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
-((node_major >= 22)) || die 'Node.js 22 or newer is required'
+node "$SOURCE_DIR/script/check-node-version.js" || die 'a patched supported Node.js release is required'
 for file in CMakeLists.txt lib/vcpkg.json lib/vcpkg-kraken.json api/package.json html/index.html; do
   [[ -f "$SOURCE_DIR/$file" ]] || die "source file is missing: $file"
 done
@@ -284,6 +283,7 @@ run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp" "$ARTIFACT_TMP/libexec/vectorwarp"
 run install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$ARTIFACT_TMP/libexec/vectorwarp-quiesce"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
+run install -m 0755 "$SOURCE_DIR/script/check-node-version.js" "$ARTIFACT_TMP/libexec/vectorwarp-check-node-version"
 run install -m 0755 "$SOURCE_DIR/script/evaluate-bearing-calibration.js" "$ARTIFACT_TMP/libexec/vectorwarp-bearing-diagnostic"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFACT_TMP/libexec/vectorwarp-sudoers-migrate"

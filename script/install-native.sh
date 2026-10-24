@@ -184,6 +184,7 @@ if $WITH_SYSTEMD; then
     die 'restart helpers are missing'
   [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
   [[ -x $ARTIFACT/libexec/vectorwarp-quiesce ]] || die 'safe shutdown helper is missing'
+  [[ -f $ARTIFACT/libexec/vectorwarp-check-node-version ]] || die 'Node version check helper is missing'
   [[ ! -L $DESTDIR/usr/bin && ! -L $DESTDIR/usr/bin/vectorwarp ]] ||
     die 'launcher install path must not be a symlink'
   if [[ -f $ARTIFACT/libexec/vectorwarp-receiver-helper ]]; then
@@ -206,8 +207,8 @@ if $WITH_SYSTEMD; then
 fi
 if [[ -z $DESTDIR ]]; then
   [[ -x /usr/bin/node ]] || die 'native services require Node.js at /usr/bin/node'
-  node_major=$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])')
-  ((node_major >= 22)) || die 'native services require Node.js 22 or newer at /usr/bin/node'
+  /usr/bin/node "$SOURCE_DIR/script/check-node-version.js" ||
+    die 'native services require a patched supported Node.js release at /usr/bin/node'
   if ldd "$ARTIFACT/bin/blah2" 2>&1 | grep -q 'not found'; then
     ldd "$ARTIFACT/bin/blah2" >&2
     die 'processor runtime libraries are missing; install SDK libraries and run ldconfig'
@@ -336,6 +337,10 @@ if $WITH_SYSTEMD; then
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-config-guard.js" "$target_prefix/libexec/vectorwarp-config-guard.js"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
+  # The unit invokes this script through the private Node binary. Keeping it
+  # non-executable also prevents RPM BRP from rewriting its env-node shebang
+  # and inferring a false /usr/bin/node dependency.
+  run install -m 0644 "$ARTIFACT/libexec/vectorwarp-check-node-version" "$target_prefix/libexec/vectorwarp-check-node-version"
   if [[ -f $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
     run install -m 0755 "$ARTIFACT/libexec/vectorwarp-gpu-setup" "$target_prefix/libexec/vectorwarp-gpu-setup"
   fi

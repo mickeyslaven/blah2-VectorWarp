@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           app_root="$(brew --prefix mickeyslaven/vectorwarp/vectorwarp)/libexec"
-          export PATH="$(brew --prefix node@24)/bin:$PATH"
+          export PATH="$app_root/runtime/node/bin:$PATH"
           export NODE_PATH="$app_root/api/node_modules"
           python3 test/recording/processor_replay_test.py --binary "$app_root/bin/blah2"
           python3 test/macos/processor_lifecycle_test.py --binary "$app_root/bin/blah2" --app-root "$app_root"
