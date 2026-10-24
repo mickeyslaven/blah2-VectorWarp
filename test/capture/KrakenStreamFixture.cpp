@@ -8,9 +8,13 @@
 #include <chrono>
 #include <cstring>
 #include <future>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 #include <thread>
 
 namespace {
@@ -42,7 +46,7 @@ struct Capture {
   std::promise<std::string> finished;
   std::future<std::string> result = finished.get_future();
   std::thread worker;
-  Capture() {
+  explicit Capture(const std::string& recordingPath = "/unused") {
     listener = socket(AF_INET, SOCK_STREAM, 0); assert(listener >= 0);
     sockaddr_in address{}; address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -51,7 +55,8 @@ struct Capture {
     socklen_t size = sizeof(address);
     assert(getsockname(listener, reinterpret_cast<sockaddr*>(&address), &size) == 0);
     for (unsigned ch = 0; ch < 5; ++ch) { storage.emplace_back(new IqData(128)); buffers.push_back(storage.back().get()); }
-    source.reset(new Kraken("Kraken", 527000000, 2400000, "/unused", &record, 5, "127.0.0.1", ntohs(address.sin_port)));
+    source.reset(new Kraken("Kraken", 527000000, 2400000, recordingPath, &record,
+      5, "127.0.0.1", ntohs(address.sin_port)));
     source->start();
     worker = std::thread([this] {
       try { source->process(buffers); finished.set_value("stopped"); }
@@ -81,6 +86,14 @@ struct Capture {
     return text;
   }
   void length(unsigned count) { for (const auto* buffer : buffers) assert(const_cast<IqData*>(buffer)->get_length() == count); }
+  void wait_recording(const std::string& previous) {
+    for (unsigned attempt = 0; attempt < 400; ++attempt) {
+      const auto status = source->recording_status();
+      if (status.active && status.file != previous && status.samples == 8) return;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    assert(false && "Kraken recording did not roll to the new setting epoch");
+  }
   ~Capture() {
     source->stop();
     if (client >= 0) close(client);
@@ -92,6 +105,12 @@ struct Capture {
 int main() {
   { Capture c; c.send_bytes({'x', 'M', 'x'}); c.send_bytes(frame(), true); c.finish(); c.length(8); }
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 1)); c.send_bytes(frame(5, 1)); c.finish(); c.length(16); }
+  // A per-channel setting change is an epoch boundary even when the Suite's
+  // frequency-change counter does not advance.
+  { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 0, 4, 527000000.0F, 16.0F));
+    c.finish(); c.length(8); }
+  { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 0, 4, 527000128.0F, 15.0F));
+    c.finish(); c.length(8); }
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 0, 0)); c.send_bytes(frame()); c.finish(); c.length(8); }
   // Latest Suite tags non-coherent streams even when the low calibration byte
   // happens to be CALIBRATED.  They must create a discontinuity and never be
@@ -115,5 +134,45 @@ int main() {
     { Capture c; c.send_bytes(frame(5, 0, 4, 527000000.0F, value));
       assert(c.finish(false).find("gain metadata") != std::string::npos); c.length(0); }
   }
-  std::cout << "Kraken actual socket capture: 14 loopback cases passed (fragmentation/resync, calibration/noise/retune/noncoherent loss, partial disconnect/reconnect, six nonfinite faults). No SDR opened.\n";
+  // Portable IQ is already DC-removed and gain-equalized. A setting change
+  // closes the old file incomplete and lazily records the new epoch with the
+  // new observed gain and exact source-relative starting sample.
+  {
+    char pattern[] = "/tmp/vectorwarp-kraken-setting-XXXXXX";
+    const char* directory = mkdtemp(pattern); assert(directory);
+    Capture c(directory);
+    const auto oldPath = c.source->open_file();
+    c.send_bytes(frame());
+    for (unsigned attempt = 0; attempt < 400 &&
+        c.source->recording_status().samples != 8; ++attempt)
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    assert(c.source->recording_status().samples == 8);
+    c.send_bytes(frame(5, 0, 4, 527000000.0F, 16.0F));
+    c.wait_recording(oldPath);
+    const auto newPath = c.source->recording_status().file;
+    c.finish(); c.length(8);
+    c.source->close_file();
+    std::ifstream sidecar(newPath + ".provenance.json"); assert(sidecar);
+    rapidjson::IStreamWrapper stream(sidecar); rapidjson::Document provenance;
+    provenance.ParseStream(stream); assert(!provenance.HasParseError());
+    const auto& details = provenance["receiverDetails"];
+    assert(details["conditioning"]["alreadyAppliedToRecordedIq"].GetBool());
+    assert(details["observedFrame"]["perChannelGainDb"][0].GetFloat() == 16.0F);
+    assert(provenance["timing"]["sourceFirstSample"] == "0");
+    blah2::ReplayOptions options; options.receiver = "Kraken"; options.channels = 5;
+    options.sampleRate = 2400000; options.frequency = 527000000;
+    bool incomplete = false;
+    try { blah2::RecordingReader old(oldPath, options); }
+    catch (const std::exception& error) {
+      incomplete = std::string(error.what()).find("not finished cleanly") != std::string::npos;
+    }
+    assert(incomplete);
+    blah2::RecordingReader recovered(newPath, options);
+    assert(recovered.provenance().contractValid && recovered.provenance().continuous &&
+      !recovered.provenance().decisionGrade);
+    std::filesystem::remove(oldPath); std::filesystem::remove(oldPath + ".provenance.json");
+    std::filesystem::remove(newPath); std::filesystem::remove(newPath + ".provenance.json");
+    std::filesystem::remove(directory);
+  }
+  std::cout << "Kraken actual socket capture: setting-boundary, fragmentation/resync, calibration/noise/retune/noncoherent loss, recording rollover/replay, partial disconnect/reconnect and nonfinite cases passed. No SDR opened.\n";
 }

@@ -92,6 +92,13 @@ std::string Kraken::recording_provenance_json() const
     observed.AddMember("synchronized",HeimdallFrame::is_synchronized_data(lastHeader),allocator);
   }
   document.AddMember("observedFrame",observed,allocator);
+  rapidjson::Value conditioning(rapidjson::kObjectType);
+  conditioning.AddMember("sampleFormat","normalized-complex-float32",allocator);
+  conditioning.AddMember("dcRemoval","per-frame-per-channel-mean",allocator);
+  conditioning.AddMember("gainEqualization","attenuate-to-minimum-reported-channel-gain",allocator);
+  conditioning.AddMember("inputGainSource","heimdall-v2-per-frame-metadata",allocator);
+  conditioning.AddMember("alreadyAppliedToRecordedIq",true,allocator);
+  document.AddMember("conditioning",conditioning,allocator);
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer); document.Accept(writer);
   return {buffer.GetString(),buffer.GetSize()};
@@ -142,7 +149,7 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
         socketFd = -1;
       }
       if (!running) return;
-      recording_discontinuity("Kraken input connection was interrupted");
+      recording_epoch_discontinuity("Kraken input connection was interrupted");
       clipRecorder->discontinuity("Kraken input connection was interrupted");
       samplePositionAvailable.store(false, std::memory_order_release);
       {
@@ -161,6 +168,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
 {
   connect_heimdall();
   std::optional<uint32_t> frequencyChangeCounter;
+  std::vector<float> frequencies, gains;
   bool resetPending = false;
   while (running)
   {
@@ -182,7 +190,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
 
     if (frequencyChangeCounter &&
         *frequencyChangeCounter != header.frequencyChangeCounter) {
-      recording_discontinuity("Kraken input retuned during recording");
+      recording_epoch_discontinuity("Kraken input retuned during recording");
       clipRecorder->discontinuity("Kraken input retuned during clip recording");
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
@@ -190,20 +198,29 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     frequencyChangeCounter = header.frequencyChangeCounter;
     if (!HeimdallFrame::is_synchronized_data(header))
     {
-      recording_discontinuity("Kraken input synchronization was lost");
+      recording_epoch_discontinuity("Kraken input synchronization was lost");
       clipRecorder->discontinuity("Kraken input synchronization was lost during clip recording");
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
       continue;
     }
+    if (!resetPending && ((!frequencies.empty() && frequencies != header.frequencies) ||
+        (!gains.empty() && gains != header.gains))) {
+      recording_epoch_discontinuity(
+        "Kraken input per-channel frequency or gain metadata changed");
+      clipRecorder->discontinuity(
+        "Kraken input per-channel frequency or gain metadata changed");
+      samplePositionAvailable.store(false, std::memory_order_release);
+      resetPending = true;
+    }
+    frequencies = header.frequencies;
+    gains = header.gains;
     {
       std::lock_guard<std::mutex> lock(provenanceMutex);
       lastHeader=header; lastHeaderAvailable=true;
     }
     if (resetPending)
     {
-      recording_discontinuity("Kraken input reset before synchronized data");
-      clipRecorder->discontinuity("Kraken input reset before synchronized clip data");
       samplePositionAvailable.store(false, std::memory_order_release);
       clear_buffers(buffers);
       resetPending = false;
@@ -228,7 +245,13 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
       (*it)->unlock();
 
-    record_block(channels);
+    Source::SampleTimePosition recordingStart;
+    if (recorded && position.available &&
+        position.nextSample >= header.samplesPerChannel)
+      recordingStart = {true, position.epoch,
+        position.nextSample - header.samplesPerChannel,
+        position.epochEstimateNanoseconds, fs};
+    record_block(channels, recordingStart);
   }
 }
 

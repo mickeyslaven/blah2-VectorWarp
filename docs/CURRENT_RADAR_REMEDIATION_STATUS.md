@@ -60,6 +60,10 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Pending after recording | Fedora then Debian/Ubuntu/Pi package tests with the actual service restrictions |
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
+The code-enumerated receiver-setting ledger is maintained in
+`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken is complete; RSPduo, USRP, HackRF,
+then the four OS/package lifecycle passes remain serially queued.
+
 ## Completed validation
 
 - Native Kraken suite: 9,323 assertions in 16 tests passed on Linux/Strix.
@@ -72,6 +76,11 @@ provenance while the radar continued processing at the unchanged RF settings.
 - Kraken timestamp-provenance change passed three Node suites, two Kraken
   recorder/socket CTests, a native processor build, and the complete 18-case
   offline replay matrix.
+- Kraken setting-trace follow-up rejects an observed per-channel frequency or
+  gain change even when the Suite counter does not advance, rolls only the old
+  portable recording incomplete, resumes at source sample zero, and preserves
+  the already-applied DC-removal/gain-equalization contract. The loopback
+  live-to-record-to-replay fixture opens no SDR and passed.
 - Live exact/provisional separation passed its API regression and deployment
   checks. The exact endpoint rejected inexact Kraken timing and the provisional
   endpoint remained explicitly `decision_grade:false`.
