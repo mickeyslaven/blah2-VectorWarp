@@ -145,6 +145,10 @@ the cross-platform acceptance pass:
 - Linux package/source collision tests remain required in the Fedora/Debian CI
   jobs because their GNU `stat`, `realpath`, systemd, and package-manager
   semantics cannot be accepted from macOS fixtures.
+- A release-matrix browser run exposed that a transient API timeout remained in
+  the diagnostic state after a later successful refresh. Frame and view errors
+  now clear only after the corresponding update succeeds; deterministic fake-
+  clock and real-Chromium tests force one timeout and prove recovery.
 
 Independent pre-release review passed the API and macOS universal/standalone
 fixture suites and found no additional reproducible runtime defect. It requires
