@@ -25,6 +25,7 @@ const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
 const {DetectionManifoldAutomation} = require('./detection-manifold-automation.js');
+const {buildArrayCalibrationStatus} = require('./array-calibration-status.js');
 const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
@@ -1042,6 +1043,20 @@ app.get('/api/bearing/manifold-recorder', (req, res) => {
 app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
+function arrayCalibrationStatus() {
+  const bearing = manifoldAutomation.status();
+  const detection = detectionManifoldAutomation.status();
+  return buildArrayCalibrationStatus({config,
+    recorderStatus: manifoldRecorder.status(), bearingStatus: bearing,
+    detectionStatus: detection,
+    frequencyResolvedStatus: frequencyResolvedShadow.status()});
+}
+app.get('/api/array-calibration/status', (req, res) => {
+  // Both evaluators are signature-cached and run away from the API thread.
+  void manifoldAutomation.evaluate();
+  void detectionManifoldAutomation.evaluate();
+  res.json(arrayCalibrationStatus());
+});
 app.get('/api/bearing/manifold-progress', (req, res) => {
   // Evaluation is signature-cached and runs off the API thread. Polling this
   // view refreshes a changed corpus promptly without loading the radar
@@ -1065,6 +1080,8 @@ app.get('/api/bearing/manifold-progress', (req, res) => {
         running: detectionAutomation.running, qualified: detectionAutomation.qualified,
         promotion_allowed: false, failures: detectionAutomation.failures || [],
         validation_path: detectionAutomation.validationPath || null,
+        candidate_path: detectionAutomation.candidatePath || null,
+        runtime_candidate_path: detectionAutomation.runtimeCandidatePath || null,
         error: detectionAutomation.error,
         last_evaluation_at: detectionAutomation.lastEvaluationAt || null},
       progress: detectionAutomation.progress},
