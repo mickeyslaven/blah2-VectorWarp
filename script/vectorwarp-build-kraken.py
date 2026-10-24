@@ -15,6 +15,7 @@ import pwd
 import resource
 import runpy
 import shutil
+import signal
 import stat
 import sys
 import tempfile
@@ -93,8 +94,8 @@ def build():
         require(user.pw_uid != 0 and user.pw_gid != 0, 'Compiler identity must be unprivileged')
         work = Path(tempfile.mkdtemp(prefix='.build-', dir=OUTROOT))
         staging = None
-        os.chown(work, user.pw_uid, user.pw_gid)
         try:
+            os.chown(work, user.pw_uid, user.pw_gid)
             def drop():
                 os.setgroups([]); os.setgid(user.pw_gid); os.setuid(user.pw_uid)
                 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -148,6 +149,11 @@ def build():
 if __name__ == '__main__':
     try:
         require(sys.argv[1:] == ['build'], 'usage: vectorwarp-build-kraken build')
+        def stopped(signum, frame):
+            # Enter bounded()'s descendant-reap and build()'s cleanup finally
+            # blocks on a normal systemd stop, without publishing partial work.
+            raise RuntimeError('Local Kraken source build stopped before completion')
+        signal.signal(signal.SIGTERM, stopped)
         launcher = runpy.run_path(str(PREFIX / 'libexec/vectorwarp'))
         with launcher['upgrade_guard']():
             build()
