@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "host": "fedora3 x86_64 live five-channel Kraken",
+  "sources": {
+    "suiteRevision": "f47ed2fb48ab5dba888b7d45fd08c9745ae22199",
+    "rtlsdrRevision": "578b43ddd971786e84e2a6ab3c338ee48c8739c3"
+  },
+  "candidate": {
+    "heimdallSha256": "14b7006ca1d668cb5b37fbd66f19962d1d007836d6ce5bac7cdfcb1bb3cfe763",
+    "driverLinkage": "pinned-static",
+    "deployedAfterGate": false
+  },
+  "configuration": {
+    "canonicalConfigSha256": "7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0",
+    "frequencyHz": 527000000,
+    "sampleRateHz": 2400000,
+    "channels": 5,
+    "channelGainsDb": [2.7, 2.7, 1.4, 1.4, 3.7]
+  },
+  "candidateGate": {
+    "result": "pass",
+    "startedAt": "2026-10-24T22:46:08Z",
+    "passedAt": "2026-10-24T22:46:56Z",
+    "calibrationState": "CONVERGED",
+    "coherenceEvents": 0,
+    "adcRailComponents": [0, 0, 0, 0, 0],
+    "mchtFrames": 2931,
+    "samplesPerChannel": 48021504,
+    "firstToLastSampleDelta": 48005120,
+    "firstToLastTransferSequenceDelta": 2930,
+    "firstToLastPacketSequenceDelta": 2930,
+    "monotonicDeltaNs": 20002089471,
+    "taiAndRealtimeDeltaNs": 20002322677
+  },
+  "rollback": {
+    "result": "pass",
+    "completedAt": "2026-10-24T22:47:32Z",
+    "priorHeimdallSha256": "1eff9c21c65370956ff4b2e037484f486aa2abc1da186187c5bc42cbe4a4a546",
+    "priorUnitSha256": "6c994038dcacb08029d1c7947a16aee8132f79615e28e50ca04125c2c041d2d4",
+    "priorPortDropinSha256": "469d59b9d5c4a7d1f326859020d6358c48e854df49bf88e7c5f9d66099495c40",
+    "servicesActive": ["vectorwarp-heimdall", "vectorwarp-api", "vectorwarp-processor"],
+    "legacyMchqFrames": 733,
+    "samplesPerChannel": 12009472,
+    "exactConfigReadback": true
+  },
+  "decision": "GO for reviewed source pin; issue 66 may close after integration; candidate rolled back and not deployed"
+}

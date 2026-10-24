@@ -1,18 +1,23 @@
 diff --git a/heimdall_v2/CMakeLists.txt b/heimdall_v2/CMakeLists.txt
-index b3a891b..5ded56b 100644
+index b3a891b..037eae5 100644
 --- a/heimdall_v2/CMakeLists.txt
 +++ b/heimdall_v2/CMakeLists.txt
-@@ -10,7 +10,7 @@ find_package(PkgConfig REQUIRED)
+@@ -9,17 +9,19 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+ find_package(PkgConfig REQUIRED)
  find_package(Threads REQUIRED)
  
- # Find Eigen3
+-# Find Eigen3
 -if(WIN32)
-+if(WIN32 OR APPLE)
-     # MSYS2 ships Eigen 5, whose config file refuses a "3.3" request
-     # (same-major-version rule) - any Eigen will do
-     find_package(Eigen3 REQUIRED NO_MODULE)
-@@ -19,7 +19,13 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
- endif()
+-    # MSYS2 ships Eigen 5, whose config file refuses a "3.3" request
+-    # (same-major-version rule) - any Eigen will do
+-    find_package(Eigen3 REQUIRED NO_MODULE)
+-else()
+-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+-endif()
++# Eigen 5's config file refuses a "3.3" request under its same-major-version
++# compatibility rule. Heimdall uses the supported Eigen API on Fedora's Eigen
++# 5 as well as Eigen 3, so require the package without pinning its major.
++find_package(Eigen3 REQUIRED NO_MODULE)
  
  # Find other dependencies using pkg-config
 -pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
@@ -26,7 +31,7 @@ index b3a891b..5ded56b 100644
  
  # Windows: a native build with MSYS2's UCRT64 toolchain (MinGW-w64 GCC; run
  # cmake in the UCRT64 shell, e.g. `cmake -G Ninja ..`), mirroring the
-@@ -60,6 +66,7 @@ endif()
+@@ -60,6 +62,7 @@ endif()
  # KrakenSDR librtlsdr fork, linked STATICALLY so a distro librtlsdr0 (earlier
  # in the loader's search path than /usr/local/lib) can never shadow it - see
  # the Makefile. Built by ../install.sh or by `make` in this directory.
@@ -34,7 +39,7 @@ index b3a891b..5ded56b 100644
  set(RTLSDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../librtlsdr)
  if(WIN32)
      # the fork's CMake names the static library librtlsdr_static.a there
-@@ -113,6 +120,7 @@ foreach(src ${RTLSDR_SRCS})
+@@ -113,6 +116,7 @@ foreach(src ${RTLSDR_SRCS})
  endforeach()
  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RTLSDR_SRCS} ${RTLSDR_STATIC_LIB})
  endif()
@@ -42,7 +47,7 @@ index b3a891b..5ded56b 100644
  
  # Check for uWebSockets
  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets")
-@@ -199,8 +207,12 @@ target_include_directories(heimdall PRIVATE
+@@ -199,8 +203,12 @@ target_include_directories(heimdall PRIVATE
      ${CMAKE_CURRENT_SOURCE_DIR}/external
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/src
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/src
@@ -56,7 +61,7 @@ index b3a891b..5ded56b 100644
  
  # Add Eigen3 include directories
  target_include_directories(heimdall PRIVATE ${EIGEN3_INCLUDE_DIR})
-@@ -275,23 +287,27 @@ if(WIN32)
+@@ -275,23 +283,27 @@ if(WIN32)
          ${LIBUV_STATIC_LIBRARY_DIRS}
      )
  else()
@@ -94,7 +99,7 @@ index b3a891b..5ded56b 100644
  endif()
  
  # Installation
-@@ -317,7 +333,7 @@ add_custom_target(status
+@@ -317,7 +329,7 @@ add_custom_target(status
      COMMAND ${CMAKE_COMMAND} -E echo "=== Build Status ==="
      COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 found: ${EIGEN3_FOUND}"
      COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 version: ${EIGEN3_VERSION}"
@@ -103,7 +108,7 @@ index b3a891b..5ded56b 100644
      COMMAND ${CMAKE_COMMAND} -E echo "FFT: pffft (vendored, external/pffft)"
      COMMENT "Checking build status..."
  )
-@@ -327,9 +343,9 @@ message(STATUS "")
+@@ -327,9 +339,9 @@ message(STATUS "")
  message(STATUS "=== Heimdall Configuration ===")
  message(STATUS "C++ Standard: C++20")
  message(STATUS "Eigen3: ${EIGEN3_VERSION} (${EIGEN3_INCLUDE_DIR})")

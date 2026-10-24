@@ -107,7 +107,7 @@ Intel receiver behavior; local runs only qualify the architecture actually used.
 `578b43ddd971786e84e2a6ab3c338ee48c8739c3`, uWebSockets and uSockets.
 The [24 October promotion review](KRAKEN_SUITE_UPDATE_2026_10_24.md) records
 the four-patch port, source hashes, M2 clean build/native simulations and the
-remaining bounded physical-hardware gate.
+completed bounded Fedora physical-hardware gate with rollback.
 The build installs dependency license files supplied upstream. The pinned
 Suite repository has no repository-wide license file; its code is not
 relicensed under VectorWarp's MIT license. These development formulas build

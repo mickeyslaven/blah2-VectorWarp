@@ -3,8 +3,10 @@
 The [24 October Suite review](KRAKEN_SUITE_UPDATE_2026_10_24.md) advances the
 software pins to Suite `f47ed2fb48ab` and Kraken RTL-SDR `578b43ddd971`. A
 clean M2 arm64 build and full fake-driver/native pipeline passed; it adds no
-physical-hardware claim. The physical results below remain tied to their
-recorded earlier revisions until the bounded live gate is run.
+M2 physical-hardware claim. The same reviewed source and patches subsequently
+passed the [bounded Fedora x86_64 five-channel live gate](validation/kraken-f47-live-20261024/README.md)
+at 527 MHz and 2.4 MS/s, including MCHT timing and mandatory rollback. The
+physical M2 results below remain tied to their recorded earlier revisions.
 
 The [October 2026 Kraken Suite update](KRAKEN_SUITE_UPDATE_2026_10.md) uses
 upstream `f648514df41d` and the reviewed companion patches. Revision
