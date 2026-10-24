@@ -423,8 +423,15 @@ if $WITH_SYSTEMD; then
         say 'HackRF access needs local review: expected plugdev group and vectorwarp account'
       fi
     fi
+    if [[ $RECEIVER_TYPES == *Usrp* && $TARGET_DISTRO == fedora ]]; then
+      if getent group usrp >/dev/null && getent passwd vectorwarp >/dev/null; then
+        run usermod --append --groups usrp vectorwarp
+      else
+        say 'USRP access needs local review: expected Fedora UHD usrp group and vectorwarp account'
+      fi
+    fi
     if command -v udevadm >/dev/null 2>&1; then
-      run udevadm control --reload || say 'udev rule reload needs local review; reconnect HackRF after reloading rules'
+      run udevadm control --reload || say 'udev rule reload needs local review; reconnect USB receivers after reloading rules'
     fi
     if [[ -x $ARTIFACT/libexec/vectorwarp-gpu-setup ]]; then
       run /usr/bin/python3 -I "$target_prefix/libexec/vectorwarp-gpu-setup" --configure-service-access ||

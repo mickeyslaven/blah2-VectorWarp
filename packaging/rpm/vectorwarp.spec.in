@@ -69,9 +69,15 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+if getent group usrp >/dev/null 2>&1 &&
+    getent passwd vectorwarp >/dev/null 2>&1; then
+  usermod --append --groups usrp vectorwarp
+else
+  printf '%s\n' 'USRP access needs local review: expected Fedora UHD usrp group and vectorwarp account.' >&2
+fi
 if command -v udevadm >/dev/null 2>&1; then
   udevadm control --reload ||
-    printf '%s\n' 'HackRF udev rule reload needs local review; reconnect after reloading rules.' >&2
+    printf '%s\n' 'Receiver udev rule reload needs local review; reconnect USB receivers after reloading rules.' >&2
 fi
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sudoers-migrate ||
   printf '%s\n' 'VectorWarp sudoers needs administrator review; customized content was preserved.' >&2
