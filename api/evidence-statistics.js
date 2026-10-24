@@ -104,11 +104,11 @@ function receiverEpoch(config) {
     device: config.capture?.device || null, replay: config.capture?.replay || null});
 }
 
-function evaluationContract(span) {
+function evaluationContract(span, timingPolicy = 'exact') {
   return {schema: 'vectorwarp-live-aircraft-scorecard-v1', delay_min: span?.delayMinBin,
     delay_max: span?.delayMaxBin, doppler_min: span?.dopplerMinHz,
     doppler_max: span?.dopplerMaxHz, timing_trigger: 'native-only-v2',
-    exact_timing_required: true,
+    exact_timing_required: timingPolicy === 'exact', timing_policy: timingPolicy,
     timing_skew_ms: 100, truth_offset_s: 1,
     source_disagreement_km: .5, required_cpis: 3, stable_track_associations: 3};
 }
@@ -404,10 +404,13 @@ class EvidenceStatistics {
   constructor(config, adsbSource, {filename, fileSystem = fs, now = Date.now,
     setIntervalFn = setInterval, clearIntervalFn = clearInterval,
     onEligibilityEvent = () => {}, onPeriodicCapture = () => {},
-    onTrackCapture = () => {}} = {}) {
+    onTrackCapture = () => {}, timingPolicy = 'exact'} = {}) {
     this.config = config;
     this.adsbSource = adsbSource;
     this.exactTimingRequired = typeof adsbSource?.getAt === 'function';
+    if (!['exact', 'provisional'].includes(timingPolicy))
+      throw new Error('Evidence timing policy must be exact or provisional');
+    this.timingPolicy = timingPolicy;
     this.fs = fileSystem;
     this.now = now;
     const recorderPath = config.process?.bearing?.manifold_recorder?.path;
@@ -440,7 +443,7 @@ class EvidenceStatistics {
     this.onPeriodicCapture = onPeriodicCapture;
     this.onTrackCapture = onTrackCapture;
     this.load();
-    this.scoreContractHash = digest(evaluationContract(this.limits));
+    this.scoreContractHash = digest(evaluationContract(this.limits, this.timingPolicy));
     if (this.state.liveScoreContract?.hash !== this.scoreContractHash) {
       for (const hex of Object.keys(this.state.active)) this.finish(hex);
       this.state.liveScoreContract = {hash: this.scoreContractHash, startedAt: now()};
@@ -509,7 +512,10 @@ class EvidenceStatistics {
 
   acceptTiming(frame) {
     const value = parse(frame);
-    if (value?.eventTime !== undefined && !exactEventTime(value)) {
+    const exact = exactEventTime(value);
+    const provisionalEstimate = value?.eventTime?.exact === false &&
+      value.eventTime.estimateAvailable === true && finite(value.timestamp);
+    if (value?.eventTime !== undefined && !exact) {
       this.eventTimeRejections += 1;
       this.lastEventTimeRejection = {
         timestamp_ms: finite(value?.timestamp) ? value.timestamp : null,
@@ -518,7 +524,7 @@ class EvidenceStatistics {
         reason: typeof value?.eventTime?.reason === 'string' ?
           value.eventTime.reason.slice(0, 240) :
           'Event-time provenance is missing or not exact'};
-      return;
+      if (this.timingPolicy !== 'provisional' || !provisionalEstimate) return;
     }
     if (!finite(value?.timestamp) || value.captureSamplePositionAvailable !== true ||
         !Number.isSafeInteger(value.captureEpoch) ||
@@ -528,6 +534,10 @@ class EvidenceStatistics {
     const item = {timestamp_ms: value.timestamp, epoch: value.captureEpoch,
       first_epoch_sample: value.captureFirstEpochSample,
       end_epoch_sample: value.captureEndEpochSample,
+      exact_event_time: exact,
+      event_time_source: typeof value?.eventTime?.source === 'string' ?
+        value.eventTime.source.slice(0, 128) : (exact ? 'legacy_exact_contract' : 'unknown'),
+      event_time_uncertainty_bounded: value?.eventTime?.uncertaintyBounded === true,
       capture_dropped_samples: Array.isArray(value.captureDroppedSamples) ?
         value.captureDroppedSamples.filter(Number.isSafeInteger) : []};
     const duplicate = this.recentTiming.some(existing =>
@@ -988,14 +998,23 @@ class EvidenceStatistics {
       ...Object.values(this.state.active).filter(pass => pass.siteKey === this.key &&
         pass.startedAt >= contractStartedAt)]
       .flatMap(pass => pass.cpiAudit || []);
-    const exactTiming = audits.filter(item => item.timing?.epoch !== undefined).length;
+    const exactTiming = audits.filter(item => item.timing?.epoch !== undefined &&
+      item.timing?.exact_event_time !== false).length;
     const joinFrames = new Map();
     for (const item of audits) {
       const row = joinFrames.get(item.timestamp_ms) || {timestamp_ms: item.timestamp_ms,
-        aircraft: 0, exact_timing: Boolean(item.timing), timing_timestamp_ms: item.timing?.timestamp_ms ?? null};
+        aircraft: 0,
+        exact_timing: Boolean(item.timing) && item.timing?.exact_event_time !== false,
+        timing_quality: item.timing?.exact_event_time === false ? 'provisional' :
+          (item.timing ? 'exact' : 'missing'),
+        timing_source: item.timing?.event_time_source ?? null,
+        timing_timestamp_ms: item.timing?.timestamp_ms ?? null};
       row.aircraft += 1; joinFrames.set(item.timestamp_ms, row);
     }
     return {schema: 'vectorwarp-live-aircraft-scorecard-v1', updated_at: this.state.updatedAt,
+      timing_policy: this.timingPolicy, decision_grade: this.timingPolicy === 'exact',
+      warning: this.timingPolicy === 'provisional' ?
+        'Operational association uses an inexact receiver time estimate; do not use for acceptance decisions.' : null,
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, config_epoch: this.configEpoch,
       receiver_epoch: this.receiverEpoch, site_epoch: this.key,

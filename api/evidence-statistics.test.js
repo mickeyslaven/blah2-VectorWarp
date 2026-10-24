@@ -245,6 +245,28 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'kraken_heimdall_host_arrival_estimate');
   uncertainStats.close();
 
+  let provisionalTruthCalls = 0;
+  const provisionalStats = new EvidenceStatistics(config, {getAt() {
+    provisionalTruthCalls += 1; return Promise.resolve({});
+  }}, {filename: path.join(directory, 'provisional-event-time.json'),
+    timingPolicy: 'provisional',
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  provisionalStats.acceptTiming({timestamp: 1500, captureSamplePositionAvailable: true,
+    captureEpoch: 1, captureFirstEpochSample: 0, captureEndEpochSample: 1200000,
+    eventTime: {source: 'kraken_heimdall_host_arrival_estimate', exact: false,
+      estimateAvailable: true, uncertaintyBounded: false, uncertaintyNs: null,
+      reason: 'Heimdall V2 has no device timestamp'}});
+  while (provisionalStats.running) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(provisionalTruthCalls, 1,
+    'provisional lane must retain operational association without claiming exact time');
+  const provisionalStatus = provisionalStats.liveStatus();
+  assert.equal(provisionalStatus.decision_grade, false);
+  assert.equal(provisionalStatus.timing_policy, 'provisional');
+  assert.match(provisionalStatus.warning, /inexact receiver time estimate/);
+  assert.equal(provisionalStatus.data_quality.event_time_rejections, 1,
+    'provisional use must retain the explicit exact-time rejection evidence');
+  provisionalStats.close();
+
   // Synthetic delayed truth: all CPI identities must survive concurrent four-CPI
   // association waits. Resolve them out of order to catch accidental latest-frame joins.
   const exactFilename = path.join(directory, 'exact-delayed-cpi.json');

@@ -78,6 +78,14 @@ const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
   {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
     onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
+// Keep useful live association visible for receivers that can preserve coherent
+// sample position but cannot provide hardware UTC (currently Kraken/RTL2832).
+// This lane is deliberately separate from the fail-closed decision-grade
+// scorecard and has no capture side effects.
+const provisionalEvidenceStatistics = createEvidenceStatistics(config, adsbSource, {
+  filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
+    '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
+  timingPolicy: 'provisional'});
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
 
@@ -453,6 +461,9 @@ app.get('/api/statistics', (req, res) => {
 });
 app.get('/api/live-scorecard', (req, res) => {
   res.json(evidenceStatistics.liveStatus());
+});
+app.get('/api/live-scorecard/provisional', (req, res) => {
+  res.json(provisionalEvidenceStatistics.liveStatus());
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -1207,6 +1218,7 @@ const server_detection = jsonStreamServer('detection', frame => {
   trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
   evidenceStatistics.acceptDetection(frame);
+  provisionalEvidenceStatistics.acceptDetection(frame);
   oprsEventRecorder.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
@@ -1216,6 +1228,7 @@ const server_tracker = jsonStreamServer('track', frame => {
   trackerPublication.acceptNative(frame);
   const published = trackerPublication.frame();
   evidenceStatistics.acceptTracker(published);
+  provisionalEvidenceStatistics.acceptTracker(published);
   oprsEventRecorder.acceptTracker(published);
 });
 listenData(server_tracker, 'track');
@@ -1276,6 +1289,7 @@ const server_timing = net.createServer(socket => {
     timing = frame;
     oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
+    provisionalEvidenceStatistics.acceptTiming(frame);
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
@@ -1311,6 +1325,7 @@ process.on('SIGTERM', () => {
   trackerForwarder.close();
   trackerPublication.close();
   evidenceStatistics.close();
+  provisionalEvidenceStatistics.close();
   oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();

@@ -634,7 +634,11 @@
   }
 
   async function renderStatistics() {
-    const statistics = await apiJson('/api/live-scorecard');
+    const [authoritative, provisional] = await Promise.all([
+      apiJson('/api/live-scorecard'), apiJson('/api/live-scorecard/provisional')]);
+    const authoritativeFrames = authoritative?.data_quality?.exact_timed_cpi_frames || 0;
+    const statistics = authoritativeFrames > 0 ? authoritative : provisional;
+    const decisionGrade = statistics?.decision_grade !== false;
     const windows = statistics?.windows || {};
     const periods = [['Hour', windows.hour], ['Day', windows.day],
       ['Week', windows.week], ['Lifetime', windows.lifetime]];
@@ -645,9 +649,9 @@
     const activeRows = array(statistics.active_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
     const finalizedRows = array(statistics.recent_finalized_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
     const quality = statistics.data_quality || {};
-    root.innerHTML = `<div class="insight-stats insight-stats-four">
+    root.innerHTML = `${decisionGrade ? '' : `<div class="evaluation-note"><strong>Provisional timing:</strong> ${escapeHtml(statistics.warning || 'Receiver time is not hardware-UTC-exact.')} Authoritative scorecard remains fail-closed (${integer(authoritative?.data_quality?.event_time_rejections)} rejected timing frames).</div>`}<div class="insight-stats insight-stats-four">
       ${card(integer(lifetime.eligible_passes), 'Eligible aircraft passes')}
-      ${card(percent(lifetime.tracking_yield, 1), 'Lifetime tracking yield')}
+      ${card(percent(lifetime.tracking_yield, 1), decisionGrade ? 'Lifetime tracking yield' : 'Provisional tracking yield', decisionGrade ? undefined : 'warning')}
       ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
       ${card(`${integer(quality.exact_timed_cpi_frames)}/${integer(quality.unique_cpi_frames)}`, 'Exact-timed CPI frames', quality.missing_timing_cpis ? 'warning' : 'good')}
     </div><div class="overview-grid">
@@ -655,11 +659,12 @@
       <section class="info-card"><h2>Eligibility context</h2>${table(['Window', 'Below range floor', 'Above range ceiling', 'Outside Doppler', 'Stale truth', 'Missing timing', 'Beyond clutter canceller'], exclusionRows)}<dl><div><dt>Physical delay span</dt><dd>${number(limits.delayMinKm, 3)}–${number(limits.delayMaxKm, 3)} km</dd></div><div><dt>Doppler span</dt><dd>${number(limits.dopplerMinHz, 0)} to ${number(limits.dopplerMaxHz, 0)} Hz</dd></div><div><dt>Clutter cancellation</dt><dd>Through ${number(limits.clutterMaxKm, 3)} km</dd></div><div><dt>Strict match gate</dt><dd>±${number(limits.matchDelayKm, 2)} km / ±${number(limits.matchDopplerHz, 1)} Hz</dd></div></dl><p class="view-note">Missing-timing and invalid-truth opportunities are excluded, never counted as misses. Beyond-clutter-canceller opportunities remain physically searchable but are reported separately.</p></section>
       <section class="info-card"><h2>Aircraft live now</h2>${activeRows.length ? table(['Aircraft', 'Status', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Delay km', 'Doppler Hz'], activeRows) : empty('No eligible aircraft live', 'Waiting for exact-timed ADS-B opportunities.')}</section>
       <section class="info-card"><h2>Recent finalized passes</h2>${finalizedRows.length ? table(['Aircraft', 'Outcome', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Finalized'], finalizedRows) : empty('No finalized passes yet', 'Passes finalize after the aircraft leaves the eligible region.')}</section>
-      <section class="info-card"><h2>Scoring integrity</h2><dl><div><dt>Association delay</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>Exact CPI frames</dt><dd>${integer(quality.exact_timed_cpi_frames)} / ${integer(quality.unique_cpi_frames)}</dd></div><div><dt>Aircraft-CPI rows</dt><dd>${integer(quality.exact_timed_aircraft_cpis)} / ${integer(quality.audited_aircraft_cpis)}</dd></div><div><dt>Pending delayed CPIs</dt><dd>${integer(quality.pending_delayed_cpis)}</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl><p class="view-note">Live states are provisional until a pass finalizes. Tracking credit requires at least three ACTIVE, measurement-supported associations. Truth held, stale, or disagreeing beyond the contract is excluded rather than scored as a miss.</p></section>
+      <section class="info-card"><h2>Scoring integrity</h2><dl><div><dt>Decision grade</dt><dd>${decisionGrade ? 'Yes' : 'No — provisional operational lane'}</dd></div><div><dt>Timing policy</dt><dd>${escapeHtml(humanize(statistics.timing_policy))}</dd></div><div><dt>Association delay</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>Exact CPI frames</dt><dd>${integer(quality.exact_timed_cpi_frames)} / ${integer(quality.unique_cpi_frames)}</dd></div><div><dt>Aircraft-CPI rows</dt><dd>${integer(quality.exact_timed_aircraft_cpis)} / ${integer(quality.audited_aircraft_cpis)}</dd></div><div><dt>Pending delayed CPIs</dt><dd>${integer(quality.pending_delayed_cpis)}</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl><p class="view-note">Live states are provisional until a pass finalizes. Tracking credit requires at least three ACTIVE, measurement-supported associations. Truth held, stale, or disagreeing beyond the contract is excluded rather than scored as a miss. A provisional timing lane is never valid for acceptance decisions.</p></section>
     </div>`;
     setState(statistics.error ? `Collection warning · ${statistics.error}` :
+      !decisionGrade ? 'Provisional receiver timing · authoritative scoring blocked' :
       statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)}` : 'Waiting for eligible ADS-B evidence',
-    statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
+    statistics.error || !decisionGrade ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 
   async function renderCalibration() {
