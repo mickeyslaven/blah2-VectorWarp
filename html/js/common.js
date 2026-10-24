@@ -546,6 +546,7 @@ function startRadarUpdates(update) {
       if (Date.now() >= due) {
         due = Date.now() + interval;
         await update(loadedConfig);
+        window.blah2FrameError = null;
       }
     } catch (error) {
       window.blah2FrameError = error?.message || String(error);

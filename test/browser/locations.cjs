@@ -18,9 +18,18 @@ const fixtures = {'/api/runtime/config': config, '/api/config': config,
   '/api/tracker': {timestamp: 1, data: []},
   '/capture/status': {supported: false, available: false, recording: false},
   '/api/adsb/status': {enabled: false, online: false}};
+let detectionRequests = 0;
+let inducedRefreshTimeout = false;
 const server = http.createServer((request, response) => {
   const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
   if (Object.hasOwn(fixtures, pathname)) {
+    if (pathname === '/api/detection' && ++detectionRequests === 2) {
+      inducedRefreshTimeout = true;
+      // Exercise recovery from one real browser-side API timeout. The request
+      // is aborted by readResponse; the following refresh must clear the stale
+      // view error after the fixture resumes responding normally.
+      return;
+    }
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify(fixtures[pathname])); return;
   }
@@ -72,7 +81,11 @@ const server = http.createServer((request, response) => {
         graph._fullLayout.width === Math.floor(graph.getBoundingClientRect().width);
     });
     stage = 'live refresh and final assertions';
-    await page.waitForTimeout(1200); // More than one live refresh after the resize.
+    const refreshDeadline = Date.now() + 8000;
+    while (detectionRequests < 3 && Date.now() < refreshDeadline) await page.waitForTimeout(100);
+    assert.equal(inducedRefreshTimeout, true, 'The recovery path must be exercised');
+    assert.ok(detectionRequests >= 3, 'A successful refresh must follow the induced timeout');
+    await page.waitForFunction(() => window.blah2ViewLastError === null);
     const state = await page.evaluate(() => {
       const graph = document.getElementById('data');
       const sites = graph.data.find(trace => trace.name === 'Radar sites');
