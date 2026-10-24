@@ -317,10 +317,16 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/systemd/vectorwarp.sudoers.in" "$temporary/vectorwarp"
   run install -m 0644 "$temporary/vectorwarp-api.service" "$unit_dir/vectorwarp-api.service"
   run install -m 0644 "$temporary/vectorwarp-processor.service" "$unit_dir/vectorwarp-processor.service"
-  if [[ -f $ARTIFACT/share/heimdall/build.json ]]; then
+  if [[ -f $ARTIFACT/share/heimdall/build.json || -f $ARTIFACT/receiver-source/kraken/kit.json ]]; then
     render "$ARTIFACT/systemd/vectorwarp-heimdall.service.in" "$temporary/vectorwarp-heimdall.service"
     run install -m 0644 "$temporary/vectorwarp-heimdall.service" "$unit_dir/vectorwarp-heimdall.service"
     run install -m 0644 "$ARTIFACT/systemd/72-vectorwarp-kraken.rules" "$udev_rule_dir/72-vectorwarp-kraken.rules"
+    if [[ -f $ARTIFACT/receiver-source/kraken/kit.json ]]; then
+      render "$ARTIFACT/systemd/vectorwarp-kraken-build.service.in" "$temporary/vectorwarp-kraken-build.service"
+      run install -m 0644 "$temporary/vectorwarp-kraken-build.service" "$unit_dir/vectorwarp-kraken-build.service"
+      render "$ARTIFACT/libexec/vectorwarp-build-kraken.py" "$temporary/vectorwarp-build-kraken"
+      run install -m 0755 "$temporary/vectorwarp-build-kraken" "$target_prefix/libexec/vectorwarp-build-kraken"
+    fi
   fi
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
   run install -m 0644 "$temporary/vectorwarp-health-watchdog.service" "$unit_dir/vectorwarp-health-watchdog.service"
@@ -370,7 +376,7 @@ if $WITH_SYSTEMD; then
   if [[ -f $ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js ]]; then
     run install -m 0644 "$ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js" "$target_prefix/libexec/vectorwarp-prepare-sdrplay.js"
   fi
-  if [[ $LOCAL_BUILD_ENABLED == true && -f $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]]; then
+  if [[ -f $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]]; then
     render "$ARTIFACT/libexec/vectorwarp-build-sdrplay.py" "$temporary/vectorwarp-build-sdrplay"
     run install -m 0755 "$temporary/vectorwarp-build-sdrplay" "$target_prefix/libexec/vectorwarp-build-sdrplay"
   fi

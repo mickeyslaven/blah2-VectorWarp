@@ -42,6 +42,34 @@ def apply_source_patch(tree, patch):
         run(['git', 'apply', patch], cwd=tree)
 
 
+def extract_sources(bundle, destination):
+    """Portable Python 3.10+ extraction: source archives need no links/devices.
+
+    Validate the entire archive before writing anything. Reject every link,
+    rather than relying on version-dependent tarfile filters and link ordering.
+    """
+    members = bundle.getmembers()
+    seen = set()
+    for member in members:
+        parts = Path(member.name).parts
+        if (not parts or Path(member.name).is_absolute() or '..' in parts or
+                '\\' in member.name or not (member.isdir() or member.isfile()) or
+                member.name in seen or member.size < 0):
+            raise ValueError('Unsafe source archive member: ' + member.name)
+        seen.add(member.name)
+    # No extract/extractall call: neither old tar semantics nor archive owner,
+    # setuid bits, symlinks, hardlinks, FIFOs or devices can affect the host.
+    for member in members:
+        target = destination / member.name
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.extractfile(member) as source, target.open('xb') as output:
+                shutil.copyfileobj(source, output)
+            target.chmod(0o755 if member.mode & 0o111 else 0o644)
+
+
 def source(name, spec, build, supplied):
     if supplied:
         directory = supplied / name
@@ -62,7 +90,7 @@ def source(name, spec, build, supplied):
     destination = build / 'sources' / name
     destination.mkdir(parents=True)
     with tarfile.open(archive) as bundle:
-        bundle.extractall(destination, filter='data')
+        extract_sources(bundle, destination)
     entries = list(destination.iterdir())
     if len(entries) != 1 or not entries[0].is_dir():
         raise ValueError(f'Unexpected {name} source archive layout')

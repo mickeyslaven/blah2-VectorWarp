@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """No-radio contract tests for package provenance and stable helper paths."""
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import runpy
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +17,85 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BundledKraken(unittest.TestCase):
+    def test_old_python_safe_extractor_rejects_escape_links_and_devices(self):
+        extract = runpy.run_path(str(ROOT / 'script/build-kraken-macos.py'))['extract_sources']
+        for name, kind in (('/escape', tarfile.REGTYPE), ('../escape', tarfile.REGTYPE),
+                           ('root/link', tarfile.SYMTYPE), ('root/hard', tarfile.LNKTYPE),
+                           ('root/fifo', tarfile.FIFOTYPE), ('root/device', tarfile.CHRTYPE)):
+            member = tarfile.TarInfo(name); member.type = kind; member.linkname = '../../escape'
+            class OldTar:
+                def getmembers(self): return [member]
+                def extractall(self, path): raise AssertionError('unsafe legacy extraction')
+            with tempfile.TemporaryDirectory() as temp, self.assertRaises(ValueError):
+                extract(OldTar(), Path(temp))
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode='w') as bundle:
+            member = tarfile.TarInfo('root/a'); member.size = 2; member.mode = 0o4755
+            bundle.addfile(member, io.BytesIO(b'ok'))
+        data.seek(0)
+        with tempfile.TemporaryDirectory() as temp, tarfile.open(fileobj=data) as bundle:
+            with patch.object(bundle, 'extractall', side_effect=AssertionError('requires modern Python')):
+                extract(bundle, Path(temp))
+            self.assertEqual((Path(temp) / 'root/a').read_bytes(), b'ok')
+            self.assertEqual((Path(temp) / 'root/a').stat().st_mode & 0o7777, 0o755)
+
+    def test_source_kit_is_only_pinned_build_instructions(self):
+        stage = runpy.run_path(str(ROOT / 'script/stage-kraken-kit.py'))['stage']
+        identity = runpy.run_path(str(ROOT / 'script/vectorwarp-build-kraken.py'))['kit_identity']
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            key = stage(ROOT, output)
+            kit = json.loads((output / 'kit.json').read_text())
+            self.assertEqual(key, identity(kit))
+            self.assertEqual(key, stage(ROOT, output))
+            self.assertFalse((output / 'bin').exists())
+            self.assertFalse(any(path.suffix in ('.so', '.dylib', '.gz') for path in output.rglob('*')))
+            self.assertEqual(set(kit['files']), {str(p.relative_to(output)) for p in output.rglob('*') if p.is_file()} - {'kit.json'})
+            kit['files']['script/build-kraken.py'] = 'bad'
+            with self.assertRaises(ValueError): identity(kit)
+
+    def test_publication_rejects_links_and_special_files(self):
+        copy = runpy.run_path(str(ROOT / 'script/vectorwarp-build-kraken.py'))['copy_regular']
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            original = root / 'original'; original.write_bytes(b'artifact')
+            link = root / 'link'; link.symlink_to(original)
+            with self.assertRaises(OSError): copy(link, root / 'published')
+            fifo = root / 'fifo'; os.mkfifo(fifo)
+            with self.assertRaises(ValueError): copy(fifo, root / 'published')
+            copy(original, root / 'published')
+            self.assertEqual((root / 'published').read_bytes(), b'artifact')
+
+    def test_release_rollback_selects_exact_kit_never_ambient_executable(self):
+        module = runpy.run_path(str(ROOT / 'script/vectorwarp-heimdall.py'))
+        select = module['companion_root']
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); release = root / 'release'; kitdir = release / 'receiver-source/kraken'
+            kitdir.mkdir(parents=True)
+            files = {'config/kraken-macos-sources.json': 'pins'}
+            key = hashlib.sha256(json.dumps(files, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            kit = dict(schema=1, kit_id=key, files=files)
+            (kitdir / 'kit.json').write_text(json.dumps(kit))
+            sandbox = {'read_json': lambda path: json.loads(path.read_text()),
+                       'trusted': lambda path: path.stat()}
+            with patch('runpy.run_path', return_value=sandbox):
+                with self.assertRaisesRegex(ValueError, 'build-kraken'): select(release, root / 'generations')
+                final = root / 'generations' / key / 'current'
+                (final / 'bin').mkdir(parents=True); (final / 'share/heimdall').mkdir(parents=True)
+                (final / 'kit-id').write_text(key)
+                (final / 'bin/heimdall').write_bytes(b'pinned')
+                (final / 'share/heimdall/index.html').write_text('local')
+                receipt = dict(schema=2, driverLinkage='pinned-static', protocol='MCHT-v1;MCHQ-v2',
+                    sourceManifestSha256='pins', artifacts={'bin/heimdall': hashlib.sha256(b'pinned').hexdigest()})
+                (final / 'share/heimdall/build.json').write_text(json.dumps(receipt))
+                self.assertEqual(select(release, root / 'generations'), final.resolve())
+                # An upgraded kit cannot silently use the old generation; a
+                # rollback restoring this kit selects the original again.
+                kit['files']['config/kraken-macos-sources.json'] = 'new'
+                kit['kit_id'] = hashlib.sha256(json.dumps(kit['files'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                (kitdir / 'kit.json').write_text(json.dumps(kit))
+                with self.assertRaisesRegex(ValueError, 'build-kraken'): select(release, root / 'generations')
+
     def test_saved_per_channel_gains_require_owned_command_and_readback(self):
         adapter = runpy.run_path(str(ROOT / 'script/vectorwarp-kraken-macos.py'))
         profile = dict(frequency=101000000, channels=2, gain=20, channel_gains=[19.7, 22.9])

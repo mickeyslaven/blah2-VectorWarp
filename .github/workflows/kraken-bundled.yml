@@ -5,6 +5,21 @@ on:
 permissions:
   contents: read
 jobs:
+  installed-source-kit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - run: sudo apt-get update && sudo apt-get install -y podman apparmor-utils
+      - name: Build and reject tampered kit inside disposable no-USB Fedora systemd
+        run: sudo python3 test/packaging/fedora_apparmor_ci.py -- python3 test/packaging/kraken_sourcekit_ci.py
+      - name: Preserve source-kit evidence (never binary)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: kraken-installed-sourcekit
+          path: build/kraken-sourcekit-evidence/
+          retention-days: 14
   distro:
     strategy:
       fail-fast: false

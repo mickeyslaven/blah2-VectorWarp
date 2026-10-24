@@ -22,6 +22,36 @@ def verify(root):
     return receipt
 
 
+def companion_root(root, generations=Path('/var/lib/vectorwarp-adapters/kraken')):
+    if (root / 'bin/heimdall').is_file():
+        verify(root)
+        return root
+    kitdir = root / 'receiver-source/kraken'
+    sandbox = runpy.run_path(str(kitdir / 'script/vectorwarp-build-sdrplay.py'))
+    kit = sandbox['read_json'](kitdir / 'kit.json')
+    identity = hashlib.sha256(json.dumps(kit['files'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    if kit.get('schema') != 1 or kit.get('kit_id') != identity:
+        raise ValueError('Invalid packaged Kraken source kit')
+    candidate = generations / identity / 'current'
+    try:
+        sandbox['trusted'](candidate / 'kit-id')
+        sandbox['trusted'](candidate / 'bin/heimdall')
+        sandbox['trusted'](candidate / 'share/heimdall/build.json')
+        sandbox['trusted'](candidate / 'share/heimdall/index.html')
+        if (candidate / 'kit-id').read_text().strip() != identity:
+            raise ValueError('Local companion belongs to a different source kit')
+        receipt = verify(candidate)
+        if receipt.get('sourceManifestSha256') != kit['files']['config/kraken-macos-sources.json']:
+            raise ValueError('Local companion source manifest mismatch')
+        expected_patches = {Path(name).name: digest for name, digest in kit['files'].items()
+                            if name.startswith('script/patches/')}
+        if receipt.get('patches', {}) != expected_patches:
+            raise ValueError('Local companion patch contract mismatch')
+    except FileNotFoundError:
+        raise ValueError('Build this release\'s pinned companion first: vectorwarp build-kraken') from None
+    return candidate.resolve(strict=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['check', 'run'])
@@ -42,14 +72,14 @@ def main():
             capture.get('device', {}).get('type') != 'Kraken' or
             capture.get('device', {}).get('heimdall', {}).get('host') != '127.0.0.1'):
         return 1 if args.action == 'check' else 0
-    verify(root)
+    companion = companion_root(root)
     profile = adapter['read_profile'](args.config, root, args.node)
     if args.action == 'check':
         return 0
     # Ignore ambient executable overrides; immutable release is authoritative.
     os.environ.update(VECTORWARP_MACOS_ROOT=str(root), VECTORWARP_MACOS_NODE=args.node,
-        VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=str(root / 'bin/heimdall'),
-        VECTORWARP_MACOS_HEIMDALL_HTML=str(root / 'share/heimdall/index.html'))
+        VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=str(companion / 'bin/heimdall'),
+        VECTORWARP_MACOS_HEIMDALL_HTML=str(companion / 'share/heimdall/index.html'))
     return adapter['main'](['run-local-v1', '--config', str(args.config),
         '--bind-host', '127.0.0.1', '--state-dir', str(args.state_dir),
         '--ready-file', str(args.state_dir / 'ready.json'), '--instance-token', secrets.token_hex(16),

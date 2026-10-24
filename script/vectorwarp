@@ -25,12 +25,13 @@ RESTART = 'vectorwarp-restart.service'
 QUIESCE = PREFIX / 'libexec/vectorwarp-quiesce'
 UPGRADE_LOCK = Path('/run/vectorwarp-package-upgrade.lock')
 UPGRADE_STATE = Path('/run/vectorwarp-package-upgrade.state')
-HELP = '''Usage: vectorwarp [open|start|stop|restart|status|logs|version|help]
+HELP = '''Usage: vectorwarp [open|start|stop|restart|build-kraken|status|logs|version|help]
 
   open       Open the web interface (default); do not start radar processing
   start      Start VectorWarp services and radar using saved settings
   stop       Stop all VectorWarp services, including the web interface
   restart    Stop, then start all VectorWarp services with saved settings
+  build-kraken  Download pinned sources and build this release's local companion (no RF)
   status     Show VectorWarp service status
   logs       Show recent VectorWarp service logs
   version    Show installed package version
@@ -158,6 +159,10 @@ def action(command):
 
 
 def service_action(command):
+    if command == 'build-kraken':
+        subprocess.run([SYSTEMCTL, 'start', 'vectorwarp-kraken-build.service'], check=True, timeout=1650)
+        print('Pinned Kraken source build complete. No receiver was started.')
+        return None
     if command == '_web':
         run([SYSTEMCTL, 'start', API], stdout=subprocess.DEVNULL)
         url = api_url()
@@ -225,7 +230,7 @@ def main(args):
         print(HELP)
     elif command == 'open':
         open_web()
-    elif command in ('start', 'stop', 'restart'):
+    elif command in ('start', 'stop', 'restart', 'build-kraken'):
         privileged(command)
     elif command == '_web':
         if os.geteuid() != 0:

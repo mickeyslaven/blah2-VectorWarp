@@ -18,27 +18,42 @@ archives are checked before extraction. No build/test command opens a receiver.
 
 The existing Homebrew formula prohibits distributing prebuilt Heimdall until
 upstream repository-wide redistribution terms are clarified. This change retains
-that restriction: native source installs and explicitly marked test packages can
-include the locally built companion; published DEB/RPM packaging is blocked. A
-reviewed local source-build kit for binary-package users is still required before
-release acceptance. This branch must not be represented as release-complete.
+that restriction: native source installs include the locally built companion;
+DEB/RPM packages (including test packages) remove its binary, driver and upstream
+assets. Packages carry only our pinned download/build instructions and patches.
+Run `vectorwarp build-kraken` once per changed source kit. This explicit admin
+action downloads checksum-pinned upstream archives and compiles under a dedicated
+non-radio account in a systemd sandbox. It never executes Heimdall or starts RF.
+Build prerequisites are distro package dependencies. Missing/network-failed builds
+remain stopped with an actionable error; ambient installed Heimdall is not a fallback.
+
+The builder reaps compiler descendants, bounds output/time, verifies the unchanged
+kit, and copies bounded regular files into root-owned immutable generations.
+Receipts and SBOMs are retained with each local build. The sandbox hides receiver
+devices and user/config data but permits network access for pinned downloads.
+Packages do not accept upstream licenses on the user's behalf; review the listed
+upstream terms before requesting a local build.
 
 ## Lifecycle and rollback
 
 The installed local service runs only for a live Kraken profile explicitly using
 127.0.0.1. It resolves the executable from the current immutable release, verifies
-its receipt, owns its child, waits for instance-token/settings readiness, and
+its receipt (or the exact kit-keyed local generation), owns its child, waits for instance-token/settings readiness, and
 reports readiness to systemd. Processor stop/restart and package quiescence stop
 the owned receiver. Remote endpoints and replay profiles skip local USB startup.
 An occupied receiver endpoint fails startup; it never adopts or kills a different
 Heimdall. Fresh package installation keeps processing stopped. The CLI's existing
 checked processor start path pulls in this service. The bundled controller uses
-the package's private Node runtime in binary test packages and system Node in
+the package's private Node runtime in binary packages and system Node in
 source installations.
 
 Rollback must quiesce processing, restore the complete previous release and its
 matching integration units, then explicitly start the intended stack. Never swap
 only Heimdall or librtlsdr. The service receipt check rejects replaced binaries.
+Local generations are retained by kit identity: returning to an older package
+automatically selects its matching build, never the new release's companion.
+An unsuccessful rebuild does not replace the previous generation. Build-kit
+changes require a fresh explicit build; ordinary start never downloads software.
 Historical releases lacking the bundled companion retain their existing receiver
 setup; this change does not silently migrate or remove a third-party service.
 

@@ -246,6 +246,8 @@ run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
 run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
+run python3 "$SOURCE_DIR/script/stage-kraken-kit.py" --source "$SOURCE_DIR" \
+  --output "$ARTIFACT_TMP/receiver-source/kraken"
 run rm -f "$ARTIFACT_TMP/bin/testAcceleration" "$ARTIFACT_TMP/bin/testAccelerationFallback"
 
 run cp -a "$SOURCE_DIR/api" "$ARTIFACT_TMP/api"
@@ -310,10 +312,11 @@ if [[ $LOCAL_BUILD_RSPDUO == ON && $DRY_RUN == false ]]; then
     --generated "$CMAKE_DIR/receiver-generated" --core "$ARTIFACT_TMP/bin/libblah2-capture-core.so.1" \
     --output "$ARTIFACT_TMP/receiver-source/rspduo"
 fi
-if [[ $LOCAL_BUILD_RSPDUO == ON && -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
+if [[ -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
   run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay.py" \
     "$ARTIFACT_TMP/libexec/vectorwarp-build-sdrplay.py"
 fi
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-kraken.py" "$ARTIFACT_TMP/libexec/vectorwarp-build-kraken.py"
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
