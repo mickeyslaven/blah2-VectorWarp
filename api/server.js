@@ -9,7 +9,7 @@ const path = require('path');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
-const {readConfig, writable, saveConfig} = require('./config-store.js');
+const {readConfig, writable, saveConfig, migrateKnownDefaults} = require('./config-store.js');
 const {getUpstreamStatus} = require('./upstream-status.js');
 const {installReceiverRoutes, trustedOrigins, sameReceiverOrigin} = require('./receiver-routes.js');
 const {createReceiverSynchronizer, receiverAcceptanceBoundary} = require('./receiver-sync.js');
@@ -51,6 +51,12 @@ const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW 
 
 // parse config file
 const configFile = path.resolve(process.argv[2] || 'config/config.yml');
+try {
+  if (migrateKnownDefaults(configFile))
+    console.error('Migrated the invalid v0.1.28 USRP selector localhost to type=b200; the previous file is in config.yml.bak.');
+} catch (error) {
+  console.error(`Could not migrate the invalid v0.1.28 USRP selector: ${error.message}`);
+}
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});

@@ -376,10 +376,15 @@ function validateConfig(config, baseline = null, options = {}) {
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');
   } else if (device.type === 'Usrp') {
     string(device.address, 'capture.device.address');
-    if (typeof device.address === 'string' && device.address.trim() &&
-        !device.address.split(',').every(item =>
-          /^[A-Za-z0-9_]+\s*=\s*[^,=]+$/.test(item.trim())))
-      errors.push('capture.device.address must use UHD key=value arguments, such as type=b200 or type=b200,serial=…');
+    if (typeof device.address === 'string' && device.address.trim()) {
+      const arguments_ = device.address.split(',');
+      const keys = arguments_.map(item => /^([A-Za-z0-9_]+)\s*=/.exec(item.trim())?.[1]);
+      if (/[\u0000-\u001f\u007f]/.test(device.address) ||
+          !arguments_.every(item =>
+            /^[A-Za-z0-9_]+\s*=\s*[^,=\s](?:[^,=]*[^,=\s])?$/.test(item.trim())) ||
+          keys.some((key, index) => key && keys.indexOf(key) !== index))
+        errors.push('capture.device.address must use unique UHD key=value arguments, such as type=b200 or type=b200,serial=…');
+    }
     string(device.subdev, 'capture.device.subdev');
     if (!Array.isArray(device.antenna) || device.antenna.length !== 2)
       errors.push('capture.device.antenna must contain exactly two values');

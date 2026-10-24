@@ -308,7 +308,8 @@ assert.equal(usrpProfile.device.address, 'type=b200',
   'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
 assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
   'The installed USRP example must select the B200 family');
-for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial']) {
+for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
+  'type=b\t200', 'type=b200,type=b210']) {
   const invalid = load('config-usrp.yml');
   invalid.capture.device.address = address;
   assert.equal(validateConfig(invalid).valid, false,
