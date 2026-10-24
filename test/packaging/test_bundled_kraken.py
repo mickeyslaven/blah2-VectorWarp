@@ -17,6 +17,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class BundledKraken(unittest.TestCase):
+    def test_rpm_manifest_owns_kraken_system_integration(self):
+        spec = (ROOT / 'packaging/rpm/vectorwarp.spec.in').read_text()
+        files = set(spec.split('\n%files\n', 1)[1].split('\n%changelog', 1)[0].splitlines())
+        for path in (
+            '/usr/lib/systemd/system/vectorwarp-heimdall.service',
+            '/usr/lib/systemd/system/vectorwarp-kraken-build.service',
+            '/usr/lib/udev/rules.d/72-vectorwarp-kraken.rules',
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, files)
+
     def test_old_python_safe_extractor_rejects_escape_links_and_devices(self):
         extract = runpy.run_path(str(ROOT / 'script/build-kraken-macos.py'))['extract_sources']
         for name, kind in (('/escape', tarfile.REGTYPE), ('../escape', tarfile.REGTYPE),

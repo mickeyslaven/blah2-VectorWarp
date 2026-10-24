@@ -123,6 +123,8 @@ fi
 /usr/bin/vectorwarp
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
+/usr/lib/systemd/system/vectorwarp-heimdall.service
+/usr/lib/systemd/system/vectorwarp-kraken-build.service
 /usr/lib/systemd/system/vectorwarp-restart.service
 /usr/lib/systemd/system/vectorwarp-health-watchdog.service
 /usr/lib/systemd/system/vectorwarp-health-watchdog.timer
@@ -136,6 +138,7 @@ fi
 /usr/lib/systemd/system/multi-user.target.wants
 /usr/lib/sysusers.d/vectorwarp.conf
 /usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules
+/usr/lib/udev/rules.d/72-vectorwarp-kraken.rules
 /usr/lib/tmpfiles.d/vectorwarp.conf
 %config(noreplace) /etc/sudoers.d/vectorwarp
 %dir /etc/vectorwarp-management
