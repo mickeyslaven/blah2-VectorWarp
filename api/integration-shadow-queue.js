@@ -125,6 +125,8 @@ class IntegrationShadowQueue {
             result.input?.native_sidecar_sha256 !== job.identity?.native_sidecar_sha256 ||
             result.input?.admission_sha256 !== job.identity?.admission_sha256 ||
             result.input?.config_sha256 !== job.identity?.config_sha256 ||
+            result.input?.native_identity_sha256 !== job.identity?.native_identity_sha256 ||
+            digestCanonical(result.input?.native_identity) !== job.identity?.native_identity_sha256 ||
             !result.arms || typeof result.arms !== 'object' ||
             !result.summary || result.summary.selection_performed !== false)
           throw new Error('result receipt contract failed');
@@ -241,12 +243,38 @@ class IntegrationShadowQueue {
         ++this.counters.rejected;
         return {accepted: false, reason: 'not-strictly-admitted'};
       }
+      // Bind the decoded recorder identity as well as its sidecar digest.  A
+      // digest alone detects a later edit, but does not make the gain/RF
+      // tuple readily auditable by either queue consumer.  Do this before a
+      // slot is reserved so an incompatible receipt fails closed.
+      const metadataPath = `${file}.json`;
+      if (!this.fs.existsSync(metadataPath) ||
+          crypto.createHash('sha256').update(this.fs.readFileSync(metadataPath)).digest('hex') !==
+            artifact.integrity.sidecar_sha256)
+        throw new Error('integration shadow native metadata does not match admitted digest');
+      const metadata = JSON.parse(this.fs.readFileSync(metadataPath));
+      const channelGains = metadata.channelGains;
+      const channelCount = metadata.channels;
+      if (metadata.schema !== 'vectorwarp-kraken-iq-clip-v1' ||
+          !Number.isFinite(metadata.frequency) || !Number.isFinite(metadata.sampleRate) ||
+          !Number.isInteger(channelCount) || channelCount < 2 ||
+          !Array.isArray(channelGains) || channelGains.length !== channelCount ||
+          channelGains.some(value => !Number.isFinite(value)))
+        throw new Error('integration shadow native metadata has incompatible RF/gain identity');
+      const nativeIdentity = {frequency_hz: metadata.frequency, sample_rate_hz: metadata.sampleRate,
+        channels: channelCount, actual_channel_gains_db: [...channelGains]};
+      const expectedConfig = this.config.capture || {};
+      if (nativeIdentity.frequency_hz !== expectedConfig.fc ||
+          nativeIdentity.sample_rate_hz !== expectedConfig.fs ||
+          nativeIdentity.channels !== expectedConfig.device?.channel_count)
+        throw new Error('integration shadow native RF/channel identity differs from configuration');
       const admissionSha256 = digestCanonical(artifact);
       const configSha256 = digestCanonical(this.config);
       const receiptKeyId = crypto.createHash('sha256').update(this.receiptKey()).digest('hex');
       const identity = {recording: file, recording_sha256: artifact.integrity.data_sha256,
         native_sidecar_sha256: artifact.integrity.sidecar_sha256,
         admission_sha256: admissionSha256, config_sha256: configSha256,
+        native_identity_sha256: digestCanonical(nativeIdentity), native_identity: nativeIdentity,
         receipt_key_id: receiptKeyId,
         producer_host: os.hostname(),
         revision, config_epoch: artifact.config_epoch, receiver_epoch: artifact.receiver_epoch};
