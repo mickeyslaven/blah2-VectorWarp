@@ -52,6 +52,7 @@ protected:
 private:
   mutable std::mutex recordingMutex;
   std::atomic<bool> recordingActive{false};
+  std::atomic<bool> recordingResumePending{false};
   std::unique_ptr<blah2::RecordingWriter> recordingWriter;
   std::string recordingFile, recordingError;
   uint64_t recordedSamples = 0;
@@ -60,6 +61,7 @@ private:
   std::vector<bool> channelStarted;
   SampleTimePosition recordingStartPosition;
   std::vector<std::string> recordingDiscontinuities;
+  std::string open_file_locked();
   void recording_failed(const std::string& error);
   void flush_recording_locked();
   void write_recording_provenance_locked(bool complete);
@@ -107,12 +109,20 @@ public:
     bool active = false;
     std::string file, error;
     uint64_t samples = 0;
+    bool resumePending = false;
   };
   bool is_recording() const { return recordingActive.load(); }
+  bool recording_wants_samples() const {
+    return recordingActive.load() || recordingResumePending.load();
+  }
   RecordingStatus recording_status() const;
   // Preserve a partial file for diagnosis, but never mark it complete after a
   // receiver reports a gap, reset, overrun, or malformed callback.
   void recording_discontinuity(const std::string& error);
+  // Close only the ambiguous epoch, then lazily start a new file on the first
+  // qualified post-boundary block. This preserves receiver operation without
+  // ever joining samples from different hardware-setting epochs.
+  void recording_epoch_discontinuity(const std::string& error);
   void record_block(const blah2::IqBlock& samples);
   void record_channel(unsigned channel, uint64_t firstSample,
     const std::vector<std::complex<float>>& samples);

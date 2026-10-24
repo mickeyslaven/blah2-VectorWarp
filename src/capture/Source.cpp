@@ -76,7 +76,13 @@ void Source::process(const std::vector<IqData *>& buffers)
 std::string Source::open_file()
 {
   std::lock_guard<std::mutex> lock(recordingMutex);
+  return open_file_locked();
+}
+
+std::string Source::open_file_locked()
+{
   if (recordingActive) return recordingFile;
+  recordingResumePending = false;
   // get string of timestamp in YYYYmmdd-HHMMSS
   auto currentTime = std::chrono::system_clock::to_time_t(
     std::chrono::system_clock::now());
@@ -110,6 +116,7 @@ std::string Source::open_file()
 void Source::close_file()
 {
   std::lock_guard<std::mutex> lock(recordingMutex);
+  recordingResumePending = false;
   recordingActive = false;
   if (!recordingWriter) return;
   try {
@@ -131,7 +138,7 @@ void Source::recording_failed(const std::string& error) {
     recordingDiscontinuities.push_back(error);
   try { write_recording_provenance_locked(false); } catch (...) {}
   if (recordingWriter) recordedSamples = recordingWriter->samples();
-  recordingActive = false; recordingWriter.reset();
+  recordingActive = false; recordingResumePending = false; recordingWriter.reset();
   pendingChannels.clear();
   std::cerr << "Recording stopped: " << error << '\n';
 }
@@ -254,12 +261,20 @@ void Source::write_recording_provenance_locked(bool complete) {
 Source::RecordingStatus Source::recording_status() const {
   std::lock_guard<std::mutex> lock(recordingMutex);
   return {recordingActive.load(), recordingFile, recordingError,
-    recordingWriter ? recordingWriter->samples() : recordedSamples};
+    recordingWriter ? recordingWriter->samples() : recordedSamples,
+    recordingResumePending.load()};
 }
 
 void Source::recording_discontinuity(const std::string& error) {
   std::lock_guard<std::mutex> lock(recordingMutex);
   if (recordingWriter) recording_failed(error);
+}
+
+void Source::recording_epoch_discontinuity(const std::string& error) {
+  std::lock_guard<std::mutex> lock(recordingMutex);
+  if (!recordingWriter || !recordingActive) return;
+  recording_failed(error);
+  recordingResumePending = true;
 }
 
 void Source::flush_recording_locked() {
@@ -286,19 +301,23 @@ void Source::flush_recording_locked() {
 }
 
 void Source::record_block(const blah2::IqBlock& samples) {
-  if (!recordingActive) return;
+  if (!recording_wants_samples()) return;
   std::lock_guard<std::mutex> lock(recordingMutex);
-  if (!recordingActive || !recordingWriter) return;
-  try { recordingWriter->append(samples); }
+  try {
+    if (recordingResumePending && !recordingWriter) open_file_locked();
+    if (!recordingActive || !recordingWriter) return;
+    recordingWriter->append(samples);
+  }
   catch (const std::exception& error) { recording_failed(error.what()); }
 }
 
 void Source::record_channel(unsigned channel, uint64_t firstSample,
     const std::vector<std::complex<float>>& samples) {
-  if (!recordingActive) return;
+  if (!recording_wants_samples()) return;
   std::lock_guard<std::mutex> lock(recordingMutex);
-  if (!recordingActive || !recordingWriter) return;
   try {
+    if (recordingResumePending && !recordingWriter) open_file_locked();
+    if (!recordingActive || !recordingWriter) return;
     if (channel >= recordingChannels || samples.empty()) throw std::runtime_error("Invalid recording input channel");
     auto& pending = pendingChannels[channel];
     if (channelStarted[channel] && firstSample != pendingStarts[channel] + pending.size())

@@ -296,6 +296,7 @@ std::string Capture::status_json() const {
   document.AddMember("replayProvenance",provenance,a);
   const auto recording = device ? device->recording_status() : Source::RecordingStatus{};
   document.AddMember("recording",recording.active,a);
+  document.AddMember("recordingResumePending",recording.resumePending,a);
   text("recordingFile",recording.file); text("recordingError",recording.error);
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);

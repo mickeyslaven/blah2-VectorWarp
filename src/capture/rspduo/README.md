@@ -29,10 +29,14 @@ for the tested service environment, workload and qualification limits.
 
 Every SDRplay `GainChange` callback is a hard capture-epoch boundary. Pending
 A/B pairs, FIFO samples, ready or partial paired CPIs, and a paired CPI borrowed
-during the transition are discarded; an active portable recording is stopped
-as discontinuous. Receiver health preserves the vendor event count, epoch,
-wall-clock arrival, `gRdB`, `lnaGRdB`, and `currGain` separately for tuners A
-and B. The callback has no sample number, so this provenance is explicitly
-`sampleAligned: false`: a CPI already handed to processing before the serialized
+during the transition are discarded. Capture continues automatically: the next
+matched A/B callback starts a qualified post-change CPI. If portable recording
+was active, only the affected file epoch is closed as incomplete and the next
+matched pair lazily starts a new file; consecutive gain events therefore do not
+create empty successor files or stop the receiver. Receiver health and both
+recording sidecars preserve the vendor event count, epoch, wall-clock arrival,
+`gRdB`, `lnaGRdB`, and `currGain` separately for tuners A and B. The callback has
+no sample number, so this provenance is explicitly `sampleAligned: false` and
+remains provisional: a CPI already handed to processing before the serialized
 callback boundary cannot be retroactively located against the hardware gain
 transition.

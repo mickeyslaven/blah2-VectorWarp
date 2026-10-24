@@ -6,11 +6,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <locale>
 #include <stdexcept>
 #include <thread>
+#include <unistd.h>
 #include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 extern std::atomic<bool> run_fg;
 extern "C" const char* blah2_rspduo_startup_receipt_json_v1(const Source*) noexcept;
 extern "C" const char* blah2_rspduo_health_json_v1(const Source*) noexcept;
@@ -485,11 +489,19 @@ int main() {
   // conversion.  The mock SDK proves callback pairing and direct handoff
   // without opening an SDRplay runtime.
   reset(); callbackScenario = CallbackScenario::GainEpoch;
-  RspDuo queued("RspDuo", 204640000, 2000000, "/unused", &record,
+  char recordingDirectory[] = "/tmp/blah2-rspduo-gain-epoch.XXXXXX";
+  assert(mkdtemp(recordingDirectory));
+  RspDuo queued("RspDuo", 204640000, 2000000, recordingDirectory, &record,
     -30, 50, 30, 31, 3, true, true);
   PairedCpiQueue queue(2, 2);
   queued.set_paired_cpi_queue(&queue);
-  queued.start(); queued.process(nullptr, nullptr); queued.stop(); queue.close();
+  queued.start();
+  const auto firstRecording = queued.open_file();
+  queued.process(nullptr, nullptr);
+  const auto resumedRecording = queued.recording_status();
+  assert(resumedRecording.active && !resumedRecording.resumePending &&
+    resumedRecording.samples == 2 && resumedRecording.file != firstRecording);
+  queued.close_file(); queued.stop(); queue.close();
   size_t queueSlot = 0; assert(queue.acquire(queueSlot));
   const auto& queuedBlock = queue.block(queueSlot);
   assert(queuedBlock.first == 2 && queuedBlock.epoch == 2 &&
@@ -500,5 +512,41 @@ int main() {
   const auto queueStats = queue.stats();
   assert(queueStats.discontinuities == 2 && queueStats.droppedCpis == 1 &&
     queueStats.discardedSamples == 2);
+
+  // Both vendor gain callbacks retire only the recording epoch they overlap.
+  // A fresh file starts lazily on the next matched A/B block, so consecutive
+  // events cannot create empty successor artifacts and capture never stops.
+  unsigned completeRecordings = 0, incompleteRecordings = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(recordingDirectory)) {
+    if (entry.path().extension() != ".blah2iq") continue;
+    std::ifstream sidecar(entry.path().string() + ".provenance.json");
+    assert(sidecar);
+    rapidjson::IStreamWrapper input(sidecar);
+    rapidjson::Document provenance;
+    provenance.ParseStream(input);
+    assert(!provenance.HasParseError());
+    const bool complete = provenance["recording"]["complete"].GetBool();
+    if (complete) {
+      ++completeRecordings;
+      assert(entry.path() == std::filesystem::path(resumedRecording.file));
+      assert(std::strcmp(provenance["recording"]["samples"].GetString(), "2") == 0);
+      assert(!provenance["timing"]["exact"].GetBool());
+      assert(!provenance["receiverDetails"]["health"]["gain"]["sampleAligned"].GetBool());
+      assert(provenance["receiverDetails"]["health"]["gain"]["epoch"].GetUint64() == 2);
+    } else {
+      ++incompleteRecordings;
+      assert(provenance["timing"]["discontinuities"].Size() == 1);
+    }
+  }
+  assert(completeRecordings == 1 && incompleteRecordings == 2);
+  blah2::RecordingReader replay(resumedRecording.file,
+    {"auto", "RspDuo", 2, 2000000, 204640000, 0});
+  blah2::IqBlock replayed;
+  assert(replay.read(replayed) && replayed[0].size() == 2 &&
+    replayed[0][0] == std::complex<float>(21, 22) &&
+    replayed[1][0] == std::complex<float>(27, 28));
+  assert(replay.provenance().contractValid && !replay.provenance().decisionGrade &&
+    !replay.provenance().exactTime);
+  std::filesystem::remove_all(recordingDirectory);
   std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

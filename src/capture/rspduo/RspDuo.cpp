@@ -331,7 +331,7 @@ void RspDuo::gain_change(sdrplay_api_TunerSelectT tuner,
   }
   const char* tunerName = tunerA && tunerB ? "both tuners" :
     tunerA ? "tuner A" : tunerB ? "tuner B" : "unknown tuner";
-  recording_discontinuity(std::string("RSPduo ") + tunerName +
+  recording_epoch_discontinuity(std::string("RSPduo ") + tunerName +
     " GainChange started capture epoch " + std::to_string(eventEpoch));
 }
 
@@ -730,7 +730,7 @@ unsigned int reset, void *cbContext)
   }
 
   // write data to file
-  if (is_recording() && numSamples) {
+  if (recording_wants_samples() && numSamples) {
     blah2::IqBlock block(2, std::vector<std::complex<float>>(numSamples));
     for (unsigned sample=0; sample<numSamples; ++sample)
       for (unsigned ch=0; ch<2; ++ch)

@@ -200,6 +200,33 @@ int main() try {
     rejects([&] { RecordingReader invalid(discontinuityPath,{"auto","Mock",2,2000000,100000000,0}); },
       "Discontinuous recording was marked complete");
 
+    MockSource segmented(directory.string(),&save);
+    const auto ambiguousEpoch=segmented.open_file();
+    segmented.record_block({{{1,2}},{{3,4}}});
+    segmented.recording_epoch_discontinuity("mock setting epoch changed");
+    const auto transition=segmented.recording_status();
+    require(!transition.active && transition.resumePending && transition.samples==1,
+      "Qualified epoch rollover did not retain a bounded resume request");
+    segmented.record_block({{{5,6}},{{7,8}}});
+    const auto resumed=segmented.recording_status();
+    require(resumed.active && !resumed.resumePending && resumed.samples==1 &&
+      resumed.file!=ambiguousEpoch,
+      "First qualified post-boundary block did not lazily resume recording");
+    segmented.close_file();
+    rejects([&] { RecordingReader invalid(ambiguousEpoch,
+      {"auto","Mock",2,2000000,100000000,0}); },
+      "Ambiguous pre-boundary epoch was marked complete");
+    RecordingReader resumedReader(resumed.file,
+      {"auto","Mock",2,2000000,100000000,0});
+    IqBlock resumedBlock;
+    require(resumedReader.read(resumedBlock) &&
+      resumedBlock[0][0]==std::complex<float>(5,6),
+      "Post-boundary recording retained pre-boundary samples");
+    std::filesystem::remove(ambiguousEpoch);
+    std::filesystem::remove(ambiguousEpoch+".provenance.json");
+    std::filesystem::remove(resumed.file);
+    std::filesystem::remove(resumed.file+".provenance.json");
+
     {
       RecordingWriter writer(path,{2,1000000,100000000,0,"blah2"});
       IqBlock replayBlock(2,std::vector<std::complex<float>>(6));
