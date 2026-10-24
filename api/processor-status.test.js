@@ -192,6 +192,36 @@ const usrpLive = {...replay, input: 'live', receiver: 'Usrp', state: 'live',
   receiverStartup: usrpStartup, receiverHealth: usrpHealth};
 assert.deepEqual(status(usrpLive).value.receiverStartup, usrpStartup);
 assert.deepEqual(status(usrpLive).value.receiverHealth, usrpHealth);
+const usrpRecovery = {state: 'qualified', qualificationRequiredBlocks: 2,
+  qualificationObservedBlocks: 2, discontinuities: '1', requalifications: '1',
+  consecutiveDiscontinuities: '0', discardedBlocks: '2',
+  discardedSamplesPerChannel: '21', lastDiscontinuity: 'UHD overflow'};
+const recoveredUsrpHealth = {...usrpHealth,
+  deviceTime: {...usrpHealth.deviceTime, epoch: '1'}, recovery: usrpRecovery};
+assert.deepEqual(status({...usrpLive, receiverHealth: recoveredUsrpHealth})
+  .value.receiverHealth, recoveredUsrpHealth);
+const requalifyingUsrpHealth = {...recoveredUsrpHealth,
+  deviceTime: {...recoveredUsrpHealth.deviceTime, continuous: false,
+    epochTick: null, nextTick: null, samples: '0', blocks: '0'},
+  recovery: {...usrpRecovery, state: 'requalifying',
+    qualificationObservedBlocks: 1, consecutiveDiscontinuities: '1',
+    requalifications: '0'}};
+assert.equal(status({...usrpLive, receiverHealth: requalifyingUsrpHealth}).valid, true);
+const unavailableUsrpHealth = {...requalifyingUsrpHealth,
+  deviceTime: {...requalifyingUsrpHealth.deviceTime, epoch: '0'},
+  recovery: {...requalifyingUsrpHealth.recovery, state: 'unavailable',
+    qualificationObservedBlocks: 0, discontinuities: '0',
+    consecutiveDiscontinuities: '0', discardedBlocks: '0',
+    discardedSamplesPerChannel: '0', lastDiscontinuity: ''}};
+assert.equal(status({...usrpLive, receiverHealth: unavailableUsrpHealth}).valid, true);
+for (const recovery of [
+  {...usrpRecovery, state: 'qualified', qualificationObservedBlocks: 1},
+  {...usrpRecovery, qualificationRequiredBlocks: 3},
+  {...usrpRecovery, requalifications: '2'},
+  {...usrpRecovery, state: 'requalifying'}
+]) assert.equal(status({...usrpLive,
+  receiverHealth: {...recoveredUsrpHealth, recovery}}).valid, false,
+  JSON.stringify(recovery));
 assert.equal(status({...usrpLive, receiverStartup: {...usrpStartup, status: 'pending',
   coherence: null}, receiverHealth: {...usrpHealth, monitoring: false,
     deviceTime: {...usrpHealth.deviceTime, continuous: false, epochTick: null,

@@ -16,6 +16,7 @@ public:
   };
   struct Snapshot {
     bool available = false;
+    uint64_t epoch = 0;
     int64_t epochTick = 0;
     int64_t nextTick = 0;
     uint64_t samples = 0;
@@ -31,7 +32,7 @@ public:
     if (!received)
       throw std::runtime_error("[USRP] UHD returned an empty successful receive block.");
     if (!metadata.has_time_spec)
-      throw std::runtime_error("[USRP] UHD receive metadata omitted device time. Input stopped before accepting this block.");
+      throw std::runtime_error("[USRP] UHD receive metadata omitted device time. Block rejected before coherent publication.");
     const auto tick = metadata.time_spec.to_ticks(static_cast<double>(sampleRate_));
     if (tick < 0 || received > static_cast<uint64_t>(std::numeric_limits<int64_t>::max() - tick))
       throw std::runtime_error("[USRP] UHD device time is outside the supported sample-tick range.");
@@ -39,8 +40,26 @@ public:
     if (available_ && tick != nextTick_)
       throw std::runtime_error("[USRP] UHD device-time discontinuity: expected tick " +
         std::to_string(nextTick_) + ", received " + std::to_string(tick) +
-        ". Input stopped before accepting this block.");
+        ". Block rejected before coherent publication.");
     return {tick, tick + static_cast<int64_t>(received), samples_, received};
+  }
+
+  template<class Metadata>
+  Observation validate_after(const Metadata& metadata, uint64_t received,
+      const Observation& prior) const {
+    if (!received)
+      throw std::runtime_error("[USRP] UHD returned an empty successful receive block.");
+    if (!metadata.has_time_spec)
+      throw std::runtime_error("[USRP] UHD receive metadata omitted device time. Block rejected before coherent publication.");
+    const auto tick = metadata.time_spec.to_ticks(static_cast<double>(sampleRate_));
+    if (tick < 0 || received > static_cast<uint64_t>(std::numeric_limits<int64_t>::max() - tick))
+      throw std::runtime_error("[USRP] UHD device time is outside the supported sample-tick range.");
+    if (tick != prior.nextTick)
+      throw std::runtime_error("[USRP] UHD device-time discontinuity during requalification: expected tick " +
+        std::to_string(prior.nextTick) + ", received " + std::to_string(tick) +
+        ". Candidate blocks discarded before coherent publication.");
+    return {tick, tick + static_cast<int64_t>(received),
+      prior.priorSamples + prior.samples, received};
   }
 
   void commit(const Observation& observation) {
@@ -56,12 +75,29 @@ public:
 
   Snapshot snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {available_, epochTick_, nextTick_, samples_, blocks_};
+    return {available_, epoch_, epochTick_, nextTick_, samples_, blocks_};
+  }
+
+  void restart() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    epoch_ = 0;
+    available_ = false;
+    epochTick_ = nextTick_ = 0;
+    samples_ = blocks_ = 0;
+  }
+
+  void discontinuity() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ++epoch_;
+    available_ = false;
+    epochTick_ = nextTick_ = 0;
+    samples_ = blocks_ = 0;
   }
 
 private:
   const uint32_t sampleRate_;
   mutable std::mutex mutex_;
+  uint64_t epoch_ = 0;
   bool available_ = false;
   int64_t epochTick_ = 0;
   int64_t nextTick_ = 0;

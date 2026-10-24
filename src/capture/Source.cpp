@@ -79,7 +79,7 @@ std::string Source::open_file()
   return open_file_locked();
 }
 
-std::string Source::open_file_locked()
+std::string Source::open_file_locked(const SampleTimePosition* startPosition)
 {
   if (recordingActive) return recordingFile;
   recordingResumePending = false;
@@ -106,7 +106,8 @@ std::string Source::open_file_locked()
     pendingStarts.assign(recordingChannels, 0);
     channelStarted.assign(recordingChannels, false);
     recordedSamples = 0; recordingError.clear(); recordingDiscontinuities.clear();
-    recordingStartPosition = sample_time_position(); recordingActive = true;
+    recordingStartPosition = startPosition ? *startPosition : sample_time_position();
+    recordingActive = true;
     write_recording_provenance_locked(false);
   } catch (const std::exception& error) { recording_failed(error.what()); throw; }
   std::cout << "Recording IQ: " << recordingFile << std::endl;
@@ -303,9 +304,27 @@ void Source::flush_recording_locked() {
 void Source::record_block(const blah2::IqBlock& samples) {
   if (!recording_wants_samples()) return;
   std::lock_guard<std::mutex> lock(recordingMutex);
+  record_block_locked(samples, nullptr);
+}
+
+void Source::record_block(const blah2::IqBlock& samples,
+    const SampleTimePosition& startPosition) {
+  if (!recording_wants_samples()) return;
+  std::lock_guard<std::mutex> lock(recordingMutex);
+  record_block_locked(samples, &startPosition);
+}
+
+void Source::record_block_locked(const blah2::IqBlock& samples,
+    const SampleTimePosition* startPosition) {
   try {
-    if (recordingResumePending && !recordingWriter) open_file_locked();
+    if (recordingResumePending && !recordingWriter)
+      open_file_locked(startPosition);
     if (!recordingActive || !recordingWriter) return;
+    if (startPosition && !recordingWriter->samples() &&
+        !recordingStartPosition.available) {
+      recordingStartPosition = *startPosition;
+      write_recording_provenance_locked(false);
+    }
     recordingWriter->append(samples);
   }
   catch (const std::exception& error) { recording_failed(error.what()); }

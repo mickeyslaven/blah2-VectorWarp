@@ -301,6 +301,7 @@ function usrpHealth(payload, outer, errors) {
   };
   const samples = decimal(timing.samples, 'samples');
   const blocks = decimal(timing.blocks, 'blocks');
+  const epoch = timing.epoch === undefined ? null : decimal(timing.epoch, 'epoch');
   let epochTick = null, nextTick = null;
   if (timing.continuous) {
     epochTick = decimal(timing.epochTick, 'epochTick');
@@ -312,9 +313,39 @@ function usrpHealth(payload, outer, errors) {
       samples !== '0' || blocks !== '0') {
     errors.push(`${name}.deviceTime unavailable state is inconsistent`);
   }
-  return {schema: 1, receiver: 'Usrp', monitoring: payload.monitoring,
+  let recovery;
+  if (payload.recovery !== undefined) {
+    const source = payload.recovery;
+    if (!object(source) || !['unavailable', 'requalifying', 'qualified'].includes(source.state)) {
+      errors.push(`${name}.recovery has an invalid state`);
+    } else {
+      const required = count(source.qualificationRequiredBlocks,
+        `${name}.recovery.qualificationRequiredBlocks`, errors);
+      const observed = count(source.qualificationObservedBlocks,
+        `${name}.recovery.qualificationObservedBlocks`, errors);
+      const counters = Object.fromEntries(['discontinuities', 'requalifications',
+        'consecutiveDiscontinuities', 'discardedBlocks', 'discardedSamplesPerChannel']
+        .map(field => [field, decimal(source[field], field)]));
+      const lastDiscontinuity = errorText(source.lastDiscontinuity,
+        `${name}.recovery.lastDiscontinuity`, errors);
+      if (required !== 2 || observed > required || epoch === null)
+        errors.push(`${name}.recovery qualification bounds are invalid`);
+      if ((source.state === 'qualified') !== timing.continuous)
+        errors.push(`${name}.recovery state disagrees with device-time continuity`);
+      if (source.state === 'qualified' && observed !== required)
+        errors.push(`${name}.recovery qualified without the required blocks`);
+      if (BigInt(counters.requalifications) > BigInt(counters.discontinuities))
+        errors.push(`${name}.recovery has more requalifications than discontinuities`);
+      recovery = {state: source.state, qualificationRequiredBlocks: required,
+        qualificationObservedBlocks: observed, ...counters, lastDiscontinuity};
+    }
+  }
+  const result = {schema: 1, receiver: 'Usrp', monitoring: payload.monitoring,
     deviceTime: {source: 'uhd-device-time', utcMapped: false,
       continuous: timing.continuous, sampleRateHz, epochTick, nextTick, samples, blocks}};
+  if (epoch !== null) result.deviceTime.epoch = epoch;
+  if (recovery !== undefined) result.recovery = recovery;
+  return result;
 }
 function hackrfStartup(payload, outer, errors) {
   const name = 'receiverStartup';

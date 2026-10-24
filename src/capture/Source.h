@@ -61,7 +61,9 @@ private:
   std::vector<bool> channelStarted;
   SampleTimePosition recordingStartPosition;
   std::vector<std::string> recordingDiscontinuities;
-  std::string open_file_locked();
+  std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
+  void record_block_locked(const blah2::IqBlock& samples,
+    const SampleTimePosition* startPosition);
   void recording_failed(const std::string& error);
   void flush_recording_locked();
   void write_recording_provenance_locked(bool complete);
@@ -124,6 +126,8 @@ public:
   // ever joining samples from different hardware-setting epochs.
   void recording_epoch_discontinuity(const std::string& error);
   void record_block(const blah2::IqBlock& samples);
+  void record_block(const blah2::IqBlock& samples,
+    const SampleTimePosition& startPosition);
   void record_channel(unsigned channel, uint64_t firstSample,
     const std::vector<std::complex<float>>& samples);
 

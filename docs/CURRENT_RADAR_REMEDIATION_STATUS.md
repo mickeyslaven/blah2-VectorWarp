@@ -54,7 +54,7 @@ provenance while the radar continued processing at the unchanged RF settings.
 | --- | --- | --- | --- |
 | 1 | Kraken/F1/F5: dequeue/TCP-arrival time presented as exact RF time | Deployed with fail-closed authoritative lane | `096e7e4`, `b02ba18`, `ccbef6b`; exact acceptance remains blocked until Heimdall supplies qualified RF time |
 | 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | Code and tests complete | `87952c3` plus bounded-resume follow-up; every GainChange invalidates only ambiguous stale work, closes only the affected recording epoch incomplete, and automatically resumes CPI/recording publication on the next matched A/B pair. Output remains provisional and `sampleAligned:false` because SDRplay supplies no event sample counter |
-| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, or jumping device time stops before append; scored capture is limited to an attested single-motherboard B210 with two distinct subdevices. Device time remains non-UTC and exact ADS-B scoring fails closed |
+| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, jumping, or discontinuous UHD time rejects only the corrupt epoch, clears unpublished IQ, rolls recording incomplete, and automatically republishes after two continuous timed blocks. Status records degraded/requalifying state and counters. Topology remains limited to an attested single-motherboard B210; device time is non-UTC and exact ADS-B scoring remains unavailable |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Code and tests complete | Callback blocks publish only as matched pairs; short/asymmetric/progression/drop faults clear both FIFOs and leave the new epoch unqualified until hardware-trigger restart. Relative epoch is recorded, but no RF/UTC time exists |
 | 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Code and tests complete | Portable sidecar v2 records backend receipts, channel/RF settings, identity/topology, relative sample epoch, intervals/discontinuities, and configuration/code fingerprints. Replay validates it against the binary header and exposes explicit `legacy-unqualified` and `decision-grade` modes |
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Pending after recording | Fedora then Debian/Ubuntu/Pi package tests with the actual service restrictions |
@@ -85,7 +85,11 @@ provenance while the radar continued processing at the unchanged RF settings.
 - USRP device-time/topology changes passed deterministic missing/regressing/
   jumping timestamp and topology tests, API provenance validation, and a full
   processor plus receiver-module build against Homebrew UHD 4.10 headers. No
-  radio hardware was opened and the live Kraken node was not changed.
+  radio hardware was opened and the live Kraken node was not changed. The
+  bounded-resume follow-up additionally proves overflow/time fault, explicit
+  requalifying telemetry, two-block automatic requalification, post-fault CPI
+  publication, incomplete old recording epoch, and provisional replay of the
+  clean successor epoch. Persistent failure remains bounded to eight retries.
 - Dual-HackRF pairing changes passed deterministic one-sided FIFO overflow,
   short callback, callback-progression divergence, paired recording/status API,
   real libhackrf module, and full processor build checks. No radio hardware was

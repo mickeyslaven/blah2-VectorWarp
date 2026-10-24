@@ -32,6 +32,7 @@ Usrp::Usrp(std::string _type, uint32_t _fc, uint32_t _fs,
 
 void Usrp::start()
 {
+  stopRequested = false;
 }
 
 void Usrp::stop()
@@ -41,10 +42,10 @@ void Usrp::stop()
 
 Source::SampleTimePosition Usrp::sample_time_position() const
 {
-  const auto timing = deviceTime.snapshot();
   std::lock_guard<std::mutex> lock(provenanceMutex);
-  if (!timing.available || !coherenceAvailable) return {};
-  return {true, 0, timing.samples, timing.epochTick, fs,
+  const auto timing = deviceTime.snapshot();
+  if (!timing.available || !coherenceAvailable || timingState != "qualified") return {};
+  return {true, timing.epoch, timing.samples, timing.epochTick, fs,
     coherence.clockSource, coherence.timeSource, coherence.motherboard,
     coherence.subdevices};
 }
@@ -109,16 +110,18 @@ std::string Usrp::startup_receipt_json() const
 
 std::string Usrp::health_json() const
 {
-  const auto timing = deviceTime.snapshot();
   rapidjson::Document document(rapidjson::kObjectType);
   auto& allocator = document.GetAllocator();
   document.AddMember("schema", 1, allocator);
   document.AddMember("receiver", "Usrp", allocator);
   document.AddMember("monitoring", monitoring.load(), allocator);
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  const auto timing = deviceTime.snapshot();
+  const bool qualified = timing.available && timingState == "qualified";
   rapidjson::Value time(rapidjson::kObjectType);
   time.AddMember("source", "uhd-device-time", allocator);
   time.AddMember("utcMapped", false, allocator);
-  time.AddMember("continuous", timing.available, allocator);
+  time.AddMember("continuous", qualified, allocator);
   time.AddMember("sampleRateHz", fs, allocator);
   const auto number = [&](int64_t value) {
     const auto text = std::to_string(value);
@@ -128,16 +131,28 @@ std::string Usrp::health_json() const
     const auto text = std::to_string(value);
     return rapidjson::Value(text.c_str(), allocator);
   };
-  if (timing.available) {
+  time.AddMember("epoch", unsignedNumber(timing.epoch), allocator);
+  if (qualified) {
     time.AddMember("epochTick", number(timing.epochTick), allocator);
     time.AddMember("nextTick", number(timing.nextTick), allocator);
   } else {
     time.AddMember("epochTick", rapidjson::Value(rapidjson::kNullType), allocator);
     time.AddMember("nextTick", rapidjson::Value(rapidjson::kNullType), allocator);
   }
-  time.AddMember("samples", unsignedNumber(timing.samples), allocator);
-  time.AddMember("blocks", unsignedNumber(timing.blocks), allocator);
+  time.AddMember("samples", unsignedNumber(qualified ? timing.samples : 0), allocator);
+  time.AddMember("blocks", unsignedNumber(qualified ? timing.blocks : 0), allocator);
   document.AddMember("deviceTime", time, allocator);
+  rapidjson::Value recovery(rapidjson::kObjectType);
+  recovery.AddMember("state", rapidjson::Value(timingState.c_str(), allocator), allocator);
+  recovery.AddMember("qualificationRequiredBlocks", REQUALIFICATION_BLOCKS, allocator);
+  recovery.AddMember("qualificationObservedBlocks", qualificationObserved, allocator);
+  recovery.AddMember("discontinuities", unsignedNumber(discontinuities), allocator);
+  recovery.AddMember("requalifications", unsignedNumber(requalifications), allocator);
+  recovery.AddMember("consecutiveDiscontinuities", unsignedNumber(consecutiveDiscontinuities), allocator);
+  recovery.AddMember("discardedBlocks", unsignedNumber(discardedBlocks), allocator);
+  recovery.AddMember("discardedSamplesPerChannel", unsignedNumber(discardedSamples), allocator);
+  recovery.AddMember("lastDiscontinuity", rapidjson::Value(lastDiscontinuity.c_str(), allocator), allocator);
+  document.AddMember("recovery", recovery, allocator);
   rapidjson::StringBuffer buffer;
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   document.Accept(writer);
@@ -174,6 +189,11 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       coherenceAvailable = false;
       appliedSettingsAvailable = false;
       appliedSettings = {};
+      timingState = "requalifying";
+      lastDiscontinuity.clear();
+      qualificationObserved = discontinuities = requalifications = 0;
+      consecutiveDiscontinuities = discardedBlocks = discardedSamples = 0;
+      deviceTime.restart();
     }
     // create a USRP object
     uhd::usrp::multi_usrp::sptr usrp = 
@@ -225,6 +245,53 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
     } monitorStream{monitoring};
     monitoring = true;
     UsrpIngressTiming ingressTiming;
+    struct StagedBlock {
+      UsrpDeviceTime::Observation timing;
+      blah2::IqBlock samples;
+    };
+    std::vector<StagedBlock> staged;
+    staged.reserve(REQUALIFICATION_BLOCKS);
+
+    const auto block_start_position = [&](const UsrpDeviceTime::Observation& observation) {
+      std::lock_guard<std::mutex> lock(provenanceMutex);
+      const auto timing = deviceTime.snapshot();
+      return SampleTimePosition{true, timing.epoch, observation.priorSamples,
+        observation.firstTick, fs, coherence.clockSource, coherence.timeSource,
+        coherence.motherboard, coherence.subdevices};
+    };
+    const auto recover = [&](const std::string& reason, uint64_t rejectedSamples) {
+      uint64_t queuedSamples = 0;
+      {
+        std::unique_lock<IqData> firstLock(*buffer1);
+        std::unique_lock<IqData> secondLock(*buffer2);
+        queuedSamples = std::max(buffer1->get_length(), buffer2->get_length());
+        buffer1->clear();
+        buffer2->clear();
+      }
+      uint64_t stagedSamples = 0;
+      for (const auto& block : staged)
+        stagedSamples += block.samples.empty() ? 0 : block.samples.front().size();
+      uint64_t consecutive = 0;
+      {
+        std::lock_guard<std::mutex> lock(provenanceMutex);
+        deviceTime.discontinuity();
+        timingState = "requalifying";
+        qualificationObserved = 0;
+        ++discontinuities;
+        consecutive = ++consecutiveDiscontinuities;
+        discardedBlocks += 1 + staged.size();
+        discardedSamples += rejectedSamples + queuedSamples + stagedSamples;
+        lastDiscontinuity = reason;
+      }
+      staged.clear();
+      recording_epoch_discontinuity(reason);
+      if (consecutive > MAX_CONSECUTIVE_DISCONTINUITIES) {
+        close_file();
+        throw std::runtime_error(reason +
+          " Automatic requalification exceeded the bounded discontinuity budget." +
+          ingressTiming.summary());
+      }
+    };
 
     while(!stopRequested)
     {
@@ -233,28 +300,90 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       size_t nReceived = rxStreamer->recv(buff_ptrs, samps_per_buff, metadata);
       ingressTiming.received();
       if (stopRequested) break;
-      // Do not silently splice discontinuous IQ into a coherent CPI. This is
-      // fail-closed error handling, not a claimed fix for unqualified B210
-      // hardware/USB endurance failures reported by the upstream project.
+      // Reject only the discontinuous block. Clear unpublished pre-fault IQ,
+      // roll the recording epoch, then require two continuous device-timed
+      // UHD blocks before publishing the candidate epoch atomically.
       try {
         verify_usrp_receive(metadata, nReceived, samps_per_buff);
-        const auto deviceTimeObservation = deviceTime.validate(metadata, nReceived);
-        append_usrp_block_committed(*buffer1, *buffer2, buff_ptrs[0], buff_ptrs[1],
-          nReceived, ingressTiming,
-          [&] { deviceTime.commit(deviceTimeObservation); });
       }
       catch (const std::exception& error) {
+        const std::string message = std::string(error.what()) + ingressTiming.summary();
+        if (metadata.error_code != uhd::rx_metadata_t::ERROR_CODE_NONE ||
+            metadata.out_of_sequence) {
+          recover(message, nReceived);
+          continue;
+        }
+        recording_discontinuity(message);
+        throw;
+      }
+
+      bool requalifying = false;
+      {
+        std::lock_guard<std::mutex> lock(provenanceMutex);
+        requalifying = timingState != "qualified";
+      }
+      UsrpDeviceTime::Observation observation;
+      try {
+        observation = requalifying && !staged.empty() ?
+          deviceTime.validate_after(metadata, nReceived, staged.back().timing) :
+          deviceTime.validate(metadata, nReceived);
+      } catch (const std::exception& error) {
+        recover(std::string(error.what()) + ingressTiming.summary(), nReceived);
+        continue;
+      }
+
+      if (requalifying) {
+        blah2::IqBlock block(2);
+        for (unsigned ch=0; ch<2; ++ch)
+          block[ch].assign(buff_ptrs[ch], buff_ptrs[ch]+nReceived);
+        staged.push_back({observation, std::move(block)});
+        {
+          std::lock_guard<std::mutex> lock(provenanceMutex);
+          qualificationObserved = staged.size();
+        }
+        if (staged.size() < REQUALIFICATION_BLOCKS) continue;
+
+        blah2::IqBlock qualified(2);
+        for (const auto& candidate : staged)
+          for (unsigned channel=0; channel<2; ++channel)
+            qualified[channel].insert(qualified[channel].end(),
+              candidate.samples[channel].begin(), candidate.samples[channel].end());
+        const auto startPosition = block_start_position(staged.front().timing);
+        try {
+          append_usrp_block_committed(*buffer1, *buffer2,
+            qualified[0].data(), qualified[1].data(), qualified[0].size(),
+            ingressTiming, [&] {
+              std::lock_guard<std::mutex> lock(provenanceMutex);
+              for (const auto& candidate : staged) deviceTime.commit(candidate.timing);
+              timingState = "qualified";
+              qualificationObserved = REQUALIFICATION_BLOCKS;
+              if (discontinuities) ++requalifications;
+              consecutiveDiscontinuities = 0;
+            });
+          ingressTiming.blocks += staged.size() - 1;
+        } catch (const std::exception& error) {
+          const std::string message = std::string(error.what()) + ingressTiming.summary();
+          recording_discontinuity(message);
+          throw std::runtime_error(message);
+        }
+        record_block(qualified, startPosition);
+        staged.clear();
+        continue;
+      }
+
+      try {
+        append_usrp_block_committed(*buffer1, *buffer2, buff_ptrs[0], buff_ptrs[1],
+          nReceived, ingressTiming, [&] { deviceTime.commit(observation); });
+      } catch (const std::exception& error) {
         const std::string message = std::string(error.what()) + ingressTiming.summary();
         recording_discontinuity(message);
         throw std::runtime_error(message);
       }
-
-      // save IQ data to file
-      if (is_recording() && nReceived) {
+      if (recording_wants_samples() && nReceived) {
         blah2::IqBlock block(2);
         for (unsigned ch=0; ch<2; ++ch)
           block[ch].assign(buff_ptrs[ch], buff_ptrs[ch]+nReceived);
-        record_block(block);
+        record_block(block, block_start_position(observation));
       }
     }
 }

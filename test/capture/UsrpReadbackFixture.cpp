@@ -77,7 +77,7 @@ int main() {
     auto second = deviceTime.validate(TimedMetadata{true, {40000007}}, 7);
     deviceTime.commit(second);
     const auto snapshot = deviceTime.snapshot();
-    assert(snapshot.available && snapshot.epochTick == 40000000);
+    assert(snapshot.available && snapshot.epoch == 0 && snapshot.epochTick == 40000000);
     assert(snapshot.nextTick == 40000014 && snapshot.samples == 14 && snapshot.blocks == 2);
     for (const auto invalid : {TimedMetadata{false, {40000014}},
                                TimedMetadata{true, {40000013}},
@@ -87,6 +87,14 @@ int main() {
       assert(rejected);
     }
     assert(deviceTime.snapshot().samples == 14);
+    deviceTime.discontinuity();
+    assert(!deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1);
+    const auto candidate = deviceTime.validate(TimedMetadata{true, {50000000}}, 7);
+    const auto continuation = deviceTime.validate_after(
+      TimedMetadata{true, {50000007}}, 7, candidate);
+    deviceTime.commit(candidate); deviceTime.commit(continuation);
+    assert(deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1 &&
+      deviceTime.snapshot().samples == 14);
   }
   struct Metadata {
     enum Error { ERROR_CODE_NONE, TIMEOUT, OVERFLOW, BROKEN_CHAIN, BAD_PACKET };
@@ -100,7 +108,7 @@ int main() {
     metadata.error_code = error;
     bool rejected = false;
     try { verify_usrp_receive(metadata, 100, 4096); }
-    catch (const std::exception& failure) { rejected = true; assert(std::string(failure.what()).find("Input stopped") != std::string::npos); }
+    catch (const std::exception& failure) { rejected = true; assert(std::string(failure.what()).find("automatic requalification") != std::string::npos); }
     assert(rejected);
   }
   metadata.error_code = Metadata::ERROR_CODE_NONE;

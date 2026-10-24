@@ -47,7 +47,7 @@ struct FakeState {
   long long jumpTicks = 0;
   double sampleRate = 2000000;
   rx_metadata_t::Error error = rx_metadata_t::ERROR_CODE_OVERFLOW;
-  bool outOfSequence = false, started = false, stopped = false;
+  bool outOfSequence = false, failEveryCall = false, started = false, stopped = false;
   size_t motherboards = 1;
   std::string motherboard = "B210", clockSource = "internal", timeSource = "internal";
   std::function<void()> beforeReceive;
@@ -75,7 +75,7 @@ public:
       static_cast<long long>((fake.calls - 1) * fake.count) +
       (fake.calls == fake.jumpTimeCall ? fake.jumpTicks : 0);
     metadata.time_spec = time_spec_t(double(firstTick) / fake.sampleRate);
-    if (fake.calls == fake.failCall) {
+    if (fake.calls == fake.failCall || fake.failEveryCall) {
       metadata.error_code = fake.error;
       metadata.out_of_sequence = fake.outOfSequence;
     }

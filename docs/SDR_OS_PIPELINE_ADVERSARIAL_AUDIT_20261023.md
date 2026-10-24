@@ -198,13 +198,19 @@ the corrected verifier must mark a discontinuity before append/record.
 fail or start a new epoch on any jump, and publish/record the device epoch and
 per-CPI sample interval.
 
-**Remediation.** Implemented fail-closed validation in
-`src/capture/usrp/UsrpDeviceTime.h`: every successful nonempty UHD block must
-carry the exact next sample tick, and the timing state is committed atomically
-with paired queue insertion. Status, event publications, and the recording
-sidecar preserve the relative device-time interval. Because this device clock
-has no qualified UTC mapping, published USRP event time remains `exact:false`
-and authoritative ADS-B/OPRS scoring rejects it.
+**Remediation.** Implemented fail-closed validation of each block plus bounded
+best-effort recovery in `src/capture/usrp/UsrpDeviceTime.h` and
+`src/capture/usrp/Usrp.cpp`. Every successful nonempty UHD block must carry the
+exact next sample tick. A missing/regressing/jumping timestamp or UHD receive
+discontinuity rejects that block, clears unpublished paired IQ, closes the
+affected recording epoch incomplete, and enters `requalifying`. Exactly two
+continuous device-timed blocks are buffered before their new epoch is published
+atomically; recording then resumes lazily. Status and recording provenance carry
+epoch, recovery state, discontinuity/requalification counts, discarded blocks
+and samples, and the last cause. Nine consecutive discontinuities exceed the
+bounded recovery budget and stop instead of spinning indefinitely. Because this
+device clock has no qualified UTC mapping, recovered USRP event time remains
+`exact:false` and authoritative ADS-B/OPRS scoring rejects it.
 
 ### F6 — two UHD channels do not prove a coherent topology (**Medium**)
 

@@ -51,6 +51,16 @@ private:
   bool appliedSettingsAvailable = false;
   UsrpAppliedSettings appliedSettings;
   std::atomic<bool> monitoring{false};
+  static constexpr uint64_t REQUALIFICATION_BLOCKS = 2;
+  static constexpr uint64_t MAX_CONSECUTIVE_DISCONTINUITIES = 8;
+  std::string timingState = "unavailable";
+  std::string lastDiscontinuity;
+  uint64_t qualificationObserved = 0;
+  uint64_t discontinuities = 0;
+  uint64_t requalifications = 0;
+  uint64_t consecutiveDiscontinuities = 0;
+  uint64_t discardedBlocks = 0;
+  uint64_t discardedSamples = 0;
 
 public:
 
