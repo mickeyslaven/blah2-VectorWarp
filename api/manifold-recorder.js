@@ -350,6 +350,11 @@ class ManifoldRecorder {
     ++this.state.frames;
     await this.recordReference(frame);
     if (!frame.data.length) return;
+    const exactTiming = frame.eventTime?.exact === true &&
+      frame.eventTime.uncertaintyBounded === true && frame.eventTime.uncertaintyNs === 0;
+    const configuredUncertainty = this.config.truth?.adsb?.provisional_event_time_uncertainty_s;
+    const timeUncertaintyS = exactTiming ? 0 :
+      (finite(configuredUncertainty) ? Math.max(0, Math.min(5, configuredUncertainty)) : 1);
     const identity = manifoldIdentity(this.config, frame.actual_gain_db, frame.frequency_hz,
       frame.sample_rate_hz);
     const identityFingerprint = crypto.createHash('sha256').update(JSON.stringify({
@@ -381,11 +386,14 @@ class ManifoldRecorder {
         if (evidence.snr_db < this.options.min_snr_db) continue;
         const delayError = evidence.delay_km - truth.delay;
         const dopplerError = evidence.doppler_hz - truth.doppler;
-        const score = (delayError / this.options.max_delay_error_km) ** 2 +
-          (dopplerError / this.options.max_doppler_error_hz) ** 2;
+        const delayGate = this.options.max_delay_error_km +
+          (finite(truth.delay_rate_km_s) ? Math.abs(truth.delay_rate_km_s) * timeUncertaintyS : 0);
+        const dopplerGate = this.options.max_doppler_error_hz +
+          (finite(truth.doppler_rate_hz_s) ? Math.abs(truth.doppler_rate_hz_s) * timeUncertaintyS : 0);
+        const score = (delayError / delayGate) ** 2 + (dopplerError / dopplerGate) ** 2;
         if (score <= 1) {
           const candidate = {score, index, icao, truth, aircraft,
-            direction, delayError, dopplerError};
+            direction, delayError, dopplerError, delayGate, dopplerGate};
           if (!candidatesByEvidence.has(index)) candidatesByEvidence.set(index, []);
           candidatesByEvidence.get(index).push(candidate);
         }
@@ -434,6 +442,10 @@ class ManifoldRecorder {
         support: {adsb_label_only: true, covariance_samples: evidence.covariance_samples || 0,
           local_nuisance_cells: evidence.detection_context?.nuisance?.length || 0},
         uncertainty: {truth_age_s: Math.abs(frame.timestamp / 1000 - candidate.truth.timestamp),
+          exact_event_time: exactTiming, event_time_uncertainty_s: timeUncertaintyS,
+          event_time_source: frame.eventTime?.source || 'unknown',
+          event_time_uncertainty_model: exactTiming ? 'exact' : 'bounded-configured-nuisance-radius',
+          gate_delay_km: candidate.delayGate, gate_doppler_hz: candidate.dopplerGate,
           delay_error_km: candidate.delayError, doppler_error_hz: candidate.dopplerError,
           normalized_match_error: Math.sqrt(candidate.score)},
         direct_path_local_azimuth_deg: normalize(orientation - direct.bearingDeg),

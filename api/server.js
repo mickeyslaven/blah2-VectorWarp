@@ -30,7 +30,7 @@ const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
-const {createEvidenceStatistics} = require('./evidence-statistics.js');
+const {createEvidenceStatisticsLanes} = require('./evidence-statistics.js');
 const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
@@ -79,29 +79,25 @@ const CLIP_PRE_ROLL_RETRY_DELAY_MS = 5000;
 // still need the next ADS-B observation.  This is bounded, but must cover both.
 const CAPTURE_TRUTH_SETTLE_MS = 8000;
 const CAPTURE_TRUTH_SETTLE_POLL_MS = 250;
-const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
-  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
+const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
+  createEvidenceStatisticsLanes(config, adsbSource, {operational: {
+    filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
+      '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
+    onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
     onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
-    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
-// Keep useful live association visible for receivers that can preserve coherent
-// sample position but cannot provide hardware UTC (currently Kraken/RTL2832).
-// This lane is deliberately separate from the fail-closed decision-grade
-// scorecard and has no capture side effects.
-const provisionalEvidenceStatistics = createEvidenceStatistics(config, adsbSource, {
-  filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
-    '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
-  timingPolicy: 'provisional'});
+    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)}});
+const captureEvidenceStatistics = provisionalEvidenceStatistics;
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
 const integrationShadowQueue = new IntegrationShadowQueue(config);
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
-  let admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  let admissions = captureEvidenceStatistics.prepareCaptureAdmissions(records, revision);
   const truthDeadline = Date.now() + CAPTURE_TRUTH_SETTLE_MS;
   while (admissionsNeedTruthSettlement(admissions) && Date.now() < truthDeadline) {
     await new Promise(resolve => setTimeout(resolve, CAPTURE_TRUTH_SETTLE_POLL_MS));
-    admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+    admissions = captureEvidenceStatistics.prepareCaptureAdmissions(records, revision);
   }
   const first = records.flatMap(record => record.captureWindows || [])
     .find(window => window.revision === revision);
@@ -122,7 +118,7 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   let admissionSidecar = null;
   const artifact = {schema: 'vectorwarp-capture-admission-v1', created_at: Date.now(), revision,
     state: captureArtifactState(integrity, admissions), integrity,
-    config_epoch: evidenceStatistics.configEpoch, receiver_epoch: evidenceStatistics.receiverEpoch,
+    config_epoch: captureEvidenceStatistics.configEpoch, receiver_epoch: captureEvidenceStatistics.receiverEpoch,
     events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
       capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
         .map(window => window.captureId)})), captures: Object.fromEntries(Object.entries(admissions)
@@ -135,9 +131,9 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   }
   integrity = {...integrity, admission_sidecar: admissionSidecar};
   captureTriggerQueue.setAdmission(revision, admissions, integrity);
-  evidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
+  captureEvidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
-  evidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
+  captureEvidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
   // Bind shadow work to the exact immutable admission document written above.
   // Later in-memory bookkeeping adds admission_sidecar to `integrity`; that
   // field is deliberately not allowed to change the queued sidecar digest.
@@ -463,7 +459,7 @@ app.get('/api/statistics', (req, res) => {
   const diagnostic = bearingDiagnostic.status();
   const recorder = manifoldRecorder.status();
   const automation = manifoldAutomation.status();
-  res.json(evidenceStatistics.status({enabled: config.process?.bearing?.enable === true,
+  res.json(captureEvidenceStatistics.status({enabled: config.process?.bearing?.enable === true,
     calibrated: Boolean(config.process?.bearing?.manifold_file),
     manifold_file: config.process?.bearing?.manifold_file || null,
     diagnostic, recorder, automation,
@@ -640,10 +636,10 @@ app.post('/api/processor/status', (req, res) => {
       setTimeout(() => {
         const retry = captureTriggerQueue.retryPreRollFailure(revision);
         if (!retry)
-          evidenceStatistics.acceptCaptureEvents(
+          captureEvidenceStatistics.acceptCaptureEvents(
             captureTriggerQueue.eventsForRevision(revision));
       }, CLIP_PRE_ROLL_RETRY_DELAY_MS).unref();
-    } else if (checked.value.clipError) evidenceStatistics.acceptCaptureEvents(
+    } else if (checked.value.clipError) captureEvidenceStatistics.acceptCaptureEvents(
       captureTriggerQueue.eventsForRevision(revision));
     else void finalizeCaptureAdmission(revision, checked.value.clipFile, checked.value.clipSamples)
       .catch(error => console.error(`Capture admission failed: ${error.message}`));

@@ -54,6 +54,30 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   await recorder.record(stale);
   assert.equal(recorder.status().samples, 1, 'stale ADS-B truth must not label a manifold sample');
   assert.ok(recorder.status().staleTruth > 0);
+  const provisionalFile = path.join(directory, 'provisional-samples.jsonl');
+  const provisionalConfig = JSON.parse(JSON.stringify(config));
+  provisionalConfig.process.bearing.manifold_recorder.path = provisionalFile;
+  provisionalConfig.truth = {adsb: {provisional_event_time_uncertainty_s: 1}};
+  const provisionalRecorder = new ManifoldRecorder(provisionalConfig, {
+    get: async kind => kind === 'aircraft' ? await source.get(kind) :
+      {abc123: {timestamp: 100, delay: 10, doppler: 20, doppler_rate_hz_s: 7}}
+  });
+  const provisionalFrame = JSON.parse(JSON.stringify(frame));
+  provisionalFrame.eventTime = {source: 'kraken_heimdall_host_arrival_estimate',
+    exact: false, estimateAvailable: true, uncertaintyBounded: false, uncertaintyNs: null};
+  provisionalFrame.data[0].doppler_hz = 32;
+  await provisionalRecorder.record(provisionalFrame);
+  assert.equal(provisionalRecorder.status().samples, 1,
+    'inexact timing must retain a corpus row inside the configured rate-expanded gate');
+  const provisionalRow = JSON.parse(fs.readFileSync(provisionalFile, 'utf8').trim());
+  assert.equal(provisionalRow.uncertainty.exact_event_time, false);
+  assert.equal(provisionalRow.uncertainty.event_time_uncertainty_s, 1);
+  assert.equal(provisionalRow.uncertainty.gate_doppler_hz, 17);
+  provisionalFrame.eventTime = {source: 'usrp_device_time_utc', exact: true,
+    uncertaintyBounded: true, uncertaintyNs: 0};
+  await provisionalRecorder.record(provisionalFrame);
+  assert.equal(provisionalRecorder.status().samples, 1,
+    'qualified exact time must use the unexpanded gate');
   const automaticConfig = JSON.parse(JSON.stringify(config));
   automaticConfig.process.bearing.manifold_recorder.enabled = 'auto';
   Object.assign(automaticConfig.capture.device, {type: 'Kraken'});

@@ -1208,6 +1208,10 @@ try
         uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
           captureEndEpochSample = 0;
         int64_t captureEpochEstimateNanoseconds = 0;
+        int64_t captureHostReceiptResidualNanoseconds = 0;
+        int64_t captureHostReceiptMaximumResidualNanoseconds = 0;
+        int64_t captureHostReceiptDriftPpm = 0;
+        uint32_t captureHostReceiptAnchors = 0;
         int64_t captureDeviceTimeEpochTick = 0;
         std::string captureClockSource, captureTimeSource,
           captureMotherboard, captureSubdevices;
@@ -1302,6 +1306,10 @@ try
               captureEpoch = position.epoch;
               captureEpochEstimateNanoseconds =
                 position.epochEstimateNanoseconds;
+              captureHostReceiptResidualNanoseconds = position.hostReceiptResidualNanoseconds;
+              captureHostReceiptMaximumResidualNanoseconds = position.hostReceiptMaximumResidualNanoseconds;
+              captureHostReceiptDriftPpm = position.hostReceiptDriftPpm;
+              captureHostReceiptAnchors = position.hostReceiptAnchors;
               captureDeviceTimeEpochTick = position.deviceTimeEpochTick;
               captureClockSource = position.clockSource;
               captureTimeSource = position.timeSource;
@@ -1359,7 +1367,10 @@ try
           else if (captureSamplePositionAvailable)
             eventTime = blah2::kraken_cpi_midpoint_time(
               captureEpochEstimateNanoseconds, captureEpoch,
-              captureFirstEpochSample, captureEndEpochSample, fs);
+              captureFirstEpochSample, captureEndEpochSample, fs,
+              captureHostReceiptResidualNanoseconds,
+              captureHostReceiptMaximumResidualNanoseconds,
+              captureHostReceiptDriftPpm, captureHostReceiptAnchors);
           const uint64_t frameTimestampMs = blah2::event_time_milliseconds(
             eventTime, time[0] / 1000);
           const auto attachEventTime = [&](std::string json) {

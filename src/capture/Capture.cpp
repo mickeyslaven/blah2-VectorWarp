@@ -35,19 +35,27 @@ Capture::SamplePosition Capture::live_sample_position() const
     if (!value.contractValid) return {};
     const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
     if (replayProgress.samples>UINT64_MAX-base) return {};
-    return {true,value.epoch,base+replayProgress.samples,0,
+    return {true,value.epoch,base+replayProgress.samples,0,0,0,0,0,
       value.deviceTimeEpochTick,replayProgress.sampleRate,value.clockSource,
       value.deviceTimeSource,value.motherboard,value.subdevices};
   }
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
   if (kraken) {
     const auto value = kraken->sample_position();
-    return {value.available, value.epoch, value.nextSample,
-      value.epochEstimateNanoseconds};
+    SamplePosition result;
+    result.available = value.available;
+    result.epoch = value.epoch;
+    result.nextSample = value.nextSample;
+    result.epochEstimateNanoseconds = value.epochEstimateNanoseconds;
+    result.hostReceiptResidualNanoseconds = value.hostReceiptResidualNanoseconds;
+    result.hostReceiptMaximumResidualNanoseconds = value.hostReceiptMaximumResidualNanoseconds;
+    result.hostReceiptDriftPpm = value.hostReceiptDriftPpm;
+    result.hostReceiptAnchors = value.hostReceiptAnchors;
+    return result;
   }
   if (!device) return {};
   const auto value = device->sample_time_position();
-  return {value.available, value.epoch, value.nextSample, 0,
+  return {value.available, value.epoch, value.nextSample, 0,0,0,0,0,
     value.deviceTimeEpochTick, value.sampleRate, value.clockSource,
     value.timeSource, value.motherboard, value.subdevices};
 }
