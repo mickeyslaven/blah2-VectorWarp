@@ -37,11 +37,15 @@ def read_blocks(path):
             if len(header) != 32:
                 raise ValueError('truncated MCHQ header')
             magic, channels, samples, *_ = struct.unpack('>8I', header)
-            if magic != MAGIC or not 2 <= channels <= 16 or not samples:
+            if magic not in (MAGIC, 0x4D434854) or not 2 <= channels <= 16 or not samples:
                 raise ValueError('malformed MCHQ header')
             metadata = stream.read(channels * 8)
             if len(metadata) != channels * 8:
                 raise ValueError('truncated MCHQ metadata')
+            if magic == 0x4D434854:
+                timing = stream.read(96)
+                if len(timing) != 96 or struct.unpack('>II', timing[:8]) != (1, 96):
+                    raise ValueError('Unsupported Heimdall timing extension')
             raw = np.frombuffer(stream.read(channels * samples * 2), dtype=np.uint8)
             if raw.size != channels * samples * 2:
                 raise ValueError('truncated MCHQ samples')

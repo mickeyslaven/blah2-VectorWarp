@@ -164,9 +164,13 @@ def capture_iq(host, port, frequency, channels, maximum_samples=262144):
         for _ in range(2048):
             header = receive_exact(sock, 32)
             magic, count, samples, phase, noise, _, _, retune = struct.unpack(">8I", header)
-            if magic != MAGIC or count < 1 or count > 16 or samples < 1 or samples > 10000000:
+            if magic not in (MAGIC, 0x4D434854) or count < 1 or count > 16 or samples < 1 or samples > 10000000:
                 raise RuntimeError("Malformed MCHQ header")
             metadata = receive_exact(sock, count * 8)
+            if magic == 0x4D434854:
+                timing = receive_exact(sock, 96)
+                if struct.unpack('>II', timing[:8]) != (1, 96):
+                    raise RuntimeError('Unsupported Heimdall timing extension')
             payload = receive_exact(sock, count * samples * 2)
             metadata_values = struct.unpack("<" + "f" * (count * 2), metadata)
             frequencies = metadata_values[::2]

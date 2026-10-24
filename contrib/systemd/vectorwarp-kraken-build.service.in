@@ -1,0 +1,36 @@
+[Unit]
+Description=Build the pinned local VectorWarp Kraken companion (no receiver access)
+AssertPathExists=@PREFIX@/current/receiver-source/kraken/kit.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I @PREFIX@/libexec/vectorwarp-build-kraken build
+WorkingDirectory=/
+Environment=PATH=/usr/bin:/bin
+UMask=0022
+TimeoutStartSec=1600
+TimeoutStopSec=5
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_SETGID CAP_SETUID CAP_KILL CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_SETUID
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+InaccessiblePaths=-/etc/vectorwarp -/etc/vectorwarp-management -/var/lib/vectorwarp -/var/lib/vectorwarp-api
+ReadWritePaths=/var/lib/vectorwarp-adapters/kraken /run/vectorwarp-kraken-build.lock /run/vectorwarp-package-upgrade.lock
+CPUQuota=200%
+MemoryMax=3G
+TasksMax=64
+LimitCORE=0

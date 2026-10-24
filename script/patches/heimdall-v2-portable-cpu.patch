@@ -1,0 +1,22 @@
+diff --git a/heimdall_v2/CMakeLists.txt b/heimdall_v2/CMakeLists.txt
+index 22d113e..32a14e5 100644
+--- a/heimdall_v2/CMakeLists.txt
++++ b/heimdall_v2/CMakeLists.txt
+@@ -34,7 +34,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|armv7|arm")
+         target_compile_options(pffft PRIVATE -mfpu=neon)
+     endif()
+ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+-    target_compile_options(pffft PRIVATE -march=native)
++    target_compile_options(pffft PRIVATE -msse2)
+ endif()
+ 
+ if(NOT APPLE)
+@@ -144,7 +144,7 @@ target_compile_options(heimdall PRIVATE
+ if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+     target_compile_options(heimdall PRIVATE -O3 -march=armv8-a -mtune=cortex-a72 -ftree-vectorize)
+ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+-    target_compile_options(heimdall PRIVATE -O3 -march=native -mtune=native)
++    target_compile_options(heimdall PRIVATE -O3 -march=x86-64 -mtune=generic)
+ else()
+     target_compile_options(heimdall PRIVATE -O2)
+ endif()

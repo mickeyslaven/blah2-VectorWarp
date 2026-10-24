@@ -297,7 +297,7 @@ if $WITH_SYSTEMD; then
   sysusers_dir="$DESTDIR/usr/lib/sysusers.d"
   tmpfiles_dir="$DESTDIR/usr/lib/tmpfiles.d"
   sudoers_dir="$DESTDIR/etc/sudoers.d"
-  run install -d -m 0755 "$unit_dir" "$udev_rule_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir"
+  run install -d -m 0755 "$unit_dir" "$udev_rule_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir" "$target_prefix/libexec"
   if $DRY_RUN; then
     temporary=/tmp/vectorwarp-install-dry-run
   else
@@ -307,6 +307,7 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp" "$temporary/vectorwarp-launcher"
   run install -d -m 0755 "$DESTDIR/usr/bin"
   run install -m 0755 "$temporary/vectorwarp-launcher" "$DESTDIR/usr/bin/vectorwarp"
+  run install -m 0755 "$temporary/vectorwarp-launcher" "$target_prefix/libexec/vectorwarp"
   render "$ARTIFACT/libexec/vectorwarp-quiesce" "$temporary/vectorwarp-quiesce"
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
@@ -317,6 +318,17 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/systemd/vectorwarp.sudoers.in" "$temporary/vectorwarp"
   run install -m 0644 "$temporary/vectorwarp-api.service" "$unit_dir/vectorwarp-api.service"
   run install -m 0644 "$temporary/vectorwarp-processor.service" "$unit_dir/vectorwarp-processor.service"
+  if [[ -f $ARTIFACT/share/heimdall/build.json || -f $ARTIFACT/receiver-source/kraken/kit.json ]]; then
+    render "$ARTIFACT/systemd/vectorwarp-heimdall.service.in" "$temporary/vectorwarp-heimdall.service"
+    run install -m 0644 "$temporary/vectorwarp-heimdall.service" "$unit_dir/vectorwarp-heimdall.service"
+    run install -m 0644 "$ARTIFACT/systemd/72-vectorwarp-kraken.rules" "$udev_rule_dir/72-vectorwarp-kraken.rules"
+    if [[ -f $ARTIFACT/receiver-source/kraken/kit.json ]]; then
+      render "$ARTIFACT/systemd/vectorwarp-kraken-build.service.in" "$temporary/vectorwarp-kraken-build.service"
+      run install -m 0644 "$temporary/vectorwarp-kraken-build.service" "$unit_dir/vectorwarp-kraken-build.service"
+      render "$ARTIFACT/libexec/vectorwarp-build-kraken.py" "$temporary/vectorwarp-build-kraken"
+      run install -m 0755 "$temporary/vectorwarp-build-kraken" "$target_prefix/libexec/vectorwarp-build-kraken"
+    fi
+  fi
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
   run install -m 0644 "$temporary/vectorwarp-health-watchdog.service" "$unit_dir/vectorwarp-health-watchdog.service"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp-health-watchdog.timer" "$unit_dir/vectorwarp-health-watchdog.timer"
@@ -365,7 +377,7 @@ if $WITH_SYSTEMD; then
   if [[ -f $ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js ]]; then
     run install -m 0644 "$ARTIFACT/libexec/vectorwarp-prepare-sdrplay.js" "$target_prefix/libexec/vectorwarp-prepare-sdrplay.js"
   fi
-  if [[ $LOCAL_BUILD_ENABLED == true && -f $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]]; then
+  if [[ -f $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]]; then
     render "$ARTIFACT/libexec/vectorwarp-build-sdrplay.py" "$temporary/vectorwarp-build-sdrplay"
     run install -m 0755 "$temporary/vectorwarp-build-sdrplay" "$target_prefix/libexec/vectorwarp-build-sdrplay"
   fi

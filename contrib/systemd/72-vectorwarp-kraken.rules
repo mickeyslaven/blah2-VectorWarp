@@ -1,0 +1,2 @@
+# Kraken's RTL2832U devices; do not alter unrelated USB device permissions.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="2838", MODE="0660", GROUP="vectorwarp"

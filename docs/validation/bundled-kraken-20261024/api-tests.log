@@ -1,0 +1,121 @@
+TAP version 13
+# Subtest: local processor cannot adopt an unrelated or failed Heimdall service
+ok 1 - local processor cannot adopt an unrelated or failed Heimdall service
+  ---
+  duration_ms: 0.601042
+  ...
+# Subtest: timed readers reject unknown versions and invalid anchor ranges
+ok 2 - timed readers reject unknown versions and invalid anchor ranges
+  ---
+  duration_ms: 0.148042
+  ...
+# Subtest: timed frames keep automatic gain operational without disciplined UTC
+ok 3 - timed frames keep automatic gain operational without disciplined UTC
+  ---
+  duration_ms: 12.595416
+  ...
+# Subtest: wire metrics preserve signed component DC, component clipping and rare peaks
+ok 4 - wire metrics preserve signed component DC, component clipping and rare peaks
+  ---
+  duration_ms: 1.129209
+  ...
+# Subtest: worker probe parses fragmented loopback frames, all channels and exact sample limit
+ok 5 - worker probe parses fragmented loopback frames, all channels and exact sample limit
+  ---
+  duration_ms: 48.168708
+  ...
+# Subtest: accepts and reports coherent per-channel physical gain metadata
+ok 6 - accepts and reports coherent per-channel physical gain metadata
+  ---
+  duration_ms: 0.526375
+  ...
+# Subtest: rejects missing expectations, non-fixed gain and unbounded options before connecting
+ok 7 - rejects missing expectations, non-fixed gain and unbounded options before connecting
+  ---
+  duration_ms: 2.074833
+  ...
+# Subtest: rejects mismatched/nonfinite metadata on every channel without using payload
+ok 8 - rejects mismatched/nonfinite metadata on every channel without using payload
+  ---
+  duration_ms: 0.640542
+  ...
+# Subtest: rejects uncalibrated, stale/wideband/independent, noise and retuning frames
+ok 9 - rejects uncalibrated, stale/wideband/independent, noise and retuning frames
+  ---
+  duration_ms: 1.168041
+  ...
+# Subtest: rejects frequency counter or group changes after the first accepted packet
+ok 10 - rejects frequency counter or group changes after the first accepted packet
+  ---
+  duration_ms: 0.254084
+  ...
+# Subtest: calibration evidence covers every packet, including a later invalid header
+ok 11 - calibration evidence covers every packet, including a later invalid header
+  ---
+  duration_ms: 0.345042
+  ...
+# Subtest: bounded assembly handles coalesced maximal packets and rejects forged dimensions immediately
+ok 12 - bounded assembly handles coalesced maximal packets and rejects forged dimensions immediately
+  ---
+  duration_ms: 10.867709
+  ...
+# Subtest: timeout, early EOF and cancellation fail closed and destroy the socket
+ok 13 - timeout, early EOF and cancellation fail closed and destroy the socket
+  ---
+  duration_ms: 22.352958
+  ...
+# Subtest: worker total deadline and cancellation terminate stalled capture
+ok 14 - worker total deadline and cancellation terminate stalled capture
+  ---
+  duration_ms: 210.644209
+  ...
+# Subtest: settle wait observes a requested phase transition then a fresh full calibrated capture
+ok 15 - settle wait observes a requested phase transition then a fresh full calibrated capture
+  ---
+  duration_ms: 1062.174
+  ...
+# Subtest: settle accepts ready-only data only when no transition was required
+ok 16 - settle accepts ready-only data only when no transition was required
+  ---
+  duration_ms: 20.972791
+  ...
+# Subtest: uncalibrated headers cannot mask wrong tuple metadata
+ok 17 - uncalibrated headers cannot mask wrong tuple metadata
+  ---
+  duration_ms: 16.97675
+  ...
+# Subtest: settle wait retries only the classified transition error
+ok 18 - settle wait retries only the classified transition error
+  ---
+  duration_ms: 0.354417
+  ...
+# Subtest: settle retries share one deadline and never overlap active probes
+ok 19 - settle retries share one deadline and never overlap active probes
+  ---
+  duration_ms: 0.304042
+  ...
+# Subtest: ready-only or noise-only observations cannot substitute for the requested phase transition
+ok 20 - ready-only or noise-only observations cannot substitute for the requested phase transition
+  ---
+  duration_ms: 0.137875
+  ...
+# Subtest: settle cancellation interrupts retry pauses and bounded options reject before probing
+ok 21 - settle cancellation interrupts retry pauses and bounded options reject before probing
+  ---
+  duration_ms: 11.754209
+  ...
+# PASS exact RF preservation and idempotent revision settlement
+# Subtest: script/vectorwarp-health-watchdog.test.js
+ok 3 - script/vectorwarp-health-watchdog.test.js
+  ---
+  duration_ms: 108.3875
+  ...
+1..22
+# tests 22
+# suites 0
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1500.881166

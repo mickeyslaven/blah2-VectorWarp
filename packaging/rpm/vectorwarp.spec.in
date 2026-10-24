@@ -14,6 +14,16 @@ Requires:       shadow-utils
 Requires:       util-linux
 Requires:       gcc-c++
 Requires:       binutils
+Requires:       cmake
+Requires:       ninja-build
+Requires:       make
+Requires:       git
+Requires:       pkgconf-pkg-config
+Requires:       eigen3-devel
+Requires:       libusb1-devel
+Requires:       openssl-devel
+Requires:       zlib-devel
+Requires:       ca-certificates
 %if 0%{?fedora} == 44
 Requires:       python3-libdnf5
 Requires:       python3-rpm
