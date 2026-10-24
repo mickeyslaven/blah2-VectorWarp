@@ -22,6 +22,9 @@ uncertainty is therefore **unbounded/unknown**, not one second. The configured
 - Anchor each full Heimdall TCP-payload receipt to its coherent end-sample.
 - Use a rolling 31-anchor Theil-Sen offset/drift fit. `eventTime.hostReceipt`
   publishes anchors, median/max residual and drift ppm.
+- Reanchor the published nominal-sample-rate epoch at the latest fitted
+  receipt; fitted host-delivery drift does not accumulate over the full
+  sample index or replace the configured RF sample rate.
 - A fit residual over 100 ms starts a fresh sample epoch, rejecting an
   ambiguous bridge. Retune, metadata change, socket loss, sync loss, recorder
   contention and clip gaps already do likewise.

@@ -91,6 +91,13 @@ private:
       value.maximumResidualNanoseconds = std::max(value.maximumResidualNanoseconds, magnitude);
     }
     value.residualNanoseconds = median(std::move(residuals));
+    // Consumers map samples at the configured sample rate, not the fitted
+    // host-delivery rate. Anchor that nominal-rate mapping at the latest
+    // fitted receipt so host drift cannot accumulate over the epoch's full
+    // sample count. The slope remains a diagnostic of host delivery only.
+    const __int128 correction = static_cast<__int128>(anchors.back().sample) *
+      (nsPerSecond - nominal) / sampleRate;
+    value.epochNanoseconds += static_cast<int64_t>(correction);
     value.available = true;
     return value;
   }
