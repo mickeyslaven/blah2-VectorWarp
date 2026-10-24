@@ -153,14 +153,19 @@ ReceiverSource load_receiver(const std::string& receiver,
     }
     const char* (*startupReceipt)(const Source*) noexcept = nullptr;
     const char* (*health)(const Source*) noexcept = nullptr;
-    if (receiver == "RspDuo") {
+    if (receiver == "RspDuo" || receiver == "Usrp") {
+      const char* startupSymbol = receiver == "RspDuo" ?
+        "blah2_rspduo_startup_receipt_json_v1" :
+        "blah2_usrp_startup_receipt_json_v1";
+      const char* healthSymbol = receiver == "RspDuo" ?
+        "blah2_rspduo_health_json_v1" : "blah2_usrp_health_json_v1";
       dlerror();
       startupReceipt = reinterpret_cast<decltype(startupReceipt)>(
-        dlsym(loaded.library.get(), "blah2_rspduo_startup_receipt_json_v1"));
+        dlsym(loaded.library.get(), startupSymbol));
       if (dlerror()) startupReceipt = nullptr; // Older matching modules have no receipt.
       dlerror();
       health = reinterpret_cast<decltype(health)>(
-        dlsym(loaded.library.get(), "blah2_rspduo_health_json_v1"));
+        dlsym(loaded.library.get(), healthSymbol));
       if (dlerror()) health = nullptr; // Older adapters remain usable without telemetry.
     }
     return ReceiverSource(source, ReceiverSourceDeleter{

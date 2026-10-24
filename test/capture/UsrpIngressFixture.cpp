@@ -4,7 +4,10 @@
 #include <cassert>
 #include <filesystem>
 #include <future>
+#include <fstream>
 #include <iostream>
+#include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 #include <thread>
 #include <unistd.h>
 
@@ -76,6 +79,39 @@ int main() {
       assert(message.find("more samples") != std::string::npos);
       assert(!a.get_length() && !b.get_length() && uhd::fake.stopped);
     }
+    // Missing, regressing and jumping UHD device time terminate the sample
+    // epoch before the invalid block can enter either coherent queue.
+    for (const auto fault : {std::pair<size_t, long long>{2, 0},
+                             {0, -1}, {0, 1}}) {
+      uhd::fake = {}; uhd::fake.failCall = 100;
+      if (fault.first) uhd::fake.missingTimeCall = fault.first;
+      else { uhd::fake.jumpTimeCall = 2; uhd::fake.jumpTicks = fault.second; }
+      IqData a(128), b(128);
+      Usrp radio("Usrp", 527000000, 2000000, "/unused", &save,
+        "", "A:A A:B", {"RX2", "RX2"}, {10, 20});
+      const auto message = rejects([&] { radio.process(&a, &b); });
+      assert(message.find(fault.first ? "omitted device time" : "device-time discontinuity") != std::string::npos);
+      assert(a.get_length() == 7 && b.get_length() == 7 && uhd::fake.calls == 2);
+      const auto time = radio.sample_time_position();
+      assert(time.available && time.deviceTimeEpochTick == 40000000);
+      assert(time.nextSample == 7 && time.sampleRate == 2000000);
+      locks_released(a, b);
+    }
+    // Unknown or unsupported clock topology fails before starting the stream.
+    for (int fault = 0; fault < 4; ++fault) {
+      uhd::fake = {};
+      if (fault == 0) uhd::fake.motherboards = 2;
+      if (fault == 1) uhd::fake.motherboard.clear();
+      if (fault == 2) uhd::fake.clockSource.clear();
+      if (fault == 3) uhd::fake.timeSource.clear();
+      IqData a(128), b(128);
+      Usrp radio("Usrp", 527000000, 2000000, "/unused", &save,
+        "", "A:A A:B", {"RX2", "RX2"}, {10, 20});
+      rejects([&] { radio.process(&a, &b); });
+      assert(!uhd::fake.started && !a.get_length() && !b.get_length());
+      const auto position = radio.sample_time_position();
+      assert(!position.available);
+    }
     // Software queue-full must stop, not evict old IQ to hide a gap.
     {
       uhd::fake = {}; uhd::fake.failCall = 100;
@@ -141,12 +177,29 @@ int main() {
       rejects([&] { radio.process(&a, &b); });
       const auto status = radio.recording_status();
       assert(!status.active && status.samples == 7 && !status.error.empty());
+      std::ifstream provenance(path + ".provenance.json");
+      assert(provenance);
+      rapidjson::IStreamWrapper stream(provenance);
+      rapidjson::Document document;
+      document.ParseStream(stream);
+      assert(!document.HasParseError());
+      assert(std::string(document["schema"].GetString()) ==
+        "vectorwarp-usrp-recording-provenance-v1");
+      assert(std::string(document["startup"]["status"].GetString()) == "accepted");
+      assert(document["startup"]["coherence"]["singleMotherboard"].GetBool());
+      assert(std::string(document["startup"]["coherence"]["policy"].GetString()) ==
+        "single-motherboard-b210-v1");
+      assert(std::string(document["timing"]["deviceTime"]["epochTick"].GetString()) == "40000000");
+      assert(std::string(document["timing"]["deviceTime"]["nextTick"].GetString()) == "40000007");
+      assert(std::string(document["timing"]["deviceTime"]["samples"].GetString()) == "7");
       blah2::ReplayOptions options;
       options.receiver = "Usrp"; options.channels = 2;
       options.sampleRate = 2000000; options.frequency = 527000000;
       const auto message = rejects([&] { blah2::RecordingReader reader(path, options); });
       assert(message.find("not finished cleanly") != std::string::npos);
-      std::filesystem::remove(path); std::filesystem::remove(directory);
+      std::filesystem::remove(path);
+      std::filesystem::remove(path + ".provenance.json");
+      std::filesystem::remove(directory);
     }
     std::cout << "USRP actual receive-loop fixtures passed (fake UHD; no hardware opened)\n";
   } catch (const std::exception& error) {

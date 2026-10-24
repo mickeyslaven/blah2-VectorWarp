@@ -7,6 +7,7 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,9 @@ struct time_spec_t {
   double seconds;
   time_spec_t(double s = 0) : seconds(s) {}
   time_spec_t operator+(time_spec_t other) const { return seconds + other.seconds; }
+  long long to_ticks(double rate) const { return std::llround(seconds * rate); }
+  int64_t get_full_secs() const { return static_cast<int64_t>(std::floor(seconds)); }
+  double get_frac_secs() const { return seconds - std::floor(seconds); }
 };
 struct stream_cmd_t {
   enum Mode { STREAM_MODE_START_CONTINUOUS, STREAM_MODE_STOP_CONTINUOUS };
@@ -27,6 +31,8 @@ struct rx_metadata_t {
   enum Error { ERROR_CODE_NONE, ERROR_CODE_OVERFLOW, ERROR_CODE_TIMEOUT, ERROR_CODE_BAD_PACKET };
   Error error_code = ERROR_CODE_NONE;
   bool out_of_sequence = false;
+  bool has_time_spec = false;
+  time_spec_t time_spec;
   std::string strerror() const { return "injected UHD error " + std::to_string(error_code); }
 };
 struct stream_args_t {
@@ -37,8 +43,13 @@ struct stream_args_t {
 };
 struct FakeState {
   size_t capacity = 64, count = 7, calls = 0, failCall = 2;
+  size_t missingTimeCall = 0, jumpTimeCall = 0;
+  long long jumpTicks = 0;
+  double sampleRate = 2000000;
   rx_metadata_t::Error error = rx_metadata_t::ERROR_CODE_OVERFLOW;
   bool outOfSequence = false, started = false, stopped = false;
+  size_t motherboards = 1;
+  std::string motherboard = "B210", clockSource = "internal", timeSource = "internal";
   std::function<void()> beforeReceive;
 };
 inline FakeState fake;
@@ -59,6 +70,11 @@ public:
     ++fake.calls;
     if (fake.beforeReceive) fake.beforeReceive();
     metadata = {};
+    metadata.has_time_spec = fake.calls != fake.missingTimeCall;
+    const auto firstTick = static_cast<long long>(20 * fake.sampleRate) +
+      static_cast<long long>((fake.calls - 1) * fake.count) +
+      (fake.calls == fake.jumpTimeCall ? fake.jumpTicks : 0);
+    metadata.time_spec = time_spec_t(double(firstTick) / fake.sampleRate);
     if (fake.calls == fake.failCall) {
       metadata.error_code = fake.error;
       metadata.out_of_sequence = fake.outOfSequence;
@@ -86,7 +102,7 @@ public:
   void set_rx_subdev_spec(subdev_spec_t s, size_t) { spec = s; }
   subdev_spec_t get_rx_subdev_spec(size_t) const { return spec; }
   size_t get_rx_num_channels() const { return 2; }
-  void set_rx_rate(double v, size_t c) { rates[c] = v; }
+  void set_rx_rate(double v, size_t c) { rates[c] = v; fake.sampleRate = v; }
   double get_rx_rate(size_t c) const { return rates[c]; }
   void set_rx_freq(double v, size_t c) { frequencies[c] = v; }
   double get_rx_freq(size_t c) const { return frequencies[c]; }
@@ -94,6 +110,10 @@ public:
   double get_rx_gain(size_t c) const { return gains[c]; }
   void set_rx_antenna(std::string v, size_t c) { antennas[c] = std::move(v); }
   std::string get_rx_antenna(size_t c) const { return antennas[c]; }
+  size_t get_num_mboards() const { return fake.motherboards; }
+  std::string get_mboard_name(size_t) const { return fake.motherboard; }
+  std::string get_clock_source(size_t) const { return fake.clockSource; }
+  std::string get_time_source(size_t) const { return fake.timeSource; }
   time_spec_t get_time_now() const { return 10; }
   rx_streamer::sptr get_rx_stream(const stream_args_t& args) const;
 };

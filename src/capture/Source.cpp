@@ -7,6 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+#include <fstream>
 #include <cctype>
 #include <stdexcept>
 
@@ -62,6 +63,7 @@ std::string Source::open_file()
     pendingStarts.assign(recordingChannels, 0);
     channelStarted.assign(recordingChannels, false);
     recordedSamples = 0; recordingError.clear(); recordingActive = true;
+    write_recording_provenance_locked();
   } catch (const std::exception& error) { recording_failed(error.what()); throw; }
   std::cout << "Recording IQ: " << recordingFile << std::endl;
   return recordingFile;
@@ -78,6 +80,7 @@ void Source::close_file()
     flush_recording_locked();
     for (const auto& pending : pendingChannels)
       if (!pending.empty()) throw std::runtime_error("Recording ended with unpaired input samples");
+    write_recording_provenance_locked();
     recordingWriter->close(); recordedSamples = recordingWriter->samples();
   }
   catch (const std::exception& error) { recording_failed(error.what()); throw; }
@@ -85,10 +88,33 @@ void Source::close_file()
 }
 
 void Source::recording_failed(const std::string& error) {
+  try { write_recording_provenance_locked(); } catch (...) {}
   if (recordingWriter) recordedSamples = recordingWriter->samples();
   recordingActive = false; recordingError = error; recordingWriter.reset();
   pendingChannels.clear();
   std::cerr << "Recording stopped: " << error << '\n';
+}
+
+void Source::write_recording_provenance_locked() {
+  if (recordingFile.empty()) return;
+  const auto provenance = recording_provenance_json();
+  if (provenance.empty()) return;
+  const std::filesystem::path target(recordingFile + ".provenance.json");
+  const std::filesystem::path temporary(target.string() + ".tmp");
+  {
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("Cannot create recording provenance sidecar");
+    output.write(provenance.data(), static_cast<std::streamsize>(provenance.size()));
+    output.put('\n');
+    output.close();
+    if (!output) throw std::runtime_error("Cannot write recording provenance sidecar");
+  }
+  std::error_code error;
+  std::filesystem::rename(temporary, target, error);
+  if (error) {
+    std::filesystem::remove(temporary);
+    throw std::runtime_error("Cannot publish recording provenance sidecar: " + error.message());
+  }
 }
 
 Source::RecordingStatus Source::recording_status() const {

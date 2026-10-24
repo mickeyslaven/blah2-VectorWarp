@@ -2,6 +2,7 @@
 #include "UsrpSettings.h"
 #include "UsrpStream.h"
 #include "UsrpIngress.h"
+#include "UsrpCoherence.h"
 
 #include <string.h>
 #include <iostream>
@@ -10,13 +11,16 @@
 #include <uhd/usrp/multi_usrp.hpp>
 #include <cmath>
 #include <stdexcept>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 // constructor
 Usrp::Usrp(std::string _type, uint32_t _fc, uint32_t _fs, 
   std::string _path, bool *_saveIq, std::string _address, 
   std::string _subdev, std::vector<std::string> _antenna, 
   std::vector<double> _gain)
-    : Source(_type, _fc, _fs, _path, _saveIq)
+    : Source(_type, _fc, _fs, _path, _saveIq), deviceTime(_fs)
 {
   address = _address;
   subdev = _subdev;
@@ -35,6 +39,114 @@ void Usrp::stop()
   stopRequested = true;
 }
 
+Source::SampleTimePosition Usrp::sample_time_position() const
+{
+  const auto timing = deviceTime.snapshot();
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  if (!timing.available || !coherenceAvailable) return {};
+  return {true, 0, timing.samples, timing.epochTick, fs,
+    coherence.clockSource, coherence.timeSource, coherence.motherboard,
+    coherence.subdevices};
+}
+
+std::string Usrp::startup_receipt_json() const
+{
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator = document.GetAllocator();
+  document.AddMember("schema", 1, allocator);
+  document.AddMember("receiver", "Usrp", allocator);
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  document.AddMember("status",
+    rapidjson::Value(coherenceAvailable ? "accepted" : "pending", allocator), allocator);
+  rapidjson::Value requested(rapidjson::kObjectType);
+  requested.AddMember("address", rapidjson::Value(address.c_str(), allocator), allocator);
+  requested.AddMember("subdevices", rapidjson::Value(subdev.c_str(), allocator), allocator);
+  requested.AddMember("frequency", fc, allocator);
+  requested.AddMember("sampleRate", fs, allocator);
+  rapidjson::Value antennas(rapidjson::kArrayType), gains(rapidjson::kArrayType);
+  for (unsigned channel = 0; channel < 2; ++channel) {
+    antennas.PushBack(rapidjson::Value(antenna[channel].c_str(), allocator), allocator);
+    gains.PushBack(gain[channel], allocator);
+  }
+  requested.AddMember("antennas", antennas, allocator);
+  requested.AddMember("gains", gains, allocator);
+  document.AddMember("requested", requested, allocator);
+  if (coherenceAvailable) {
+    rapidjson::Value applied(rapidjson::kObjectType);
+    applied.AddMember("motherboards", static_cast<uint64_t>(coherence.motherboards), allocator);
+    applied.AddMember("channels", static_cast<uint64_t>(coherence.channels), allocator);
+    applied.AddMember("motherboard", rapidjson::Value(coherence.motherboard.c_str(), allocator), allocator);
+    applied.AddMember("clockSource", rapidjson::Value(coherence.clockSource.c_str(), allocator), allocator);
+    applied.AddMember("timeSource", rapidjson::Value(coherence.timeSource.c_str(), allocator), allocator);
+    applied.AddMember("subdevices", rapidjson::Value(coherence.subdevices.c_str(), allocator), allocator);
+    applied.AddMember("policy", rapidjson::Value(coherence.policy.c_str(), allocator), allocator);
+    applied.AddMember("singleMotherboard", true, allocator);
+    document.AddMember("coherence", applied, allocator);
+  } else document.AddMember("coherence", rapidjson::Value(rapidjson::kNullType), allocator);
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  document.Accept(writer);
+  return {buffer.GetString(), buffer.GetSize()};
+}
+
+std::string Usrp::health_json() const
+{
+  const auto timing = deviceTime.snapshot();
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator = document.GetAllocator();
+  document.AddMember("schema", 1, allocator);
+  document.AddMember("receiver", "Usrp", allocator);
+  document.AddMember("monitoring", monitoring.load(), allocator);
+  rapidjson::Value time(rapidjson::kObjectType);
+  time.AddMember("source", "uhd-device-time", allocator);
+  time.AddMember("utcMapped", false, allocator);
+  time.AddMember("continuous", timing.available, allocator);
+  time.AddMember("sampleRateHz", fs, allocator);
+  const auto number = [&](int64_t value) {
+    const auto text = std::to_string(value);
+    return rapidjson::Value(text.c_str(), allocator);
+  };
+  const auto unsignedNumber = [&](uint64_t value) {
+    const auto text = std::to_string(value);
+    return rapidjson::Value(text.c_str(), allocator);
+  };
+  if (timing.available) {
+    time.AddMember("epochTick", number(timing.epochTick), allocator);
+    time.AddMember("nextTick", number(timing.nextTick), allocator);
+  } else {
+    time.AddMember("epochTick", rapidjson::Value(rapidjson::kNullType), allocator);
+    time.AddMember("nextTick", rapidjson::Value(rapidjson::kNullType), allocator);
+  }
+  time.AddMember("samples", unsignedNumber(timing.samples), allocator);
+  time.AddMember("blocks", unsignedNumber(timing.blocks), allocator);
+  document.AddMember("deviceTime", time, allocator);
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  document.Accept(writer);
+  return {buffer.GetString(), buffer.GetSize()};
+}
+
+std::string Usrp::recording_provenance_json() const
+{
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator = document.GetAllocator();
+  document.AddMember("schema", "vectorwarp-usrp-recording-provenance-v1", allocator);
+  for (const auto& item : {std::pair<const char*, std::string>{"startup", startup_receipt_json()},
+                           {"timing", health_json()}}) {
+    rapidjson::Document parsed;
+    parsed.Parse(item.second.c_str());
+    if (parsed.HasParseError() || !parsed.IsObject())
+      throw std::runtime_error("[USRP] Could not serialize recording provenance.");
+    rapidjson::Value copied;
+    copied.CopyFrom(parsed, allocator);
+    document.AddMember(rapidjson::Value(item.first, allocator), copied, allocator);
+  }
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  document.Accept(writer);
+  return {buffer.GetString(), buffer.GetSize()};
+}
+
 void Usrp::process(IqData *buffer1, IqData *buffer2)
 {
     if (!buffer1 || !buffer2 || buffer1 == buffer2)
@@ -45,6 +157,12 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
 
     // Set and independently read back both channels before opening the stream.
     apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
+    const auto attestation = attest_usrp_coherence(*usrp, subdev);
+    {
+      std::lock_guard<std::mutex> lock(provenanceMutex);
+      coherence = attestation;
+      coherenceAvailable = true;
+    }
 
     // create a receive streamer
     uhd::stream_args_t streamArgs("fc32", "sc16");
@@ -75,6 +193,11 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
         catch (...) {} // Do not replace the original receive/processing error.
       }
     } stopStream{rxStreamer};
+    struct MonitorStream {
+      std::atomic<bool>& active;
+      ~MonitorStream() { active = false; }
+    } monitorStream{monitoring};
+    monitoring = true;
     UsrpIngressTiming ingressTiming;
 
     while(!stopRequested)
@@ -89,8 +212,10 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
       // hardware/USB endurance failures reported by the upstream project.
       try {
         verify_usrp_receive(metadata, nReceived, samps_per_buff);
-        append_usrp_block(*buffer1, *buffer2, buff_ptrs[0], buff_ptrs[1],
-          nReceived, ingressTiming);
+        const auto deviceTimeObservation = deviceTime.validate(metadata, nReceived);
+        append_usrp_block_committed(*buffer1, *buffer2, buff_ptrs[0], buff_ptrs[1],
+          nReceived, ingressTiming,
+          [&] { deviceTime.commit(deviceTimeObservation); });
       }
       catch (const std::exception& error) {
         const std::string message = std::string(error.what()) + ingressTiming.summary();

@@ -47,6 +47,7 @@ add_executable(testUsrpReadback ${PROJECT_ROOT}/test/capture/UsrpReadbackFixture
 target_compile_features(testUsrpReadback PRIVATE cxx_std_17)
 target_include_directories(testUsrpReadback PRIVATE ${PROJECT_ROOT}/src)
 target_compile_options(testUsrpReadback PRIVATE -UNDEBUG)
+target_link_libraries(testUsrpReadback PRIVATE blah2RapidJson)
 add_test(NAME usrpAppliedReadback COMMAND testUsrpReadback)
 
 # Keep transport parsing and scaled-counter rollover coverage SDK-free.

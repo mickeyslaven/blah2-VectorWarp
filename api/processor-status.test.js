@@ -175,4 +175,55 @@ assert.equal(fresh(null, 6000), false);
 assert.equal(fresh({receivedAt: NaN}, 6000), false);
 assert.equal(fresh({receivedAt: 1000}, 6000), true);
 assert.equal(fresh({receivedAt: 1000}, 6001), false);
+
+const usrpStartup = {schema: 1, receiver: 'Usrp', status: 'accepted',
+  requested: {address: 'type=b200', subdevices: 'A:A A:B',
+    frequency: 527000000, sampleRate: 2000000,
+    antennas: ['RX2', 'RX2'], gains: [10, 20]},
+  coherence: {motherboards: 1, channels: 2, motherboard: 'B210',
+    clockSource: 'internal', timeSource: 'internal', subdevices: 'A:A A:B',
+    policy: 'single-motherboard-b210-v1', singleMotherboard: true}};
+const usrpHealth = {schema: 1, receiver: 'Usrp', monitoring: true,
+  deviceTime: {source: 'uhd-device-time', utcMapped: false, continuous: true,
+    sampleRateHz: 2000000, epochTick: '40000000', nextTick: '40000014',
+    samples: '14', blocks: '2'}};
+const usrpLive = {...replay, input: 'live', receiver: 'Usrp', state: 'live',
+  file: '', frequency: 527000000, sampleRate: 2000000,
+  receiverStartup: usrpStartup, receiverHealth: usrpHealth};
+assert.deepEqual(status(usrpLive).value.receiverStartup, usrpStartup);
+assert.deepEqual(status(usrpLive).value.receiverHealth, usrpHealth);
+assert.equal(status({...usrpLive, receiverStartup: {...usrpStartup, status: 'pending',
+  coherence: null}, receiverHealth: {...usrpHealth, monitoring: false,
+    deviceTime: {...usrpHealth.deviceTime, continuous: false, epochTick: null,
+      nextTick: null, samples: '0', blocks: '0'}}}).valid, true);
+for (const receiverStartup of [
+  {...usrpStartup, coherence: {...usrpStartup.coherence, motherboards: 2}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, clockSource: ''}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, timeSource: ''}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, motherboard: 'X310'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, policy: 'all-usrps'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, subdevices: 'A:B A:A'}},
+  {...usrpStartup, requested: {...usrpStartup.requested, sampleRate: 6000000}},
+  {...usrpStartup, status: 'pending'}
+]) assert.equal(status({...usrpLive, receiverStartup}).valid, false,
+  JSON.stringify(receiverStartup));
+for (const deviceTime of [
+  {...usrpHealth.deviceTime, source: 'host-arrival-time'},
+  {...usrpHealth.deviceTime, utcMapped: true},
+  {...usrpHealth.deviceTime, sampleRateHz: 6000000},
+  {...usrpHealth.deviceTime, nextTick: '40000015'},
+  {...usrpHealth.deviceTime, epochTick: null},
+  {...usrpHealth.deviceTime, samples: 14},
+  {...usrpHealth.deviceTime, continuous: false},
+  {...usrpHealth.deviceTime, continuous: false, epochTick: null, nextTick: null,
+    samples: '0', blocks: '1'}
+]) assert.equal(status({...usrpLive,
+  receiverHealth: {...usrpHealth, deviceTime}}).valid, false, JSON.stringify(deviceTime));
+const sanitizedUsrp = status({...usrpLive,
+  receiverStartup: {...usrpStartup, injected: '<script>'},
+  receiverHealth: {...usrpHealth, injected: '<script>',
+    deviceTime: {...usrpHealth.deviceTime, injected: '<script>'}}});
+assert.equal(sanitizedUsrp.valid, true);
+assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverStartup, 'injected'), false);
+assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverHealth.deviceTime, 'injected'), false);
 console.log('Processor status validation and freshness tests passed.');

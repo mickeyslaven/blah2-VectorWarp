@@ -53,6 +53,9 @@ public:
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
     int64_t epochEstimateNanoseconds = 0;
+    int64_t deviceTimeEpochTick = 0;
+    uint32_t sampleRate = 0;
+    std::string clockSource, timeSource, motherboard, subdevices;
   };
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
@@ -116,6 +119,7 @@ public:
     // letting wall-clock playback time masquerade as sample time.
     return type == "Kraken";
   }
+  bool requires_usrp_time_provenance() const { return type == "Usrp"; }
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

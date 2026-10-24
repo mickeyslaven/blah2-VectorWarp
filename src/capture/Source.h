@@ -50,6 +50,7 @@ private:
   std::vector<bool> channelStarted;
   void recording_failed(const std::string& error);
   void flush_recording_locked();
+  void write_recording_provenance_locked();
 
 public:
 
@@ -82,6 +83,18 @@ public:
   /// @brief Call methods to gracefully stop capture.
   /// @return Void.
   virtual void stop() = 0;
+
+  struct SampleTimePosition {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+    int64_t deviceTimeEpochTick = 0;
+    uint32_t sampleRate = 0;
+    std::string clockSource, timeSource, motherboard, subdevices;
+  };
+  virtual SampleTimePosition sample_time_position() const { return {}; }
+  // Empty means this receiver has no recording sidecar contract.
+  virtual std::string recording_provenance_json() const { return {}; }
 
   // File replay is receiver-independent and is owned by Capture/ReplayPlayer.
 

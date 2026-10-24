@@ -58,6 +58,7 @@ if(BLAH2_ENABLE_USRP)
   blah2_add_receiver(blah2ReceiverUsrp usrp BLAH2_MODULE_USRP
     ${PROJECT_ROOT}/src/capture/usrp/Usrp.cpp ${UHD_LIBRARIES})
   target_include_directories(blah2ReceiverUsrp PRIVATE ${UHD_INCLUDE_DIRS})
+  target_link_libraries(blah2ReceiverUsrp PRIVATE blah2RapidJson)
 endif()
 if(BLAH2_ENABLE_HACKRF)
   if(APPLE)

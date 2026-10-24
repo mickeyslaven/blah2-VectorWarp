@@ -30,10 +30,16 @@ Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _pat
 Capture::SamplePosition Capture::live_sample_position() const
 {
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
-  if (!kraken) return {};
-  const auto value = kraken->sample_position();
-  return {value.available, value.epoch, value.nextSample,
-    value.epochEstimateNanoseconds};
+  if (kraken) {
+    const auto value = kraken->sample_position();
+    return {value.available, value.epoch, value.nextSample,
+      value.epochEstimateNanoseconds};
+  }
+  if (!device) return {};
+  const auto value = device->sample_time_position();
+  return {value.available, value.epoch, value.nextSample, 0,
+    value.deviceTimeEpochTick, value.sampleRate, value.clockSource,
+    value.timeSource, value.motherboard, value.subdevices};
 }
 
 void Capture::process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 
@@ -287,7 +293,7 @@ std::string Capture::status_json() const {
     document.AddMember("pairedCpiDropped", queue.discardedSamples, a);
     document.AddMember("pairedCpiTrailingSamples", queue.trailingSamples, a);
   }
-  if (type == "RspDuo" && device) {
+  if ((type == "RspDuo" || type == "Usrp") && device) {
     const auto receiptJson = blah2::receiver_startup_receipt(device);
     rapidjson::Document receipt;
     receipt.Parse(receiptJson.c_str());

@@ -24,6 +24,10 @@ struct EventTimeProvenance
   uint64_t firstSample = 0;
   uint64_t endSample = 0;
   uint32_t sampleRate = 0;
+  std::string source = "kraken_heimdall_host_arrival_estimate";
+  bool deviceTimeAvailable = false;
+  int64_t deviceTimeEpochTick = 0;
+  std::string clockSource, timeSource, motherboard, subdevices;
   std::string reason;
 };
 
@@ -33,6 +37,40 @@ inline EventTimeProvenance kraken_event_time_unavailable(
   EventTimeProvenance value;
   value.present = true;
   value.reason = std::move(reason);
+  return value;
+}
+
+inline EventTimeProvenance usrp_event_time_unavailable(
+  std::string reason = "USRP device sample time is unavailable")
+{
+  EventTimeProvenance value;
+  value.present = true;
+  value.source = "usrp_uhd_device_time";
+  value.reason = std::move(reason);
+  return value;
+}
+
+inline EventTimeProvenance usrp_cpi_midpoint_time(int64_t epochTick,
+  uint64_t firstSample, uint64_t endSample, uint32_t sampleRate,
+  std::string clockSource, std::string timeSource,
+  std::string motherboard, std::string subdevices)
+{
+  auto value = usrp_event_time_unavailable();
+  value.epoch = 0;
+  value.firstSample = firstSample;
+  value.endSample = endSample;
+  value.sampleRate = sampleRate;
+  value.deviceTimeEpochTick = epochTick;
+  value.clockSource = std::move(clockSource);
+  value.timeSource = std::move(timeSource);
+  value.motherboard = std::move(motherboard);
+  value.subdevices = std::move(subdevices);
+  if (epochTick < 0 || endSample <= firstSample || !sampleRate ||
+      value.clockSource.empty() || value.timeSource.empty() ||
+      value.motherboard.empty() || value.subdevices.empty())
+    return value;
+  value.deviceTimeAvailable = true;
+  value.reason = "UHD device time is sample-contiguous but is not mapped to UTC";
   return value;
 }
 
@@ -73,7 +111,7 @@ inline rapidjson::Value event_time_json(const EventTimeProvenance& value,
 {
   rapidjson::Value result(rapidjson::kObjectType);
   result.AddMember("schema", "vectorwarp-event-time-v1", allocator);
-  result.AddMember("source", "kraken_heimdall_host_arrival_estimate", allocator);
+  result.AddMember("source", rapidjson::Value(value.source.c_str(), allocator), allocator);
   result.AddMember("exact", false, allocator);
   result.AddMember("uncertaintyBounded", false, allocator);
   result.AddMember("uncertaintyNs", rapidjson::Value(rapidjson::kNullType), allocator);
@@ -96,6 +134,31 @@ inline rapidjson::Value event_time_json(const EventTimeProvenance& value,
   result.AddMember("firstSample", unsignedText(value.firstSample), allocator);
   result.AddMember("endSample", unsignedText(value.endSample), allocator);
   result.AddMember("sampleRateHz", value.sampleRate, allocator);
+  if (value.source == "usrp_uhd_device_time") {
+    result.AddMember("deviceTimeAvailable", value.deviceTimeAvailable, allocator);
+    if (value.deviceTimeAvailable) {
+      result.AddMember("deviceTimeEpochTick", text(value.deviceTimeEpochTick), allocator);
+      const __int128 midpointNumerator =
+        static_cast<__int128>(value.deviceTimeEpochTick) * 2 +
+        static_cast<__int128>(value.firstSample) +
+        static_cast<__int128>(value.endSample);
+      if (midpointNumerator >= std::numeric_limits<int64_t>::min() &&
+          midpointNumerator <= std::numeric_limits<int64_t>::max())
+        result.AddMember("deviceTimeMidpointTickNumerator",
+          text(static_cast<int64_t>(midpointNumerator)), allocator);
+      else result.AddMember("deviceTimeMidpointTickNumerator",
+        rapidjson::Value(rapidjson::kNullType), allocator);
+      result.AddMember("deviceTimeMidpointTickDenominator", 2, allocator);
+    } else {
+      result.AddMember("deviceTimeEpochTick", rapidjson::Value(rapidjson::kNullType), allocator);
+      result.AddMember("deviceTimeMidpointTickNumerator", rapidjson::Value(rapidjson::kNullType), allocator);
+      result.AddMember("deviceTimeMidpointTickDenominator", rapidjson::Value(rapidjson::kNullType), allocator);
+    }
+    result.AddMember("clockSource", rapidjson::Value(value.clockSource.c_str(), allocator), allocator);
+    result.AddMember("timeSource", rapidjson::Value(value.timeSource.c_str(), allocator), allocator);
+    result.AddMember("motherboard", rapidjson::Value(value.motherboard.c_str(), allocator), allocator);
+    result.AddMember("subdevices", rapidjson::Value(value.subdevices.c_str(), allocator), allocator);
+  }
   result.AddMember("reason", rapidjson::Value(value.reason.c_str(), allocator), allocator);
   return result;
 }

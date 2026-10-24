@@ -198,6 +198,14 @@ the corrected verifier must mark a discontinuity before append/record.
 fail or start a new epoch on any jump, and publish/record the device epoch and
 per-CPI sample interval.
 
+**Remediation.** Implemented fail-closed validation in
+`src/capture/usrp/UsrpDeviceTime.h`: every successful nonempty UHD block must
+carry the exact next sample tick, and the timing state is committed atomically
+with paired queue insertion. Status, event publications, and the recording
+sidecar preserve the relative device-time interval. Because this device clock
+has no qualified UTC mapping, published USRP event time remains `exact:false`
+and authoritative ADS-B/OPRS scoring rejects it.
+
 ### F6 — two UHD channels do not prove a coherent topology (**Medium**)
 
 Settings are applied to motherboard index 0 and checked per channel, but there is
@@ -218,6 +226,13 @@ phase-coherent two-channel device (such as an explicitly identified B210) or add
 clock/time source configuration, PPS/time synchronization, motherboard and
 sensor readback, timed-start verification, and a physical common-signal phase/
 sample-lag qualification.
+
+**Remediation.** `src/capture/usrp/UsrpCoherence.h` now enforces the bounded
+`single-motherboard-b210-v1` policy before streaming: one motherboard, B210
+identity, at least two receive channels, two distinct applied subdevices, and
+nonempty UHD clock/time-source readback. Other USRP models and multi-motherboard
+topologies fail closed pending separate qualification. This attests topology;
+it does not replace a hardware phase/LO calibration test.
 
 ## Backend review 4 — dual HackRF (**Complete**)
 

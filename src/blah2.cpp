@@ -1140,6 +1140,9 @@ try
         uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
           captureEndEpochSample = 0;
         int64_t captureEpochEstimateNanoseconds = 0;
+        int64_t captureDeviceTimeEpochTick = 0;
+        std::string captureClockSource, captureTimeSource,
+          captureMotherboard, captureSubdevices;
 #ifdef VECTORWARP_MIXED_AUTO
         blah2::mixed::Choice mixedChoice = blah2::mixed::Choice::cpu;
         bool mixedChoiceMade = false, mixedInputPrepared = false;
@@ -1222,6 +1225,11 @@ try
               captureEpoch = position.epoch;
               captureEpochEstimateNanoseconds =
                 position.epochEstimateNanoseconds;
+              captureDeviceTimeEpochTick = position.deviceTimeEpochTick;
+              captureClockSource = position.clockSource;
+              captureTimeSource = position.timeSource;
+              captureMotherboard = position.motherboard;
+              captureSubdevices = position.subdevices;
               captureFirstEpochSample = position.nextSample -
                 captureBacklogSamples.front();
               captureEndEpochSample = captureFirstEpochSample + nSamples;
@@ -1239,8 +1247,16 @@ try
           time.push_back(captureStartUs ? captureStartUs : current_time_us());
           auto eventTime = capture->requires_kraken_time_provenance() ?
             blah2::kraken_event_time_unavailable() :
-            blah2::EventTimeProvenance{};
-          if (captureSamplePositionAvailable)
+            capture->requires_usrp_time_provenance() ?
+              blah2::usrp_event_time_unavailable() :
+              blah2::EventTimeProvenance{};
+          if (captureSamplePositionAvailable &&
+              capture->requires_usrp_time_provenance())
+            eventTime = blah2::usrp_cpi_midpoint_time(
+              captureDeviceTimeEpochTick, captureFirstEpochSample,
+              captureEndEpochSample, fs, captureClockSource,
+              captureTimeSource, captureMotherboard, captureSubdevices);
+          else if (captureSamplePositionAvailable)
             eventTime = blah2::kraken_cpi_midpoint_time(
               captureEpochEstimateNanoseconds, captureEpoch,
               captureFirstEpochSample, captureEndEpochSample, fs);

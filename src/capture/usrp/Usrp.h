@@ -17,8 +17,12 @@
 
 #include "capture/Source.h"
 #include "data/IqData.h"
+#include "UsrpCoherence.h"
+#include "UsrpDeviceTime.h"
 
 #include <stdint.h>
+#include <atomic>
+#include <mutex>
 #include <string>
 
 class Usrp : public Source
@@ -39,6 +43,12 @@ private:
   /// @brief USRP gain for each channel.
   std::vector<double> gain;
 
+  UsrpDeviceTime deviceTime;
+  mutable std::mutex provenanceMutex;
+  bool coherenceAvailable = false;
+  UsrpCoherenceAttestation coherence;
+  std::atomic<bool> monitoring{false};
+
 public:
 
   /// @brief Constructor.
@@ -53,15 +63,20 @@ public:
   /// @param buffer1 Pointer to reference buffer.
   /// @param buffer2 Pointer to surveillance buffer.
   /// @return Void.
-  void process(IqData *buffer1, IqData *buffer2);
+  void process(IqData *buffer1, IqData *buffer2) override;
 
   /// @brief Call methods to start capture.
   /// @return Void.
-  void start();
+  void start() override;
 
   /// @brief Call methods to gracefully stop capture.
   /// @return Void.
-  void stop();
+  void stop() override;
+
+  SampleTimePosition sample_time_position() const override;
+  std::string startup_receipt_json() const;
+  std::string health_json() const;
+  std::string recording_provenance_json() const override;
 
 
 };

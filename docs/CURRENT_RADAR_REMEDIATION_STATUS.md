@@ -54,7 +54,7 @@ provenance while the radar continued processing at the unchanged RF settings.
 | --- | --- | --- | --- |
 | 1 | Kraken/F1/F5: dequeue/TCP-arrival time presented as exact RF time | Deployed with fail-closed authoritative lane | `096e7e4`, `b02ba18`, `ccbef6b`; exact acceptance remains blocked until Heimdall supplies qualified RF time |
 | 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | Code and tests complete | `87952c3`; every GainChange creates a hard epoch boundary, invalidates stale work, and stops recording. Residual boundary is callback-aligned (`sampleAligned:false`) because SDRplay supplies no sample counter |
-| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | In progress | Reject missing/jumping device time; attest clock/time source and supported topology |
+| 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, or jumping device time stops before append; scored capture is limited to an attested single-motherboard B210 with two distinct subdevices. Device time remains non-UTC and exact ADS-B scoring fails closed |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Pending after USRP | Any unequal drop/progression must invalidate both channels and restart a qualified epoch |
 | 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Pending after backend fixes | Versioned manifest/header with replay round-trip tests |
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Pending after recording | Fedora then Debian/Ubuntu/Pi package tests with the actual service restrictions |
@@ -78,6 +78,10 @@ provenance while the radar continued processing at the unchanged RF settings.
 - RSPduo gain-boundary changes passed mocked SDK, paired-queue, API schema, SDRplay
   3.15-header, and full processor build checks. This backend is not deployed on
   or exercised against the live Kraken node.
+- USRP device-time/topology changes passed deterministic missing/regressing/
+  jumping timestamp and topology tests, API provenance validation, and a full
+  processor plus receiver-module build against Homebrew UHD 4.10 headers. No
+  radio hardware was opened and the live Kraken node was not changed.
 
 ## Supporting artifacts
 
