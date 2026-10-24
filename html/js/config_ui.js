@@ -24,7 +24,7 @@ const CONFIG_META = {
   'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
   'capture.device.heimdall.channel_gains': ['Coherent channel gains', 'Optional fixed dB vector, one physical tuner-table gain per channel.'],
   'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
-  'capture.device.address': ['USRP address', 'UHD device address or hostname'],
+  'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
   'capture.device.gain': ['Channel gains', 'Gain for each receive channel, in dB.'],

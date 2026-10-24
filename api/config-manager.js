@@ -58,7 +58,7 @@ const DEVICE_PROFILES = [
     description: 'Two coherent receive channels through UHD',
     sampleRate: 2000000,
     device: {
-      type: 'Usrp', address: 'localhost', subdev: 'A:A A:B',
+      type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
       antenna: ['RX2', 'RX2'], gain: [20, 20]
     }
   },
@@ -376,6 +376,10 @@ function validateConfig(config, baseline = null, options = {}) {
       errors.push('capture.device.heimdall.host must be an IP address or hostname, without a URL or port');
   } else if (device.type === 'Usrp') {
     string(device.address, 'capture.device.address');
+    if (typeof device.address === 'string' && device.address.trim() &&
+        !device.address.split(',').every(item =>
+          /^[A-Za-z0-9_]+\s*=\s*[^,=]+$/.test(item.trim())))
+      errors.push('capture.device.address must use UHD key=value arguments, such as type=b200 or type=b200,serial=…');
     string(device.subdev, 'capture.device.subdev');
     if (!Array.isArray(device.antenna) || device.antenna.length !== 2)
       errors.push('capture.device.antenna must contain exactly two values');

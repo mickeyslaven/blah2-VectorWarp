@@ -3,7 +3,7 @@ capture:
   fc: 204640000
   device:
     type: "Usrp"
-    address: "localhost"
+    address: "type=b200"
     subdev: "A:A A:B"
     antenna: ["RX2", "RX2"]
     gain: [20.0, 20.0]

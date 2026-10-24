@@ -303,6 +303,24 @@ for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'confi
 const profiles = getDeviceProfiles();
 assert.deepEqual(profiles.map(profile => profile.type).sort(),
   ['HackRF', 'Kraken', 'RspDuo', 'Usrp']);
+const usrpProfile = profiles.find(profile => profile.type === 'Usrp');
+assert.equal(usrpProfile.device.address, 'type=b200',
+  'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
+assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
+  'The installed USRP example must select the B200 family');
+for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial']) {
+  const invalid = load('config-usrp.yml');
+  invalid.capture.device.address = address;
+  assert.equal(validateConfig(invalid).valid, false,
+    `Reject malformed UHD device arguments: ${address}`);
+}
+for (const address of ['type=b200', 'serial=31ABC42', 'addr=192.0.2.1',
+  'type=b200,serial=31ABC42']) {
+  const valid = load('config-usrp.yml');
+  valid.capture.device.address = address;
+  assert.equal(validateConfig(valid).valid, true,
+    `Accept UHD key=value device arguments: ${address}`);
+}
 
 for (const profile of profiles) {
   const switched = clone(sixChannel);
