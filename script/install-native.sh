@@ -70,6 +70,20 @@ else
   [[ -r /etc/os-release ]] || die 'cannot identify host distribution'
   TARGET_DISTRO=$(. /etc/os-release; printf '%s' "$ID")
 fi
+if $WITH_SYSTEMD && [[ $PREFIX != /opt/vectorwarp || $SYSCONFDIR != /etc/vectorwarp ]]; then
+  die 'custom --prefix or --sysconfdir requires --no-systemd; global VectorWarp CLI and unit names cannot be isolated'
+fi
+if [[ -z $DESTDIR && ( $PREFIX == /opt/vectorwarp || $SYSCONFDIR == /etc/vectorwarp || $WITH_SYSTEMD == true ) ]]; then
+  package_owner=
+  if command -v dpkg-query >/dev/null 2>&1 &&
+      dpkg-query -W -f='${db:Status-Status}\n' vectorwarp 2>/dev/null | grep -Fxq installed; then
+    package_owner=DEB
+  elif command -v rpm >/dev/null 2>&1 && rpm -q vectorwarp >/dev/null 2>&1; then
+    package_owner=RPM
+  fi
+  [[ -z $package_owner ]] ||
+    die "$package_owner package vectorwarp owns the default integration paths; uninstall it before a source install"
+fi
 if $SETUP_PI_GPU; then
   [[ -z $DESTDIR ]] || die '--setup-pi-gpu is forbidden with --destdir; staging never probes or changes the host GPU'
   $WITH_SYSTEMD || die '--setup-pi-gpu requires the installed integration helpers'

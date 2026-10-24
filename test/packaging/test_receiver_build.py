@@ -376,7 +376,8 @@ endif()
         artifact = self.make_artifact('kraken', 'Kraken')
         cases = (
             ((), 'vectorwarp help lists all commands'),
-            (('--prefix', '/opt/vectorwarp-custom'), 'custom prefix: vectorwarp stop/restart refuse'),
+            (('--prefix', '/opt/vectorwarp-custom', '--sysconfdir', '/etc/vectorwarp-custom', '--no-systemd'),
+             'systemd integration was not installed'),
             (('--no-systemd',), 'systemd integration was not installed'),
         )
         for index, (options, guidance) in enumerate(cases):
@@ -386,6 +387,27 @@ endif()
                 self.assertIn(guidance, result.stdout)
                 self.assertNotIn('systemctl enable --now vectorwarp-api.service vectorwarp-processor.service',
                                  result.stdout)
+
+    def test_custom_prefix_requires_isolated_no_systemd_install(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        result = self.install(artifact, self.temp / 'custom-systemd',
+                              '--prefix', '/opt/vectorwarp-custom', '--preflight')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires --no-systemd', result.stderr)
+
+    def test_live_source_preflight_refuses_installed_deb_or_rpm(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        for manager in ('dpkg-query', 'rpm'):
+            with self.subTest(manager=manager):
+                tools = self.temp / f'package-{manager}'
+                tools.mkdir()
+                executable(tools / manager, '#!/bin/sh\nexit 0\n')
+                environment = os.environ | {'PATH': f'{tools}:{os.environ.get("PATH", "")}' }
+                result = subprocess.run([
+                    'bash', str(INSTALL_SCRIPT), '--artifact', str(artifact), '--preflight'],
+                    cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('package vectorwarp owns', result.stderr)
 
     def test_usb_rule_stage_requires_explicit_target_and_preserves_debian_group(self):
         artifact = self.make_artifact('hackrf', 'HackRF,Kraken')

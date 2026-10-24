@@ -52,7 +52,11 @@ def main():
     app_root = args.app_root.resolve()
     if not binary.is_file():
         raise SystemExit(f'Missing native processor: {binary}')
-    node = (app_root / 'bin/node').resolve() if args.standalone else Path(shutil.which('node') or '')
+    if args.standalone:
+        node = (app_root / 'bin/node').resolve()
+    else:
+        bundled = app_root / 'runtime/node/bin/node'
+        node = bundled.resolve() if bundled.is_file() else Path(shutil.which('node') or '')
     if not node.is_file():
         raise SystemExit(f'Missing Node runtime: {node}')
     with tempfile.TemporaryDirectory(prefix='vectorwarp-macos-lifecycle-') as temporary:

@@ -116,6 +116,16 @@ const iq = net.createServer(socket => {
   write();
 });
 const listen = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+async function reservePorts(count) {
+  const listeners = await Promise.all(Array.from({length: count}, () => new Promise((resolve, reject) => {
+    const listener = net.createServer();
+    listener.once('error', reject);
+    listener.listen(0, '127.0.0.1', () => resolve(listener));
+  })));
+  const ports = listeners.map(listener => listener.address().port);
+  await Promise.all(listeners.map(listener => new Promise(resolve => listener.close(resolve))));
+  return ports;
+}
 let revision;
 function request(method, route, body, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -145,9 +155,9 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
 (async () => {
   try {
     await listen(suite); await listen(iq);
-    const basePort = 32000 + process.pid % 1000;
     config.network.ip = '127.0.0.1';
-    Object.keys(config.network.ports).forEach((key, i) => { config.network.ports[key] = basePort + i; });
+    const ports = await reservePorts(Object.keys(config.network.ports).length);
+    Object.keys(config.network.ports).forEach((key, i) => { config.network.ports[key] = ports[i]; });
     config.truth.adsb.enabled = false;
     config.capture.device.heimdall = {host: '127.0.0.1', port: iq.address().port,
       control_port: suite.address().port, gain: 14, gain_control: 'fixed'};

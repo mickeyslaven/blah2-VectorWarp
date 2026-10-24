@@ -115,6 +115,33 @@ complete; all four OS/package lifecycle passes are complete.
 
 ## Completed validation
 
+### v0.1.23 pre-release hardening
+
+The release candidate adds permanent regression gates for defects found during
+the cross-platform acceptance pass:
+
+- API integration tests allocate ephemeral ports rather than deriving a fixed
+  range from the process ID, eliminating parallel-run port collisions.
+- Both installed macOS lifecycle suites select the package's pinned Node
+  runtime even when `PATH` contains an intentionally unusable `node`; the real
+  Homebrew package passed lifecycle, five-channel simulated Heimdall-to-API,
+  crash-recovery, retune, replay, formula, and linkage checks on Apple Silicon.
+- The immutable RPM payload keeps the explicitly-invoked Node version helper
+  non-executable so dependency scanning cannot invent a host `/usr/bin/node`
+  requirement.
+- Source installs refuse package-owned integration paths, package first-install
+  refuses an unmanaged `/opt/vectorwarp` footprint, and custom prefixes require
+  `--no-systemd`. Debian/RPM directionality tests cover both collision orders.
+- Linux package/source collision tests remain required in the Fedora/Debian CI
+  jobs because their GNU `stat`, `realpath`, systemd, and package-manager
+  semantics cannot be accepted from macOS fixtures.
+
+Independent pre-release review passed the API and macOS universal/standalone
+fixture suites and found no additional reproducible runtime defect. It requires
+the Linux package jobs to pass before merge. No physical SDR was attached to the
+Mac; the five-channel Kraken test used USB-isolated simulated IQ and did not
+touch the live 527 MHz node.
+
 - Native Kraken suite: 9,323 assertions in 16 tests passed on Linux/Strix.
 - Full API test chain passed.
 - Unequal-gain live/replay parity and gain-metadata mismatch rejection passed.

@@ -78,10 +78,13 @@ jobs:
         run: |
           set -euo pipefail
           app_root="$(brew --prefix mickeyslaven/vectorwarp/vectorwarp)/libexec"
-          export PATH="$app_root/runtime/node/bin:$PATH"
           export NODE_PATH="$app_root/api/node_modules"
           python3 test/recording/processor_replay_test.py --binary "$app_root/bin/blah2"
-          python3 test/macos/processor_lifecycle_test.py --binary "$app_root/bin/blah2" --app-root "$app_root"
+          mkdir -p "$RUNNER_TEMP/stale-node"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/stale-node/node"
+          chmod +x "$RUNNER_TEMP/stale-node/node"
+          PATH="$RUNNER_TEMP/stale-node:$PATH" python3 test/macos/processor_lifecycle_test.py \
+            --binary "$app_root/bin/blah2" --app-root "$app_root"
       - name: Upload only formulas that passed the installed checks
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -22,6 +22,7 @@ class UpgradeHookTests(unittest.TestCase):
         self.systemd.mkdir()
         self.state = self.base / 'upgrade.state'
         self.socket_unit = self.base / 'vectorwarp-receiver.socket'
+        self.package_prefix = self.base / 'opt-vectorwarp'
         shutil.copy2(ROOT / 'contrib/systemd/vectorwarp-receiver.socket', self.socket_unit)
         self.log = self.base / 'calls.log'
         systemctl = self.tools / 'systemctl'
@@ -74,6 +75,7 @@ esac
         source = source.replace('/run/vectorwarp-package-upgrade.lock', str(self.base / 'upgrade.lock'))
         source = source.replace('/usr/lib/systemd/system/vectorwarp-receiver.socket', str(self.socket_unit))
         source = source.replace('/opt/vectorwarp/runtime/node/bin/node', str(self.tools / 'node'))
+        source = source.replace('/opt/vectorwarp', str(self.package_prefix))
         script = self.base / Path(relative).name
         script.write_text(source)
         script.chmod(0o755)
@@ -147,6 +149,16 @@ esac
         self.assertEqual(self.call(pre, 'install').returncode, 0)
         self.assertFalse(self.state.exists())
         self.assertFalse(self.log.exists())
+
+    def test_first_install_refuses_an_unmanaged_source_footprint(self):
+        pre = self.script('packaging/deb/preinst')
+        self.package_prefix.mkdir()
+        for argument in ('install', '1'):
+            with self.subTest(argument=argument):
+                result = self.call(pre, argument)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('not package-managed', result.stderr)
+                self.assertFalse(self.log.exists())
 
     def test_manual_stop_stops_every_own_unit_and_removes_only_its_snapshot(self):
         result = self.call(self.script('packaging/deb/preinst'), 'manual-stop', SOCKET_STATE='active')
