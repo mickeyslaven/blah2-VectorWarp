@@ -354,8 +354,8 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'Detailed finalized passes must remain bounded for restart-safe persistence');
   assert.equal(boundedState.state.rollup.passes, 1);
   assert.equal(boundedState.state.rollup.tracked, 1);
-  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 64);
-  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 64);
+  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 16);
+  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 16);
   boundedState.persist();
   assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
     'Bounded synthetic state must remain well below the loader safety cap');

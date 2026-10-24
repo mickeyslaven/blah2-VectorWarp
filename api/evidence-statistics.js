@@ -12,8 +12,11 @@ const SPEED_OF_LIGHT_KM_S = 299792.458;
 // next API restart.
 const MAX_PASSES = 500;
 const MAX_ELIGIBILITY_EVENTS = 250;
-const MAX_FINALIZED_CPI_AUDIT = 64;
-const MAX_FINALIZED_TRUTH_SAMPLES = 64;
+// First/last truth remain separately preserved on every pass. Sixteen detailed
+// tail rows are enough for diagnosis without letting 500 passes approach the
+// 64 MiB normal operating target.
+const MAX_FINALIZED_CPI_AUDIT = 16;
+const MAX_FINALIZED_TRUTH_SAMPLES = 16;
 const MAX_STATE_INPUT_BYTES = 256 * 1024 * 1024;
 // Keep the trigger window permanently while retaining a recent tail for pass
 // diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
