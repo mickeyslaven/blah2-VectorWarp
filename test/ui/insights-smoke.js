@@ -116,7 +116,9 @@ global.fetchStatusResource = async (url, options = {}) => {
   url = new URL(url, window.location.origin).href;
   const fixtures = mode === 'rich' ? rich : portable;
   const path = new URL(url).pathname.replace('/api/runtime/config', '/api/config')
-    .replace('/api/adsb/delay-doppler', '/api/dd').replace('/api/live-scorecard', '/api/statistics');
+    .replace('/api/adsb/delay-doppler', '/api/dd')
+    .replace('/api/live-scorecard/provisional', '/api/statistics')
+    .replace('/api/live-scorecard', '/api/statistics');
   if (path === '/api/system/status') return {ok: true, text: async () => JSON.stringify({serverId: 'fixture', radar: 'receiving'})};
   if (path === '/api/adsb/status') return {ok: true, text: async () => JSON.stringify({enabled: mode === 'rich', online: mode === 'rich'})};
   if (!(path in fixtures)) return {ok: false, status: 404, text: async () => ''};
