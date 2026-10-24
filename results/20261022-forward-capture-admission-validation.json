@@ -1,0 +1,79 @@
+{
+  "schema": "vectorwarp-forward-capture-admission-validation-v1",
+  "validated_at_ms": 1792692905902,
+  "host": "root@100.126.186.65",
+  "commits": [
+    "274082b7a41c094f6547ac91069944c7a8593932",
+    "38a9961e97e4e613d0c98442156426863bb362bf",
+    "38a4f1c1b6789fc8866a3566d402db12c767a3d1",
+    "d3fe1be82d15e912524a520f137ed2f8e5034ca3"
+  ],
+  "deployed_release": "/opt/vectorwarp/releases/20261022T181410Z-capture-admission-38a4f1c",
+  "config_sha256": "ea5ddd10b6a717716ad1f44ad069fc1cb4f63172f8041f5ba247fd6f1783ff15",
+  "rf": {
+    "frequency_hz": 563000000,
+    "sample_rate_hz": 2400000,
+    "channels": 5,
+    "mode": "coherent",
+    "channel_order": [0, 1, 2, 3, 4],
+    "channel_gains_db": [19.7, 25.4, 20.7, 25.4, 22.9],
+    "phase_state": 4,
+    "noise_source": 0,
+    "retuning_in_progress": 0
+  },
+  "incident": {
+    "truth_gap_cause": "Event truth retained the first 30 and newest 30 one-second samples, deleting the middle of long passes; no pre-trigger truth history was copied into a new event.",
+    "deleted_pointer_audit": {"ledger_pointers": 513, "raw_present": 160, "sidecar_present": 160, "raw_missing": 353},
+    "deleted_pointer_cause": "No production recorder retention or prune unit was found. Historical ledger rows remained immutable after external/manual recording removal.",
+    "initial_integrity_failure": "The API raced native sidecar publication and could not reopen legacy 0600 processor-owned files.",
+    "receiver_reconciliation": "Suite had reset per-channel gains to five values of 2.7 dB. Safe Apply issued only set_channel_gains and verified authoritative readback before processor start. Frequency, rate, channel count, coherent mode and physical mapping were unchanged."
+  },
+  "fix": {
+    "truth_sampling_ms": 500,
+    "maximum_truth_bracket_ms": 3000,
+    "maximum_raw_observation_offset_s": 1.0,
+    "maximum_second_source_disagreement_km": 0.5,
+    "projection_model": "constant_velocity_ground_track",
+    "nearest_hold_or_fallback": false,
+    "native_recording_mode": "0640",
+    "integrity": "Independent SHA-256 of IQ and native sidecar after a bounded publication retry; native streaming SHA remains a fail-closed compatibility path for older 0600 files.",
+    "shared_clip_semantics": "The clip is admitted when integrity is valid and at least one target has complete CPI truth. Each incomplete co-resident target remains quarantined.",
+    "health": "Persistent admitted/quarantined/reason counters plus missing-after-admission audit."
+  },
+  "fresh_proof": {
+    "revision": 7,
+    "file": "/var/lib/vectorwarp/recordings/kraken-clip-r7-1792692880103526546-1.mchq",
+    "admission_sidecar": "/var/lib/vectorwarp/recordings/kraken-clip-r7-1792692880103526546-1.mchq.admission.json",
+    "artifact_state": "admitted",
+    "native_file_mode": "0640",
+    "native_sidecar_mode": "0640",
+    "samples_per_channel": 24000000,
+    "duration_s": 10.0,
+    "data_bytes": 240105552,
+    "data_sha256": "e42c25c95a0e55741a9867cfa22b5924ee188874d15e2e7226846ce0ccfc3841",
+    "data_sha256_verified_by": "independent-read-sha256",
+    "native_sidecar_sha256": "a51554b5498dff8fb75cb5d06c8eb1c2cdf786a90fbcfd98145083cb72db77c3",
+    "valid_target": {
+      "event_id": "eligibility:0f6110ca44179618afadfc13b6be072064a84013aa84368be781d8642d26ef4d",
+      "pass_id": "0f6110ca44179618afadfc13b6be072064a84013aa84368be781d8642d26ef4d",
+      "cpi_count": 20,
+      "truth_sample_count": 25,
+      "maximum_bracket_span_ms": 1560,
+      "maximum_raw_observation_offset_s": 0.6800000667572021,
+      "maximum_projected_source_disagreement_km": 0.012671988753848458,
+      "sources": [
+        "http://100.90.37.77/tar1090",
+        "http://100.127.124.29:8080",
+        "exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60"
+      ]
+    },
+    "co_resident_targets_quarantined": 4
+  },
+  "live_after": {
+    "heimdall": "active",
+    "api": "active",
+    "processor": "active",
+    "radar": "receiving",
+    "last_frame_at_ms": 1792692905902
+  }
+}

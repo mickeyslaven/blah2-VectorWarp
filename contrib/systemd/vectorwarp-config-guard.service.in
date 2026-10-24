@@ -1,0 +1,17 @@
+[Unit]
+Description=Quiesce VectorWarp when saved receiver configuration is unreconciled
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node @PREFIX@/libexec/vectorwarp-config-guard.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/config-guard.json
+TimeoutStartSec=45
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/lib/vectorwarp-api
+RestrictAddressFamilies=AF_UNIX AF_NETLINK

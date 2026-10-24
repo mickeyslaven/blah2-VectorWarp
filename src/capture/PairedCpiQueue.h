@@ -22,7 +22,7 @@ private:
   std::vector<size_t> free_, ready_;
   size_t head_ = 0, count_ = 0, writing_ = 0, filled_ = 0, loan_ = 0;
   uint32_t expected_ = 0;
-  uint64_t epoch_ = 0;
+  std::atomic<uint64_t> epoch_{0};
   bool sequence_ = false, borrowed_ = false, closed_ = false;
   std::mutex producerMutex_;
   mutable std::mutex mutex_;
@@ -50,18 +50,21 @@ public:
 
   // A reset or counter gap invalidates partial and queued old-epoch data.
   void discontinuity() {
+    epoch_.fetch_add(1, std::memory_order_acq_rel);
     std::lock_guard<std::mutex> producer(producerMutex_); std::lock_guard<std::mutex> lock(mutex_);
-    discard_ready_locked(); stats_.discardedSamples += filled_; filled_ = 0; partialCount_.store(0, std::memory_order_release); sequence_ = false; ++epoch_; ++stats_.discontinuities;
+    discard_ready_locked(); stats_.discardedSamples += filled_; filled_ = 0; partialCount_.store(0, std::memory_order_release); sequence_ = false; ++stats_.discontinuities;
   }
   void push(const int16_t* iq, uint32_t count, uint32_t first) {
     if (!iq || !count) throw std::invalid_argument("Invalid paired CPI callback");
     std::lock_guard<std::mutex> producer(producerMutex_);
+    uint64_t pushEpoch = epoch_.load(std::memory_order_acquire);
     if (closed_) throw std::runtime_error("Producer used closed paired CPI queue");
     if (sequence_ && first != expected_) { std::lock_guard<std::mutex> lock(mutex_); discard_ready_locked();
-      stats_.discardedSamples += filled_; filled_ = 0; partialCount_.store(0, std::memory_order_release); ++epoch_; ++stats_.discontinuities; }
+      stats_.discardedSamples += filled_; filled_ = 0; partialCount_.store(0, std::memory_order_release);
+      pushEpoch = epoch_.fetch_add(1, std::memory_order_acq_rel) + 1; ++stats_.discontinuities; }
     sequence_ = true; expected_ = first + count;
     for (uint32_t offset = 0; offset < count;) {
-      if (!filled_) { blocks_[writing_].first = first + offset; blocks_[writing_].epoch = epoch_; }
+      if (!filled_) { blocks_[writing_].first = first + offset; blocks_[writing_].epoch = pushEpoch; }
       const size_t take = std::min<size_t>(samples_ - filled_, count - offset);
       std::memcpy(blocks_[writing_].iq.data() + 4 * filled_, iq + 4 * size_t(offset), take * 4 * sizeof(int16_t));
       filled_ += take; partialCount_.store(filled_, std::memory_order_release); offset += take;
@@ -88,6 +91,11 @@ public:
     slot = ready_[head_]; head_ = (head_ + 1) % ready_.size(); --count_;
     readyCount_.store(count_, std::memory_order_release); loan_ = slot; borrowed_ = true; ++stats_.taken; return true; }
   const Block& block(size_t slot) const { return blocks_.at(slot); }
-  void release(size_t slot) { std::lock_guard<std::mutex> lock(mutex_); if (!borrowed_ || slot != loan_) throw std::logic_error("Invalid paired CPI release"); borrowed_ = false; free_.push_back(slot); }
+  // False means a discontinuity retired this block while the consumer was
+  // decoding it; callers must not process or publish that stale CPI.
+  bool release(size_t slot) { std::lock_guard<std::mutex> lock(mutex_); if (!borrowed_ || slot != loan_) throw std::logic_error("Invalid paired CPI release");
+    const bool current = blocks_[slot].epoch == epoch_.load(std::memory_order_acquire); borrowed_ = false; free_.push_back(slot);
+    if (!current) { ++stats_.droppedCpis; stats_.discardedSamples += samples_; }
+    return current; }
   Stats stats() const { std::lock_guard<std::mutex> lock(mutex_); return stats_; }
 };

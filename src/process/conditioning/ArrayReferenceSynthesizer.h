@@ -18,6 +18,10 @@ public:
     uint32_t powerIterations = 12;
     double covarianceSmoothing = 0.8;
     double diagonalLoading = 0.001;
+    // Replay-only target protection: relative channel response of a candidate
+    // surveillance direction with respect to the learned direct-path beam.
+    // Empty preserves the production eigenbeam exactly.
+    std::vector<std::complex<double>> protectionRelativeSteering;
   };
 
   struct Metrics

@@ -1,0 +1,30 @@
+{
+  "schema": "vectorwarp-sparse-beam-recovery-matrix-v1",
+  "candidate_only": true,
+  "method": "complex L1 beam decomposition after local covariance whitening",
+  "selection": {
+    "recording": "r277",
+    "predeclared_penalties": [0.1, 0.25, 0.5, 0.75],
+    "selected_penalty": 0.5,
+    "guard_radius": 2,
+    "training_radius": 5,
+    "diagonal_loading": 0.3,
+    "beam_policy": "one fixed sparse beam over the complete dwell"
+  },
+  "acceptance": {
+    "minimum_margin_db": 3.0,
+    "threshold": "empirical local-cutout control p99",
+    "note": "A miss must first clear its local controls before any whole-map promotion test."
+  },
+  "recordings": [
+    {"id": "r277", "role": "positive", "frames": 8, "margin_db": 19.3274782194, "controls_exceeding_target": 0, "artifact": "r277-sparse-beam-p0.5.json"},
+    {"id": "r12", "role": "miss", "frames": 8, "margin_db": -5.9146827549, "controls_exceeding_target": 369, "artifact": "r12-sparse-beam-v1.json"},
+    {"id": "r94", "role": "miss", "frames": 8, "margin_db": -5.7563624372, "controls_exceeding_target": 105, "artifact": "r94-sparse-beam-v1.json"},
+    {"id": "r620", "role": "miss", "frames": 20, "margin_db": -5.69024093, "controls_exceeding_target": 347, "artifact": "r620-sparse-beam-v1.json"},
+    {"id": "r623", "role": "miss", "frames": 20, "margin_db": -4.8377278337, "controls_exceeding_target": 362, "artifact": "r623-sparse-beam-v1.json"}
+  ],
+  "positive_retained": true,
+  "misses_recovered": [],
+  "accepted": false,
+  "decision": "Reject: the positive is retained, but every miss is below even its local control p99; no whole-map promotion test is justified."
+}

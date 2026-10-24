@@ -1,0 +1,307 @@
+{
+  "capability_profile": "REF_SURV_2CH",
+  "claim_scope": "pure_synthetic",
+  "domains": {
+    "acquisition_rf": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "valid_iq_fraction",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "fraction",
+          "value": 1
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "bearing_spatial": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": false,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [
+            "System does not claim bearing capability."
+          ],
+          "name": "bearing_capability",
+          "numerator": null,
+          "status": "N/A",
+          "unit": null,
+          "value": null
+        }
+      ],
+      "required": false,
+      "status": "N/A"
+    },
+    "cancellation_target_preservation": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "target_attenuation_db",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "dB",
+          "value": 0.4
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "evaluation_integrity": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "frozen_opportunity_contract",
+          "numerator": null,
+          "status": "PASS",
+          "unit": null,
+          "value": true
+        },
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "missing_opportunity_results_counted_as_misses",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "count",
+          "value": 0
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "raw_detection": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": 2,
+          "interval_95": [
+            0.34238022750665303,
+            1.0
+          ],
+          "limitations": [],
+          "name": "raw_detection_pass_recall",
+          "numerator": 2,
+          "status": "PASS",
+          "unit": "fraction",
+          "value": 1.0
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "realtime_operational": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "processing_time_ratio_p99",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "ratio",
+          "value": 0.4
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "recoverability_regression": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "positive_control_retention",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "fraction",
+          "value": 1
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "reference_quality": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "reference_snr_db",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "dB",
+          "value": 18
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "synchronization_calibration": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "phase_stability_deg",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "degree",
+          "value": 2
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    },
+    "tracking": {
+      "limitations": [],
+      "metrics": [
+        {
+          "applicable": true,
+          "denominator": 2,
+          "interval_95": [
+            0.34238022750665303,
+            1.0
+          ],
+          "limitations": [],
+          "name": "tracking_pass_recall",
+          "numerator": 2,
+          "status": "PASS",
+          "unit": "fraction",
+          "value": 1.0
+        },
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "pass_macro_continuity",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "fraction",
+          "value": 0.8333333333333333
+        },
+        {
+          "applicable": true,
+          "denominator": null,
+          "interval_95": null,
+          "limitations": [],
+          "name": "median_track_fragments_per_pass",
+          "numerator": null,
+          "status": "PASS",
+          "unit": "count",
+          "value": 1.0
+        },
+        {
+          "applicable": true,
+          "denominator": 1.0,
+          "interval_95": null,
+          "limitations": [],
+          "name": "nuisance_tracks_per_hour",
+          "numerator": 2,
+          "status": "PASS",
+          "unit": "tracks/hour",
+          "value": 2.0
+        }
+      ],
+      "required": true,
+      "status": "PASS"
+    }
+  },
+  "evidence_summary": {
+    "missing_results_counted_as_misses": 0,
+    "passes": 2,
+    "planned_opportunities_per_trial": 6,
+    "sensitivity": {},
+    "trials": 1
+  },
+  "mission_tuple": {
+    "bearing_within_30deg": {
+      "applicable": false,
+      "denominator": null,
+      "interval_95": null,
+      "limitations": [],
+      "name": "pass_macro_within_30deg",
+      "numerator": null,
+      "status": "N/A",
+      "unit": null,
+      "value": null
+    },
+    "nuisance_tracks_per_hour": {
+      "applicable": true,
+      "denominator": 1.0,
+      "interval_95": null,
+      "limitations": [],
+      "name": "nuisance_tracks_per_hour",
+      "numerator": 2,
+      "status": "PASS",
+      "unit": "tracks/hour",
+      "value": 2.0
+    },
+    "raw_detection_pass_recall": {
+      "applicable": true,
+      "denominator": 2,
+      "interval_95": [
+        0.34238022750665303,
+        1.0
+      ],
+      "limitations": [],
+      "name": "raw_detection_pass_recall",
+      "numerator": 2,
+      "status": "PASS",
+      "unit": "fraction",
+      "value": 1.0
+    },
+    "tracking_pass_recall": {
+      "applicable": true,
+      "denominator": 2,
+      "interval_95": [
+        0.34238022750665303,
+        1.0
+      ],
+      "limitations": [],
+      "name": "tracking_pass_recall",
+      "numerator": 2,
+      "status": "PASS",
+      "unit": "fraction",
+      "value": 1.0
+    }
+  },
+  "oprs_version": "0.2.0",
+  "overall_status": "QUALIFIED",
+  "plan_hash": "sha256:8223be707fa8c38cee233dc255987a59c2041dbae8309fd171a2f08e1943392d",
+  "plan_id": "example-2ch-pure-synthetic-v1",
+  "prohibitions": [
+    "This scorecard does not combine evidence layers.",
+    "Scoring truth is validation-only and must not be used during inference."
+  ],
+  "schema": "open-passive-radar-scorecard-v1",
+  "system_id": "example-ref-surv-2ch"
+}

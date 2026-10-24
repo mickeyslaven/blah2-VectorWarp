@@ -287,11 +287,14 @@ endif()
         for name in ("config.yml", "config-kraken.yml", "config-usrp.yml", "config-hackrf.yml"):
             shutil.copy2(ROOT / "config" / name, artifact / "config-examples" / name)
         for name in ("vectorwarp-api.service.in", "vectorwarp-processor.service.in",
-                     "vectorwarp-restart.service.in", "vectorwarp.sysusers",
+                     "vectorwarp-restart.service.in", "vectorwarp-health-watchdog.service.in",
+                     "vectorwarp-health-watchdog.timer", "vectorwarp-config-guard.service.in",
+                     "vectorwarp-config-guard.path.in", "vectorwarp.sysusers",
                      "vectorwarp.tmpfiles", "vectorwarp.sudoers.in",
                      "72-vectorwarp-hackrf.rules"):
             shutil.copy2(ROOT / "contrib/systemd" / name, artifact / "systemd" / name)
-        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
+        for name in ("vectorwarp", "vectorwarp-restart", "vectorwarp-health-watchdog.js",
+                     "vectorwarp-config-guard.js", "vectorwarp-wait-api.js", "vectorwarp-activate-web",
                      "vectorwarp-sudoers-migrate.py", "check-node-version.js"):
             shutil.copy2(ROOT / "script" / name, artifact / "libexec" / name)
         (artifact / "libexec/check-node-version.js").rename(
@@ -373,7 +376,8 @@ endif()
         artifact = self.make_artifact('kraken', 'Kraken')
         cases = (
             ((), 'vectorwarp help lists all commands'),
-            (('--prefix', '/opt/vectorwarp-custom'), 'custom prefix: vectorwarp stop/restart refuse'),
+            (('--prefix', '/opt/vectorwarp-custom', '--sysconfdir', '/etc/vectorwarp-custom', '--no-systemd'),
+             'systemd integration was not installed'),
             (('--no-systemd',), 'systemd integration was not installed'),
         )
         for index, (options, guidance) in enumerate(cases):
@@ -383,6 +387,28 @@ endif()
                 self.assertIn(guidance, result.stdout)
                 self.assertNotIn('systemctl enable --now vectorwarp-api.service vectorwarp-processor.service',
                                  result.stdout)
+
+    def test_custom_prefix_requires_isolated_no_systemd_install(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        result = self.install(artifact, self.temp / 'custom-systemd',
+                              '--prefix', '/opt/vectorwarp-custom', '--preflight')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires --no-systemd', result.stderr)
+
+    def test_live_source_preflight_refuses_installed_deb_or_rpm(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        for manager in ('dpkg-query', 'rpm'):
+            with self.subTest(manager=manager):
+                tools = self.temp / f'package-{manager}'
+                tools.mkdir()
+                response = "printf 'installed\\n'\n" if manager == 'dpkg-query' else 'exit 0\n'
+                executable(tools / manager, '#!/bin/sh\n' + response)
+                environment = os.environ | {'PATH': f'{tools}:{os.environ.get("PATH", "")}' }
+                result = subprocess.run([
+                    'bash', str(INSTALL_SCRIPT), '--artifact', str(artifact), '--preflight'],
+                    cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('package vectorwarp owns', result.stderr)
 
     def test_usb_rule_stage_requires_explicit_target_and_preserves_debian_group(self):
         artifact = self.make_artifact('hackrf', 'HackRF,Kraken')
@@ -484,6 +510,8 @@ endif()
                          (ROOT / 'packaging/deb/preinst').read_text().replace('@PREFIX@', '/opt/vectorwarp'))
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-receiver-apt.py').is_file())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket').is_symlink())
+        self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-processor.service.wants/vectorwarp-health-watchdog.timer').is_symlink())
+        self.assertTrue((stage / 'usr/lib/systemd/system/multi-user.target.wants/vectorwarp-config-guard.path').is_symlink())
         service = (stage / 'usr/lib/systemd/system/vectorwarp-receiver.service').read_text()
         self.assertIn('ExecStart=/usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-receiver-helper serve', service)
         self.assertNotIn('receiver-helper', (stage / 'etc/sudoers.d/vectorwarp').read_text())
@@ -493,6 +521,14 @@ endif()
         self.assertNotIn('/usr/bin/sudo', api_unit)
         self.assertIn('NoNewPrivileges=yes', api_unit)
         self.assertIn('/var/lib/vectorwarp/recordings', api_unit)
+        self.assertIn('Environment=VECTORWARP_LINUX_SERVICE=1', api_unit)
+        processor_unit = (stage / 'usr/lib/systemd/system/vectorwarp-processor.service').read_text()
+        self.assertIn('Environment=VECTORWARP_LINUX_SERVICE=1', processor_unit)
+        for helper in ('vectorwarp-health-watchdog.js', 'vectorwarp-config-guard.js'):
+            self.assertTrue((stage / 'opt/vectorwarp/libexec' / helper).is_file())
+            unit = (stage / 'usr/lib/systemd/system' / f'{helper[:-3]}.service').read_text()
+            self.assertIn(f'/opt/vectorwarp/libexec/{helper}', unit)
+            self.assertNotIn('/opt/vectorwarp/current/libexec/', unit)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-sudoers-migrate').is_file())
         self.assertNotIn('vectorwarp-restart.service', (stage / 'etc/sudoers.d/vectorwarp').read_text())
         fresh_stage = self.temp / 'stage-management-default'

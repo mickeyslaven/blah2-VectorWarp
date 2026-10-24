@@ -1,0 +1,199 @@
+{
+  "schema": "vectorwarp-inverted-spatial-tail-v1",
+  "exploratory": true,
+  "method_id": "sparse_beam",
+  "hypothesis_job": "a68a06-r110",
+  "hypothesis_event_excluded": "eligibility:c4f6597440c3077b7e875673aeb9e7e93eca0f7b47576292d71c6bd74c408cf8",
+  "hypothesis_generation": {
+    "job_id": "a68a06-r110",
+    "target_score": 0.006802651449145138,
+    "controls": 458,
+    "controls_at_or_below_target": 58,
+    "lower_tail_p": 0.12854030501089325,
+    "family_lower_quantile": 0.0006666666666666666,
+    "family_lower_control": 0.0,
+    "notch_margin_db": -2978.3267821936706,
+    "clears_three_db": false
+  },
+  "hypothesis_doppler": {
+    "median_abs_hz": 4.27822236084445,
+    "minimum_abs_hz": 2.805589261467841,
+    "maximum_abs_hz": 5.404633978786363
+  },
+  "trial_accounting": {
+    "variant_trials": 15,
+    "alpha": 0.01,
+    "minimum_notch_margin_db": 3.0
+  },
+  "qualification": {
+    "name": "chronological_first_half",
+    "events": [
+      {
+        "event_id": "eligibility:0c655afa7c1dcf96426c1b7a0cb0e4fd40d00f3ef4e87fdeb1882d2199e40019",
+        "hex": "ac75a5",
+        "event_lower_tail_p": 0.47391304347826085,
+        "best_notch_margin_db": -3.8688810655533064,
+        "clips": [
+          {
+            "job_id": "ac75a5-r42",
+            "target_score": 0.16530426536985182,
+            "controls": 366,
+            "controls_at_or_below_target": 189,
+            "lower_tail_p": 0.5177111716621253,
+            "family_lower_quantile": 0.0003333333333333333,
+            "family_lower_control": 0.06782596060877978,
+            "notch_margin_db": -3.8688810655533064,
+            "clears_three_db": false
+          },
+          {
+            "job_id": "ac75a5-r43",
+            "target_score": 0.13114245943845856,
+            "controls": 459,
+            "controls_at_or_below_target": 108,
+            "lower_tail_p": 0.23695652173913043,
+            "family_lower_quantile": 0.0003333333333333333,
+            "family_lower_control": 0.052254255938254765,
+            "notch_margin_db": -3.9962165605278193,
+            "clears_three_db": false
+          }
+        ]
+      },
+      {
+        "event_id": "eligibility:21ff520bcd11eb364e02473eb9f691504cec4a381a37eddfc55ef07be081a5a6",
+        "hex": "a1cc1f",
+        "event_lower_tail_p": 0.7123287671232876,
+        "best_notch_margin_db": -6.354092315668374,
+        "clips": [
+          {
+            "job_id": "a1cc1f-r46",
+            "target_score": 0.21539911202321074,
+            "controls": 437,
+            "controls_at_or_below_target": 311,
+            "lower_tail_p": 0.7123287671232876,
+            "family_lower_quantile": 0.0006666666666666666,
+            "family_lower_control": 0.04986946131436269,
+            "notch_margin_db": -6.354092315668374,
+            "clears_three_db": false
+          }
+        ]
+      },
+      {
+        "event_id": "eligibility:0c374ad16cdda58cca47516398bbcf53a6a8f35b678c54d7d49a984f9580cf37",
+        "hex": "a5dcde",
+        "event_lower_tail_p": 0.05217391304347826,
+        "best_notch_margin_db": -2.51338459063096,
+        "clips": [
+          {
+            "job_id": "a5dcde-r59",
+            "target_score": 0.09706227629646469,
+            "controls": 459,
+            "controls_at_or_below_target": 23,
+            "lower_tail_p": 0.05217391304347826,
+            "family_lower_quantile": 0.0006666666666666666,
+            "family_lower_control": 0.054414170497883343,
+            "notch_margin_db": -2.51338459063096,
+            "clears_three_db": false
+          }
+        ]
+      }
+    ],
+    "fisher_p": 0.23242714579127402,
+    "variant_corrected_fisher_p": 1.0,
+    "directionally_consistent": false,
+    "all_events_clear_three_db": false,
+    "passes": false
+  },
+  "validation": {
+    "name": "chronological_held_out_half",
+    "events": [
+      {
+        "event_id": "eligibility:7e5356e8fe8b3507859eb334386ae13db8cb45d3cb2635e03be3e5cf9b318258",
+        "hex": "aaa555",
+        "event_lower_tail_p": 0.10580912863070539,
+        "best_notch_margin_db": -1.6197609853670605,
+        "clips": [
+          {
+            "job_id": "aaa555-r73",
+            "target_score": 0.15155479224155574,
+            "controls": 416,
+            "controls_at_or_below_target": 163,
+            "lower_tail_p": 0.3932853717026379,
+            "family_lower_quantile": 0.00022222222222222223,
+            "family_lower_control": 0.06587746363703176,
+            "notch_margin_db": -3.6183280358816363,
+            "clears_three_db": false
+          },
+          {
+            "job_id": "aaa555-r74",
+            "target_score": 0.09754439650704946,
+            "controls": 481,
+            "controls_at_or_below_target": 16,
+            "lower_tail_p": 0.035269709543568464,
+            "family_lower_quantile": 0.00022222222222222223,
+            "family_lower_control": 0.06717786969270383,
+            "notch_margin_db": -1.6197609853670605,
+            "clears_three_db": false
+          },
+          {
+            "job_id": "aaa555-r75",
+            "target_score": 0.17679126181895027,
+            "controls": 459,
+            "controls_at_or_below_target": 244,
+            "lower_tail_p": 0.532608695652174,
+            "family_lower_quantile": 0.00022222222222222223,
+            "family_lower_control": 0.06852114628963131,
+            "notch_margin_db": -4.116361758696113,
+            "clears_three_db": false
+          }
+        ]
+      },
+      {
+        "event_id": "eligibility:1400aed110607c97e111a0942fa75eac9d3627b5b0508eed5f1a6c34c9f66c73",
+        "hex": "a975e9",
+        "event_lower_tail_p": 0.8082191780821918,
+        "best_notch_margin_db": -4.835305323452454,
+        "clips": [
+          {
+            "job_id": "a975e9-r76",
+            "target_score": 0.22018000361312703,
+            "controls": 437,
+            "controls_at_or_below_target": 353,
+            "lower_tail_p": 0.8082191780821918,
+            "family_lower_quantile": 0.0006666666666666666,
+            "family_lower_control": 0.07231815573208016,
+            "notch_margin_db": -4.835305323452454,
+            "clears_three_db": false
+          }
+        ]
+      },
+      {
+        "event_id": "eligibility:ed149cbe6f0e7ae1ddf07745174961b9c211edf7306c17eadca48bedd2e75ea0",
+        "hex": "ac5765",
+        "event_lower_tail_p": 0.23443983402489627,
+        "best_notch_margin_db": -3.4386965019869304,
+        "clips": [
+          {
+            "job_id": "ac5765-r83",
+            "target_score": 0.13255672521863338,
+            "controls": 481,
+            "controls_at_or_below_target": 112,
+            "lower_tail_p": 0.23443983402489627,
+            "family_lower_quantile": 0.0006666666666666666,
+            "family_lower_control": 0.060052641637322365,
+            "notch_margin_db": -3.4386965019869304,
+            "clears_three_db": false
+          }
+        ]
+      }
+    ],
+    "fisher_p": 0.2516512288810706,
+    "variant_corrected_fisher_p": 1.0,
+    "directionally_consistent": false,
+    "all_events_clear_three_db": false,
+    "passes": false
+  },
+  "frozen_for_misses": false,
+  "misses_scored": false,
+  "rejection_reason": "The predeclared positive-control qualification and held-out validation did not both support a corrected target-induced low-tail notch.",
+  "interpretation": "The inversion is not validated as a target detector. The r110 value remains hypothesis-generating only and is consistent with suppression near the direct-path/low-Doppler region rather than a demonstrated target-induced notch."
+}

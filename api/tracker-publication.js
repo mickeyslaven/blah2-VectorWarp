@@ -77,6 +77,7 @@ class TrackerPublication {
     this.lastExternalAt = null;
     this.lastInputAt = null;
     this.inputTimestamp = null;
+    this.inputEventTime = null;
     this.counters = {events: 0, invalid: 0, frames: 0};
     this.lastFusion = {nativeSupplements: 0, nativeDeduplicated: 0,
       fallbackActive: false};
@@ -89,6 +90,8 @@ class TrackerPublication {
     const value = parseObject(frame);
     if (!finite(value?.timestamp)) return;
     this.inputTimestamp = value.timestamp;
+    this.inputEventTime = value.eventTime && typeof value.eventTime === 'object' ?
+      {...value.eventTime} : null;
     this.lastInputAt = this.now();
   }
 
@@ -150,9 +153,11 @@ class TrackerPublication {
   buildFrame(primary, supplements, native) {
     const data = [...primary, ...supplements];
     const count = state => data.filter(track => track.state === state).length;
+    const eventTime = native?.eventTime || this.inputEventTime;
     return {timestamp: this.externalTimestamp, n: data.length,
       nTentative: count('TENTATIVE'), nAssociated: count('ASSOCIATED'),
       nActive: count('ACTIVE'), nCoasting: count('COASTING'), data,
+      ...(eventTime ? {eventTime} : {}),
       publication: {mode: this.settings.mode, primary: 'unassisted',
         unassisted: primary.length, nativeSupplement: supplements.length,
         nativeTimestamp: native?.timestamp ?? null}};
@@ -162,6 +167,7 @@ class TrackerPublication {
     return {mode: this.settings.mode, eventFile: this.settings.eventFile,
       inputFresh: this.inputFresh(), externalFresh: this.externalFresh(),
       lastInputAt: this.lastInputAt, inputTimestamp: this.inputTimestamp,
+      inputEventTime: this.inputEventTime,
       lastExternalAt: this.lastExternalAt,
       externalTimestamp: this.externalTimestamp, externalTracks: this.external.size,
       nativeAvailable: this.nativeFrame() !== null, settings: {...this.settings},

@@ -1,0 +1,21 @@
+{
+  "schema": "vectorwarp-ordered-recovery-matrix-state-v1",
+  "matrix_schema": "vectorwarp-ordered-recovery-matrix-v1",
+  "matrix_status": "calibration_pending",
+  "calibration_job_ids": [
+    "next-c595dde2281e-r118",
+    "next-042b8d02a3c0-r120",
+    "next-dcb6b05d644d-r234",
+    "next-58c90e1a90bb-r1196",
+    "next-0cd27cc3ff08-r1610",
+    "next-0cd27cc3ff08-r1612"
+  ],
+  "deferred_misses": {
+    "status": "blocked_until_frozen",
+    "manifest_sha256": "c2ea969f0aa2661d47379ed6ccab41d036632e7f9c9604100c46bd097a9cac1c"
+  },
+  "cache": {
+    "policy": "replay-only named intermediates; cache keys are job namespace plus cache input"
+  },
+  "results": {}
+}

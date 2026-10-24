@@ -42,6 +42,7 @@ const CONFIG_META = {
   'capture.replay.state': ['Replay a recording', 'Use the replay file instead of live input'],
   'capture.replay.loop': ['Loop replay', 'Start the recording again after its end.'],
   'capture.replay.file': ['Replay file', 'Full path to the recording used when replay is enabled.'],
+  'capture.replay.provenance': ['Replay provenance', 'Legacy accepts unqualified recordings. Decision-grade requires bounded RF-time provenance.'],
   'capture.replay.format': ['Recording format', 'Auto detects portable recordings; select a legacy format only when needed.'],
   'capture.replay.legacy_block_samples': ['Legacy USRP block samples', 'Required only for old USRP blocks; use the original receiver block size.'],
   'process.performance': ['Performance', 'CPU and GPU settings'],
@@ -163,10 +164,11 @@ const CONFIG_META = {
   'network.ports.config': ['Configuration port', 'Reserved for configuration control; it must remain unique.'],
   'truth.adsb': ['ADS-B', 'Aircraft overlay and radar comparison'],
   'truth.adsb.enabled': ['Show ADS-B', 'Display aircraft from the ADS-B feed'],
-  'truth.adsb.tar1090': ['ADS-B source', 'Local decoder or server base address; data/aircraft.json is added automatically.'],
+  'truth.adsb.tar1090': ['ADS-B sources', 'Add local receivers or public exchanges; the newest fresh source wins without blending.'],
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
+  'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
   'truth.ais.enabled': ['AIS evaluation', 'Not implemented in this processor.'],
   'truth.ais.ip': ['Reserved AIS address', 'Not used by this processor.'],
@@ -692,34 +694,191 @@ function arrayInput(value, path) {
   return wrapper;
 }
 
+const ADSB_PUBLIC_EXCHANGES = [
+  {id: 'adsb-fi', label: 'adsb.fi', host: 'opendata.adsb.fi',
+    description: 'Public exchange · best effort and rate limited'},
+  {id: 'adsb-lol', label: 'adsb.lol', host: 'api.adsb.lol',
+    description: 'Public exchange · best effort and rate limited'}
+];
+
+function adsbExchangeId(source) {
+  if (typeof source !== 'string' || !source.startsWith('exchange:')) return null;
+  try {
+    const host = new URL(source.slice('exchange:'.length)).hostname;
+    return ADSB_PUBLIC_EXCHANGES.find(exchange => exchange.host === host)?.id || null;
+  } catch (_) { return null; }
+}
+
+function adsbPublicSource(id, config = activeConfig) {
+  const latitude = Number(config.location?.rx?.latitude);
+  const longitude = Number(config.location?.rx?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (id === 'adsb-fi')
+    return `exchange:https://opendata.adsb.fi/api/v3/lat/${latitude}/lon/${longitude}/dist/60`;
+  if (id === 'adsb-lol')
+    return `exchange:https://api.adsb.lol/v2/point/${latitude}/${longitude}/60`;
+  return null;
+}
+
+function adsbSourcesInput(legacyValue, path) {
+  const configured = activeConfig.truth?.adsb?.sources;
+  let sources = Array.isArray(configured) && configured.length ?
+    configured.map(value => String(value)) : [String(legacyValue ?? 'auto')];
+  const wrapper = document.createElement('div');
+  wrapper.className = 'adsb-source-editor';
+
+  const writeSources = next => {
+    sources = [...new Set(next)].slice(0, 8);
+    const firstLocal = sources.find(source => !source.startsWith('exchange:'));
+    if (firstLocal) activeConfig.truth.adsb.tar1090 = firstLocal;
+    setValue(['truth', 'adsb', 'sources'], sources);
+  };
+
+  const commit = () => {
+    const next = [...wrapper.querySelectorAll('[data-adsb-source]')]
+      .map(input => input.value.trim()).filter(Boolean);
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const toggle = wrapper.querySelector(`[data-adsb-exchange="${exchange.id}"]`);
+      if (!toggle?.checked) continue;
+      const existing = sources.find(source => adsbExchangeId(source) === exchange.id);
+      const generated = adsbPublicSource(exchange.id);
+      if (existing || generated) next.push(existing || generated);
+    }
+    writeSources(next);
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const toggle = wrapper.querySelector(`[data-adsb-exchange="${exchange.id}"]`);
+      if (!toggle) continue;
+      toggle.checked = sources.some(source => adsbExchangeId(source) === exchange.id);
+      toggle.disabled = !toggle.checked && sources.length >= 8;
+    }
+    const add = wrapper.querySelector('.adsb-source-add');
+    if (add) add.disabled = sources.length >= 8;
+  };
+
+  const sourceRow = (source, type) => {
+    const row = document.createElement('div');
+    row.className = 'adsb-source-row';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = source;
+    input.dataset.adsbSource = type;
+    input.placeholder = type === 'local' ?
+      'http://192.168.1.50/tar1090' : 'exchange:https://example/api';
+    input.setAttribute('aria-label', type === 'local' ? 'Local ADS-B source' : 'Custom ADS-B exchange');
+    input.addEventListener('input', () => {
+      const index = Number(input.dataset.sourceIndex);
+      sources[index] = input.value;
+      const next = sources.filter(Boolean);
+      const firstLocal = next.find(value => !value.startsWith('exchange:'));
+      if (firstLocal) activeConfig.truth.adsb.tar1090 = firstLocal;
+      setValue(path, next);
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'button-secondary adsb-source-remove';
+    remove.textContent = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${type} ADS-B source`);
+    remove.disabled = sources.length <= 1;
+    remove.addEventListener('click', () => {
+      sources.splice(Number(input.dataset.sourceIndex), 1);
+      writeSources(sources);
+      renderRows();
+    });
+    row.append(input, remove);
+    return {row, input};
+  };
+
+  const renderRows = () => {
+    wrapper.replaceChildren();
+    const intro = document.createElement('p');
+    intro.className = 'adsb-source-note';
+    intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
+    wrapper.appendChild(intro);
+
+    const localHeading = document.createElement('strong');
+    localHeading.textContent = 'Local receivers';
+    wrapper.appendChild(localHeading);
+    sources.forEach((source, index) => {
+      if (source.startsWith('exchange:')) return;
+      const {row, input} = sourceRow(source, 'local');
+      input.dataset.sourceIndex = index;
+      wrapper.appendChild(row);
+    });
+    const addLocal = document.createElement('button');
+    addLocal.type = 'button';
+    addLocal.className = 'button-secondary adsb-source-add';
+    addLocal.textContent = 'Add local source';
+    addLocal.disabled = sources.length >= 8;
+    addLocal.addEventListener('click', () => {
+      sources.push('http://');
+      writeSources(sources);
+      renderRows();
+      const inputs = wrapper.querySelectorAll('[data-adsb-source="local"]');
+      inputs[inputs.length - 1]?.focus();
+    });
+    wrapper.appendChild(addLocal);
+
+    const exchangeHeading = document.createElement('strong');
+    exchangeHeading.textContent = 'Online sources';
+    wrapper.appendChild(exchangeHeading);
+    const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
+    for (const exchange of ADSB_PUBLIC_EXCHANGES) {
+      const row = document.createElement('div');
+      row.className = 'adsb-exchange-row';
+      const copy = document.createElement('span');
+      const title = document.createElement('b');
+      title.textContent = exchange.label;
+      const detail = document.createElement('small');
+      detail.textContent = exchange.description;
+      copy.append(title, detail);
+      const label = document.createElement('label');
+      label.className = 'switch';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.dataset.adsbExchange = exchange.id;
+      input.checked = sources.some(source => adsbExchangeId(source) === exchange.id);
+      input.disabled = !hasSite || (!input.checked && sources.length >= 8);
+      input.setAttribute('aria-label', `Use ${exchange.label}`);
+      input.addEventListener('change', commit);
+      label.append(input, document.createElement('span'));
+      row.append(copy, label);
+      wrapper.appendChild(row);
+    }
+
+    const custom = sources.map((source, index) => ({source, index}))
+      .filter(({source}) => source.startsWith('exchange:') && !adsbExchangeId(source));
+    if (custom.length) {
+      const customHeading = document.createElement('strong');
+      customHeading.textContent = 'Custom online sources';
+      wrapper.appendChild(customHeading);
+      for (const {source, index} of custom) {
+        const {row, input} = sourceRow(source, 'custom');
+        input.dataset.sourceIndex = index;
+        wrapper.appendChild(row);
+      }
+    }
+    if (!hasSite) {
+      const warning = document.createElement('p');
+      warning.className = 'adsb-source-note warning';
+      warning.textContent = 'Set the receiver latitude and longitude before enabling an online source.';
+      wrapper.appendChild(warning);
+    }
+    const controls = wrapper.querySelectorAll('input, select');
+    for (const [index, control] of Array.from(controls).entries()) {
+      control.id = `config-truth-adsb-tar1090-${index}`;
+      control.setAttribute('aria-describedby', 'config-truth-adsb-tar1090-0-help');
+    }
+  };
+
+  renderRows();
+  return wrapper;
+}
+
 function typedInput(value, path) {
   const key = path.join('.');
   const rule = capabilities.fieldRules?.[key] || {};
   if (key === 'truth.adsb.tar1090' && Array.isArray(rule.sourceChoices)) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'config-source-input';
-    const local = rule.sourceChoices.some(item => item.value === value);
-    let serverAddress = local ? '' : String(value ?? '');
-    const endpoint = document.createElement('input');
-    endpoint.type = 'text';
-    endpoint.value = serverAddress;
-    endpoint.placeholder = 'http://192.168.1.50/tar1090';
-    endpoint.setAttribute('aria-label', 'ADS-B server address');
-    endpoint.hidden = local;
-    endpoint.required = !local;
-    const mode = selectInput([...rule.sourceChoices,
-      {value: 'server', label: 'Server endpoint'}], local ? value : 'server', selected => {
-      endpoint.hidden = selected !== 'server';
-      endpoint.required = selected === 'server';
-      setValue(path, selected === 'server' ? serverAddress : selected);
-    });
-    mode.setAttribute('aria-label', 'ADS-B source');
-    endpoint.addEventListener('input', () => {
-      serverAddress = endpoint.value;
-      if (mode.value === 'server') setValue(path, serverAddress);
-    });
-    wrapper.append(mode, endpoint);
-    return wrapper;
+    return adsbSourcesInput(value, ['truth', 'adsb', 'sources']);
   }
   if (key === 'capture.device.heimdall.gain') {
     const wrapper = document.createElement('div');
@@ -1460,12 +1619,14 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
-      if (activeConfig.capture?.device?.type === 'RspDuo') {
+      if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
         startup.className = 'upstream-status receiver-startup';
         panel.appendChild(startup);
         renderReceiverStartup(null, startup);
+      }
+      if (activeConfig.capture?.device?.type === 'RspDuo') {
         const health = document.createElement('section');
         health.id = 'receiver-health';
         health.className = 'upstream-status receiver-health';
@@ -1492,6 +1653,14 @@ function renderReceiverOverload(status, target = document.getElementById('receiv
 
 function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
+  if (activeConfig.capture?.device?.type === 'HackRF') {
+    renderHackrfStartup(status, target);
+    return;
+  }
+  if (activeConfig.capture?.device?.type === 'Usrp') {
+    renderUsrpStartup(status, target);
+    return;
+  }
   const detailsOpen = target.querySelector('details')?.open === true;
   const heading = document.createElement('h3');
   heading.textContent = 'SDRplay startup';
@@ -1540,6 +1709,8 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     ['DAB / RF notch', `${requested.dabNotch ? 'On' : 'Off'} / ${requested.rfNotch ? 'On' : 'Off'}`],
     ['IF / bandwidth', `${requested.ifFrequencyKhz} / ${requested.ifBandwidthKhz} kHz`],
     ['Decimation', `${requested.decimation}×`],
+    ['Sample counter policy / effective ratio',
+      `${requested.sampleCounterScalePolicy || requested.sampleCounterScale} / ${requested.sampleCounterScale}`],
     ['SDK stages completed', Object.entries(receipt.sdk.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(', ') || 'None']
   ];
   for (const [name, value] of rows) {
@@ -1552,6 +1723,147 @@ function renderReceiverStartup(status, target = document.getElementById('receive
   }
   const note = document.createElement('p');
   note.textContent = 'These checks do not measure RF performance, filtering or phase coherence.';
+  details.append(summary, table, note);
+  target.appendChild(details);
+}
+
+function renderHackrfStartup(status, target = document.getElementById('receiver-startup')) {
+  if (!target) return;
+  const detailsOpen = target.querySelector('details')?.open === true;
+  const heading = document.createElement('h3');
+  heading.textContent = 'Dual HackRF startup';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  const processor = status?.processorFresh && status.processor?.receiver === 'HackRF' &&
+    status.processor?.input === 'live' ? status.processor : null;
+  const receipt = processor?.receiverStartup;
+  if (!processor) message.textContent = 'No current HackRF status. Saved settings apply at startup.';
+  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (!receipt) message.textContent = 'HackRF startup receipt unavailable. Rebuild HackRF support to see it.';
+  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through libhackrf…';
+  else if (!receipt.setterAcceptance) message.textContent = 'HackRF started without qualified setter acceptance.';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. The last HackRF startup calls were accepted.';
+  else message.textContent = status.radar === 'receiving' ?
+    'Both HackRF startup paths accepted settings; receiving provisional paired frames.' :
+    'Both HackRF startup paths accepted settings; waiting for provisional paired frames.';
+  target.replaceChildren(heading, message);
+  if (!receipt) return;
+  const requested = receipt.requested;
+  const device = activeConfig.capture.device;
+  const matches = requested.frequency === activeConfig.capture.fc &&
+    requested.sampleRate === activeConfig.capture.fs &&
+    JSON.stringify(requested.serials) === JSON.stringify(device.serial) &&
+    JSON.stringify(requested.lnaGainDb) === JSON.stringify(device.gain_lna) &&
+    JSON.stringify(requested.vgaGainDb) === JSON.stringify(device.gain_vga) &&
+    JSON.stringify(requested.ampEnabled) === JSON.stringify(device.amp_enable);
+  if (!matches) {
+    const mismatch = document.createElement('p');
+    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
+    target.appendChild(mismatch);
+  }
+  const details = document.createElement('details');
+  details.open = detailsOpen;
+  const summary = document.createElement('summary');
+  summary.textContent = 'Startup setter details';
+  const table = document.createElement('table');
+  const caption = document.createElement('caption');
+  caption.textContent = 'libhackrf setter acceptance, not RF or synchronization readback';
+  table.appendChild(caption);
+  const resolved = receipt.deviceIdentity?.resolvedSerials || [];
+  const yesNo = values => Array.isArray(values) ?
+    values.map(value => value ? 'On' : 'Off').join(' / ') : 'Unavailable';
+  const rows = [
+    ['Resolved reference / surveillance', resolved.join(' / ') || 'Unavailable'],
+    ['Frequency', `${requested.frequency} Hz`],
+    ['Sample rate', `${requested.sampleRate} S/s`],
+    ['LNA gain reference / surveillance', `${requested.lnaGainDb.join(' / ')} dB`],
+    ['VGA gain reference / surveillance', `${requested.vgaGainDb.join(' / ')} dB`],
+    ['RF amplifier reference / surveillance', yesNo(requested.ampEnabled)],
+    ['Clock output / trigger input role', `${receipt.synchronization?.clockOutputRole || 'Unavailable'} / ${receipt.synchronization?.hardwareTriggerRole || 'Unavailable'}`],
+    ['Baseband filter', 'libhackrf automatic (at most 0.75 × sample rate)']
+  ];
+  for (const [name, value] of rows) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row'; label.textContent = name;
+    const cell = document.createElement('td');
+    cell.textContent = String(value);
+    row.append(label, cell); table.appendChild(row);
+  }
+  const note = document.createElement('p');
+  note.textContent = 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.';
+  details.append(summary, table, note);
+  target.appendChild(details);
+}
+
+function renderUsrpStartup(status, target = document.getElementById('receiver-startup')) {
+  if (!target) return;
+  const detailsOpen = target.querySelector('details')?.open === true;
+  const heading = document.createElement('h3');
+  heading.textContent = 'USRP startup';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  const processor = status?.processorFresh && status.processor?.receiver === 'Usrp' &&
+    status.processor?.input === 'live' ? status.processor : null;
+  const receipt = processor?.receiverStartup;
+  if (!processor) message.textContent = 'No current USRP status. Saved settings apply at startup.';
+  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (!receipt) message.textContent = 'USRP startup readback unavailable. Rebuild UHD support to see it.';
+  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through UHD…';
+  else if (!receipt.readbackAvailable) message.textContent = 'USRP started without qualified UHD setting readback.';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. UHD read back the last startup settings.';
+  else message.textContent = status.radar === 'receiving' ?
+    'UHD read back both channels; receiving radar frames.' :
+    'UHD read back both channels; waiting for radar frames.';
+  target.replaceChildren(heading, message);
+  if (!receipt) return;
+  const requested = receipt.requested;
+  const device = activeConfig.capture.device;
+  const matches = requested.frequency === activeConfig.capture.fc &&
+    requested.sampleRate === activeConfig.capture.fs && requested.address === device.address &&
+    requested.subdevices === device.subdev &&
+    JSON.stringify(requested.antennas) === JSON.stringify(device.antenna) &&
+    JSON.stringify(requested.gains) === JSON.stringify(device.gain);
+  if (!matches) {
+    const mismatch = document.createElement('p');
+    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
+    target.appendChild(mismatch);
+  }
+  const details = document.createElement('details');
+  details.open = detailsOpen;
+  const summary = document.createElement('summary');
+  summary.textContent = 'Startup readback details';
+  const table = document.createElement('table');
+  const caption = document.createElement('caption');
+  caption.textContent = 'UHD device-API getter values, not a physical RF measurement';
+  table.appendChild(caption);
+  const applied = receipt.appliedReadback;
+  const coherence = receipt.coherence;
+  const identity = coherence?.deviceIdentity;
+  const joined = (values, suffix = '') => Array.isArray(values) ?
+    values.map(value => `${value}${suffix}`).join(' / ') : 'Unavailable';
+  const rows = [
+    ['Device address', requested.address],
+    ['Motherboard', coherence ? `${coherence.motherboard}${identity?.motherboardSerial ?
+      `; serial ${identity.motherboardSerial}` : '; serial unavailable'}` : 'Not attested'],
+    ['RX identity A / B', joined(identity?.rxIds)],
+    ['Clock / time source', coherence ? `${coherence.clockSource} / ${coherence.timeSource}` : 'Not attested'],
+    ['Subdevices', applied?.subdevices || requested.subdevices],
+    ['Frequency A / B', joined(applied?.perChannelFrequencyHz, ' Hz')],
+    ['Sample rate A / B', joined(applied?.perChannelSampleRateHz, ' S/s')],
+    ['Gain A / B', joined(applied?.perChannelGainDb, ' dB')],
+    ['Antenna A / B', joined(applied?.perChannelAntenna)]
+  ];
+  for (const [name, value] of rows) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row'; label.textContent = name;
+    const cell = document.createElement('td');
+    cell.textContent = String(value);
+    row.append(label, cell); table.appendChild(row);
+  }
+  const note = document.createElement('p');
+  note.textContent = 'These getters do not measure RF performance or map UHD device time to UTC. Exact event-time scoring remains unavailable.';
   details.append(summary, table, note);
   target.appendChild(details);
 }
@@ -2033,6 +2345,6 @@ function accelerationSummary(value, radar) {
 }
 
 if (typeof module !== 'undefined')
-  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels,
+  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

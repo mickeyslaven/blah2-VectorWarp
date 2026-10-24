@@ -1,0 +1,181 @@
+{
+  "schema": "vectorwarp-production-positive-replay-v1",
+  "job_id": "4fed008bbce8219aa985",
+  "pass_id": "7809cd8d1c5ec696bdcc14c99fbf6ea1044c856999035afad6767f5ad2c27e4e",
+  "hex": "ac011d",
+  "recording": "/root/ordered-recovery-benchmark/associated/kraken-clip-r89-1792687870704413371-22.mchq",
+  "association_count": 6,
+  "reproduced_associations": 6,
+  "all_associations_reproduced": true,
+  "detection_frames": 20,
+  "matches": [
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687863444,
+        "cell_index": 33,
+        "measured_delay_raw": 5.24,
+        "measured_delay_km": 5.24,
+        "measured_doppler_hz": 254.05,
+        "measured_snr_db": 5.8,
+        "tracker": null,
+        "predicted_delay_km": 5.421968661758263,
+        "predicted_doppler_hz": 245.62466676398367,
+        "delay_residual_km": -0.18196866175826276,
+        "doppler_residual_hz": 8.425333236016343,
+        "gate_delay_km": 0.4309752625274309,
+        "gate_doppler_hz": 22.35647336115041,
+        "normalized_gate_score": 0.32030011845618744
+      },
+      "replay": {
+        "frame_index": 4,
+        "delay_km": 5.24,
+        "doppler_hz": 254.29,
+        "snr_db": 5.2,
+        "delay_residual_km": 0.0,
+        "doppler_residual_hz": 0.23999999999998067,
+        "matched": true
+      }
+    },
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687863942,
+        "cell_index": 32,
+        "measured_delay_raw": 5.12,
+        "measured_delay_km": 5.12,
+        "measured_doppler_hz": 256.07,
+        "measured_snr_db": 6.64,
+        "tracker": null,
+        "predicted_delay_km": 5.421968661758263,
+        "predicted_doppler_hz": 245.62466676398367,
+        "delay_residual_km": -0.30196866175826287,
+        "doppler_residual_hz": 10.445333236016324,
+        "gate_delay_km": 0.6408979262376353,
+        "gate_doppler_hz": 25,
+        "normalized_gate_score": 0.3965644212836046
+      },
+      "replay": {
+        "frame_index": 6,
+        "delay_km": 5.13,
+        "doppler_hz": 256.05,
+        "snr_db": 8.63,
+        "delay_residual_km": 0.009999999999999787,
+        "doppler_residual_hz": 0.01999999999998181,
+        "matched": true
+      }
+    },
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687864447,
+        "cell_index": 37,
+        "measured_delay_raw": 5.1,
+        "measured_delay_km": 5.1,
+        "measured_doppler_hz": 258.2,
+        "measured_snr_db": 6.37,
+        "tracker": null,
+        "predicted_delay_km": 5.421968661758263,
+        "predicted_doppler_hz": 245.62466676398367,
+        "delay_residual_km": -0.32196866175826333,
+        "doppler_residual_hz": 12.57533323601632,
+        "gate_delay_km": 0.7069483735507713,
+        "gate_doppler_hz": 25,
+        "normalized_gate_score": 0.46044297112638244
+      },
+      "replay": {
+        "frame_index": 6,
+        "delay_km": 5.13,
+        "doppler_hz": 256.05,
+        "snr_db": 8.63,
+        "delay_residual_km": 0.03000000000000025,
+        "doppler_residual_hz": 2.1499999999999773,
+        "matched": true
+      }
+    },
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687869445,
+        "cell_index": 42,
+        "measured_delay_raw": 4.36,
+        "measured_delay_km": 4.36,
+        "measured_doppler_hz": 275.43,
+        "measured_snr_db": 5.81,
+        "tracker": null,
+        "predicted_delay_km": 4.5660575228377915,
+        "predicted_doppler_hz": 274.34536300525076,
+        "delay_residual_km": -0.20605752283779122,
+        "doppler_residual_hz": 1.0846369947492462,
+        "gate_delay_km": 0.4146125657285903,
+        "gate_doppler_hz": 18.627800844624716,
+        "normalized_gate_score": 0.2503875579967883
+      },
+      "replay": {
+        "frame_index": 16,
+        "delay_km": 4.38,
+        "doppler_hz": 274.88,
+        "snr_db": 8.18,
+        "delay_residual_km": 0.019999999999999574,
+        "doppler_residual_hz": 0.5500000000000114,
+        "matched": true
+      }
+    },
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687869943,
+        "cell_index": 40,
+        "measured_delay_raw": 4.26,
+        "measured_delay_km": 4.26,
+        "measured_doppler_hz": 277.08,
+        "measured_snr_db": 6.44,
+        "tracker": null,
+        "predicted_delay_km": 4.5660575228377915,
+        "predicted_doppler_hz": 274.34536300525076,
+        "delay_residual_km": -0.30605752283779175,
+        "doppler_residual_hz": 2.7346369947492235,
+        "gate_delay_km": 0.6490813189582637,
+        "gate_doppler_hz": 25,
+        "normalized_gate_score": 0.2343002154093497
+      },
+      "replay": {
+        "frame_index": 18,
+        "delay_km": 4.25,
+        "doppler_hz": 277.85,
+        "snr_db": 8.26,
+        "delay_residual_km": 0.009999999999999787,
+        "doppler_residual_hz": 0.7700000000000387,
+        "matched": true
+      }
+    },
+    {
+      "association": {
+        "kind": "detection",
+        "frame_timestamp_ms": 1792687870447,
+        "cell_index": 40,
+        "measured_delay_raw": 4.23,
+        "measured_delay_km": 4.23,
+        "measured_doppler_hz": 278.03,
+        "measured_snr_db": 6.49,
+        "tracker": null,
+        "predicted_delay_km": 4.5660575228377915,
+        "predicted_doppler_hz": 274.34536300525076,
+        "delay_residual_km": -0.3360575228377911,
+        "doppler_residual_hz": 3.684636994749212,
+        "gate_delay_km": 0.7227088816677044,
+        "gate_doppler_hz": 25,
+        "normalized_gate_score": 0.23794476814354223
+      },
+      "replay": {
+        "frame_index": 18,
+        "delay_km": 4.25,
+        "doppler_hz": 277.85,
+        "snr_db": 8.26,
+        "delay_residual_km": 0.019999999999999574,
+        "doppler_residual_hz": 0.17999999999994998,
+        "matched": true
+      }
+    }
+  ]
+}

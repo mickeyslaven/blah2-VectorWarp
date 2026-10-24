@@ -374,7 +374,14 @@ function createKrakenControlClient(options = {}) {
           gain: wanted.gain === undefined && !current.fullResetAfterAck ? undefined : lastStatus.gain,
           channelGains: lastStatus.channelGains};
         if (current.id === 'set_frequency') expectedReadback.frequency = current.value;
-        if (current.id === 'set_gain') expectedReadback.gain = current.value;
+        if (current.id === 'set_gain') {
+          expectedReadback.gain = current.value;
+          // Suite applies a common gain by replacing every physical channel
+          // gain with the nearest hardware step.  Do not require the old
+          // vector while confirming this intermediate operation; a requested
+          // final vector is checked by the following set_channel_gains step.
+          expectedReadback.channelGains = undefined;
+        }
         if (current.id === 'set_num_elements') expectedReadback.channelCount = current.value;
         if (current.id === 'set_channel_gains') expectedReadback.channelGains = current.value;
         // A delayed response from an earlier command must not authorize this
@@ -625,16 +632,16 @@ function receiverAcceptanceBoundary(config) {
   if (receiverType === 'Usrp') return {receiverType, mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through UHD multi_usrp',
-    acknowledgement: 'UHD exceptions can report failure; no positive applied-settings acknowledgement is emitted',
-    positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'UHD startup getters check frequency, rate, gain, antenna, and subdevice mapping before streaming; radar status does not confirm applied values.',
-    hardwareReadback: false, physicalReceiverVerified: false};
+    acknowledgement: 'processor startup receipt includes validated per-channel UHD getter readback',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'UHD startup getters and radar status confirm frequency, rate, gain, antenna, and subdevice mapping before streaming; this is device-API configuration readback, not physical RF verification.',
+    hardwareReadback: true, physicalReceiverVerified: false};
   if (receiverType === 'HackRF') return {receiverType, mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through two serial-selected libhackrf devices',
-    acknowledgement: 'Every current open/set/start return code is checked and can report failure',
-    positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'No post-set frequency, rate, gain, amplifier, clock, or synchronization readback is implemented.',
+    acknowledgement: 'processor startup receipt confirms exact serial resolution and successful open/set/start return codes',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'Setter acceptance is preserved in fresh radar status, but no post-set frequency, rate, gain, amplifier, clock, or synchronization readback is available.',
     hardwareReadback: false, physicalReceiverVerified: false};
   return {receiverType, mode: 'unknown', configurationAuthority: 'none',
     writePath: 'unsupported', acknowledgement: 'none', hardwareReadback: false,

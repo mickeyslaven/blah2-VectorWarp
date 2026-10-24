@@ -1,0 +1,36 @@
+{
+  "schema": "vectorwarp-deployment-receipt-v1",
+  "deployed_at": "2026-10-24T02:28:33Z",
+  "release": "/opt/vectorwarp/releases/20261024T022833Z-scorecard-bounds-v2",
+  "commits": ["88d4957", "e55759a", "d93139f"],
+  "live_config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88cfa5d43e5b659ccd",
+  "rf_unchanged": {
+    "frequency_hz": 527000000,
+    "sample_rate_hz": 2400000,
+    "channels": 5,
+    "channel_gains_db": [2.7, 2.7, 1.4, 1.4, 3.7]
+  },
+  "timing_contract": {
+    "association_lag_cpis": 4,
+    "association_lag_ms": 2000,
+    "provisional_event_time_uncertainty_s": 1,
+    "nuisance_accounting": "bounded-event-time-rate-expanded-association-gates",
+    "decision_grade": false,
+    "radar_inference_uses_adsb": false
+  },
+  "acceptance": {
+    "api_active": true,
+    "processor_active": true,
+    "heimdall_active": true,
+    "processor_fresh": true,
+    "frames_advanced": true,
+    "processor_errors": [],
+    "scorecard_error": null,
+    "persisted_scorecard_bytes": 3290216,
+    "persisted_passes": 46,
+    "persisted_eligibility_events": 8,
+    "maximum_finalized_cpi_audit_rows": 16,
+    "maximum_finalized_truth_rows": 16
+  },
+  "residual_limit": "Kraken/Heimdall still has no hardware UTC epoch. The one-second radius is an explicit operational scoring assumption, not a hardware-time attestation."
+}

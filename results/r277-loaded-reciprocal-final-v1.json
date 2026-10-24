@@ -1,0 +1,297 @@
+{
+  "schema": "vectorwarp-loaded-reciprocal-mchq-v1",
+  "candidate_only": true,
+  "recording": "/var/lib/vectorwarp/recordings/kraken-clip-r277-1792586233306383040-108.mchq",
+  "trajectory": "r277-clip-truth.json",
+  "frames": 10,
+  "sample_rate_hz": 2400000,
+  "cpi_s": 0.5,
+  "filter": {
+    "form": "conj(X) / (abs(X)^2 + lambda*median(abs(X)^2))",
+    "loadings": [
+      0.01,
+      0.1,
+      1.0
+    ],
+    "fft_size": 2048,
+    "max_delay_km": 64,
+    "max_doppler_hz": 400,
+    "tradeoffs": {
+      "0.01": [
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.628573484505433,
+          "filter_energy": 0.03813645616173744,
+          "mean_response": 0.9643878936767578,
+          "median_reciprocal_denominator": 70.48759460449219
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.649205474104142,
+          "filter_energy": 0.03817369043827057,
+          "mean_response": 0.9640372395515442,
+          "median_reciprocal_denominator": 70.73847961425781
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.616873915602951,
+          "filter_energy": 0.037921104580163956,
+          "mean_response": 0.9642711877822876,
+          "median_reciprocal_denominator": 70.87480163574219
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.615777113881725,
+          "filter_energy": 0.03777328133583069,
+          "mean_response": 0.9643650650978088,
+          "median_reciprocal_denominator": 71.172119140625
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.616681205483195,
+          "filter_energy": 0.037867024540901184,
+          "mean_response": 0.9643184542655945,
+          "median_reciprocal_denominator": 71.06031036376953
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.628284968766747,
+          "filter_energy": 0.03792727738618851,
+          "mean_response": 0.9641880989074707,
+          "median_reciprocal_denominator": 71.12451171875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.622565161598947,
+          "filter_energy": 0.037773873656988144,
+          "mean_response": 0.9643266797065735,
+          "median_reciprocal_denominator": 71.16963195800781
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.630933552621329,
+          "filter_energy": 0.037628356367349625,
+          "mean_response": 0.9642676115036011,
+          "median_reciprocal_denominator": 71.50056457519531
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.609077905706941,
+          "filter_energy": 0.03784463182091713,
+          "mean_response": 0.9643360376358032,
+          "median_reciprocal_denominator": 70.89262390136719
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 6.602274161864273,
+          "filter_energy": 0.03754695504903793,
+          "mean_response": 0.9644819498062134,
+          "median_reciprocal_denominator": 71.35191345214844
+        }
+      ],
+      "0.1": [
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.831808599194733,
+          "filter_energy": 0.014781969599425793,
+          "mean_response": 0.8284876346588135,
+          "median_reciprocal_denominator": 76.76546478271484
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8292240185865722,
+          "filter_energy": 0.01470973715186119,
+          "mean_response": 0.8279675841331482,
+          "median_reciprocal_denominator": 77.04811096191406
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.817769503526844,
+          "filter_energy": 0.014689543284475803,
+          "mean_response": 0.8283580541610718,
+          "median_reciprocal_denominator": 77.19189453125
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.81872717104758,
+          "filter_energy": 0.014637368731200695,
+          "mean_response": 0.8283867239952087,
+          "median_reciprocal_denominator": 77.5262222290039
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8170661625467925,
+          "filter_energy": 0.014664297923445702,
+          "mean_response": 0.8283259272575378,
+          "median_reciprocal_denominator": 77.39202117919922
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8190310187179466,
+          "filter_energy": 0.014650299213826656,
+          "mean_response": 0.8280792236328125,
+          "median_reciprocal_denominator": 77.47042846679688
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8203798113321277,
+          "filter_energy": 0.014627547934651375,
+          "mean_response": 0.8285591006278992,
+          "median_reciprocal_denominator": 77.520263671875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8234281975702396,
+          "filter_energy": 0.014552579261362553,
+          "mean_response": 0.8284860253334045,
+          "median_reciprocal_denominator": 77.88565063476562
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.8110947854116435,
+          "filter_energy": 0.014672981575131416,
+          "mean_response": 0.8286757469177246,
+          "median_reciprocal_denominator": 77.21517181396484
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 3.812600988585126,
+          "filter_energy": 0.014586707577109337,
+          "mean_response": 0.8288368582725525,
+          "median_reciprocal_denominator": 77.7130355834961
+        }
+      ],
+      "1.0": [
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2421511310935993,
+          "filter_energy": 0.0026808318216353655,
+          "mean_response": 0.47537627816200256,
+          "median_reciprocal_denominator": 139.59716796875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2373431536187158,
+          "filter_energy": 0.002667700406163931,
+          "mean_response": 0.4751966595649719,
+          "median_reciprocal_denominator": 140.16424560546875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2337540355344803,
+          "filter_energy": 0.002665385603904724,
+          "mean_response": 0.47511065006256104,
+          "median_reciprocal_denominator": 140.41494750976562
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.233873278967744,
+          "filter_energy": 0.0026552374474704266,
+          "mean_response": 0.4751119911670685,
+          "median_reciprocal_denominator": 140.9968719482422
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2329589956317086,
+          "filter_energy": 0.002660102443769574,
+          "mean_response": 0.47503453493118286,
+          "median_reciprocal_denominator": 140.74258422851562
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2315357446074673,
+          "filter_energy": 0.0026563149876892567,
+          "mean_response": 0.47496670484542847,
+          "median_reciprocal_denominator": 140.88153076171875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.236502037604024,
+          "filter_energy": 0.0026566465385258198,
+          "mean_response": 0.4754430055618286,
+          "median_reciprocal_denominator": 141.00094604492188
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2384873550071196,
+          "filter_energy": 0.002643335610628128,
+          "mean_response": 0.47548672556877136,
+          "median_reciprocal_denominator": 141.64752197265625
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2326717321880438,
+          "filter_energy": 0.002667538821697235,
+          "mean_response": 0.4754468500614166,
+          "median_reciprocal_denominator": 140.4901123046875
+        },
+        {
+          "relative_noise_gain_db_at_equal_mean_response": 1.2336421931297439,
+          "filter_energy": 0.0026507312431931496,
+          "mean_response": 0.47546789050102234,
+          "median_reciprocal_denominator": 141.38528442382812
+        }
+      ]
+    }
+  },
+  "controls": {
+    "target_rows": [
+      183,
+      183,
+      183,
+      183,
+      183,
+      183,
+      183,
+      183,
+      183,
+      183
+    ],
+    "target_columns": [
+      69,
+      69,
+      69,
+      69,
+      69,
+      69,
+      69,
+      69,
+      69,
+      69
+    ],
+    "control_stride_bins": 2,
+    "control_count": 51396,
+    "parameter_trial_control_p99": 2.2979514984134397
+  },
+  "scores": {
+    "0.01": {
+      "target": 0.8590549796159568,
+      "control_p99": 1.959455532162945,
+      "margin_db": -3.5811445244062208,
+      "per_frame_ratio_db": [
+        4.470921961648333,
+        -8.136606942794467,
+        -7.044058775147802,
+        -1.001754845794576,
+        -0.27464693189480566,
+        -8.272942982434854,
+        -1.3419036999556648,
+        -8.85710652698528,
+        -6.239758358986277,
+        3.9028610310053824
+      ],
+      "control_count": 51396,
+      "margin_over_parameter_trial_control_p99_db": -4.2731989841974025
+    },
+    "0.1": {
+      "target": 0.9959567613103057,
+      "control_p99": 2.1252900925180254,
+      "margin_db": -3.291777333964511,
+      "per_frame_ratio_db": [
+        3.6263689426928627,
+        -4.547866097145339,
+        -4.846910570270958,
+        5.0476453497156015,
+        -7.581320090353856,
+        -6.469735984041003,
+        1.064475662562113,
+        -3.695748030495017,
+        -2.1426627994134657,
+        0.26861010832765164
+      ],
+      "control_count": 51396,
+      "margin_over_parameter_trial_control_p99_db": -3.6310037376132263
+    },
+    "1.0": {
+      "target": 1.0474611088830499,
+      "control_p99": 2.113805365362214,
+      "margin_db": -3.049270888679252,
+      "per_frame_ratio_db": [
+        -1.059680130736012,
+        -5.4881167028145175,
+        0.9115685389302619,
+        4.874723293419571,
+        -8.786781566463915,
+        -15.575539446488111,
+        -2.961617407658835,
+        0.21510936055993513,
+        3.416404623118205,
+        0.7562748034483746
+      ],
+      "control_count": 51396,
+      "margin_over_parameter_trial_control_p99_db": -3.4120295099101643
+    }
+  },
+  "deployment_note": "Offline replay experiment only; no ATSC reconstruction or live configuration."
+}

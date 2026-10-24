@@ -111,8 +111,13 @@ async function expectReject(promise, pattern) {
   assert.equal(frequencyMapping.commandContract,
     'inspected-suite-v2-newline-json');
   assert.ok(getSettingsMapping('Usrp').every(item =>
-    item.direction === 'direct-tuning' && item.confirmation === 'unsupported-readback' &&
-    item.hardwareReadback === false));
+    item.direction === 'direct-tuning' &&
+    item.confirmation === 'processor-startup-uhd-readback' &&
+    item.hardwareReadback === true && item.physicalRfVerified === false));
+  assert.ok(getSettingsMapping('HackRF').every(item =>
+    item.direction === 'direct-tuning' &&
+    item.confirmation === 'processor-startup-setter-acceptance' &&
+    item.hardwareReadback === false && item.physicalRfVerified === false));
 
   const readyPlan = manager.plan({receiverType: 'Kraken'}, result);
   assert.equal(readyPlan.executable, false);

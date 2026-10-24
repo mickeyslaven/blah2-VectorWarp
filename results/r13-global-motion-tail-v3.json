@@ -1,0 +1,17 @@
+{
+  "schema": "vectorwarp-global-motion-tail-v1",
+  "samples": 1000,
+  "seed": 20261021,
+  "targets": {
+    "a4dc43": {
+      "score_db": 1.4471082203755103,
+      "sample_exceedances": 3,
+      "empirical_percentile": 0.997,
+      "sample_exceeding_local_maxima": 3,
+      "local_neighbor_exceedances": 0,
+      "local_neighbor_max_db": 1.3910939446225223
+    }
+  },
+  "sample_p99_db": 1.3727166577542562,
+  "sample_max_db": 1.9793385414414026
+}

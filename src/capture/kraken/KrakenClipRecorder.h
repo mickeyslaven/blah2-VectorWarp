@@ -12,6 +12,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 #include <condition_variable>
 
@@ -42,6 +43,13 @@ struct IqClipStatus
 class KrakenClipRecorder
 {
 public:
+  struct Position
+  {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+    int64_t epochEstimateNanoseconds = 0;
+  };
   struct Options
   {
     double ringSeconds = 4.0;
@@ -69,7 +77,8 @@ public:
   // waiting; radar ingress remains unaffected.
   bool ingest(const std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE>& fixed,
     std::vector<uint8_t> metadata, std::vector<uint8_t> payload,
-    const HeimdallFrame::Header& header);
+    const HeimdallFrame::Header& header, Position* position = nullptr);
+  Position position() const;
 
 private:
   struct Frame;
@@ -88,6 +97,7 @@ private:
   std::deque<std::shared_ptr<Frame>> ring;
   std::unique_ptr<Active> active;
   std::deque<std::unique_ptr<Job>> jobs;
+  std::unordered_set<uint64_t> writerRevisions;
   IqClipStatus terminal;
   std::thread writer;
   bool stopping = false;

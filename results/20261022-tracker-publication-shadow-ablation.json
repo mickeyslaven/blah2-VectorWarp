@@ -1,0 +1,84 @@
+{
+  "schema": "vectorwarp-tracker-publication-shadow-ablation-v1",
+  "arm": "coherent_beam_bank",
+  "replay": {
+    "signal_start_epoch": 1792527509.975899,
+    "cpi_seconds": 0.5,
+    "detector_input_reused_for_all_arms": true
+  },
+  "raw_detector": {
+    "frames": 59,
+    "detections": 249,
+    "unmatched_to_eligible_adsb": 246,
+    "target_near_detections": 3,
+    "target_near_aircraft": {
+      "a81461": 3
+    },
+    "canonical_sha256": "c4c55311e3c88dd724f027bf8f367d2552c11c58cf0953d727b01ef0d5dd2dd7"
+  },
+  "stationary_clutter": {
+    "mode": "fresh-map bounded proof; resident execution unavailable on this host",
+    "persistence_cpis": 60,
+    "retirement_history_samples": 100,
+    "frames": 59,
+    "admission_suppression_reachable": false,
+    "retirement_reachable": false,
+    "off_observed_native": {
+      "frames": 59,
+      "peak_tracker_population": 155,
+      "peak_tentative_population": 151,
+      "observable_formed_track_ids": 20,
+      "associated_track_ids": 20,
+      "confirmed_active_or_coasting_track_ids": 8,
+      "track_frame_instances": 203,
+      "unmatched_track_frame_instances": 201,
+      "ids_never_near_eligible_adsb": 19,
+      "target_near_track_ids": 1,
+      "target_near_aircraft": {
+        "a81461": 2
+      }
+    },
+    "on_shadow_native": {
+      "expected_equal_to_off": true,
+      "reason": "at most one persistence credit per cell per CPI; both thresholds exceed clip length"
+    }
+  },
+  "publication": {
+    "native": {
+      "frames": 59,
+      "peak_tracker_population": 155,
+      "peak_tentative_population": 151,
+      "observable_formed_track_ids": 20,
+      "associated_track_ids": 20,
+      "confirmed_active_or_coasting_track_ids": 8,
+      "track_frame_instances": 203,
+      "unmatched_track_frame_instances": 201,
+      "ids_never_near_eligible_adsb": 19,
+      "target_near_track_ids": 1,
+      "target_near_aircraft": {
+        "a81461": 2
+      }
+    },
+    "hybrid_no_external_events": {
+      "frames": 59,
+      "peak_tracker_population": 5,
+      "peak_tentative_population": 0,
+      "observable_formed_track_ids": 13,
+      "associated_track_ids": 6,
+      "confirmed_active_or_coasting_track_ids": 8,
+      "track_frame_instances": 173,
+      "unmatched_track_frame_instances": 172,
+      "ids_never_near_eligible_adsb": 12,
+      "target_near_track_ids": 1,
+      "target_near_aircraft": {
+        "a81461": 1
+      }
+    },
+    "hybrid_policy": {
+      "native_min_associations": 5,
+      "input_fresh": true,
+      "external_events": 0,
+      "semantics": "exact TrackerPublication output over identical saved native frames"
+    }
+  }
+}

@@ -425,8 +425,9 @@ function withSixChannels(config) {
       'A deliberate direct-backend Apply must permit its own SDK startup checks');
     assert.equal(directResult.body.receiverSync.status, 'not-required');
     assert.match(directResult.body.receiverSync.acceptance.acknowledgement,
-      /no positive applied-settings acknowledgement/);
-    assert.equal(directResult.body.receiverSync.acceptance.hardwareReadback, false);
+      /validated per-channel UHD getter readback/);
+    assert.equal(directResult.body.receiverSync.acceptance.hardwareReadback, true);
+    assert.equal(directResult.body.receiverSync.acceptance.physicalReceiverVerified, false);
     assert.equal(commands.length, commandsBeforeMismatch,
       'A direct receiver profile must not be sent to Suite V2');
 

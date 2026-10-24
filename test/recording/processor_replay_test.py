@@ -206,7 +206,8 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
         process["reference_synthesis"] = {"mode": "dedicated", "channels": [0]}
     return {
         "capture": {"fs": sample_rate, "fc": frequency, "device": device,
-                    "replay": {"state": True, "loop": loop, "file": str(recording), "format": "auto"}},
+                    "replay": {"state": True, "loop": loop, "file": str(recording),
+                               "format": "auto", "provenance": "legacy-unqualified"}},
         "process": process,
         "network": {"ip": HOST, "ports": dict(api=api_port, **sink_ports)},
         "save": {"iq": False, "map": False, "detection": False, "timing": False, "path": str(recording.parent)},
@@ -272,7 +273,7 @@ def assert_finite_numbers(value, name="map.data"):
         raise AssertionError(f"{name} is not a finite numeric map value")
 
 
-def assert_processor_outputs(sinks):
+def assert_processor_outputs(sinks, receiver):
     if not all(sinks.bytes[name] for name in ("map", "timestamp", "timing")):
         raise AssertionError("processor did not produce map, timestamp and timing output")
     map_json = first_json(sinks.payloads["map"], "map")
@@ -292,6 +293,31 @@ def assert_processor_outputs(sinks):
     if not all(isinstance(timing_json["clutterAcceleration"].get(field), bool)
                for field in ("gpuExecuted", "cpuExecuted")):
         raise AssertionError("timing output does not distinguish clutter GPU work from CPU validation")
+    sources = {
+        "Kraken": "kraken_heimdall_host_arrival_estimate",
+        "RspDuo": "sdrplay_callback_sample_counter",
+        "Usrp": "usrp_uhd_device_time",
+        "HackRF": "hackrf_shared_trigger_relative_sample_epoch",
+    }
+    expected = {
+        "schema": "vectorwarp-event-time-v1", "source": sources[receiver],
+        "exact": False, "uncertaintyBounded": False, "uncertaintyNs": None,
+        "estimateAvailable": False, "estimateNs": None, "epochEstimateNs": None,
+        "epoch": "0", "firstSample": "0", "endSample": "0", "sampleRateHz": 0,
+    }
+    for output_name, payload in (("map", map_json), ("timing", timing_json)):
+        provenance = payload.get("eventTime")
+        if not isinstance(provenance, dict):
+            raise AssertionError(f"{receiver} legacy replay {output_name} has no provisional event-time provenance")
+        for key, value in expected.items():
+            if provenance.get(key) != value:
+                raise AssertionError(
+                    f"{receiver} legacy replay {output_name} eventTime.{key} was "
+                    f"{provenance.get(key)!r}, expected {value!r}")
+        if not isinstance(provenance.get("reason"), str) or not provenance["reason"]:
+            raise AssertionError(f"{receiver} legacy replay {output_name} lacks an uncertainty reason")
+        if receiver == "Usrp" and provenance.get("deviceTimeAvailable") is not False:
+            raise AssertionError("Legacy USRP replay must not invent UHD device time")
     timestamp = bytes(sinks.payloads["timestamp"]).strip()
     if not timestamp or not timestamp.isdigit():
         raise AssertionError("timestamp output is not numeric")
@@ -365,7 +391,7 @@ def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, c
                                      any(item.get("state") == "complete" for item in states))
                 if not progress_observed:
                     raise AssertionError(f"{receiver}/{channels} never reported {required_state}")
-                assert_processor_outputs(sinks)
+                assert_processor_outputs(sinks, receiver)
             return {"case": f"{receiver}-{channels}-{kind}", "ok": True,
                     "sample_rate": sample_rate, "cpi_seconds": cpi, "clutter": clutter,
                     "states": sorted({item.get("state") for item in states}),

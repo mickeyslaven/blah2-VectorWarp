@@ -1,0 +1,20 @@
+{
+  "schema": "oprs-system-manifest-v1",
+  "system_id": "example-ref-surv-2ch",
+  "implementation": "receiver-neutral reference example",
+  "capability_profile": "REF_SURV_2CH",
+  "sample_rate_hz": 20000,
+  "center_frequency_hz": 100000000,
+  "usable_bandwidth_hz": 16000,
+  "sample_format": "blah2iq_cf32le",
+  "full_scale": 1.0,
+  "synchronization": "shared_clock_and_time",
+  "bearing_capability": false,
+  "vendor_telemetry": false,
+  "channels": [
+    {"channel_id": "ref", "hardware_index": 0, "roles": ["reference"], "antenna_polarization": "horizontal"},
+    {"channel_id": "surv", "hardware_index": 1, "roles": ["surveillance"], "antenna_polarization": "horizontal"}
+  ],
+  "array_geometry": null,
+  "adapter": {"name": "vectorwarp-blah2iq-v1", "replay_only": true}
+}

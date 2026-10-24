@@ -50,8 +50,16 @@ const truthFixture = http.createServer((req, res) => {
   truthRequests.push(req.url);
   const url = new URL(req.url, 'http://fixture.invalid');
   res.setHeader('Content-Type', 'application/json');
-  if (url.pathname === '/receiver/data/aircraft.json')
-    return res.end(JSON.stringify({now: Date.now() / 1000, aircraft: [{hex: 'abc123', flight: 'TEST', lat: 1, lon: 2, alt_geom: 1000, seen_pos: 0}]}));
+  if (url.pathname === '/receiver/data/aircraft.json') {
+    // The configured four-CPI hold exists so a delayed feeder observation can
+    // arrive for the original request epoch. Model that delay here instead of
+    // returning a future observation that the <=1 s association contract must
+    // correctly reject.
+    const lagSeconds = (config.truth.adsb.association_lag_cpis || 0) * config.process.data.cpi;
+    return res.end(JSON.stringify({now: Date.now() / 1000 - lagSeconds,
+      aircraft: [{hex: 'abc123', flight: 'TEST', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 120, track: 90, seen_pos: 0}]}));
+  }
   res.writeHead(404); res.end('{}');
 });
 truthFixture.listen(truthPort, '127.0.0.1');

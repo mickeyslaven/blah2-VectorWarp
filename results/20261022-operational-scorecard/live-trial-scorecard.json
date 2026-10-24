@@ -1,0 +1,1384 @@
+{
+  "schema": "vectorwarp-operational-scorecard-v1",
+  "evaluation_status": "INVALID_FOR_OPERATIONAL_ACCEPTANCE",
+  "critical_review": "docs/OPRS_CRITICAL_REVIEW.md",
+  "metric_contract": {
+    "independent_unit": "finalized aircraft pass",
+    "minimum_opportunity_frames": 3,
+    "success_frames": 3,
+    "primary_metric": "tracking pass recall",
+    "success_definition": "at least 3 ADS-B-associated tracked CPIs in an admitted pass",
+    "detection_definition": "at least 3 ADS-B-associated raw-detection CPIs in an admitted pass",
+    "truth": {
+      "maximum_raw_observation_offset_s": 1.0,
+      "event_time_projection_required": true,
+      "maximum_source_disagreement_km": 0.5
+    },
+    "pool_config_epochs": false,
+    "interval": "two-sided Wilson 95%",
+    "interpretation": "Recall is primary only at a non-inferior nuisance-track burden; nuisance data is reported separately and is not available in this evidence file."
+  },
+  "inputs": [
+    {
+      "label": "live-trial",
+      "source": "results/20261022-operational-scorecard/live-trial-evidence-statistics.json",
+      "source_sha256": "494223117d1c06a7e3fa7491a2de1761a2f577ad623f09d1b36bcdafb72d75ee",
+      "input_schema": "vectorwarp-evidence-statistics-v2",
+      "input_created_at": 1792700292378,
+      "input_updated_at": 1792700783695,
+      "epochs": [
+        {
+          "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+          "summary": {
+            "passes_seen": 26,
+            "passes_admitted": 12,
+            "passes_excluded": 14,
+            "detection_passes": 0,
+            "tracked_passes": 1,
+            "raw_detection_recall": {
+              "estimate": 0.0,
+              "lower_95": 0.0,
+              "upper_95": 0.24249400665524085
+            },
+            "primary_tracking_recall": {
+              "estimate": 0.08333333333333333,
+              "lower_95": 0.014865094404917095,
+              "upper_95": 0.35387991114111694
+            },
+            "detected_to_tracked_conversion": {
+              "estimate": null,
+              "lower_95": null,
+              "upper_95": null
+            },
+            "median_tracking_continuity": 0.014084507042253521,
+            "median_detection_latency_s": null,
+            "median_tracking_latency_s": 104.515,
+            "exclusion_reasons": {
+              "insufficient_eligible_frames": 14,
+              "not_finalized": 14
+            }
+          },
+          "stratified": {
+            "delay_region": {
+              "core_le_30km": {
+                "passes_seen": 9,
+                "passes_admitted": 5,
+                "passes_excluded": 4,
+                "detection_passes": 0,
+                "tracked_passes": 1,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.43448246478317476
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.2,
+                  "lower_95": 0.03622410863243014,
+                  "upper_95": 0.6244653702374747
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": 0.014084507042253521,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": 104.515,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 4,
+                  "not_finalized": 4
+                }
+              },
+              "extended_30_60km": {
+                "passes_seen": 14,
+                "passes_admitted": 6,
+                "passes_excluded": 8,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.3903342879021653
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.3903342879021653
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 8,
+                  "not_finalized": 8
+                }
+              },
+              "outside_60km": {
+                "passes_seen": 3,
+                "passes_admitted": 1,
+                "passes_excluded": 2,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 2,
+                  "not_finalized": 2
+                }
+              }
+            },
+            "elevation_region": {
+              "high_ge_15deg": {
+                "passes_seen": 3,
+                "passes_admitted": 0,
+                "passes_excluded": 3,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "primary_tracking_recall": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 3,
+                  "not_finalized": 3
+                }
+              },
+              "low_lt_5deg": {
+                "passes_seen": 17,
+                "passes_admitted": 10,
+                "passes_excluded": 7,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.2775327998628892
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.2775327998628892
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 7,
+                  "not_finalized": 7
+                }
+              },
+              "mid_5_15deg": {
+                "passes_seen": 6,
+                "passes_admitted": 2,
+                "passes_excluded": 4,
+                "detection_passes": 0,
+                "tracked_passes": 1,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.5,
+                  "lower_95": 0.09453120573423074,
+                  "upper_95": 0.9054687942657693
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": 0.014084507042253521,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": 104.515,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 4,
+                  "not_finalized": 4
+                }
+              }
+            },
+            "doppler_region": {
+              "clear_ge_100hz": {
+                "passes_seen": 26,
+                "passes_admitted": 12,
+                "passes_excluded": 14,
+                "detection_passes": 0,
+                "tracked_passes": 1,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.24249400665524085
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.08333333333333333,
+                  "lower_95": 0.014865094404917095,
+                  "upper_95": 0.35387991114111694
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": 0.014084507042253521,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": 104.515,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 14,
+                  "not_finalized": 14
+                }
+              }
+            },
+            "azimuth_region": {
+              "azimuth_000_045deg": {
+                "passes_seen": 4,
+                "passes_admitted": 0,
+                "passes_excluded": 4,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "primary_tracking_recall": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 4,
+                  "not_finalized": 4
+                }
+              },
+              "azimuth_045_090deg": {
+                "passes_seen": 3,
+                "passes_admitted": 2,
+                "passes_excluded": 1,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 1,
+                  "not_finalized": 1
+                }
+              },
+              "azimuth_090_135deg": {
+                "passes_seen": 4,
+                "passes_admitted": 2,
+                "passes_excluded": 2,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 2,
+                  "not_finalized": 2
+                }
+              },
+              "azimuth_135_180deg": {
+                "passes_seen": 4,
+                "passes_admitted": 2,
+                "passes_excluded": 2,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.6576197724933469
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 2,
+                  "not_finalized": 2
+                }
+              },
+              "azimuth_180_225deg": {
+                "passes_seen": 3,
+                "passes_admitted": 1,
+                "passes_excluded": 2,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 2,
+                  "not_finalized": 2
+                }
+              },
+              "azimuth_270_315deg": {
+                "passes_seen": 6,
+                "passes_admitted": 4,
+                "passes_excluded": 2,
+                "detection_passes": 0,
+                "tracked_passes": 1,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.4898908364545973
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.25,
+                  "lower_95": 0.04558726080970055,
+                  "upper_95": 0.6993581574175981
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": 0.014084507042253521,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": 104.515,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 2,
+                  "not_finalized": 2
+                }
+              },
+              "azimuth_315_360deg": {
+                "passes_seen": 2,
+                "passes_admitted": 1,
+                "passes_excluded": 1,
+                "detection_passes": 0,
+                "tracked_passes": 0,
+                "raw_detection_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "primary_tracking_recall": {
+                  "estimate": 0.0,
+                  "lower_95": 0.0,
+                  "upper_95": 0.7934506856227626
+                },
+                "detected_to_tracked_conversion": {
+                  "estimate": null,
+                  "lower_95": null,
+                  "upper_95": null
+                },
+                "median_tracking_continuity": null,
+                "median_detection_latency_s": null,
+                "median_tracking_latency_s": null,
+                "exclusion_reasons": {
+                  "insufficient_eligible_frames": 1,
+                  "not_finalized": 1
+                }
+              }
+            }
+          },
+          "records": [
+            {
+              "pass_id": "99d95169d68c9922113f8292f9a1b09d02a25941ab170f4888dc40bf0ebd3958",
+              "hex": "a1a7fe",
+              "flight": "N20572",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 32.22033266362067,
+                "elevation_deg": 7.202848597752782,
+                "ground_range_km": 17.465219517520044,
+                "abs_doppler_hz": 269.01868299933625,
+                "azimuth_deg": 205.83441448310734,
+                "altitude_ft": 8475
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_180_225deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "10c9f16d89ec3b249bda2af1833a0c9a21aa8d8d9f4f7078fdd03dfb90166c11",
+              "hex": "a1c9a6",
+              "flight": "N214PC",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 30,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 49.12501455327928,
+                "elevation_deg": 3.3252022233222913,
+                "ground_range_km": 32.023808977854884,
+                "abs_doppler_hz": 279.82374274374945,
+                "azimuth_deg": 73.56962448656756,
+                "altitude_ft": 7300.052000045776
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_045_090deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "43f99313a3b0259347a9c2630f2480b95245941ff6095673cf547ea8cb642532",
+              "hex": "a2c574",
+              "flight": "AAY1144",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": 1792700701829,
+              "eligible_frames": 154,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 13.919473805049819,
+                "elevation_deg": 5.39062662162877,
+                "ground_range_km": 8.049851058652674,
+                "abs_doppler_hz": 161.2193375330737,
+                "azimuth_deg": 192.69718303545335,
+                "altitude_ft": 3838.407467142741
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_180_225deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "db15bc6b403facd5baa850a4991b6299f5fef8d2eb7669aee2584f70bd755edd",
+              "hex": "a3248c",
+              "flight": "N301RM",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 213,
+              "detected_frames": 0,
+              "tracked_frames": 3,
+              "detection_success": false,
+              "tracking_success": true,
+              "continuity": 0.014084507042253521,
+              "detection_latency_s": null,
+              "tracking_latency_s": 104.515,
+              "geometry": {
+                "delay_km": 24.39480327310301,
+                "elevation_deg": 13.471897763031166,
+                "ground_range_km": 11.949288845513207,
+                "abs_doppler_hz": 311.5386987620632,
+                "azimuth_deg": 279.24515866674903,
+                "altitude_ft": 10550
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "ae8539cf55a856296368f9be86026bc58da1c4b63b7f292449b93483f7babec5",
+              "hex": "a43ff0",
+              "flight": "N373LF",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": 1792700543724,
+              "eligible_frames": 8,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 58.94124768136497,
+                "elevation_deg": 0.4062604653249803,
+                "ground_range_km": 37.17629954965494,
+                "abs_doppler_hz": 216.53723966349133,
+                "azimuth_deg": 75.81905044727915,
+                "altitude_ft": 2026.0090665181478
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_045_090deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "dcc3ab42839b1beb195cd0b6a4a6691b9d7d53bdba1ef88b6a5ab0651fd13dde",
+              "hex": "abccc5",
+              "flight": "N86CW",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 60,
+              "detected_frames": 2,
+              "tracked_frames": 2,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.03333333333333333,
+              "detection_latency_s": 117.015,
+              "tracking_latency_s": 87.136,
+              "geometry": {
+                "delay_km": 24.03566776961983,
+                "elevation_deg": 0.7498635661309307,
+                "ground_range_km": 18.801851949914866,
+                "abs_doppler_hz": 148.2206220063453,
+                "azimuth_deg": 120.91441994307638,
+                "altitude_ft": 1965.7231979370117
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_090_135deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "746d3b53154fbb48c7431f3e24564d3c67d4f7f8bab1e5474e9ecb74426f92cb",
+              "hex": "ac4bfe",
+              "flight": "SWA1030",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700296380,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 46.160791636610846,
+                "elevation_deg": 24.368362018471526,
+                "ground_range_km": 24.03427528983489,
+                "abs_doppler_hz": 134.69990202974566,
+                "azimuth_deg": 181.55067935398375,
+                "altitude_ft": 36875
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "high_ge_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_180_225deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "ddb5d3e149822086459cbbd54f1cfcfdacf21e5ca80c61f0bcd6b790cf87281a",
+              "hex": "a019e3",
+              "flight": "N10518",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700305400,
+              "finalized_at": 1792700595151,
+              "eligible_frames": 14,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 16.769543498954118,
+                "elevation_deg": 4.045480576684787,
+                "ground_range_km": 14.092668881485604,
+                "abs_doppler_hz": 163.9046978642909,
+                "azimuth_deg": 133.78330845210883,
+                "altitude_ft": 4428.362133789063
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_090_135deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "db680cdae3877f3ba1e2b614a383c3c13fd418fd12bd1bcef71ba41f0a43cbb5",
+              "hex": "a2b153",
+              "flight": "UAL2055",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700305400,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 9,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 52.669572867206284,
+                "elevation_deg": 1.9144983856643047,
+                "ground_range_km": 26.344192477583057,
+                "abs_doppler_hz": 492.540203643513,
+                "azimuth_deg": 280.5855418472326,
+                "altitude_ft": 4047.467205810547
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "b8f3cc1a8055420ad8341088f32237de403ceba2d118d1d23ddbe17906f2f416",
+              "hex": "a18289",
+              "flight": "N197DT",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700317411,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 7,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 62.289380139254376,
+                "elevation_deg": 1.3502395365858497,
+                "ground_range_km": 33.67053923252875,
+                "abs_doppler_hz": 102.99531317702474,
+                "azimuth_deg": 341.48980323381704,
+                "altitude_ft": 3762.1343994140625
+              },
+              "strata": {
+                "delay_region": "outside_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_315_360deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "78a6e75f75998ae77f8482db50fc314d89c070f5d7a5d9c9a810c04762db01db",
+              "hex": "ac857b",
+              "flight": "PDT5977",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700317411,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 40.60803177412882,
+                "elevation_deg": 21.83649782448262,
+                "ground_range_km": 19.595963449927755,
+                "abs_doppler_hz": 289.0952449278276,
+                "azimuth_deg": 299.58232746395583,
+                "altitude_ft": 27020.86133219401
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "high_ge_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "eb06e1c158d833798796de8257fbc06f1ab49c8192aef76060e61ab470ee2922",
+              "hex": "a200df",
+              "flight": "LJY228",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700350942,
+              "finalized_at": 1792700477670,
+              "eligible_frames": 4,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 23.276353608635823,
+                "elevation_deg": 0.2729475495474204,
+                "ground_range_km": 11.72746777577718,
+                "abs_doppler_hz": 188.7692689691428,
+                "azimuth_deg": 284.7398087292296,
+                "altitude_ft": 1341.6522664388021
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "fafb4389ef9ab853757ae285ca568c74989aee2d97375f726a72afbfe7e6cc0e",
+              "hex": "ab786d",
+              "flight": "N8380C",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700350942,
+              "finalized_at": 1792700635105,
+              "eligible_frames": 60,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 38.469579090722775,
+                "elevation_deg": 0.8570798253200401,
+                "ground_range_km": 23.754081508570874,
+                "abs_doppler_hz": 102.13930267920796,
+                "azimuth_deg": 158.93409473197448,
+                "altitude_ft": 2325.0
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_135_180deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "5888b35adadd47b3d4817e708de9d0cf99c91d2ee3d16a4e73b872f291b46f55",
+              "hex": "a68a06",
+              "flight": "N520ME",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700377984,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": 2.755,
+              "tracking_latency_s": 4.159,
+              "geometry": {
+                "delay_km": 6.837603343863734,
+                "elevation_deg": 1.5797465928671117,
+                "ground_range_km": 9.652590513462712,
+                "abs_doppler_hz": 111.11938511467811,
+                "azimuth_deg": 54.0302175800104,
+                "altitude_ft": 2075
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_045_090deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "d7a8d13c2ea20339385baf61b418845fe3080e905b283ec00741f4346322fe20",
+              "hex": "a99a22",
+              "flight": "N718DT",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700384076,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": 198.874,
+              "tracking_latency_s": 201.375,
+              "geometry": {
+                "delay_km": 39.88481839074444,
+                "elevation_deg": 0.943141801764379,
+                "ground_range_km": 26.986863607746606,
+                "abs_doppler_hz": 287.7223513686559,
+                "azimuth_deg": 124.55776178175051,
+                "altitude_ft": 2615.9333292643228
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_090_135deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "594f7089cbd095756aa3ccabe710b4f53732e9d55f5026d2ab498c2b5524100e",
+              "hex": "a32bba",
+              "flight": "AAL2754",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700399393,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": 159.554,
+              "tracking_latency_s": 162.052,
+              "geometry": {
+                "delay_km": 9.256996058139544,
+                "elevation_deg": 6.05541825142993,
+                "ground_range_km": 7.53005893080638,
+                "abs_doppler_hz": 224.13903712053377,
+                "azimuth_deg": 178.24866492942908,
+                "altitude_ft": 3922.4847999572753
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_135_180deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "ff94713d399fa5115adfc6cb139900c4455f51ed4e11f95f838b24fc3b3fd5ad",
+              "hex": "aae267",
+              "flight": "RVJ800",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700412191,
+              "finalized_at": 1792700635106,
+              "eligible_frames": 24,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 43.94657201332318,
+                "elevation_deg": 2.527657543818892,
+                "ground_range_km": 21.947940191137125,
+                "abs_doppler_hz": 381.93329384427926,
+                "azimuth_deg": 277.3664292205436,
+                "altitude_ft": 4337.107198333741
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "66ff0142cf00d580cdcdb678dd92f30f991e2f9e93666a43a0f786a0f9a0c60e",
+              "hex": "a53304",
+              "flight": "N434LR",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700469538,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 24.935214872668183,
+                "elevation_deg": 8.623778405859634,
+                "ground_range_km": 15.614720896341662,
+                "abs_doppler_hz": 273.4224032659007,
+                "azimuth_deg": 10.931216191748717,
+                "altitude_ft": 8948.005333455403
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_000_045deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "314dd92363daacc8db48cfa8b58c55d56bee73c9ba928623410cadf584699c22",
+              "hex": "ad4fe1",
+              "flight": "AAL2442",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700490689,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 53.51097066707873,
+                "elevation_deg": 19.662494653248572,
+                "ground_range_km": 28.67608567575039,
+                "abs_doppler_hz": 700.4167536355321,
+                "azimuth_deg": 18.201110908951478,
+                "altitude_ft": 34775
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "high_ge_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_000_045deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "fdc8ea9078e04963e4730d71ef95671e014eb4ac493a210ad21bc0a04cd37bb6",
+              "hex": "a1c9a6",
+              "flight": "N214PC",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700638607,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 41.11777239958037,
+                "elevation_deg": 3.8719670082693773,
+                "ground_range_km": 28.236714863271715,
+                "abs_doppler_hz": 372.37850630521035,
+                "azimuth_deg": 94.59092866244981,
+                "altitude_ft": 7424.466666666666
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_090_135deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "607be53db7385b03868774ae9e326ccfd81dbce23d05a6a3644394d5b7e354c2",
+              "hex": "ab786d",
+              "flight": "N8380C",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700638607,
+              "finalized_at": 1792700765166,
+              "eligible_frames": 6,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 52.363056198970256,
+                "elevation_deg": 0.4611695434012462,
+                "ground_range_km": 31.83520633082068,
+                "abs_doppler_hz": 136.6811936598766,
+                "azimuth_deg": 144.37777650351325,
+                "altitude_ft": 1999.0560000101725
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_135_180deg"
+              },
+              "admitted": true,
+              "exclusion_reasons": []
+            },
+            {
+              "pass_id": "d30a7b51ff1d7a041850d701d4bf6df010bf6e6776f839716f7a63d549b78205",
+              "hex": "a1f46b",
+              "flight": "RPA5685",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700657120,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 23.870303589248884,
+                "elevation_deg": 3.84118924386782,
+                "ground_range_km": 18.04610163158143,
+                "abs_doppler_hz": 520.4499614896913,
+                "azimuth_deg": 42.05871113619182,
+                "altitude_ft": 5132.815999603272
+              },
+              "strata": {
+                "delay_region": "core_le_30km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_000_045deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "1d1d5490629820ddbf979f8c83e15ce2c66a898ecf146b2da51c2a7f60226ee9",
+              "hex": "a9eeb6",
+              "flight": "RPA3577",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700657120,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 51.68492394379123,
+                "elevation_deg": 2.1794798026806577,
+                "ground_range_km": 25.964108916845078,
+                "abs_doppler_hz": 385.2335519872484,
+                "azimuth_deg": 287.5190749922334,
+                "altitude_ft": 4400.247463480631
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_270_315deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "5b82519ea27503c04adb249d53cb7d7650335c6b2879b9c8d888bd9efeaf6ddf",
+              "hex": "a58c2e",
+              "flight": "ASA442",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700699823,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 74.64075228261241,
+                "elevation_deg": 14.899977776799439,
+                "ground_range_km": 39.71148442202261,
+                "abs_doppler_hz": 476.7909488917481,
+                "azimuth_deg": 324.209821895782,
+                "altitude_ft": 35825.0
+              },
+              "strata": {
+                "delay_region": "outside_60km",
+                "elevation_region": "mid_5_15deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_315_360deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "d8635e4b8ec345b77b22b3a2ec7664a7b1bd18c998cf52173bba4f8dc9dab5dd",
+              "hex": "a188ba",
+              "flight": "FDY238",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700720850,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 67.27012166998259,
+                "elevation_deg": 2.540056134437516,
+                "ground_range_km": 38.87858062039491,
+                "abs_doppler_hz": 331.4051790847492,
+                "azimuth_deg": 21.66748715623902,
+                "altitude_ft": 6816.850667317708
+              },
+              "strata": {
+                "delay_region": "outside_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_000_045deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            },
+            {
+              "pass_id": "efac71b006cf6de40b816bdb21ba15adb00a180feb77168e97c86d59eea7222a",
+              "hex": "a019e3",
+              "flight": "N10518",
+              "config_epoch": "61d5741577cba0fa325b31bf86cd7e4d708872f887eea2390edf1c52edd6a17a",
+              "receiver_epoch": "c4d8cbc0f73a969262c41cf57b3e97713f9c0904c15f23d98f2d3ed020dd2898",
+              "observed_at": 1792700766167,
+              "finalized_at": null,
+              "eligible_frames": 1,
+              "detected_frames": 0,
+              "tracked_frames": 0,
+              "detection_success": false,
+              "tracking_success": false,
+              "continuity": 0.0,
+              "detection_latency_s": null,
+              "tracking_latency_s": null,
+              "geometry": {
+                "delay_km": 55.116849138461625,
+                "elevation_deg": 1.7282295451859717,
+                "ground_range_km": 32.12435926668212,
+                "abs_doppler_hz": 210.22062950052498,
+                "azimuth_deg": 160.7194937425179,
+                "altitude_ft": 4338.121866607666
+              },
+              "strata": {
+                "delay_region": "extended_30_60km",
+                "elevation_region": "low_lt_5deg",
+                "doppler_region": "clear_ge_100hz",
+                "azimuth_region": "azimuth_135_180deg"
+              },
+              "admitted": false,
+              "exclusion_reasons": [
+                "insufficient_eligible_frames",
+                "not_finalized"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "geometry_adjusted_comparisons": []
+}

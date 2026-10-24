@@ -1,0 +1,31 @@
+{
+  "schema": "vectorwarp-fresh-only-recovery-policy-v1",
+  "effective_utc": "2026-10-22T03:07:52Z",
+  "minimum_capture_timestamp_ms": 1792686940348,
+  "decision": "All earlier WWAT captures and replay outputs are quarantined from recovery and frequency-comparison decisions because their aircraft truth can be stale or spatially unbounded.",
+  "authoritative_recordings_deleted": false,
+  "temporary_replay_copies_deleted": true,
+  "required_truth": {
+    "association_lag_cpis": 4,
+    "association_lag_ms": 2000,
+    "maximum_absolute_raw_observation_offset_s": 1.0,
+    "maximum_truth_bracket_span_s": 3.0,
+    "forbid_nearest_sample_hold": true,
+    "forbid_legacy_fallback": true,
+    "require_event_time_provenance": true,
+    "maximum_dual_source_horizontal_disagreement_km": 0.5,
+    "dual_source_disagreement_rule": "apply when a second source has an observation within 3 seconds; do not blend disagreeing sources"
+  },
+  "quarantined_inputs": [
+    "results/20261021-527a-*-manifest.json",
+    "results/20261021-527b-*-manifest.json",
+    "results/20261021-wwat563-current-*-manifest.json",
+    "results/adsb-reconciled-v2/*.adsb-reconciled-v2.json"
+  ],
+  "retained": [
+    "source code and tests",
+    "research reviews",
+    "method implementations",
+    "prior outputs for audit only"
+  ]
+}

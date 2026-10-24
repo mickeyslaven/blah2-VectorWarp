@@ -60,12 +60,31 @@ coherentFusion.capture.device.array_geometry = {
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const measuredFusion = clone(coherentFusion);
+measuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
+assert.equal(validateConfig(measuredFusion).valid, true,
+  'coherent beam-bank fusion accepts a distinct detection manifold path');
+for (const manifold of ['', '   ', 7, null]) {
+  const invalid = clone(coherentFusion);
+  invalid.process.surveillance_fusion.manifold_file = manifold;
+  assert.equal(validateConfig(invalid).valid, false,
+    `reject invalid detection manifold path ${JSON.stringify(manifold)}`);
+}
+const noncoherentMeasuredFusion = clone(measuredFusion);
+noncoherentMeasuredFusion.process.surveillance_fusion.mode = 'noncoherent';
+assert.equal(validateConfig(noncoherentMeasuredFusion).valid, false,
+  'detection manifold cannot be attached to noncoherent fusion');
 const whitenedFusion = clone(coherentFusion);
 whitenedFusion.process.performance.acceleration = 'gpu-resident';
 whitenedFusion.process.tracker.gpu_capacity = 1024;
 whitenedFusion.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
 assert.equal(validateConfig(whitenedFusion).valid, true,
   'noise-whitened beam-bank fusion accepts resident Kraken geometry');
+const residentMeasuredFusion = clone(whitenedFusion);
+residentMeasuredFusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+residentMeasuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
+assert.equal(validateConfig(residentMeasuredFusion).valid, false,
+  'detection manifold fails closed on the resident GPU path that cannot consume it');
 const nonresidentWhitenedFusion = clone(whitenedFusion);
 nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,
@@ -202,6 +221,31 @@ for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
   const value = clone(sixChannel);
   value.truth.adsb.tar1090 = source;
   assert.equal(validateConfig(value).valid, false, `Reject ADS-B source: ${source}`);
+}
+{
+  const value = clone(sixChannel);
+  value.truth.adsb.sources = ['local:readsb', 'https://adsb-backup.example/tar1090'];
+  value.truth.adsb.source_timeout = .75;
+  assert.equal(validateConfig(value).valid, true, 'Accept bounded multi-source ADS-B configuration');
+
+  const unchanged = clone(value);
+  assert.equal(validateConfig(unchanged, value).valid, true,
+    'An unchanged read-only ADS-B source array must survive an unrelated Apply');
+  unchanged.truth.adsb.sources[1] = 'https://different.example/tar1090';
+  assert.equal(validateConfig(unchanged, value).valid, false,
+    'A changed read-only ADS-B source array must still be rejected');
+}
+for (const sources of [[], Array(9).fill('local:readsb'),
+  ['local:readsb', 'local:readsb'], ['auto', 'https://adsb.example'],
+  ['receiver.example:8080', 'http://receiver.example:8080/'],
+  ['local:readsb', 'file:///etc/passwd'], ['local:readsb', 7]]) {
+  const value = clone(sixChannel); value.truth.adsb.sources = sources;
+  assert.equal(validateConfig(value).valid, false,
+    `Reject ADS-B sources: ${JSON.stringify(sources)}`);
+}
+for (const timeout of [0, 10.1, '1']) {
+  const value = clone(sixChannel); value.truth.adsb.source_timeout = timeout;
+  assert.equal(validateConfig(value).valid, false, `Reject ADS-B source timeout: ${timeout}`);
 }
 for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
   for (const mode of ['auto', 'cpu', 'gpu', 'cuda', '', 1, true, null]) {
@@ -453,4 +497,12 @@ legacyUsrp.capture.replay = {...legacyUsrp.capture.replay, state: true,
 assert.equal(validateConfig(legacyUsrp).valid, true, 'USRP legacy replay block size');
 delete legacyUsrp.capture.replay.legacy_block_samples;
 assert.equal(validateConfig(legacyUsrp).valid, false, 'USRP legacy replay requires block size');
+for (const provenance of ['legacy-unqualified', 'decision-grade']) {
+  const replay = clone(sixChannel); replay.capture.replay.provenance = provenance;
+  assert.equal(validateConfig(replay).valid, true, provenance);
+}
+const invalidProvenance = clone(sixChannel);
+invalidProvenance.capture.replay.provenance = 'best-effort';
+assert.equal(validateConfig(invalidProvenance).valid, false,
+  'Replay must not silently invent an unqualified provenance mode');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);

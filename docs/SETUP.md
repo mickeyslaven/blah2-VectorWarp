@@ -127,6 +127,9 @@ Before streaming, the adapter checks both channels through UHD getters:
 sample rate within 0.5 Hz, tuning within 1 Hz, gain within 0.05 dB, and exact
 antenna/subdevice values. Mismatches stop startup. These are software readbacks,
 not RF or clock-source verification; clock/time source is not a web setting.
+Fresh processor status and the Settings startup panel preserve those per-channel
+getter values, the attested clock/time sources, and UHD motherboard/RX identity.
+They remain explicitly non-UTC and do not prove physical RF performance.
 
 The 6 MS/s replay path passes with clutter filtering, but this is not a sustained
 B210 hardware test. The upstream B210 timeout/crash report still needs a physical
@@ -143,9 +146,15 @@ endurance test; defensive error handling is not evidence that it is resolved.
 4. Set frequency, sample rate, LNA/VGA gain and amplifier selection, then choose
    **Save & Restart**.
 
-The adapter checks both devices' open, setting and start return codes. It does
-not read back frequency, gain or clock synchronization afterward. The 6 MS/s
-replay check is not a physical USB-throughput or coherence test.
+The adapter resolves each configured serial suffix uniquely from one device
+enumeration, opens those exact reference/surveillance devices, and checks every
+open, setting and start return code. Fresh processor status and the Settings
+startup panel preserve the resolved full serials and per-radio settings.
+libhackrf automatically chooses a baseband filter no wider than 0.75 times the
+sample rate; VectorWarp records that policy but cannot read back its exact
+analog state. Frequency, gain, clock/trigger wiring and hardware time likewise
+have no post-set readback. Setter acceptance is therefore useful operational
+evidence, not a physical RF or coherence test.
 
 ## Receiver settings: application and verification
 
@@ -170,6 +179,57 @@ web endpoint works too. Local decoder-file discovery does not require tar1090.
 Discovery does not install or start a decoder or scan
 other hosts. The source is saved in `truth.adsb.tar1090`. Live ADS-B is disabled
 during replay and preview; it is never radar detection or tracking input.
+
+For an advanced redundant installation, `truth.adsb.sources` may be an ordered
+list of up to eight readsb/dump1090-compatible base addresses or local selections.
+When present and non-empty, it replaces `tar1090` as the active list; omitting it
+retains the legacy singleton behavior. Sources are read concurrently, separately
+timed out, and fused per ICAO address. `source_timeout` is seconds, from 0.1 to
+10 (default 1.5):
+
+```yaml
+truth:
+  adsb:
+    enabled: true
+    tar1090: 'localhost:8080' # legacy/default source
+    sources:
+      - 'local:readsb'
+      - 'https://approved-backup.example/tar1090'
+      - 'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60'
+    source_timeout: 1.5
+    association_lag_cpis: 4 # two seconds when CPI is 0.5 s
+    # Provisional scoring only. It expands the validation association tube by
+    # aircraft delay/Doppler rate; it never changes detection or tracking.
+    provisional_event_time_uncertainty_s: 1.0
+```
+
+Do not combine `auto` with other list entries because discovery could rediscover
+the same receiver and manufacture false corroboration. Duplicate entries are
+also rejected. This plumbing does not add credentials or enable a public feed;
+only configure services whose access, attribution, retention, and operational
+terms have been approved. `/api/adsb/status` reports per-source health,
+latency, positions usable by geometry, positions fresh enough for evidence,
+failures, and the latest fusion summary.
+
+Prefix an exact ADS-B Exchange v2-compatible endpoint with `exchange:`. These
+responses use `ac` and millisecond snapshot timestamps; VectorWarp normalizes
+them to readsb event time without changing each aircraft's `seen_pos`. Ordered
+sources are deduplicated by ICAO address and the observation with the newest
+actual position event time (`snapshot time - seen_pos`) wins. Source provenance,
+agreement, and disagreement remain attached to that single aircraft record. A
+fresh moving observation is propagated to the fusion/CPI timestamp using its
+ground speed, track, and vertical rate; provenance retains both the original
+observation age and the bounded projection interval.
+`association_lag_cpis` delays ADS-B association—not RF capture or detector
+processing—then projects the newly arrived observation backward or forward to
+the held CPI timestamp.
+When an SDR cannot supply a UTC-qualified RF timestamp,
+`provisional_event_time_uncertainty_s` treats the remaining absolute offset as a
+bounded nuisance parameter. The scorer expands only its validation gates by the
+aircraft's measured delay and Doppler rates over that radius, records the
+allowance on every association, and keeps the result non-decision-grade. It does
+not steer a beam, move a detection cell, or provide ADS-B to radar inference.
+Configure only services whose usage and attribution terms fit the deployment.
 
 Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).
 Stock 3lips uses an external adsb2dd service rather than this built-in converter.

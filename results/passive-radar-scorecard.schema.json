@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$ref": "../schemas/oprs/scorecard-v1.schema.json",
+  "deprecated": true,
+  "description": "Compatibility pointer; canonical schema: schemas/oprs/scorecard-v1.schema.json"
+}

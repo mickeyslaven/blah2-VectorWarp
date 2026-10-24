@@ -69,6 +69,19 @@ function preservesNativeCompatibility() {
   assert.equal(publicationSettings({process: {tracker: {}}}).mode, 'native');
 }
 
+function preservesEventTimeProvenanceThroughFusion() {
+  const eventTime = {source: 'kraken_heimdall_host_arrival_estimate', exact: false,
+    uncertaintyBounded: false, uncertaintyNs: null};
+  const publication = new TrackerPublication(config('external'), {now: () => 10});
+  const nativeFrame = JSON.parse(native());
+  nativeFrame.eventTime = eventTime;
+  publication.acceptNative(nativeFrame);
+  publication.acceptInput({timestamp: 1000, eventTime}, true);
+  assert.equal(publication.acceptExternal(event('timed', 1000, 1, 1)), true);
+  assert.deepEqual(JSON.parse(publication.frame()).eventTime, eventTime,
+    'fusion must not strip an inexact Kraken event-time warning');
+}
+
 function convertsExternalDelayAndHistory() {
   for (const [sampleRate, expected] of [
     [2_400_000, [6.324375244956963, 7.1249290734325275]],
@@ -173,6 +186,7 @@ async function tailsOnlyNewEventsAndFollowsRotation() {
 (async () => {
   publishesHybridWithoutDuplicate();
   preservesNativeCompatibility();
+  preservesEventTimeProvenanceThroughFusion();
   convertsExternalDelayAndHistory();
   rejectsInvalidSampleRatesWithFullNativeFallback();
   supportsExternalOnlyAndRejectsBadEvents();

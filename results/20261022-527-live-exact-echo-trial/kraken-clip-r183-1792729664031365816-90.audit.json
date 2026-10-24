@@ -1,0 +1,316 @@
+{
+  "schema": "vectorwarp-live-echo-cutout-audit-v1",
+  "replay": "/root/wwat527-live-exact/kraken-clip-r183-1792729664031365816-90.replay.json",
+  "admission": "/root/wwat527-live-exact/kraken-clip-r183-1792729664031365816-90.mchq.admission.json",
+  "arm": "whitened_null_6db",
+  "frames": [
+    {
+      "frame": 0,
+      "timestamp_ms": 1792729661029,
+      "truth_delay_km": 5.162833033056363,
+      "truth_doppler_hz": 351.01035109289074,
+      "sampled_delay_km": 5.1214544908,
+      "sampled_doppler_hz": 350.1178730172,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -3.3488279896312045,
+      "sum_rank": 263,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -3.655883268653265,
+          "rank": 128,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -7.797308353492395,
+          "rank": 462,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -6.143289202768157,
+          "rank": 291,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -5.0845863820122705,
+          "rank": 253,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -9.153880217796535,
+          "rank": 599,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 1,
+      "timestamp_ms": 1792729661528,
+      "truth_delay_km": 5.117543008001108,
+      "truth_doppler_hz": 349.53523805785915,
+      "sampled_delay_km": 5.1214544908,
+      "sampled_doppler_hz": 350.1178730172,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -1.8379904340686113,
+      "sum_rank": 84,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -9.920578383695348,
+          "rank": 598,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -4.274421057489662,
+          "rank": 180,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -2.3201244812593615,
+          "rank": 79,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -7.25356365054127,
+          "rank": 464,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -0.832166553746345,
+          "rank": 28,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 2,
+      "timestamp_ms": 1792729662027,
+      "truth_delay_km": 5.117543008001108,
+      "truth_doppler_hz": 349.53523805785915,
+      "sampled_delay_km": 5.1214544908,
+      "sampled_doppler_hz": 350.1178730172,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -2.051571580924125,
+      "sum_rank": 91,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -1.5276673117463235,
+          "rank": 45,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -12.571978394622183,
+          "rank": 779,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -6.580828050829305,
+          "rank": 339,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -6.750352106870476,
+          "rank": 372,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -3.8386305949837043,
+          "rank": 86,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 3,
+      "timestamp_ms": 1792729662524,
+      "truth_delay_km": 5.117543008001108,
+      "truth_doppler_hz": 349.53523805785915,
+      "sampled_delay_km": 5.1214544908,
+      "sampled_doppler_hz": 350.1178730172,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -7.315769482877119,
+      "sum_rank": 840,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -13.0200927335295,
+          "rank": 796,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -10.25291637524395,
+          "rank": 653,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -9.34390147011434,
+          "rank": 597,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -8.69447797712125,
+          "rank": 535,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -7.178665152846971,
+          "rank": 427,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 4,
+      "timestamp_ms": 1792729663030,
+      "truth_delay_km": 4.959976916739361,
+      "truth_doppler_hz": 351.91099027367324,
+      "sampled_delay_km": 4.9965409666,
+      "sampled_doppler_hz": 352.1185465773,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -7.7387277650937545,
+      "sum_rank": 869,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -11.264015700002869,
+          "rank": 735,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -20.431439351005594,
+          "rank": 962,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -12.71470030334439,
+          "rank": 794,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -7.365995199399741,
+          "rank": 429,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -7.430066195319589,
+          "rank": 429,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 5,
+      "timestamp_ms": 1792729663527,
+      "truth_delay_km": 4.7571003691821385,
+      "truth_doppler_hz": 354.96992512149603,
+      "sampled_delay_km": 4.7467139183,
+      "sampled_doppler_hz": 354.1192201374,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -5.620144546020907,
+      "sum_rank": 649,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -4.545102927743265,
+          "rank": 235,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -12.539595183516088,
+          "rank": 779,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -15.448982829575078,
+          "rank": 877,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -4.944481585684565,
+          "rank": 231,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -18.89080840013148,
+          "rank": 966,
+          "control_cells": 1016
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "overlapping_frames": 6,
+    "truth_inside_cutout_frames": 6,
+    "sum_positive_frames": 0,
+    "sum_three_db_frames": 0,
+    "sum_longest_positive_run": 0,
+    "sum_best_margin_p99_db": -1.8379904340686113,
+    "channels": [
+      {
+        "channel": 0,
+        "frames": 6,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -1.5276673117463235
+      },
+      {
+        "channel": 1,
+        "frames": 6,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -4.274421057489662
+      },
+      {
+        "channel": 2,
+        "frames": 6,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -2.3201244812593615
+      },
+      {
+        "channel": 3,
+        "frames": 6,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -4.944481585684565
+      },
+      {
+        "channel": 4,
+        "frames": 6,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -0.832166553746345
+      }
+    ]
+  }
+}

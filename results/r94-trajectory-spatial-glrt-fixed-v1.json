@@ -1,0 +1,191 @@
+{
+  "schema": "vectorwarp-spatial-glrt-v1",
+  "frames": 20,
+  "target_cells": [
+    {
+      "frame": 0,
+      "row": 9,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 78.0262688438
+    },
+    {
+      "frame": 1,
+      "row": 9,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 78.0262688438
+    },
+    {
+      "frame": 2,
+      "row": 9,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 78.0262688438
+    },
+    {
+      "frame": 3,
+      "row": 9,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 78.0262688438
+    },
+    {
+      "frame": 4,
+      "row": 10,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 80.0269424039
+    },
+    {
+      "frame": 5,
+      "row": 11,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 82.027615964
+    },
+    {
+      "frame": 6,
+      "row": 11,
+      "column": 12,
+      "delay_km": 22.1096937775,
+      "doppler_hz": 82.027615964
+    },
+    {
+      "frame": 7,
+      "row": 12,
+      "column": 11,
+      "delay_km": 21.9847802533,
+      "doppler_hz": 84.0282895241
+    },
+    {
+      "frame": 8,
+      "row": 12,
+      "column": 11,
+      "delay_km": 21.9847802533,
+      "doppler_hz": 84.0282895241
+    },
+    {
+      "frame": 9,
+      "row": 12,
+      "column": 11,
+      "delay_km": 21.9847802533,
+      "doppler_hz": 84.0282895241
+    },
+    {
+      "frame": 10,
+      "row": 12,
+      "column": 11,
+      "delay_km": 21.9847802533,
+      "doppler_hz": 84.0282895241
+    },
+    {
+      "frame": 11,
+      "row": 12,
+      "column": 11,
+      "delay_km": 21.9847802533,
+      "doppler_hz": 84.0282895241
+    },
+    {
+      "frame": 12,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 13,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 14,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 15,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 16,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 17,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 18,
+      "row": 13,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 86.0289630842
+    },
+    {
+      "frame": 19,
+      "row": 12,
+      "column": 10,
+      "delay_km": 21.8598667291,
+      "doppler_hz": 84.0282895241
+    }
+  ],
+  "configuration": {
+    "guard_radius": 2,
+    "training_radius": 5,
+    "diagonal_loading": 0.3,
+    "beam_trials": 12,
+    "beam_policy": "fixed"
+  },
+  "target_score": 0.9402523894151006,
+  "control_p99": 1.3286537733857897,
+  "margin_over_control_p99_db": -1.5016737951744346,
+  "controls": 458,
+  "controls_exceeding_target": 150,
+  "target_beam_votes": [
+    10,
+    9,
+    3,
+    3,
+    8,
+    6,
+    10,
+    8,
+    3,
+    10,
+    3,
+    7,
+    10,
+    10,
+    10,
+    9,
+    4,
+    10,
+    7,
+    10
+  ],
+  "target_fixed_beam": 10,
+  "target_covariance_samples_per_frame": 96,
+  "trajectory": "results/r94-clip-truth.json",
+  "hex": "a22389",
+  "truth": {
+    "flight": "N237LP",
+    "outcome": "no_radar_return",
+    "delay": 22.1150981455563,
+    "doppler": 77.81597584547532
+  },
+  "candidate_only": true
+}

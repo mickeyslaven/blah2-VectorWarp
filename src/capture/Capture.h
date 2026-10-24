@@ -47,6 +47,16 @@ private:
   std::string unsupportedClipError;
 
 public:
+  struct SamplePosition
+  {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+    int64_t epochEstimateNanoseconds = 0;
+    int64_t deviceTimeEpochTick = 0;
+    uint32_t sampleRate = 0;
+    std::string clockSource, timeSource, motherboard, subdevices;
+  };
   std::atomic<bool> stopping{false}, inputStopped{false}, processingBusy{false};
   std::atomic<bool> pairedCpiQueueActive{false};
   std::atomic<uint64_t> replayGeneration{0};
@@ -98,10 +108,21 @@ public:
   /// @param file Absolute path of file to replay.
   /// @return Void.
   void set_replay(bool loop, std::string file, std::string format = "auto",
-    uint32_t legacyBlockSamples = 0);
+    uint32_t legacyBlockSamples = 0,
+    std::string provenanceMode = "legacy-unqualified");
   // Optional receiver extension, installed before start when the loaded
   // module supports it. Older modules retain the normal FIFO contract.
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
+  SamplePosition live_sample_position() const;
+  bool requires_kraken_time_provenance() const {
+    // Replay retains the configured receiver identity, but the recording
+    // format has no stored RF-time epoch. Mark it inexact too instead of
+    // letting wall-clock playback time masquerade as sample time.
+    return type == "Kraken";
+  }
+  bool requires_usrp_time_provenance() const { return type == "Usrp"; }
+  bool requires_hackrf_time_provenance() const { return type == "HackRF"; }
+  bool requires_rspduo_time_provenance() const { return type == "RspDuo"; }
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

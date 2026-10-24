@@ -8,6 +8,7 @@
 #include "data/Map.h"
 #include "data/Detection.h"
 #include "data/meta/Timing.h"
+#include "data/meta/EventTime.h"
 #include "data/Track.h"
 #include "process/ambiguity/Ambiguity.h"
 #include "process/ambiguity/Acceleration.h"
@@ -25,6 +26,8 @@
 #include "process/conditioning/ArrayReferenceSynthesizer.h"
 #include "process/fusion/Noncoherent.h"
 #include "process/fusion/CoherentBeamBank.h"
+#include "process/analysis/ComplexCutoutRecorder.h"
+#include "process/analysis/ReplayEchoInjector.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -57,6 +60,7 @@
 #include <array>
 #include <cmath>
 #include <numeric>
+#include <optional>
 
 volatile sig_atomic_t STOP_SIGNAL = 0;
 std::unique_ptr<Socket> socket_map;
@@ -136,6 +140,45 @@ bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
   return success;
 }
 
+std::optional<std::complex<double>> direct_path_pilot(
+  const IqData& reference, const std::vector<std::unique_ptr<IqData>>& surveillance,
+  const std::vector<uint32_t>& surveillanceChannels,
+  const std::vector<uint32_t>& referenceChannels,
+  const std::vector<std::complex<double>>& referenceWeights)
+{
+  const auto& referenceSamples = reference.view_data();
+  if (referenceSamples.empty() || surveillance.size() != surveillanceChannels.size())
+    return std::nullopt;
+  std::complex<double> pilot{};
+  for (std::size_t path = 0; path < surveillance.size(); ++path)
+  {
+    const auto& samples = surveillance[path]->view_data();
+    if (samples.size() != referenceSamples.size()) return std::nullopt;
+    std::complex<double> correlation{};
+    double referenceEnergy = 0, surveillanceEnergy = 0;
+    for (std::size_t sample = 0; sample < samples.size(); ++sample)
+    {
+      correlation += samples[sample] * std::conj(referenceSamples[sample]);
+      referenceEnergy += std::norm(referenceSamples[sample]);
+      surveillanceEnergy += std::norm(samples[sample]);
+    }
+    const double normalization = std::sqrt(referenceEnergy * surveillanceEnergy);
+    if (!(normalization > 1e-30) || !std::isfinite(normalization)) continue;
+    auto weight = std::complex<double>{1, 0};
+    const auto found = std::find(referenceChannels.begin(), referenceChannels.end(),
+      surveillanceChannels[path]);
+    if (found != referenceChannels.end())
+    {
+      const std::size_t index = std::distance(referenceChannels.begin(), found);
+      if (index < referenceWeights.size()) weight = std::conj(referenceWeights[index]);
+    }
+    pilot += weight * correlation / normalization;
+  }
+  if (!std::isfinite(pilot.real()) || !std::isfinite(pilot.imag()) ||
+      std::abs(pilot) <= 1e-30) return std::nullopt;
+  return pilot;
+}
+
 int main(int argc, char **argv)
 try
 {
@@ -166,6 +209,7 @@ try
   std::string type, path, replayFile, ip_capture;
   bool saveIq, state, loop;
   std::string replayFormat = "auto";
+  std::string replayProvenanceMode = "legacy-unqualified";
   uint32_t legacyReplayBlockSamples = 0;
   tree["capture"]["fs"] >> fs;
   tree["capture"]["fc"] >> fc;
@@ -179,6 +223,8 @@ try
     tree["capture"]["replay"]["format"] >> replayFormat;
   if (tree["capture"]["replay"].has_child("legacy_block_samples"))
     tree["capture"]["replay"]["legacy_block_samples"] >> legacyReplayBlockSamples;
+  if (tree["capture"]["replay"].has_child("provenance"))
+    tree["capture"]["replay"]["provenance"] >> replayProvenanceMode;
   tree["network"]["ip"] >> ip_capture;
   tree["network"]["ports"]["api"] >> port_capture;
   if (fs == 0 || fc == 0 || port_capture == 0)
@@ -381,6 +427,8 @@ try
   uint32_t coherentBeamCount = 12;
   double effectiveBeamTrials = 0;
   double directPathNullDb = 0;
+  std::string surveillanceManifoldFile;
+  bool surveillanceManifoldConfigured = false;
   std::vector<std::array<double, 3>> coherentPositions;
   double directPathAzimuthRad = 0,xAxisBearingDeg = 0,bearingUncertaintyFloorDeg = 0;
   if (tree["process"].has_child("surveillance_fusion"))
@@ -392,6 +440,10 @@ try
       fusion["effective_beam_trials"] >> effectiveBeamTrials;
     if (fusion.has_child("direct_path_null_db"))
       fusion["direct_path_null_db"] >> directPathNullDb;
+    if (fusion.has_child("manifold_file")) {
+      surveillanceManifoldConfigured = true;
+      fusion["manifold_file"] >> surveillanceManifoldFile;
+    }
   }
   if (surveillanceFusionMode != "noncoherent" &&
       surveillanceFusionMode != "coherent_beam_bank" &&
@@ -506,7 +558,7 @@ try
 
   Capture *capture = new Capture(type, fs, fc, path);
   if (state) capture->set_replay(loop, replayFile, replayFormat,
-    legacyReplayBlockSamples);
+    legacyReplayBlockSamples, replayProvenanceMode);
 
   // Keep one bounded capture queue per coherent input.
   double tCpi, tBuffer;
@@ -608,6 +660,12 @@ try
     tree["process"]["performance"]["acceleration"] >> accelerationMode;
   const char* gpuDevice = std::getenv("BLAH2_GPU_DEVICE");
   const bool residentMode=accelerationMode=="gpu-resident";
+  if (surveillanceManifoldConfigured &&
+      surveillanceManifoldFile.find_first_not_of(" \t\r\n") == std::string::npos)
+    throw std::invalid_argument("Measured surveillance manifold_file must be a non-empty path");
+  if (surveillanceManifoldConfigured &&
+      (surveillanceFusionMode != "coherent_beam_bank" || residentMode))
+    throw std::invalid_argument("Measured surveillance manifold requires non-resident coherent_beam_bank fusion");
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
@@ -689,6 +747,42 @@ try
       node["covariance_smoothing"] >> referenceConfig.covarianceSmoothing;
     if (node.has_child("diagonal_loading"))
       node["diagonal_loading"] >> referenceConfig.diagonalLoading;
+    // Offline target-protected reference experiment.  A caller selects a
+    // member of a fixed, complete azimuth bank; it never consumes ADS-B truth
+    // at runtime.  The chosen direction is nulled in the reference before
+    // ECA/CAF, while the measured eigenbeam remains the direct-path anchor.
+    if (node.has_child("target_protection_beams") ||
+        node.has_child("target_protection_beam_index"))
+    {
+      if (!state)
+        throw std::invalid_argument("Target-protection reference is replay-only");
+      uint32_t beams = 0, index = 0;
+      if (node.has_child("target_protection_beams"))
+        node["target_protection_beams"] >> beams;
+      if (node.has_child("target_protection_beam_index"))
+        node["target_protection_beam_index"] >> index;
+      if (beams < 4 || beams > 360 || index >= beams ||
+          coherentPositions.empty())
+        throw std::invalid_argument("Invalid target-protection beam-bank configuration");
+      const double targetAzimuth = 2 * std::acos(-1.0) * double(index) / double(beams);
+      const double directX = std::cos(directPathAzimuthRad);
+      const double directY = std::sin(directPathAzimuthRad);
+      const double targetX = std::cos(targetAzimuth);
+      const double targetY = std::sin(targetAzimuth);
+      const double waveNumber = 2 * std::acos(-1.0) * double(fc) / 299792458.0;
+      referenceConfig.protectionRelativeSteering.reserve(coherentPositions.size());
+      for (const auto& position : coherentPositions)
+      {
+        const double relativePhase = waveNumber *
+          (position[0] * (targetX - directX) +
+           position[1] * (targetY - directY));
+        referenceConfig.protectionRelativeSteering.push_back(
+          std::polar(1.0, -relativePhase));
+      }
+      std::cout << "[ReferenceSynthesis] target_protection_beam=" << index
+        << "/" << beams << " azimuth_deg=" <<
+        targetAzimuth * 180.0 / std::acos(-1.0) << "\n";
+    }
   }
   ArrayReferenceSynthesizer referenceSynthesizer(referenceConfig);
   uint64_t reportedReferenceUpdate = 0;
@@ -697,19 +791,43 @@ try
   std::unique_ptr<CoherentBeamBank> coherentMapFusion;
   if (coherentFusion)
   {
+    std::vector<std::complex<double>> surveillanceManifold;
+    if (surveillanceManifoldConfigured)
+    {
+      const auto loaded = blah2::bearing_manifold::load(surveillanceManifoldFile,
+        double(fc), coherentBeamCount, uint32_t(coherentPositions.size()));
+      surveillanceManifold.assign(loaded.responses.begin(), loaded.responses.end());
+    }
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        directPathAzimuthRad, directPathNullDb});
+        directPathAzimuthRad, directPathNullDb, surveillanceManifold});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
     std::cout << " direct_path_azimuth_deg=" <<
       directPathAzimuthRad * 180.0 / std::acos(-1.0);
     std::cout << " effective_beam_trials=" << effectiveBeamTrials
       << " direct_path_null_db=" << directPathNullDb;
+    if (surveillanceManifoldConfigured)
+      std::cout << " measured_manifold=" << surveillanceManifoldFile;
     std::cout << "\n";
   }
   else
     std::cout << "[SurveillanceFusion] mode=noncoherent\n";
+
+  blah2::analysis::ReplayEchoInjector::Config echoConfig;
+  if (tree["capture"]["replay"].has_child("inject_echo")) {
+    auto echo = tree["capture"]["replay"]["inject_echo"];
+    if (echo.has_child("state")) echo["state"] >> echoConfig.enabled;
+    if (echo.has_child("amplitude_db")) echo["amplitude_db"] >> echoConfig.amplitudeDb;
+    if (echo.has_child("delay_km")) echo["delay_km"] >> echoConfig.delayKm;
+    if (echo.has_child("doppler_hz")) echo["doppler_hz"] >> echoConfig.dopplerHz;
+    double targetAzimuthDeg = 0;
+    if (echo.has_child("target_azimuth_deg_array"))
+      echo["target_azimuth_deg_array"] >> targetAzimuthDeg;
+    echoConfig.targetAzimuthRad = targetAzimuthDeg * std::acos(-1.0) / 180.0;
+  }
+  blah2::analysis::ReplayEchoInjector echoInjector(echoConfig, fs, fc,
+    directPathAzimuthRad, coherentPositions, state);
 
   // set up process detection
   double pfa, minDoppler;
@@ -974,6 +1092,20 @@ try
   {
     saveDetectionPath = savePath + ".detection";
   }
+  blah2::analysis::ComplexCutoutRecorder::Config complexCutoutConfig;
+  if (tree["save"].has_child("complex_cutout")) {
+    auto cutout = tree["save"]["complex_cutout"];
+    if (cutout.has_child("state")) cutout["state"] >> complexCutoutConfig.enabled;
+    if (cutout.has_child("path")) cutout["path"] >> complexCutoutConfig.path;
+    if (cutout.has_child("delay_km")) cutout["delay_km"] >> complexCutoutConfig.delayKm;
+    if (cutout.has_child("doppler_hz")) cutout["doppler_hz"] >> complexCutoutConfig.dopplerHz;
+    if (cutout.has_child("delay_radius_bins"))
+      cutout["delay_radius_bins"] >> complexCutoutConfig.delayRadiusBins;
+    if (cutout.has_child("doppler_radius_bins"))
+      cutout["doppler_radius_bins"] >> complexCutoutConfig.dopplerRadiusBins;
+    if (cutout.has_child("max_frames")) cutout["max_frames"] >> complexCutoutConfig.maxFrames;
+  }
+  blah2::analysis::ComplexCutoutRecorder complexCutout(complexCutoutConfig, fs, state);
 
   // set up output timing
   uint64_t tStart = current_time_ms();
@@ -1007,6 +1139,13 @@ try
         bool ready = false;
         uint64_t captureStartUs = 0;
         std::vector<uint64_t> captureBacklogSamples, captureDroppedSamples;
+        bool captureSamplePositionAvailable = false;
+        uint64_t captureEpoch = 0, captureFirstEpochSample = 0,
+          captureEndEpochSample = 0;
+        int64_t captureEpochEstimateNanoseconds = 0;
+        int64_t captureDeviceTimeEpochTick = 0;
+        std::string captureClockSource, captureTimeSource,
+          captureMotherboard, captureSubdevices;
 #ifdef VECTORWARP_MIXED_AUTO
         blah2::mixed::Choice mixedChoice = blah2::mixed::Choice::cpu;
         bool mixedChoiceMade = false, mixedInputPrepared = false;
@@ -1055,9 +1194,18 @@ try
                 captureData[0]->assign_paired_i16(block.iq.data(), nSamples,
                   *captureData[1]);
               }
+              // PairedCpiQueue is the RSPduo capture-epoch authority. Its
+              // generation advances on gain/reset/gap boundaries and its
+              // first offset is delivered-sample-relative, never UTC.
+              if (block.epoch != UINT64_MAX) {
+                captureSamplePositionAvailable = true;
+                captureEpoch = block.epoch + 1;
+                captureFirstEpochSample = block.first;
+                captureEndEpochSample = uint64_t(block.first) + nSamples;
+              }
               ready = true;
             } catch (...) { pairedCpiQueue->release(slot); throw; }
-            pairedCpiQueue->release(slot);
+            if (!pairedCpiQueue->release(slot)) ready = false;
           }
           const auto queue = pairedCpiQueue->stats();
           captureBacklogSamples.resize(2);
@@ -1077,6 +1225,27 @@ try
               captureBacklogSamples.push_back(buffer->get_length());
               captureDroppedSamples.push_back(buffer->get_dropped_samples());
             }
+            const auto position = capture->live_sample_position();
+            if (position.available && !captureBacklogSamples.empty() &&
+                std::all_of(captureBacklogSamples.begin(),
+                  captureBacklogSamples.end(), [&](uint64_t value) {
+                    return value == captureBacklogSamples.front();
+                  }) &&
+                position.nextSample >= captureBacklogSamples.front() &&
+                captureBacklogSamples.front() >= nSamples) {
+              captureSamplePositionAvailable = true;
+              captureEpoch = position.epoch;
+              captureEpochEstimateNanoseconds =
+                position.epochEstimateNanoseconds;
+              captureDeviceTimeEpochTick = position.deviceTimeEpochTick;
+              captureClockSource = position.clockSource;
+              captureTimeSource = position.timeSource;
+              captureMotherboard = position.motherboard;
+              captureSubdevices = position.subdevices;
+              captureFirstEpochSample = position.nextSample -
+                captureBacklogSamples.front();
+              captureEndEpochSample = captureFirstEpochSample + nSamples;
+            }
             for (std::size_t channel = 0; channel < captureChannelCount; channel++)
               captureData[channel]->replace(captureBuffers[channel]->drain_front(nSamples));
           }
@@ -1088,6 +1257,38 @@ try
           // between extraction and setting the consumer-busy state.
           AtomicFlagGuard processing(capture->processingBusy);
           time.push_back(captureStartUs ? captureStartUs : current_time_us());
+          auto eventTime = capture->requires_kraken_time_provenance() ?
+            blah2::kraken_event_time_unavailable() :
+            capture->requires_usrp_time_provenance() ?
+              blah2::usrp_event_time_unavailable() :
+            capture->requires_hackrf_time_provenance() ?
+              blah2::hackrf_event_time_unavailable() :
+            capture->requires_rspduo_time_provenance() ?
+              blah2::rspduo_event_time_unavailable() :
+              blah2::EventTimeProvenance{};
+          if (captureSamplePositionAvailable &&
+              capture->requires_usrp_time_provenance())
+            eventTime = blah2::usrp_cpi_midpoint_time(
+              captureDeviceTimeEpochTick, captureFirstEpochSample,
+              captureEndEpochSample, fs, captureClockSource,
+              captureTimeSource, captureMotherboard, captureSubdevices);
+          else if (captureSamplePositionAvailable &&
+                   capture->requires_hackrf_time_provenance())
+            eventTime = blah2::hackrf_cpi_sample_epoch(captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
+          else if (captureSamplePositionAvailable &&
+                   capture->requires_rspduo_time_provenance())
+            eventTime = blah2::rspduo_cpi_sample_epoch(captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
+          else if (captureSamplePositionAvailable)
+            eventTime = blah2::kraken_cpi_midpoint_time(
+              captureEpochEstimateNanoseconds, captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
+          const uint64_t frameTimestampMs = blah2::event_time_milliseconds(
+            eventTime, time[0] / 1000);
+          const auto attachEventTime = [&](std::string json) {
+            return blah2::annotate_event_time(std::move(json), eventTime);
+          };
           const uint64_t nextReplayGeneration = capture->replayGeneration.load();
           if (nextReplayGeneration != replayGeneration)
           {
@@ -1108,10 +1309,14 @@ try
           // later rejects it. UI publication timestamps remain wall-clock.
           const uint64_t trackerFrame = replayProcessedFrames;
           ReplayFrameGuard replayFrame(state, replayProcessedFrames);
+          std::vector<IqData*> physicalChannels;
+          physicalChannels.reserve(captureData.size());
+          for (auto& channel : captureData) physicalChannels.push_back(channel.get());
+          echoInjector.apply(trackerFrame * uint64_t(nSamples), physicalChannels);
           const bool residentOracle=resident&&resident->qualifying();
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
-            const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:time[0]/1000;
+            const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:frameTimestampMs;
             resident->begin(captureData,{++residentLogical,++residentConsumed,signalTime});
           }
           // This block is the unchanged CPU route, or its bounded startup oracle.
@@ -1164,6 +1369,9 @@ try
                  pathIndex < surveillanceChannels.size(); pathIndex++)
               surveillanceData[pathIndex]->replace(
                 captureData[surveillanceChannels[pathIndex]]->drain_front(nSamples));
+          const auto cutoutPilot = complexCutout.enabled() ? direct_path_pilot(
+            *referenceData, surveillanceData, surveillanceChannels, referenceChannels,
+            referenceSynthesizer.get_metrics().weights) : std::nullopt;
           timing_helper(timing_name, timing_time, time,
             "reference_synthesis");
           
@@ -1315,6 +1523,8 @@ try
           for (size_t channel = 0; channel < ambiguity.size(); ++channel) {
             channelMaps[channel] = ambiguity[channel]->result();
           }
+          complexCutout.append(frameTimestampMs, channelMaps,
+            referenceSynthesizer.get_metrics().weights, cutoutPilot);
           if(resident)resident->checkMaps(ambiguityPointers);
           // Only the fused map is detected/published. Fusion consumes complex
           // samples, so per-channel display metrics would be unused log passes.
@@ -1336,7 +1546,7 @@ try
           if (isTracker)
           {
             const uint64_t trackerTime = state ? tStart +
-              (trackerFrame * uint64_t(nSamples) * 1000) / fs : time[0]/1000;
+              (trackerFrame * uint64_t(nSamples) * 1000) / fs : frameTimestampMs;
             track = tracker->process(detection.get(), trackerTime);
             timing_helper(timing_name, timing_time, time, "tracker");
           }
@@ -1345,27 +1555,44 @@ try
           blah2::resident::Coordinator::Publication residentPublication;
           std::string cpuManifoldEvidence;
           if(resident){
+            auto evidenceMapping=bearingChannelMapping;
+            if(manifoldRecorderEnabled&&evidenceMapping.empty())
+              for(uint32_t i=0;i<surveillanceChannels.size();++i)evidenceMapping.push_back(i);
+            const blah2::resident::BearingConfig evidenceBearing{
+              true,
+              bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:
+                blah2::resident::BearingMethod::coherentBeamBank,
+              bearingReferenceAnchor=="fixed_site_projected"?
+                blah2::resident::BearingReferenceAnchor::fixedSiteProjected:
+                bearingReferenceAnchor=="fixed_site"?blah2::resident::BearingReferenceAnchor::fixedSite:
+                blah2::resident::BearingReferenceAnchor::liveEigenbeam,
+              bearingScanBeams,bearingCandidatePeaks,bearingGuardRadius,bearingTrainingRadius,
+              bearingDiagonalLoading,std::move(evidenceMapping),{}};
             resident->receivePrepared();
-            residentPublication=resident->format(time[0]/1000,
+            residentPublication=resident->format(frameTimestampMs,
               {bearingEnabled,coherentBeamCount,bearingScanBeams/coherentBeamCount,bearingMinConsistent,xAxisBearingDeg,
                bearingUncertaintyFloorDeg,bearingMinPeakSeparationDb,
                bearingMethod=="covariance_mvdr"?1u:0u,bearingScanBeams,
                ambiguity.front()->get_cpi(),bearingMaxRateDegPerSecond,
                stationaryClutter?stationaryPersistenceCpis:0u,
-               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled);
+               stationaryClutter?stationaryMaxDopplerHz:0.0},manifoldRecorderEnabled,
+               evidenceBearing);
             resident->commit();
             timing_helper(timing_name,timing_time,time,"gpu_resident_ready");
           }
           else if(manifoldRecorderEnabled)
-            cpuManifoldEvidence=blah2::manifold_evidence::cpu(time[0]/1000,double(fc),double(fs),
+            cpuManifoldEvidence=blah2::manifold_evidence::cpu(frameTimestampMs,double(fc),double(fs),
               *detection,channelMaps,referenceSynthesizer.get_metrics().weights);
 
           // output IqData meta data
-          jsonIqData = resident ? std::move(residentPublication.spectrum) : referenceData->to_json(time[0]/1000);
+          jsonIqData = attachEventTime(resident ?
+            std::move(residentPublication.spectrum) :
+            referenceData->to_json(frameTimestampMs));
           socket_iqdata->sendData(jsonIqData);
 
           // output map data
-          mapJson = resident ? std::move(residentPublication.map) : map->to_json_km(time[0]/1000, fs);
+          mapJson = attachEventTime(resident ? std::move(residentPublication.map) :
+            map->to_json_km(frameTimestampMs, fs));
           if (saveMap)
           {
             map->save(mapJson, saveMapPath);
@@ -1375,10 +1602,13 @@ try
           // output detection data
           if (isDetection)
           {
-            detectionJson = resident ? std::move(residentPublication.detections) : detection->to_json_km(time[0]/1000, fs);
+            detectionJson = attachEventTime(resident ?
+              std::move(residentPublication.detections) :
+              detection->to_json_km(frameTimestampMs, fs));
             socket_detection->sendData(detectionJson);
-            if(manifoldRecorderEnabled)socket_manifold->sendData(resident?
-              residentPublication.manifoldEvidence:cpuManifoldEvidence);
+            if(manifoldRecorderEnabled)socket_manifold->sendData(attachEventTime(
+              resident ? std::move(residentPublication.manifoldEvidence) :
+              std::move(cpuManifoldEvidence)));
           }
           if (saveDetection && isDetection)
           {
@@ -1388,9 +1618,12 @@ try
           // output tracker data
           if (isTracker)
           {
-            jsonTracker = resident ? std::move(residentPublication.tracks) : track->to_json(time[0]/1000);
+            jsonTracker = attachEventTime(resident ?
+              std::move(residentPublication.tracks) :
+              track->to_json(frameTimestampMs));
             socket_track->sendData(jsonTracker);
-            if(bearingEnabled)socket_bearing->sendData(residentPublication.bearing);
+            if(bearingEnabled)socket_bearing->sendData(attachEventTime(
+              std::move(residentPublication.bearing)));
           }
 
           // output radar data timer
@@ -1429,8 +1662,10 @@ try
 #endif
 
           // output timing data
-          timing->update(time[0]/1000, timing_time, timing_name);
+          timing->update(frameTimestampMs, timing_time, timing_name);
           timing->set_capture_queues(captureBacklogSamples,captureDroppedSamples);
+          timing->set_capture_sample_position(captureSamplePositionAvailable,
+            captureEpoch, captureFirstEpochSample, captureEndEpochSample);
           timing->set_acceleration(
 #ifdef VECTORWARP_MIXED_AUTO
             mixedAuto ? mixedStatus :
@@ -1459,13 +1694,13 @@ try
             disabled.reason = "Clutter filtering is disabled";
             timing->set_clutter_acceleration(disabled, false, false);
           }
-          jsonTiming = timing->to_json();
+          jsonTiming = attachEventTime(timing->to_json());
           socket_timing->sendData(jsonTiming);
           timing_time.clear();
           timing_name.clear();
 
           // output CPI timestamp for updating data
-          std::string t0_string = std::to_string(time[0]/1000);
+          std::string t0_string = std::to_string(frameTimestampMs);
           socket_timestamp->sendData(t0_string);
           if(resident){
             // sendData is a completed local TCP write, not a browser/application
@@ -1473,7 +1708,7 @@ try
             resident->published();
             const auto residentWholeEnd=std::chrono::steady_clock::now();
             const double wholeMs=std::chrono::duration<double,std::milli>(residentWholeEnd-residentWholeStart).count();
-            std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<time[0]/1000
+            std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<frameTimestampMs
               <<" startup_cpu_oracle="<<residentOracle<<" whole_ms="<<wholeMs
               <<" whole_start_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeStart.time_since_epoch()).count()
               <<" whole_end_ns="<<std::chrono::duration_cast<std::chrono::nanoseconds>(residentWholeEnd.time_since_epoch()).count()<<" includes_fifo=1 includes_pack_ipc=1 includes_json=1 includes_all_socket_writes=1 backlog=";

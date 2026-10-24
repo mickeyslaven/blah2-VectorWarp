@@ -35,9 +35,10 @@ struct UsrpIngressTiming {
   }
 };
 
-inline void append_usrp_block(IqData& first, IqData& second,
+template<class Commit>
+void append_usrp_block_committed(IqData& first, IqData& second,
     const std::complex<float>* a, const std::complex<float>* b,
-    std::size_t count, UsrpIngressTiming& timing) {
+    std::size_t count, UsrpIngressTiming& timing, Commit commit) {
   if (&first == &second || (count && (!a || !b)))
     throw std::invalid_argument("[USRP] Invalid paired receive buffers.");
   const auto start = UsrpIngressTiming::Clock::now();
@@ -58,7 +59,14 @@ inline void append_usrp_block(IqData& first, IqData& second,
       "if processing cannot keep up, then restart.");
   first.append_unlocked(a, count);
   second.append_unlocked(b, count);
+  commit();
   timing.maxQueueWriteMs = std::max(timing.maxQueueWriteMs,
     UsrpIngressTiming::milliseconds(locked, UsrpIngressTiming::Clock::now()));
   if (count) { ++timing.blocks; timing.samples += count; }
+}
+
+inline void append_usrp_block(IqData& first, IqData& second,
+    const std::complex<float>* a, const std::complex<float>* b,
+    std::size_t count, UsrpIngressTiming& timing) {
+  append_usrp_block_committed(first, second, a, b, count, timing, [] {});
 }

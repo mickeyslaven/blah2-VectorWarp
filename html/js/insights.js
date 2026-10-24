@@ -634,54 +634,88 @@
   }
 
   async function renderStatistics() {
-    const statistics = await apiJson('/api/statistics');
+    const [authoritative, provisional] = await Promise.all([
+      apiJson('/api/live-scorecard'), apiJson('/api/live-scorecard/provisional')]);
+    const authoritativeFrames = authoritative?.data_quality?.exact_timed_cpi_frames || 0;
+    const statistics = authoritativeFrames > 0 ? authoritative : provisional;
+    const decisionGrade = statistics?.decision_grade !== false;
     const windows = statistics?.windows || {};
     const periods = [['Hour', windows.hour], ['Day', windows.day],
       ['Week', windows.week], ['Lifetime', windows.lifetime]];
     const lifetime = windows.lifetime || {};
-    const bearing = statistics?.bearing || {};
-    const diagnostic = bearing.diagnostic || {};
-    const recorder = bearing.recorder || {};
-    const automation = bearing.automation || {};
     const limits = statistics?.limits || {};
     const trackingRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_config_passes)}</td><td>${integer(item.eligible_passes)}</td><td>${integer(item.eligible_no_radar_return)}</td><td>${integer(item.detected_not_tracked)}</td><td>${integer(item.tracked_passes)}</td><td>${percent(item.tracking_yield, 1)}</td></tr>`);
-    const exclusionRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_span?.below_detection_floor)}</td><td>${integer(item.out_of_span?.above_delay_ceiling)}</td><td>${integer(item.out_of_span?.outside_doppler_span)}</td><td>${integer(item.out_of_span?.stale_truth)}</td><td>${integer(item.out_of_span?.beyond_clutter_cancellation)}</td></tr>`);
-    const bearingState = !bearing.enabled ? 'Disabled' : bearing.calibrated ? 'Calibrated manifold active' :
-      automation.qualified ? 'Qualified; activation pending' : 'Diagnostic / collecting';
-    root.innerHTML = `<div class="insight-stats insight-stats-four">
+    const exclusionRows = periods.map(([label, item = {}]) => `<tr><td>${label}</td><td>${integer(item.out_of_span?.below_detection_floor)}</td><td>${integer(item.out_of_span?.above_delay_ceiling)}</td><td>${integer(item.out_of_span?.outside_doppler_span)}</td><td>${integer(item.out_of_span?.stale_truth)}</td><td>${integer(item.out_of_span?.missing_exact_timing)}</td><td>${integer(item.out_of_span?.beyond_clutter_cancellation)}</td></tr>`);
+    const activeRows = array(statistics.active_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.status))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${number(item.last_truth?.delay_km, 2)}</td><td>${number(item.last_truth?.doppler_hz, 1)}</td></tr>`);
+    const finalizedRows = array(statistics.recent_finalized_passes).map(item => `<tr><td>${escapeHtml(item.flight || item.hex)}</td><td>${escapeHtml(humanize(item.outcome))}</td><td>${integer(item.eligible_cpis)}</td><td>${integer(item.detected_cpis)}</td><td>${integer(item.tracked_cpis)}</td><td>${timeLabel(item.finalized_at)}</td></tr>`);
+    const quality = statistics.data_quality || {};
+    root.innerHTML = `${decisionGrade ? '' : `<div class="evaluation-note"><strong>Provisional timing:</strong> ${escapeHtml(statistics.warning || 'Receiver time is not hardware-UTC-exact.')} Authoritative scorecard remains fail-closed (${integer(authoritative?.data_quality?.event_time_rejections)} rejected timing frames).</div>`}<div class="insight-stats insight-stats-four">
       ${card(integer(lifetime.eligible_passes), 'Eligible aircraft passes')}
-      ${card(percent(lifetime.tracking_yield, 1), 'Lifetime tracking yield')}
-      ${card(integer(diagnostic.samples ?? recorder.samples), 'Bearing samples')}
-      ${card(bearingState, 'Bearing status', bearing.calibrated ? 'good' : 'warning')}
+      ${card(percent(lifetime.tracking_yield, 1), decisionGrade ? 'Lifetime tracking yield' : 'Provisional tracking yield', decisionGrade ? undefined : 'warning')}
+      ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
+      ${card(`${integer(quality.exact_timed_cpi_frames)}/${integer(quality.unique_cpi_frames)}`, 'Exact-timed CPI frames', quality.missing_timing_cpis ? 'warning' : 'good')}
     </div><div class="overview-grid">
       <section class="info-card"><h2>Tracking score</h2>${table(['Window', 'Out of config', 'Eligible', 'No radar return', 'Detected, not tracked', 'Tracked', 'Tracking yield'], trackingRows)}<p class="view-note">Out-of-config passes never enter the performance denominator. “No radar return” isolates eligible aircraft with neither strict detections nor tracks. “Detected, not tracked” isolates tracker/initiation loss. Detection and tracking credit each require at least three unambiguous strict delay–Doppler matches.</p></section>
-      <section class="info-card"><h2>Eligibility context</h2>${table(['Window', 'Below range floor', 'Above range ceiling', 'Outside Doppler', 'Stale truth', 'Beyond clutter canceller'], exclusionRows)}<dl><div><dt>Physical delay span</dt><dd>${number(limits.detectionMinDelayKm, 3)}–${number(limits.delayMaxKm, 3)} km</dd></div><div><dt>Doppler span</dt><dd>${number(limits.dopplerMinHz, 0)} to ${number(limits.dopplerMaxHz, 0)} Hz</dd></div><div><dt>Clutter cancellation</dt><dd>Through ${number(limits.clutterMaxKm, 3)} km</dd></div><div><dt>Strict match gate</dt><dd>±${number(limits.matchDelayKm, 2)} km / ±${number(limits.matchDopplerHz, 1)} Hz</dd></div></dl><p class="view-note">Beyond-clutter-canceller opportunities remain physically searchable but are reported separately because they lack configured cancellation coverage.</p></section>
-      <section class="info-card"><h2>Bearing evidence</h2><dl>
-        <div><dt>Interpretation</dt><dd>${escapeHtml(bearingState)}</dd></div>
-        <div><dt>Corpus</dt><dd>${integer(diagnostic.samples ?? recorder.samples)} samples · ${integer(diagnostic.aircraft)} aircraft · ${integer(diagnostic.sectors)}/8 sectors</dd></div>
-        <div><dt>Active model</dt><dd>${bearing.calibrated ? escapeHtml(bearing.manifold_file) : 'Ideal manifold; not calibrated'}</dd></div>
-        <div><dt>Primary active-mapping error</dt><dd>${number(diagnostic.active?.median_error_deg, 1)}° median · ${percent(diagnostic.active?.within_45_fraction, 0)} within 45°</dd></div>
-        <div><dt>Best truth-assisted replay</dt><dd>${number(diagnostic.best?.median_error_deg, 1)}° median · ${percent(diagnostic.best?.within_45_fraction, 0)} within 45°</dd></div>
-        <div><dt>Heading-only diagnostic</dt><dd>${number(diagnostic.global_heading_bias?.signed_correction_deg, 0)}° correction · ${number(diagnostic.global_heading_bias?.median_error_deg, 1)}° median</dd></div>
-        <div><dt>Evidence gate</dt><dd>${diagnostic.evidence_ready ? 'Ready for review' : 'More independent coverage required'}</dd></div>
-      </dl><p class="view-note">Best replay and heading correction are truth-assisted diagnostics, not calibrated accuracy. Only withheld-pass validation can qualify a measured manifold.</p></section>
-      <section class="info-card"><h2>Manifold and live bearing</h2><dl>
-        <div><dt>Recorder</dt><dd>${recorder.enabled ? 'Enabled' : 'Disabled'} · ${integer(recorder.samples)} accepted · ${integer(recorder.unmatched)} unmatched</dd></div>
-        <div><dt>Rejected truth</dt><dd>${integer(recorder.staleTruth)} stale · ${integer(recorder.elevationRejected)} elevation · ${integer(recorder.ambiguous)} ambiguous</dd></div>
-        <div><dt>Reference corpus</dt><dd>${integer(recorder.referenceSamples)} samples · max phase step ${number(recorder.maxReferencePhaseStepDeg, 2)}° · amplitude step ${number(recorder.maxReferenceAmplitudeStepDb, 3)} dB</dd></div>
-        <div><dt>Training coverage</dt><dd>${integer(automation.evidence?.training?.samples)} samples · ${integer(automation.evidence?.training?.passes)} passes · ${integer(automation.evidence?.training?.aircraft)} aircraft</dd></div>
-        <div><dt>Held-out validation</dt><dd>${integer(automation.evidence?.comparison?.passes)} passes / ${integer(automation.evidence?.comparison?.sectors)} sectors · ideal ${number(automation.evidence?.comparison?.ideal?.median_error_deg, 1)}° · measured ${number(automation.evidence?.comparison?.measured?.median_error_deg, 1)}°</dd></div>
-        <div><dt>Qualification</dt><dd>${escapeHtml(automation.state || 'Unavailable')}${automation.failures?.length ? ` · ${integer(automation.failures.length)} unmet gate(s)` : ''}${automation.error ? ` · ${escapeHtml(automation.error)}` : ''}</dd></div>
-        <div><dt>Current bearings</dt><dd>${integer(bearing.live?.tracks)} total · ${integer(bearing.live?.publishable)} publishable · ${integer(bearing.live?.resolved)} resolved · ${integer(bearing.live?.stationary)} stationary</dd></div>
-        <div><dt>Frequency-resolved reference</dt><dd>${escapeHtml(bearing.frequency_resolved?.state || (bearing.frequency_resolved?.enabled ? 'Enabled' : 'Disabled'))} · ${integer(bearing.frequency_resolved?.analyses)} analyses · rank-1 ${number(bearing.frequency_resolved?.result?.summary?.rank1_fraction, 4)} · ideal correlation ${number(bearing.frequency_resolved?.result?.summary?.ideal_correlation, 3)}</dd></div>
-      </dl></section>
+      <section class="info-card"><h2>Eligibility context</h2>${table(['Window', 'Below range floor', 'Above range ceiling', 'Outside Doppler', 'Stale truth', 'Missing timing', 'Beyond clutter canceller'], exclusionRows)}<dl><div><dt>Physical delay span</dt><dd>${number(limits.delayMinKm, 3)}–${number(limits.delayMaxKm, 3)} km</dd></div><div><dt>Doppler span</dt><dd>${number(limits.dopplerMinHz, 0)} to ${number(limits.dopplerMaxHz, 0)} Hz</dd></div><div><dt>Clutter cancellation</dt><dd>Through ${number(limits.clutterMaxKm, 3)} km</dd></div><div><dt>Strict match gate</dt><dd>±${number(limits.matchDelayKm, 2)} km / ±${number(limits.matchDopplerHz, 1)} Hz</dd></div></dl><p class="view-note">Missing-timing and invalid-truth opportunities are excluded, never counted as misses. Beyond-clutter-canceller opportunities remain physically searchable but are reported separately.</p></section>
+      <section class="info-card"><h2>Aircraft live now</h2>${activeRows.length ? table(['Aircraft', 'Status', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Delay km', 'Doppler Hz'], activeRows) : empty('No eligible aircraft live', 'Waiting for exact-timed ADS-B opportunities.')}</section>
+      <section class="info-card"><h2>Recent finalized passes</h2>${finalizedRows.length ? table(['Aircraft', 'Outcome', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Finalized'], finalizedRows) : empty('No finalized passes yet', 'Passes finalize after the aircraft leaves the eligible region.')}</section>
+      <section class="info-card"><h2>Scoring integrity</h2><dl><div><dt>Decision grade</dt><dd>${decisionGrade ? 'Yes' : 'No — provisional operational lane'}</dd></div><div><dt>Timing policy</dt><dd>${escapeHtml(humanize(statistics.timing_policy))}</dd></div><div><dt>Association delay</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>UTC nuisance radius</dt><dd>±${number(statistics.provisional_event_time_uncertainty_s, 2)} s (scoring only)</dd></div><div><dt>Exact CPI frames</dt><dd>${integer(quality.exact_timed_cpi_frames)} / ${integer(quality.unique_cpi_frames)}</dd></div><div><dt>Aircraft-CPI rows</dt><dd>${integer(quality.exact_timed_aircraft_cpis)} / ${integer(quality.audited_aircraft_cpis)}</dd></div><div><dt>Pending delayed CPIs</dt><dd>${integer(quality.pending_delayed_cpis)}</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl><p class="view-note">Live states are provisional until a pass finalizes. Tracking credit requires at least three ACTIVE, measurement-supported associations. Truth held, stale, or disagreeing beyond the contract is excluded rather than scored as a miss. The UTC nuisance radius expands validation gates using measured trajectory rates; it never steers radar processing. A provisional timing lane is never valid for acceptance decisions.</p></section>
     </div>`;
     setState(statistics.error ? `Collection warning · ${statistics.error}` :
+      !decisionGrade ? 'Provisional receiver timing · authoritative scoring blocked' :
       statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)}` : 'Waiting for eligible ADS-B evidence',
-    statistics.error ? 'warning' : statistics.updated_at ? 'good' : 'warning');
+    statistics.error || !decisionGrade ? 'warning' : statistics.updated_at ? 'good' : 'warning');
   }
 
-  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics};
+  async function renderCalibration() {
+    setupPlotScaffold('insight-content-wide');
+    const campaign = await apiJson('/api/bearing/manifold-progress');
+    const progress = campaign?.progress || {};
+    const automation = campaign?.automation || {};
+    const recorder = campaign?.recorder || {};
+    const sectors = array(progress.sectors);
+    const requirements = array(progress.requirements);
+    const completion = finite(progress.evidence_completion_fraction) ?? 0;
+    document.getElementById('view-summary').innerHTML =
+      `${card(percent(completion, 0), 'Collection gate progress', progress.collection_ready ? 'good' : 'warning')}` +
+      `${card(integer(progress.independent_passes), 'Independent passes')}` +
+      `${card(integer(progress.unique_aircraft), 'Unique aircraft')}` +
+      `${card(`${integer(progress.covered_sectors)}/${integer(progress.required_covered_sectors)}`, 'Covered sectors')}`;
+    const requirementRows = requirements.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${item.comparison === 'at_most' ? `≤ ${number(item.required, 1)}` : integer(item.required)}</td><td>${item.comparison === 'at_most' ? number(item.current, 1) : integer(item.current)}</td><td><span class="state-pill ${item.complete ? 'active' : 'coasting'}">${item.complete ? 'Ready' : 'Collecting'}</span></td></tr>`);
+    const sectorRows = sectors.map(item => `<tr><td>${integer(item.from_deg)}–${integer(item.to_deg)}°</td><td>${integer(item.samples)}</td><td>${integer(item.passes)}</td><td>${integer(item.aircraft)}</td><td><span class="state-pill ${item.ready ? 'active' : 'coasting'}">${item.ready ? 'Covered' : `${integer(item.passes_needed)} passes / ${integer(item.aircraft_needed)} aircraft needed`}</span></td></tr>`);
+    const blockers = array(progress.next_actions);
+    const failureText = array(automation.failures).filter(Boolean);
+    const active = Boolean(campaign.active_model);
+    const frequencyHz = finite(campaign.frequency_hz);
+    document.getElementById('view-detail').innerHTML = `<div class="overview-grid">
+      <section class="info-card"><h2>Campaign state</h2><dl>
+        <div><dt>Frequency</dt><dd>${frequencyHz === null ? '—' : `${number(frequencyHz / 1e6, 3)} MHz`}</dd></div>
+        <div><dt>Recorder</dt><dd>${recorder.enabled ? 'Collecting automatically' : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
+        <div><dt>Fitter</dt><dd>${escapeHtml(humanize(automation.state))}${automation.running ? ' · running now' : ''}</dd></div>
+        <div><dt>Candidate</dt><dd>${automation.qualified ? 'Qualified on held-out passes' : 'Not qualified'}</dd></div>
+        <div><dt>Live manifold</dt><dd>${active ? escapeHtml(campaign.active_model) : 'Ideal steering remains active'}</dd></div>
+        <div><dt>Last sample</dt><dd>${progress.last_sample_at ? escapeHtml(timeLabel(progress.last_sample_at)) : 'Waiting for accepted evidence'}</dd></div>
+      </dl><p class="view-note">${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></section>
+      <section class="info-card"><h2>Next evidence needed</h2>${blockers.length ? `<ul class="calibration-blockers">${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="view-note">Collection gates are complete. Held-out performance gates determine whether the candidate can activate.</p>'}${failureText.length ? `<p class="view-note evaluation-note">Latest fit: ${escapeHtml(failureText.join(' '))}</p>` : ''}</section>
+      <section class="info-card"><h2>Reference stability</h2><dl>
+        <div><dt>Reference samples</dt><dd>${integer(recorder.referenceSamples)}</dd></div>
+        <div><dt>Latest phase step</dt><dd>${number(recorder.maxReferencePhaseStepDeg, 2)}°</dd></div>
+        <div><dt>Latest amplitude step</dt><dd>${number(recorder.maxReferenceAmplitudeStepDb, 2)} dB</dd></div>
+        <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
+      </dl></section>
+    </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
+    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`;
+    const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
+    await Plotly.react('data', [
+      {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},
+      {x: labels, y: sectors.map(item => item.aircraft), name: 'Unique aircraft', type: 'bar', marker: {color: colors[1]}}
+    ], {...plotBase, barmode: 'group', xaxis: {title: 'Local array azimuth sector', gridcolor: '#47362e'}, yaxis: {title: 'Independent evidence', rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
+    const tone = recorder.error || automation.error ? 'bad' : automation.qualified ? 'good' : 'warning';
+    setState(recorder.error || automation.error ? `Calibration warning · ${recorder.error || automation.error}` :
+      automation.qualified ? 'Qualified measured manifold' : `Collecting · ${percent(completion, 0)} of minimum evidence gates`, tone);
+  }
+
+  const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};
 
   async function refresh() {
     if (refreshing || !renderers[view]) return;

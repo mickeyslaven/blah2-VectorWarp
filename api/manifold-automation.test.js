@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
-const {evaluateManifoldCandidate} = require('./manifold-automation');
+const {evaluateManifoldCandidate, summarizeManifoldProgress} = require('./manifold-automation');
 const {setupDefaults, readConfig, saveConfig} = require('./config-store');
 
 const polar = value => [Math.cos(value), Math.sin(value)];
@@ -51,6 +51,15 @@ const skewed = samples.filter(sample => sample.truth.local_azimuth_deg === 90);
 assert.throws(() => evaluateManifoldCandidate(skewed, config, relaxed),
   /azimuth bins|unsupported azimuth gap/,
   'single-sector data cannot produce a promotable manifold');
+const skewedProgress = summarizeManifoldProgress(skewed, config, relaxed);
+assert.equal(skewedProgress.collection_ready, false);
+assert.equal(skewedProgress.covered_sectors, 1);
+assert.equal(skewedProgress.largest_unsupported_gap_deg, 360);
+assert.equal(skewedProgress.requirements.some(row => row.id === 'covered_sectors' && !row.complete), true);
+const completeProgress = summarizeManifoldProgress(samples, config, relaxed);
+assert.equal(completeProgress.collection_ready, true);
+assert.equal(completeProgress.covered_sectors, 8);
+assert.equal(completeProgress.holdout_sectors >= 4, true);
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-auto-manifold-'));
 const filename = path.join(directory, 'config.yml');

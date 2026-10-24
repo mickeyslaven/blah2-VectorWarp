@@ -1,0 +1,42 @@
+{
+  "schema": "vectorwarp-post-doppler-stap-matrix-v1",
+  "candidate_only": true,
+  "method": "replay-only robust loaded post-Doppler five-channel STAP adaptive matched filter",
+  "selection": {
+    "recording": "r277",
+    "predeclared_grid_trials": 8,
+    "doppler_radius": 1,
+    "space_time_dimension": 15,
+    "diagonal_loading": 0.1,
+    "robust_energy_clip": 3.0,
+    "beam_policy": "one fixed beam over the complete dwell",
+    "calibrated_signal_time_bias": {"delay_km": 0.02578255, "doppler_hz": 7.053549}
+  },
+  "acceptance": {
+    "positive_control_min_margin_db": 3.0,
+    "miss_min_margin_db": 3.0,
+    "control_threshold": "maximum of matched-delay and whole-search empirical p99",
+    "requires_positive_and_at_least_one_miss": true
+  },
+  "recordings": [
+    {"id": "r277", "role": "positive", "frames": 8, "margin_db": 6.818663809276608,
+     "whole_search_paths": 491, "whole_search_signal_trials": 5892,
+     "artifact": "r277-post-doppler-stap-v1.json"},
+    {"id": "r12", "role": "miss", "frames": 20, "margin_db": -3.7712517638421845,
+     "whole_search_paths": 68, "whole_search_signal_trials": 816,
+     "artifact": "r12-post-doppler-stap-v1.json"},
+    {"id": "r94", "role": "miss", "frames": 20, "margin_db": -2.3528181947816176,
+     "whole_search_paths": 156, "whole_search_signal_trials": 1872,
+     "artifact": "r94-post-doppler-stap-v1.json"},
+    {"id": "r620", "role": "miss", "frames": 20, "margin_db": -2.1889982017827845,
+     "whole_search_paths": 123, "whole_search_signal_trials": 1476,
+     "artifact": "r620-post-doppler-stap-v1.json"},
+    {"id": "r623", "role": "miss", "frames": 20, "margin_db": -4.589359923560799,
+     "whole_search_paths": 156, "whole_search_signal_trials": 1872,
+     "artifact": "r623-post-doppler-stap-v1.json"}
+  ],
+  "positive_retained": true,
+  "misses_recovered": [],
+  "accepted": false,
+  "decision": "Reject: r277 clears the strict empirical p99 by +6.819 dB, but no held-out miss reaches +3 dB. No live change or deployment is justified."
+}

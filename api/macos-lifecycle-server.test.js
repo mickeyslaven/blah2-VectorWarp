@@ -17,7 +17,7 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-macos-api-')
 const filename = path.join(directory, 'config.yml');
 const launcher = path.join(directory, 'vectorwarp-macos');
 const marker = path.join(directory, 'restart-argument');
-let child;
+let child, serverErrors = '';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function ports(count) {
   const listeners = await Promise.all(Array.from({length: count}, () => new Promise((resolve, reject) => {
@@ -40,12 +40,14 @@ async function ports(count) {
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {stdio: 'pipe', env: {
       ...process.env, BLAH2_CONFIG_RESTART_COMMAND: '', VECTORWARP_MACOS_LIFECYCLE: '1',
       VECTORWARP_MACOS_LAUNCHER: launcher, BLAH2_RECEIVER_TYPES: 'HackRF,Usrp,Kraken'}});
+    child.stderr.on('data', chunk => { serverErrors += chunk; });
     let capabilities;
-    for (let attempt = 0; attempt < 120; attempt += 1) {
+    for (let attempt = 0; attempt < 600; attempt += 1) {
       try { const response = await fetch(`${origin}/api/config/capabilities`); if (response.ok) { capabilities = await response.json(); break; } }
       catch (_) {} await delay(50);
     }
-    assert.equal(capabilities?.restartAvailable, true, 'Darwin launcher was not exposed to the browser');
+    assert.equal(capabilities?.restartAvailable, true,
+      `Darwin launcher was not exposed to the browser: ${serverErrors.slice(-2000)}`);
     const response = await fetch(`${origin}/api/config?restart=true`, {method: 'PUT', headers: {
       'Content-Type': 'application/json', Origin: origin, 'If-Match': `"${capabilities.configRevision}"`,
       'X-VectorWarp-Intent': 'config-write-v1', 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'}, body: JSON.stringify(config)});

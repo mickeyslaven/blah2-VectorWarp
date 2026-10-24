@@ -1,0 +1,18 @@
+[Unit]
+Description=VectorWarp advancing-frame liveness watchdog
+Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
+After=network-online.target vectorwarp-api.service vectorwarp-processor.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=180
+ExecStart=/usr/bin/node @PREFIX@/libexec/vectorwarp-health-watchdog.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/health-watchdog.json
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=@SYSCONFDIR@ /var/lib/vectorwarp-api
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

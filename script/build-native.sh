@@ -277,11 +277,16 @@ else
 fi
 run mkdir -p "$ARTIFACT_TMP/libexec"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-restart" "$ARTIFACT_TMP/libexec/vectorwarp-restart"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-health-watchdog.js" "$ARTIFACT_TMP/libexec/vectorwarp-health-watchdog.js"
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-config-guard.js" "$ARTIFACT_TMP/libexec/vectorwarp-config-guard.js"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-activate-web" "$ARTIFACT_TMP/libexec/vectorwarp-activate-web"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp" "$ARTIFACT_TMP/libexec/vectorwarp"
 run install -m 0755 "$SOURCE_DIR/packaging/deb/preinst" "$ARTIFACT_TMP/libexec/vectorwarp-quiesce"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-wait-api.js" "$ARTIFACT_TMP/libexec/vectorwarp-wait-api.js"
-run install -m 0755 "$SOURCE_DIR/script/check-node-version.js" "$ARTIFACT_TMP/libexec/vectorwarp-check-node-version"
+# The service always invokes this helper through an explicit Node binary.  It
+# must remain non-executable in both the immutable release and the integration
+# copy so RPM does not infer a host /usr/bin/node dependency from its shebang.
+run install -m 0644 "$SOURCE_DIR/script/check-node-version.js" "$ARTIFACT_TMP/libexec/vectorwarp-check-node-version"
 run install -m 0755 "$SOURCE_DIR/script/evaluate-bearing-calibration.js" "$ARTIFACT_TMP/libexec/vectorwarp-bearing-diagnostic"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-receiver-helper.py" "$ARTIFACT_TMP/libexec/vectorwarp-receiver-helper"
 run install -m 0755 "$SOURCE_DIR/script/vectorwarp-sudoers-migrate.py" "$ARTIFACT_TMP/libexec/vectorwarp-sudoers-migrate"

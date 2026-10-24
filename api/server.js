@@ -29,8 +29,12 @@ const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js'
 const {createTrackerForwarder} = require('./tracker-forward.js');
 const {createTrackerPublication} = require('./tracker-publication.js');
 const {createEvidenceStatistics} = require('./evidence-statistics.js');
+const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
+const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
+  captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
-const {createCaptureTriggerQueue} = require('./capture-trigger-queue.js');
+const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
+  require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
   evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
@@ -57,11 +61,78 @@ const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
 frequencyResolvedShadow.start();
 const trackerForwarder = createTrackerForwarder(config, adsbSource);
 const trackerPublication = createTrackerPublication(config);
-const captureTriggerQueue = createCaptureTriggerQueue();
+// The native recorder copies roughly 96 MB for each four-second five-channel
+// clip.  Space physical claims so a burst of simultaneously eligible aircraft
+// coalesces instead of saturating the one-copy raw ring.
+const captureTriggerQueue = createCaptureTriggerQueue({...captureTriggerOptions(process.env, config),
+  minimumExposureIntervalMs: 5000});
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
-const CLIP_PRE_ROLL_RETRY_DELAY_MS = 2250;
+// A failed native request can reset the bounded raw ring.  Give it materially
+// more than the configured two-second pre-roll before issuing the one retry.
+const CLIP_PRE_ROLL_RETRY_DELAY_MS = 5000;
+// Exact-CPI truth is intentionally delayed by four CPIs, and the final CPI may
+// still need the next ADS-B observation.  This is bounded, but must cover both.
+const CAPTURE_TRUTH_SETTLE_MS = 8000;
+const CAPTURE_TRUTH_SETTLE_POLL_MS = 250;
 const evidenceStatistics = createEvidenceStatistics(config, adsbSource,
-  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event)});
+  {onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
+    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
+    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)});
+// Keep useful live association visible for receivers that can preserve coherent
+// sample position but cannot provide hardware UTC (currently Kraken/RTL2832).
+// This lane is deliberately separate from the fail-closed decision-grade
+// scorecard and has no capture side effects.
+const provisionalEvidenceStatistics = createEvidenceStatistics(config, adsbSource, {
+  filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
+    '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
+  timingPolicy: 'provisional'});
+const oprsEventRecorder = createOprsEventRecorder(config,
+  {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
+
+async function finalizeCaptureAdmission(revision, file, samples) {
+  const records = captureTriggerQueue.eventsForRevision(revision);
+  let admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  const truthDeadline = Date.now() + CAPTURE_TRUTH_SETTLE_MS;
+  while (admissionsNeedTruthSettlement(admissions) && Date.now() < truthDeadline) {
+    await new Promise(resolve => setTimeout(resolve, CAPTURE_TRUTH_SETTLE_POLL_MS));
+    admissions = evidenceStatistics.prepareCaptureAdmissions(records, revision);
+  }
+  const first = records.flatMap(record => record.captureWindows || [])
+    .find(window => window.revision === revision);
+  let integrity;
+  try {
+    for (let attempt = 0; attempt < 5; ++attempt) {
+      integrity = await verifyCaptureIntegrity(file, {revision, samples,
+        windowStart: first?.windowStart, windowEnd: first?.windowEnd});
+      if (integrity.valid || !(integrity.reasons || []).some(reason =>
+        ['recording-sidecar-invalid', 'recording-size-mismatch'].includes(reason))) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  } catch (error) { integrity = {valid: false, reasons: ['recording-integrity-error'], error: error.message}; }
+  const {metadata: integrityMetadata, ...integritySummary} = integrity;
+  integrity = integritySummary;
+  admissions = Object.fromEntries(Object.entries(admissions).map(([id, admission]) =>
+    [id, validateProcessorSampleRanges(admission, integrityMetadata)]));
+  let admissionSidecar = null;
+  const artifact = {schema: 'vectorwarp-capture-admission-v1', created_at: Date.now(), revision,
+    state: captureArtifactState(integrity, admissions), integrity,
+    config_epoch: evidenceStatistics.configEpoch, receiver_epoch: evidenceStatistics.receiverEpoch,
+    events: records.map(record => ({event_id: record.eventId, pass_id: record.passId,
+      capture_ids: (record.captureWindows || []).filter(window => window.revision === revision)
+        .map(window => window.captureId)})), captures: Object.fromEntries(Object.entries(admissions)
+      .map(([id, truth]) => [id, {...truth,
+        admission_state: truth.valid && integrity.valid ? 'admitted' : 'quarantined'}]))};
+  if (file) try { admissionSidecar = await writeAdmissionSidecar(file, artifact); }
+  catch (error) {
+    integrity = {...integrity, valid: false,
+      reasons: [...new Set([...(integrity.reasons || []), 'admission-sidecar-write'])], error: error.message};
+  }
+  integrity = {...integrity, admission_sidecar: admissionSidecar};
+  captureTriggerQueue.setAdmission(revision, admissions, integrity);
+  evidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
+    [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
+  evidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
+}
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
@@ -388,6 +459,12 @@ app.get('/api/statistics', (req, res) => {
     diagnostic, recorder, automation,
     frequency_resolved: frequencyResolvedShadow.status()}));
 });
+app.get('/api/live-scorecard', (req, res) => {
+  res.json(evidenceStatistics.liveStatus());
+});
+app.get('/api/live-scorecard/provisional', (req, res) => {
+  res.json(provisionalEvidenceStatistics.liveStatus());
+});
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
 });
@@ -553,10 +630,10 @@ app.post('/api/processor/status', (req, res) => {
           evidenceStatistics.acceptCaptureEvents(
             captureTriggerQueue.eventsForRevision(revision));
       }, CLIP_PRE_ROLL_RETRY_DELAY_MS).unref();
-    } else {
-      evidenceStatistics.acceptCaptureEvents(
-        captureTriggerQueue.eventsForRevision(revision));
-    }
+    } else if (checked.value.clipError) evidenceStatistics.acceptCaptureEvents(
+      captureTriggerQueue.eventsForRevision(revision));
+    else void finalizeCaptureAdmission(revision, checked.value.clipFile, checked.value.clipSamples)
+      .catch(error => console.error(`Capture admission failed: ${error.message}`));
   }
   res.status(204).end();
 });
@@ -953,6 +1030,24 @@ app.get('/api/bearing/manifold-recorder', (req, res) => {
 app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
+app.get('/api/bearing/manifold-progress', (req, res) => {
+  // Evaluation is signature-cached and runs off the API thread. Polling this
+  // view refreshes a changed corpus promptly without loading the radar
+  // processor or repeatedly fitting unchanged data.
+  void manifoldAutomation.evaluate();
+  const automation = manifoldAutomation.status();
+  res.json({schema: 'vectorwarp-manifold-campaign-status-v1', generated_at: Date.now(),
+    frequency_hz: config.capture?.fc || null,
+    active_model: config.process?.bearing?.manifold_file || null,
+    recorder: manifoldRecorder.status(),
+    automation: {enabled: automation.enabled, state: automation.state,
+      running: automation.running, qualified: automation.qualified,
+      failures: automation.failures || [], error: automation.error,
+      last_evaluation_at: automation.lastEvaluationAt || null,
+      promotion: automation.promotion || null},
+    progress: automation.progress,
+    frequency_resolved: frequencyResolvedShadow.status()});
+});
 app.get('/api/bearing/diagnostic', (req, res) => {
   if (req.query.refresh === 'true') void bearingDiagnostic.refresh({force: true});
   res.json(bearingDiagnostic.status());
@@ -980,7 +1075,7 @@ app.get('/capture', (req, res) => {
   res.send(capture);
 });
 app.get('/capture/request', (req, res) => res.json({recording: capture,
-  revision: captureRevision, clip: captureTriggerQueue.request()}));
+  revision: captureRevision, clip: captureTriggerQueue.request(true)}));
 app.get('/capture/status', (req, res) => {
   const now = Date.now();
   const receiving = lastFrameAt !== null && now - lastFrameAt <
@@ -1123,13 +1218,18 @@ const server_detection = jsonStreamServer('detection', frame => {
   trackGuidedShadowRecorder.accept(frame);
   trackerPublication.acceptInput(frame, trackerForwarder.status().connected);
   evidenceStatistics.acceptDetection(frame);
+  provisionalEvidenceStatistics.acceptDetection(frame);
+  oprsEventRecorder.acceptDetection(frame);
 });
 listenData(server_detection, 'detection');
 
 const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
-  evidenceStatistics.acceptTracker(trackerPublication.frame());
+  const published = trackerPublication.frame();
+  evidenceStatistics.acceptTracker(published);
+  provisionalEvidenceStatistics.acceptTracker(published);
+  oprsEventRecorder.acceptTracker(published);
 });
 listenData(server_tracker, 'track');
 
@@ -1187,6 +1287,9 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionEligible(connection)) return;
     activeTimingConnection = connection.id;
     timing = frame;
+    oprsEventRecorder.acceptTiming(frame);
+    evidenceStatistics.acceptTiming(frame);
+    provisionalEvidenceStatistics.acceptTiming(frame);
     lastTimingAt = Date.now();
     stash_timing.update_data(timing);
     serviceErrors.delete('timing');
@@ -1222,6 +1325,8 @@ process.on('SIGTERM', () => {
   trackerForwarder.close();
   trackerPublication.close();
   evidenceStatistics.close();
+  provisionalEvidenceStatistics.close();
+  oprsEventRecorder.close();
   bearingDiagnostic.close();
   gainMonitor.stop();
   process.exit(0);

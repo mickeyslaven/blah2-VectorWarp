@@ -29,4 +29,10 @@ int main() {
   queue.push(b.data(), 2, 0xfffffffeu); queue.close();
   const auto stopped = queue.stats(); check(stopped.trailingSamples == 2 && stopped.discardedSamples == 7);
   check(queue.backlog_samples() == 0 && !queue.acquire(slot));
+  PairedCpiQueue borrowed(4, 1);
+  borrowed.push(c.data(), 4, 0); check(borrowed.acquire(slot));
+  borrowed.discontinuity(); check(!borrowed.release(slot));
+  const auto invalidated = borrowed.stats();
+  check(invalidated.discontinuities == 1 && invalidated.droppedCpis == 1 &&
+    invalidated.discardedSamples == 4);
 }

@@ -5,7 +5,8 @@ set -e
 # handled by the incoming package's preinst and postinst.
 if [ "${1:-}" = remove ] && [ -d /run/systemd/system ]; then
   systemctl stop vectorwarp-processor.service vectorwarp-api.service \
-    vectorwarp-restart.service vectorwarp-sdrplay-build.service \
+    vectorwarp-restart.service vectorwarp-health-watchdog.timer \
+    vectorwarp-config-guard.path vectorwarp-sdrplay-build.service \
     vectorwarp-receiver.service vectorwarp-receiver.socket >/dev/null 2>&1 || true
 fi
 exit 0

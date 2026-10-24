@@ -16,5 +16,5 @@ void verify_usrp_receive(const Metadata& metadata, std::size_t received,
   if (metadata.error_code != Metadata::ERROR_CODE_NONE || metadata.out_of_sequence)
     throw std::runtime_error("[USRP] Receive discontinuity: " + metadata.strerror() +
       (metadata.out_of_sequence ? " (out of sequence)" : "") +
-      ". Input stopped before accepting this block; check the receiver/USB/network path and explicitly restart. No automatic IQ-gap retry.");
+      ". Block rejected before coherent publication; the receiver will attempt bounded automatic requalification.");
 }

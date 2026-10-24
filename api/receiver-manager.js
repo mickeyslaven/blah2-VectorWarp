@@ -84,15 +84,15 @@ const SETTINGS_SYNC = Object.freeze({
     'capture.fc', 'capture.fs', 'capture.device.address',
     'capture.device.subdev', 'capture.device.antenna', 'capture.device.gain'
   ].map(configField => Object.freeze({configField, authority: 'vectorwarp',
-    direction: 'direct-tuning', confirmation: 'unsupported-readback',
-    hardwareReadback: false}))),
+    direction: 'direct-tuning', confirmation: 'processor-startup-uhd-readback',
+    hardwareReadback: true, physicalRfVerified: false}))),
   HackRF: Object.freeze([
     'capture.fc', 'capture.fs', 'capture.device.serial',
     'capture.device.gain_lna', 'capture.device.gain_vga',
     'capture.device.amp_enable'
   ].map(configField => Object.freeze({configField, authority: 'vectorwarp',
-    direction: 'direct-tuning', confirmation: 'unsupported-readback',
-    hardwareReadback: false})))
+    direction: 'direct-tuning', confirmation: 'processor-startup-setter-acceptance',
+    hardwareReadback: false, physicalRfVerified: false})))
 });
 
 function plainObject(value) {

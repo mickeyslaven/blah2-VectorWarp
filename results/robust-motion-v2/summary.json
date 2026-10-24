@@ -1,0 +1,19 @@
+{
+  "schema": "vectorwarp-robust-motion-summary-v1",
+  "scope": "Offline truth-anchored evaluation of a deployable blind scan statistic. Truth/ADS-B is not an input to the proposed detector.",
+  "method": {
+    "statistic": "geometric_mean_db",
+    "definition": "For each scanned quadratic motion-bank path, average the per-frame local power-ratio values in dB (equivalently: 10*log10 of the geometric mean of linear local ratios). Select the best path at every tested anchor.",
+    "bank": "3 delay velocities x 3 Doppler velocities x 3 delay accelerations x 3 Doppler accelerations = 81 paths",
+    "calibration": {"delay_km": 0.02578255, "doppler_hz": 7.053549},
+    "false_alarm_reference": "For each target clip, threshold against the maximum (the implementation's empirical p99) of 64-80 independently optimized nearby control anchors using the identical bank."
+  },
+  "cases": [
+    {"clip": "r12", "flight": "N4313D", "role": "negative/missed", "frames": 20, "target_db": 0.6903164348, "control_p99_db": 1.4179444868, "margin_db": -0.7276280520},
+    {"clip": "r13", "flight": "NWF412", "role": "recovered missed aircraft", "frames": 20, "target_db": 1.4471082204, "control_p99_db": 1.3375499557, "margin_db": 0.1095582647},
+    {"clip": "r94", "flight": "N237LP", "role": "negative/missed", "frames": 20, "target_db": 0.4042680053, "control_p99_db": 1.7180249482, "margin_db": -1.3137569429},
+    {"clip": "r277", "flight": "N536ME", "role": "positive control", "frames": 10, "target_db": 6.3082833725, "control_p99_db": 3.2827624152, "margin_db": 3.0255209573}
+  ],
+  "robustness_check": "Seven quantiles, seven symmetric trims, signed-rank, four count thresholds and four run-length thresholds were tested. Of the temporal summaries that retain r277, only the geometric mean gives r13 a material positive margin; count/run >= 6 dB are only +0.0015/+0.0011 dB.",
+  "decision": "Candidate for a blind replay scan: recover r13 while retaining r277 and rejecting r12/r94 under their matched control maxima. Do not promote to deployment yet: the r13 clearance is only 0.110 dB and the statistic family was evaluated post hoc; require held-out replays and a global all-anchor false-alarm scan."
+}

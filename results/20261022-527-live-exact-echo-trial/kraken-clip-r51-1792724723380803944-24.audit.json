@@ -1,0 +1,359 @@
+{
+  "schema": "vectorwarp-live-echo-cutout-audit-v1",
+  "replay": "/root/wwat527-live-exact/kraken-clip-r51-1792724723380803944-24.replay.json",
+  "admission": "/root/wwat527-live-exact/kraken-clip-r51-1792724723380803944-24.mchq.admission.json",
+  "arm": "whitened_null_6db",
+  "frames": [
+    {
+      "frame": 0,
+      "timestamp_ms": 1792724720224,
+      "truth_delay_km": 60.51233041476886,
+      "truth_doppler_hz": 212.00248061998087,
+      "sampled_delay_km": 60.4581456966,
+      "sampled_doppler_hz": 212.0713973704,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -4.549240916688763,
+      "sum_rank": 411,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -3.671141392377214,
+          "rank": 127,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -4.736487157853668,
+          "rank": 224,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -12.783664249958925,
+          "rank": 791,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -9.558692807258018,
+          "rank": 570,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -9.502814580108323,
+          "rank": 601,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 1,
+      "timestamp_ms": 1792724720730,
+      "truth_delay_km": 60.51233041476886,
+      "truth_doppler_hz": 212.00248061998087,
+      "sampled_delay_km": 60.4581456966,
+      "sampled_doppler_hz": 212.0713973704,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -6.37944513768688,
+      "sum_rank": 779,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -25.0523429153411,
+          "rank": 1001,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -12.302850227090566,
+          "rank": 778,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -4.157904710978454,
+          "rank": 174,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -22.858537458357212,
+          "rank": 994,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -5.753797773719089,
+          "rank": 326,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 2,
+      "timestamp_ms": 1792724721227,
+      "truth_delay_km": 60.51233041476886,
+      "truth_doppler_hz": 212.00248061998087,
+      "sampled_delay_km": 60.4581456966,
+      "sampled_doppler_hz": 212.0713973704,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -2.146879056654906,
+      "sum_rank": 128,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -4.9572742700894326,
+          "rank": 207,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -7.695509239799094,
+          "rank": 438,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": 0.14764125667106,
+          "rank": 7,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -11.047138341950792,
+          "rank": 733,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -6.247929160380078,
+          "rank": 374,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 3,
+      "timestamp_ms": 1792724721726,
+      "truth_delay_km": 60.43979871925145,
+      "truth_doppler_hz": 211.08941363013665,
+      "sampled_delay_km": 60.4581456966,
+      "sampled_doppler_hz": 212.0713973704,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -0.8613372983035892,
+      "sum_rank": 51,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -6.072476224950293,
+          "rank": 362,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -19.769049651323567,
+          "rank": 971,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -8.095194952796463,
+          "rank": 538,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -0.3090605851596977,
+          "rank": 16,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -1.0877926584454192,
+          "rank": 28,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 4,
+      "timestamp_ms": 1792724722224,
+      "truth_delay_km": 60.32252344533044,
+      "truth_doppler_hz": 209.61309102967425,
+      "sampled_delay_km": 60.3332321725,
+      "sampled_doppler_hz": 210.0707238103,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -2.600861223795584,
+      "sum_rank": 155,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -2.790380829323671,
+          "rank": 76,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -9.399373492839825,
+          "rank": 650,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -12.652000879923497,
+          "rank": 805,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -8.533841629005959,
+          "rank": 554,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -2.296402990407361,
+          "rank": 78,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 5,
+      "timestamp_ms": 1792724722730,
+      "truth_delay_km": 60.20336423126612,
+      "truth_doppler_hz": 208.1130524035016,
+      "sampled_delay_km": 60.2083186483,
+      "sampled_doppler_hz": 208.0700502502,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -8.422605521523277,
+      "sum_rank": 946,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -18.390872607110104,
+          "rank": 957,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -6.41791682994638,
+          "rank": 401,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -8.294655035424654,
+          "rank": 495,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -10.868931601424636,
+          "rank": 680,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -23.798353795754576,
+          "rank": 986,
+          "control_cells": 1016
+        }
+      ]
+    },
+    {
+      "frame": 6,
+      "timestamp_ms": 1792724723226,
+      "truth_delay_km": 60.15744319027296,
+      "truth_doppler_hz": 207.53497427681452,
+      "sampled_delay_km": 60.2083186483,
+      "sampled_doppler_hz": 208.0700502502,
+      "truth_inside_cutout": true,
+      "sum_margin_p99_db": -4.420994317858953,
+      "sum_rank": 363,
+      "channels": [
+        {
+          "channel": 0,
+          "margin_p99_db": -10.206081920571696,
+          "rank": 621,
+          "control_cells": 1016
+        },
+        {
+          "channel": 1,
+          "margin_p99_db": -3.8743274851032883,
+          "rank": 195,
+          "control_cells": 1016
+        },
+        {
+          "channel": 2,
+          "margin_p99_db": -5.998772873350539,
+          "rank": 337,
+          "control_cells": 1016
+        },
+        {
+          "channel": 3,
+          "margin_p99_db": -3.532144661642993,
+          "rank": 135,
+          "control_cells": 1016
+        },
+        {
+          "channel": 4,
+          "margin_p99_db": -11.830451026696547,
+          "rank": 759,
+          "control_cells": 1016
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "overlapping_frames": 7,
+    "truth_inside_cutout_frames": 7,
+    "sum_positive_frames": 0,
+    "sum_three_db_frames": 0,
+    "sum_longest_positive_run": 0,
+    "sum_best_margin_p99_db": -0.8613372983035892,
+    "channels": [
+      {
+        "channel": 0,
+        "frames": 7,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -2.790380829323671
+      },
+      {
+        "channel": 1,
+        "frames": 7,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -3.8743274851032883
+      },
+      {
+        "channel": 2,
+        "frames": 7,
+        "positive_frames": 1,
+        "three_db_frames": 0,
+        "longest_positive_run": 1,
+        "best_margin_p99_db": 0.14764125667106
+      },
+      {
+        "channel": 3,
+        "frames": 7,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -0.3090605851596977
+      },
+      {
+        "channel": 4,
+        "frames": 7,
+        "positive_frames": 0,
+        "three_db_frames": 0,
+        "longest_positive_run": 0,
+        "best_margin_p99_db": -1.0877926584454192
+      }
+    ]
+  }
+}

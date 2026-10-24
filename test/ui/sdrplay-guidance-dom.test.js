@@ -89,7 +89,8 @@ const check = async () => {
       hardwareVerified: false, readbackAvailable: false,
       requested: {...saved.capture.device, frequency: saved.capture.fc,
         sampleRate: saved.capture.fs, serial: '', ifFrequencyKhz: 1620,
-        ifBandwidthKhz: 1536, decimation: 1},
+        ifBandwidthKhz: 1536, decimation: 1, sampleCounterScalePolicy: 'auto',
+        sampleCounterScale: 3},
       selected: {serial: '<img src=x onerror=alert(1)>'},
       sdk: {version: 3.15, stages: {open: true, init: true, gainUpdateA: true, gainUpdateB: true}}};
     const live = {radar: 'receiving', processorFresh: true,
@@ -97,6 +98,7 @@ const check = async () => {
     window.renderReceiverStartup(live);
     assert.match(startup.textContent, /SDRplay accepted settings; receiving radar frames/);
     assert.match(startup.textContent, /not measured tuner values/);
+    assert.match(startup.textContent, /Sample counter policy \/ effective ratioauto \/ 3/);
     assert.equal(startup.querySelector('img'), null, 'Receipt strings must be text, not HTML');
     assert.doesNotMatch(startup.textContent, /Running settings differ/);
     startup.querySelector('details').open = true;
@@ -116,6 +118,77 @@ const check = async () => {
     assert.equal(startup.querySelector('table'), null, 'Stale receipts must not appear current');
     window.renderReceiverStartup({...live, processor: {...live.processor, input: 'replay'}});
     assert.match(startup.textContent, /No current RSPduo status/);
+
+    Object.assign(saved, setupDefaults());
+    saved.capture.device = {type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
+      antenna: ['RX2', 'RX2'], gain: [10, 20]};
+    saved.capture.fs = 2000000;
+    await window.renderConfiguration();
+    const usrpTarget = window.document.getElementById('receiver-startup');
+    assert.match(usrpTarget.textContent, /No current USRP status/);
+    const usrpReceipt = {schema: 1, receiver: 'Usrp', status: 'accepted',
+      hardwareVerified: true, readbackAvailable: true, physicalRfVerified: false,
+      requested: {address: 'type=b200', subdevices: 'A:A A:B',
+        frequency: saved.capture.fc, sampleRate: saved.capture.fs,
+        antennas: ['RX2', 'RX2'], gains: [10, 20]},
+      appliedReadback: {subdevices: 'A:A A:B',
+        perChannelFrequencyHz: [saved.capture.fc, saved.capture.fc],
+        perChannelSampleRateHz: [saved.capture.fs, saved.capture.fs],
+        perChannelGainDb: [10, 20], perChannelAntenna: ['RX2', 'RX2']},
+      coherence: {motherboard: 'B210', clockSource: 'internal',
+        timeSource: 'internal', deviceIdentity: {motherboardSerial: '31ABC42',
+          rxIds: ['B210 RX', '<img src=x onerror=alert(1)>']}}};
+    const usrpLive = {radar: 'receiving', processorFresh: true,
+      processor: {receiver: 'Usrp', input: 'live', state: 'live',
+        receiverStartup: usrpReceipt}};
+    window.renderReceiverStartup(usrpLive);
+    assert.match(usrpTarget.textContent, /UHD read back both channels; receiving radar frames/);
+    assert.match(usrpTarget.textContent, /device-API getter values/);
+    assert.match(usrpTarget.textContent, /serial 31ABC42/);
+    assert.match(usrpTarget.textContent, /Exact event-time scoring remains unavailable/);
+    assert.equal(usrpTarget.querySelector('img'), null, 'USRP receipt strings must be text, not HTML');
+    assert.doesNotMatch(usrpTarget.textContent, /Running settings differ/);
+    usrpReceipt.requested.gains[1] = 21;
+    window.renderReceiverStartup(usrpLive);
+    assert.match(usrpTarget.textContent, /Running settings differ/);
+
+    Object.assign(saved, setupDefaults());
+    saved.capture.device = {type: 'HackRF',
+      serial: ['a1', 'b2'], gain_lna: [16, 32], gain_vga: [20, 40],
+      amp_enable: [false, true]};
+    saved.capture.fs = 6000000;
+    await window.renderConfiguration();
+    const hackrfTarget = window.document.getElementById('receiver-startup');
+    assert.match(hackrfTarget.textContent, /No current HackRF status/);
+    const hackrfReceipt = {schema: 1, receiver: 'HackRF', status: 'accepted',
+      hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+      setterAcceptance: true,
+      requested: {frequency: saved.capture.fc, sampleRate: saved.capture.fs,
+        serials: ['a1', 'b2'], lnaGainDb: [16, 32], vgaGainDb: [20, 40],
+        ampEnabled: [false, true]},
+      derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+        independentReadback: false},
+      deviceIdentity: {complete: true,
+        resolvedSerials: ['000000000000000000000000000000a1',
+          '<img src=x onerror=alert(1)>'], roles: ['reference', 'surveillance']},
+      synchronization: {policy: 'shared-clock-hardware-trigger-v1',
+        clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+        startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+        hardwareTimestampAvailable: false}};
+    const hackrfLive = {radar: 'receiving', processorFresh: true,
+      processor: {receiver: 'HackRF', input: 'live', state: 'live',
+        receiverStartup: hackrfReceipt}};
+    window.renderReceiverStartup(hackrfLive);
+    assert.match(hackrfTarget.textContent, /accepted settings; receiving provisional paired frames/);
+    assert.match(hackrfTarget.textContent, /setter acceptance, not RF or synchronization readback/);
+    assert.match(hackrfTarget.textContent, /at most 0.75 × sample rate/);
+    assert.match(hackrfTarget.textContent, /Pairing and event time remain provisional/);
+    assert.equal(hackrfTarget.querySelector('img'), null,
+      'HackRF receipt strings must be text, not HTML');
+    assert.doesNotMatch(hackrfTarget.textContent, /Running settings differ/);
+    hackrfReceipt.requested.lnaGainDb[1] = 24;
+    window.renderReceiverStartup(hackrfLive);
+    assert.match(hackrfTarget.textContent, /Running settings differ/);
     console.log('SDRplay guidance DOM fixture passed.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

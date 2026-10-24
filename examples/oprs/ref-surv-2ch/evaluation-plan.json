@@ -1,0 +1,34 @@
+{
+  "schema": "oprs-evaluation-plan-v1",
+  "plan_id": "example-2ch-pure-synthetic-v1",
+  "plan_hash": "sha256:8223be707fa8c38cee233dc255987a59c2041dbae8309fd171a2f08e1943392d",
+  "system_manifest_hash": "sha256:7e0a219515e6617626859301edb3e6f1e6d10a1a59c3a6d7fdc9a71179ba81dd",
+  "evidence_layer": "pure_synthetic",
+  "partition": "evaluation",
+  "site_epoch_id": "synthetic-site-v1",
+  "receiver_epoch_id": "fixture-receiver-v1",
+  "max_truth_offset_ns": 0,
+  "pass_success_min_cpis": 2,
+  "opportunity_envelope": {"detector_independent": true, "delay_min_km": 1, "delay_max_km": 60, "doppler_min_hz": -250, "doppler_max_hz": 250},
+  "opportunities": [
+    {"opportunity_id":"p1-c1","pass_id":"p1","cpi_id":"c1","event_time_ns":1000000000,"truth":{"sample_time_ns":1000000000,"used_by_inference":false,"delay_km":12,"doppler_hz":-80,"bearing_deg":null}},
+    {"opportunity_id":"p1-c2","pass_id":"p1","cpi_id":"c2","event_time_ns":1500000000,"truth":{"sample_time_ns":1500000000,"used_by_inference":false,"delay_km":13,"doppler_hz":-76,"bearing_deg":null}},
+    {"opportunity_id":"p1-c3","pass_id":"p1","cpi_id":"c3","event_time_ns":2000000000,"truth":{"sample_time_ns":2000000000,"used_by_inference":false,"delay_km":14,"doppler_hz":-72,"bearing_deg":null}},
+    {"opportunity_id":"p2-c1","pass_id":"p2","cpi_id":"c1","event_time_ns":3000000000,"truth":{"sample_time_ns":3000000000,"used_by_inference":false,"delay_km":35,"doppler_hz":110,"bearing_deg":null}},
+    {"opportunity_id":"p2-c2","pass_id":"p2","cpi_id":"c2","event_time_ns":3500000000,"truth":{"sample_time_ns":3500000000,"used_by_inference":false,"delay_km":36,"doppler_hz":105,"bearing_deg":null}},
+    {"opportunity_id":"p2-c3","pass_id":"p2","cpi_id":"c3","event_time_ns":4000000000,"truth":{"sample_time_ns":4000000000,"used_by_inference":false,"delay_km":37,"doppler_hz":100,"bearing_deg":null}}
+  ],
+  "required_domains": ["evaluation_integrity","acquisition_rf","synchronization_calibration","reference_quality","cancellation_target_preservation","raw_detection","tracking","recoverability_regression","realtime_operational"],
+  "metric_thresholds": {
+    "valid_iq_fraction":{"domain":"acquisition_rf","direction":"min","pass":0.99,"warn":0.95,"unit":"fraction"},
+    "phase_stability_deg":{"domain":"synchronization_calibration","direction":"max","pass":5,"warn":15,"unit":"degree"},
+    "reference_snr_db":{"domain":"reference_quality","direction":"min","pass":12,"warn":8,"unit":"dB"},
+    "target_attenuation_db":{"domain":"cancellation_target_preservation","direction":"max","pass":1,"warn":3,"unit":"dB"},
+    "raw_detection_pass_recall":{"domain":"raw_detection","direction":"min","pass":0.8,"warn":0.6,"unit":"fraction"},
+    "tracking_pass_recall":{"domain":"tracking","direction":"min","pass":0.8,"warn":0.6,"unit":"fraction"},
+    "pass_macro_continuity":{"domain":"tracking","direction":"min","pass":0.7,"warn":0.5,"unit":"fraction"},
+    "nuisance_tracks_per_hour":{"domain":"tracking","direction":"max","pass":5,"warn":10,"unit":"tracks/hour"},
+    "positive_control_retention":{"domain":"recoverability_regression","direction":"min","pass":0.98,"warn":0.9,"unit":"fraction"},
+    "processing_time_ratio_p99":{"domain":"realtime_operational","direction":"max","pass":0.8,"warn":1.0,"unit":"ratio"}
+  }
+}

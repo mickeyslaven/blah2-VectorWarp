@@ -19,6 +19,16 @@
 
 class Source
 {
+public:
+  struct SampleTimePosition {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+    int64_t deviceTimeEpochTick = 0;
+    uint32_t sampleRate = 0;
+    std::string clockSource, timeSource, motherboard, subdevices;
+  };
+
 protected:
 
   /// @brief The capture device type.
@@ -42,14 +52,21 @@ protected:
 private:
   mutable std::mutex recordingMutex;
   std::atomic<bool> recordingActive{false};
+  std::atomic<bool> recordingResumePending{false};
   std::unique_ptr<blah2::RecordingWriter> recordingWriter;
   std::string recordingFile, recordingError;
   uint64_t recordedSamples = 0;
   std::vector<std::deque<std::complex<float>>> pendingChannels;
   std::vector<uint64_t> pendingStarts;
   std::vector<bool> channelStarted;
+  SampleTimePosition recordingStartPosition;
+  std::vector<std::string> recordingDiscontinuities;
+  std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
+  void record_block_locked(const blah2::IqBlock& samples,
+    const SampleTimePosition* startPosition);
   void recording_failed(const std::string& error);
   void flush_recording_locked();
+  void write_recording_provenance_locked(bool complete);
 
 public:
 
@@ -83,19 +100,34 @@ public:
   /// @return Void.
   virtual void stop() = 0;
 
+  virtual SampleTimePosition sample_time_position() const { return {}; }
+  // Backend-specific applied settings/readback embedded in the portable v2
+  // recording contract. Empty is represented explicitly, never as exact.
+  virtual std::string recording_provenance_json() const { return "{}"; }
+
   // File replay is receiver-independent and is owned by Capture/ReplayPlayer.
 
   struct RecordingStatus {
     bool active = false;
     std::string file, error;
     uint64_t samples = 0;
+    bool resumePending = false;
   };
   bool is_recording() const { return recordingActive.load(); }
+  bool recording_wants_samples() const {
+    return recordingActive.load() || recordingResumePending.load();
+  }
   RecordingStatus recording_status() const;
   // Preserve a partial file for diagnosis, but never mark it complete after a
   // receiver reports a gap, reset, overrun, or malformed callback.
   void recording_discontinuity(const std::string& error);
+  // Close only the ambiguous epoch, then lazily start a new file on the first
+  // qualified post-boundary block. This preserves receiver operation without
+  // ever joining samples from different hardware-setting epochs.
+  void recording_epoch_discontinuity(const std::string& error);
   void record_block(const blah2::IqBlock& samples);
+  void record_block(const blah2::IqBlock& samples,
+    const SampleTimePosition& startPosition);
   void record_channel(unsigned channel, uint64_t firstSample,
     const std::vector<std::complex<float>>& samples);
 

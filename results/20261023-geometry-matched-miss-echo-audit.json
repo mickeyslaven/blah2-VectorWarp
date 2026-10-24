@@ -1,0 +1,126 @@
+{
+  "schema": "vectorwarp-geometry-matched-miss-echo-audit-v1",
+  "created_at": "2026-10-23T13:40:00-04:00",
+  "config_revision": "54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd",
+  "frequency_hz": 527000000,
+  "method": {
+    "frames_per_clip": 7,
+    "truth": "exact-CPI projected ADS-B",
+    "fusion": "noise_whitened_beam_bank with 6 dB direct-path null",
+    "single_frame_reference": "same-frame local p99",
+    "trajectory_stack": "noncoherent five-channel power along the exact moving truth path",
+    "bounded_bias_search": {
+      "doppler_bins_each_side": 10,
+      "delay_bins_each_side": 2,
+      "target_trials": 105,
+      "correction": "p99 of equivalently searched offset-trajectory windows"
+    }
+  },
+  "positive_control": {
+    "flight": "RPA5731",
+    "hex": "a1ecfd",
+    "recording": "kraken-clip-r29-1792775102182073270-18.mchq",
+    "live_overlap": {
+      "associated_detection_cpis": 1,
+      "associated_track_cpis": 6
+    },
+    "best_doppler_bin_bias": -6,
+    "search_corrected_fusion_margin_p99_db": 7.638853993688287,
+    "search_corrected_rank": 1,
+    "null_windows": 330,
+    "interpretation": "The analysis recovers a known live catch strongly once the bounded Doppler-model bias is included."
+  },
+  "matched_misses": [
+    {
+      "flight": "N5355P",
+      "hex": "a6c615",
+      "recording": "kraken-clip-r28-1792775068212220884-17.mchq",
+      "matched_catch_hex": "ab786d",
+      "geometry": {
+        "delay_km": 61.64,
+        "doppler_hz": 128.0,
+        "bearing_deg": 183.2,
+        "elevation_deg": 1.1,
+        "ground_range_km": 31.9,
+        "altitude_ft": 3102
+      },
+      "single_frame_best_fusion_margin_p99_db": -1.4604830614101494,
+      "exact_trajectory_stack_margin_p99_db": -1.8883637571895004,
+      "search_corrected_fusion_margin_p99_db": -0.680256023727213,
+      "search_corrected_rank": 160,
+      "null_windows": 290,
+      "credible_echo": false
+    },
+    {
+      "flight": "N505LP",
+      "hex": "a64d8b",
+      "recording": "kraken-clip-r14-1792774619753529787-3.mchq",
+      "matched_catch_hex": "ab786d",
+      "geometry": {
+        "delay_km": 45.76,
+        "doppler_hz": 191.0,
+        "bearing_deg": 121.9,
+        "elevation_deg": 0.7,
+        "ground_range_km": 26.4,
+        "altitude_ft": 2228
+      },
+      "single_frame_positive_count": 1,
+      "single_frame_best_fusion_margin_p99_db": 0.18332562251993592,
+      "single_frame_longest_positive_run": 1,
+      "exact_trajectory_stack_margin_p99_db": -2.125777258510791,
+      "search_corrected_fusion_margin_p99_db": -1.4092318668784953,
+      "search_corrected_rank": 657,
+      "null_windows": 864,
+      "credible_echo": false,
+      "interpretation": "One isolated p99 crossing did not persist or survive trajectory stacking and is consistent with a noise or clutter fluctuation."
+    },
+    {
+      "flight": "CXK551",
+      "hex": "a32756",
+      "recording": "kraken-clip-r42-1792775428361183640-30.mchq",
+      "matched_catch_hex": "a6b185",
+      "matched_catch_flight": "N530ME",
+      "geometry": {
+        "delay_km": 23.37,
+        "doppler_hz": 83.9,
+        "bearing_deg": 131.7,
+        "elevation_deg": 0.0,
+        "ground_range_km": 14.7,
+        "altitude_ft": 1179
+      },
+      "single_frame_best_fusion_margin_p99_db": -2.0517406912458243,
+      "exact_trajectory_stack_margin_p99_db": -1.8007242183451702,
+      "search_corrected_fusion_margin_p99_db": -0.8611648845863024,
+      "search_corrected_rank": 710,
+      "null_windows": 1144,
+      "credible_echo": false
+    },
+    {
+      "flight": "N518AR",
+      "hex": "a67f37",
+      "recording": "kraken-clip-r17-1792774731799855394-6.mchq",
+      "matched_catch_hex": "ab786d",
+      "geometry": {
+        "delay_km": 61.61,
+        "doppler_hz": 241.3,
+        "bearing_deg": 203.4,
+        "elevation_deg": 2.1,
+        "ground_range_km": 31.3,
+        "altitude_ft": 4849
+      },
+      "single_frame_best_fusion_margin_p99_db": -4.029652988804137,
+      "exact_trajectory_stack_margin_p99_db": -3.010773895147752,
+      "bounded_search_note": "Doppler-only because the truth trajectory was adjacent to the configured delay ceiling.",
+      "search_corrected_fusion_margin_p99_db": -1.3182523595430866,
+      "search_corrected_rank": 78,
+      "null_windows": 88,
+      "credible_echo": false
+    }
+  ],
+  "conclusion": {
+    "credible_echoes": 0,
+    "borderline_isolated_glimpses": 1,
+    "audited_misses": 4,
+    "interpretation": "The sampled misses do not contain persistent trajectory-consistent aircraft energy comparable to the positive control. For these clips the main limitation is echo strength or propagation geometry, not ADS-B timing or a modest delay-Doppler model bias."
+  }
+}

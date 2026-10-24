@@ -30,15 +30,25 @@ const startup = {
   requested: {serial: 'mock-only', frequency: 204640000, sampleRate: 2000000,
     agcSetPoint: -30, bandwidthNumber: 50, gainReduction: [30, 31],
     lnaState: 3, dabNotch: true, rfNotch: false,
-    ifBandwidthKhz: 1536, ifFrequencyKhz: 1620, decimation: 1},
+    ifBandwidthKhz: 1536, ifFrequencyKhz: 1620, decimation: 1,
+    usbMode: 'isoch', sampleCounterScale: 1, sampleCounterScalePolicy: '1',
+    sdkDebugLevel: 'error'},
   selected: {serial: 'mock-only', deviceIndex: 0, hardwareVersion: 3,
     tuner: 'Both', mode: 'Dual_Tuner'},
-  sdk: {version: 3.15, stages}
+  sdk: {version: 3.15, parameters: {adcSampleRateHz: 6000000,
+    descriptorSampleRateHz: 6000000}, stages}
 };
 const live = {...replay, input: 'live', receiver: 'RspDuo', state: 'live',
   file: '', frequency: 204640000, sampleRate: 2000000,
   receiverStartup: startup};
 assert.equal(status(live).valid, true);
+const automaticStartup = {...startup, requested: {...startup.requested,
+  sampleCounterScale: 3, sampleCounterScalePolicy: 'auto'}};
+assert.equal(status({...live, receiverStartup: automaticStartup}).valid, true);
+assert.equal(status({...live, receiverStartup: {...automaticStartup,
+  requested: {...automaticStartup.requested, sampleCounterScale: 1}}}).valid, false);
+assert.equal(status({...live, receiverStartup: {...startup,
+  requested: {...startup.requested, sampleCounterScalePolicy: '3'}}}).valid, false);
 assert.equal(status({...live, receiverStartup: undefined}).valid, true); // older module
 const clipAcknowledgement = status({...live, receiverStartup: undefined,
   clipRevision: 7, clipError: '', clipFile: '/clips/pass.mchq',
@@ -88,6 +98,8 @@ for (const receiverStartup of [
   {...startup, status: 'accepted', sdk: {...startup.sdk, stages: {...stages, gainUpdateB: false}}},
   {...startup, requested: {...startup.requested, frequency: 204650000}},
   {...startup, selected: {...startup.selected, serial: 'other'}},
+  {...startup, sdk: {...startup.sdk, parameters: {...startup.sdk.parameters, adcSampleRateHz: 0}}},
+  {...startup, sdk: {...startup.sdk, parameters: {...startup.sdk.parameters, descriptorSampleRateHz: Infinity}}},
   {...startup, requested: {...startup.requested, lnaState: 9, frequency: 1000000000}},
   {...startup, selected: null}
 ]) assert.equal(status({...live, receiverStartup}).valid, false);
@@ -104,6 +116,42 @@ const onset = {...idleTuner, active: true, detectedCount: 1, lastDetectedAt: 172
 const corrected = {...onset, active: false, correctedCount: 1, lastCorrectedAt: 1720000001000};
 const activeHealth = {...health, monitoring: true, overload: {A: onset, B: corrected}, ackFailures: 2};
 assert.deepEqual(status({...live, receiverHealth: activeHealth}).value.receiverHealth, activeHealth);
+const idleGain = requestedGainReductionDb => ({requestedGainReductionDb,
+  requestedLnaState: 3, eventCount: 0, lastEventAt: 0, epoch: 0,
+  metadataAvailable: false, reported: null});
+const gainHealth = {...health, gain: {policy: 'epoch-on-vendor-change',
+  sampleAligned: false, epoch: 2, tuners: {
+    A: {...idleGain(30), eventCount: 1, lastEventAt: 1720000002000, epoch: 1,
+      metadataAvailable: true, reported: {gRdB: 37, lnaGRdB: 12, currGain: 23.5}},
+    B: {...idleGain(31), eventCount: 1, lastEventAt: 1720000003000, epoch: 2,
+      metadataAvailable: true, reported: {gRdB: 41, lnaGRdB: 15, currGain: 19.25}}
+  }}, sampleTime: {source: 'sdrplay-delivered-relative-sample-epoch',
+    exact: false, uncertaintyBounded: false, sampleAligned: false,
+    available: true, epoch: '3', nextSample: '4096'}};
+assert.deepEqual(status({...live, receiverHealth: gainHealth}).value.receiverHealth,
+  gainHealth, 'Per-tuner vendor gain events and capture epochs survive validation');
+for (const invalidGain of [
+  null, [], {...gainHealth.gain, policy: 'ignore'},
+  {...gainHealth.gain, sampleAligned: true},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, requestedGainReductionDb: 31}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, epoch: 3}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, metadataAvailable: false}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, reported: {...gainHealth.gain.tuners.A.reported,
+      currGain: Infinity}}}}
+]) assert.equal(status({...live, receiverHealth: {...health, gain: invalidGain}}).valid,
+  false, JSON.stringify(invalidGain));
+for (const sampleTime of [
+  {...gainHealth.sampleTime, exact: true},
+  {...gainHealth.sampleTime, source: 'wall-clock'},
+  {...gainHealth.sampleTime, epoch: 3},
+  {...gainHealth.sampleTime, available: false},
+  {...gainHealth.sampleTime, nextSample: '-1'}
+]) assert.equal(status({...live,
+  receiverHealth: {...gainHealth, sampleTime}}).valid, false, JSON.stringify(sampleTime));
 for (const state of ['stopped', 'error']) {
   const stopped = {...live, state, error: state === 'error' ? 'Receiver disconnected' : '',
     receiverHealth: {...activeHealth, monitoring: false}};
@@ -149,4 +197,200 @@ assert.equal(fresh(null, 6000), false);
 assert.equal(fresh({receivedAt: NaN}, 6000), false);
 assert.equal(fresh({receivedAt: 1000}, 6000), true);
 assert.equal(fresh({receivedAt: 1000}, 6001), false);
+
+const usrpStartup = {schema: 1, receiver: 'Usrp', status: 'accepted',
+  hardwareVerified: true, readbackAvailable: true, physicalRfVerified: false,
+  requested: {address: 'type=b200', subdevices: 'A:A A:B',
+    frequency: 527000000, sampleRate: 2000000,
+    antennas: ['RX2', 'RX2'], gains: [10, 20]},
+  appliedReadback: {subdevices: 'A:A A:B',
+    perChannelFrequencyHz: [527000000, 527000000],
+    perChannelSampleRateHz: [2000000, 2000000],
+    perChannelGainDb: [10, 20], perChannelAntenna: ['RX2', 'RX2']},
+  coherence: {motherboards: 1, channels: 2, motherboard: 'B210',
+    clockSource: 'internal', timeSource: 'internal', subdevices: 'A:A A:B',
+    policy: 'single-motherboard-b210-v1', singleMotherboard: true,
+    deviceIdentity: {complete: true, motherboardId: 'B210',
+      motherboardSerial: '31ABC42', rxIds: ['B210 RX', 'B210 RX'],
+      rxSerials: ['31ABC42', '31ABC42'], rxSubdeviceNames: ['A', 'B']}}};
+const usrpHealth = {schema: 1, receiver: 'Usrp', monitoring: true,
+  deviceTime: {source: 'uhd-device-time', utcMapped: false, continuous: true,
+    sampleRateHz: 2000000, epochTick: '40000000', nextTick: '40000014',
+    samples: '14', blocks: '2'}};
+const usrpLive = {...replay, input: 'live', receiver: 'Usrp', state: 'live',
+  file: '', frequency: 527000000, sampleRate: 2000000,
+  receiverStartup: usrpStartup, receiverHealth: usrpHealth};
+assert.deepEqual(status(usrpLive).value.receiverStartup, usrpStartup);
+assert.deepEqual(status(usrpLive).value.receiverHealth, usrpHealth);
+const incompleteUsrpIdentity = {...usrpStartup, coherence: {...usrpStartup.coherence,
+  deviceIdentity: {complete: false, motherboardId: '', motherboardSerial: '',
+    rxIds: ['', ''], rxSerials: ['', ''], rxSubdeviceNames: ['', '']}}};
+assert.equal(status({...usrpLive, receiverStartup: incompleteUsrpIdentity}).valid, true,
+  'Missing optional UHD identity stays explicit without disabling capture');
+const usrpRecovery = {state: 'qualified', qualificationRequiredBlocks: 2,
+  qualificationObservedBlocks: 2, discontinuities: '1', requalifications: '1',
+  consecutiveDiscontinuities: '0', discardedBlocks: '2',
+  discardedSamplesPerChannel: '21', lastDiscontinuity: 'UHD overflow'};
+const recoveredUsrpHealth = {...usrpHealth,
+  deviceTime: {...usrpHealth.deviceTime, epoch: '1'}, recovery: usrpRecovery};
+assert.deepEqual(status({...usrpLive, receiverHealth: recoveredUsrpHealth})
+  .value.receiverHealth, recoveredUsrpHealth);
+const requalifyingUsrpHealth = {...recoveredUsrpHealth,
+  deviceTime: {...recoveredUsrpHealth.deviceTime, continuous: false,
+    epochTick: null, nextTick: null, samples: '0', blocks: '0'},
+  recovery: {...usrpRecovery, state: 'requalifying',
+    qualificationObservedBlocks: 1, consecutiveDiscontinuities: '1',
+    requalifications: '0'}};
+assert.equal(status({...usrpLive, receiverHealth: requalifyingUsrpHealth}).valid, true);
+const unavailableUsrpHealth = {...requalifyingUsrpHealth,
+  deviceTime: {...requalifyingUsrpHealth.deviceTime, epoch: '0'},
+  recovery: {...requalifyingUsrpHealth.recovery, state: 'unavailable',
+    qualificationObservedBlocks: 0, discontinuities: '0',
+    consecutiveDiscontinuities: '0', discardedBlocks: '0',
+    discardedSamplesPerChannel: '0', lastDiscontinuity: ''}};
+assert.equal(status({...usrpLive, receiverHealth: unavailableUsrpHealth}).valid, true);
+for (const recovery of [
+  {...usrpRecovery, state: 'qualified', qualificationObservedBlocks: 1},
+  {...usrpRecovery, qualificationRequiredBlocks: 3},
+  {...usrpRecovery, requalifications: '2'},
+  {...usrpRecovery, state: 'requalifying'}
+]) assert.equal(status({...usrpLive,
+  receiverHealth: {...recoveredUsrpHealth, recovery}}).valid, false,
+  JSON.stringify(recovery));
+assert.equal(status({...usrpLive, receiverStartup: {...usrpStartup, status: 'pending',
+  hardwareVerified: false, readbackAvailable: false, appliedReadback: null,
+  coherence: null}, receiverHealth: {...usrpHealth, monitoring: false,
+    deviceTime: {...usrpHealth.deviceTime, continuous: false, epochTick: null,
+      nextTick: null, samples: '0', blocks: '0'}}}).valid, true);
+for (const receiverStartup of [
+  {...usrpStartup, coherence: {...usrpStartup.coherence, motherboards: 2}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, clockSource: ''}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, timeSource: ''}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, motherboard: 'X310'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, policy: 'all-usrps'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence, subdevices: 'A:B A:A'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence,
+    deviceIdentity: {...usrpStartup.coherence.deviceIdentity, complete: false}}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence,
+    deviceIdentity: {...usrpStartup.coherence.deviceIdentity, rxIds: ['B210 RX']}}},
+  {...usrpStartup, hardwareVerified: false},
+  {...usrpStartup, readbackAvailable: false},
+  {...usrpStartup, physicalRfVerified: true},
+  {...usrpStartup, appliedReadback: null},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelFrequencyHz: [527000002, 527000000]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelSampleRateHz: [1999999, 2000000]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelGainDb: [10, 21]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelAntenna: ['TX/RX', 'RX2']}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    subdevices: 'A:B A:A'}},
+  {...usrpStartup, requested: {...usrpStartup.requested, sampleRate: 6000000}},
+  {...usrpStartup, status: 'pending'},
+  {...usrpStartup, status: 'pending', hardwareVerified: false,
+    readbackAvailable: false, appliedReadback: null}
+]) assert.equal(status({...usrpLive, receiverStartup}).valid, false,
+  JSON.stringify(receiverStartup));
+for (const deviceTime of [
+  {...usrpHealth.deviceTime, source: 'host-arrival-time'},
+  {...usrpHealth.deviceTime, utcMapped: true},
+  {...usrpHealth.deviceTime, sampleRateHz: 6000000},
+  {...usrpHealth.deviceTime, nextTick: '40000015'},
+  {...usrpHealth.deviceTime, epochTick: null},
+  {...usrpHealth.deviceTime, samples: 14},
+  {...usrpHealth.deviceTime, continuous: false},
+  {...usrpHealth.deviceTime, continuous: false, epochTick: null, nextTick: null,
+    samples: '0', blocks: '1'}
+]) assert.equal(status({...usrpLive,
+  receiverHealth: {...usrpHealth, deviceTime}}).valid, false, JSON.stringify(deviceTime));
+const sanitizedUsrp = status({...usrpLive,
+  receiverStartup: {...usrpStartup, injected: '<script>'},
+  receiverHealth: {...usrpHealth, injected: '<script>',
+    deviceTime: {...usrpHealth.deviceTime, injected: '<script>'}}});
+assert.equal(sanitizedUsrp.valid, true);
+assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverStartup, 'injected'), false);
+assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverHealth.deviceTime, 'injected'), false);
+
+const hackrfStartup = {schema: 1, receiver: 'HackRF', status: 'accepted',
+  hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+  setterAcceptance: true,
+  requested: {frequency: 527000000, sampleRate: 6000000,
+    serials: ['a1', 'b2'], lnaGainDb: [16, 32], vgaGainDb: [20, 40],
+    ampEnabled: [false, true]},
+  derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+    independentReadback: false},
+  deviceIdentity: {complete: true,
+    resolvedSerials: ['000000000000000000000000000000a1',
+      '000000000000000000000000000000b2'],
+    roles: ['reference', 'surveillance']},
+  synchronization: {policy: 'shared-clock-hardware-trigger-v1',
+    clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+    startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+    hardwareTimestampAvailable: false}};
+const hackrfHealth = {schema: 1, receiver: 'HackRF', monitoring: true,
+  pairing: {policy: 'paired-callback-requalify-v2', state: 'qualified', qualified: true,
+    epoch: '1', callbacks: ['2', '2'], samples: ['4', '4'],
+    pairedCallbacks: '2', pairedSamples: '4', discontinuities: '0',
+    requalifications: '0', consecutiveDiscontinuities: '0', retryBudget: '8',
+    qualificationRequiredPairs: 2, qualificationObservedPairs: 2,
+    drainRequired: false, drainSeen: [false, false], discardedSamples: ['0', '0'],
+    reason: 'paired hardware-triggered callbacks are aligned'}};
+const hackrfLive = {...replay, input: 'live', receiver: 'HackRF', state: 'live',
+  file: '', frequency: 527000000, sampleRate: 6000000,
+  receiverStartup: hackrfStartup, receiverHealth: hackrfHealth};
+assert.deepEqual(status(hackrfLive).value.receiverStartup, hackrfStartup);
+assert.deepEqual(status(hackrfLive).value.receiverHealth, hackrfHealth);
+assert.equal(status({...hackrfLive, receiverHealth: {...hackrfHealth, pairing: {
+  ...hackrfHealth.pairing, callbacks: ['3', '2'], samples: ['6', '4']}}}).valid,
+true, 'One staged callback is a valid transient and cannot publish alone');
+const hackrfFault = {...hackrfHealth, monitoring: false, pairing: {
+  ...hackrfHealth.pairing, state: 'unavailable', qualified: false, epoch: '10', callbacks: ['11', '2'],
+  samples: ['20', '4'], discontinuities: '9', discardedSamples: ['20', '2'],
+  consecutiveDiscontinuities: '9', qualificationObservedPairs: 0,
+  reason: 'HackRF callback progression diverged'}};
+assert.equal(status({...hackrfLive, receiverHealth: hackrfFault}).valid, true);
+const hackrfRecovering = {...hackrfHealth, pairing: {
+  ...hackrfHealth.pairing, state: 'requalifying', qualified: false, epoch: '2',
+  callbacks: ['5', '4'], samples: ['10', '8'], discontinuities: '1',
+  requalifications: '0', consecutiveDiscontinuities: '1',
+  qualificationObservedPairs: 1, drainRequired: false, drainSeen: [true, true],
+  discardedSamples: ['4', '4'], reason: 'awaiting second matched callback pair'}};
+assert.equal(status({...hackrfLive, receiverHealth: hackrfRecovering}).valid, true);
+for (const receiverStartup of [
+  {...hackrfStartup, requested: {...hackrfStartup.requested, serials: ['a1', 'a1']}},
+  {...hackrfStartup, requested: {...hackrfStartup.requested, lnaGainDb: [15, 32]}},
+  {...hackrfStartup, setterAcceptance: false},
+  {...hackrfStartup, hardwareVerified: true},
+  {...hackrfStartup, derived: {...hackrfStartup.derived, independentReadback: true}},
+  {...hackrfStartup, deviceIdentity: {...hackrfStartup.deviceIdentity,
+    resolvedSerials: ['000000000000000000000000000000b2',
+      '000000000000000000000000000000a1']}},
+  {...hackrfStartup, synchronization: {...hackrfStartup.synchronization,
+    physicalWiringVerified: true}},
+  {...hackrfStartup, status: 'pending'}
+]) assert.equal(status({...hackrfLive, receiverStartup}).valid, false,
+  JSON.stringify(receiverStartup));
+const pendingHackrf = {...hackrfStartup, status: 'pending', setterAcceptance: false,
+  deviceIdentity: {complete: false, resolvedSerials: ['', ''],
+    roles: ['reference', 'surveillance']}, synchronization: null};
+assert.equal(status({...hackrfLive, receiverStartup: pendingHackrf}).valid, true,
+  'A fully qualified pending receipt is a valid transient');
+for (const pairing of [
+  {...hackrfHealth.pairing, policy: 'best-effort'},
+  {...hackrfHealth.pairing, state: 'requalifying'},
+  {...hackrfHealth.pairing, retryBudget: '9'},
+  {...hackrfHealth.pairing, qualificationRequiredPairs: 1},
+  {...hackrfHealth.pairing, drainRequired: true},
+  {...hackrfHealth.pairing, requalifications: '1'},
+  {...hackrfHealth.pairing, epoch: 1}
+]) assert.equal(status({...hackrfLive,
+  receiverHealth: {...hackrfHealth, pairing}}).valid, false, JSON.stringify(pairing));
+const sanitizedHackrf = status({...hackrfLive,
+  receiverStartup: {...hackrfStartup, injected: '<script>'},
+  receiverHealth: {...hackrfHealth, injected: '<script>',
+    pairing: {...hackrfHealth.pairing, injected: '<script>'}}});
+assert.equal(sanitizedHackrf.valid, true);
+assert.equal(Object.hasOwn(sanitizedHackrf.value.receiverHealth.pairing, 'injected'), false);
 console.log('Processor status validation and freshness tests passed.');

@@ -58,6 +58,12 @@ output=$(realpath -m "$output")
 [[ -f $deb && $deb == *.deb ]] || die '--deb must be an existing .deb file'
 [[ -f $PI_PROFILE_SOURCE ]] || die 'missing reviewed Pi 4 RSPduo profile source'
 [[ $(grep -c '^Environment=' "$PI_PROFILE_SOURCE") == 7 ]] || die 'Pi performance profile must contain seven environment flags'
+for setting in OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECTORWARP_FFTW_PLAN=measure \
+  VECTORWARP_CLUTTER_WORKERS=2 VECTORWARP_RSPDUO_CPI_QUEUE=1 \
+  VECTORWARP_RSPDUO_USB_MODE=bulk VECTORWARP_RSPDUO_COUNTER_SCALE=auto; do
+  grep -Fxq "Environment=$setting" "$PI_PROFILE_SOURCE" ||
+    die "Pi performance profile lacks reviewed setting: $setting"
+done
 [[ ! -e $output && ! -L $output ]] || die 'refusing to replace --output'
 [[ ! -e "$output.provenance.json" && ! -L "$output.provenance.json" ]] || die 'refusing to replace output provenance'
 mkdir -p "$(dirname "$output")"
@@ -192,6 +198,8 @@ gpu_groups=()
 for group in render video; do chroot "$root_mount" getent group "$group" >/dev/null && gpu_groups+=("$group"); done
 (( ${#gpu_groups[@]} == 2 )) || die 'Pi OS image lacks expected render and video groups'
 chroot "$root_mount" /usr/sbin/usermod --append --groups "$(IFS=,; printf '%s' "${gpu_groups[*]}")" vectorwarp
+chroot "$root_mount" getent group plugdev >/dev/null || die 'Pi OS image lacks the HackRF plugdev group'
+chroot "$root_mount" /usr/sbin/usermod --append --groups plugdev vectorwarp
 
 # Ship the reviewed Pi 4 RSPduo baseline at 2 MS/s / 500 ms, replacing only
 # the example RF centre frequency with a neutral placeholder.  The processor
@@ -208,11 +216,14 @@ if (!result.valid) throw new Error(result.errors.join("; "));
 '
 
 # Bake the seven reviewed RSPduo runtime flags as an image profile. Generic
-# receivers ignore these names. The profile remains removable before choosing
-# another RSP sample mode.
+# receivers ignore these names. Its automatic counter policy safely resolves
+# against the selected RSPduo mode and the profile remains removable.
 install -d -m 0755 "$root_mount/etc/systemd/system/vectorwarp-processor.service.d"
 install -m 0644 "$PI_PROFILE_SOURCE" \
   "$root_mount/etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf"
+cmp -s "$PI_PROFILE_SOURCE" \
+  "$root_mount/etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf" ||
+  die 'installed Pi performance profile differs from reviewed source'
 
 # This target-only unit selects the stock performance governor only on a Pi 4
 # BCM2711. It never runs during assembly and does not overclock the hardware.
@@ -248,6 +259,8 @@ chroot "$root_mount" /bin/bash -eu -c '
   test "$(dpkg-query -W -f="\${db:Status-Status}" vulkan-tools)" = installed
   id -nG vectorwarp | tr " " "\n" | grep -qx render
   id -nG vectorwarp | tr " " "\n" | grep -qx video
+  id -nG vectorwarp | tr " " "\n" | grep -qx plugdev
+  ! id -nG vectorwarp-api | tr " " "\n" | grep -qx plugdev
   find /usr/share/vulkan/icd.d -type f -name "*.json" -print -quit | grep -q .
   test -L /etc/systemd/system/multi-user.target.wants/vectorwarp-api.service
   test "$(readlink /etc/systemd/system/multi-user.target.wants/vectorwarp-api.service)" = /usr/lib/systemd/system/vectorwarp-api.service
@@ -268,6 +281,9 @@ chroot "$root_mount" /bin/bash -eu -c '
   grep -qx "    surveillance_workers: 1" /etc/vectorwarp/config.yml
   grep -qx "    fft_threads: 4" /etc/vectorwarp/config.yml
   test "$(grep -c "^Environment=" /etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf)" = 7
+  grep -Fxq "Environment=VECTORWARP_RSPDUO_COUNTER_SCALE=auto" /etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf
+  grep -Fxq "Environment=VECTORWARP_LINUX_SERVICE=1" /usr/lib/systemd/system/vectorwarp-api.service
+  grep -Fxq "Environment=VECTORWARP_LINUX_SERVICE=1" /usr/lib/systemd/system/vectorwarp-processor.service
   test -L /etc/systemd/system/multi-user.target.wants/vectorwarp-pi4-performance-governor.service
   grep -q "brcm,bcm2711" /etc/systemd/system/vectorwarp-pi4-performance-governor.service
   ! find /var/lib/vectorwarp -type f -print -quit | grep -q .
@@ -304,7 +320,8 @@ data = {
     'installed_packages': dict(line.rstrip('\n').split('\t', 1) for line in open(package_list, encoding='utf-8') if '\t' in line),
     'services': {'api_enabled': True, 'processor_enabled': False},
     'pi4_rspduo_profile': {'source': 'contrib/systemd/pi4-rspduo-performance.conf', 'sha256': profile_sha,
-                            'environment_flags': 7, 'counter_scale': 3,
+                            'environment_flags': 7, 'counter_scale_policy': 'auto',
+                            'qualified_profile_effective_counter_scale': 3,
                             'stock_bcm2711_performance_governor_enabled': True},
     'first_boot': {'raspberry_pi_imager_user_ssh_wifi': True},
 }

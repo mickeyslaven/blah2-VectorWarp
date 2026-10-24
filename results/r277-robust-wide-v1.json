@@ -1,0 +1,670 @@
+{
+  "schema": "vectorwarp-robust-motion-statistics-v1",
+  "frames": 10,
+  "cpi_seconds": 0.5,
+  "bias": {
+    "delay_km": 0.02578255,
+    "doppler_hz": 7.053549
+  },
+  "search": {
+    "path_trials": 1225,
+    "guard": 2,
+    "train": 6,
+    "min_doppler": 15
+  },
+  "aircraft": {
+    "a6c7cf": {
+      "flight": "N536ME",
+      "statistics": {
+        "mean_power_db": {
+          "target": 11.596983870546818,
+          "control_p99": 16.785420208835443,
+          "margin": -5.188436338288625,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "geometric_mean_db": {
+          "target": 6.308283372481847,
+          "control_p99": 5.417542536811215,
+          "margin": 0.8907408356706314,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "median_db": {
+          "target": 5.8231740674693535,
+          "control_p99": 6.059310255034459,
+          "margin": -0.2361361875651058,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "q25_db": {
+          "target": 1.3811578124246429,
+          "control_p99": 2.149498658563894,
+          "margin": -0.7683408461392511,
+          "best_motion": {
+            "delay_velocity_km_s": -0.1,
+            "doppler_velocity_hz_s": -60.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 8.0
+          },
+          "target_per_frame_local_ratio_db": [
+            2.813300505759882,
+            1.2538739646709,
+            3.8324003280972407,
+            1.9833875284149782,
+            4.510032506333468,
+            3.5890751777729717,
+            3.5494550638354054,
+            -2.4428567600329303,
+            -1.732754117064815,
+            1.7630093556858712
+          ]
+        },
+        "q75_db": {
+          "target": 12.486469343986283,
+          "control_p99": 11.798246185136588,
+          "margin": 0.688223158849695,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trimmed_mean_db": {
+          "target": 6.210863322158782,
+          "control_p99": 5.2242033765062255,
+          "margin": 0.9866599456525567,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "signed_rank_db": {
+          "target": 5.1,
+          "control_p99": 5.5,
+          "margin": -0.40000000000000036,
+          "best_motion": {
+            "delay_velocity_km_s": 0.10000000000000003,
+            "doppler_velocity_hz_s": -40.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": -12.0
+          },
+          "target_per_frame_local_ratio_db": [
+            4.11898264209562,
+            0.23591360171307496,
+            -0.2652787046534285,
+            0.26587094887926654,
+            1.0961987663916588,
+            1.1259360743014506,
+            4.61432158659524,
+            2.5395381805728796,
+            1.6581001414212806,
+            0.7331861344460634
+          ]
+        },
+        "q10_db": {
+          "target": 0.1857943710764246,
+          "control_p99": 1.5090737675206563,
+          "margin": -1.3232793964442315,
+          "best_motion": {
+            "delay_velocity_km_s": 0.10000000000000003,
+            "doppler_velocity_hz_s": -40.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": -12.0
+          },
+          "target_per_frame_local_ratio_db": [
+            4.11898264209562,
+            0.23591360171307496,
+            -0.2652787046534285,
+            0.26587094887926654,
+            1.0961987663916588,
+            1.1259360743014506,
+            4.61432158659524,
+            2.5395381805728796,
+            1.6581001414212806,
+            0.7331861344460634
+          ]
+        },
+        "q15_db": {
+          "target": 0.5689389958470629,
+          "control_p99": 1.7227923218838919,
+          "margin": -1.1538533260368289,
+          "best_motion": {
+            "delay_velocity_km_s": 0.10000000000000003,
+            "doppler_velocity_hz_s": -40.0,
+            "delay_acceleration_km_s2": 0.04,
+            "doppler_acceleration_hz_s2": 4.0
+          },
+          "target_per_frame_local_ratio_db": [
+            3.3586273455482756,
+            0.5930965239388643,
+            0.6699129985844582,
+            -4.111793200458658,
+            0.5559310961053237,
+            2.885438483221269,
+            0.8671969869714947,
+            1.2252047642239716,
+            2.806721764026272,
+            2.464302708588859
+          ]
+        },
+        "q20_db": {
+          "target": 0.6565483483237573,
+          "control_p99": 1.8280090260572266,
+          "margin": -1.1714606777334693,
+          "best_motion": {
+            "delay_velocity_km_s": -0.1,
+            "doppler_velocity_hz_s": -60.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 8.0
+          },
+          "target_per_frame_local_ratio_db": [
+            2.813300505759882,
+            1.2538739646709,
+            3.8324003280972407,
+            1.9833875284149782,
+            4.510032506333468,
+            3.5890751777729717,
+            3.5494550638354054,
+            -2.4428567600329303,
+            -1.732754117064815,
+            1.7630093556858712
+          ]
+        },
+        "q30_db": {
+          "target": 1.6102687383813796,
+          "control_p99": 2.331025920740085,
+          "margin": -0.7207571823587053,
+          "best_motion": {
+            "delay_velocity_km_s": -0.1,
+            "doppler_velocity_hz_s": -60.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 8.0
+          },
+          "target_per_frame_local_ratio_db": [
+            2.813300505759882,
+            1.2538739646709,
+            3.8324003280972407,
+            1.9833875284149782,
+            4.510032506333468,
+            3.5890751777729717,
+            3.5494550638354054,
+            -2.4428567600329303,
+            -1.732754117064815,
+            1.7630093556858712
+          ]
+        },
+        "q35_db": {
+          "target": 2.2219194562334605,
+          "control_p99": 2.797227833167107,
+          "margin": -0.5753083769336467,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "q40_db": {
+          "target": 3.3276047311646217,
+          "control_p99": 2.9823211735909148,
+          "margin": 0.345283557573707,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim10_mean_db": {
+          "target": 6.218103599260155,
+          "control_p99": 5.00645617124463,
+          "margin": 1.2116474280155254,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim15_mean_db": {
+          "target": 6.218103599260155,
+          "control_p99": 5.00645617124463,
+          "margin": 1.2116474280155254,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim20_mean_db": {
+          "target": 6.210863322158782,
+          "control_p99": 5.2242033765062255,
+          "margin": 0.9866599456525567,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim25_mean_db": {
+          "target": 6.210863322158782,
+          "control_p99": 5.2242033765062255,
+          "margin": 0.9866599456525567,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim30_mean_db": {
+          "target": 5.681503795750358,
+          "control_p99": 5.362214307582981,
+          "margin": 0.3192894881673771,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim35_mean_db": {
+          "target": 5.681503795750358,
+          "control_p99": 5.362214307582981,
+          "margin": 0.3192894881673771,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "trim40_mean_db": {
+          "target": 5.8231740674693535,
+          "control_p99": 6.059310255034459,
+          "margin": -0.2361361875651058,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "count_ge_0_db": {
+          "target": 9.016527087183812,
+          "control_p99": 10.033559140661115,
+          "margin": -1.017032053477303,
+          "best_motion": {
+            "delay_velocity_km_s": -0.2,
+            "doppler_velocity_hz_s": -60.0,
+            "delay_acceleration_km_s2": 0.04,
+            "doppler_acceleration_hz_s2": 8.0
+          },
+          "target_per_frame_local_ratio_db": [
+            4.621546018117263,
+            1.2538739646709,
+            0.05582086097297031,
+            0.9622862932818363,
+            1.3469658196771466,
+            -3.231868471720899,
+            3.5494550638354054,
+            0.6570905266300664,
+            2.317039280940127,
+            1.7630093556858712
+          ]
+        },
+        "run_ge_0_db": {
+          "target": 7.023294534430571,
+          "control_p99": 10.033559140661115,
+          "margin": -3.0102646062305443,
+          "best_motion": {
+            "delay_velocity_km_s": -0.1,
+            "doppler_velocity_hz_s": -60.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 8.0
+          },
+          "target_per_frame_local_ratio_db": [
+            2.813300505759882,
+            1.2538739646709,
+            3.8324003280972407,
+            1.9833875284149782,
+            4.510032506333468,
+            3.5890751777729717,
+            3.5494550638354054,
+            -2.4428567600329303,
+            -1.732754117064815,
+            1.7630093556858712
+          ]
+        },
+        "count_ge_2_db": {
+          "target": 6.056365730193065,
+          "control_p99": 8.00679167212677,
+          "margin": -1.9504259419337053,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "run_ge_2_db": {
+          "target": 6.056365730193065,
+          "control_p99": 7.017602743783162,
+          "margin": -0.9612370135900976,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "count_ge_4_db": {
+          "target": 6.044365730193065,
+          "control_p99": 6.025168087261451,
+          "margin": 0.019197642931613856,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "run_ge_4_db": {
+          "target": 6.044365730193065,
+          "control_p99": 6.025168087261451,
+          "margin": 0.019197642931613856,
+          "best_motion": {
+            "delay_velocity_km_s": 0.0,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": 0.0,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            1.8533576979230737,
+            0.965975408016098,
+            -3.546599860797979,
+            4.310436086658987,
+            7.33591204827972,
+            16.02624872192653,
+            17.893634644124717,
+            13.573189341935159,
+            9.226309350139653,
+            -4.5556297133874954
+          ]
+        },
+        "count_ge_6_db": {
+          "target": 5.035730521337144,
+          "control_p99": 5.027234720352286,
+          "margin": 0.008495800984857915,
+          "best_motion": {
+            "delay_velocity_km_s": 0.10000000000000003,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": -0.04,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            -2.2416660605679963,
+            -1.5841613310803395,
+            0.18778534314657283,
+            -1.1235993573565173,
+            10.172457142014705,
+            15.29419237294308,
+            18.28767233716739,
+            12.942740195224856,
+            9.033459289794376,
+            -4.5556297133874954
+          ]
+        },
+        "run_ge_6_db": {
+          "target": 5.035730521337144,
+          "control_p99": 5.014732437646217,
+          "margin": 0.020998083690927594,
+          "best_motion": {
+            "delay_velocity_km_s": 0.10000000000000003,
+            "doppler_velocity_hz_s": 0.0,
+            "delay_acceleration_km_s2": -0.04,
+            "doppler_acceleration_hz_s2": 0.0
+          },
+          "target_per_frame_local_ratio_db": [
+            -2.2416660605679963,
+            -1.5841613310803395,
+            0.18778534314657283,
+            -1.1235993573565173,
+            10.172457142014705,
+            15.29419237294308,
+            18.28767233716739,
+            12.942740195224856,
+            9.033459289794376,
+            -4.5556297133874954
+          ]
+        }
+      }
+    }
+  },
+  "replay": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/results/r277-raw-maps.json",
+  "truth": "/run/media/mickeyslaven/My Book/vectorwarp-lab-20261021/clips/r277-trigger-truth.jsonl",
+  "candidate_only": true,
+  "deployment_note": "Blind scan statistic: ADS-B/truth anchors are evaluation-only."
+}

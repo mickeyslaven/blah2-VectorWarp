@@ -40,7 +40,8 @@ function fetchHttp(url, options = {}) {
     if (unavailable) { res.writeHead(503); return res.end('{}'); }
     res.end(JSON.stringify(req.url.startsWith('/api/dd') ?
       {abc123: {timestamp: Date.now() / 1000, delay: 1, doppler: 2}} :
-      {now: Date.now() / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2, seen_pos: 0}]}));
+      {now: Date.now() / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        gs: 0, track: 0, seen_pos: 0}]}));
   });
   await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
   const config = setupDefaults();
@@ -135,12 +136,17 @@ function fetchHttp(url, options = {}) {
     const installer = fs.readFileSync(path.resolve(__dirname,
       '../../script/install-native.sh'), 'utf8');
     assert.match(apiUnit, /User=vectorwarp-api/);
+    assert.match(apiUnit, /SupplementaryGroups=.*vectorwarp-config.*vectorwarp/,
+      'API needs read-only processor-group access to hash completed IQ captures');
     assert.match(apiUnit, /BLAH2_RECEIVER_TYPES=@RECEIVER_TYPES@/);
     assert.match(apiUnit, /ExecCondition=\/usr\/bin\/node @PREFIX@\/libexec\/vectorwarp-check-node-version/);
     assert.match(processorUnit, /User=vectorwarp/);
     assert.match(processorUnit, /ExecCondition=.*receiver-start-check\.js/);
     assert.doesNotMatch(processorUnit, /ExecStartPre=.*receiver-start-check\.js/);
     assert.match(processorUnit, /RestartPreventExitStatus=78/);
+    assert.match(processorUnit, /PartOf=vectorwarp-api\.service/,
+      'API stop/restart must quiesce its processor socket consumer');
+    assert.match(processorUnit, /After=.*vectorwarp-api\.service/);
     assert.doesNotMatch(apiUnit + processorUnit, /User=root/);
     assert.match(apiUnit, /BLAH2_CONFIG_RESTART_COMMAND=.*vectorwarp-receiver-helper.*request-restart/);
     assert.match(apiUnit, /ReadWritePaths=.*\/var\/lib\/vectorwarp\/recordings/);

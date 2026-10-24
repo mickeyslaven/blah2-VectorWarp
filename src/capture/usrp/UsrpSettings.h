@@ -5,7 +5,7 @@
 // device. Device creation/address selection remains in Usrp::process(). No
 // external UHD application or second settings UI is involved.
 template<class Device, class SubdeviceSpec>
-void apply_usrp_settings(Device& device, const SubdeviceSpec& subdevices,
+UsrpAppliedSettings apply_usrp_settings(Device& device, const SubdeviceSpec& subdevices,
                          double frequency, double sampleRate,
                          const std::vector<double>& gain,
                          const std::vector<std::string>& antenna) {
@@ -25,5 +25,5 @@ void apply_usrp_settings(Device& device, const SubdeviceSpec& subdevices,
     device.set_rx_freq(frequency, channel);
     device.set_rx_gain(gain[channel], channel);
   }
-  verify_usrp_readback(device, frequency, sampleRate, gain, antenna, subdevices.to_string());
+  return verify_usrp_readback(device, frequency, sampleRate, gain, antenna, subdevices.to_string());
 }

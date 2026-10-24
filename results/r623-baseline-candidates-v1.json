@@ -1,0 +1,14 @@
+{
+  "aircraft": {
+    "a1f850": {
+      "flight": "",
+      "outcome": "no_radar_return",
+      "predicted_delay_km": 40.64460718381377,
+      "predicted_doppler_hz": -146.48952415166036,
+      "nearby_detection_frames": [],
+      "nearby_detection_count": 0,
+      "nearby_detections": [],
+      "nearby_tracks": {}
+    }
+  }
+}

@@ -7,6 +7,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'packaging/pi/build-pi4-image.sh'
+PROFILE = ROOT / 'contrib/systemd/pi4-rspduo-performance.conf'
 
 
 class PiImageBuilderTests(unittest.TestCase):
@@ -65,6 +66,24 @@ class PiImageBuilderTests(unittest.TestCase):
                              '--source-revision', 'b' * 40)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('--allow-network', result.stderr)
+
+    def test_reviewed_profile_and_service_access_contract(self):
+        settings = {line for line in PROFILE.read_text().splitlines()
+                    if line.startswith('Environment=')}
+        self.assertEqual(settings, {
+            'Environment=OPENBLAS_NUM_THREADS=1',
+            'Environment=OMP_NUM_THREADS=1',
+            'Environment=VECTORWARP_FFTW_PLAN=measure',
+            'Environment=VECTORWARP_CLUTTER_WORKERS=2',
+            'Environment=VECTORWARP_RSPDUO_CPI_QUEUE=1',
+            'Environment=VECTORWARP_RSPDUO_USB_MODE=bulk',
+            'Environment=VECTORWARP_RSPDUO_COUNTER_SCALE=auto',
+        })
+        source = SCRIPT.read_text()
+        self.assertIn("getent group plugdev >/dev/null", source)
+        self.assertIn("groups plugdev vectorwarp", source)
+        self.assertIn("VECTORWARP_LINUX_SERVICE=1", source)
+        self.assertIn("'counter_scale_policy': 'auto'", source)
 
 
 if __name__ == '__main__':

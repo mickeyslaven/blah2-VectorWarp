@@ -34,12 +34,16 @@ def main():
     args.heimdall = args.heimdall.resolve(strict=True)
     args.include = args.include.resolve(strict=True)
     app = args.app_root.resolve(strict=True)
+    bundled_node = app / 'runtime/node/bin/node'
+    node = bundled_node.resolve() if bundled_node.is_file() else Path(shutil.which('node') or '')
+    if not node.is_file():
+        raise SystemExit(f'Missing Node runtime: {node}')
     work = args.output.resolve()
     work.mkdir(mode=0o700, parents=True, exist_ok=False)
     simulation = module('native_simulation', ROOT / 'test/macos/kraken/native_simulation_test.py')
     native = simulation.prepare(args, work)
     lifecycle = module('lifecycle', app / 'script/vectorwarp-macos.py')
-    config = json.loads(subprocess.check_output([shutil.which('node'), '-e',
+    config = json.loads(subprocess.check_output([str(node), '-e',
         'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
         str(app / 'config/config-kraken.yml')], cwd=app / 'api', text=True))
     api_port_count = len(config['network']['ports'])
@@ -78,7 +82,7 @@ def main():
            if not key.startswith(('DYLD_', 'LD_', 'HEIMDALL_', 'VECTORWARP_KRAKEN_SIM_'))}
     env.update(VECTORWARP_MACOS_ROOT=str(app), VECTORWARP_MACOS_STATE=str(state),
         VECTORWARP_MACOS_CONFIG=str(filename), VECTORWARP_MACOS_PROCESSOR=str(args.binary.resolve(strict=True)),
-        VECTORWARP_MACOS_NODE=shutil.which('node'), VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=str(native),
+        VECTORWARP_MACOS_NODE=str(node), VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=str(native),
         VECTORWARP_MACOS_HEIMDALL_HTML=str(html), VECTORWARP_MACOS_HEIMDALL_WEB_PORT=str(receiver_ports[2]),
         VECTORWARP_MACOS_HEIMDALL_RTL_PORT=str(receiver_ports[3]), VECTORWARP_KRAKEN_SIM_ROOT=str(sdk),
         VECTORWARP_KRAKEN_SIM_COUNT='5', HEIMDALL_VERBOSE_LOG='1')

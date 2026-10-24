@@ -111,7 +111,8 @@ function interpolate(left, right, fraction) {
 
 function fitManifold(rawSamples, {beams = 60, minSamples = 20, minPasses = 1,
   minCoverage = .5, maxGapDeg = 90, maxElevationDeg = 15,
-  maxDelayErrorKm = .25, maxDopplerErrorHz = 5, maxTruthAgeS = 3} = {}) {
+  maxDelayErrorKm = .25, maxDopplerErrorHz = 5, maxTruthAgeS = 3,
+  holdoutPredicate = passIsHoldout} = {}) {
   if (!Number.isInteger(beams) || beams < 4 || beams > 127 ||
       !Number.isInteger(minSamples) || minSamples < 2 ||
       !Number.isInteger(minPasses) || minPasses < 1)
@@ -145,7 +146,7 @@ function fitManifold(rawSamples, {beams = 60, minSamples = 20, minPasses = 1,
     const bin = Math.round(normalizeAngle(sample.truth.local_azimuth_deg) / step) % beams;
     const snr = Math.max(1, Math.min(20, 10 ** (sample.detection.snr_db / 20)));
     bins[bin].push({vector, snr, passId: sample._pass_id,
-      holdout: passIsHoldout(sample._pass_id)});
+      holdout: holdoutPredicate(sample._pass_id)});
   });
   // Equal total weight per independent pass within each azimuth bin. SNR still
   // ranks frames inside a pass, but cannot turn one aircraft into many votes.
@@ -173,7 +174,7 @@ function fitManifold(rawSamples, {beams = 60, minSamples = 20, minPasses = 1,
       holdout_median_correlation: holdout.length ? median(holdout) : null};
   }
   const directBin = Math.round(normalizeAngle(samples[0].direct_path_local_azimuth_deg) / step) % beams;
-  const directSamples = labelled.filter(sample => !passIsHoldout(sample._pass_id))
+  const directSamples = labelled.filter(sample => !holdoutPredicate(sample._pass_id))
     .map(sample => ({vector: normalizeVector(sample.reference_weights), passId: sample._pass_id}))
     .filter(sample => sample.vector);
   if (!directSamples.length) throw new Error('No training passes remain after holdout selection');

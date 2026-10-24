@@ -9,6 +9,15 @@ foreach(interface src/capture/ReceiverModule.h src/capture/Source.h
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_ROOT}/${interface}")
 endforeach()
 string(SHA256 BLAH2_RECEIVER_COHORT "${BLAH2_RECEIVER_ABI_INPUT}")
+set(BLAH2_RECEIVER_CODE_INPUT "")
+foreach(source src/capture/Source.cpp src/capture/Recording.cpp
+    src/capture/kraken/Kraken.cpp src/capture/rspduo/RspDuo.cpp
+    src/capture/usrp/Usrp.cpp src/capture/hackrf/HackRf.cpp)
+  file(SHA256 "${PROJECT_ROOT}/${source}" source_hash)
+  string(APPEND BLAH2_RECEIVER_CODE_INPUT "|${source_hash}")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_ROOT}/${source}")
+endforeach()
+string(SHA256 BLAH2_RECEIVER_CODE_FINGERPRINT "${BLAH2_RECEIVER_CODE_INPUT}")
 set(BLAH2_BUILT_USRP ${BLAH2_ENABLE_USRP})
 set(BLAH2_BUILT_HACKRF ${BLAH2_ENABLE_HACKRF})
 set(BLAH2_BUILT_RSPDUO ${BLAH2_ENABLE_RSPDUO})
@@ -25,6 +34,7 @@ add_library(blah2CaptureCore SHARED
   ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp
   ${PROJECT_ROOT}/src/data/IqData.cpp)
 target_compile_features(blah2CaptureCore PUBLIC cxx_std_17)
+target_include_directories(blah2CaptureCore PRIVATE "${PROJECT_BINARY_DIR}/receiver-generated")
 target_link_libraries(blah2CaptureCore PRIVATE blah2RapidJson Threads::Threads)
 set_target_properties(blah2CaptureCore PROPERTIES OUTPUT_NAME blah2-capture-core
   VERSION 1.0.0 SOVERSION 1 LIBRARY_OUTPUT_DIRECTORY "${BLAH2_OUTPUT_DIR}"
@@ -58,6 +68,7 @@ if(BLAH2_ENABLE_USRP)
   blah2_add_receiver(blah2ReceiverUsrp usrp BLAH2_MODULE_USRP
     ${PROJECT_ROOT}/src/capture/usrp/Usrp.cpp ${UHD_LIBRARIES})
   target_include_directories(blah2ReceiverUsrp PRIVATE ${UHD_INCLUDE_DIRS})
+  target_link_libraries(blah2ReceiverUsrp PRIVATE blah2RapidJson)
 endif()
 if(BLAH2_ENABLE_HACKRF)
   if(APPLE)
@@ -68,6 +79,7 @@ if(BLAH2_ENABLE_HACKRF)
       ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp PkgConfig::HACKRF)
   endif()
   target_include_directories(blah2ReceiverHackrf PRIVATE ${HACKRF_INCLUDE_DIRS})
+  target_link_libraries(blah2ReceiverHackrf PRIVATE blah2RapidJson)
 endif()
 if(BLAH2_ENABLE_RSPDUO)
   blah2_add_receiver(blah2ReceiverRspduo rspduo BLAH2_MODULE_RSPDUO

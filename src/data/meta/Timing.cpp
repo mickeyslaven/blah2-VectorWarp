@@ -55,6 +55,15 @@ std::string Timing::to_json()
   for (uint64_t value : captureDroppedSamples) dropped.PushBack(value, allocator);
   document.AddMember("captureBacklogSamples", backlog, allocator);
   document.AddMember("captureDroppedSamples", dropped, allocator);
+  document.AddMember("captureSamplePositionAvailable",
+    captureSamplePositionAvailable, allocator);
+  if (captureSamplePositionAvailable) {
+    document.AddMember("captureEpoch", captureEpoch, allocator);
+    document.AddMember("captureFirstEpochSample", captureFirstEpochSample,
+      allocator);
+    document.AddMember("captureEndEpochSample", captureEndEpochSample,
+      allocator);
+  }
   rapidjson::Value name_value;
   for (size_t i = 0; i < time.size(); i++)
   {

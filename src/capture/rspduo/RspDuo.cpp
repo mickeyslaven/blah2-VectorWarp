@@ -121,9 +121,16 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
   ifType = ifModeMap[fs];
   usb_bulk_fg = rspduo_usb_bulk_mode(std::getenv("VECTORWARP_RSPDUO_USB_MODE"));
   const char* counterScale = std::getenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
-  if (counterScale && std::strcmp(counterScale, "1") != 0 && std::strcmp(counterScale, "3") != 0)
-    throw std::invalid_argument("VECTORWARP_RSPDUO_COUNTER_SCALE must be 1 or 3");
-  scaledSampleCounter = counterScale && std::strcmp(counterScale, "3") == 0;
+  if (counterScale && std::strcmp(counterScale, "1") != 0 &&
+      std::strcmp(counterScale, "3") != 0 && std::strcmp(counterScale, "auto") != 0)
+    throw std::invalid_argument("VECTORWARP_RSPDUO_COUNTER_SCALE must be 1, 3, or auto");
+  sampleCounterScalePolicy = counterScale ? counterScale : "1";
+  scaledSampleCounter = sampleCounterScalePolicy == "3";
+  const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
+  if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
+      std::strcmp(debugLevel, "error") != 0)
+    throw std::invalid_argument("VECTORWARP_SDRPLAY_DEBUG_LEVEL must be error or verbose");
+  sdkDebugLevel = debugLevel ? debugLevel : "error";
   sampleClock.configure(scaledSampleCounter ? 3 : 1);
   for (auto& slot : callbackStorage)
     slot.resize(static_cast<std::size_t>(MAX_CALLBACK_SAMPLES) * 4);
@@ -155,12 +162,21 @@ void RspDuo::start()
   callbackFault = false;
   callbackFaultReason = nullptr;
   streamEstablished = false;
+  pairedPublishedSamples = 0;
+  sampleEpoch.store(1, std::memory_order_release);
+  nextEpochSample.store(0, std::memory_order_release);
+  samplePositionAvailable.store(false, std::memory_order_release);
   {
     std::lock_guard<std::mutex> pairingLock(callbackMutex);
     pendingHead = pendingCount = 0;
     callbackSlotBusy.fill(false);
     expectedFirstSampleValid = false;
     sampleClock.clear();
+  }
+  {
+    std::lock_guard<std::mutex> gainLock(gainEventMutex);
+    gainEventState = {};
+    gainEpoch = 0;
   }
   try {
     open_api();
@@ -179,6 +195,13 @@ void RspDuo::stop()
   run_fg = false;
   std::lock_guard<std::mutex> lock(lifecycleMutex);
   uninitialise_device();
+}
+
+Source::SampleTimePosition RspDuo::sample_time_position() const
+{
+  if (!samplePositionAvailable.load(std::memory_order_acquire)) return {};
+  return {true, sampleEpoch.load(std::memory_order_acquire),
+    nextEpochSample.load(std::memory_order_acquire), 0, fs};
 }
 
 void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
@@ -271,6 +294,68 @@ void RspDuo::clear_pending_locked() noexcept
     --pendingCount;
   }
   pendingHead = 0;
+}
+
+void RspDuo::gain_change(sdrplay_api_TunerSelectT tuner,
+  const sdrplay_api_EventParamsT* params)
+{
+  const bool tunerA = tuner == sdrplay_api_Tuner_A ||
+    tuner == sdrplay_api_Tuner_Both;
+  const bool tunerB = tuner == sdrplay_api_Tuner_B ||
+    tuner == sdrplay_api_Tuner_Both;
+  // This lock is the capture-epoch linearization point: a B publication that
+  // already completed belongs to the old epoch; a borrowed old-epoch block is
+  // invalidated below; no new B publication can cross this event.
+  std::lock_guard<std::mutex> processingLock(callbackBProcessingMutex);
+  const auto at = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  uint64_t eventEpoch = 0;
+  {
+    std::lock_guard<std::mutex> gainLock(gainEventMutex);
+    eventEpoch = ++gainEpoch;
+    for (unsigned channel = 0; channel < gainEventState.size(); ++channel) {
+      if ((channel == 0 && !tunerA) || (channel == 1 && !tunerB)) continue;
+      auto& state = gainEventState[channel];
+      ++state.count;
+      state.lastEventAt = at > 0 ? static_cast<uint64_t>(at) : 0;
+      state.epoch = eventEpoch;
+      state.metadataAvailable = params && std::isfinite(params->gainParams.currGain);
+      if (state.metadataAvailable) {
+        state.gRdB = params->gainParams.gRdB;
+        state.lnaGRdB = params->gainParams.lnaGRdB;
+        state.currGain = params->gainParams.currGain;
+      }
+    }
+  }
+  if (tunerA) gainEventsA.fetch_add(1, std::memory_order_relaxed);
+  if (tunerB) gainEventsB.fetch_add(1, std::memory_order_relaxed);
+
+  // GainChange is not sample-aligned by the vendor API. Serialize against the
+  // entire B-side conversion/publication path and retire every sample whose
+  // gain epoch is ambiguous; the next matched A/B callback starts cleanly.
+  {
+    std::lock_guard<std::mutex> pairingLock(callbackMutex);
+    clear_pending_locked();
+    expectedFirstSampleValid = false;
+    sampleClock.clear();
+  }
+  if (pairedCpiQueue) pairedCpiQueue->discontinuity();
+  if (sampleEpoch.load(std::memory_order_relaxed) == UINT64_MAX)
+    throw std::overflow_error("RSPduo sample epoch exhausted");
+  sampleEpoch.fetch_add(1, std::memory_order_release);
+  samplePositionAvailable.store(false, std::memory_order_release);
+  nextEpochSample.store(0, std::memory_order_release);
+  pairedPublishedSamples = 0;
+  if (outputBuffer1 && outputBuffer2) {
+    std::unique_lock<IqData> outputLock1(*outputBuffer1);
+    std::unique_lock<IqData> outputLock2(*outputBuffer2);
+    outputBuffer1->clear();
+    outputBuffer2->clear();
+  }
+  const char* tunerName = tunerA && tunerB ? "both tuners" :
+    tunerA ? "tuner A" : tunerB ? "tuner B" : "unknown tuner";
+  recording_epoch_discontinuity(std::string("RSPduo ") + tunerName +
+    " GainChange started capture epoch " + std::to_string(eventEpoch));
 }
 
 void RspDuo::set_paired_cpi_queue(PairedCpiQueue* queue)
@@ -437,12 +522,8 @@ void RspDuo::get_device()
   // Keep SDK errors, but avoid emitting thousands of
   // verbose service/journal lines during an RF overload/AGC burst. A caller
   // may opt back into the exact original behavior for comparison.
-  const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
-  if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
-      std::strcmp(debugLevel, "error") != 0)
-    throw std::invalid_argument("VECTORWARP_SDRPLAY_DEBUG_LEVEL must be error or verbose");
   require_api(sdrplay_api_DebugEnable(chosenDevice->dev,
-    debugLevel && std::strcmp(debugLevel, "verbose") == 0 ?
+    sdkDebugLevel == "verbose" ?
       sdrplay_api_DbgLvl_Verbose : sdrplay_api_DbgLvl_Error),
     "Enable API diagnostic logging");
   { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.debugEnable = true; }
@@ -466,13 +547,33 @@ void RspDuo::set_device_parameters()
   if (deviceParams->devParams == NULL || deviceParams->rxChannelA == NULL ||
       deviceParams->rxChannelB == NULL)
     throw std::runtime_error("[RspDuo] API omitted device or dual-tuner parameters.");
-  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.getDeviceParams = true; }
+  if (!std::isfinite(deviceParams->devParams->fsFreq.fsHz) ||
+      deviceParams->devParams->fsFreq.fsHz <= 0 ||
+      deviceParams->devParams->fsFreq.fsHz > 100000000 ||
+      !std::isfinite(chosenDevice->rspDuoSampleFreq) ||
+      chosenDevice->rspDuoSampleFreq < 0 ||
+      chosenDevice->rspDuoSampleFreq > 100000000)
+    throw std::runtime_error("[RspDuo] API returned invalid sample-clock descriptors.");
+  {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    startupStages.getDeviceParams = true;
+    // These are SDK-reported configuration descriptors, not an independent
+    // measurement of the physical sample clock. Preserve both rather than
+    // silently assuming the selected dual-tuner mode is always 6 MHz.
+    startupStages.adcSampleRateHz = deviceParams->devParams->fsFreq.fsHz;
+    startupStages.descriptorSampleRateHz = chosenDevice->rspDuoSampleFreq;
+  }
 
-  if (scaledSampleCounter && !SdkSampleClock::supportsRatio3({
-      deviceParams->devParams->fsFreq.fsHz, fs, static_cast<unsigned>(nDecimation),
-      ifType == sdrplay_api_IF_1_620,
-      chosenDevice->rspDuoMode == sdrplay_api_RspDuoMode_Dual_Tuner}))
+  const bool ratio3Supported = SdkSampleClock::supportsRatio3({
+    deviceParams->devParams->fsFreq.fsHz, fs, static_cast<unsigned>(nDecimation),
+    ifType == sdrplay_api_IF_1_620,
+    chosenDevice->rspDuoMode == sdrplay_api_RspDuoMode_Dual_Tuner});
+  if (sampleCounterScalePolicy == "auto") {
+    scaledSampleCounter = ratio3Supported;
+    sampleClock.configure(scaledSampleCounter ? 3 : 1);
+  } else if (scaledSampleCounter && !ratio3Supported) {
     throw std::runtime_error("[RspDuo] Scaled SDK counter is validated only for dual-tuner 6MHz ADC / 2MSps output.");
+  }
 
   // set USB mode
   if (usb_bulk_fg)
@@ -645,6 +746,10 @@ unsigned int reset, void *cbContext)
     paired[j++] = xq[i];
   }
 
+  const auto blockEpoch = sampleEpoch.load(std::memory_order_acquire);
+  const auto blockFirstSample = nextEpochSample.load(std::memory_order_acquire);
+  if (blockFirstSample > UINT64_MAX - numSamples)
+    throw std::overflow_error("RSPduo relative sample position exhausted");
   if (!pairedCpiQueue) {
     // Fixed order avoids inter-channel deadlock; RAII releases both locks if
     // a FIFO allocation throws and the C callback wrapper converts it to a
@@ -656,6 +761,8 @@ unsigned int reset, void *cbContext)
       outputBuffer1->push_back({(double)paired[i], (double)paired[i+1]});
       outputBuffer2->push_back({(double)paired[i+2], (double)paired[i+3]});
     }
+    nextEpochSample.store(blockFirstSample + numSamples, std::memory_order_release);
+    samplePositionAvailable.store(true, std::memory_order_release);
   }
 
   if (pairedCpiQueue) {
@@ -665,15 +772,17 @@ unsigned int reset, void *cbContext)
     pairedCpiQueue->push(reinterpret_cast<const int16_t*>(paired), numSamples,
       pairedPublishedSamples);
     pairedPublishedSamples += numSamples;
+    nextEpochSample.store(blockFirstSample + numSamples, std::memory_order_release);
+    samplePositionAvailable.store(true, std::memory_order_release);
   }
 
   // write data to file
-  if (is_recording() && numSamples) {
+  if (recording_wants_samples() && numSamples) {
     blah2::IqBlock block(2, std::vector<std::complex<float>>(numSamples));
     for (unsigned sample=0; sample<numSamples; ++sample)
       for (unsigned ch=0; ch<2; ++ch)
         block[ch][sample] = {float(paired[sample*4+ch*2]), float(paired[sample*4+ch*2+1])};
-    record_block(block);
+    record_block(block, {true, blockEpoch, blockFirstSample, 0, fs});
   }
 
   // find max for stats
@@ -707,7 +816,7 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
   const bool tunerA = tuner == sdrplay_api_Tuner_A;
   switch (eventId) {
   case sdrplay_api_GainChange:
-    (tunerA ? gainEventsA : gainEventsB).fetch_add(1, std::memory_order_relaxed);
+    gain_change(tuner, params);
     break;
   case sdrplay_api_PowerOverloadChange: {
     (tunerA ? overloadEventsA : overloadEventsB).fetch_add(1, std::memory_order_relaxed);
@@ -786,13 +895,21 @@ void RspDuo::cleanup_api() noexcept
 std::string RspDuo::health_json() const
 {
   auto health = overloadHealth.snapshot();
+  std::array<GainEventState, 2> gain;
+  uint64_t currentGainEpoch = 0;
+  {
+    std::lock_guard<std::mutex> lock(gainEventMutex);
+    gain = gainEventState;
+    currentGainEpoch = gainEpoch;
+  }
   // Init completion and a concurrent failure/stop can overlap. Never let an
   // earlier monitoring=true snapshot override the current lifecycle flags.
   health.monitoring = health.monitoring && !deviceRemoved.load() &&
     !callbackFault.load() && !stopRequested.load();
   std::ostringstream out;
   out.imbue(std::locale::classic());
-  out << std::boolalpha << "{\"schema\":1,\"receiver\":\"RspDuo\",\"monitoring\":"
+  out << std::boolalpha << std::setprecision(std::numeric_limits<double>::max_digits10)
+      << "{\"schema\":1,\"receiver\":\"RspDuo\",\"monitoring\":"
       << health.monitoring << ",\"overload\":{";
   for (unsigned i = 0; i < health.channels.size(); ++i) {
     const auto& c = health.channels[i];
@@ -803,7 +920,32 @@ std::string RspDuo::health_json() const
         << ",\"lastDetectedAt\":" << c.lastDetectedAt
         << ",\"lastCorrectedAt\":" << c.lastCorrectedAt << '}';
   }
-  out << "},\"ackFailures\":" << health.ackFailures << '}';
+  out << "},\"ackFailures\":" << health.ackFailures
+      << ",\"gain\":{\"policy\":\"epoch-on-vendor-change\",\"sampleAligned\":false"
+      << ",\"epoch\":" << currentGainEpoch << ",\"tuners\":{";
+  for (unsigned i = 0; i < gain.size(); ++i) {
+    if (i) out << ',';
+    const auto& event = gain[i];
+    out << '"' << (i == 0 ? 'A' : 'B') << "\":{\"requestedGainReductionDb\":"
+        << (i == 0 ? gain_reduction_nr_a : gain_reduction_nr_b)
+        << ",\"requestedLnaState\":" << lna_state_nr
+        << ",\"eventCount\":" << event.count
+        << ",\"lastEventAt\":" << event.lastEventAt
+        << ",\"epoch\":" << event.epoch
+        << ",\"metadataAvailable\":" << event.metadataAvailable
+        << ",\"reported\":";
+    if (event.metadataAvailable)
+      out << "{\"gRdB\":" << event.gRdB << ",\"lnaGRdB\":" << event.lnaGRdB
+          << ",\"currGain\":" << event.currGain << '}';
+    else out << "null";
+    out << '}';
+  }
+  out << "}},\"sampleTime\":{\"source\":\"sdrplay-delivered-relative-sample-epoch\""
+      << ",\"exact\":false,\"uncertaintyBounded\":false,\"sampleAligned\":false"
+      << ",\"available\":" << samplePositionAvailable.load(std::memory_order_acquire)
+      << ",\"epoch\":\"" << sampleEpoch.load(std::memory_order_acquire)
+      << "\",\"nextSample\":\"" << nextEpochSample.load(std::memory_order_acquire)
+      << "\"}}";
   return out.str();
 }
 
@@ -835,7 +977,11 @@ std::string RspDuo::startup_receipt_json() const
       << ",\"dabNotch\":" << dab_notch_fg << ",\"rfNotch\":" << rf_notch_fg
       << ",\"ifBandwidthKhz\":" << static_cast<int>(bwType)
       << ",\"ifFrequencyKhz\":" << static_cast<int>(ifType)
-      << ",\"decimation\":" << nDecimation << "},\"selected\":";
+      << ",\"decimation\":" << nDecimation
+      << ",\"usbMode\":\"" << (usb_bulk_fg ? "bulk" : "isoch") << '"'
+      << ",\"sampleCounterScale\":" << (scaledSampleCounter ? 3 : 1)
+      << ",\"sampleCounterScalePolicy\":\"" << sampleCounterScalePolicy << '"'
+      << ",\"sdkDebugLevel\":\"" << sdkDebugLevel << "\"},\"selected\":";
   if (stages.select)
     out << "{\"serial\":" << json_string(stages.selectedSerial)
         << ",\"deviceIndex\":" << stages.deviceIndex
@@ -845,7 +991,9 @@ std::string RspDuo::startup_receipt_json() const
   out << ",\"sdk\":{\"version\":";
   if (stages.sdkVersion > 0) out << stages.sdkVersion;
   else out << "null";
-  out << ",\"stages\":{\"open\":" << stages.open
+  out << ",\"parameters\":{\"adcSampleRateHz\":" << stages.adcSampleRateHz
+      << ",\"descriptorSampleRateHz\":" << stages.descriptorSampleRateHz
+      << "},\"stages\":{\"open\":" << stages.open
       << ",\"apiVersion\":" << stages.apiVersion
       << ",\"lock\":" << stages.lock
       << ",\"enumerate\":" << stages.enumerate
@@ -857,4 +1005,12 @@ std::string RspDuo::startup_receipt_json() const
       << ",\"gainUpdateA\":" << stages.gainUpdateA
       << ",\"gainUpdateB\":" << stages.gainUpdateB << "}}}";
   return out.str();
+}
+
+std::string RspDuo::recording_provenance_json() const
+{
+  const auto startup=startup_receipt_json();
+  const auto health=health_json();
+  return std::string("{\"schema\":\"vectorwarp-rspduo-recording-details-v1\",\"startup\":")+
+    (startup.empty() ? "null" : startup)+",\"health\":"+health+"}";
 }

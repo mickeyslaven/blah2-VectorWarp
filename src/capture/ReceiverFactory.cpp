@@ -17,6 +17,50 @@
 #error A receiver module must select exactly one backend
 #endif
 
+#if defined(BLAH2_MODULE_HACKRF)
+extern "C" __attribute__((visibility("default")))
+const char* blah2_hackrf_startup_receipt_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string receipt;
+    receipt = static_cast<const HackRf*>(source)->startup_receipt_json();
+    return receipt.c_str();
+  } catch (...) { return nullptr; }
+}
+
+extern "C" __attribute__((visibility("default")))
+const char* blah2_hackrf_health_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string health;
+    health = static_cast<const HackRf*>(source)->health_json();
+    return health.c_str();
+  } catch (...) { return nullptr; }
+}
+#endif
+
+#if defined(BLAH2_MODULE_USRP)
+extern "C" __attribute__((visibility("default")))
+const char* blah2_usrp_startup_receipt_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string receipt;
+    receipt = static_cast<const Usrp*>(source)->startup_receipt_json();
+    return receipt.c_str();
+  } catch (...) { return nullptr; }
+}
+
+extern "C" __attribute__((visibility("default")))
+const char* blah2_usrp_health_json_v1(const Source* source) noexcept {
+  if (!source) return nullptr;
+  try {
+    thread_local std::string health;
+    health = static_cast<const Usrp*>(source)->health_json();
+    return health.c_str();
+  } catch (...) { return nullptr; }
+}
+#endif
+
 namespace {
 Source* create(const Blah2ReceiverConfig* config, char* error, std::size_t capacity) noexcept {
   try {

@@ -1,0 +1,12 @@
+{
+  "schema": "vectorwarp-associated-exact-frame-calibration-blocker-v1",
+  "status": "superseded",
+  "reason": "Replay timestamps are intentionally wall-clock timestamps from the replay run. Exact association mapping is recording-relative: nominal=floor((association.frame_timestamp_ms-capture.window_start)/500)-1, searched at nominal plus/minus one frame.",
+  "trajectory_quarantine": {
+    "maximum_bracket_span_ms": 3000,
+    "invalid_positive_labels": 6,
+    "invalid_miss_labels": 63,
+    "r90_example": "stored association 5.02 km / 19.4 Hz versus stale trajectory 16.83 km / 370 Hz"
+  },
+  "safe_next_step": "Score each exact detector-association frame/cell using the recording-relative mapping. Do not use wide-bracket trajectories or score misses first."
+}

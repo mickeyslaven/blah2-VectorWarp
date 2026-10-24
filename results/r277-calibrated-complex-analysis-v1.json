@@ -1,0 +1,225 @@
+{
+  "schema": "vectorwarp-calibrated-complex-replay-v1",
+  "accepted_positive_control": true,
+  "truth": {
+    "delay": 8.614217452286292,
+    "doppler": -32.91354941532337,
+    "timestamp": 1792586230.312,
+    "flight": "N536ME",
+    "outcome": "tracked",
+    "event_id": "eligibility:7417ffdbde61dbbf04a2f92bd2e12459f99c57fd91c216f1bc4b1e3e7a00d799"
+  },
+  "near_detection_frames": 7,
+  "median_delay_bias_km": 0.02578254771370858,
+  "median_doppler_bias_hz": 7.053549415323367,
+  "track_evidence": {
+    "0000": {
+      "near_samples": 35,
+      "active": true
+    },
+    "0001": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0002": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0003": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0004": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0005": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0007": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0013": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0017": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0011": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0034": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0035": {
+      "near_samples": 0,
+      "active": false
+    }
+  },
+  "complex_cutout_frames": 8,
+  "complex_trace_frames": 6,
+  "phase_coherence_uncompensated": 0.1898682084871234,
+  "phase_coherence_negative": 0.1793956974959535,
+  "phase_coherence_positive": 0.200194230319604,
+  "detections": [
+    {
+      "frame": 2,
+      "delay_km": 8.61,
+      "doppler_hz": -23.91,
+      "snr_db": 3.48,
+      "delay_bias_km": -0.004217452286292556,
+      "doppler_bias_hz": 9.003549415323366
+    },
+    {
+      "frame": 3,
+      "delay_km": 8.62,
+      "doppler_hz": -24.02,
+      "snr_db": 3.96,
+      "delay_bias_km": 0.005782547713707231,
+      "doppler_bias_hz": 8.893549415323367
+    },
+    {
+      "frame": 4,
+      "delay_km": 8.71,
+      "doppler_hz": -25.64,
+      "snr_db": 3.5,
+      "delay_bias_km": 0.09578254771370887,
+      "doppler_bias_hz": 7.273549415323366
+    },
+    {
+      "frame": 5,
+      "delay_km": 8.68,
+      "doppler_hz": -25.86,
+      "snr_db": 5.83,
+      "delay_bias_km": 0.06578254771370773,
+      "doppler_bias_hz": 7.053549415323367
+    },
+    {
+      "frame": 6,
+      "delay_km": 8.68,
+      "doppler_hz": -26.01,
+      "snr_db": 7.52,
+      "delay_bias_km": 0.06578254771370773,
+      "doppler_bias_hz": 6.903549415323365
+    },
+    {
+      "frame": 7,
+      "delay_km": 8.64,
+      "doppler_hz": -26.22,
+      "snr_db": 7.29,
+      "delay_bias_km": 0.02578254771370858,
+      "doppler_bias_hz": 6.693549415323368
+    },
+    {
+      "frame": 8,
+      "delay_km": 8.64,
+      "doppler_hz": -26.32,
+      "snr_db": 6.65,
+      "delay_bias_km": 0.02578254771370858,
+      "doppler_bias_hz": 6.593549415323366
+    }
+  ],
+  "complex_trace": [
+    {
+      "row": 16,
+      "column": 4,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -24.0080827211,
+      "beam": 10,
+      "frame": 2,
+      "real": -6.0059139757282205,
+      "imag": -7.441442054004583,
+      "power": 91.4460625269555
+    },
+    {
+      "row": 16,
+      "column": 4,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -24.0080827211,
+      "beam": 6,
+      "frame": 3,
+      "real": -3.1809188192566347,
+      "imag": 7.4861571653810355,
+      "power": 66.16079363948684
+    },
+    {
+      "row": 15,
+      "column": 5,
+      "delay_km": 8.7439466916,
+      "doppler_hz": -26.0087562812,
+      "beam": 7,
+      "frame": 4,
+      "real": -9.734671328000472,
+      "imag": 3.344130097389865,
+      "power": 105.94703197246321
+    },
+    {
+      "row": 15,
+      "column": 4,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812,
+      "beam": 7,
+      "frame": 5,
+      "real": 6.4639927760738525,
+      "imag": -17.13668395690334,
+      "power": 335.4491396479233
+    },
+    {
+      "row": 15,
+      "column": 4,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812,
+      "beam": 7,
+      "frame": 6,
+      "real": 21.165166289301176,
+      "imag": -13.87580908852968,
+      "power": 640.5023419150938
+    },
+    {
+      "row": 15,
+      "column": 4,
+      "delay_km": 8.6190331675,
+      "doppler_hz": -26.0087562812,
+      "beam": 7,
+      "frame": 7,
+      "real": -7.460299181437582,
+      "imag": -13.313071973301897,
+      "power": 232.8939492428747
+    }
+  ],
+  "hex": "a6c7cf"
+}

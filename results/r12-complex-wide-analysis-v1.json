@@ -1,0 +1,193 @@
+{
+  "schema": "vectorwarp-calibrated-complex-replay-v1",
+  "accepted_positive_control": false,
+  "truth": {
+    "flight": "N4313D",
+    "outcome": "no_radar_return",
+    "delay": 21.21920143752181,
+    "doppler": 80.82959276897967
+  },
+  "near_detection_frames": 0,
+  "median_delay_bias_km": null,
+  "median_doppler_bias_hz": null,
+  "track_evidence": {
+    "0001": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0007": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0002": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0008": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0009": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0010": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0013": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0015": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0017": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0004": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0003": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0005": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0006": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001B": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0014": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0016": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0021": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0024": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0022": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0031": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0011": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0027": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0028": {
+      "near_samples": 0,
+      "active": false
+    }
+  },
+  "complex_cutout_frames": 8,
+  "complex_trace_frames": 0,
+  "applied_delay_bias_km": 0.02578255,
+  "applied_doppler_bias_hz": 7.053549,
+  "calibrated_cell_evidence": {
+    "frames": 8,
+    "control_paths": 616,
+    "selected_delay_km": 21.2352991083,
+    "selected_doppler_hz": 88.0296366443,
+    "noncoherent_margin_over_control_p99_db": -0.19145730441148912,
+    "phase_compensated_margin_over_control_p99_db": -6.439095139401676
+  },
+  "resident_tbd_cfar_evidence": {
+    "motion_trials": 135,
+    "effective_pfa_per_integrated_pass": 7.4074074074074075e-06,
+    "selected_delay_km": 21.2352991083,
+    "selected_doppler_hz": 88.0296366443,
+    "best_by_cpis": {
+      "2": {
+        "ending_frame": 5,
+        "margin_db": -8.548620823973312,
+        "target_over_mean_training_db": 1.3433929028325728,
+        "target_over_median_training_db": 1.574332235255921,
+        "alpha": 9.754418235279193,
+        "training_cells": 12
+      },
+      "4": {
+        "ending_frame": 5,
+        "margin_db": -6.477448376947984,
+        "target_over_mean_training_db": 1.0276169751357958,
+        "target_over_median_training_db": 1.03625165467475,
+        "alpha": 5.629975892469437,
+        "training_cells": 12
+      },
+      "8": {
+        "ending_frame": 7,
+        "margin_db": -5.374504052366841,
+        "target_over_mean_training_db": 0.27247555362551873,
+        "target_over_median_training_db": 0.40512869886545677,
+        "alpha": 3.670269549574486,
+        "training_cells": 12
+      }
+    }
+  },
+  "phase_coherence_uncompensated": null,
+  "phase_coherence_negative": null,
+  "phase_coherence_positive": null,
+  "detections": [],
+  "complex_trace": [],
+  "hex": "a5299a"
+}

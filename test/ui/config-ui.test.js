@@ -6,7 +6,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS} =
   require('../../html/js/config_ui.js');
 const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
 const {MAX_AUTOMATIC_GAIN_MS} = require('../../api/automatic-gain.js');
@@ -26,6 +26,13 @@ assert.equal(accelerationSummary(null, 'receiving'), 'Not reported');
 assert.equal(metadata(['truth'])[0], 'ADS-B');
 assert.equal(metadata(['truth', 'adsb'])[0], 'ADS-B');
 assert.equal(metadata(['truth', 'adsb', 'enabled'])[0], 'Show ADS-B');
+assert.equal(adsbExchangeId('exchange:https://opendata.adsb.fi/api/v3/lat/1/lon/2/dist/60'), 'adsb-fi');
+assert.equal(adsbExchangeId('exchange:https://api.adsb.lol/v2/point/1/2/60'), 'adsb-lol');
+assert.equal(adsbExchangeId('http://receiver.local/tar1090'), null);
+assert.equal(adsbPublicSource('adsb-fi', {location: {rx: {latitude: 40.5, longitude: -80.1}}}),
+  'exchange:https://opendata.adsb.fi/api/v3/lat/40.5/lon/-80.1/dist/60');
+assert.equal(adsbPublicSource('adsb-lol', {location: {rx: {latitude: 40.5, longitude: -80.1}}}),
+  'exchange:https://api.adsb.lol/v2/point/40.5/-80.1/60');
 assert.equal(metadata(['capture', 'device', 'serial'], 'RspDuo')[0], 'RSPduo serial');
 assert.equal(metadata(['capture', 'device', 'serial'], 'HackRF')[0], 'HackRF serial numbers');
 assert.equal(metadata(['process', 'clutter', 'followAmbiguity'])[0], 'Follow radar delay range');

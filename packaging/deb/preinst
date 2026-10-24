@@ -6,6 +6,17 @@ set -eu
 manual_stop=false
 case "${1:-}" in
   upgrade|2) ;;
+  install|1)
+    # A package must never absorb a source installation and later remove or
+    # partially overwrite it.  On a genuine first install the package does not
+    # own /opt/vectorwarp yet, so any existing footprint requires an explicit
+    # administrator migration/removal first.
+    if [ -e /opt/vectorwarp ] || [ -L /opt/vectorwarp ]; then
+      printf '%s\n' 'VectorWarp package installation refused: /opt/vectorwarp already exists but is not package-managed. Remove or migrate the source installation first.' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
   manual-stop)
     [ "$#" -eq 1 ] || exit 64
     manual_stop=true

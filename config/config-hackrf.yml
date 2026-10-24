@@ -14,6 +14,7 @@ capture:
     loop: false
     file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
     format: 'auto'
+    provenance: 'legacy-unqualified'
 
 process:
   data:
@@ -106,6 +107,7 @@ truth:
     poll_interval: 1
     smoothing_window: 10
     max_position_age: 30
+    provisional_event_time_uncertainty_s: 1
   ais:
     enabled: false
     ip: 0.0.0.0

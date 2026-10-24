@@ -1,0 +1,161 @@
+{
+  "schema": "vectorwarp-calibrated-complex-replay-v1",
+  "accepted_positive_control": false,
+  "truth": {
+    "flight": "N4313D",
+    "outcome": "no_radar_return",
+    "delay": 21.21920143752181,
+    "doppler": 80.82959276897967
+  },
+  "near_detection_frames": 0,
+  "median_delay_bias_km": null,
+  "median_doppler_bias_hz": null,
+  "track_evidence": {
+    "0001": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0007": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0002": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0008": {
+      "near_samples": 0,
+      "active": true
+    },
+    "0009": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000E": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0010": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0013": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0015": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0017": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0004": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0003": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0005": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0006": {
+      "near_samples": 0,
+      "active": false
+    },
+    "000F": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001B": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0014": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0016": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001D": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0021": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0024": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001A": {
+      "near_samples": 0,
+      "active": false
+    },
+    "001C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0022": {
+      "near_samples": 0,
+      "active": false
+    },
+    "002C": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0031": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0011": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0027": {
+      "near_samples": 0,
+      "active": false
+    },
+    "0028": {
+      "near_samples": 0,
+      "active": false
+    }
+  },
+  "complex_cutout_frames": 8,
+  "complex_trace_frames": 0,
+  "applied_delay_bias_km": 0.02578254771370858,
+  "applied_doppler_bias_hz": 7.053549415323367,
+  "calibrated_cell_evidence": {
+    "frames": 8,
+    "control_paths": 216,
+    "selected_delay_km": 21.2352991083,
+    "selected_doppler_hz": 88.0296366443,
+    "noncoherent_margin_over_control_p99_db": -0.19808326110654134,
+    "phase_compensated_margin_over_control_p99_db": -7.002945712766591
+  },
+  "phase_coherence_uncompensated": null,
+  "phase_coherence_negative": null,
+  "phase_coherence_positive": null,
+  "detections": [],
+  "complex_trace": [],
+  "hex": "a5299a"
+}

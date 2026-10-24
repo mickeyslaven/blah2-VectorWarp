@@ -79,8 +79,15 @@ jobs:
           brew test vectorwarp/local/vectorwarp
           brew test vectorwarp/local/vectorwarp-heimdall
           app_root="$(brew --prefix vectorwarp/local/vectorwarp)/libexec"
-          python3 test/macos/processor_lifecycle_test.py --binary "$app_root/bin/blah2" --app-root "$app_root"
-          python3 test/macos/kraken_pipeline_test.py --binary "$app_root/bin/blah2" --heimdall "$app_root/bin/heimdall" --include "$app_root/share/heimdall/include" --app-root "$app_root" --output build/kraken-ci-installed-pipeline
+          mkdir -p "$RUNNER_TEMP/stale-node"
+          printf '#!/bin/sh\nexit 99\n' > "$RUNNER_TEMP/stale-node/node"
+          chmod +x "$RUNNER_TEMP/stale-node/node"
+          PATH="$RUNNER_TEMP/stale-node:$PATH" python3 test/macos/processor_lifecycle_test.py \
+            --binary "$app_root/bin/blah2" --app-root "$app_root"
+          PATH="$RUNNER_TEMP/stale-node:$PATH" python3 test/macos/kraken_pipeline_test.py \
+            --binary "$app_root/bin/blah2" --heimdall "$app_root/bin/heimdall" \
+            --include "$app_root/share/heimdall/include" --app-root "$app_root" \
+            --output build/kraken-ci-installed-pipeline
           brew uninstall vectorwarp/local/vectorwarp
           brew uninstall vectorwarp/local/vectorwarp-heimdall
           brew untap vectorwarp/local

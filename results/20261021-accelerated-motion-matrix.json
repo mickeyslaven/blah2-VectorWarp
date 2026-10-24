@@ -1,0 +1,13 @@
+{
+  "schema": "vectorwarp-ford-street-accelerated-motion-matrix-v1",
+  "method": "offline ADS-B-gated quadratic local integration; candidate-only",
+  "acceptance": "target must exceed matched control p99 by 3 dB and retain the known positive control",
+  "decision": "rejected: no truth-near recovery and the positive control did not survive this retained-map analysis",
+  "cases": [
+    {"clip": "r94", "flight": "N237LP", "role": "newest miss", "frames": 20, "target_db": 1.409429, "control_p99_db": 2.357537, "margin_db": -0.948108},
+    {"clip": "r12", "flight": "N4313D", "role": "matched/exact-truth negative control", "frames": 20, "target_db": 1.796950, "control_p99_db": 2.484228, "margin_db": -0.687278},
+    {"clip": "r13", "flight": "NWF412", "role": "independent miss", "frames": 20, "target_db": 0.971306, "control_p99_db": 2.088828, "margin_db": -1.117523},
+    {"clip": "r277", "flight": "N536ME", "role": "persistent-track positive control", "frames": 10, "target_db": 1.864169, "control_p99_db": 11.950255, "margin_db": -10.086086}
+  ],
+  "artifacts": ["r94-accelerated-local-v1.json", "r12-accelerated-local-v1.json", "r13-accelerated-local-v1.json", "r277-accelerated-local-v1.json"]
+}

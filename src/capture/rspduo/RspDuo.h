@@ -49,6 +49,7 @@ private:
     bool select = false, unlock = false, debugEnable = false;
     bool getDeviceParams = false, init = false, gainUpdateA = false, gainUpdateB = false;
     float sdkVersion = 0;
+    double adcSampleRateHz = 0, descriptorSampleRateHz = 0;
     std::string selectedSerial;
     unsigned deviceIndex = 0, hardwareVersion = 0;
   } startupStages;
@@ -62,6 +63,18 @@ private:
   std::atomic<bool> streamEstablished{false};
   // Diagnostic counters only; no per-event I/O on the SDK event thread.
   std::atomic<uint64_t> gainEventsA{0}, gainEventsB{0};
+  struct GainEventState {
+    uint64_t count = 0;
+    uint64_t lastEventAt = 0;
+    uint64_t epoch = 0;
+    bool metadataAvailable = false;
+    unsigned int gRdB = 0;
+    unsigned int lnaGRdB = 0;
+    double currGain = 0;
+  };
+  mutable std::mutex gainEventMutex;
+  std::array<GainEventState, 2> gainEventState{};
+  uint64_t gainEpoch = 0;
   std::atomic<uint64_t> overloadEventsA{0}, overloadEventsB{0};
   RspDuoOverloadStatus overloadHealth;
   std::atomic<uint64_t> ackCount{0}, ackErrorCount{0}, ackMaxUs{0};
@@ -84,12 +97,18 @@ private:
   uint32_t expectedFirstSample = 0;
   bool expectedFirstSampleValid = false;
   bool scaledSampleCounter = false;
+  std::string sampleCounterScalePolicy = "1";
+  std::string sdkDebugLevel = "error";
   SdkSampleClock sampleClock;
   IqData* outputBuffer1 = nullptr;
   IqData* outputBuffer2 = nullptr;
   PairedCpiQueue* pairedCpiQueue = nullptr;
   uint32_t pairedPublishedSamples = 0;
+  std::atomic<bool> samplePositionAvailable{false};
+  std::atomic<uint64_t> sampleEpoch{1}, nextEpochSample{0};
   void clear_pending_locked() noexcept;
+  void gain_change(sdrplay_api_TunerSelectT tuner,
+    const sdrplay_api_EventParamsT* params);
   void signal_callback_fault(const char* discontinuity = nullptr) noexcept;
   void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)
@@ -240,6 +259,7 @@ public:
   /// @param buffer2 Pointer to surveillance buffer.
   /// @return Void.
   void process(IqData *buffer1, IqData *buffer2) override;
+  SampleTimePosition sample_time_position() const override;
 
   /// @brief Get file name from path.
   /// @return String of file name based on current time.
@@ -256,6 +276,7 @@ public:
   /// SDK call acceptance only; the API offers no independent tuner readback.
   std::string startup_receipt_json() const;
   std::string health_json() const;
+  std::string recording_provenance_json() const override;
 
 
 };

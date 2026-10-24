@@ -1,0 +1,23 @@
+{
+  "schema": "oprs-system-manifest-v1",
+  "system_id": "example-ref-plus-4-surveillance-array",
+  "implementation": "receiver-neutral coherent-array reference example",
+  "capability_profile": "REF_PLUS_ARRAY",
+  "sample_rate_hz": 20000,
+  "center_frequency_hz": 100000000,
+  "usable_bandwidth_hz": 16000,
+  "sample_format": "blah2iq_cf32le",
+  "full_scale": 1.0,
+  "synchronization": "shared_clock_and_time",
+  "bearing_capability": true,
+  "vendor_telemetry": true,
+  "channels": [
+    {"channel_id": "ref", "hardware_index": 0, "roles": ["reference"]},
+    {"channel_id": "surv0", "hardware_index": 1, "roles": ["surveillance"]},
+    {"channel_id": "surv1", "hardware_index": 2, "roles": ["surveillance"]},
+    {"channel_id": "surv2", "hardware_index": 3, "roles": ["surveillance"]},
+    {"channel_id": "surv3", "hardware_index": 4, "roles": ["surveillance"]}
+  ],
+  "array_geometry": {"coordinate_frame": "ENU metres", "manifold": "ideal", "elements": {"surv0": [0, 0, 0], "surv1": [0.75, 0, 0], "surv2": [0.75, 0.75, 0], "surv3": [0, 0.75, 0]}},
+  "adapter": {"name": "vectorwarp-blah2iq-v1", "replay_only": true}
+}

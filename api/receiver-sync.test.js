@@ -140,6 +140,31 @@ async function rejected(promise, code, pattern) {
     assert.deepEqual(accepted.after.channelGains, candidate.capture.device.heimdall.channel_gains);
     assert.deepEqual(accepted.operations.map(item => item.operation), ['set_channel_gains']);
   } finally { await channelGainSuite.close(); }
+  const commonThenChannelSuite = await simulatedSuite({frequency: 204640000,
+    sampleRate: 2400000, channels: 5, maximum: 5, reconfiguring: false, gain: 6,
+    channelGains: [7.7, 7.7, 7.7, 7.7, 7.7]}, (command, socket, live) => {
+    if (command.command === 'set_gain') {
+      socket.write(`${JSON.stringify({status: 'success', gain: command.gain})}\n`);
+      live.gain = command.gain;
+      live.channelGains = [2.7, 2.7, 2.7, 2.7, 2.7];
+    } else {
+      assert.equal(command.command, 'set_channel_gains');
+      socket.write(`${JSON.stringify({status: 'success', channel_gains: command.gains})}\n`);
+      live.channelGains = [...command.gains];
+    }
+    socket.write(`${JSON.stringify(status(live))}\n`);
+  });
+  try {
+    const candidate = config(commonThenChannelSuite.port);
+    candidate.capture.device.heimdall.gain = 2;
+    candidate.capture.device.heimdall.channel_gains = [19.7, 25.4, 20.7, 25.4, 22.9];
+    const accepted = await createKrakenControlClient({statusTimeoutMs: 1000,
+      readbackTimeoutMs: 1000}).synchronize(candidate);
+    assert.deepEqual(accepted.operations.map(item => item.operation),
+      ['set_gain', 'set_channel_gains']);
+    assert.deepEqual(accepted.after.channelGains,
+      candidate.capture.device.heimdall.channel_gains);
+  } finally { await commonThenChannelSuite.close(); }
   const noChannelGainSuite = await simulatedSuite({frequency: 204640000, sampleRate: 2400000,
     channels: 5, maximum: 5, reconfiguring: false, gain: 18}, () => assert.fail('no command expected'));
   try {
@@ -471,9 +496,19 @@ async function rejected(promise, code, pattern) {
     receiverType: 'Usrp', mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through UHD multi_usrp',
-    acknowledgement: 'UHD exceptions can report failure; no positive applied-settings acknowledgement is emitted',
-    positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'UHD startup getters check frequency, rate, gain, antenna, and subdevice mapping before streaming; radar status does not confirm applied values.',
+    acknowledgement: 'processor startup receipt includes validated per-channel UHD getter readback',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'UHD startup getters and radar status confirm frequency, rate, gain, antenna, and subdevice mapping before streaming; this is device-API configuration readback, not physical RF verification.',
+    hardwareReadback: true, physicalReceiverVerified: false
+  });
+  const hackrfDirect = {capture: {replay: {state: false}, device: {type: 'HackRF'}}};
+  assert.deepEqual(receiverAcceptanceBoundary(hackrfDirect), {
+    receiverType: 'HackRF', mode: 'live',
+    configurationAuthority: 'VectorWarp startup configuration',
+    writePath: 'processor startup through two serial-selected libhackrf devices',
+    acknowledgement: 'processor startup receipt confirms exact serial resolution and successful open/set/start return codes',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'Setter acceptance is preserved in fresh radar status, but no post-set frequency, rate, gain, amplifier, clock, or synchronization readback is available.',
     hardwareReadback: false, physicalReceiverVerified: false
   });
   const synchronizer = createReceiverSynchronizer({kraken: {

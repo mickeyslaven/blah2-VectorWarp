@@ -1,6 +1,9 @@
 #include "capture/usrp/UsrpReadback.h"
+#include "capture/usrp/UsrpCoherence.h"
+#include "capture/usrp/UsrpDeviceTime.h"
 #include "capture/usrp/UsrpSettings.h"
 #include "capture/usrp/UsrpStream.h"
+#include "data/meta/EventTime.h"
 #include <array>
 #include <cassert>
 #include <iostream>
@@ -9,13 +12,28 @@
 #undef OVERFLOW
 #endif
 struct Spec { std::string value = "A:A A:B"; std::string to_string() const { return value; } };
+struct RxInfo {
+  std::array<std::pair<std::string, std::string>, 5> values;
+  bool has_key(const std::string& key) const {
+    for (const auto& item : values) if (item.first == key) return true;
+    return false;
+  }
+  std::string get(const std::string& key) const {
+    for (const auto& item : values) if (item.first == key) return item.second;
+    throw std::out_of_range(key);
+  }
+};
 struct Receiver {
   size_t count = 2;
+  size_t boards = 1;
   Spec spec;
+  std::string motherboard = "B210", clockSource = "internal", timeSource = "internal";
   std::array<double, 2> rate{2000000, 2000000}, frequency{100000000, 100000000}, gain{10, 20};
   std::array<std::string, 2> antenna{"RX2", "RX2"};
   std::vector<std::string> calls;
   int coerceChannel = -1;
+  bool mismatchedIdentity = false;
+  bool unavailableIdentity = false;
   void set_rx_subdev_spec(Spec value, size_t board) { assert(board == 0); spec = value; calls.push_back("subdev"); }
   void set_rx_rate(double value, size_t channel) {
     rate[channel] = value + (coerceChannel == static_cast<int>(channel) ? 1 : 0);
@@ -30,6 +48,19 @@ struct Receiver {
   double get_rx_freq(size_t channel) { return frequency[channel]; }
   double get_rx_gain(size_t channel) { return gain[channel]; }
   std::string get_rx_antenna(size_t channel) { return antenna[channel]; }
+  size_t get_num_mboards() { return boards; }
+  std::string get_mboard_name(size_t) { return motherboard; }
+  std::string get_clock_source(size_t) { return clockSource; }
+  std::string get_time_source(size_t) { return timeSource; }
+  RxInfo get_usrp_rx_info(size_t channel) {
+    if (unavailableIdentity) throw std::runtime_error("identity unavailable");
+    RxInfo info;
+    info.values = {{{"mboard_id", "B210"}, {"mboard_serial",
+      channel && mismatchedIdentity ? "other-board" : "31ABC42"},
+      {"rx_id", "B210 RX"}, {"rx_serial", "31ABC42"},
+      {"rx_subdev_name", channel ? "B" : "A"}}};
+    return info;
+  }
 };
 void verify(Receiver& value) { verify_usrp_readback(value, 100000000, 2000000, {10, 20}, {"RX2", "RX2"}, "A:A A:B"); }
 void rejects(Receiver value) {
@@ -38,6 +69,55 @@ void rejects(Receiver value) {
   assert(rejected);
 }
 int main() {
+  {
+    const auto event = blah2::usrp_cpi_midpoint_time(40000000, 7, 14,
+      2000000, "internal", "internal", "B210", "A:A A:B");
+    assert(event.deviceTimeAvailable && !event.estimateAvailable);
+    assert(blah2::event_time_milliseconds(event, 1234) == 1234);
+    rapidjson::Document document(rapidjson::kObjectType);
+    document.AddMember("eventTime",
+      blah2::event_time_json(event, document.GetAllocator()),
+      document.GetAllocator());
+    const auto& encoded = document["eventTime"];
+    assert(!encoded["exact"].GetBool() && !encoded["uncertaintyBounded"].GetBool());
+    assert(encoded["estimateNs"].IsNull() && encoded["deviceTimeAvailable"].GetBool());
+    assert(std::string(encoded["deviceTimeMidpointTickNumerator"].GetString()) == "80000021");
+    assert(encoded["deviceTimeMidpointTickDenominator"].GetInt() == 2);
+  }
+  struct Time {
+    int64_t tick = 0;
+    int64_t to_ticks(double) const { return tick; }
+  };
+  struct TimedMetadata {
+    bool has_time_spec = true;
+    Time time_spec;
+  };
+  {
+    UsrpDeviceTime deviceTime(2000000);
+    auto first = deviceTime.validate(TimedMetadata{true, {40000000}}, 7);
+    deviceTime.commit(first);
+    auto second = deviceTime.validate(TimedMetadata{true, {40000007}}, 7);
+    deviceTime.commit(second);
+    const auto snapshot = deviceTime.snapshot();
+    assert(snapshot.available && snapshot.epoch == 0 && snapshot.epochTick == 40000000);
+    assert(snapshot.nextTick == 40000014 && snapshot.samples == 14 && snapshot.blocks == 2);
+    for (const auto invalid : {TimedMetadata{false, {40000014}},
+                               TimedMetadata{true, {40000013}},
+                               TimedMetadata{true, {40000015}}}) {
+      bool rejected = false;
+      try { deviceTime.validate(invalid, 7); } catch (const std::exception&) { rejected = true; }
+      assert(rejected);
+    }
+    assert(deviceTime.snapshot().samples == 14);
+    deviceTime.discontinuity();
+    assert(!deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1);
+    const auto candidate = deviceTime.validate(TimedMetadata{true, {50000000}}, 7);
+    const auto continuation = deviceTime.validate_after(
+      TimedMetadata{true, {50000007}}, 7, candidate);
+    deviceTime.commit(candidate); deviceTime.commit(continuation);
+    assert(deviceTime.snapshot().available && deviceTime.snapshot().epoch == 1 &&
+      deviceTime.snapshot().samples == 14);
+  }
   struct Metadata {
     enum Error { ERROR_CODE_NONE, TIMEOUT, OVERFLOW, BROKEN_CHAIN, BAD_PACKET };
     Error error_code = ERROR_CODE_NONE;
@@ -50,7 +130,7 @@ int main() {
     metadata.error_code = error;
     bool rejected = false;
     try { verify_usrp_receive(metadata, 100, 4096); }
-    catch (const std::exception& failure) { rejected = true; assert(std::string(failure.what()).find("Input stopped") != std::string::npos); }
+    catch (const std::exception& failure) { rejected = true; assert(std::string(failure.what()).find("automatic requalification") != std::string::npos); }
     assert(rejected);
   }
   metadata.error_code = Metadata::ERROR_CODE_NONE;
@@ -76,8 +156,44 @@ int main() {
       catch (const std::exception&) { rejected = true; }
       assert(rejected);
     }
+    Receiver duplicate;
+    duplicate.spec.value = "A:A A:A";
+    bool duplicateRejected = false;
+    try { attest_usrp_coherence(duplicate, "A:A A:A"); }
+    catch (const std::exception&) { duplicateRejected = true; }
+    assert(duplicateRejected);
   }
   Receiver matched; verify(matched);
+  {
+    const auto attestation = attest_usrp_coherence(matched, "A:A A:B");
+    assert(attestation.motherboards == 1 && attestation.channels == 2);
+    assert(attestation.motherboard == "B210" && attestation.clockSource == "internal");
+    assert(attestation.timeSource == "internal" && attestation.subdevices == "A:A A:B");
+    assert(attestation.policy == "single-motherboard-b210-v1");
+    assert(attestation.identityComplete && attestation.motherboardId == "B210" &&
+      attestation.motherboardSerial == "31ABC42" &&
+      attestation.rxSubdeviceNames[0] == "A" && attestation.rxSubdeviceNames[1] == "B");
+    Receiver unavailable;
+    unavailable.unavailableIdentity = true;
+    const auto provisional = attest_usrp_coherence(unavailable, "A:A A:B");
+    assert(!provisional.identityComplete && provisional.motherboardSerial.empty());
+    for (int fault = 0; fault < 9; ++fault) {
+      Receiver invalid;
+      if (fault == 0) invalid.boards = 2;
+      if (fault == 1) invalid.count = 1;
+      if (fault == 2) invalid.motherboard.clear();
+      if (fault == 3) invalid.clockSource.clear();
+      if (fault == 4) invalid.timeSource.clear();
+      if (fault == 5) invalid.spec.value = "A:B A:A";
+      if (fault == 6) invalid.motherboard = "X310";
+      if (fault == 7) invalid.spec.value = "A:A A:A";
+      if (fault == 8) invalid.mismatchedIdentity = true;
+      bool rejected = false;
+      try { attest_usrp_coherence(invalid, "A:A A:B"); }
+      catch (const std::exception&) { rejected = true; }
+      assert(rejected);
+    }
+  }
   for (size_t channel = 0; channel < 2; ++channel) {
     for (double invalid : {0.0, -1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()}) {
       Receiver sampleRate; sampleRate.rate[channel] = invalid; rejects(sampleRate);
@@ -91,5 +207,5 @@ int main() {
   }
   Receiver count; count.count = 1; rejects(count);
   Receiver mapping; mapping.spec.value = "A:B A:A"; rejects(mapping);
-  std::cout << "UHD mocked setter/readback: both channels at2/6/20MS/s, 6 setter-coercion, 34 getter/nonfinite/mapping and 8 discontinuity/capacity faults refused. No hardware opened.\n";
+  std::cout << "UHD mocked setter/readback, topology attestation and device-time continuity passed. No hardware opened.\n";
 }

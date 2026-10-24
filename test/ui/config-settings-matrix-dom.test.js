@@ -176,8 +176,7 @@ async function saveAndAssert(label, expected) {
     setScalar('process.tracker.delete', 11);
     setScalar('truth.adsb.enabled', true);
     const adsb = field('truth.adsb.tar1090');
-    change(adsb.querySelector('select'), 'server');
-    change(adsb.querySelector('input'), 'https://adsb.example/tar1090');
+    change(adsb.querySelector('[data-adsb-source="local"]'), 'https://adsb.example/tar1090');
     setScalar('truth.adsb.poll_interval', 2);
     setScalar('truth.adsb.smoothing_window', 12);
     setScalar('truth.adsb.max_position_age', 40);

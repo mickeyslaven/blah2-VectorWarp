@@ -1,0 +1,100 @@
+{
+  "schema": "vectorwarp-coherent-trajectory-v1",
+  "frames": 8,
+  "cpi_s": 0.5,
+  "target_cell": {
+    "row": 15,
+    "column": 12,
+    "delay_km": 8.6190331675,
+    "doppler_hz": -26.0087562812
+  },
+  "search": {
+    "beams": 12,
+    "delay_rates_km_s": [
+      -0.1,
+      -0.05,
+      0.0,
+      0.05,
+      0.1
+    ],
+    "doppler_rates_hz_s": [
+      -8.0,
+      -6.0,
+      -4.0,
+      -2.0,
+      0.0,
+      2.0,
+      4.0,
+      6.0,
+      8.0
+    ],
+    "residual_phase_rates_hz": [
+      -1.0,
+      0.0,
+      1.0
+    ],
+    "phase_signs": [
+      -1,
+      1
+    ],
+    "control_anchors": 500
+  },
+  "target_best": {
+    "score": 250.85924391712598,
+    "noncoherent": 160.91673495021706,
+    "coherence": 0.1948672740553791,
+    "beam": 7,
+    "delay_rate_km_s": 0.0,
+    "doppler_rate_hz_s": 0.0,
+    "residual_phase_rate_hz": 0.0,
+    "phase_sign": 1,
+    "cells": [
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ],
+      [
+        15,
+        12
+      ]
+    ]
+  },
+  "control_p99_score": 262.3976160935148,
+  "coherent_margin_over_control_p99_db": -0.1952977613183276,
+  "noncoherent_margin_over_control_p99_db": 1.01497307919269,
+  "controls_exceeding_target": 6,
+  "hex": "a6c7cf",
+  "truth": {
+    "delay": 8.614217452286292,
+    "doppler": -32.91354941532337,
+    "timestamp": 1792586230.312,
+    "flight": "N536ME",
+    "outcome": "tracked",
+    "event_id": "eligibility:7417ffdbde61dbbf04a2f92bd2e12459f99c57fd91c216f1bc4b1e3e7a00d799"
+  },
+  "candidate_only": true
+}

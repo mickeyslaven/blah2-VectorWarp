@@ -1,0 +1,131 @@
+{
+  "schema": "vectorwarp-bounded-live-capture-ledger-v1",
+  "snapshot_at": "2026-10-22T22:32:21Z",
+  "node": "100.126.186.65",
+  "authorization_cutoff_ms": 1792707014000,
+  "active_config_revision": "80aea56b3d16510aa3aa46521241c4f4c648236b8220a3b94308c35c9c236f22",
+  "capture_policy": {
+    "event_triggered_only": true,
+    "pre_seconds": 2,
+    "post_seconds": 2,
+    "periodic_interval_seconds": 0,
+    "periodic_max_snapshots": 0,
+    "positive_control_min_associated_cpis": 3,
+    "stop_when_positive_passes_at_least": 20,
+    "stop_when_miss_passes_at_least": 20,
+    "stop_at_new_iq_bytes": 51539607552,
+    "stop_below_free_bytes": 644245094400
+  },
+  "deployed_fixes": [
+    "e139648 Fix in-flight capture revision race",
+    "f84a966 Wait for delayed ADS-B truth before capture admission",
+    "1d04ec3 Retain exact truth through capture post-roll"
+  ],
+  "snapshot": {
+    "clip_files": 37,
+    "artifact_states": {
+      "admitted": 6,
+      "quarantined": 31
+    },
+    "valid_target_rows": 7,
+    "independent_valid_passes": 7,
+    "positive_control_passes": 1,
+    "glimpse_passes": 1,
+    "miss_passes": 5,
+    "pending_passes": 3,
+    "new_iq_bytes": 3553563696,
+    "free_bytes": 806810312704,
+    "queue_capacity_drops": 0,
+    "quarantine_reasons": {
+      "truth-bracket-missing": 45,
+      "truth-bracket-span": 2
+    }
+  },
+  "passes": [
+    {
+      "flight": "N811ME",
+      "hex": "ab0e2b",
+      "pass_id": "1c504a2ee5aaf67c35f31c8de47f3938dbada79de9ed89ced30d9dfce5e70d2e",
+      "state": "finalized",
+      "outcome": "tracked",
+      "detected_frames": 8,
+      "tracked_frames": 9,
+      "class": "positive_control",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r42-1792707571712021532-19.mchq"
+    },
+    {
+      "flight": "ROU1626",
+      "hex": "c05e72",
+      "pass_id": "d6a73cb33530757bd65408158fb9fa47a49c97f293a8cf4ccae7b3f66948bef7",
+      "state": "finalized",
+      "outcome": "no_radar_return",
+      "detected_frames": 0,
+      "tracked_frames": 1,
+      "class": "glimpse",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r3-1792707025297700702-1.mchq"
+    },
+    {
+      "flight": "UPS5152",
+      "hex": "a43952",
+      "pass_id": "4c35cac756b6283a9a0b08f383cd24bef6fc4972217a7c2a2cd746760b932b3b",
+      "state": "finalized",
+      "outcome": "no_radar_return",
+      "detected_frames": 0,
+      "tracked_frames": 0,
+      "class": "miss",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r13-1792707068161449184-5.mchq"
+    },
+    {
+      "flight": "FFT1620",
+      "hex": "a88d47",
+      "pass_id": "4d550240b6a901854d70ff6ffaea1236e87db3aa64fe04872888c500a8ffdeb2",
+      "state": "finalized",
+      "outcome": "no_radar_return",
+      "detected_frames": 0,
+      "tracked_frames": 0,
+      "class": "miss",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r16-1792707962144546230-5.mchq"
+    },
+    {
+      "flight": "N2FE",
+      "hex": "a18dd3",
+      "pass_id": "6ee6e2a9b194721216b01eb1c1799f6ec7ea99a6bd7394d84cead52b5b4505e4",
+      "state": "pending",
+      "outcome": null,
+      "detected_frames": 0,
+      "tracked_frames": 0,
+      "class": "provisional_miss",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r5-1792707994671377752-1.mchq"
+    },
+    {
+      "flight": "ASP864",
+      "hex": "c0315a",
+      "pass_id": "e4370db3840f2b0fd14e525b2cbd7d3a48eef971c5dce83c9f315e31368b18e4",
+      "state": "pending",
+      "outcome": null,
+      "detected_frames": 0,
+      "tracked_frames": 0,
+      "class": "provisional_miss",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r5-1792707994671377752-1.mchq"
+    },
+    {
+      "flight": "UAL2787",
+      "hex": "a05ddc",
+      "pass_id": "e2df24b062af7563c0a9a739a2d1a842cdd733b29f13cc5690ea20e906c15aa2",
+      "state": "pending",
+      "outcome": null,
+      "detected_frames": 0,
+      "tracked_frames": 0,
+      "class": "provisional_miss",
+      "valid_cpis": 8,
+      "file": "kraken-clip-r12-1792708026717982825-4.mchq"
+    }
+  ],
+  "interpretation": "Positive controls require at least three associated detection or track CPIs. A single associated track CPI is retained as a glimpse, not promoted to a positive control. Pending passes remain provisional until finalization. Quarantined clips are excluded from replay and performance claims."
+}

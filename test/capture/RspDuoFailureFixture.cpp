@@ -6,11 +6,15 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <locale>
 #include <stdexcept>
 #include <thread>
+#include <unistd.h>
 #include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 extern std::atomic<bool> run_fg;
 extern "C" const char* blah2_rspduo_startup_receipt_json_v1(const Source*) noexcept;
 extern "C" const char* blah2_rspduo_health_json_v1(const Source*) noexcept;
@@ -44,7 +48,7 @@ sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
 bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
-enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
+enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, GainEpoch, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
 CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
 std::string mockSerial = "mock-only";
@@ -60,6 +64,7 @@ void reset() {
   overloadAcks = 0;
   opened = closed = locked = unlocked = selected = released = initialized = uninitialized = 0;
   deviceParameters = {}; tunerA = {}; tunerB = {};
+  deviceParameters.fsFreq.fsHz = 6000000;
   parameters = {&deviceParameters, &tunerA, &tunerB};
   failAt.clear(); nullParameters = removeOnInit = multipleDevices = stopAfterGain = false;
   callbackScenario = CallbackScenario::None;
@@ -79,6 +84,7 @@ sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi() { ++unlocked; return sdrplay_api_
 sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT* devices, unsigned* count, unsigned) {
   *count = failAt == "none" ? 0 : (multipleDevices ? 2 : 1);
   devices[0] = {}; devices[0].hwVer = failAt == "wrong-model" ? SDRPLAY_RSP1_ID : SDRPLAY_RSPduo_ID;
+  devices[0].rspDuoSampleFreq = 6000000;
   std::strcpy(devices[0].SerNo, mockSerial.c_str());
   if (failAt == "bad-serial") std::strcpy(devices[0].SerNo, "bad\nserial");
   if (multipleDevices) { devices[1] = devices[0]; std::strcpy(devices[1].SerNo, "mock-second"); }
@@ -95,6 +101,7 @@ sdrplay_api_ErrT sdrplay_api_ReleaseDevice(sdrplay_api_DeviceT*) { ++released; r
 const char* sdrplay_api_GetErrorString(sdrplay_api_ErrT) { return "injected failure"; }
 sdrplay_api_ErrT sdrplay_api_DebugEnable(HANDLE, sdrplay_api_DbgLvl_t) { return result("debug"); }
 sdrplay_api_ErrT sdrplay_api_GetDeviceParams(HANDLE, sdrplay_api_DeviceParamsT** output) {
+  if (failAt == "invalid-clock") deviceParameters.fsFreq.fsHz = NAN;
   *output = nullParameters ? nullptr : &parameters; return result("parameters");
 }
 sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, void* context) {
@@ -118,6 +125,14 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
   auto callB2 = [&](uint32_t first) {
     sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
     callbacks->StreamBCbFn(bx2, bq2, &params, 2, 0, context);
+  };
+  auto gain = [&](sdrplay_api_TunerSelectT tuner, unsigned gRdB,
+                  unsigned lnaGRdB, double currGain) {
+    sdrplay_api_EventParamsT event{};
+    event.gainParams.gRdB = gRdB;
+    event.gainParams.lnaGRdB = lnaGRdB;
+    event.gainParams.currGain = currGain;
+    callbacks->EventCbFn(sdrplay_api_GainChange, tuner, &event, context);
   };
   switch (callbackScenario) {
     case CallbackScenario::Matched: callA(100); callB(100); run_fg = false; break;
@@ -160,6 +175,12 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
       first.join(); second.join(); callB2(104); run_fg = false;
       break;
     }
+    case CallbackScenario::GainEpoch:
+      // Retire a pending A half-pair, then a complete queued/FIFO pair. Only
+      // samples captured after the last vendor gain event may survive.
+      callA(100); gain(sdrplay_api_Tuner_A, 37, 12, 23.5); callB(100);
+      callA(102); callB(102); gain(sdrplay_api_Tuner_B, 41, 15, 19.25);
+      callA2(104); callB2(104); run_fg = false; break;
     case CallbackScenario::None: break;
   }
   return result("init");
@@ -249,6 +270,12 @@ int main() {
       assert(std::strcmp(accepted["status"].GetString(), "accepted") == 0);
       assert(accepted["hardwareVerified"].GetBool() == false);
       assert(accepted["readbackAvailable"].GetBool() == false);
+      assert(accepted["requested"]["usbMode"] == "isoch");
+      assert(accepted["requested"]["sampleCounterScale"].GetUint() == 1);
+      assert(accepted["requested"]["sampleCounterScalePolicy"] == "1");
+      assert(accepted["requested"]["sdkDebugLevel"] == "error");
+      assert(accepted["sdk"]["parameters"]["adcSampleRateHz"].GetDouble() == 6000000);
+      assert(accepted["sdk"]["parameters"]["descriptorSampleRateHz"].GetDouble() == 6000000);
       assert(accepted["sdk"]["stages"]["gainUpdateA"].GetBool());
       assert(accepted["sdk"]["stages"]["gainUpdateB"].GetBool());
       assert(initialized == 1 && callbackContext == &receiver);
@@ -274,12 +301,16 @@ int main() {
   escaped.stop();
   reset(); stopAfterGain = true;
   setenv("VECTORWARP_RSPDUO_USB_MODE", "bulk", 1);
+  setenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL", "verbose", 1);
   RspDuo bulk("RspDuo", 204640000, 2000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
   bulk.start();
   assert(deviceParameters.mode == sdrplay_api_BULK);
+  assert(receipt(bulk)["requested"]["usbMode"] == "bulk");
+  assert(receipt(bulk)["requested"]["sdkDebugLevel"] == "verbose");
   bulk.process(nullptr, nullptr); bulk.stop();
   unsetenv("VECTORWARP_RSPDUO_USB_MODE");
+  unsetenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
   setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "2", 1);
   try {
     RspDuo invalidScale("RspDuo", 204640000, 2000000, "/unused", &record,
@@ -287,16 +318,47 @@ int main() {
     assert(false);
   } catch (const std::invalid_argument&) {}
   unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
+  setenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL", "chatty", 1);
+  try {
+    RspDuo invalidDebug("RspDuo", 204640000, 2000000, "/unused", &record,
+      -30, 50, 30, 31, 3, true, false);
+    assert(false);
+  } catch (const std::invalid_argument&) {}
+  unsetenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
   reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
   setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "3", 1);
   RspDuo scaled("RspDuo", 204640000, 2000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
-  scaled.start(); scaled.process(nullptr, nullptr); scaled.stop();
+  scaled.start();
+  assert(receipt(scaled)["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(receipt(scaled)["requested"]["sampleCounterScalePolicy"] == "3");
+  scaled.process(nullptr, nullptr); scaled.stop();
   reset(); deviceParameters.fsFreq.fsHz = 6000000;
   RspDuo invalidScaledRate("RspDuo", 204640000, 1000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
   try { invalidScaledRate.start(); assert(false); } catch (const std::runtime_error&) {}
   invalidScaledRate.stop();
+  unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
+  reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
+  setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "auto", 1);
+  RspDuo automaticScaled("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  automaticScaled.start();
+  assert(receipt(automaticScaled)["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(receipt(automaticScaled)["requested"]["sampleCounterScalePolicy"] == "auto");
+  rapidjson::Document automaticRecording;
+  automaticRecording.Parse(automaticScaled.recording_provenance_json().c_str());
+  assert(!automaticRecording.HasParseError());
+  assert(automaticRecording["startup"]["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(automaticRecording["startup"]["requested"]["sampleCounterScalePolicy"] == "auto");
+  automaticScaled.process(nullptr, nullptr); automaticScaled.stop();
+  reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
+  RspDuo automaticNormal("RspDuo", 204640000, 1000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  automaticNormal.start();
+  assert(receipt(automaticNormal)["requested"]["sampleCounterScale"].GetUint() == 1);
+  assert(receipt(automaticNormal)["requested"]["sampleCounterScalePolicy"] == "auto");
+  automaticNormal.process(nullptr, nullptr); automaticNormal.stop();
   unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
   for (const std::string serial : {"", "not-present"}) {
     reset(); multipleDevices = true;
@@ -311,7 +373,7 @@ int main() {
   try { tooFast.start(); assert(false); } catch (const std::exception&) {}
   assert(tooFast.startup_receipt_json().empty());
   assert(opened == 0); // Six-MS/s output is not offered by this dual-tuner adapter.
-  for (const auto& stage : {"open", "version", "version-mismatch", "version-unusual", "lock", "enumerate", "none", "wrong-model", "bad-serial", "select", "debug", "parameters"}) {
+  for (const auto& stage : {"open", "version", "version-mismatch", "version-unusual", "lock", "enumerate", "none", "wrong-model", "bad-serial", "select", "debug", "parameters", "invalid-clock"}) {
     reset(); failAt = stage;
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
     bool failed = false;
@@ -391,7 +453,8 @@ int main() {
     CallbackScenario::BFirst, CallbackScenario::Reset, CallbackScenario::DuplicateA,
     CallbackScenario::LengthMismatch, CallbackScenario::EpochMismatch, CallbackScenario::ResetAfterPair,
     CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB,
-    CallbackScenario::ConcurrentPairHandoff, CallbackScenario::ScaledCounterInvalidRaw,
+    CallbackScenario::ConcurrentPairHandoff, CallbackScenario::GainEpoch,
+    CallbackScenario::ScaledCounterInvalidRaw,
     CallbackScenario::ScaledFsChangedA, CallbackScenario::ScaledFsChangedB}) {
     reset(); callbackScenario = scenario;
     if (scenario == CallbackScenario::ScaledCounterInvalidRaw ||
@@ -406,7 +469,8 @@ int main() {
     catch (const std::exception& error) { failed = true; message = error.what(); }
     const bool matched = scenario == CallbackScenario::Matched || scenario == CallbackScenario::Wraparound ||
       scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset ||
-      scenario == CallbackScenario::ConcurrentPairHandoff;
+      scenario == CallbackScenario::ConcurrentPairHandoff ||
+      scenario == CallbackScenario::GainEpoch;
     assert(failed != matched);
     if (failed) {
       rapidjson::Document health;
@@ -418,8 +482,38 @@ int main() {
       const unsigned expected = scenario == CallbackScenario::ConcurrentPairHandoff ? 6 :
         scenario == CallbackScenario::Wraparound ? 4 : 2;
       assert(a.size() == expected && b.size() == expected);
-      assert(a.front() == std::complex<double>(1, 2));
-      assert(b.front() == std::complex<double>(7, 8));
+      const bool afterGain = scenario == CallbackScenario::GainEpoch;
+      assert(a.front() == (afterGain ? std::complex<double>(21, 22) :
+        std::complex<double>(1, 2)));
+      assert(b.front() == (afterGain ? std::complex<double>(27, 28) :
+        std::complex<double>(7, 8)));
+      if (afterGain) {
+        rapidjson::Document health;
+        health.Parse(receiver.health_json().c_str());
+        assert(!health.HasParseError());
+        assert(std::strcmp(health["gain"]["policy"].GetString(),
+          "epoch-on-vendor-change") == 0);
+        assert(!health["gain"]["sampleAligned"].GetBool());
+        assert(health["gain"]["epoch"].GetUint64() == 2);
+        const auto& gainA = health["gain"]["tuners"]["A"];
+        const auto& gainB = health["gain"]["tuners"]["B"];
+        assert(gainA["eventCount"].GetUint64() == 1 &&
+          gainA["epoch"].GetUint64() == 1 &&
+          gainA["reported"]["gRdB"].GetUint() == 37 &&
+          gainA["reported"]["lnaGRdB"].GetUint() == 12 &&
+          gainA["reported"]["currGain"].GetDouble() == 23.5);
+        assert(gainB["eventCount"].GetUint64() == 1 &&
+          gainB["epoch"].GetUint64() == 2 &&
+          gainB["reported"]["gRdB"].GetUint() == 41 &&
+          gainB["reported"]["lnaGRdB"].GetUint() == 15 &&
+          gainB["reported"]["currGain"].GetDouble() == 19.25);
+        const auto position = receiver.sample_time_position();
+        assert(position.available && position.epoch == 3 && position.nextSample == 2);
+        assert(health["sampleTime"]["source"] ==
+          "sdrplay-delivered-relative-sample-epoch");
+        assert(!health["sampleTime"]["exact"].GetBool() &&
+          !health["sampleTime"]["sampleAligned"].GetBool());
+      }
       if (scenario == CallbackScenario::ConcurrentPairHandoff) {
         assert(a[2] == std::complex<double>(21, 22));
         assert(b[2] == std::complex<double>(27, 28));
@@ -444,16 +538,68 @@ int main() {
   // The opt-in queue takes complete paired IIQQ blocks before any FIFO
   // conversion.  The mock SDK proves callback pairing and direct handoff
   // without opening an SDRplay runtime.
-  reset(); callbackScenario = CallbackScenario::Matched;
-  RspDuo queued("RspDuo", 204640000, 2000000, "/unused", &record,
+  reset(); callbackScenario = CallbackScenario::GainEpoch;
+  char recordingDirectory[] = "/tmp/blah2-rspduo-gain-epoch.XXXXXX";
+  assert(mkdtemp(recordingDirectory));
+  RspDuo queued("RspDuo", 204640000, 2000000, recordingDirectory, &record,
     -30, 50, 30, 31, 3, true, true);
-  PairedCpiQueue queue(2, 1);
+  PairedCpiQueue queue(2, 2);
   queued.set_paired_cpi_queue(&queue);
-  queued.start(); queued.process(nullptr, nullptr); queued.stop(); queue.close();
+  queued.start();
+  const auto firstRecording = queued.open_file();
+  queued.process(nullptr, nullptr);
+  const auto resumedRecording = queued.recording_status();
+  assert(resumedRecording.active && !resumedRecording.resumePending &&
+    resumedRecording.samples == 2 && resumedRecording.file != firstRecording);
+  queued.close_file(); queued.stop(); queue.close();
   size_t queueSlot = 0; assert(queue.acquire(queueSlot));
   const auto& queuedBlock = queue.block(queueSlot);
-  assert(queuedBlock.first == 0 && queuedBlock.iq[0] == 1 &&
-    queuedBlock.iq[1] == 2 && queuedBlock.iq[2] == 7 && queuedBlock.iq[3] == 8);
+  assert(queuedBlock.first == 0 && queuedBlock.epoch == 2 &&
+    queuedBlock.iq[0] == 21 && queuedBlock.iq[1] == 22 &&
+    queuedBlock.iq[2] == 27 && queuedBlock.iq[3] == 28);
   queue.release(queueSlot);
+  assert(!queue.acquire(queueSlot));
+  const auto queueStats = queue.stats();
+  assert(queueStats.discontinuities == 2 && queueStats.droppedCpis == 1 &&
+    queueStats.discardedSamples == 2);
+
+  // Both vendor gain callbacks retire only the recording epoch they overlap.
+  // A fresh file starts lazily on the next matched A/B block, so consecutive
+  // events cannot create empty successor artifacts and capture never stops.
+  unsigned completeRecordings = 0, incompleteRecordings = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(recordingDirectory)) {
+    if (entry.path().extension() != ".blah2iq") continue;
+    std::ifstream sidecar(entry.path().string() + ".provenance.json");
+    assert(sidecar);
+    rapidjson::IStreamWrapper input(sidecar);
+    rapidjson::Document provenance;
+    provenance.ParseStream(input);
+    assert(!provenance.HasParseError());
+    const bool complete = provenance["recording"]["complete"].GetBool();
+    if (complete) {
+      ++completeRecordings;
+      assert(entry.path() == std::filesystem::path(resumedRecording.file));
+      assert(std::strcmp(provenance["recording"]["samples"].GetString(), "2") == 0);
+      assert(!provenance["timing"]["exact"].GetBool());
+      assert(!provenance["receiverDetails"]["health"]["gain"]["sampleAligned"].GetBool());
+      assert(provenance["receiverDetails"]["health"]["gain"]["epoch"].GetUint64() == 2);
+      assert(provenance["timing"]["epoch"] == "3");
+      assert(provenance["timing"]["sourceFirstSample"] == "0");
+      assert(provenance["receiverDetails"]["startup"]["requested"]["usbMode"] == "isoch");
+    } else {
+      ++incompleteRecordings;
+      assert(provenance["timing"]["discontinuities"].Size() == 1);
+    }
+  }
+  assert(completeRecordings == 1 && incompleteRecordings == 2);
+  blah2::RecordingReader replay(resumedRecording.file,
+    {"auto", "RspDuo", 2, 2000000, 204640000, 0});
+  blah2::IqBlock replayed;
+  assert(replay.read(replayed) && replayed[0].size() == 2 &&
+    replayed[0][0] == std::complex<float>(21, 22) &&
+    replayed[1][0] == std::complex<float>(27, 28));
+  assert(replay.provenance().contractValid && !replay.provenance().decisionGrade &&
+    !replay.provenance().exactTime);
+  std::filesystem::remove_all(recordingDirectory);
   std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

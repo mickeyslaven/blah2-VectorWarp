@@ -111,9 +111,18 @@ const rules = {
   'process.surveillance_fusion.beams': {...integer(4, 360), optional: true},
   'process.surveillance_fusion.effective_beam_trials': {...numeric(1, 360), optional: true},
   'process.surveillance_fusion.direct_path_null_db': {...numeric(0, 40), optional: true},
+  'process.surveillance_fusion.manifold_file': {type: 'string', optional: true},
   'truth.adsb.poll_interval': {...numeric(.1, 60), optional: true},
   'truth.adsb.smoothing_window': {...integer(2, 64), optional: true},
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},
+  'truth.adsb.association_lag_cpis': {...integer(0, 8), optional: true,
+    readOnly: 'Advanced ADS-B event-time alignment setting; edit YAML or the configuration API.'},
+  'truth.adsb.provisional_event_time_uncertainty_s': {...numeric(0, 5), optional: true,
+    readOnly: 'Advanced provisional scoring uncertainty; never used by radar inference.'},
+  'truth.adsb.source_timeout': {...numeric(.1, 10), optional: true,
+    readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
+  'truth.adsb.sources': {type: 'array', optional: true,
+    readOnly: 'Advanced ordered source list; edit the YAML or configuration API.'},
   'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
   'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
   'network.tracker_forward.enabled': {type: 'boolean', optional: true},
@@ -161,5 +170,7 @@ for (const name of ['capture.device.surveillance_channels','capture.device.seria
 for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
 rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
 rules['capture.device.serial'] = {type: 'serial'};
+rules['capture.replay.provenance'] = {type: 'string',
+  choices: ['legacy-unqualified', 'decision-grade']};
 
 module.exports = rules;

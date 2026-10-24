@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vectorwarp.local/schema/aircraft-pass-ledger-v1.json",
+  "title": "VectorWarp strict fresh aircraft/pass ledger",
+  "type": "object",
+  "required": ["schema", "frozen_cohort", "rolling_post_freeze", "scopes"],
+  "properties": {
+    "schema": {"const": "vectorwarp-aircraft-pass-report-v1"},
+    "frozen_cohort": {
+      "type": "object",
+      "required": ["sha256", "candidate_clips"],
+      "properties": {
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "candidate_clips": {"type": "integer", "minimum": 0}
+      }
+    },
+    "rolling_post_freeze": {
+      "type": "object",
+      "required": ["source_candidate_clips", "new_candidate_clips"]
+    },
+    "scopes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["scope", "immutable", "records", "aggregate", "stratified"],
+        "properties": {
+          "scope": {"enum": ["frozen_matrix_cohort", "post_freeze_rolling"]},
+          "immutable": {"type": "boolean"},
+          "records": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/pass"}
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "classification": {
+      "type": ["string", "null"],
+      "enum": ["tracked", "detected_not_tracked", "miss_unrecoverable",
+        "offline_candidate", "validated_offline_recovery", "excluded_with_reason", null]
+    },
+    "pass": {
+      "type": "object",
+      "required": ["scope", "pass_id", "hex", "live_outcome", "classification",
+        "classification_final", "classification_status", "geometry", "clips"],
+      "properties": {
+        "classification": {"$ref": "#/$defs/classification"},
+        "classification_final": {"type": "boolean"},
+        "classification_status": {"enum": ["final", "pending_offline_matrix"]},
+        "clips": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["candidate_key", "revision", "file", "truth_provenance",
+              "association_provenance", "iq_integrity", "offline_results"]
+          }
+        }
+      }
+    }
+  }
+}

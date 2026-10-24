@@ -9,6 +9,7 @@ struct ReplayProgress {
   std::string state = "loading";
   uint64_t samples = 0, total = 0, loops = 0, trailingSamples = 0;
   uint32_t sampleRate = 0;
+  RecordingProvenance provenance;
 };
 
 class ReplayPlayer {

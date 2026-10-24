@@ -25,6 +25,7 @@ void ReplayPlayer::run(const std::string& file,const ReplayOptions& options,
   ReplayProgress progress; publish(progress);
   RecordingReader reader(file,options);
   progress.total=reader.metadata().samples; progress.sampleRate=reader.metadata().sampleRate;
+  progress.provenance=reader.provenance(); publish(progress);
   if(progress.total<frameSamples) throw std::runtime_error("Recording is shorter than one processing frame; reduce the frame interval");
   do {
     progress.state="playing"; progress.samples=0; progress.trailingSamples=0; publish(progress);

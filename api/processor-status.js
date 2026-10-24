@@ -5,6 +5,7 @@ const STATES = new Set(['loading', 'playing', 'draining', 'complete', 'stopped',
 const MAX_TEXT = 4096;
 const MAX_ERROR_TEXT = 512;
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function text(value, name, errors, required = true) {
   if (value === undefined && !required) return '';
@@ -88,6 +89,19 @@ function rspStartup(payload, outer, errors) {
     errors.push(`${name}.requested IF and decimation do not match output rate`);
   if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
     errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  if (!['isoch', 'bulk'].includes(requested.usbMode))
+    errors.push(`${name}.requested.usbMode is invalid`);
+  if (![1, 3].includes(requested.sampleCounterScale))
+    errors.push(`${name}.requested.sampleCounterScale is invalid`);
+  const sampleCounterScalePolicy = requested.sampleCounterScalePolicy ??
+    String(requested.sampleCounterScale);
+  if (!['1', '3', 'auto'].includes(sampleCounterScalePolicy))
+    errors.push(`${name}.requested.sampleCounterScalePolicy is invalid`);
+  if (sampleCounterScalePolicy !== 'auto' &&
+      Number(sampleCounterScalePolicy) !== requested.sampleCounterScale)
+    errors.push(`${name}.requested sample-counter policy and effective scale disagree`);
+  if (!['error', 'verbose'].includes(requested.sdkDebugLevel))
+    errors.push(`${name}.requested.sdkDebugLevel is invalid`);
   if (selected !== null && (!selected || typeof selected !== 'object' || Array.isArray(selected)))
     errors.push(`${name}.selected must be an object or null`);
   if (selected && typeof selected === 'object' && !Array.isArray(selected)) {
@@ -106,6 +120,24 @@ function rspStartup(payload, outer, errors) {
     errors.push(`${name}.sdk.version is invalid`);
   if (stages.apiVersion && sdk.version === null)
     errors.push(`${name}.sdk.version is required after the version check`);
+  const sdkParameters = sdk.parameters;
+  if (!object(sdkParameters)) errors.push(`${name}.sdk.parameters must be an object`);
+  const sdkRate = field => {
+    const value = sdkParameters?.[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100000000)
+      errors.push(`${name}.sdk.parameters.${field} is invalid`);
+    return value;
+  };
+  const adcSampleRateHz = sdkRate('adcSampleRateHz');
+  const descriptorSampleRateHz = sdkRate('descriptorSampleRateHz');
+  if (stages.getDeviceParams && !(adcSampleRateHz > 0))
+    errors.push(`${name}.sdk.parameters.adcSampleRateHz is required after parameter retrieval`);
+  if (stages.getDeviceParams && sampleCounterScalePolicy === 'auto') {
+    const expectedScale = adcSampleRateHz === 6000000 && sampleRate === 2000000 &&
+      decimation === 1 && ifFrequencyKhz === 1620 ? 3 : 1;
+    if (requested.sampleCounterScale !== expectedScale)
+      errors.push(`${name}.requested automatic sample-counter scale disagrees with SDK descriptors`);
+  }
   const allAccepted = RSP_STAGES.every(stage => stages[stage] === true);
   if ((payload.status === 'accepted') !== allAccepted)
     errors.push(`${name}.status disagrees with SDK stages`);
@@ -115,14 +147,17 @@ function rspStartup(payload, outer, errors) {
     hardwareVerified: false, readbackAvailable: false,
     requested: {serial, frequency, sampleRate, agcSetPoint, bandwidthNumber,
       gainReduction, lnaState, dabNotch: requested.dabNotch, rfNotch: requested.rfNotch,
-      ifBandwidthKhz, ifFrequencyKhz, decimation},
+      ifBandwidthKhz, ifFrequencyKhz, decimation, usbMode: requested.usbMode,
+      sampleCounterScale: requested.sampleCounterScale,
+      sampleCounterScalePolicy,
+      sdkDebugLevel: requested.sdkDebugLevel},
     selected: selected ? {serial: selected.serial, deviceIndex: selected.deviceIndex,
       hardwareVersion: selected.hardwareVersion, tuner: 'Both', mode: 'Dual_Tuner'} : null,
-    sdk: {version: sdk.version, stages: Object.fromEntries(RSP_STAGES.map(stage => [stage, stages[stage]]))}};
+    sdk: {version: sdk.version, parameters: {adcSampleRateHz, descriptorSampleRateHz},
+      stages: Object.fromEntries(RSP_STAGES.map(stage => [stage, stages[stage]]))}};
 }
 function rspHealth(payload, outer, errors) {
   const name = 'receiverHealth';
-  const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   if (outer.input !== 'live' || outer.receiver !== 'RspDuo' || !object(payload)) {
     errors.push(`${name} requires a live RspDuo object`); return null;
   }
@@ -154,8 +189,483 @@ function rspHealth(payload, outer, errors) {
     overload[tuner] = {active: source.active, detectedCount, correctedCount,
       lastDetectedAt, lastCorrectedAt};
   }
-  return {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring, overload,
-    ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
+  let gain;
+  if (payload.gain !== undefined) {
+    const source = payload.gain;
+    if (!object(source) || source.policy !== 'epoch-on-vendor-change' ||
+        source.sampleAligned !== false || !object(source.tuners)) {
+      errors.push(`${name}.gain has an invalid schema`);
+    } else {
+      const epoch = count(source.epoch, `${name}.gain.epoch`, errors);
+      const tuners = {};
+      for (const [index, tuner] of ['A', 'B'].entries()) {
+        const event = source.tuners[tuner];
+        const field = `${name}.gain.tuners.${tuner}`;
+        if (!object(event)) {
+          errors.push(`${field} must be an object`); continue;
+        }
+        const unsigned32 = (value, suffix) => {
+          if (!Number.isSafeInteger(value) || value < 0 || value > 4294967295)
+            errors.push(`${field}.${suffix} must be a non-negative 32-bit integer`);
+          return Number.isSafeInteger(value) && value >= 0 && value <= 4294967295 ? value : 0;
+        };
+        const requestedGainReductionDb = unsigned32(event.requestedGainReductionDb,
+          'requestedGainReductionDb');
+        const requestedLnaState = unsigned32(event.requestedLnaState,
+          'requestedLnaState');
+        const eventCount = count(event.eventCount, `${field}.eventCount`, errors);
+        const lastEventAt = count(event.lastEventAt, `${field}.lastEventAt`, errors);
+        const eventEpoch = count(event.epoch, `${field}.epoch`, errors);
+        if (eventEpoch > epoch) errors.push(`${field}.epoch exceeds capture gain epoch`);
+        if ((eventCount === 0) !== (lastEventAt === 0 && eventEpoch === 0))
+          errors.push(`${field} event count and provenance disagree`);
+        if (typeof event.metadataAvailable !== 'boolean')
+          errors.push(`${field}.metadataAvailable must be boolean`);
+        let reported = null;
+        if (event.metadataAvailable) {
+          if (!object(event.reported)) errors.push(`${field}.reported must be an object`);
+          else {
+            const gRdB = unsigned32(event.reported.gRdB, 'reported.gRdB');
+            const lnaGRdB = unsigned32(event.reported.lnaGRdB, 'reported.lnaGRdB');
+            const currGain = event.reported.currGain;
+            if (typeof currGain !== 'number' || !Number.isFinite(currGain))
+              errors.push(`${field}.reported.currGain must be finite`);
+            reported = {gRdB, lnaGRdB,
+              currGain: typeof currGain === 'number' && Number.isFinite(currGain) ? currGain : 0};
+          }
+        } else if (event.reported !== null) {
+          errors.push(`${field}.reported must be null when metadata is unavailable`);
+        }
+        const requested = outer.receiverStartup?.requested;
+        if (requested && (requested.gainReduction[index] !== requestedGainReductionDb ||
+            requested.lnaState !== requestedLnaState))
+          errors.push(`${field} requested gain does not match startup receipt`);
+        tuners[tuner] = {requestedGainReductionDb, requestedLnaState,
+          eventCount, lastEventAt, epoch: eventEpoch,
+          metadataAvailable: event.metadataAvailable, reported};
+      }
+      gain = {policy: 'epoch-on-vendor-change', sampleAligned: false, epoch, tuners};
+    }
+  }
+  const result = {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring,
+    overload, ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
+  if (gain !== undefined) result.gain = gain;
+  if (payload.sampleTime !== undefined) {
+    const source = payload.sampleTime;
+    const decimal = (value, field) => {
+      if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+        errors.push(`${name}.sampleTime.${field} must be a decimal integer string`);
+        return '0';
+      }
+      return value;
+    };
+    if (!object(source) ||
+        source.source !== 'sdrplay-delivered-relative-sample-epoch' ||
+        source.exact !== false || source.uncertaintyBounded !== false ||
+        source.sampleAligned !== false || typeof source.available !== 'boolean') {
+      errors.push(`${name}.sampleTime has an invalid schema`);
+    } else {
+      const epoch = decimal(source.epoch, 'epoch');
+      const nextSample = decimal(source.nextSample, 'nextSample');
+      if (BigInt(epoch) === 0n || (!source.available && BigInt(nextSample) !== 0n))
+        errors.push(`${name}.sampleTime availability disagrees with its position`);
+      result.sampleTime = {source: source.source, exact: false,
+        uncertaintyBounded: false, sampleAligned: false,
+        available: source.available, epoch, nextSample};
+    }
+  }
+  return result;
+}
+function usrpStartup(payload, outer, errors) {
+  const name = 'receiverStartup';
+  if (outer.input !== 'live' || outer.receiver !== 'Usrp' || !object(payload)) {
+    errors.push(`${name} requires a live Usrp object`); return null;
+  }
+  const requested = payload.requested;
+  if (payload.schema !== 1 || payload.receiver !== 'Usrp' ||
+      !['pending', 'accepted'].includes(payload.status) || !object(requested)) {
+    errors.push(`${name} has an invalid schema`); return null;
+  }
+  const address = text(requested.address, `${name}.requested.address`, errors);
+  const subdevices = text(requested.subdevices, `${name}.requested.subdevices`, errors);
+  const frequency = positive32(requested.frequency, `${name}.requested.frequency`, errors);
+  const sampleRate = positive32(requested.sampleRate, `${name}.requested.sampleRate`, errors);
+  const strings = (source, field) => {
+    if (!Array.isArray(source) || source.length !== 2) {
+      errors.push(`${name}.requested.${field} requires two values`); return [];
+    }
+    return source.map((value, index) => text(value,
+      `${name}.requested.${field}[${index}]`, errors));
+  };
+  const antennas = strings(requested.antennas, 'antennas');
+  let gains = [];
+  if (!Array.isArray(requested.gains) || requested.gains.length !== 2)
+    errors.push(`${name}.requested.gains requires two values`);
+  else gains = requested.gains.map((gain, index) => {
+    if (typeof gain !== 'number' || !Number.isFinite(gain))
+      errors.push(`${name}.requested.gains[${index}] must be finite`);
+    return typeof gain === 'number' && Number.isFinite(gain) ? gain : 0;
+  });
+  if (!subdevices) errors.push(`${name}.requested.subdevices must not be empty`);
+  if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
+    errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  if (typeof payload.hardwareVerified !== 'boolean' ||
+      typeof payload.readbackAvailable !== 'boolean' ||
+      payload.physicalRfVerified !== false)
+    errors.push(`${name} readback verification flags are invalid`);
+  let appliedReadback = null;
+  if (payload.status === 'pending') {
+    if (payload.hardwareVerified !== false || payload.readbackAvailable !== false ||
+        payload.appliedReadback !== null)
+      errors.push(`${name}.pending cannot claim applied UHD readback`);
+  } else if (payload.hardwareVerified !== true || payload.readbackAvailable !== true ||
+      !object(payload.appliedReadback)) {
+    errors.push(`${name}.accepted requires applied UHD readback`);
+  } else {
+    const source = payload.appliedReadback;
+    const appliedSubdevices = text(source.subdevices,
+      `${name}.appliedReadback.subdevices`, errors);
+    const numericPair = (values, field, expected, tolerance, positive = true) => {
+      if (!Array.isArray(values) || values.length !== 2) {
+        errors.push(`${name}.appliedReadback.${field} requires two values`); return [];
+      }
+      return values.map((value, index) => {
+        if (typeof value !== 'number' || !Number.isFinite(value) || (positive && value <= 0))
+          errors.push(`${name}.appliedReadback.${field}[${index}] must be ${positive ? 'positive and ' : ''}finite`);
+        else if (Math.abs(value - expected[index]) > tolerance)
+          errors.push(`${name}.appliedReadback.${field}[${index}] differs from request`);
+        return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+      });
+    };
+    const frequencyHz = numericPair(source.perChannelFrequencyHz,
+      'perChannelFrequencyHz', [frequency, frequency], 1);
+    const sampleRateHz = numericPair(source.perChannelSampleRateHz,
+      'perChannelSampleRateHz', [sampleRate, sampleRate], 0.5);
+    const gainDb = numericPair(source.perChannelGainDb,
+      'perChannelGainDb', gains, 0.05, false);
+    let appliedAntennas = [];
+    if (!Array.isArray(source.perChannelAntenna) || source.perChannelAntenna.length !== 2)
+      errors.push(`${name}.appliedReadback.perChannelAntenna requires two values`);
+    else appliedAntennas = source.perChannelAntenna.map((value, index) => text(value,
+      `${name}.appliedReadback.perChannelAntenna[${index}]`, errors));
+    if (appliedSubdevices !== subdevices)
+      errors.push(`${name}.appliedReadback.subdevices differs from request`);
+    if (appliedAntennas.length === 2 &&
+        appliedAntennas.some((value, index) => value !== antennas[index]))
+      errors.push(`${name}.appliedReadback.perChannelAntenna differs from request`);
+    appliedReadback = {subdevices: appliedSubdevices,
+      perChannelFrequencyHz: frequencyHz, perChannelSampleRateHz: sampleRateHz,
+      perChannelGainDb: gainDb, perChannelAntenna: appliedAntennas};
+  }
+  let coherence = null;
+  if (payload.status === 'pending') {
+    if (payload.coherence !== null) errors.push(`${name}.coherence must be null while pending`);
+  } else if (!object(payload.coherence)) {
+    errors.push(`${name}.accepted requires coherence attestation`);
+  } else {
+    const source = payload.coherence;
+    const motherboards = count(source.motherboards, `${name}.coherence.motherboards`, errors);
+    const channels = count(source.channels, `${name}.coherence.channels`, errors);
+    const motherboard = text(source.motherboard, `${name}.coherence.motherboard`, errors);
+    const clockSource = text(source.clockSource, `${name}.coherence.clockSource`, errors);
+    const timeSource = text(source.timeSource, `${name}.coherence.timeSource`, errors);
+    const appliedSubdevices = text(source.subdevices, `${name}.coherence.subdevices`, errors);
+    const policy = text(source.policy, `${name}.coherence.policy`, errors);
+    if (motherboards !== 1 || channels < 2 || source.singleMotherboard !== true ||
+        motherboard !== 'B210' || policy !== 'single-motherboard-b210-v1' ||
+        !clockSource || !timeSource || !appliedSubdevices)
+      errors.push(`${name}.coherence does not attest one complete coherent motherboard`);
+    if (appliedSubdevices !== subdevices)
+      errors.push(`${name}.coherence subdevices differ from request`);
+    const identitySource = source.deviceIdentity;
+    let deviceIdentity = null;
+    if (!object(identitySource) || typeof identitySource.complete !== 'boolean') {
+      errors.push(`${name}.coherence.deviceIdentity has an invalid schema`);
+    } else {
+      const identityText = field => {
+        const value = identitySource[field];
+        return text(value, `${name}.coherence.deviceIdentity.${field}`, errors, false);
+      };
+      const identityPair = field => {
+        const value = identitySource[field];
+        if (!Array.isArray(value) || value.length !== 2) {
+          errors.push(`${name}.coherence.deviceIdentity.${field} requires two values`);
+          return [];
+        }
+        return value.map((item, index) => text(item,
+          `${name}.coherence.deviceIdentity.${field}[${index}]`, errors, false));
+      };
+      const motherboardId = identityText('motherboardId');
+      const motherboardSerial = identityText('motherboardSerial');
+      const rxIds = identityPair('rxIds');
+      const rxSerials = identityPair('rxSerials');
+      const rxSubdeviceNames = identityPair('rxSubdeviceNames');
+      const complete = Boolean(motherboardId && motherboardSerial &&
+        rxIds.length === 2 && rxIds.every(Boolean) &&
+        rxSubdeviceNames.length === 2 && rxSubdeviceNames.every(Boolean));
+      if (identitySource.complete !== complete)
+        errors.push(`${name}.coherence.deviceIdentity.complete disagrees with its fields`);
+      deviceIdentity = {complete, motherboardId, motherboardSerial,
+        rxIds, rxSerials, rxSubdeviceNames};
+    }
+    coherence = {motherboards, channels, motherboard, clockSource, timeSource,
+      subdevices: appliedSubdevices, policy, singleMotherboard: true, deviceIdentity};
+  }
+  return {schema: 1, receiver: 'Usrp', status: payload.status,
+    hardwareVerified: payload.hardwareVerified,
+    readbackAvailable: payload.readbackAvailable,
+    physicalRfVerified: false,
+    requested: {address, subdevices, frequency, sampleRate, antennas, gains},
+    appliedReadback, coherence};
+}
+function usrpHealth(payload, outer, errors) {
+  const name = 'receiverHealth';
+  if (outer.input !== 'live' || outer.receiver !== 'Usrp' || !object(payload) ||
+      payload.schema !== 1 || payload.receiver !== 'Usrp' ||
+      typeof payload.monitoring !== 'boolean' || !object(payload.deviceTime)) {
+    errors.push(`${name} has an invalid live Usrp schema`); return null;
+  }
+  if (outer.state === 'stopped' && payload.monitoring)
+    errors.push(`${name}.monitoring must be false after stop`);
+  const timing = payload.deviceTime;
+  if (timing.source !== 'uhd-device-time' || timing.utcMapped !== false ||
+      typeof timing.continuous !== 'boolean')
+    errors.push(`${name}.deviceTime has invalid provenance`);
+  const sampleRateHz = positive32(timing.sampleRateHz,
+    `${name}.deviceTime.sampleRateHz`, errors);
+  if (sampleRateHz !== outer.sampleRate)
+    errors.push(`${name}.deviceTime.sampleRateHz must match processor status`);
+  const decimal = (value, field) => {
+    if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+      errors.push(`${name}.deviceTime.${field} must be a decimal integer string`); return '0';
+    }
+    return value;
+  };
+  const samples = decimal(timing.samples, 'samples');
+  const blocks = decimal(timing.blocks, 'blocks');
+  const epoch = timing.epoch === undefined ? null : decimal(timing.epoch, 'epoch');
+  let epochTick = null, nextTick = null;
+  if (timing.continuous) {
+    epochTick = decimal(timing.epochTick, 'epochTick');
+    nextTick = decimal(timing.nextTick, 'nextTick');
+    if (BigInt(samples) === 0n || BigInt(blocks) === 0n ||
+        BigInt(nextTick) !== BigInt(epochTick) + BigInt(samples))
+      errors.push(`${name}.deviceTime continuous range is inconsistent`);
+  } else if (timing.epochTick !== null || timing.nextTick !== null ||
+      samples !== '0' || blocks !== '0') {
+    errors.push(`${name}.deviceTime unavailable state is inconsistent`);
+  }
+  let recovery;
+  if (payload.recovery !== undefined) {
+    const source = payload.recovery;
+    if (!object(source) || !['unavailable', 'requalifying', 'qualified'].includes(source.state)) {
+      errors.push(`${name}.recovery has an invalid state`);
+    } else {
+      const required = count(source.qualificationRequiredBlocks,
+        `${name}.recovery.qualificationRequiredBlocks`, errors);
+      const observed = count(source.qualificationObservedBlocks,
+        `${name}.recovery.qualificationObservedBlocks`, errors);
+      const counters = Object.fromEntries(['discontinuities', 'requalifications',
+        'consecutiveDiscontinuities', 'discardedBlocks', 'discardedSamplesPerChannel']
+        .map(field => [field, decimal(source[field], field)]));
+      const lastDiscontinuity = errorText(source.lastDiscontinuity,
+        `${name}.recovery.lastDiscontinuity`, errors);
+      if (required !== 2 || observed > required || epoch === null)
+        errors.push(`${name}.recovery qualification bounds are invalid`);
+      if ((source.state === 'qualified') !== timing.continuous)
+        errors.push(`${name}.recovery state disagrees with device-time continuity`);
+      if (source.state === 'qualified' && observed !== required)
+        errors.push(`${name}.recovery qualified without the required blocks`);
+      if (BigInt(counters.requalifications) > BigInt(counters.discontinuities))
+        errors.push(`${name}.recovery has more requalifications than discontinuities`);
+      recovery = {state: source.state, qualificationRequiredBlocks: required,
+        qualificationObservedBlocks: observed, ...counters, lastDiscontinuity};
+    }
+  }
+  const result = {schema: 1, receiver: 'Usrp', monitoring: payload.monitoring,
+    deviceTime: {source: 'uhd-device-time', utcMapped: false,
+      continuous: timing.continuous, sampleRateHz, epochTick, nextTick, samples, blocks}};
+  if (epoch !== null) result.deviceTime.epoch = epoch;
+  if (recovery !== undefined) result.recovery = recovery;
+  return result;
+}
+function hackrfStartup(payload, outer, errors) {
+  const name = 'receiverStartup';
+  if (outer.input !== 'live' || outer.receiver !== 'HackRF' || !object(payload) ||
+      payload.schema !== 1 || payload.receiver !== 'HackRF' ||
+      !['pending', 'accepted'].includes(payload.status) || !object(payload.requested)) {
+    errors.push(`${name} has an invalid live HackRF schema`); return null;
+  }
+  const requested = payload.requested;
+  if (payload.hardwareVerified !== false || payload.readbackAvailable !== false ||
+      payload.physicalRfVerified !== false ||
+      payload.setterAcceptance !== (payload.status === 'accepted'))
+    errors.push(`${name} has invalid application/readback boundaries`);
+  const frequency = positive32(requested.frequency, `${name}.requested.frequency`, errors);
+  const sampleRate = positive32(requested.sampleRate, `${name}.requested.sampleRate`, errors);
+  if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
+    errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  const serials = Array.isArray(requested.serials) && requested.serials.length === 2 ?
+    requested.serials.map((value, index) => text(value,
+      `${name}.requested.serials[${index}]`, errors)) : [];
+  if (serials.length !== 2 || !serials[0] || !serials[1] || serials[0] === serials[1])
+    errors.push(`${name}.requested.serials requires two distinct values`);
+  const gains = (field, step, maximum) => {
+    const source = requested[field];
+    if (!Array.isArray(source) || source.length !== 2) {
+      errors.push(`${name}.requested.${field} requires two values`); return [];
+    }
+    return source.map((value, index) => {
+      if (!Number.isInteger(value) || value < 0 || value > maximum || value % step)
+        errors.push(`${name}.requested.${field}[${index}] is invalid`);
+      return Number.isInteger(value) && value >= 0 ? value : 0;
+    });
+  };
+  const lnaGainDb = gains('lnaGainDb', 8, 40);
+  const vgaGainDb = gains('vgaGainDb', 2, 62);
+  const ampEnabled = requested.ampEnabled;
+  if (!Array.isArray(ampEnabled) || ampEnabled.length !== 2 ||
+      ampEnabled.some(value => typeof value !== 'boolean'))
+    errors.push(`${name}.requested.ampEnabled requires two booleans`);
+  if (!object(payload.derived) ||
+      payload.derived.basebandFilterPolicy !==
+        'libhackrf-sample-rate-auto-at-most-0.75-fs' ||
+      payload.derived.independentReadback !== false)
+    errors.push(`${name}.derived has invalid baseband-filter provenance`);
+  const identitySource = payload.deviceIdentity;
+  let deviceIdentity = null;
+  if (!object(identitySource) || typeof identitySource.complete !== 'boolean' ||
+      !Array.isArray(identitySource.resolvedSerials) ||
+      identitySource.resolvedSerials.length !== 2 ||
+      !Array.isArray(identitySource.roles) || identitySource.roles.length !== 2 ||
+      identitySource.roles[0] !== 'reference' ||
+      identitySource.roles[1] !== 'surveillance') {
+    errors.push(`${name}.deviceIdentity has an invalid schema`);
+  } else {
+    const resolvedSerials = identitySource.resolvedSerials.map((value, index) =>
+      text(value, `${name}.deviceIdentity.resolvedSerials[${index}]`, errors, false));
+    if (payload.status === 'accepted') {
+      if (!identitySource.complete || !resolvedSerials[0] || !resolvedSerials[1] ||
+          resolvedSerials[0] === resolvedSerials[1] ||
+          !resolvedSerials.every((value, index) => value.endsWith(serials[index] || '\0')))
+        errors.push(`${name}.deviceIdentity does not uniquely match the requested roles`);
+    } else if (identitySource.complete || resolvedSerials.some(Boolean)) {
+      errors.push(`${name}.pending deviceIdentity must be incomplete`);
+    }
+    deviceIdentity = {complete: identitySource.complete, resolvedSerials,
+      roles: ['reference', 'surveillance']};
+  }
+  let synchronization = null;
+  if (payload.status === 'pending') {
+    if (payload.synchronization !== null)
+      errors.push(`${name}.synchronization must be null while pending`);
+  } else if (!object(payload.synchronization)) {
+    errors.push(`${name}.accepted requires synchronization provenance`);
+  } else {
+    const source = payload.synchronization;
+    if (source.policy !== 'shared-clock-hardware-trigger-v1' ||
+        source.clockOutputRole !== 'surveillance' ||
+        source.hardwareTriggerRole !== 'surveillance' ||
+        source.startOrder !== 'surveillance-then-reference' ||
+        source.physicalWiringVerified !== false ||
+        source.hardwareTimestampAvailable !== false)
+      errors.push(`${name}.synchronization has invalid provenance`);
+    synchronization = {policy: 'shared-clock-hardware-trigger-v1',
+      clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+      startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+      hardwareTimestampAvailable: false};
+  }
+  return {schema: 1, receiver: 'HackRF', status: payload.status,
+    hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+    setterAcceptance: payload.setterAcceptance,
+    requested: {frequency, sampleRate, serials, lnaGainDb, vgaGainDb,
+      ampEnabled: Array.isArray(ampEnabled) ? ampEnabled.slice(0, 2) : []},
+    derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+      independentReadback: false}, deviceIdentity, synchronization};
+}
+function hackrfHealth(payload, outer, errors) {
+  const name = 'receiverHealth';
+  if (outer.input !== 'live' || outer.receiver !== 'HackRF' || !object(payload) ||
+      payload.schema !== 1 || payload.receiver !== 'HackRF' ||
+      typeof payload.monitoring !== 'boolean' || !object(payload.pairing)) {
+    errors.push(`${name} has an invalid live HackRF schema`); return null;
+  }
+  if (outer.state === 'stopped' && payload.monitoring)
+    errors.push(`${name}.monitoring must be false after stop`);
+  const pairing = payload.pairing;
+  if (pairing.policy !== 'paired-callback-requalify-v2' ||
+      !['unavailable', 'requalifying', 'qualified'].includes(pairing.state) ||
+      typeof pairing.qualified !== 'boolean')
+    errors.push(`${name}.pairing has invalid provenance`);
+  const decimal = (value, field) => {
+    if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+      errors.push(`${name}.pairing.${field} must be a decimal integer string`); return '0';
+    }
+    return value;
+  };
+  const pair = (value, field) => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      errors.push(`${name}.pairing.${field} requires two values`); return ['0', '0'];
+    }
+    return value.map((item, index) => decimal(item, `${field}[${index}]`));
+  };
+  const epoch = decimal(pairing.epoch, 'epoch');
+  const callbacks = pair(pairing.callbacks, 'callbacks');
+  const samples = pair(pairing.samples, 'samples');
+  const pairedCallbacks = decimal(pairing.pairedCallbacks, 'pairedCallbacks');
+  const pairedSamples = decimal(pairing.pairedSamples, 'pairedSamples');
+  const discontinuities = decimal(pairing.discontinuities, 'discontinuities');
+  const requalifications = decimal(pairing.requalifications, 'requalifications');
+  const consecutiveDiscontinuities = decimal(pairing.consecutiveDiscontinuities,
+    'consecutiveDiscontinuities');
+  const retryBudget = decimal(pairing.retryBudget, 'retryBudget');
+  const discardedSamples = pair(pairing.discardedSamples, 'discardedSamples');
+  const qualificationRequiredPairs = count(pairing.qualificationRequiredPairs,
+    `${name}.pairing.qualificationRequiredPairs`, errors);
+  const qualificationObservedPairs = count(pairing.qualificationObservedPairs,
+    `${name}.pairing.qualificationObservedPairs`, errors);
+  if (typeof pairing.drainRequired !== 'boolean' || !Array.isArray(pairing.drainSeen) ||
+      pairing.drainSeen.length !== 2 ||
+      pairing.drainSeen.some(value => typeof value !== 'boolean'))
+    errors.push(`${name}.pairing drain guard has an invalid schema`);
+  const drainSeen = Array.isArray(pairing.drainSeen) ? pairing.drainSeen.slice(0, 2) : [];
+  const reason = text(pairing.reason, `${name}.pairing.reason`, errors);
+  const pairedCallbackCount = BigInt(pairedCallbacks);
+  const pairedSampleCount = BigInt(pairedSamples);
+  const callbackCounts = callbacks.map(BigInt);
+  const sampleCounts = samples.map(BigInt);
+  if (pairedCallbackCount > callbackCounts[0] || pairedCallbackCount > callbackCounts[1] ||
+      pairedSampleCount > sampleCounts[0] || pairedSampleCount > sampleCounts[1])
+    errors.push(`${name}.pairing published counters exceed received counters`);
+  if (qualificationRequiredPairs !== 2 ||
+      qualificationObservedPairs > qualificationRequiredPairs)
+    errors.push(`${name}.pairing qualification bounds are invalid`);
+  if ((pairing.state === 'qualified') !== pairing.qualified ||
+      (pairing.qualified && (qualificationObservedPairs !== qualificationRequiredPairs ||
+        pairing.drainRequired)) ||
+      (pairing.state === 'unavailable' && payload.monitoring) ||
+      (pairing.drainRequired && pairing.state !== 'requalifying'))
+    errors.push(`${name}.pairing state is inconsistent`);
+  if (BigInt(requalifications) > BigInt(discontinuities) ||
+      BigInt(consecutiveDiscontinuities) > BigInt(discontinuities) ||
+      BigInt(retryBudget) !== 8n ||
+      (pairing.state === 'unavailable' && BigInt(discontinuities) > 0n &&
+        BigInt(consecutiveDiscontinuities) <= BigInt(retryBudget)) ||
+      (pairing.qualified && BigInt(consecutiveDiscontinuities) !== 0n))
+    errors.push(`${name}.pairing recovery counters are inconsistent`);
+  if (pairing.qualified) {
+    if (BigInt(epoch) === 0n || pairedCallbackCount === 0n || pairedSampleCount === 0n ||
+        callbackCounts.some(value => value < pairedCallbackCount) ||
+        sampleCounts.some(value => value < pairedSampleCount))
+      errors.push(`${name}.pairing qualified counters disagree`);
+  }
+  return {schema: 1, receiver: 'HackRF', monitoring: payload.monitoring,
+    pairing: {policy: 'paired-callback-requalify-v2', state: pairing.state,
+      qualified: pairing.qualified,
+      epoch, callbacks, samples, pairedCallbacks, pairedSamples, discontinuities,
+      requalifications, consecutiveDiscontinuities, retryBudget,
+      qualificationRequiredPairs, qualificationObservedPairs,
+      drainRequired: pairing.drainRequired, drainSeen, discardedSamples, reason}};
 }
 function status(payload) {
   const errors = [];
@@ -204,9 +714,17 @@ function status(payload) {
   if (value.positionSamples > value.totalSamples && value.totalSamples > 0)
     errors.push('positionSamples exceeds totalSamples');
   if (payload.receiverStartup !== undefined)
-    value.receiverStartup = rspStartup(payload.receiverStartup, value, errors);
+    value.receiverStartup = value.receiver === 'Usrp' ?
+      usrpStartup(payload.receiverStartup, value, errors) :
+      value.receiver === 'HackRF' ?
+        hackrfStartup(payload.receiverStartup, value, errors) :
+      rspStartup(payload.receiverStartup, value, errors);
   if (payload.receiverHealth !== undefined)
-    value.receiverHealth = rspHealth(payload.receiverHealth, value, errors);
+    value.receiverHealth = value.receiver === 'Usrp' ?
+      usrpHealth(payload.receiverHealth, value, errors) :
+      value.receiver === 'HackRF' ?
+        hackrfHealth(payload.receiverHealth, value, errors) :
+      rspHealth(payload.receiverHealth, value, errors);
   return errors.length ? {valid: false, errors} : {valid: true, value};
 }
 

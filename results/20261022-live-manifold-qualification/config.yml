@@ -1,0 +1,258 @@
+capture:
+  fs: 2400000
+  fc: 563000000
+  device:
+    type: Kraken
+    heimdall:
+      host: 127.0.0.1
+      port: 8091
+      control_port: 8092
+      gain: 2
+      gain_control: fixed
+      channel_gains:
+        - 19.7
+        - 25.4
+        - 20.7
+        - 25.4
+        - 22.9
+    channel_count: 5
+    reference_channel: 0
+    surveillance_channels:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    array_geometry:
+      shape: regular_polygon
+      entry_template: pentagon
+      units: m
+      coordinate_frame: array_xy_right_handed
+      mapping_confirmed: true
+      geometry_confirmed: true
+      orientation_confirmed: true
+      x_axis_bearing_deg_true: 80
+      bearing_channels:
+        - 0
+        - 1
+        - 2
+        - 3
+        - 4
+      ula_half_plane: both
+      operator_reported_ch0_heading_deg: 80
+      operator_heading_reference: true north
+      operator_notes: >-
+        Arrow five-boom UCA with 440 MHz dipoles at the physical 600 MHz (hole 9) radius setting.
+        After the 2026-10-18 roof move, the array was raised approximately one foot without
+        intentional rotation; CH0 remains at the previously established true bearing of 80 degrees.
+        CH1-CH4 proceed clockwise in 72-degree steps. Manufacturer hole radius is 7.62 inches
+        (0.193548 m).
+      elements:
+        - id: CH0
+          daq_channel: 0
+          receiver_serial: "1000"
+          position:
+            - 0.193548
+            - 0
+            - 0
+        - id: CH1
+          daq_channel: 1
+          receiver_serial: "1001"
+          position:
+            - 0.059809621
+            - -0.184075087
+            - 0
+        - id: CH2
+          daq_channel: 2
+          receiver_serial: "1002"
+          position:
+            - -0.156583621
+            - -0.11376466
+            - 0
+        - id: CH3
+          daq_channel: 3
+          receiver_serial: "1003"
+          position:
+            - -0.156583621
+            - 0.11376466
+            - 0
+        - id: CH4
+          daq_channel: 4
+          receiver_serial: "1004"
+          position:
+            - 0.059809621
+            - 0.184075087
+            - 0
+  replay:
+    state: false
+    loop: false
+    file: /var/lib/vectorwarp/recordings/recording.blah2iq
+    format: auto
+process:
+  performance:
+    surveillance_workers: 2
+    fft_threads: 1
+    acceleration: gpu-resident
+  data:
+    cpi: 0.5
+    buffer: 2
+    overlap: 0
+  ambiguity:
+    delayMin: -10
+    delayMax: 500
+    dopplerMin: -600
+    dopplerMax: 600
+  clutter:
+    enable: true
+    delayMin: -10
+    delayMax: 500
+    followAmbiguity: false
+  reference_synthesis:
+    mode: array_eigenbeam
+    channels:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    analysis_samples: 32768
+    analysis_interval: 10
+    power_iterations: 12
+    covariance_smoothing: 0.8
+    diagonal_loading: 0.001
+  detection:
+    enable: true
+    pfa: 0.005
+    nGuard: 2
+    nTrain: 6
+    minDelay: 5
+    minDoppler: 0
+    nCentroid: 6
+    integration_cpis: 1
+    integration_motion_bins: 0
+    track_before_detect:
+      enable: true
+      max_cpis: 8
+      motion_bins: 1
+      delay_motion_bins: 2
+      doppler_motion_bins: 4
+  tracker:
+    enable: true
+    initiate:
+      M: 3
+      "N": 5
+      maxAcc: 10
+      acceleration_model: adaptive_gate
+    delete: 10
+    smooth: none
+    gpu_capacity: 4096
+    publication:
+      mode: hybrid
+      event_file: /var/lib/vectorwarp-api/tracker/unassisted.jsonl
+      stale_after_s: 3
+      native_min_associations: 5
+      delay_tolerance: 2
+      doppler_tolerance: 5
+    track_guided_shadow:
+      enable: true
+      promote: true
+      max_tracks: 64
+  surveillance_fusion:
+    mode: coherent_beam_bank
+    beams: 12
+    effective_beam_trials: 5
+    direct_path_null_db: 0
+  bearing:
+    enable: false
+    min_consistent: 3
+    min_peak_separation_db: 3
+    method: covariance_mvdr
+    reference_anchor: fixed_site
+    scan_beams: 60
+    candidate_peaks: 3
+    guard_radius: 1
+    training_radius: 3
+    diagonal_loading: 0.01
+    channel_mapping:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+    manifold_recorder:
+      enabled: "on"
+      path: /var/lib/vectorwarp-api/calibration/manifold-samples.jsonl
+      min_snr_db: 6
+      min_elevation_deg: 0
+      max_elevation_deg: 15
+      max_delay_error_km: 0.25
+      max_doppler_error_hz: 5
+      max_truth_age_s: 3
+      max_file_mb: 64
+      max_files: 4
+    frequency_resolved_shadow:
+      enabled: true
+      fft_size: 2048
+      subbands: 24
+      bandwidth_fraction: 0.9
+      diagonal_loading: 0.01
+      capture_seconds: 0.25
+      interval_s: 300
+      timeout_ms: 15000
+    manifold_automation:
+      auto_promote: false
+network:
+  ip: 100.126.186.65
+  tracker_forward:
+    enabled: true
+    host: 127.0.0.1
+    port: 30101
+    annotate_adsb: false
+  ports:
+    api: 3000
+    map: 3001
+    detection: 3002
+    track: 3003
+    bearing: 3004
+    manifold: 3005
+    timestamp: 4000
+    timing: 4001
+    iqdata: 4002
+    config: 4003
+truth:
+  adsb:
+    enabled: true
+    tar1090: 100.127.124.29:8080
+    sources:
+      - http://100.90.37.77/tar1090
+      - http://100.127.124.29:8080
+      - exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60
+      - exchange:https://api.adsb.lol/v2/point/40.4420304/-80.0566972/60
+    source_timeout: 4
+    poll_interval: 1
+    smoothing_window: 10
+    max_position_age: 5
+    association_lag_cpis: 4
+    delay_tolerance: 2
+    doppler_tolerance: 5
+  ais:
+    enabled: false
+    ip: 0.0.0.0
+    port: 30001
+location:
+  rx:
+    latitude: 40.442030432817
+    longitude: -80.056697229925
+    altitude: 353.067485205
+    name: Ford Street rooftop (estimated 18 ft above ground)
+  tx:
+    latitude: 40.446167
+    longitude: -79.963944
+    altitude: 349
+    name: WWAT-CD RF29 detection trial
+save:
+  iq: false
+  map: false
+  detection: false
+  timing: false
+  path: /var/lib/vectorwarp/recordings/

@@ -70,6 +70,20 @@ else
   [[ -r /etc/os-release ]] || die 'cannot identify host distribution'
   TARGET_DISTRO=$(. /etc/os-release; printf '%s' "$ID")
 fi
+if $WITH_SYSTEMD && [[ $PREFIX != /opt/vectorwarp || $SYSCONFDIR != /etc/vectorwarp ]]; then
+  die 'custom --prefix or --sysconfdir requires --no-systemd; global VectorWarp CLI and unit names cannot be isolated'
+fi
+if [[ -z $DESTDIR && ( $PREFIX == /opt/vectorwarp || $SYSCONFDIR == /etc/vectorwarp || $WITH_SYSTEMD == true ) ]]; then
+  package_owner=
+  if command -v dpkg-query >/dev/null 2>&1 &&
+      dpkg-query -W -f='${db:Status-Status}\n' vectorwarp 2>/dev/null | grep -Fxq installed; then
+    package_owner=DEB
+  elif command -v rpm >/dev/null 2>&1 && rpm -q vectorwarp >/dev/null 2>&1; then
+    package_owner=RPM
+  fi
+  [[ -z $package_owner ]] ||
+    die "$package_owner package vectorwarp owns the default integration paths; uninstall it before a source install"
+fi
 if $SETUP_PI_GPU; then
   [[ -z $DESTDIR ]] || die '--setup-pi-gpu is forbidden with --destdir; staging never probes or changes the host GPU'
   $WITH_SYSTEMD || die '--setup-pi-gpu requires the installed integration helpers'
@@ -176,10 +190,10 @@ if $WITH_SYSTEMD; then
     [[ -f $ARTIFACT/systemd/72-vectorwarp-hackrf.rules ]] ||
       die 'Fedora HackRF rule is missing from artifact'
   fi
-  for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
+  for file in vectorwarp-api.service.in vectorwarp-processor.service.in vectorwarp-restart.service.in vectorwarp-health-watchdog.service.in vectorwarp-health-watchdog.timer vectorwarp-config-guard.service.in vectorwarp-config-guard.path.in vectorwarp.sysusers vectorwarp.tmpfiles vectorwarp.sudoers.in; do
     [[ -f $ARTIFACT/systemd/$file ]] || die "systemd artifact is incomplete: $file"
   done
-  [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
+  [[ -x $ARTIFACT/libexec/vectorwarp-restart && -x $ARTIFACT/libexec/vectorwarp-health-watchdog.js && -x $ARTIFACT/libexec/vectorwarp-config-guard.js && -x $ARTIFACT/libexec/vectorwarp-wait-api.js &&
      -x $ARTIFACT/libexec/vectorwarp-activate-web ]] ||
     die 'restart helpers are missing'
   [[ -x $ARTIFACT/libexec/vectorwarp ]] || die 'launcher is missing'
@@ -297,10 +311,17 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"
   render "$ARTIFACT/systemd/vectorwarp-restart.service.in" "$temporary/vectorwarp-restart.service"
+  render "$ARTIFACT/systemd/vectorwarp-health-watchdog.service.in" "$temporary/vectorwarp-health-watchdog.service"
+  render "$ARTIFACT/systemd/vectorwarp-config-guard.service.in" "$temporary/vectorwarp-config-guard.service"
+  render "$ARTIFACT/systemd/vectorwarp-config-guard.path.in" "$temporary/vectorwarp-config-guard.path"
   render "$ARTIFACT/systemd/vectorwarp.sudoers.in" "$temporary/vectorwarp"
   run install -m 0644 "$temporary/vectorwarp-api.service" "$unit_dir/vectorwarp-api.service"
   run install -m 0644 "$temporary/vectorwarp-processor.service" "$unit_dir/vectorwarp-processor.service"
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
+  run install -m 0644 "$temporary/vectorwarp-health-watchdog.service" "$unit_dir/vectorwarp-health-watchdog.service"
+  run install -m 0644 "$ARTIFACT/systemd/vectorwarp-health-watchdog.timer" "$unit_dir/vectorwarp-health-watchdog.timer"
+  run install -m 0644 "$temporary/vectorwarp-config-guard.service" "$unit_dir/vectorwarp-config-guard.service"
+  run install -m 0644 "$temporary/vectorwarp-config-guard.path" "$unit_dir/vectorwarp-config-guard.path"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.sysusers" "$sysusers_dir/vectorwarp.conf"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp.tmpfiles" "$tmpfiles_dir/vectorwarp.conf"
   # Fedora's packaged HackRF rule has no group; Debian/Ubuntu already grant
@@ -326,6 +347,8 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp-restart" "$temporary/vectorwarp-restart"
   run install -m 0755 "$temporary/vectorwarp-quiesce" "$target_prefix/libexec/vectorwarp-quiesce"
   run install -m 0755 "$temporary/vectorwarp-restart" "$target_prefix/libexec/vectorwarp-restart"
+  run install -m 0755 "$ARTIFACT/libexec/vectorwarp-health-watchdog.js" "$target_prefix/libexec/vectorwarp-health-watchdog.js"
+  run install -m 0755 "$ARTIFACT/libexec/vectorwarp-config-guard.js" "$target_prefix/libexec/vectorwarp-config-guard.js"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-activate-web" "$target_prefix/libexec/vectorwarp-activate-web"
   run install -m 0755 "$ARTIFACT/libexec/vectorwarp-wait-api.js" "$target_prefix/libexec/vectorwarp-wait-api.js"
   # The unit invokes this script through the private Node binary. Keeping it
@@ -373,6 +396,10 @@ if $WITH_SYSTEMD; then
     run install -d -m 0755 "$unit_dir/vectorwarp-api.service.wants"
     run ln -sfn ../vectorwarp-receiver.socket "$unit_dir/vectorwarp-api.service.wants/vectorwarp-receiver.socket"
   fi
+  run install -d -m 0755 "$unit_dir/vectorwarp-processor.service.wants"
+  run ln -sfn ../vectorwarp-health-watchdog.timer "$unit_dir/vectorwarp-processor.service.wants/vectorwarp-health-watchdog.timer"
+  run install -d -m 0755 "$unit_dir/multi-user.target.wants"
+  run ln -sfn ../vectorwarp-config-guard.path "$unit_dir/multi-user.target.wants/vectorwarp-config-guard.path"
   if [[ -z $DESTDIR && $EUID -eq 0 ]]; then run chown -R root:root "$target_prefix/libexec"; fi
   if [[ -z $DESTDIR ]]; then
     run systemd-sysusers /usr/lib/sysusers.d/vectorwarp.conf

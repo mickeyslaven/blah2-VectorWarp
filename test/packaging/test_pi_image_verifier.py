@@ -27,6 +27,14 @@ class PiImageVerifierTests(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertNotEqual(self.invoke(*args).returncode, 0)
 
+    def test_verifies_profile_groups_and_service_policy(self):
+        source = SCRIPT.read_text()
+        for contract in ('VECTORWARP_RSPDUO_COUNTER_SCALE=auto',
+                         'VECTORWARP_LINUX_SERVICE=1',
+                         'grep -qx plugdev'):
+            self.assertIn(contract, source)
+        self.assertIn('! id -nG vectorwarp-api', source)
+
 
 if __name__ == '__main__':
     unittest.main()

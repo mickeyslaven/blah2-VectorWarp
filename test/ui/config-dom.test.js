@@ -161,27 +161,25 @@ function change(input, value, event = 'input') {
     assert.equal(writes, 1);
     assert.equal(window.document.getElementById('config-save').disabled, true);
 
-    // Existing remote endpoints stay selected and survive local discovery edits.
+    // Existing remote endpoints become the first local source. Multiple local
+    // receivers and public exchanges edit the authoritative source list.
     const adsb = query('truth.adsb.tar1090');
-    const sourceMode = adsb.querySelector('select');
-    const sourceEndpoint = adsb.querySelector('input');
+    let sourceInputs = adsb.querySelectorAll('[data-adsb-source="local"]');
+    const sourceEndpoint = sourceInputs[0];
     const remoteEndpoint = saved.truth.adsb.tar1090;
-    assert.equal(sourceMode.value, 'server');
-    assert.equal(sourceEndpoint.hidden, false);
     assert.equal(sourceEndpoint.value, remoteEndpoint);
-    change(sourceMode, 'auto', 'change');
-    assert.equal(sourceEndpoint.hidden, true);
+    adsb.querySelector('.adsb-source-add').click();
+    sourceInputs = adsb.querySelectorAll('[data-adsb-source="local"]');
+    assert.equal(sourceInputs.length, 2);
+    change(sourceInputs[1], 'http://second-receiver.local/tar1090');
+    const adsbFi = adsb.querySelector('[data-adsb-exchange="adsb-fi"]');
+    change(adsbFi, true, 'change');
     assert.equal(await window.validateActiveConfiguration(), true);
-    assert.equal(saved.truth.adsb.tar1090, remoteEndpoint, 'Changing source mode must not save automatically');
-    change(sourceMode, 'local:readsb', 'change');
-    assert.equal(await window.validateActiveConfiguration(), true);
-    change(sourceMode, 'server', 'change');
-    assert.equal(sourceEndpoint.hidden, false);
-    assert.equal(sourceEndpoint.value, remoteEndpoint, 'Returning to server mode retains the typed endpoint');
-    change(sourceEndpoint, 'https://other-device.example/tar1090');
-    assert.equal(await window.validateActiveConfiguration(), true);
+    assert.equal(saved.truth.adsb.tar1090, remoteEndpoint, 'Editing sources must not save automatically');
     window.document.getElementById('config-reset').click();
-    assert.equal(query('truth.adsb.tar1090').querySelector('input').value, remoteEndpoint);
+    assert.equal(query('truth.adsb.tar1090').querySelector('[data-adsb-source="local"]').value, remoteEndpoint);
+    assert.equal(query('truth.adsb.tar1090').querySelectorAll('[data-adsb-source="local"]').length, 1);
+    assert.equal(query('truth.adsb.tar1090').querySelector('[data-adsb-exchange="adsb-fi"]').checked, false);
     assert.equal(await window.validateActiveConfiguration(), true);
 
     // A stale valid response must not unlock Save after a newer invalid edit.

@@ -86,9 +86,53 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validateConfig(config, baseline = null) {
+function linuxServicePathPolicy(environment = process.env) {
+  if (environment.VECTORWARP_LINUX_SERVICE !== '1') return null;
+  return Object.freeze({kind: 'systemd-linux',
+    recordingRoot: '/var/lib/vectorwarp/recordings',
+    hiddenReplayRoots: Object.freeze(['/home', '/root', '/run/user', '/tmp', '/var/tmp'])});
+}
+
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) &&
+    relative !== '..' && !path.isAbsolute(relative));
+}
+
+function nearestExistingRealPath(candidate) {
+  let current = path.resolve(candidate);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  try { return fs.realpathSync(current); }
+  catch (_) { return null; }
+}
+
+function servicePathWithin(root, candidate) {
+  if (!pathWithin(root, candidate)) return false;
+  if (!fs.existsSync(root)) return true;
+  const realRoot = nearestExistingRealPath(root);
+  const realCandidate = nearestExistingRealPath(candidate);
+  return !realRoot || !realCandidate || pathWithin(realRoot, realCandidate);
+}
+
+function servicePathHidden(roots, candidate) {
+  if (roots.some(root => pathWithin(root, candidate))) return true;
+  const realCandidate = nearestExistingRealPath(candidate);
+  return realCandidate !== null && roots.some(root => {
+    if (!fs.existsSync(root)) return false;
+    const realRoot = nearestExistingRealPath(root);
+    return realRoot !== null && pathWithin(realRoot, realCandidate);
+  });
+}
+
+function validateConfig(config, baseline = null, options = {}) {
   const errors = [];
   const notices = [];
+  const pathPolicy = options.pathPolicy === undefined ?
+    linuxServicePathPolicy(options.environment || process.env) : options.pathPolicy;
   const advise = (field, message) => notices.push({field, message});
   const inspectKeys = (value, name = 'configuration') => {
     if (name === 'configuration.capture.device.array_geometry') return;
@@ -185,7 +229,12 @@ function validateConfig(config, baseline = null) {
     if (rule.type === 'number') number(value, key, rule);
     if (rule.choices && !(rule.type === 'autoBoolean' && typeof value === 'boolean'))
       oneOf(value, key, rule.choices);
-    if (rule.readOnly && baseline && previous !== undefined && previous !== value)
+    // Arrays and objects returned by GET are distinct JavaScript references
+    // when submitted back through Apply.  Read-only means value equality, not
+    // object identity; otherwise an unchanged ordered ADS-B source list makes
+    // every unrelated live configuration change impossible.
+    if (rule.readOnly && baseline && previous !== undefined &&
+        JSON.stringify(previous) !== JSON.stringify(value))
       errors.push(`${key} is read-only: ${rule.readOnly}`);
   };
   inspectFields(root);
@@ -245,8 +294,17 @@ function validateConfig(config, baseline = null) {
   boolean(replay.state, 'capture.replay.state');
   boolean(replay.loop, 'capture.replay.loop');
   string(replay.file, 'capture.replay.file');
+  if (typeof replay.file === 'string' && !path.isAbsolute(replay.file))
+    errors.push('capture.replay.file must be a full absolute path');
+  if (pathPolicy?.kind === 'systemd-linux' && typeof replay.file === 'string' &&
+      path.isAbsolute(replay.file) &&
+      servicePathHidden(pathPolicy.hiddenReplayRoots, replay.file))
+    errors.push('capture.replay.file is hidden by the packaged Linux service sandbox; use /var/lib/vectorwarp/recordings/ or another service-readable system path');
   if (replay.format !== undefined)
     oneOf(replay.format, 'capture.replay.format', ['auto', 'blah2', 'mchq', 's16-interleaved', 's8-interleaved', 'usrp-blocks']);
+  if (replay.provenance !== undefined)
+    oneOf(replay.provenance, 'capture.replay.provenance',
+      ['legacy-unqualified', 'decision-grade']);
   if (replay.legacy_block_samples !== undefined)
     number(replay.legacy_block_samples, 'capture.replay.legacy_block_samples', {integer: true, min: 1, max: 262144});
   if (replay.format === 'usrp-blocks' && replay.legacy_block_samples === undefined)
@@ -683,6 +741,13 @@ function validateConfig(config, baseline = null) {
     if (fusion.direct_path_null_db !== undefined)
       number(fusion.direct_path_null_db,
         'process.surveillance_fusion.direct_path_null_db', {min: 0, max: 40});
+    if (fusion.manifold_file !== undefined &&
+        (typeof fusion.manifold_file !== 'string' || !fusion.manifold_file.trim()))
+      errors.push('process.surveillance_fusion.manifold_file must be a non-empty path');
+    if (fusion.manifold_file !== undefined &&
+        (fusion.mode !== 'coherent_beam_bank' ||
+         processConfig.performance?.acceleration === 'gpu-resident'))
+      errors.push('process.surveillance_fusion.manifold_file requires non-resident coherent_beam_bank fusion');
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
       if (device.type !== 'Kraken')
@@ -939,17 +1004,54 @@ function validateConfig(config, baseline = null) {
   const ais = requireObject(truth.ais, 'truth.ais');
   boolean(adsb.enabled, 'truth.adsb.enabled');
   string(adsb.tar1090, 'truth.adsb.tar1090');
-  if (classifyAdsbSource(adsb.tar1090).mode === 'explicit') {
+  const validateAdsbSource = (source, key) => {
+    const classification = classifyAdsbSource(source);
+    if (classification.mode !== 'explicit') return source;
     try {
-      if (typeof adsb.tar1090 === 'string' && /^local:(?!\d+(?:\/|$))/.test(adsb.tar1090))
+      if (typeof source === 'string' && /^local:(?!\d+(?:\/|$))/.test(source))
         throw new Error('Unknown local source');
-      sourceAddress(adsb.tar1090);
+      if (typeof source === 'string' && source.startsWith('exchange:')) {
+        const endpoint = new URL(source.slice('exchange:'.length));
+        if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname ||
+            endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+          throw new Error('Invalid exchange endpoint');
+        return `exchange:${endpoint.href}`;
+      }
+      return sourceAddress(source).href;
     }
-    catch (_) { errors.push('truth.adsb.tar1090: select a local source or enter a hostname, host:port or HTTP(S) address without credentials or a query'); }
+    catch (_) {
+      errors.push(`${key}: select a local source, enter a readsb address, or use exchange:https://... without credentials or a query`);
+      return null;
+    }
+  };
+  validateAdsbSource(adsb.tar1090, 'truth.adsb.tar1090');
+  if (adsb.sources !== undefined) {
+    if (!Array.isArray(adsb.sources) || adsb.sources.length < 1 || adsb.sources.length > 8)
+      errors.push('truth.adsb.sources must contain 1 to 8 source addresses');
+    else {
+      const unique = new Set();
+      adsb.sources.forEach((source, index) => {
+        string(source, `truth.adsb.sources.${index}`);
+        const identity = validateAdsbSource(source, `truth.adsb.sources.${index}`);
+        if (typeof source === 'string') {
+          if (unique.has(identity)) errors.push('truth.adsb.sources must not contain duplicates');
+          unique.add(identity);
+        }
+      });
+      if (adsb.sources.length > 1 && adsb.sources.includes('auto'))
+        errors.push('truth.adsb.sources: auto cannot be combined with explicit sources');
+    }
   }
+  if (adsb.source_timeout !== undefined) number(adsb.source_timeout,
+    'truth.adsb.source_timeout', {min: .1, max: 10});
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
+  if (adsb.association_lag_cpis !== undefined) number(adsb.association_lag_cpis,
+    'truth.adsb.association_lag_cpis', {integer: true, min: 0, max: 8});
+  if (adsb.provisional_event_time_uncertainty_s !== undefined)
+    number(adsb.provisional_event_time_uncertainty_s,
+      'truth.adsb.provisional_event_time_uncertainty_s', {min: 0, max: 5});
   if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
@@ -962,6 +1064,9 @@ function validateConfig(config, baseline = null) {
   string(save.path, 'save.path');
   if (typeof save.path === 'string' && (!path.isAbsolute(save.path) || !save.path.endsWith('/')))
     errors.push('save.path must be a full directory path ending in /');
+  if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
+      path.isAbsolute(save.path) && !servicePathWithin(pathPolicy.recordingRoot, save.path))
+    errors.push(`save.path must remain under ${pathPolicy.recordingRoot}/ for the packaged Linux service`);
   return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
     warnings: notices.map(notice => notice.message),
     estimatedMemoryBytes: Number.isFinite(estimatedBytes) ? estimatedBytes : null};
@@ -994,5 +1099,6 @@ function writeConfigAtomically(filename, config) {
   }
 }
 
-module.exports = {KRAKEN_MAX_CHANNELS, getDeviceProfiles, validateConfig, FIELD_RULES,
+module.exports = {KRAKEN_MAX_CHANNELS, getDeviceProfiles, validateConfig,
+  linuxServicePathPolicy, FIELD_RULES,
   writeConfigAtomically};

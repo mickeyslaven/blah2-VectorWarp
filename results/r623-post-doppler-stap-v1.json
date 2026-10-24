@@ -1,0 +1,333 @@
+{
+  "configuration": {
+    "doppler_radius": 1,
+    "diagonal_loading": 0.1,
+    "robust_energy_clip": 3.0,
+    "target_exclusion_radius": 1,
+    "doppler_look_offsets": [
+      0
+    ],
+    "beam_trials": 12,
+    "aggregation": "fixed_trial_mean"
+  },
+  "frames": 20,
+  "target_cells": [
+    {
+      "frame": 0,
+      "row": 8,
+      "column": 5,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 1,
+      "row": 8,
+      "column": 5,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 2,
+      "row": 8,
+      "column": 5,
+      "delay_km": 42.3456846925,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 3,
+      "row": 8,
+      "column": 6,
+      "delay_km": 42.4705982166,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 4,
+      "row": 8,
+      "column": 6,
+      "delay_km": 42.4705982166,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 5,
+      "row": 8,
+      "column": 7,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 6,
+      "row": 8,
+      "column": 7,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 7,
+      "row": 8,
+      "column": 7,
+      "delay_km": 42.5955117408,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 8,
+      "row": 8,
+      "column": 8,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 9,
+      "row": 8,
+      "column": 8,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 10,
+      "row": 8,
+      "column": 8,
+      "delay_km": 42.7204252649,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 11,
+      "row": 8,
+      "column": 9,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 12,
+      "row": 8,
+      "column": 9,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 13,
+      "row": 8,
+      "column": 9,
+      "delay_km": 42.8453387891,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 14,
+      "row": 8,
+      "column": 10,
+      "delay_km": 42.9702523133,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 15,
+      "row": 8,
+      "column": 10,
+      "delay_km": 42.9702523133,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 16,
+      "row": 8,
+      "column": 10,
+      "delay_km": 42.9702523133,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 17,
+      "row": 8,
+      "column": 11,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 18,
+      "row": 8,
+      "column": 11,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -144.048496327
+    },
+    {
+      "frame": 19,
+      "row": 8,
+      "column": 11,
+      "delay_km": 43.0951658375,
+      "doppler_hz": -144.048496327
+    }
+  ],
+  "target_score": 1.003301033506101,
+  "target_winning_trial": {
+    "beam": 10,
+    "doppler_look_offset": 0
+  },
+  "matched_control_p99": 1.878267295964194,
+  "whole_search_control_p99": 2.886471355019355,
+  "strict_control_p99": 2.886471355019355,
+  "margin_over_control_p99_db": -4.589359923560799,
+  "controls_exceeding_target": 147,
+  "whole_search_max": 3.085082740918751,
+  "trial_accounting": {
+    "signal_trials_per_path": 12,
+    "matched_control_paths": 8,
+    "whole_search_control_paths": 156,
+    "matched_control_signal_trials": 96,
+    "whole_search_signal_trials": 1872,
+    "parameter_grid_trials": 0
+  },
+  "covariance": [
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.21402412816607988
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.19153701281606594
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18385759270214977
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.16972327110905902
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18524389892714915
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.17963962815203416
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.20561545710106433
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18582929677604731
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.20349892306608197
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18249721117467477
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.1655105499262276
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18584171647858774
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.1824299089877379
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.19030486183623518
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.19951224670960557
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18182789725372325
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.19362889318446386
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.1784332917594615
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.1852826021500159
+    },
+    {
+      "raw_samples": 66,
+      "effective_weight": 66.0,
+      "clipped_samples": 0,
+      "dimension": 15,
+      "loading_value": 0.18398749391949745
+    }
+  ],
+  "schema": "vectorwarp-post-doppler-stap-v1",
+  "method": "robust-loaded post-Doppler STAP adaptive matched filter",
+  "candidate_only": true,
+  "parameter_selection": {
+    "policy": "frozen_on_r277",
+    "grid_trials": 0
+  },
+  "trajectory": "results/r623-clip-truth.json",
+  "replay": "/tmp/r623-post-doppler-cutout.json",
+  "replay_sha256": "b5e84a2f7d59d2c8a15758cf9f31ede5113a2d9e40b7ced28b39e17d2d417a6b",
+  "recording": "/var/lib/vectorwarp/recordings/kraken-clip-r623-1792615850195914417-292.mchq",
+  "trajectory_schema": "vectorwarp-clip-truth-trajectory-v1",
+  "calibrated_signal_time_bias": {
+    "delay_km": 0.02578255,
+    "doppler_hz": 7.053549
+  }
+}

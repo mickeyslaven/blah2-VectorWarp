@@ -86,6 +86,14 @@ Restart**. This saves the configuration and starts radar, including on the first
 **Save for later** saves without starting it; use `vectorwarp start` later to start the
 full stack with saved settings.
 
+Packaged Linux recording output stays below
+`/var/lib/vectorwarp/recordings/`, the directory shared by the non-root
+processor and API sandboxes. Replay files may also use another system-readable
+absolute path such as `/srv/radar/`; paths below `/home`, `/root`, `/run/user`,
+`/tmp`, or `/var/tmp` are unavailable to the packaged services and Settings
+rejects them before restart. Source builds do not inherit this systemd path
+policy.
+
 ### 3. Use controls and help
 
 The following launcher behavior is included in version 0.1.7 and newer.

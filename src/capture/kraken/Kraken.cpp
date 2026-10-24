@@ -12,6 +12,9 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 namespace
 {
@@ -45,6 +48,60 @@ void Kraken::request_clip(const blah2::IqClipRequest& request)
 blah2::IqClipStatus Kraken::clip_status() const
 {
   return clipRecorder->status();
+}
+
+Kraken::SamplePosition Kraken::sample_position() const
+{
+  return {samplePositionAvailable.load(std::memory_order_acquire),
+    sampleEpoch.load(std::memory_order_relaxed),
+    nextEpochSample.load(std::memory_order_relaxed),
+    sampleEpochEstimateNanoseconds.load(std::memory_order_relaxed)};
+}
+
+Source::SampleTimePosition Kraken::sample_time_position() const
+{
+  const auto position = sample_position();
+  return {position.available, position.epoch, position.nextSample, 0, fs};
+}
+
+std::string Kraken::recording_provenance_json() const
+{
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator=document.GetAllocator();
+  document.AddMember("schema","vectorwarp-kraken-recording-details-v1",allocator);
+  document.AddMember("receiver","Kraken",allocator);
+  rapidjson::Value endpoint(rapidjson::kObjectType);
+  endpoint.AddMember("host",rapidjson::Value(heimdallHost.c_str(),allocator),allocator);
+  endpoint.AddMember("port",heimdallPort,allocator);
+  endpoint.AddMember("deviceIdentityAvailable",false,allocator);
+  endpoint.AddMember("deviceIdentityReason","Heimdall V2 does not expose Kraken serial identity",allocator);
+  document.AddMember("heimdall",endpoint,allocator);
+  rapidjson::Value observed(rapidjson::kObjectType);
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  observed.AddMember("available",lastHeaderAvailable,allocator);
+  if(lastHeaderAvailable) {
+    observed.AddMember("phaseState",lastHeader.phaseState,allocator);
+    observed.AddMember("noiseSource",lastHeader.noiseSource,allocator);
+    observed.AddMember("frequencyChangeCounter",lastHeader.frequencyChangeCounter,allocator);
+    observed.AddMember("groupIndex",lastHeader.currentGroupIndex,allocator);
+    rapidjson::Value frequencies(rapidjson::kArrayType),gains(rapidjson::kArrayType);
+    for(float value:lastHeader.frequencies) frequencies.PushBack(value,allocator);
+    for(float value:lastHeader.gains) gains.PushBack(value,allocator);
+    observed.AddMember("perChannelFrequencyHz",frequencies,allocator);
+    observed.AddMember("perChannelGainDb",gains,allocator);
+    observed.AddMember("synchronized",HeimdallFrame::is_synchronized_data(lastHeader),allocator);
+  }
+  document.AddMember("observedFrame",observed,allocator);
+  rapidjson::Value conditioning(rapidjson::kObjectType);
+  conditioning.AddMember("sampleFormat","normalized-complex-float32",allocator);
+  conditioning.AddMember("dcRemoval","per-frame-per-channel-mean",allocator);
+  conditioning.AddMember("gainEqualization","attenuate-to-minimum-reported-channel-gain",allocator);
+  conditioning.AddMember("inputGainSource","heimdall-v2-per-frame-metadata",allocator);
+  conditioning.AddMember("alreadyAppliedToRecordedIq",true,allocator);
+  document.AddMember("conditioning",conditioning,allocator);
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer); document.Accept(writer);
+  return {buffer.GetString(),buffer.GetSize()};
 }
 
 void Kraken::start()
@@ -92,8 +149,13 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
         socketFd = -1;
       }
       if (!running) return;
-      recording_discontinuity("Kraken input connection was interrupted");
+      recording_epoch_discontinuity("Kraken input connection was interrupted");
       clipRecorder->discontinuity("Kraken input connection was interrupted");
+      samplePositionAvailable.store(false, std::memory_order_release);
+      {
+        std::lock_guard<std::mutex> lock(provenanceMutex);
+        lastHeaderAvailable=false;
+      }
       clear_buffers(buffers);
       std::cerr << "[Kraken] " << error.what()
         << "; retrying in 1 second" << std::endl;
@@ -106,6 +168,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
 {
   connect_heimdall();
   std::optional<uint32_t> frequencyChangeCounter;
+  std::vector<float> frequencies, gains;
   bool resetPending = false;
   while (running)
   {
@@ -127,22 +190,38 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
 
     if (frequencyChangeCounter &&
         *frequencyChangeCounter != header.frequencyChangeCounter) {
-      recording_discontinuity("Kraken input retuned during recording");
+      recording_epoch_discontinuity("Kraken input retuned during recording");
       clipRecorder->discontinuity("Kraken input retuned during clip recording");
+      samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
     }
     frequencyChangeCounter = header.frequencyChangeCounter;
     if (!HeimdallFrame::is_synchronized_data(header))
     {
-      recording_discontinuity("Kraken input synchronization was lost");
+      recording_epoch_discontinuity("Kraken input synchronization was lost");
       clipRecorder->discontinuity("Kraken input synchronization was lost during clip recording");
+      samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
       continue;
     }
+    if (!resetPending && ((!frequencies.empty() && frequencies != header.frequencies) ||
+        (!gains.empty() && gains != header.gains))) {
+      recording_epoch_discontinuity(
+        "Kraken input per-channel frequency or gain metadata changed");
+      clipRecorder->discontinuity(
+        "Kraken input per-channel frequency or gain metadata changed");
+      samplePositionAvailable.store(false, std::memory_order_release);
+      resetPending = true;
+    }
+    frequencies = header.frequencies;
+    gains = header.gains;
+    {
+      std::lock_guard<std::mutex> lock(provenanceMutex);
+      lastHeader=header; lastHeaderAvailable=true;
+    }
     if (resetPending)
     {
-      recording_discontinuity("Kraken input reset before synchronized data");
-      clipRecorder->discontinuity("Kraken input reset before synchronized clip data");
+      samplePositionAvailable.store(false, std::memory_order_release);
       clear_buffers(buffers);
       resetPending = false;
     }
@@ -151,12 +230,28 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     for (auto *buffer : buffers) buffer->lock();
     for (std::size_t channel = 0; channel < channels.size(); channel++)
       buffers[channel]->append_unlocked(channels[channel]);
+    blah2::KrakenClipRecorder::Position position;
+    const bool recorded = clipRecorder->ingest(headerBytes, std::move(metadata),
+      std::move(payload), header, &position);
+    if (recorded && position.available)
+    {
+      sampleEpoch.store(position.epoch, std::memory_order_relaxed);
+      nextEpochSample.store(position.nextSample, std::memory_order_relaxed);
+      sampleEpochEstimateNanoseconds.store(position.epochEstimateNanoseconds,
+        std::memory_order_relaxed);
+      samplePositionAvailable.store(true, std::memory_order_release);
+    }
+    else samplePositionAvailable.store(false, std::memory_order_release);
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
       (*it)->unlock();
 
-    record_block(channels);
-    clipRecorder->ingest(headerBytes, std::move(metadata), std::move(payload),
-      header);
+    Source::SampleTimePosition recordingStart;
+    if (recorded && position.available &&
+        position.nextSample >= header.samplesPerChannel)
+      recordingStart = {true, position.epoch,
+        position.nextSample - header.samplesPerChannel,
+        position.epochEstimateNanoseconds, fs};
+    record_block(channels, recordingStart);
   }
 }
 
