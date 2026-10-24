@@ -172,6 +172,19 @@ try {
     '/etc/vectorwarp/detection-manifold.json';
   persistGroup('kraken-measured-fusion', measuredBaseline, measuredFusion,
     ['process.surveillance_fusion.manifold_file']);
+  const collection = clone(measuredBaseline);
+  collection.truth.adsb.enabled = true;
+  collection.process.surveillance_fusion.detection_manifold_automation = {
+    enabled: true,
+    corpus_path: '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl',
+    validation_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-validation.jsonl',
+    candidate_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-candidate.json'
+  };
+  persistGroup('kraken-detection-manifold-collection', measuredBaseline, collection,
+    ['process.surveillance_fusion.detection_manifold_automation.enabled',
+      'process.surveillance_fusion.detection_manifold_automation.corpus_path',
+      'process.surveillance_fusion.detection_manifold_automation.validation_path',
+      'process.surveillance_fusion.detection_manifold_automation.candidate_path']);
   const bearingBaseline = clone(fusion);
   Object.assign(bearingBaseline.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true

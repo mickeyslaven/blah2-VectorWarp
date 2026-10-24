@@ -747,6 +747,29 @@ function validateConfig(config, baseline = null, options = {}) {
     if (fusion.manifold_file !== undefined &&
         !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
       errors.push('process.surveillance_fusion.manifold_file requires coherent surveillance fusion');
+    if (fusion.detection_manifold_automation !== undefined) {
+      const automation = requireObject(fusion.detection_manifold_automation,
+        'process.surveillance_fusion.detection_manifold_automation');
+      if (automation.enabled !== undefined)
+        boolean(automation.enabled,
+          'process.surveillance_fusion.detection_manifold_automation.enabled');
+      for (const name of ['corpus_path', 'validation_path', 'candidate_path']) {
+        const value = automation[name];
+        if (value !== undefined && (typeof value !== 'string' || !path.isAbsolute(value)))
+          errors.push(`process.surveillance_fusion.detection_manifold_automation.${name} must be an absolute path`);
+      }
+      if (automation.enabled === true) {
+        const corpusPath = automation.corpus_path ||
+          processConfig.bearing?.manifold_recorder?.path;
+        if (typeof corpusPath !== 'string' || !path.isAbsolute(corpusPath))
+          errors.push('enabled detection manifold automation requires an absolute corpus path');
+        if (!['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
+          errors.push('detection manifold automation requires coherent surveillance fusion');
+        if (device.type !== 'Kraken' || processConfig.detection?.enable !== true ||
+            root.truth?.adsb?.enabled !== true)
+          errors.push('detection manifold automation requires Kraken coherent detection and ADS-B truth');
+      }
+    }
     if (fusion.manifold_file !== undefined) {
       const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
       const commonFixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
