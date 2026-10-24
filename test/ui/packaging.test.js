@@ -138,6 +138,9 @@ assert.match(packageScript,
 assert.match(packageScript,
   /find "\$STAGE\/opt\/vectorwarp\/libexec" -maxdepth 1 -type f -name '\*\.js' -exec chmod 0644/,
   'Every packaged Node helper must be excluded from executable RPM dependency scanning.');
+assert.match(packageScript, /packaged helper is missing/);
+assert.match(packageScript, /does not use its stable integration helper/);
+assert.match(packageScript, /points into the removed release libexec directory/);
 assert.doesNotMatch(packageScript,
   /ExecStartPre=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
   'Packaging must not restore the retired restart-looping receiver pre-check.');

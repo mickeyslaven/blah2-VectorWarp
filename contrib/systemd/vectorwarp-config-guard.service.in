@@ -4,7 +4,7 @@ Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/node @PREFIX@/current/libexec/vectorwarp-config-guard.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/config-guard.json
+ExecStart=/usr/bin/node @PREFIX@/libexec/vectorwarp-config-guard.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/config-guard.json
 TimeoutStartSec=45
 NoNewPrivileges=yes
 PrivateTmp=yes

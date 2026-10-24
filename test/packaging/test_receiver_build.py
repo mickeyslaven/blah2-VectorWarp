@@ -524,6 +524,11 @@ endif()
         self.assertIn('Environment=VECTORWARP_LINUX_SERVICE=1', api_unit)
         processor_unit = (stage / 'usr/lib/systemd/system/vectorwarp-processor.service').read_text()
         self.assertIn('Environment=VECTORWARP_LINUX_SERVICE=1', processor_unit)
+        for helper in ('vectorwarp-health-watchdog.js', 'vectorwarp-config-guard.js'):
+            self.assertTrue((stage / 'opt/vectorwarp/libexec' / helper).is_file())
+            unit = (stage / 'usr/lib/systemd/system' / f'{helper[:-3]}.service').read_text()
+            self.assertIn(f'/opt/vectorwarp/libexec/{helper}', unit)
+            self.assertNotIn('/opt/vectorwarp/current/libexec/', unit)
         self.assertTrue((stage / 'opt/vectorwarp/libexec/vectorwarp-sudoers-migrate').is_file())
         self.assertNotIn('vectorwarp-restart.service', (stage / 'etc/sudoers.d/vectorwarp').read_text())
         fresh_stage = self.temp / 'stage-management-default'

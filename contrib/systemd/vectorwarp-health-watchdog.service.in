@@ -6,7 +6,7 @@ After=network-online.target vectorwarp-api.service vectorwarp-processor.service
 [Service]
 Type=oneshot
 TimeoutStartSec=180
-ExecStart=/usr/bin/node @PREFIX@/current/libexec/vectorwarp-health-watchdog.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/health-watchdog.json
+ExecStart=/usr/bin/node @PREFIX@/libexec/vectorwarp-health-watchdog.js @SYSCONFDIR@/config.yml /var/lib/vectorwarp-api/health-watchdog.json
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

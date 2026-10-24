@@ -243,6 +243,14 @@ run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-
 # helper cannot silently reintroduce an RPM /usr/bin/node or /usr/bin/env
 # dependency merely by carrying an executable shebang.
 run find "$STAGE/opt/vectorwarp/libexec" -maxdepth 1 -type f -name '*.js' -exec chmod 0644 '{}' +
+for helper in vectorwarp-health-watchdog.js vectorwarp-config-guard.js; do
+  [[ -f $STAGE/opt/vectorwarp/libexec/$helper ]] || die "packaged helper is missing: $helper"
+  unit=${helper%.js}.service
+  grep -q "/opt/vectorwarp/libexec/$helper" "$STAGE/usr/lib/systemd/system/$unit" ||
+    die "packaged $unit does not use its stable integration helper"
+  ! grep -q '/opt/vectorwarp/current/libexec/' "$STAGE/usr/lib/systemd/system/$unit" ||
+    die "packaged $unit points into the removed release libexec directory"
+done
 
 printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
