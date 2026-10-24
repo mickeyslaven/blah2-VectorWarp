@@ -52,10 +52,8 @@ REVIEW_PURPOSE = "first-party-build-only"
 REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
 REVIEW_MAX_BYTES = 64 * 1024
 REVIEW_PATH = re.compile(
-    r"(?:CMakeLists\.txt|script/build-macos\.sh|"
-    r"cmake/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*|"
-    r"(?:third_party|third-party|vendor)/[A-Za-z0-9][A-Za-z0-9._-]*"
-    r"(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*)")
+    r"(?:CMakeLists\.txt|script/build-macos\.sh|cmake/ReceiverCohort\.h\.in|"
+    r"cmake/[A-Za-z0-9][A-Za-z0-9._-]*\.cmake)")
 
 
 def sha256(path):

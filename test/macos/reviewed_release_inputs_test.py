@@ -109,14 +109,14 @@ class ReviewedBuildChangesTest(unittest.TestCase):
                 self.verify(self.record(baseline_source_id="b" * 40))
 
     def test_rejects_unsafe_guarded_paths(self):
-        record = self.record(files={"cmake/../outside.cmake": "a" * 64})
-        self.write_receipt(record)
-        with self.assertRaisesRegex(ValueError, "unsafe guarded build path"):
-            inputs.reviewed_build_changes(
-                self.checkout, self.source_id, ["cmake/../outside.cmake"], self.receipt)
-        record = self.record(files={"cmake/../outside.cmake": "a" * 64})
-        with self.assertRaisesRegex(ValueError, "exactly match|unsafe path|guarded paths differ"):
-            self.verify(record)
+        for path in ("cmake/../outside.cmake", "vendor/unreviewed.c",
+                     "third_party/unreviewed.c"):
+            with self.subTest(path=path):
+                record = self.record(files={path: "a" * 64})
+                self.write_receipt(record)
+                with self.assertRaisesRegex(ValueError, "unsafe guarded build path"):
+                    inputs.reviewed_build_changes(
+                        self.checkout, self.source_id, [path], self.receipt)
 
     def test_accepts_exact_review_of_other_guarded_build_inputs(self):
         (self.checkout / "cmake").mkdir()
