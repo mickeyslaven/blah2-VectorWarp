@@ -69,6 +69,13 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+# The UHD dependency owns this declaration. Materialize it here as well as
+# relying on RPM's transaction integration so our following membership update
+# is independent of sysusers trigger ordering.
+if [ -f /usr/lib/sysusers.d/uhd.conf ] &&
+    command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers /usr/lib/sysusers.d/uhd.conf
+fi
 if getent group usrp >/dev/null 2>&1 &&
     getent passwd vectorwarp >/dev/null 2>&1; then
   usermod --append --groups usrp vectorwarp

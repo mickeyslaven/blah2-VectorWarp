@@ -1327,7 +1327,7 @@ try
           if (captureSamplePositionAvailable &&
               capture->requires_usrp_time_provenance())
             eventTime = blah2::usrp_cpi_midpoint_time(
-              captureDeviceTimeEpochTick, captureFirstEpochSample,
+              captureEpoch, captureDeviceTimeEpochTick, captureFirstEpochSample,
               captureEndEpochSample, fs, captureClockSource,
               captureTimeSource, captureMotherboard, captureSubdevices);
           else if (captureSamplePositionAvailable &&

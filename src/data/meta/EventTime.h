@@ -100,13 +100,13 @@ inline EventTimeProvenance hackrf_cpi_sample_epoch(uint64_t epoch,
   return value;
 }
 
-inline EventTimeProvenance usrp_cpi_midpoint_time(int64_t epochTick,
-  uint64_t firstSample, uint64_t endSample, uint32_t sampleRate,
+inline EventTimeProvenance usrp_cpi_midpoint_time(uint64_t epoch,
+  int64_t epochTick, uint64_t firstSample, uint64_t endSample, uint32_t sampleRate,
   std::string clockSource, std::string timeSource,
   std::string motherboard, std::string subdevices)
 {
   auto value = usrp_event_time_unavailable();
-  value.epoch = 0;
+  value.epoch = epoch;
   value.firstSample = firstSample;
   value.endSample = endSample;
   value.sampleRate = sampleRate;

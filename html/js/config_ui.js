@@ -1816,7 +1816,8 @@ function renderUsrpStartup(status, target = document.getElementById('receiver-st
     status.processor?.input === 'live' ? status.processor : null;
   const receipt = processor?.receiverStartup;
   if (!processor) message.textContent = 'No current USRP status. Saved settings apply at startup.';
-  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (processor.state === 'error') message.textContent =
+    `Receiver error: ${processor.error} Reconnect the USRP if it was unplugged, then run vectorwarp restart.`;
   else if (!receipt) message.textContent = 'USRP startup readback unavailable. Rebuild UHD support to see it.';
   else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through UHD…';
   else if (!receipt.readbackAvailable) message.textContent = 'USRP started without qualified UHD setting readback.';

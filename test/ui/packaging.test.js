@@ -126,6 +126,8 @@ assert.match(rpmSpec, /^Requires:\s+uhd-firmware$/m,
   'Fedora packages need the matching B210 firmware image subpackage.');
 assert.match(rpmSpec, /usermod --append --groups usrp vectorwarp/,
   'Fedora UHD grants B210 device nodes to the usrp group; the processor account must join it.');
+assert.match(rpmSpec, /systemd-sysusers \/usr\/lib\/sysusers\.d\/uhd\.conf/,
+  'Fedora package setup must not depend on UHD sysusers transaction ordering.');
 assert.match(nativeInstaller,
   /\$RECEIVER_TYPES == \*Usrp\* && \$TARGET_DISTRO == fedora[\s\S]*usermod --append --groups usrp vectorwarp/,
   'A direct Fedora source install needs the same official UHD device-node group.');

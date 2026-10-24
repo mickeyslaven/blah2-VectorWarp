@@ -47,7 +47,10 @@ case "$package" in
     as_root apt-get --yes install "$package" ;;
   *.rpm)
     command -v dnf >/dev/null || die 'dnf is required for an RPM smoke test'
-    as_root dnf --assumeyes install "$package" ;;
+    as_root dnf --assumeyes install "$package"
+    id -nG vectorwarp | tr ' ' '\n' | grep -Fxq usrp ||
+      die 'Fedora processor account cannot access official UHD device nodes'
+    ;;
   *) die 'package must end in .deb or .rpm' ;;
 esac
 

@@ -187,7 +187,7 @@ def config(receiver, channels, recording, api_port, sink_ports, loop=False, mism
         device.update(agcSetPoint=-20, bandwidthNumber=5, gainReduction=[50, 45],
                       lnaState=1, dabNotch=False, rfNotch=False)
     elif receiver == "Usrp":
-        device.update(address="127.0.0.1", subdev="A:A A:B", antenna=["RX2", "RX2"], gain=[20.0, 20.0])
+        device.update(address="type=b200", subdev="A:A A:B", antenna=["RX2", "RX2"], gain=[20.0, 20.0])
     elif receiver == "HackRF":
         device.update(serial=["offline-reference", "offline-surveillance"], gain_lna=[0, 0],
                       gain_vga=[0, 0], amp_enable=[False, False])
