@@ -61,6 +61,7 @@ public:
   blah2::IqClipStatus clip_status() const;
   SamplePosition sample_position() const;
   Source::SampleTimePosition sample_time_position() const override;
+  std::vector<double> actual_gain_db() const;
   std::string recording_provenance_json() const override;
 };
 

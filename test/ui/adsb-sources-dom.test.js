@@ -3,7 +3,7 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
-const {JSDOM} = require('jsdom');
+const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
 const {setupDefaults} = require('../../api/config-store');
 

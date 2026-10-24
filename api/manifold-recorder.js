@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const {compatibilityFingerprint} = require('./manifold-identity');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalize = value => ((value % 360) + 360) % 360;
@@ -28,9 +29,12 @@ function azimuthElevation(site, aircraft) {
 }
 
 function validateEvidence(frame) {
-  if (!frame || !['vectorwarp-manifold-evidence-v1', 'vectorwarp-manifold-evidence-v2'].includes(frame.schema) ||
+  if (!frame || !['vectorwarp-manifold-evidence-v1', 'vectorwarp-manifold-evidence-v2',
+      'vectorwarp-manifold-evidence-v3'].includes(frame.schema) ||
       !finite(frame.timestamp) || !finite(frame.frequency_hz) || frame.frequency_hz <= 0 ||
       !Number.isInteger(frame.channels) || frame.channels < 2 || frame.channels > 8 ||
+      !Array.isArray(frame.actual_gain_db)||frame.actual_gain_db.length!==frame.channels||
+      frame.actual_gain_db.some(value=>!finite(value))||
       !Array.isArray(frame.reference_weights) || frame.reference_weights.length !== frame.channels ||
       frame.reference_weights.some(value => !Array.isArray(value) || value.length !== 2 ||
         !value.every(finite)) || !Array.isArray(frame.data) || frame.data.length > 65536)
@@ -43,7 +47,7 @@ function validateEvidence(frame) {
         !finite(state.coherent_gain_db) || !finite(state.scale) || state.scale < 0)
       throw new Error('Invalid reference diagnostic state');
   }
-  if (frame.schema === 'vectorwarp-manifold-evidence-v2') {
+  if (frame.schema !== 'vectorwarp-manifold-evidence-v1') {
     const replay = frame.bearing_replay;
     if (!replay || !['coherent_beam_bank', 'covariance_mvdr'].includes(replay.method) ||
         (replay.reference_anchor !== undefined &&
@@ -60,13 +64,33 @@ function validateEvidence(frame) {
         row.response.length !== frame.channels || row.response.some(value =>
           !Array.isArray(value) || value.length !== 2 || !value.every(finite)))
       throw new Error('Invalid manifold evidence row');
-    if (frame.schema === 'vectorwarp-manifold-evidence-v2' &&
+    if (frame.schema !== 'vectorwarp-manifold-evidence-v1' &&
         frame.bearing_replay.method === 'covariance_mvdr' &&
         (!Number.isInteger(row.covariance_samples) || row.covariance_samples < 1 ||
          !Array.isArray(row.covariance) || row.covariance.length !== frame.channels ||
          row.covariance.some(line => !Array.isArray(line) || line.length !== frame.channels ||
            line.some(value => !Array.isArray(value) || value.length !== 2 || !value.every(finite)))))
       throw new Error('Invalid manifold covariance evidence');
+    if (row.detection_context !== undefined) {
+      const context = row.detection_context, cfar = context?.cfar;
+      if (!context || context.same_iq !== true || !Array.isArray(context.nuisance) ||
+          context.nuisance.some(item => !Array.isArray(item?.response) ||
+            item.response.length !== frame.channels || item.response.some(value =>
+              !Array.isArray(value) || value.length !== 2 || !value.every(finite)) ||
+            !finite(item.baseline_statistic) ||
+            typeof item.baseline_detected !== 'boolean') ||
+          !finite(context.target?.baseline_statistic) ||
+          typeof context.target.baseline_detected !== 'boolean' ||
+          !finite(cfar?.pfa) || cfar.pfa <= 0 || cfar.pfa >= 1 ||
+          !Number.isInteger(cfar.training_cells) || cfar.training_cells < 1 ||
+          !finite(cfar.effective_trials) || cfar.effective_trials < 1 ||
+          !finite(cfar.baseline_threshold) ||
+          !Number.isInteger(row.covariance_samples) || row.covariance_samples < 1 ||
+          !Array.isArray(row.covariance) || row.covariance.length !== frame.channels ||
+          row.covariance.some(line => !Array.isArray(line) || line.length !== frame.channels ||
+            line.some(value => !Array.isArray(value) || value.length !== 2 || !value.every(finite))))
+        throw new Error('Invalid same-IQ detection context');
+    }
   }
   return frame;
 }
@@ -83,13 +107,26 @@ function automaticallyEligible(config) {
 
 function fingerprintDescriptor(config) {
   const options = config.process?.bearing?.manifold_recorder || {};
-  const heimdall = config.capture?.device?.heimdall || {};
+  const device = config.capture?.device || {}, heimdall = device.heimdall || {};
+  const channels = device.surveillance_channels;
+  let requestedChannelGains = null, requestedCaptureChannelGains;
+  if (Array.isArray(heimdall.channel_gains)) {
+    if (Array.isArray(channels) && heimdall.channel_gains.length === device.channel_count &&
+        channels.every(channel => Number.isInteger(channel) && channel >= 0 &&
+          channel < heimdall.channel_gains.length)) {
+      requestedCaptureChannelGains = [...heimdall.channel_gains];
+      requestedChannelGains = channels.map(channel => heimdall.channel_gains[channel]);
+    } else if (Array.isArray(channels) && heimdall.channel_gains.length === channels.length) {
+      requestedChannelGains = [...heimdall.channel_gains];
+    }
+  }
   return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
     receiver_gain_v2: {requested_common_gain: heimdall.gain ?? 'keep',
-      requested_channel_gains: Array.isArray(heimdall.channel_gains) ?
-        [...heimdall.channel_gains] : null},
-    surveillance_channels: config.capture?.device?.surveillance_channels,
-    array_geometry: config.capture?.device?.array_geometry,
+      requested_channel_gains: requestedChannelGains,
+      ...(requestedCaptureChannelGains ?
+        {requested_capture_channel_gains: requestedCaptureChannelGains} : {})},
+    surveillance_channels: channels,
+    array_geometry: device.array_geometry,
     receiver: config.location?.rx, transmitter: config.location?.tx,
     bearing_replay_v1: {method: config.process?.bearing?.method,
       reference_anchor: config.process?.bearing?.reference_anchor,
@@ -108,6 +145,40 @@ function fingerprintDescriptor(config) {
 
 function siteFingerprint(config) {
   return crypto.createHash('sha256').update(JSON.stringify(fingerprintDescriptor(config))).digest('hex');
+}
+
+function manifoldIdentity(config, actualGainDb, frequencyHz = config.capture?.fc,
+  sampleRateHz = config.capture?.fs) {
+  const device = config.capture?.device || {}, channels = device.surveillance_channels;
+  const heimdall = device.heimdall || {}, geometry = device.array_geometry || {};
+  if (!finite(frequencyHz) || frequencyHz <= 0 || !finite(sampleRateHz) || sampleRateHz <= 0 ||
+      !Array.isArray(channels) || !channels.length ||
+      !Array.isArray(actualGainDb) || actualGainDb.length !== channels.length ||
+      actualGainDb.some(value => !finite(value)) || !finite(geometry.x_axis_bearing_deg_true) ||
+      !Array.isArray(geometry.elements)) throw new Error('Invalid measured manifold identity');
+  let requested;
+  if (Array.isArray(heimdall.channel_gains) && heimdall.channel_gains.length === device.channel_count)
+    requested = channels.map(channel => heimdall.channel_gains[channel]);
+  else if (finite(heimdall.gain) && heimdall.gain >= 0)
+    requested = channels.map(() => heimdall.gain);
+  else throw new Error('Measured manifold identity requires explicit fixed requested gains');
+  if (requested.some(value => !finite(value) || value < 0 || value > 50))
+    throw new Error('Invalid requested gain in measured manifold identity');
+  const byChannel = new Map(geometry.elements.map(element => [element?.daq_channel, element]));
+  const positions = channels.map(channel => byChannel.get(channel)?.position);
+  if (positions.some(position => !Array.isArray(position) || position.length !== 3 ||
+      position.some(value => !finite(value)))) throw new Error('Invalid geometry in measured manifold identity');
+  const location = value => [value?.latitude,value?.longitude,value?.altitude];
+  const receiver=location(config.location?.rx),transmitter=location(config.location?.tx);
+  if(receiver.some(value=>!finite(value))||transmitter.some(value=>!finite(value)))
+    throw new Error('Invalid fixed illuminator identity');
+  const identity = {frequency_hz: frequencyHz, sample_rate_hz: sampleRateHz,
+    channel_mapping: [...channels],
+    requested_gain_db: requested, actual_gain_db: [...actualGainDb], positions_m: positions,
+    x_axis_bearing_deg_true: geometry.x_axis_bearing_deg_true,
+    receiver_location:receiver,transmitter_location:transmitter};
+  identity.compatibility_fingerprint = compatibilityFingerprint(identity);
+  return identity;
 }
 
 class ManifoldRecorder {
@@ -279,6 +350,10 @@ class ManifoldRecorder {
     ++this.state.frames;
     await this.recordReference(frame);
     if (!frame.data.length) return;
+    const identity = manifoldIdentity(this.config, frame.actual_gain_db, frame.frequency_hz,
+      frame.sample_rate_hz);
+    const identityFingerprint = crypto.createHash('sha256').update(JSON.stringify({
+      configuration: fingerprintDescriptor(this.config), identity})).digest('hex');
     const [raw, delayDoppler] = await Promise.all([
       this.adsbSource.get('aircraft'), this.adsbSource.get('delayDoppler')]);
     const aircraftByHex = new Map((raw.aircraft || []).map(item => [item.hex, item]));
@@ -333,10 +408,11 @@ class ManifoldRecorder {
       if (usedEvidence.has(candidate.index) || usedAircraft.has(candidate.icao)) continue;
       usedEvidence.add(candidate.index); usedAircraft.add(candidate.icao);
       const evidence = frame.data[candidate.index];
-      records.push({schema: 'vectorwarp-manifold-sample-v1', recorded_at: new Date().toISOString(),
+      records.push({schema: 'vectorwarp-manifold-sample-v2', recorded_at: new Date().toISOString(),
         radar_timestamp_ms: frame.timestamp, frequency_hz: frame.frequency_hz,
         sample_rate_hz: frame.sample_rate_hz, channels: frame.channels,
-        config_fingerprint: this.fingerprint,
+        config_fingerprint: identityFingerprint,
+        manifold_identity: identity,
         receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2,
         icao: candidate.icao,
         flight: typeof candidate.aircraft.flight === 'string' ? candidate.aircraft.flight.trim() : '',
@@ -349,12 +425,27 @@ class ManifoldRecorder {
           doppler_error_hz: candidate.dopplerError, normalized_error: Math.sqrt(candidate.score)},
         detection: {cell: evidence.cell, delay_km: evidence.delay_km,
           doppler_hz: evidence.doppler_hz, snr_db: evidence.snr_db},
+        configuration: {frequency_hz: frame.frequency_hz,
+          sample_rate_hz: frame.sample_rate_hz,
+          config_fingerprint: identityFingerprint,
+          receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2},
+        support: {adsb_label_only: true, covariance_samples: evidence.covariance_samples || 0,
+          local_nuisance_cells: evidence.detection_context?.nuisance?.length || 0},
+        uncertainty: {truth_age_s: Math.abs(frame.timestamp / 1000 - candidate.truth.timestamp),
+          delay_error_km: candidate.delayError, doppler_error_hz: candidate.dopplerError,
+          normalized_match_error: Math.sqrt(candidate.score)},
         direct_path_local_azimuth_deg: normalize(orientation - direct.bearingDeg),
         response: evidence.response, reference_weights: frame.reference_weights,
         ...(frame.reference_state ? {reference_state: frame.reference_state} : {}),
         ...(frame.bearing_replay ? {bearing_replay: frame.bearing_replay} : {}),
         ...(evidence.covariance ? {covariance: evidence.covariance,
           covariance_samples: evidence.covariance_samples} : {})});
+      if (evidence.covariance || evidence.detection_context) {
+        records.at(-1).local_context = {
+          ...(evidence.covariance ? {covariance: evidence.covariance,
+            covariance_samples: evidence.covariance_samples} : {}),
+          ...(evidence.detection_context ? {detection: evidence.detection_context} : {})};
+      }
     }
     this.state.unmatched += frame.data.length - usedEvidence.size;
     if (!records.length) return;
@@ -372,5 +463,5 @@ function createManifoldRecorder(config, adsbSource, dependencies) {
   return new ManifoldRecorder(config, adsbSource, dependencies);
 }
 
-module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor, siteFingerprint,
+module.exports = {azimuthElevation, validateEvidence, automaticallyEligible, fingerprintDescriptor, siteFingerprint, manifoldIdentity,
   ManifoldRecorder, createManifoldRecorder};

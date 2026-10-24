@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
 const {evaluateManifoldCandidate, summarizeManifoldProgress} = require('./manifold-automation');
+const {compatibilityFingerprint} = require('./manifold-identity');
 const {setupDefaults, readConfig, saveConfig} = require('./config-store');
 
 const polar = value => [Math.cos(value), Math.sin(value)];
@@ -21,6 +22,12 @@ process: {surveillance_fusion: {mode: 'coherent_beam_bank', direct_path_null_db:
   bearing: {scan_beams: 8, channel_mapping: [0, 1, 2], manifold_recorder: {
     max_elevation_deg: 15, max_delay_error_km: .25,
     max_doppler_error_hz: 5, max_truth_age_s: 3}}}};
+const identity = {frequency_hz: 539000000, sample_rate_hz: 2400000,
+  channel_mapping: [0, 1, 2], requested_gain_db: [14, 14, 14],
+  actual_gain_db: [14, 14, 14], positions_m: [point(0), point(120), point(240)],
+  receiver_location: [40, -80, 300], transmitter_location: [40.1, -79.9, 400],
+  x_axis_bearing_deg_true: 80};
+identity.compatibility_fingerprint = compatibilityFingerprint(identity);
 
 const samples = [];
 for (let bin = 0; bin < 8; ++bin) for (let pass = 0; pass < 12; ++pass) {
@@ -29,7 +36,9 @@ for (let bin = 0; bin < 8; ++bin) for (let pass = 0; pass < 12; ++pass) {
   const response = [common, common + .9 * Math.cos(local * Math.PI / 180) + .3,
     common + 1.2 * Math.sin(local * Math.PI / 180) - .4].map(polar);
   samples.push({schema: 'vectorwarp-manifold-sample-v1', frequency_hz: 539000000,
+    sample_rate_hz: 2400000,
     channels: 3, config_fingerprint: 'automatic-test', icao: `${bin.toString(16)}${pass.toString(16)}`,
+    manifold_identity: identity,
     radar_timestamp_ms: (bin * 100 + pass) * 300000,
     direct_path_local_azimuth_deg: 22.5,
     truth: {local_azimuth_deg: local, bearing_deg_true: (80 - local + 360) % 360,

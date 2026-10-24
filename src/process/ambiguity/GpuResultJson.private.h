@@ -253,8 +253,9 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  uint64_t referenceFrames,uint64_t referenceUpdates,double coherentFraction,double coherentGainDb,double referenceScale,
  uint32_t bearingMethod,uint32_t bearingReferenceAnchor,uint32_t bearingScanBeams,
  uint32_t bearingGuardRadius,uint32_t bearingTrainingRadius,
- double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping){
- shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);
+ double bearingDiagonalLoading,View<uint32_t> bearingChannelMapping,
+ View<double> actualGainDb){
+ shape(detectionsView);shape(cells);shape(channelMaps);shape(referenceWeights);shape(actualGainDb);
  require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
   rows&&columns&&channels>=2&&channels<=8,"Invalid manifold evidence geometry");
  const uint64_t count=uint64_t(rows)*columns;
@@ -265,8 +266,9 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
   std::isfinite(coherentGainDb)&&std::isfinite(referenceScale)&&referenceScale>=0,
   "Invalid reference diagnostic state");
  require(bearingMethod<=1&&bearingReferenceAnchor<=2&&bearingScanBeams>=4&&
-  bearingScanBeams<=127&&bearingChannelMapping.count==channels,
+  bearingScanBeams<=127&&bearingChannelMapping.count==channels&&actualGainDb.count==channels,
   "Invalid manifold replay configuration");
+ for(size_t i=0;i<actualGainDb.count;++i)finite(actualGainDb.data[i]);
  std::array<bool,8> used{};for(size_t i=0;i<bearingChannelMapping.count;++i){
   require(bearingChannelMapping.data[i]<channels&&!used[bearingChannelMapping.data[i]],
    "Invalid manifold replay mapping");used[bearingChannelMapping.data[i]]=true;}
@@ -278,6 +280,9 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v2");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);
+ w.Key("actual_gain_db");w.StartArray();
+ for(size_t i=0;i<actualGainDb.count;++i)w.Double(actualGainDb.data[i]);
+ w.EndArray();
  w.Key("bearing_replay");w.StartObject();w.Key("method");
  w.String(bearingMethod==1?"covariance_mvdr":"coherent_beam_bank");
  w.Key("reference_anchor");w.String(bearingReferenceAnchor==2?"fixed_site_projected":

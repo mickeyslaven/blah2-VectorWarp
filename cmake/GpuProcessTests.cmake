@@ -108,7 +108,7 @@ add_test(NAME gpuDriverDiagnostics COMMAND ${Python3_EXECUTABLE}
 set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)
 
 
-# CPU-only ABI5 and result-publication regressions; no device/module is loaded.
+# CPU-only resident ABI10 and result-publication regressions; no device/module is loaded.
 add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
 target_compile_features(testGpuResidentWire PRIVATE cxx_std_17)

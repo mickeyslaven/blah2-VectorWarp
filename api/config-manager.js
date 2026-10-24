@@ -745,9 +745,22 @@ function validateConfig(config, baseline = null, options = {}) {
         (typeof fusion.manifold_file !== 'string' || !fusion.manifold_file.trim()))
       errors.push('process.surveillance_fusion.manifold_file must be a non-empty path');
     if (fusion.manifold_file !== undefined &&
-        (fusion.mode !== 'coherent_beam_bank' ||
-         processConfig.performance?.acceleration === 'gpu-resident'))
-      errors.push('process.surveillance_fusion.manifold_file requires non-resident coherent_beam_bank fusion');
+        !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
+      errors.push('process.surveillance_fusion.manifold_file requires coherent surveillance fusion');
+    if (fusion.manifold_file !== undefined) {
+      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const commonFixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
+      const vectorFixed=Array.isArray(heimdall.channel_gains)&&
+        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
+      if(heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')
+        errors.push('measured surveillance manifold requires capture.device.heimdall.gain_control: fixed');
+      if(!commonFixed&&!vectorFixed)
+        errors.push('measured surveillance manifold requires an explicit fixed requested gain vector');
+      if(geometry.mapping_confirmed!==true||geometry.geometry_confirmed!==true||
+         geometry.orientation_confirmed!==true)
+        errors.push('measured surveillance manifold requires confirmed channel mapping, geometry, and orientation');
+    }
     if (fusion.mode === 'coherent_beam_bank' || fusion.mode === 'noise_whitened_beam_bank') {
       const label = fusion.mode;
       if (device.type !== 'Kraken')
@@ -861,6 +874,17 @@ function validateConfig(config, baseline = null, options = {}) {
     if (bearing.manifold_file !== undefined &&
         (typeof bearing.manifold_file !== 'string' || !bearing.manifold_file.trim()))
       errors.push('process.bearing.manifold_file must be a non-empty path');
+    if (bearing.manifold_file !== undefined) {
+      const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
+      const fixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
+      const vector=Array.isArray(heimdall.channel_gains)&&
+        heimdall.channel_gains.length===device.channel_count&&
+        heimdall.channel_gains.every(value=>typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=50);
+      if((heimdall.gain_control!==undefined&&heimdall.gain_control!=='fixed')||(!fixed&&!vector))
+        errors.push('measured bearing manifold requires an explicit fixed requested gain vector');
+      if(geometry.mapping_confirmed!==true||geometry.geometry_confirmed!==true||geometry.orientation_confirmed!==true)
+        errors.push('measured bearing manifold requires confirmed channel mapping, geometry, and orientation');
+    }
     if (bearing.channel_mapping !== undefined && (!Array.isArray(bearing.channel_mapping) ||
         bearing.channel_mapping.some(value => !Number.isInteger(value) || value < 0 || value > 7) ||
         new Set(bearing.channel_mapping).size !== bearing.channel_mapping.length))

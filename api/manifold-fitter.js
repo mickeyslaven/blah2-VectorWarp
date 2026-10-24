@@ -1,5 +1,7 @@
 'use strict';
 
+const {validIdentity} = require('./manifold-identity');
+
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
 const scale = (a, value) => [a[0] * value, a[1] * value];
@@ -63,10 +65,12 @@ function summarizeCoverage(samples, sectors = 8) {
 }
 
 function validateSample(sample) {
-  if (!sample || sample.schema !== 'vectorwarp-manifold-sample-v1' ||
+  if (!sample || !['vectorwarp-manifold-sample-v1', 'vectorwarp-manifold-sample-v2'].includes(sample.schema) ||
       !finite(sample.frequency_hz) || !Number.isInteger(sample.channels) ||
       !finite(sample.truth?.local_azimuth_deg) || !finite(sample.truth?.elevation_deg) ||
       !finite(sample.direct_path_local_azimuth_deg) ||
+      !validIdentity(sample.manifold_identity, sample.frequency_hz,
+        sample.sample_rate_hz, sample.channels) ||
       !finite(sample.detection?.snr_db) || !Array.isArray(sample.response) ||
       sample.response.length !== sample.channels || sample.response.some(value =>
         !Array.isArray(value) || value.length !== 2 || !value.every(finite)) ||
@@ -134,8 +138,10 @@ function fitManifold(rawSamples, {beams = 60, minSamples = 20, minPasses = 1,
   if (!samples.length) throw new Error('No manifold samples were supplied');
   const frequency = samples[0].frequency_hz, channels = samples[0].channels;
   const fingerprint = samples[0].config_fingerprint;
+  const identity = JSON.stringify(samples[0].manifold_identity);
   if (samples.some(sample => Math.abs(sample.frequency_hz - frequency) > Math.max(1, frequency * 1e-6) ||
       sample.channels !== channels || sample.config_fingerprint !== fingerprint ||
+      JSON.stringify(sample.manifold_identity) !== identity ||
       Math.abs(sample.direct_path_local_azimuth_deg - samples[0].direct_path_local_azimuth_deg) > 1e-6))
     throw new Error('Samples from different frequencies, channel layouts, or site configurations cannot be mixed');
   const labelled = labelPasses(samples);
@@ -215,7 +221,11 @@ function fitManifold(rawSamples, {beams = 60, minSamples = 20, minPasses = 1,
   const elevations = samples.map(sample => sample.truth.elevation_deg);
   const holdout = statistics.filter(Boolean).map(item => item.holdout_median_correlation)
     .filter(finite);
-  return {schema: 'vectorwarp-bearing-manifold-v1', frequency_hz: frequency,
+  const fittedIdentity = {...samples[0].manifold_identity,
+    direct_path_local_azimuth_deg: normalizeAngle(samples[0].direct_path_local_azimuth_deg),
+    direct_path_beam: directBin};
+  return {schema: 'vectorwarp-bearing-manifold-v2', frequency_hz: frequency,
+    identity: fittedIdentity,
     responses, calibration: {method: 'adsb_supervised_complex_projective_mean-v1',
       config_fingerprint: fingerprint, beams, channels,
       input_samples: samples.length, supplied_samples: validated.length,

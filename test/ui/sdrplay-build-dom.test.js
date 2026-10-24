@@ -2,7 +2,8 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
-const {JSDOM} = require('jsdom');
+const {createRequire} = require('module');
+const {JSDOM} = createRequire(path.join(__dirname, '..', '..', 'api', 'package.json'))('jsdom');
 const {setupDefaults} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 

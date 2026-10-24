@@ -65,6 +65,17 @@ void configCases(){
   "Coherent resident fusion configuration did not round trip");
  check(wire::configHash(coherent)!=wire::configHash(c),
   "Coherent resident fusion is not bound to config identity");
+ auto measuredFusion=coherent;
+ for(uint32_t beam=0;beam<measuredFusion.fusion.beams;++beam)
+  for(uint32_t channel=0;channel<measuredFusion.geometry.channels;++channel)
+   measuredFusion.fusion.manifoldResponses.push_back(
+    std::polar(1.0f,float(.11*beam-.23*channel)));
+ const auto measuredFusionBytes=encodeConfig(measuredFusion);
+ const auto measuredFusionDecoded=decodeConfig(bytes(measuredFusionBytes),bytes(d),bytes(f));
+ check(encodeConfig(measuredFusionDecoded)==measuredFusionBytes&&
+  measuredFusionDecoded.fusion.manifoldResponses==measuredFusion.fusion.manifoldResponses&&
+  wire::configHash(measuredFusion)!=wire::configHash(coherent),
+  "Measured surveillance manifold did not round trip or bind config identity");
  auto tbd=coherent;tbd.detector.integrationCpis=8;
  tbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4);
  const auto tbdBytes=encodeConfig(tbd);
@@ -162,6 +173,12 @@ void configCases(){
  mutate([](auto&v){v.presence&=~bit(Section::canonical);});mutate([](auto&v){v.presence|=uint64_t(1)<<63;});
  mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
+ mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses={{1,0}};});
+ mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});
+  v.fusion.manifoldResponses[0]={0,0};});
+ mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});
+  v.fusion.manifoldResponses[0]={std::numeric_limits<float>::infinity(),0};});
+ mutate([](auto&v){v.fusion.manifoldResponses={{1,0}};});
  mutate([&](auto&v){v=bearing;v.bearing.channelMapping={0,0};});
  mutate([&](auto&v){v=bearing;v.bearing.scanBeams=59;});
  mutate([&](auto&v){v=bearing;v.bearing.manifoldResponses={{1,0}};});

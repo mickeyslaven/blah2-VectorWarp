@@ -2,7 +2,7 @@
 const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
-const {JSDOM} = require('jsdom');
+const {JSDOM} = require('./jsdom');
 const {setupDefaults} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 const dom = new JSDOM('<div id="configuration"></div>', {url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'});

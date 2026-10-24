@@ -2,6 +2,7 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -42,6 +43,13 @@ TEST_CASE("coherent beam bank recovers array gain in a steered direction")
       -waveNumber * position[0]));
   fusion.calibrate(direct);
   const auto result = fusion.process(maps);
+  const auto bank = fusion.powerBankAt(maps, 0, 0);
+  REQUIRE(bank.size() == config.beams);
+  REQUIRE(*std::max_element(bank.begin(), bank.end()) ==
+    Catch::Approx(std::norm(result->data[0][0])).epsilon(1e-12));
+  std::vector<std::complex<double>> sameIq;
+  for (const auto& map : storage) sameIq.push_back(map.data[0][0]);
+  REQUIRE(fusion.powerBank(sameIq) == bank);
   REQUIRE(std::abs(result->data[0][0]) == Catch::Approx(std::sqrt(5.0)).epsilon(1e-12));
   REQUIRE(result->data[0][0].imag() == 0.0);
 }

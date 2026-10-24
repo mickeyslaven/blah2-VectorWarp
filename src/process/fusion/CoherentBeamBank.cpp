@@ -150,12 +150,49 @@ std::unique_ptr<Map<std::complex<double>>> CoherentBeamBank::process(
         for (std::size_t channel = 0; channel < maps.size(); ++channel)
           beamValue += weights[channel] * maps[channel]->data[row][column];
         const double power = std::norm(beamValue);
-        if (power > bestPower)
-          bestPower = power;
+        if (power > bestPower) bestPower = power;
       }
       // Match the existing noncoherent fusion contract: downstream stages
       // consume a real, nonnegative amplitude rather than a complex sample.
       fused->data[row][column] = {std::sqrt(bestPower), 0};
     }
   return fused;
+}
+
+std::vector<double> CoherentBeamBank::powerBankAt(
+  const std::vector<Map<std::complex<double>> *>& maps,
+  uint32_t row, uint32_t column) const
+{
+  if (maps.empty() || maps.size() != weights_.front().size())
+    throw std::invalid_argument("Coherent fusion map count does not match antenna geometry");
+  if (row >= maps.front()->get_nRows() || column >= maps.front()->get_nCols())
+    throw std::out_of_range("Coherent fusion cell is outside the ambiguity map");
+  for (auto* map : maps)
+    if (!map || map->get_nRows() != maps.front()->get_nRows() ||
+        map->get_nCols() != maps.front()->get_nCols())
+      throw std::invalid_argument("Ambiguity-map dimensions do not match");
+  std::vector<std::complex<double>> channels;
+  channels.reserve(maps.size());
+  for (auto* map : maps) channels.push_back(map->data[row][column]);
+  return powerBank(channels);
+}
+
+std::vector<double> CoherentBeamBank::powerBank(
+  const std::vector<std::complex<double>>& channels) const
+{
+  if (channels.size() != weights_.front().size())
+    throw std::invalid_argument("Coherent fusion channel vector does not match antenna geometry");
+  std::vector<double> powers;
+  powers.reserve(weights_.size());
+  for (const auto& weights : weights_)
+  {
+    std::complex<double> beamValue{0, 0};
+    for (std::size_t channel = 0; channel < channels.size(); ++channel)
+      beamValue += weights[channel] * channels[channel];
+    const double power = std::norm(beamValue);
+    if (!std::isfinite(power))
+      throw std::runtime_error("Coherent fusion produced non-finite beam power");
+    powers.push_back(power);
+  }
+  return powers;
 }

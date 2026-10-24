@@ -317,6 +317,8 @@ struct RecordingReader::Impl {
     const uint64_t delta=metadata.frequency>options.frequency ? metadata.frequency-options.frequency : options.frequency-metadata.frequency;
     if(delta>(format=="mchq" ? 256U : 0U)) fail("Recording frequency differs from Settings");
     provenance=read_provenance(path,options,metadata);
+    if(format=="mchq")provenance.perChannelGainDb.assign(
+      firstMchq.gains.begin(),firstMchq.gains.end());
     if(options.provenanceMode!="legacy-unqualified" && options.provenanceMode!="decision-grade")
       fail("Replay provenance mode must be legacy-unqualified or decision-grade");
     if(options.provenanceMode=="decision-grade" && !provenance.decisionGrade)

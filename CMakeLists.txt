@@ -22,6 +22,7 @@ else()
 endif()
 
 option(BLAH2_KRAKEN_ONLY "Build only the Kraken capture backend" OFF)
+option(BLAH2_BUILD_OFFLINE_TOOLS "Build replay-only analysis executables" OFF)
 # Keep the historical CMake behavior unless a caller explicitly selects the
 # individual live backends. Kraken remains the always-available baseline.
 set(BLAH2_OPTIONAL_RECEIVER_DEFAULT ON)
@@ -149,6 +150,20 @@ add_executable(blah2
   src/data/meta/Timing.cpp
 )
 
+if(BUILD_TESTING OR BLAH2_BUILD_OFFLINE_TOOLS)
+  # Replay-only production beam/CFAR evidence emitter. It is never linked into
+  # the live processor and has no configuration default or deployment hook.
+  add_executable(detectionManifoldGridReplay
+    src/process/analysis/DetectionManifoldGridReplay.cpp
+    src/process/fusion/CoherentBeamBank.cpp
+    src/data/Map.cpp)
+  target_link_libraries(detectionManifoldGridReplay PRIVATE blah2RapidJson)
+  if(NOT BLAH2_BUILD_OFFLINE_TOOLS)
+    set_target_properties(detectionManifoldGridReplay PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_TEST_UNIT_DIR}")
+  endif()
+endif()
+
 target_link_libraries(blah2 PRIVATE 
   Threads::Threads
   blah2RapidJson
@@ -175,6 +190,11 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
 endif()
 
 if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME detectionManifoldNativeGrid
+    COMMAND ${Python3_EXECUTABLE}
+      ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py
+      --binary $<TARGET_FILE:detectionManifoldGridReplay>)
   include(cmake/RecordingTests.cmake)
 endif()
 if(BLAH2_KRAKEN_ONLY AND NOT BLAH2_ENABLE_RSPDUO AND
@@ -321,6 +341,8 @@ add_executable(testKrakenMultiChannel
   test/unit/process/fusion/TestNoncoherent.cpp
   test/unit/process/fusion/TestCoherentBeamBank.cpp
   test/unit/process/fusion/TestBearingSteering.cpp
+  test/unit/process/ambiguity/TestBearingManifold.cpp
+  test/unit/process/ambiguity/TestResidentFusionWeights.cpp
   src/capture/kraken/HeimdallFrame.cpp
   src/process/conditioning/ArrayReferenceSynthesizer.cpp
   src/process/fusion/Noncoherent.cpp

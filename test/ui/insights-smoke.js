@@ -6,7 +6,7 @@ const vm = require('vm');
 const view = process.argv[2];
 const mode = process.argv[3] || 'portable';
 if (!['portable', 'rich'].includes(mode)) throw new Error(`Unknown fixture mode: ${mode}`);
-const validViews = ['overview', 'detections', 'health', 'activity', 'site', 'locations', 'evaluation', 'tracks', 'statistics'];
+const validViews = ['overview', 'detections', 'health', 'activity', 'site', 'locations', 'evaluation', 'tracks', 'statistics', 'calibration'];
 if (!validViews.includes(view)) throw new Error(`Unknown view: ${view}`);
 
 class Element {
@@ -70,7 +70,16 @@ const portable = {
           outside_doppler_span: 0, stale_truth: 0}}])),
     bearing: {enabled: false, calibrated: false, live: {tracks: 0, publishable: 0,
       resolved: 0, stationary: 0}, diagnostic: {available: false}, recorder: {enabled: false},
-      automation: {state: 'disabled'}, frequency_resolved: {enabled: false}}}
+      automation: {state: 'disabled'}, frequency_resolved: {enabled: false}}},
+  '/api/bearing/manifold-progress': {frequency_hz: 100000000, active_model: null,
+    recorder: {enabled: false}, automation: {enabled: false, state: 'disabled', qualified: false},
+    progress: {samples: 0, independent_passes: 0, unique_aircraft: 0, covered_sectors: 0,
+      required_covered_sectors: 6, evidence_completion_fraction: 0, requirements: [], sectors: [],
+      next_actions: ['Collect evidence.']}, detection: {automation: {enabled: false,
+      state: 'disabled', qualified: false, promotion_allowed: false}, progress: {accepted_samples: 0,
+      independent_passes: 0, validation_passes: 0, miss_passes: 0, covered_sectors: 0,
+      fit_bins: 0, positive_control: {fit_ready: false}, validation: {ready: false},
+      production_replay: {imported_passes: 0}}}}
 };
 const rich = {
   '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
@@ -98,6 +107,21 @@ const rich = {
         maxReferencePhaseStepDeg: .2, maxReferenceAmplitudeStepDb: .01},
       automation: {state: 'collecting', qualified: false},
       frequency_resolved: {enabled: true, state: 'idle'}}},
+  '/api/bearing/manifold-progress': {frequency_hz: 527000000, active_model: null,
+    recorder: {enabled: true, samples: 120, referenceSamples: 90,
+      maxReferencePhaseStepDeg: .2, maxReferenceAmplitudeStepDb: .01},
+    automation: {enabled: true, state: 'collecting', qualified: false},
+    progress: {samples: 120, independent_passes: 60, unique_aircraft: 20, covered_sectors: 6,
+      required_covered_sectors: 6, evidence_completion_fraction: .8,
+      requirements: [{label: 'Independent passes', required: 40, current: 60, complete: true}],
+      sectors: [{from_deg: 0, to_deg: 45, samples: 20, passes: 10, aircraft: 4, ready: true,
+        passes_needed: 0, aircraft_needed: 0}], next_actions: []},
+    detection: {automation: {enabled: false, state: 'disabled', qualified: false,
+      promotion_allowed: false, runtimeCandidatePath: '/tmp/replay-only.runtime.json'}, progress: {accepted_samples: 48, independent_passes: 24,
+      validation_passes: 5, miss_passes: 3, covered_sectors: 4, fit_bins: 7,
+      positive_control: {fit_ready: true}, validation: {ready: false},
+      production_replay: {imported_passes: 0},
+      limitation: 'Truth-selected statistics are diagnostic only; native full-bank replay is required.'}}},
   '/api/adsb': {now: Date.now() / 1000, aircraft: [{hex: 'abc123', flight: 'TEST1', lat: 40.05, lon: -80.1, alt_geom: 5000, seen_pos: 1}]},
   '/api/locations': {enabled: true, available: true, data: [
     {id: 'T1', state: 'ASSOCIATED', bearing_deg_true: 112, uncertainty_deg: 8,
@@ -116,7 +140,9 @@ global.fetchStatusResource = async (url, options = {}) => {
   url = new URL(url, window.location.origin).href;
   const fixtures = mode === 'rich' ? rich : portable;
   const path = new URL(url).pathname.replace('/api/runtime/config', '/api/config')
-    .replace('/api/adsb/delay-doppler', '/api/dd').replace('/api/live-scorecard', '/api/statistics');
+    .replace('/api/adsb/delay-doppler', '/api/dd')
+    .replace('/api/live-scorecard/provisional', '/api/statistics')
+    .replace('/api/live-scorecard', '/api/statistics');
   if (path === '/api/system/status') return {ok: true, text: async () => JSON.stringify({serverId: 'fixture', radar: 'receiving'})};
   if (path === '/api/adsb/status') return {ok: true, text: async () => JSON.stringify({enabled: mode === 'rich', online: mode === 'rich'})};
   if (!(path in fixtures)) return {ok: false, status: 404, text: async () => ''};
@@ -135,7 +161,7 @@ global.startRadarUpdates = common.startRadarUpdates;
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 
 setTimeout(() => {
-  const plotViews = new Set(['activity', 'site', 'locations', 'evaluation', 'tracks']);
+  const plotViews = new Set(['activity', 'site', 'locations', 'evaluation', 'tracks', 'calibration']);
   const errors = [];
   const rendered = [...elements.values()].map(element => element.innerHTML).join('');
   if (!root.children.length) errors.push('view root remained empty');
@@ -156,6 +182,13 @@ setTimeout(() => {
     errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
+  if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
+      !rendered.includes('Never automatic') ||
+      !(mode === 'rich' ? rendered.includes('Replay-only dense artifact available') :
+        rendered.includes('sparse offline model')) ||
+      !rendered.includes('production qualification disabled') ||
+      !rendered.includes('receipt harness ready / native export required')))
+    errors.push('detection manifold progress and promotion policy were not rendered');
   if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
       lastPlot.traces.some(trace => trace.mode?.includes('text')))
     errors.push('raster OSM style cannot render text symbols without a glyph source');

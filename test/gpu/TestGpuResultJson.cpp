@@ -63,10 +63,11 @@ void detectionCases(){
  std::vector<std::complex<float>>channelMaps(12);channelMaps[3]={1,2};channelMaps[9]={3,4};
  const std::vector<std::complex<double>>weights{{.5,.25},{-.5,.75}};
  const std::vector<uint32_t>mapping{0,1};
+ const std::vector<double>actualGains{14.2,14.1};
  rapidjson::Document evidence;evidence.Parse(manifoldEvidence(5,539e6,2.4e6,3,2,2,
   View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
   {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},20,2,.8,6.1,1.2,1,1,60,0,1,.01,
-  {mapping.data(),mapping.size()}).c_str());
+  {mapping.data(),mapping.size()},{actualGains.data(),actualGains.size()}).c_str());
  check(!evidence.HasParseError()&&std::string(evidence["schema"].GetString())=="vectorwarp-manifold-evidence-v2"&&
   evidence["data"].Size()==1&&evidence["data"][0]["response"][0][0].GetDouble()==1&&
   evidence["data"][0]["response"][1][1].GetDouble()==4&&evidence["reference_weights"].Size()==2&&
@@ -74,20 +75,21 @@ void detectionCases(){
   evidence["reference_state"]["coherent_gain_db"].GetDouble()==6.1&&
   evidence["data"][0]["covariance"].Size()==2&&
   std::string(evidence["bearing_replay"]["reference_anchor"].GetString())=="fixed_site"&&
-  evidence["bearing_replay"]["channel_mapping"].Size()==2,
+  evidence["bearing_replay"]["channel_mapping"].Size()==2&&
+  evidence["actual_gain_db"].Size()==2&&evidence["actual_gain_db"][0].GetDouble()==14.2,
   "Sparse manifold evidence serialization differs");
  // The initial analysis is update one while the completed-frame counter is
  // still zero. Those counters have different meanings and no ordering rule.
  auto initial=manifoldEvidence(5,539e6,2.4e6,3,2,2,
   View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
   {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},0,1,.8,6.1,1.2,1,1,60,0,1,.01,
-  {mapping.data(),mapping.size()});
+  {mapping.data(),mapping.size()},{actualGains.data(),actualGains.size()});
  check(!initial.empty(),"Initial reference update rejected");
  Map<std::complex<double>>map0(3,2),map1(3,2);map0.delay={0,1};map1.delay=map0.delay;
  map0.doppler={-20,0,20};map1.doppler=map0.doppler;map0.data[2][1]={5,6};map1.data[2][1]={7,8};
  Detection cpuEvidence(1.2,18,9);std::vector<Map<std::complex<double>>*>cpuMaps{&map0,&map1};
  rapidjson::Document cpuDoc;cpuDoc.Parse(blah2::manifold_evidence::cpu(6,539e6,2e6,
-  cpuEvidence,cpuMaps,weights).c_str());
+  cpuEvidence,cpuMaps,weights,actualGains).c_str());
  check(!cpuDoc.HasParseError()&&cpuDoc["data"][0]["cell"].GetUint()==5&&
   cpuDoc["data"][0]["response"][0][0].GetDouble()==5&&
   cpuDoc["data"][0]["response"][1][1].GetDouble()==8,

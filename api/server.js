@@ -24,6 +24,7 @@ const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
+const {DetectionManifoldAutomation} = require('./detection-manifold-automation.js');
 const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
@@ -55,6 +56,8 @@ const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
 manifoldAutomation.start();
+const detectionManifoldAutomation = new DetectionManifoldAutomation(config);
+detectionManifoldAutomation.start();
 const bearingDiagnostic = createBearingDiagnosticCache(config);
 bearingDiagnostic.start();
 const frequencyResolvedShadow = createFrequencyResolvedShadow(config);
@@ -1035,7 +1038,9 @@ app.get('/api/bearing/manifold-progress', (req, res) => {
   // view refreshes a changed corpus promptly without loading the radar
   // processor or repeatedly fitting unchanged data.
   void manifoldAutomation.evaluate();
+  void detectionManifoldAutomation.evaluate();
   const automation = manifoldAutomation.status();
+  const detectionAutomation = detectionManifoldAutomation.status();
   res.json({schema: 'vectorwarp-manifold-campaign-status-v1', generated_at: Date.now(),
     frequency_hz: config.capture?.fc || null,
     active_model: config.process?.bearing?.manifold_file || null,
@@ -1046,6 +1051,14 @@ app.get('/api/bearing/manifold-progress', (req, res) => {
       last_evaluation_at: automation.lastEvaluationAt || null,
       promotion: automation.promotion || null},
     progress: automation.progress,
+    detection: {active_model: config.process?.surveillance_fusion?.manifold_file || null,
+      automation: {enabled: detectionAutomation.enabled, state: detectionAutomation.state,
+        running: detectionAutomation.running, qualified: detectionAutomation.qualified,
+        promotion_allowed: false, failures: detectionAutomation.failures || [],
+        validation_path: detectionAutomation.validationPath || null,
+        error: detectionAutomation.error,
+        last_evaluation_at: detectionAutomation.lastEvaluationAt || null},
+      progress: detectionAutomation.progress},
     frequency_resolved: frequencyResolvedShadow.status()});
 });
 app.get('/api/bearing/diagnostic', (req, res) => {

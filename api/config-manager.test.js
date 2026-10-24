@@ -61,6 +61,10 @@ coherentFusion.capture.device.array_geometry = {
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
 const measuredFusion = clone(coherentFusion);
+Object.assign(measuredFusion.capture.device.array_geometry,
+  {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+measuredFusion.capture.device.heimdall.gain = 14;
+measuredFusion.capture.device.heimdall.gain_control = 'fixed';
 measuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
 assert.equal(validateConfig(measuredFusion).valid, true,
   'coherent beam-bank fusion accepts a distinct detection manifold path');
@@ -81,10 +85,33 @@ whitenedFusion.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
 assert.equal(validateConfig(whitenedFusion).valid, true,
   'noise-whitened beam-bank fusion accepts resident Kraken geometry');
 const residentMeasuredFusion = clone(whitenedFusion);
+Object.assign(residentMeasuredFusion.capture.device.array_geometry,
+  {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+residentMeasuredFusion.capture.device.heimdall.gain = 14;
+residentMeasuredFusion.capture.device.heimdall.gain_control = 'fixed';
 residentMeasuredFusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
 residentMeasuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
-assert.equal(validateConfig(residentMeasuredFusion).valid, false,
-  'detection manifold fails closed on the resident GPU path that cannot consume it');
+assert.equal(validateConfig(residentMeasuredFusion).valid, true,
+  'detection manifold is accepted by the resident coherent GPU path');
+const residentWhitenedMeasuredFusion = clone(whitenedFusion);
+Object.assign(residentWhitenedMeasuredFusion.capture.device.array_geometry,
+  {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+residentWhitenedMeasuredFusion.capture.device.heimdall.gain = 14;
+residentWhitenedMeasuredFusion.capture.device.heimdall.gain_control = 'fixed';
+residentWhitenedMeasuredFusion.process.surveillance_fusion.manifold_file =
+  '/tmp/detection-manifold.json';
+assert.equal(validateConfig(residentWhitenedMeasuredFusion).valid, true,
+  'detection manifold is accepted by the resident noise-whitened GPU path');
+for (const mutate of [
+  value => { value.capture.device.heimdall.gain = 'keep'; },
+  value => { value.capture.device.heimdall.gain_control = 'measured'; },
+  value => { value.capture.device.array_geometry.orientation_confirmed = false; }
+]) {
+  const invalid = clone(residentWhitenedMeasuredFusion);
+  mutate(invalid);
+  assert.equal(validateConfig(invalid).valid, false,
+    'measured resident manifold must fail closed when its identity is not fixed');
+}
 const nonresidentWhitenedFusion = clone(whitenedFusion);
 nonresidentWhitenedFusion.process.performance.acceleration = 'auto';
 assert.equal(validateConfig(nonresidentWhitenedFusion).valid, false,

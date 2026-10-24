@@ -3,6 +3,7 @@
 #include "GpuPostprocess.private.h"
 #include "GpuTracker.private.h"
 #include "process/ambiguity/BearingSteering.h"
+#include "process/ambiguity/ResidentFusionWeights.h"
 // Private direct-call arithmetic seam. Included after ClutterPipeline, inside
 // blah2's private namespace. No main/worker ABI or production route is changed.
 // Host work is immutable input/output byte copies, status checks and submission.
@@ -28,6 +29,7 @@ struct ResidentFrameConfig {
     uint32_t mode = 0, beams = 0;
     double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0,
       directPathAzimuthRad = 0, directPathNullDb = 0;
+    std::vector<std::complex<float>> manifoldResponses;
   } fusion;
   // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
   // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
@@ -280,10 +282,17 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
      config.fusion.elementStepRad==0||!std::isfinite(config.fusion.directPathAzimuthRad)||
      !std::isfinite(config.fusion.directPathNullDb)||config.fusion.directPathNullDb<0||
      config.fusion.directPathNullDb>40)) ||
+    (!config.fusion.manifoldResponses.empty()&&
+     config.fusion.manifoldResponses.size()!=uint64_t(config.fusion.beams)*g.channels) ||
     (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
      config.fusion.element0Rad||config.fusion.elementStepRad||
-     config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb)))
+     config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb||
+     !config.fusion.manifoldResponses.empty())))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
+ for(const auto& value:config.fusion.manifoldResponses)
+  if(!std::isfinite(value.real())||!std::isfinite(value.imag())||
+     !(std::norm(value)>1e-12f))
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED measured surveillance manifold");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
     !g.channels || g.channels>8 || !g.clutterSamples || g.clutterSamples>INT32_MAX ||
@@ -580,16 +589,20 @@ class ResidentFramePipeline {
    const double nullFraction=1.0-std::pow(10.0,-config.fusion.directPathNullDb/20.0);
    const auto calibrate=[&](Buffer& buffer,uint32_t beams){auto* target=static_cast<std::complex<float>*>(buffer.mapped);
    const bool bearingRefinement=&buffer==refinementWeights.get();
-   const bool measured=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool measuredFusion=!bearingRefinement&&!config.fusion.manifoldResponses.empty();
+   const bool measuredBearing=bearingRefinement&&!config.postprocess.bearingManifoldResponses.empty();
+   const bool measured=measuredBearing;
    const bool projected=bearingRefinement&&config.postprocess.bearingReferenceAnchor==2;
    const bool fixedSite=bearingRefinement&&
     (config.postprocess.bearingReferenceAnchor==1||projected);
-   const double directAngle=std::fmod(config.fusion.directPathAzimuthRad+6.283185307179586476925286766559,6.283185307179586476925286766559);
+   const double directAngle=std::fmod(std::fmod(config.fusion.directPathAzimuthRad,
+    6.283185307179586476925286766559)+6.283185307179586476925286766559,
+    6.283185307179586476925286766559);
    const uint32_t directBeam=uint32_t(std::llround(directAngle*beams/6.283185307179586476925286766559))%beams;
    std::array<std::complex<double>,8> referenceAnchor{};double referenceAnchorNorm=0;
    for(uint32_t channel=0;channel<channels;++channel){
     if(!fixedSite)referenceAnchor[channel]=checkpoint.weights[channel];
-    else if(measured)referenceAnchor[channel]=
+    else if(measuredBearing)referenceAnchor[channel]=
      config.postprocess.bearingManifoldResponses[uint64_t(directBeam)*channels+channel];
     else{const uint32_t physical=blah2::bearing_steering::physicalElement(
       channel,config.postprocess.bearingChannelMapping);
@@ -601,6 +614,14 @@ class ResidentFramePipeline {
    if(!(referenceAnchorNorm>0)||!std::isfinite(referenceAnchorNorm))
     throw std::runtime_error("Bearing reference anchor has zero norm");
    for(uint32_t beam=0;beam<beams;++beam){
+    if(measuredFusion){
+     const auto combined=blah2::resident_fusion::measuredWeights(
+      config.fusion.manifoldResponses,beams,channels,beam,directBeam,
+      checkpoint.weights.data(),channelScale.data(),nullFraction,whiten);
+     for(uint32_t channel=0;channel<channels;++channel)
+      target[uint64_t(beam)*channels+channel]=std::complex<float>(std::conj(combined[channel]));
+     continue;
+    }
     const double beamAngle=6.283185307179586476925286766559*double(beam)/beams;
     std::array<std::complex<double>,8> steering{},combined{};
     for(uint32_t channel=0;channel<channels;++channel){
@@ -642,7 +663,7 @@ class ResidentFramePipeline {
       throw std::runtime_error("Noise-whitened fusion produced invalid weights");
      const double combinedScale=1.0/std::sqrt(combinedNorm);
      for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else if(measured||projected){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
+    }else if(measuredBearing||projected){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
      if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
      const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
     }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
