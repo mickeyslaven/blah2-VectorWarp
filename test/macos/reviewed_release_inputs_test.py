@@ -232,14 +232,16 @@ class BaselineNoticeValidationTest(unittest.TestCase):
 class ReviewedNpmLockTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.baseline = subprocess.check_output(
-            ["git", "-C", str(ROOT), "show",
-             inputs.BASELINE_SOURCE_ID + ":api/package-lock.json"])
         cls.candidate = (ROOT / "api/package-lock.json").read_bytes()
+        cls.baseline = inputs.reconstructed_baseline_npm_lock(cls.candidate)
 
     def test_accepts_only_reviewed_proxy_addr_transition(self):
         self.assertIsNone(inputs.reviewed_npm_lock_delta(
             self.baseline, self.candidate))
+
+    def test_reconstructs_exact_reviewed_baseline_without_git_history(self):
+        self.assertEqual(hashlib.sha256(self.baseline).hexdigest(),
+                         inputs.BASELINE_NPM_LOCK_SHA256)
 
     def test_rejects_unreviewed_lock_change_even_with_matching_outer_hash(self):
         value = json.loads(self.candidate)

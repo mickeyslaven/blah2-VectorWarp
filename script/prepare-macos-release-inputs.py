@@ -30,6 +30,8 @@ BASELINE_NPM_LOCK_SHA256 = "de38adb43b306b81ee4aac67dbc913927a6dfef1bd062d3a8bb8
 REVIEWED_NPM_LOCK_SHA256 = "0fa96e32fbe379ee7f51e26904fa4c0865273d8bec881f8beb53aa05177a1849"
 PROXY_ADDR_REVIEW = {
     "old_version": "2.0.7",
+    "old_resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
+    "old_integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
     "version": "2.0.8",
     "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
     "integrity": "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==",
@@ -157,6 +159,35 @@ def reviewed_npm_lock_delta(baseline_raw, candidate_raw):
     old_copy["packages"][package_path] = new
     if old_copy != candidate:
         raise ValueError("npm dependency lock contains an unreviewed change")
+
+
+def reconstructed_baseline_npm_lock(candidate_raw):
+    """Reconstruct the reviewed baseline without depending on Git history.
+
+    Release CI intentionally uses shallow checkouts. The complete candidate and
+    reconstructed baseline remain independently pinned by their raw SHA-256
+    digests, while reviewed_npm_lock_delta proves the sole structural change.
+    """
+    if hashlib.sha256(candidate_raw).hexdigest() != REVIEWED_NPM_LOCK_SHA256:
+        raise ValueError("npm dependency lock changed; new source/notices review required")
+    candidate = json.loads(candidate_raw)
+    package_path = "node_modules/proxy-addr"
+    packages = candidate.get("packages")
+    if not isinstance(packages, dict) or package_path not in packages:
+        raise ValueError("reviewed proxy-addr lock entry is missing")
+    baseline = json.loads(json.dumps(candidate))
+    baseline["packages"][package_path] = {
+        "version": PROXY_ADDR_REVIEW["old_version"],
+        "resolved": PROXY_ADDR_REVIEW["old_resolved"],
+        "integrity": PROXY_ADDR_REVIEW["old_integrity"],
+        "license": "MIT",
+        "dependencies": {"forwarded": "0.2.0", "ipaddr.js": "1.9.1"},
+        "engines": {"node": ">= 0.10"},
+    }
+    raw = (json.dumps(baseline, indent=2) + "\n").encode()
+    if hashlib.sha256(raw).hexdigest() != BASELINE_NPM_LOCK_SHA256:
+        raise ValueError("reconstructed baseline npm dependency lock changed")
+    return raw
 
 
 def fetch_proxy_addr_source(output):
@@ -304,9 +335,9 @@ def verify_checkout(checkout, source_id, review_receipt=None):
         git("cat-file", "-e", BASELINE_SOURCE_ID + "^{commit}")
     except subprocess.CalledProcessError:
         git("fetch", "--no-tags", "origin", BASELINE_SOURCE_ID)
-    baseline_lock = subprocess.check_output(
-        ["git", "-C", str(checkout), "show", BASELINE_SOURCE_ID + ":api/package-lock.json"])
-    reviewed_npm_lock_delta(baseline_lock, (checkout / "api/package-lock.json").read_bytes())
+    candidate_lock = (checkout / "api/package-lock.json").read_bytes()
+    baseline_lock = reconstructed_baseline_npm_lock(candidate_lock)
+    reviewed_npm_lock_delta(baseline_lock, candidate_lock)
     changed = git("diff", "--name-only", BASELINE_SOURCE_ID, source_id).splitlines()
     # Signing entitlements/package wiring are included in the current first-party
     # archive; only native dependency/build inputs block source-kit reuse here.
