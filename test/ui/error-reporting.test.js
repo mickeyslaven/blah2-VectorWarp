@@ -63,11 +63,12 @@ const procedural = [
   }
 
   const dirty = reports.buildReport({incident: {code: 'MANUAL_REPORT', component: 'support', stage: 'manual',
-    message: '"serial":"ABC" Authorization: Bearer ghp_bad api_key=key tcp://private.local /Volumes/a /mnt/b \\\\server\\share'}, status: base, config});
-  assert.doesNotMatch(JSON.stringify(dirty), new RegExp('DO-NOT-SEND|192\\.168\\.1\\.2|ABC|ghp_bad|private\\.local|Volumes|mnt/b|server'));
+    message: 'serial number ABC12345; serial_number=XYZ987; (40.7128,-74.0060); aircraft_hex=A0B1C2; callsign VW123; Authorization: Bearer ghp_bad; api_key=key; tcp://private.local; /Volumes/Radio Data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw'}, status: base, config});
+  assert.doesNotMatch(JSON.stringify(dirty), new RegExp('DO-NOT-SEND|192\\.168\\.1\\.2|ABC12345|XYZ987|40\\.7128|74\\.0060|A0B1C2|VW123|ghp_bad|private\\.local|Volumes|Jane Doe|server'));
   assert.match(dirty.submissionId, /^[0-9a-f-]{36}$/);
-  assert.deepEqual(reports.scalars({safeCount: 2, lat: 1, lon: 2, receiverSerialNumber: 'x',
-    accessTokenValue: 'x', adsbHex: 'abc123', flight: 'VW1'}), {safeCount: 2});
+  assert.deepEqual(reports.scalars({safeCount: 2, lat: 1, lon: 2, latDeg: 1, lonDeg: 2,
+    receiverSerialNumber: 'x', accessTokenValue: 'x', adsbHex: 'abc123', flight: 'VW1',
+    icao: 'abc123', callsign: 'VW1', aircraftHex: 'abc123'}), {safeCount: 2});
 
   const tracker = {active: null, generations: new Map()};
   const failure = status({radar: 'stale', processor: {state: 'live'}});
@@ -76,6 +77,10 @@ const procedural = [
   const first = reports.addContextAction(target, () => ({incident, status: failure, config}));
   incident = reports.classify(failure, tracker);
   assert.equal(reports.addContextAction(target, () => ({incident, status: failure, config})), first);
+  const reworded = status({radar: 'stale', processor: {state: 'live', error: 'callback wording changed'}});
+  incident = reports.classify(reworded, tracker);
+  assert.equal(reports.addContextAction(target, () => ({incident, status: reworded, config})), first);
+  assert.equal(incident._recoveryGeneration, 0);
   assert.equal(target.querySelectorAll('.report-context-action').length, 1);
   reports.classify(status({radar: 'receiving'}), tracker);
   incident = reports.classify(failure, tracker);

@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import {githubIssue, normalizeReport, reportFingerprint} from '../src/index.js';
 
 const receiverTypes = ['RspDuo', 'Kraken', 'Usrp', 'HackRF', 'Replay', 'Unknown'];
+
+test('live pathway smoke uses the current consent and submission schema', () => {
+  const source = fs.readFileSync(new URL('../script/live-pathway-smoke.mjs', import.meta.url), 'utf8');
+  assert.match(source, /consent:\s*true/);
+  assert.match(source, /submissionId:\s*crypto\.randomUUID\(\)/);
+});
 
 function baseReport(pathway) {
   return {

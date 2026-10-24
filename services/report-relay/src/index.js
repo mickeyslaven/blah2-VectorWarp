@@ -6,7 +6,7 @@ const REPORT_KEYS = new Set([
   'schema', 'consent', 'submissionId', 'incident', 'build', 'system', 'receiver', 'runtime',
   'recentEvents', 'comment'
 ]);
-const SENSITIVE_KEY = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight)/;
+const SENSITIVE_KEY = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight|aircraft|icao|callsign|hex)/;
 
 const responseHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,13 +50,15 @@ function redactText(value, maximum, name, required = false) {
     .replace(IPV6_PATTERN, '[IP redacted]')
     .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi,
       'Bearer [redacted]')
-    .replace(/["']?(?:serial(?:number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address)["']?\s*[:=]\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
-      match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
+    .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign)["']?\s*(?::|=|\s)\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
+      '[sensitive value redacted]')
     .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
       match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
-    .replace(/\\\\[^\s\\/]+[\\/][^\s"'<>]*/g, '[path redacted]')
-    .replace(/[A-Za-z]:\\(?:[^\s<>:"|?*]+\\)*[^\s<>:"|?*]*/g, '[path redacted]')
-    .replace(/(^|[\s("'=])\/(?:Users|Volumes|home|mnt|etc|var|opt|private|tmp|run)\/[^\s"'<>]*/g,
+    .replace(/\(\s*-?(?:[0-8]?\d(?:\.\d+)?|90(?:\.0+)?)\s*,\s*-?(?:1[0-7]\d(?:\.\d+)?|\d?\d(?:\.\d+)?|180(?:\.0+)?)\s*\)/g,
+      '[coordinates redacted]')
+    .replace(/\\\\[^\s\\/]+[\\/][^,;"'<>\r\n]*/g, '[path redacted]')
+    .replace(/[A-Za-z]:\\(?:[^<>:"|?*\r\n]+\\)*[^,;<>:"|?*\r\n]*/g, '[path redacted]')
+    .replace(/(^|[\s("'=])\/(?:Users|Volumes|home|mnt|etc|var|opt|private|tmp|run)\/[^,;"'<>\r\n]*/g,
       (_, prefix) => `${prefix}[path redacted]`)
     .replace(/\s+/g, ' ').trim();
   if (!result && required) throw new ReportError(`${name} is required`);
@@ -115,7 +117,7 @@ function safeDetails(value, name) {
   for (const [key, item] of entries) {
     const canonical = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
     if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) || SENSITIVE_KEY.test(canonical) ||
-        canonical === 'lat' || canonical === 'lon' || canonical === 'ip')
+        /^(?:lat(?:deg|itude)?|lon(?:deg|gitude)?|ip)$/.test(canonical))
       throw new ReportError(`${name} contains a sensitive or unsupported field`);
     if (typeof item === 'boolean') result[key] = item;
     else if (typeof item === 'number' && Number.isFinite(item)) result[key] = item;
@@ -127,8 +129,8 @@ function safeDetails(value, name) {
 }
 
 class ReportError extends Error {
-  constructor(message, status = 422) {
-    super(message); this.status = status;
+  constructor(message, status = 422, ambiguous = false) {
+    super(message); this.status = status; this.ambiguous = ambiguous;
   }
 }
 
@@ -315,25 +317,53 @@ export async function createIssue(report, env, fetcher) {
   const fingerprint = await reportFingerprint(report);
   const reportId = await submissionReceiptId(report);
   const issue = githubIssue(report, fingerprint, reportId, env.REPORT_LABELS || '');
-  const response = await fetcher(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/issues`, {
-    method: 'POST',
-    headers: {
+  let response;
+  try {
+    response = await fetcher(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/issues`, {
+      method: 'POST',
+      headers: {
       'Accept': 'application/vnd.github+json',
       'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
       'Content-Type': 'application/json',
       'User-Agent': 'vectorwarp-report-relay',
       'X-GitHub-Api-Version': GITHUB_API_VERSION
-    },
-    body: JSON.stringify(issue)
-  });
-  if (!response.ok) throw new ReportError('Report destination is temporarily unavailable', 502);
+      },
+      body: JSON.stringify(issue)
+    });
+  } catch (_) {
+    throw new ReportError('Report destination is temporarily unavailable', 502, true);
+  }
+  if (!response.ok)
+    throw new ReportError('Report destination is temporarily unavailable', 502, response.status >= 500);
   let result;
   try { result = await response.json(); }
-  catch (_) { throw new ReportError('Report destination returned an invalid response', 502); }
+  catch (_) { throw new ReportError('Report destination returned an invalid response', 502, true); }
   if (!Number.isSafeInteger(result.number) || typeof result.html_url !== 'string' ||
       !result.html_url.startsWith('https://github.com/'))
-    throw new ReportError('Report destination returned an invalid response', 502);
+    throw new ReportError('Report destination returned an invalid response', 502, true);
   return {reportId};
+}
+
+async function reconcileIssue(report, env, fetcher) {
+  if (!env.GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY || ''))
+    throw new ReportError('Reporting service is not configured', 503);
+  const reportId = await submissionReceiptId(report);
+  const query = encodeURIComponent(`repo:${env.GITHUB_REPOSITORY} is:issue "${reportId}" in:body`);
+  let response;
+  try {
+    response = await fetcher(`https://api.github.com/search/issues?q=${query}&per_page=10`, {headers: {
+      'Accept': 'application/vnd.github+json', 'Authorization': `Bearer ${env.GITHUB_TOKEN}`,
+      'User-Agent': 'vectorwarp-report-relay', 'X-GitHub-Api-Version': GITHUB_API_VERSION
+    }});
+  } catch (_) { throw new ReportError('Report status is temporarily unavailable', 503, true); }
+  if (!response.ok) throw new ReportError('Report status is temporarily unavailable', 503, true);
+  let value;
+  try { value = await response.json(); }
+  catch (_) { throw new ReportError('Report status is temporarily unavailable', 503, true); }
+  const marker = `**Submission:** \`${reportId}\``;
+  return Array.isArray(value.items) && value.items.some(item => typeof item?.body === 'string' &&
+    item.body.includes(marker) && typeof item.html_url === 'string' &&
+    item.html_url.startsWith(`https://github.com/${env.GITHUB_REPOSITORY}/issues/`));
 }
 
 export class ReportDeduplicator {
@@ -342,14 +372,32 @@ export class ReportDeduplicator {
     try {
       const report = await request.json();
       const reportId = await submissionReceiptId(report);
-      const existing = await this.state.storage.get('result');
-      if (existing?.reportId === reportId) return json(200, {ok: true, ...existing});
+      const existing = await this.state.storage.get('submission');
+      if (existing?.phase === 'complete' && existing.reportId === reportId)
+        return json(200, {ok: true, reportId});
       if (!this.inflight) this.inflight = (async () => {
-        const result = await createIssue(report, this.env, globalThis.fetch);
-        await this.state.storage.put('result', result);
+        if (existing?.phase === 'pending') {
+          if (existing.reportId !== reportId)
+            throw new ReportError('Submission identity conflict', 409);
+          if (await reconcileIssue(report, this.env, globalThis.fetch)) {
+            await this.state.storage.put('submission', {phase: 'complete', reportId});
+            return {reportId, reconciled: true};
+          }
+          throw new ReportError('Report submission is pending; retry later', 503, true);
+        }
+        await this.state.storage.put('submission', {phase: 'pending', reportId});
+        let result;
+        try {
+          result = await createIssue(report, this.env, globalThis.fetch);
+        } catch (error) {
+          if (!error?.ambiguous) await this.state.storage.delete('submission');
+          throw error;
+        }
+        await this.state.storage.put('submission', {phase: 'complete', reportId});
         return result;
       })().finally(() => { this.inflight = null; });
-      return json(201, {ok: true, ...await this.inflight});
+      const result = await this.inflight;
+      return json(result.reconciled ? 200 : 201, {ok: true, reportId: result.reportId});
     } catch (error) {
       if (error instanceof ReportError) return json(error.status, {ok: false, error: error.message});
       return json(500, {ok: false, error: 'Report could not be submitted'});

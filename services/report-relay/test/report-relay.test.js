@@ -52,11 +52,11 @@ test('valid report becomes a bounded GitHub issue with separate grouping and rec
 
 test('adversarial free text is sanitized before it reaches GitHub', async () => {
   const dirty = sample();
-  dirty.incident.message = '"serial":"ABC123" "lat":"40.7" "lon":-74.0 Authorization: Bearer ghp_bad api_key="key123"';
-  dirty.comment = 'tcp://radar.local:5000 wss://private.example/ws /Volumes/Radio/a /mnt/data/a \\\\server\\share\\secret';
+  dirty.incident.message = '"serial":"ABC123" serial number ABC12345 serial_number=XYZ987 "lat":"40.7" "lon":-74.0 (40.7128,-74.0060) Authorization: Bearer ghp_bad api_key="key123" aircraft_hex=A0B1C2 callsign VW123';
+  dirty.comment = 'tcp://radar.local:5000 wss://private.example/ws; /Volumes/Radio Data/private file.raw; /mnt/data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw';
   const report = normalizeReport(dirty);
   const issue = githubIssue(report, await reportFingerprint(report), await submissionReceiptId(report));
-  assert.doesNotMatch(issue.body, /ABC123|40\.7|-74\.0|ghp_bad|key123|radar\.local|private\.example|Volumes|mnt\/data|server\\\\share/);
+  assert.doesNotMatch(issue.body, /ABC123|XYZ987|40\.7|-74\.0|ghp_bad|key123|A0B1C2|VW123|radar\.local|private\.example|Volumes|mnt\/data|Jane Doe|capture file|server\\\\share|private file/);
   assert.match(issue.body, /\[URL redacted\]/); assert.match(issue.body, /\[path redacted\]/);
 });
 
@@ -66,7 +66,8 @@ test('schema rejects consent gaps, unsafe Markdown release values and sensitive 
   assert.throws(() => normalizeReport(sample({submissionId: 'not-a-uuid'})), /submissionId/);
   const mention = sample(); mention.build.version = '@maintainer ![x](https://beacon.invalid)';
   assert.throws(() => normalizeReport(mention), /release identifier/);
-  for (const key of ['lat', 'lon', 'receiverSerialNumber', 'accessTokenValue', 'adsbHex', 'flight']) {
+  for (const key of ['lat', 'lon', 'latDeg', 'lonDeg', 'receiverSerialNumber', 'accessTokenValue',
+    'adsbHex', 'flight', 'icao', 'callsign', 'aircraftHex']) {
     const value = sample(); value.runtime.details = {[key]: 'secret'};
     assert.throws(() => normalizeReport(value), /sensitive or unsupported/, key);
   }
@@ -85,7 +86,8 @@ test('chunked body is cancelled immediately after the streaming limit', async ()
 
 test('same submission is idempotent and creates one GitHub issue', async () => {
   const values = new Map(); let calls = 0;
-  const state = {storage: {get: async key => values.get(key), put: async (key, value) => values.set(key, value)}};
+  const state = {storage: {get: async key => values.get(key), put: async (key, value) => values.set(key, value),
+    delete: async key => values.delete(key)}};
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { calls++; return new Response(JSON.stringify({number: 7,
     html_url: 'https://github.com/owner/repository/issues/7'}), {status: 201}); };
@@ -97,6 +99,42 @@ test('same submission is idempotent and creates one GitHub issue', async () => {
     assert.equal(first.status, 201); assert.equal(second.status, 200); assert.equal(calls, 1);
     assert.deepEqual(await first.json(), await second.json());
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('ambiguous GitHub success and final storage failure reconcile without a duplicate POST', async t => {
+  const normalized = normalizeReport(sample());
+  const reportId = await submissionReceiptId(normalized);
+  const marker = `**Submission:** \`${reportId}\``;
+  const make = () => new Request('https://internal/', {method: 'POST', body: JSON.stringify(normalized)});
+  for (const failure of ['response-lost', 'storage-put']) await t.test(failure, async () => {
+    const values = new Map(); let posts = 0, searches = 0, failCompletePut = failure === 'storage-put';
+    const state = {storage: {get: async key => values.get(key), delete: async key => values.delete(key),
+      put: async (key, value) => {
+        if (value.phase === 'complete' && failCompletePut) { failCompletePut = false; throw new Error('storage unavailable'); }
+        values.set(key, value);
+      }}};
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options = {}) => {
+      if (String(url).includes('/search/issues')) {
+        searches++;
+        return new Response(JSON.stringify({items: [{body: marker,
+          html_url: 'https://github.com/owner/repository/issues/9'}]}), {status: 200});
+      }
+      posts++;
+      if (failure === 'response-lost') throw new TypeError('connection closed after send');
+      return new Response(JSON.stringify({number: 9,
+        html_url: 'https://github.com/owner/repository/issues/9'}), {status: 201});
+    };
+    try {
+      assert.equal((await new ReportDeduplicator(state, environment()).fetch(make())).status,
+        failure === 'response-lost' ? 502 : 500);
+      assert.deepEqual(values.get('submission'), {phase: 'pending', reportId});
+      const retry = await new ReportDeduplicator(state, environment()).fetch(make());
+      assert.equal(retry.status, 200); assert.deepEqual(await retry.json(), {ok: true, reportId});
+      assert.equal(posts, 1); assert.equal(searches, 1);
+      assert.deepEqual(values.get('submission'), {phase: 'complete', reportId});
+    } finally { globalThis.fetch = originalFetch; }
+  });
 });
 
 test('bad requests and missing mandatory protection bindings fail closed', async () => {

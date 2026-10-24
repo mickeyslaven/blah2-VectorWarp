@@ -8,7 +8,7 @@
   const STORAGE_KEY = 'vectorwarp-pending-diagnostic-report-v1';
   const IPV6_PATTERN = /(?<![A-Fa-f0-9:])(?:(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,7}:|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|[A-Fa-f0-9]{1,4}:(?:(?::[A-Fa-f0-9]{1,4}){1,6})|:(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:))(?![A-Fa-f0-9:])/g;
   const allowedReceivers = new Set(['RspDuo', 'Kraken', 'Usrp', 'HackRF', 'Replay', 'Unknown']);
-  const sensitiveKey = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight)/;
+  const sensitiveKey = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight|aircraft|icao|callsign|hex)/;
   const incidentTracker = {active: null, generations: new Map()};
   const memory = new Map();
   const memoryStorage = {setItem: (key, value) => memory.set(key, value),
@@ -26,13 +26,15 @@
       .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP redacted]')
       .replace(IPV6_PATTERN, '[IP redacted]')
       .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi, 'Bearer [redacted]')
-      .replace(/["']?(?:serial(?:number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address)["']?\s*[:=]\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
-        match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
+      .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign)["']?\s*(?::|=|\s)\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
+        '[sensitive value redacted]')
       .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
         match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
-      .replace(/\\\\[^\s\\/]+[\\/][^\s"'<>]*/g, '[path redacted]')
-      .replace(/[A-Za-z]:\\(?:[^\s<>:"|?*]+\\)*[^\s<>:"|?*]*/g, '[path redacted]')
-      .replace(/(^|[\s("'=])\/(?:Users|Volumes|home|mnt|etc|var|opt|private|tmp|run)\/[^\s"'<>]*/g,
+      .replace(/\(\s*-?(?:[0-8]?\d(?:\.\d+)?|90(?:\.0+)?)\s*,\s*-?(?:1[0-7]\d(?:\.\d+)?|\d?\d(?:\.\d+)?|180(?:\.0+)?)\s*\)/g,
+        '[coordinates redacted]')
+      .replace(/\\\\[^\s\\/]+[\\/][^,;"'<>\r\n]*/g, '[path redacted]')
+      .replace(/[A-Za-z]:\\(?:[^<>:"|?*\r\n]+\\)*[^,;<>:"|?*\r\n]*/g, '[path redacted]')
+      .replace(/(^|[\s("'=])\/(?:Users|Volumes|home|mnt|etc|var|opt|private|tmp|run)\/[^,;"'<>\r\n]*/g,
         (_, prefix) => `${prefix}[path redacted]`).replace(/\s+/g, ' ').trim().slice(0, maximum) || null;
   }
   function integer(value, fallback = null) {
@@ -43,7 +45,7 @@
     for (const [key, item] of Object.entries(value).slice(0, 40)) {
       const canonical = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
       if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) || sensitiveKey.test(canonical) ||
-          canonical === 'lat' || canonical === 'lon' || canonical === 'ip') continue;
+          /^(?:lat(?:deg|itude)?|lon(?:deg|gitude)?|ip)$/.test(canonical)) continue;
       if (typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item)) || item === null)
         result[key] = item;
       else if (typeof item === 'string') result[key] = clean(item);
@@ -111,7 +113,8 @@
     } else if (status.errors?.length)
       incident = {code: 'PROCESSOR_RUNTIME_FAILED', component: 'processor', stage: 'runtime', message: status.errors.join(' ')};
     if (!incident) { if (tracker.active) tracker.generations.set(tracker.active, (tracker.generations.get(tracker.active) || 0) + 1); tracker.active = null; return null; }
-    const base = [incident.code, incident.component, incident.stage, clean(incident.message, 128)].join('|');
+    const base = [incident.code, incident.component, incident.stage,
+      processor.receiver || status.receiverType || 'Unknown'].join('|');
     if (tracker.active && tracker.active !== base)
       tracker.generations.set(tracker.active, (tracker.generations.get(tracker.active) || 0) + 1);
     tracker.active = base; incident._fingerprint = base;

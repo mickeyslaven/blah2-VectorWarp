@@ -37,6 +37,7 @@ function report([code, component, stage, receiverType, details], index) {
   return {
     schema: 1,
     consent: true,
+    submissionId: crypto.randomUUID(),
     incident: {code, component, stage, severity: 'error',
       message: `Synthetic live pathway verification for ${code}`,
       firstSeenAt: at, lastSeenAt: at, occurrences: 1, recovered: true},

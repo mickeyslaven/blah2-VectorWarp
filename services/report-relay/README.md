@@ -22,6 +22,9 @@ VectorWarp repository is intentionally not the automatic-report destination.
   result for that ID, so network retries return the same receipt without
   opening duplicate issues. The coarser incident fingerprint is used only to
   correlate similar failures and is not the receipt shown to the user.
+- If GitHub accepts a report but its response is lost, the durable pending
+  record is reconciled against the exact submission marker before any retry;
+  an ambiguous retry never performs a second issue-creation request.
 - The endpoint fails closed if either rate limiting or deduplication is not
   configured.
 
