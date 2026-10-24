@@ -305,3 +305,27 @@ positive/miss cohort with compatible frequency, installed-state and full gain-
 vector fingerprints.  Only a dense manifold that passes that held-out replay
 may be considered for a separately authorized live A/B.
 
+## 2026-10-24 live v0.1.28 collection deployment
+
+The signed v0.1.28 Fedora package is installed on the live Kraken node. A
+shipped configuration-validation defect blocked its new collection settings;
+commit `18b2272` repairs the schema/semantic validation and adds persistence and
+invalid-input regressions. The patch is published as PR #75 and is presently
+hot-deployed at
+`/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix`.
+
+Safe Apply produced config revision
+`7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0`
+without changing 527 MHz, 2.4 MS/s, five coherent channels, mapping or physical
+gains `[2.7,2.7,1.4,1.4,3.7]` dB. Frames advance and GPU-resident processing
+is ready. Detection-manifold automation reports `collecting`; the first
+verified checkpoint contained 20 fresh fixed-transmitter anchor samples and
+zero admitted aircraft-response samples. The old 993-row v1 corpus was rotated
+aside and is not mixed into the new identity epoch.
+
+No measured detection manifold is loaded into production. The unchanged
+ideal/noise-whitened 12-beam path with its 6 dB direct null remains active.
+Candidate promotion stays false until fresh pass-disjoint corpus and replay
+gates pass; this is live evidence collection, not a measured-weight performance
+claim.
+
