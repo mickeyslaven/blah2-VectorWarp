@@ -23,6 +23,11 @@ class ConnectionError : public std::runtime_error
 public:
   using std::runtime_error::runtime_error;
 };
+int64_t wall_clock_nanoseconds()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+}
 }
 
 Kraken::Kraken(std::string type, uint32_t fc, uint32_t fs,
@@ -55,7 +60,11 @@ Kraken::SamplePosition Kraken::sample_position() const
   return {samplePositionAvailable.load(std::memory_order_acquire),
     sampleEpoch.load(std::memory_order_relaxed),
     nextEpochSample.load(std::memory_order_relaxed),
-    sampleEpochEstimateNanoseconds.load(std::memory_order_relaxed)};
+    sampleEpochEstimateNanoseconds.load(std::memory_order_relaxed),
+    hostReceiptResidualNanoseconds.load(std::memory_order_relaxed),
+    hostReceiptMaximumResidualNanoseconds.load(std::memory_order_relaxed),
+    hostReceiptDriftPpm.load(std::memory_order_relaxed),
+    hostReceiptAnchors.load(std::memory_order_relaxed)};
 }
 
 Source::SampleTimePosition Kraken::sample_time_position() const
@@ -186,6 +195,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     HeimdallFrame::decode_metadata(header, metadata);
     std::vector<uint8_t> payload(HeimdallFrame::payload_size(header));
     receive_exact(payload.data(), payload.size());
+    const int64_t receiptNanoseconds = wall_clock_nanoseconds();
 
     if (header.numChannels != buffers.size())
       throw std::runtime_error(
@@ -239,18 +249,35 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
       buffers[channel]->append_unlocked(channels[channel]);
     blah2::KrakenClipRecorder::Position position;
     const bool recorded = clipRecorder->ingest(headerBytes, std::move(metadata),
-      std::move(payload), header, &position);
+      std::move(payload), header, &position, receiptNanoseconds);
+    const bool hostReceiptDiscontinuity = recorded && position.discontinuity;
     if (recorded && position.available)
     {
       sampleEpoch.store(position.epoch, std::memory_order_relaxed);
       nextEpochSample.store(position.nextSample, std::memory_order_relaxed);
       sampleEpochEstimateNanoseconds.store(position.epochEstimateNanoseconds,
         std::memory_order_relaxed);
+      hostReceiptResidualNanoseconds.store(position.hostReceiptResidualNanoseconds,
+        std::memory_order_relaxed);
+      hostReceiptMaximumResidualNanoseconds.store(
+        position.hostReceiptMaximumResidualNanoseconds, std::memory_order_relaxed);
+      hostReceiptDriftPpm.store(position.hostReceiptDriftPpm,
+        std::memory_order_relaxed);
+      hostReceiptAnchors.store(position.hostReceiptAnchors,
+        std::memory_order_relaxed);
       samplePositionAvailable.store(true, std::memory_order_release);
     }
     else samplePositionAvailable.store(false, std::memory_order_release);
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
       (*it)->unlock();
+
+    if (hostReceiptDiscontinuity) {
+      // The current frame begins a new host/sample epoch. Do not combine it
+      // with pre-step buffered samples in one CPI or recording interval.
+      recording_epoch_discontinuity("Kraken host-receipt/sample anchor discontinuity");
+      clear_buffers(buffers);
+      continue;
+    }
 
     Source::SampleTimePosition recordingStart;
     if (recorded && position.available &&

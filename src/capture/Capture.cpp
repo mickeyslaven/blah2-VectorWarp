@@ -35,7 +35,7 @@ Capture::SamplePosition Capture::live_sample_position() const
     if (!value.contractValid) return {};
     const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
     if (replayProgress.samples>UINT64_MAX-base) return {};
-    return {true,value.epoch,base+replayProgress.samples,0,
+    return {true,value.epoch,base+replayProgress.samples,0,0,0,0,0,
       value.deviceTimeEpochTick,replayProgress.sampleRate,value.clockSource,
       value.deviceTimeSource,value.motherboard,value.subdevices};
   }
@@ -43,11 +43,13 @@ Capture::SamplePosition Capture::live_sample_position() const
   if (kraken) {
     const auto value = kraken->sample_position();
     return {value.available, value.epoch, value.nextSample,
-      value.epochEstimateNanoseconds};
+      value.epochEstimateNanoseconds, 0, 0, value.hostReceiptResidualNanoseconds,
+      value.hostReceiptMaximumResidualNanoseconds, value.hostReceiptDriftPpm,
+      value.hostReceiptAnchors};
   }
   if (!device) return {};
   const auto value = device->sample_time_position();
-  return {value.available, value.epoch, value.nextSample, 0,
+  return {value.available, value.epoch, value.nextSample, 0,0,0,0,0,
     value.deviceTimeEpochTick, value.sampleRate, value.clockSource,
     value.timeSource, value.motherboard, value.subdevices};
 }

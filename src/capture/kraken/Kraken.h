@@ -31,6 +31,10 @@ private:
   std::atomic<uint64_t> sampleEpoch{0};
   std::atomic<uint64_t> nextEpochSample{0};
   std::atomic<int64_t> sampleEpochEstimateNanoseconds{0};
+  std::atomic<int64_t> hostReceiptResidualNanoseconds{0};
+  std::atomic<int64_t> hostReceiptMaximumResidualNanoseconds{0};
+  std::atomic<int64_t> hostReceiptDriftPpm{0};
+  std::atomic<uint32_t> hostReceiptAnchors{0};
   mutable std::mutex provenanceMutex;
   HeimdallFrame::Header lastHeader;
   bool lastHeaderAvailable = false;
@@ -49,6 +53,10 @@ public:
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
     int64_t epochEstimateNanoseconds = 0;
+    int64_t hostReceiptResidualNanoseconds = 0;
+    int64_t hostReceiptMaximumResidualNanoseconds = 0;
+    int64_t hostReceiptDriftPpm = 0;
+    uint32_t hostReceiptAnchors = 0;
   };
   Kraken(std::string type, uint32_t fc, uint32_t fs, std::string path,
     bool *saveIq, std::size_t channelCount, std::string heimdallHost,
