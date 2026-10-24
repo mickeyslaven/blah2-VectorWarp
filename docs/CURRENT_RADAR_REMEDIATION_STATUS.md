@@ -14,7 +14,7 @@ risk are recorded here.
 - Receiver: five coherent Kraken channels
 - Physical gains: `[2.7, 2.7, 1.4, 1.4, 3.7]` dB
 - Config revision: `54db8e29db9aabf295851abb47db54efe34b0e9502d5e88c8fa5d43e5b659ccd`
-- Deployed release: `/opt/vectorwarp/releases/20261024T005000Z-eventtime-provisional-v2`
+- Deployed release: `/opt/vectorwarp/releases/20261024T022833Z-scorecard-bounds-v2`
 - Deployed correction: per-channel gain normalization before covariance,
   reference synthesis, clutter cancellation, and beamforming
 - Deployed correction: ADS-B association now waits four CPIs, fetches the
@@ -75,8 +75,9 @@ and eligibility events could grow until the persisted scorecard exceeded its
 loader safety limit. The repaired persistence contract keeps a bounded detailed
 working set, compacts finalized CPI/truth histories, and rolls evicted lifetime
 headline counts forward. A 501-pass synthetic restart-state regression remains
-well below the loader cap. This storage follow-up is code/test complete and is
-the next API-only deployment acceptance check.
+well below the loader cap. Live acceptance retained 46 detailed passes and 8
+eligibility events in 3.29 MB, with at most 16 finalized CPI and truth rows per
+pass; the scorecard reloaded without error and live frames continued advancing.
 
 Backend-specific mitigation remains honest about the hardware boundary:
 
@@ -211,6 +212,7 @@ complete; all four OS/package lifecycle passes are complete.
 - `docs/SDR_OS_PIPELINE_ADVERSARIAL_AUDIT_20261023.md`
 - `results/20261023-gain-adsb-deployment.json`
 - `results/20261024-eventtime-provisional-deployment.json`
+- `results/20261024-time-nuisance-deployment.json`
 - Commits `37e1bf4`, `aba2e45`, `5e4abac`, `096e7e4`, `b02ba18`,
   `ccbef6b`, `87952c3`
 
