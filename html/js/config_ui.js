@@ -1708,6 +1708,8 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     ['DAB / RF notch', `${requested.dabNotch ? 'On' : 'Off'} / ${requested.rfNotch ? 'On' : 'Off'}`],
     ['IF / bandwidth', `${requested.ifFrequencyKhz} / ${requested.ifBandwidthKhz} kHz`],
     ['Decimation', `${requested.decimation}×`],
+    ['Sample counter policy / effective ratio',
+      `${requested.sampleCounterScalePolicy || requested.sampleCounterScale} / ${requested.sampleCounterScale}`],
     ['SDK stages completed', Object.entries(receipt.sdk.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(', ') || 'None']
   ];
   for (const [name, value] of rows) {

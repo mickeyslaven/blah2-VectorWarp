@@ -364,12 +364,38 @@ full DEB install and USB-node fixture remains a Linux release-host acceptance
 test. No additional Debian/Ubuntu-only sample-format or receiver-setting defect
 was found.
 
-## OS review 3 — Raspberry Pi (**serial review pending**)
+## OS review 3 — Raspberry Pi (**Complete**)
 
-The Pi image installs and verifies the seven-variable RSPduo drop-in
-(`packaging/pi/build-pi4-image.sh:210-215`,
-`packaging/pi/build-pi4-image.sh:260-273`). Its profile enables AGC, so the
-bounded RSPduo gain-epoch recovery is the relevant next acceptance check.
+The Pi image installs and verifies the exact seven-variable RSPduo drop-in,
+processor-only HackRF `plugdev` access, and both packaged service-policy flags
+(`packaging/pi/build-pi4-image.sh:59-66,190-226,258-289`,
+`packaging/pi/verify-pi4-image.sh:76-88`). Its
+profile enables AGC, so the bounded RSPduo gain-epoch recovery applies.
+
+### F9 — Pi counter override disables valid RSPduo modes (**Medium, corrected**)
+
+The shipped Pi drop-in formerly forced
+`VECTORWARP_RSPDUO_COUNTER_SCALE=3` for the entire processor service. Native
+capture correctly allows that workaround only when SDRplay reports the
+qualified dual-tuner 6 MHz ADC / 2 MS/s output geometry. Selecting another
+schema-supported RSPduo output rate therefore caused startup to fail until the
+operator found and removed a systemd override outside the Settings path.
+
+**Reproduction.** Install the Pi image profile, select RSPduo 1 MS/s in
+Settings, save and restart. The old path reached `RspDuo::set_device_parameters`
+with an inherited ratio-three request and rejected an otherwise supported
+device mode.
+
+**Correction.** The Pi drop-in requests `auto`. After reading SDRplay device
+parameters, the adapter applies ratio 3 only to the qualified geometry and
+otherwise automatically applies ratio 1. Explicit operator-requested ratio 3
+remains strict. Startup status, Settings and portable recording details preserve
+both policy and effective ratio (`src/capture/rspduo/RspDuo.cpp:123-134,567-576,970-984`,
+`api/processor-status.js:92-102,131-153`,
+`html/js/config_ui.js:1700-1713`). Mocked SDK tests prove both
+2 MS/s→3 and 1 MS/s→1 without hardware. Builder/verifier tests additionally
+reject a changed or partial seven-setting profile, missing processor `plugdev`
+access, API membership in that device group, or absent Linux service flags.
 
 ### F8 — Linux config path contract disagrees with systemd sandbox (**Medium, corrected**)
 

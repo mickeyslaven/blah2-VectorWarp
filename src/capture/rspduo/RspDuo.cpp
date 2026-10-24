@@ -121,9 +121,11 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
   ifType = ifModeMap[fs];
   usb_bulk_fg = rspduo_usb_bulk_mode(std::getenv("VECTORWARP_RSPDUO_USB_MODE"));
   const char* counterScale = std::getenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
-  if (counterScale && std::strcmp(counterScale, "1") != 0 && std::strcmp(counterScale, "3") != 0)
-    throw std::invalid_argument("VECTORWARP_RSPDUO_COUNTER_SCALE must be 1 or 3");
-  scaledSampleCounter = counterScale && std::strcmp(counterScale, "3") == 0;
+  if (counterScale && std::strcmp(counterScale, "1") != 0 &&
+      std::strcmp(counterScale, "3") != 0 && std::strcmp(counterScale, "auto") != 0)
+    throw std::invalid_argument("VECTORWARP_RSPDUO_COUNTER_SCALE must be 1, 3, or auto");
+  sampleCounterScalePolicy = counterScale ? counterScale : "1";
+  scaledSampleCounter = sampleCounterScalePolicy == "3";
   const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
   if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
       std::strcmp(debugLevel, "error") != 0)
@@ -562,11 +564,16 @@ void RspDuo::set_device_parameters()
     startupStages.descriptorSampleRateHz = chosenDevice->rspDuoSampleFreq;
   }
 
-  if (scaledSampleCounter && !SdkSampleClock::supportsRatio3({
-      deviceParams->devParams->fsFreq.fsHz, fs, static_cast<unsigned>(nDecimation),
-      ifType == sdrplay_api_IF_1_620,
-      chosenDevice->rspDuoMode == sdrplay_api_RspDuoMode_Dual_Tuner}))
+  const bool ratio3Supported = SdkSampleClock::supportsRatio3({
+    deviceParams->devParams->fsFreq.fsHz, fs, static_cast<unsigned>(nDecimation),
+    ifType == sdrplay_api_IF_1_620,
+    chosenDevice->rspDuoMode == sdrplay_api_RspDuoMode_Dual_Tuner});
+  if (sampleCounterScalePolicy == "auto") {
+    scaledSampleCounter = ratio3Supported;
+    sampleClock.configure(scaledSampleCounter ? 3 : 1);
+  } else if (scaledSampleCounter && !ratio3Supported) {
     throw std::runtime_error("[RspDuo] Scaled SDK counter is validated only for dual-tuner 6MHz ADC / 2MSps output.");
+  }
 
   // set USB mode
   if (usb_bulk_fg)
@@ -973,6 +980,7 @@ std::string RspDuo::startup_receipt_json() const
       << ",\"decimation\":" << nDecimation
       << ",\"usbMode\":\"" << (usb_bulk_fg ? "bulk" : "isoch") << '"'
       << ",\"sampleCounterScale\":" << (scaledSampleCounter ? 3 : 1)
+      << ",\"sampleCounterScalePolicy\":\"" << sampleCounterScalePolicy << '"'
       << ",\"sdkDebugLevel\":\"" << sdkDebugLevel << "\"},\"selected\":";
   if (stages.select)
     out << "{\"serial\":" << json_string(stages.selectedSerial)

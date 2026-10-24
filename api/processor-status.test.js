@@ -31,7 +31,8 @@ const startup = {
     agcSetPoint: -30, bandwidthNumber: 50, gainReduction: [30, 31],
     lnaState: 3, dabNotch: true, rfNotch: false,
     ifBandwidthKhz: 1536, ifFrequencyKhz: 1620, decimation: 1,
-    usbMode: 'isoch', sampleCounterScale: 1, sdkDebugLevel: 'error'},
+    usbMode: 'isoch', sampleCounterScale: 1, sampleCounterScalePolicy: '1',
+    sdkDebugLevel: 'error'},
   selected: {serial: 'mock-only', deviceIndex: 0, hardwareVersion: 3,
     tuner: 'Both', mode: 'Dual_Tuner'},
   sdk: {version: 3.15, parameters: {adcSampleRateHz: 6000000,
@@ -41,6 +42,13 @@ const live = {...replay, input: 'live', receiver: 'RspDuo', state: 'live',
   file: '', frequency: 204640000, sampleRate: 2000000,
   receiverStartup: startup};
 assert.equal(status(live).valid, true);
+const automaticStartup = {...startup, requested: {...startup.requested,
+  sampleCounterScale: 3, sampleCounterScalePolicy: 'auto'}};
+assert.equal(status({...live, receiverStartup: automaticStartup}).valid, true);
+assert.equal(status({...live, receiverStartup: {...automaticStartup,
+  requested: {...automaticStartup.requested, sampleCounterScale: 1}}}).valid, false);
+assert.equal(status({...live, receiverStartup: {...startup,
+  requested: {...startup.requested, sampleCounterScalePolicy: '3'}}}).valid, false);
 assert.equal(status({...live, receiverStartup: undefined}).valid, true); // older module
 const clipAcknowledgement = status({...live, receiverStartup: undefined,
   clipRevision: 7, clipError: '', clipFile: '/clips/pass.mchq',

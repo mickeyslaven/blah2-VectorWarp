@@ -93,6 +93,13 @@ function rspStartup(payload, outer, errors) {
     errors.push(`${name}.requested.usbMode is invalid`);
   if (![1, 3].includes(requested.sampleCounterScale))
     errors.push(`${name}.requested.sampleCounterScale is invalid`);
+  const sampleCounterScalePolicy = requested.sampleCounterScalePolicy ??
+    String(requested.sampleCounterScale);
+  if (!['1', '3', 'auto'].includes(sampleCounterScalePolicy))
+    errors.push(`${name}.requested.sampleCounterScalePolicy is invalid`);
+  if (sampleCounterScalePolicy !== 'auto' &&
+      Number(sampleCounterScalePolicy) !== requested.sampleCounterScale)
+    errors.push(`${name}.requested sample-counter policy and effective scale disagree`);
   if (!['error', 'verbose'].includes(requested.sdkDebugLevel))
     errors.push(`${name}.requested.sdkDebugLevel is invalid`);
   if (selected !== null && (!selected || typeof selected !== 'object' || Array.isArray(selected)))
@@ -125,6 +132,12 @@ function rspStartup(payload, outer, errors) {
   const descriptorSampleRateHz = sdkRate('descriptorSampleRateHz');
   if (stages.getDeviceParams && !(adcSampleRateHz > 0))
     errors.push(`${name}.sdk.parameters.adcSampleRateHz is required after parameter retrieval`);
+  if (stages.getDeviceParams && sampleCounterScalePolicy === 'auto') {
+    const expectedScale = adcSampleRateHz === 6000000 && sampleRate === 2000000 &&
+      decimation === 1 && ifFrequencyKhz === 1620 ? 3 : 1;
+    if (requested.sampleCounterScale !== expectedScale)
+      errors.push(`${name}.requested automatic sample-counter scale disagrees with SDK descriptors`);
+  }
   const allAccepted = RSP_STAGES.every(stage => stages[stage] === true);
   if ((payload.status === 'accepted') !== allAccepted)
     errors.push(`${name}.status disagrees with SDK stages`);
@@ -136,6 +149,7 @@ function rspStartup(payload, outer, errors) {
       gainReduction, lnaState, dabNotch: requested.dabNotch, rfNotch: requested.rfNotch,
       ifBandwidthKhz, ifFrequencyKhz, decimation, usbMode: requested.usbMode,
       sampleCounterScale: requested.sampleCounterScale,
+      sampleCounterScalePolicy,
       sdkDebugLevel: requested.sdkDebugLevel},
     selected: selected ? {serial: selected.serial, deviceIndex: selected.deviceIndex,
       hardwareVersion: selected.hardwareVersion, tuner: 'Both', mode: 'Dual_Tuner'} : null,

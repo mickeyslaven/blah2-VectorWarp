@@ -74,9 +74,18 @@ test_root() {
   test -x "$r/usr/lib/raspberrypi-sys-mods/imager_custom"
   test -L "$r/usr/lib/systemd/system/vectorwarp-api.service.wants/vectorwarp-receiver.socket"
   test -x "$r/opt/vectorwarp/runtime/node/bin/node"; test -f "$r/opt/vectorwarp/current/receiver-source/rspduo/kit.json"
+  grep -Fxq 'Environment=VECTORWARP_LINUX_SERVICE=1' "$r/usr/lib/systemd/system/vectorwarp-api.service"
+  grep -Fxq 'Environment=VECTORWARP_LINUX_SERVICE=1' "$r/usr/lib/systemd/system/vectorwarp-processor.service"
   test -f "$r/etc/vectorwarp/config.yml"; grep -qx '  fc: 100000000' "$r/etc/vectorwarp/config.yml"
   grep -qx '    type: "RspDuo"' "$r/etc/vectorwarp/config.yml"
-  chroot "$r" /bin/sh -ec 'id -nG vectorwarp | tr " " "\n" | grep -qx render; id -nG vectorwarp | tr " " "\n" | grep -qx video; find /usr/share/vulkan/icd.d -type f -name "*.json" -print -quit | grep -q .'
+  test "$(grep -c '^Environment=' "$r/etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf")" = 7
+  for setting in OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECTORWARP_FFTW_PLAN=measure \
+    VECTORWARP_CLUTTER_WORKERS=2 VECTORWARP_RSPDUO_CPI_QUEUE=1 \
+    VECTORWARP_RSPDUO_USB_MODE=bulk VECTORWARP_RSPDUO_COUNTER_SCALE=auto; do
+    grep -Fxq "Environment=$setting" \
+      "$r/etc/systemd/system/vectorwarp-processor.service.d/pi4-rspduo-performance.conf"
+  done
+  chroot "$r" /bin/sh -ec 'id -nG vectorwarp | tr " " "\n" | grep -qx render; id -nG vectorwarp | tr " " "\n" | grep -qx video; id -nG vectorwarp | tr " " "\n" | grep -qx plugdev; ! id -nG vectorwarp-api | tr " " "\n" | grep -qx plugdev; find /usr/share/vulkan/icd.d -type f -name "*.json" -print -quit | grep -q .'
   required_elfs=("$r/opt/vectorwarp/runtime/node/bin/node" "$r/opt/vectorwarp/current/bin/blah2" "$r/opt/vectorwarp/current/bin/blah2-gpu-worker" "$r/opt/vectorwarp/current/bin/blah2-mixed-worker")
   for elf in "${required_elfs[@]}"; do
     [[ -x $elf ]] || die "missing required native worker: ${elf#$r}"

@@ -17,7 +17,10 @@ streaming; omit it (or use `isoch`) for the established isochronous default.
 `VECTORWARP_RSPDUO_COUNTER_SCALE=3` is intentionally accepted only when the
 SDK reports dual-tuner, 6 MHz ADC, 2 MS/s output, and decimation 1. It handles
 the alternate divided sample counter at its 32-bit rollover without changing
-the paired IQ data.
+the paired IQ data. `auto`, used by the Pi image profile, selects that guarded
+ratio only for the matching SDK descriptors and otherwise falls back to the
+normal ratio 1. Status and recordings preserve both the policy and the effective
+ratio.
 
 With `VECTORWARP_RSPDUO_CPI_QUEUE=1`, live dual-channel capture writes validated
 tuner pairs into a bounded signed16 CPI queue. The processor borrows one ready

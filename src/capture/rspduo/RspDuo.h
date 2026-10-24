@@ -97,6 +97,7 @@ private:
   uint32_t expectedFirstSample = 0;
   bool expectedFirstSampleValid = false;
   bool scaledSampleCounter = false;
+  std::string sampleCounterScalePolicy = "1";
   std::string sdkDebugLevel = "error";
   SdkSampleClock sampleClock;
   IqData* outputBuffer1 = nullptr;

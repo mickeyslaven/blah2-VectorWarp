@@ -34,9 +34,11 @@ future work.
 
 The image profile prepares the tested Pi 4B 8 GB RSPduo geometry: 2 MS/s,
 500 ms CPI, ±300 Hz (301×411), tracking, and Automatic acceleration. It starts
-with radar stopped. Its counter-ratio-three performance drop-in is valid only
-for that dual-tuner 2 MS/s mode; remove or replace it before selecting another
-RSPduo mode. Other receiver profiles ignore those RSPduo-specific flags.
+with radar stopped. Its automatic sample-counter policy selects ratio three only
+when SDRplay reports the qualified dual-tuner 6 MHz ADC / 2 MS/s geometry. Other
+RSPduo modes automatically retain ratio one, and status/recording provenance
+shows both the `auto` policy and effective ratio. Other receiver profiles ignore
+those RSPduo-specific flags.
 
 This preview has not completed the flow on a clean card. Review
 [validation limits](PI4_IMAGE_VALIDATION_20260919.md) before flashing; it does
@@ -154,9 +156,9 @@ sudo systemctl daemon-reload
 
 The drop-in enables the bounded paired CPI queue and bulk USB transport, uses
 measured FFT plans and two clutter CPU slots, and limits BLAS/OpenMP to one
-thread. Its sample-counter ratio of three is accepted only for the tested
-dual-tuner 6 MHz ADC / 2 MS/s output mode; another receiver mode requires a
-separately qualified profile. These settings apply on the next processor
+thread. Its automatic sample-counter policy applies ratio three only for the
+tested dual-tuner 6 MHz ADC / 2 MS/s output mode and falls back to ratio one for
+other RSPduo modes. These settings apply on the next processor
 start. An already-running processor needs `vectorwarp restart` after saving
 the configuration. Remove this drop-in and reload systemd to return to the
 normal service environment.

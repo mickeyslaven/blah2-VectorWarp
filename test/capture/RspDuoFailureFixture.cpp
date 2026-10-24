@@ -272,6 +272,7 @@ int main() {
       assert(accepted["readbackAvailable"].GetBool() == false);
       assert(accepted["requested"]["usbMode"] == "isoch");
       assert(accepted["requested"]["sampleCounterScale"].GetUint() == 1);
+      assert(accepted["requested"]["sampleCounterScalePolicy"] == "1");
       assert(accepted["requested"]["sdkDebugLevel"] == "error");
       assert(accepted["sdk"]["parameters"]["adcSampleRateHz"].GetDouble() == 6000000);
       assert(accepted["sdk"]["parameters"]["descriptorSampleRateHz"].GetDouble() == 6000000);
@@ -330,12 +331,34 @@ int main() {
     -30, 50, 30, 31, 3, true, false);
   scaled.start();
   assert(receipt(scaled)["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(receipt(scaled)["requested"]["sampleCounterScalePolicy"] == "3");
   scaled.process(nullptr, nullptr); scaled.stop();
   reset(); deviceParameters.fsFreq.fsHz = 6000000;
   RspDuo invalidScaledRate("RspDuo", 204640000, 1000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
   try { invalidScaledRate.start(); assert(false); } catch (const std::runtime_error&) {}
   invalidScaledRate.stop();
+  unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
+  reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
+  setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "auto", 1);
+  RspDuo automaticScaled("RspDuo", 204640000, 2000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  automaticScaled.start();
+  assert(receipt(automaticScaled)["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(receipt(automaticScaled)["requested"]["sampleCounterScalePolicy"] == "auto");
+  rapidjson::Document automaticRecording;
+  automaticRecording.Parse(automaticScaled.recording_provenance_json().c_str());
+  assert(!automaticRecording.HasParseError());
+  assert(automaticRecording["startup"]["requested"]["sampleCounterScale"].GetUint() == 3);
+  assert(automaticRecording["startup"]["requested"]["sampleCounterScalePolicy"] == "auto");
+  automaticScaled.process(nullptr, nullptr); automaticScaled.stop();
+  reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
+  RspDuo automaticNormal("RspDuo", 204640000, 1000000, "/unused", &record,
+    -30, 50, 30, 31, 3, true, false);
+  automaticNormal.start();
+  assert(receipt(automaticNormal)["requested"]["sampleCounterScale"].GetUint() == 1);
+  assert(receipt(automaticNormal)["requested"]["sampleCounterScalePolicy"] == "auto");
+  automaticNormal.process(nullptr, nullptr); automaticNormal.stop();
   unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
   for (const std::string serial : {"", "not-present"}) {
     reset(); multipleDevices = true;

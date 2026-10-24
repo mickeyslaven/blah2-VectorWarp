@@ -89,7 +89,8 @@ const check = async () => {
       hardwareVerified: false, readbackAvailable: false,
       requested: {...saved.capture.device, frequency: saved.capture.fc,
         sampleRate: saved.capture.fs, serial: '', ifFrequencyKhz: 1620,
-        ifBandwidthKhz: 1536, decimation: 1},
+        ifBandwidthKhz: 1536, decimation: 1, sampleCounterScalePolicy: 'auto',
+        sampleCounterScale: 3},
       selected: {serial: '<img src=x onerror=alert(1)>'},
       sdk: {version: 3.15, stages: {open: true, init: true, gainUpdateA: true, gainUpdateB: true}}};
     const live = {radar: 'receiving', processorFresh: true,
@@ -97,6 +98,7 @@ const check = async () => {
     window.renderReceiverStartup(live);
     assert.match(startup.textContent, /SDRplay accepted settings; receiving radar frames/);
     assert.match(startup.textContent, /not measured tuner values/);
+    assert.match(startup.textContent, /Sample counter policy \/ effective ratioauto \/ 3/);
     assert.equal(startup.querySelector('img'), null, 'Receipt strings must be text, not HTML');
     assert.doesNotMatch(startup.textContent, /Running settings differ/);
     startup.querySelector('details').open = true;
