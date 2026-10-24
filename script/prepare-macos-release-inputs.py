@@ -27,6 +27,15 @@ SPEC.loader.exec_module(package)
 BASELINE_SOURCE_SHA256 = "193456313f51fc6d330c4e8332beec4957adfad8a80e4a4d81dea6fd7fbb19cd"
 BASELINE_SOURCE_ID = "f8135ac947a88dd416b0f0ae8d3d891dd546da1d"
 BASELINE_NPM_LOCK_SHA256 = "de38adb43b306b81ee4aac67dbc913927a6dfef1bd062d3a8bb8659956518c2d"
+REVIEWED_NPM_LOCK_SHA256 = "0fa96e32fbe379ee7f51e26904fa4c0865273d8bec881f8beb53aa05177a1849"
+PROXY_ADDR_REVIEW = {
+    "old_version": "2.0.7",
+    "version": "2.0.8",
+    "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz",
+    "integrity": "sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==",
+    "archive_sha256": "ffcc8055b78b0852b2889a426ad3a3003b60bc79df704faca194157efa2b2587",
+    "license_sha256": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813",
+}
 HEADER_VERSIONS = {"asio": "1.38.2", "rapidjson": "1.1.0",
                    "vulkan-headers": "1.4.357.0"}
 CPP_HEADER = {
@@ -117,6 +126,58 @@ def fetch_intel_cpp_source(output, url, baseline_notices):
     if (license_sha != CPP_LICENSE_SHA256 or
             sha256(baseline_notices / "embedded/cpp-httplib/LICENSE") != license_sha):
         raise ValueError("Intel cpp-httplib license differs from reviewed notice")
+    return archive
+
+
+def reviewed_npm_lock_delta(baseline_raw, candidate_raw):
+    """Accept only the reviewed proxy-addr 2.0.7 -> 2.0.8 lock transition."""
+    if hashlib.sha256(baseline_raw).hexdigest() != BASELINE_NPM_LOCK_SHA256:
+        raise ValueError("baseline npm dependency lock changed")
+    if hashlib.sha256(candidate_raw).hexdigest() != REVIEWED_NPM_LOCK_SHA256:
+        raise ValueError("npm dependency lock changed; new source/notices review required")
+    baseline = json.loads(baseline_raw)
+    candidate = json.loads(candidate_raw)
+    package_path = "node_modules/proxy-addr"
+    old = ((baseline.get("packages") or {}).get(package_path) or {})
+    new = ((candidate.get("packages") or {}).get(package_path) or {})
+    if (old.get("version") != PROXY_ADDR_REVIEW["old_version"] or
+            old.get("license") != "MIT" or
+            new != {
+                "version": PROXY_ADDR_REVIEW["version"],
+                "resolved": PROXY_ADDR_REVIEW["resolved"],
+                "integrity": PROXY_ADDR_REVIEW["integrity"],
+                "license": "MIT",
+                "dependencies": {"forwarded": "0.2.0", "ipaddr.js": "1.9.1"},
+                "engines": {"node": ">= 0.10"},
+                "funding": {"type": "opencollective",
+                            "url": "https://opencollective.com/express"},
+            }):
+        raise ValueError("reviewed proxy-addr lock entry changed")
+    old_copy = json.loads(json.dumps(baseline))
+    old_copy["packages"][package_path] = new
+    if old_copy != candidate:
+        raise ValueError("npm dependency lock contains an unreviewed change")
+
+
+def fetch_proxy_addr_source(output):
+    archive = output / "proxy-addr-2.0.8.tgz"
+    with urllib.request.urlopen(PROXY_ADDR_REVIEW["resolved"], timeout=60) as response, \
+            archive.open("xb") as stream:
+        shutil.copyfileobj(response, stream)
+    if sha256(archive) != PROXY_ADDR_REVIEW["archive_sha256"]:
+        raise ValueError("proxy-addr source archive hash differs from reviewed input")
+    with tarfile.open(archive, "r:gz") as source:
+        package_stream = source.extractfile("package/package.json")
+        license_stream = source.extractfile("package/LICENSE")
+        if package_stream is None or license_stream is None:
+            raise ValueError("proxy-addr source archive is incomplete")
+        metadata = json.load(package_stream)
+        license_sha = hashlib.sha256(license_stream.read()).hexdigest()
+    if (metadata.get("name") != "proxy-addr" or
+            metadata.get("version") != PROXY_ADDR_REVIEW["version"] or
+            metadata.get("license") != "MIT" or
+            license_sha != PROXY_ADDR_REVIEW["license_sha256"]):
+        raise ValueError("proxy-addr source identity or license differs from review")
     return archive
 
 
@@ -239,12 +300,13 @@ def verify_checkout(checkout, source_id, review_receipt=None):
         return subprocess.check_output(["git", "-C", str(checkout), *args], text=True).strip()
     if git("rev-parse", "HEAD") != source_id or git("status", "--porcelain"):
         raise ValueError("source checkout is not clean at the exact candidate commit")
-    if sha256(checkout / "api/package-lock.json") != BASELINE_NPM_LOCK_SHA256:
-        raise ValueError("npm dependency lock changed; new source/notices review required")
     try:
         git("cat-file", "-e", BASELINE_SOURCE_ID + "^{commit}")
     except subprocess.CalledProcessError:
         git("fetch", "--no-tags", "origin", BASELINE_SOURCE_ID)
+    baseline_lock = subprocess.check_output(
+        ["git", "-C", str(checkout), "show", BASELINE_SOURCE_ID + ":api/package-lock.json"])
+    reviewed_npm_lock_delta(baseline_lock, (checkout / "api/package-lock.json").read_bytes())
     changed = git("diff", "--name-only", BASELINE_SOURCE_ID, source_id).splitlines()
     # Signing entitlements/package wiring are included in the current first-party
     # archive; only native dependency/build inputs block source-kit reuse here.
@@ -268,6 +330,24 @@ def rebind_notices(baseline, output, source_id, runtimes):
     validated_baseline_notices(baseline)
     shutil.copytree(baseline, output, symlinks=False)
     index = read_json(output / "INDEX.json")
+    proxy_records = [item for item in index.get("api_packages", [])
+                     if item.get("name") == "proxy-addr"]
+    if (len(proxy_records) != 1 or
+            proxy_records[0].get("version") != PROXY_ADDR_REVIEW["old_version"] or
+            proxy_records[0].get("license") != "MIT" or
+            proxy_records[0].get("notice_files_in_each_runtime") !=
+            ["api/node_modules/proxy-addr/LICENSE"]):
+        raise ValueError("baseline proxy-addr notice identity changed")
+    proxy_records[0]["version"] = PROXY_ADDR_REVIEW["version"]
+    for arch, runtime in runtimes.items():
+        package_json = runtime / "api/node_modules/proxy-addr/package.json"
+        license_path = runtime / "api/node_modules/proxy-addr/LICENSE"
+        package_value = read_json(package_json)
+        if (package_value.get("name") != "proxy-addr" or
+                package_value.get("version") != PROXY_ADDR_REVIEW["version"] or
+                package_value.get("license") != "MIT" or
+                sha256(license_path) != PROXY_ADDR_REVIEW["license_sha256"]):
+            raise ValueError(f"{arch} proxy-addr runtime identity or notice differs from review")
     matches = [item for item in index.get("input_notices", [])
                if item.get("file") == "embedded/cpp-httplib/LICENSE"]
     matches[0]["origin"] += "; cpp-httplib-0.53.1.tar.gz::cpp-httplib-0.53.1/LICENSE (Intel)"
@@ -319,7 +399,7 @@ def add_file(archive, name, source):
         archive.addfile(info, stream)
 
 
-def source_archive(args, source_id, runtimes, output, intel_cpp, review=None):
+def source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, review=None):
     baseline = Path(args.baseline_source_archive)
     if sha256(baseline) != BASELINE_SOURCE_SHA256:
         raise ValueError("accepted baseline source archive changed")
@@ -330,6 +410,7 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, review=None):
     items = {"dependency-source-baseline-v0.1.9.tar.gz": baseline,
              "VectorWarp-current-source.tar.gz": first_party,
              "cpp-httplib-0.53.1.tar.gz": intel_cpp,
+             "proxy-addr-2.0.8.tgz": proxy_addr,
              "runtime-arm64-standalone.json": runtimes["arm64"] / "standalone.json",
              "runtime-x86_64-standalone.json": runtimes["x86_64"] / "standalone.json",
              "inventory-arm64.json": Path(args.arm64_inventory),
@@ -349,7 +430,9 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, review=None):
               "licenses and build instructions. It is reused only after both architecture inventories, "
               "embedded-header versions and npm lock passed exact-input checks. Intel uses "
               "cpp-httplib 0.53.1; its separately verified source archive is alongside this README, "
-              "with the same MIT license text as the 0.54.1 arm64 notice. Extract the baseline kit, "
+              "with the same MIT license text as the 0.54.1 arm64 notice. The reviewed npm lock "
+              "transition changes only proxy-addr 2.0.7 to 2.0.8; its exact registry source archive "
+              "and unchanged MIT license are included. Extract the baseline kit, "
               "then use the current first-party checkout for the build; do not use its historical "
               "f813 first-party archive. Current runtime manifests and CI inventories are included "
               "for provenance. No signing key, SDK, runtime binary or notarization credential is here." +
@@ -388,6 +471,7 @@ def source_archive(args, source_id, runtimes, output, intel_cpp, review=None):
         raise ValueError("corresponding-source archive is missing members")
     first_party.unlink()
     intel_cpp.unlink()
+    proxy_addr.unlink()
     return archive_path
 
 
@@ -442,10 +526,11 @@ def prepare(args):
     try:
         intel_cpp = fetch_intel_cpp_source(
             output, verify_cpp_formula(args.x86_64_cpp_formula, "x86_64"), Path(args.baseline_notices))
+        proxy_addr = fetch_proxy_addr_source(output)
         rebind_notices(Path(args.baseline_notices), output / "notices", source_id, runtimes)
         if review is not None:
             persist_review(output, review)
-        archive = source_archive(args, source_id, runtimes, output, intel_cpp, review)
+        archive = source_archive(args, source_id, runtimes, output, intel_cpp, proxy_addr, review)
         receipt = {"schema": 1, "source_id": source_id,
             "version": args.version, "source_archive": archive.name,
             "source_archive_sha256": sha256(archive), "source_archive_size": archive.stat().st_size,
