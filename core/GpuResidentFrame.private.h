@@ -856,6 +856,15 @@ public:
   const uint64_t lateBytes=uint64_t(g.clutterSamples)*g.channels*16+m*16+gpu_resident::words*4;
   const auto budget=gpu_memory::heapBudget(context_.candidate.info.memoryBytes);
   const auto& limit=context_.candidate.properties.limits;
+  if(config_.replayMaxBytes){
+   const uint64_t passes=config_.postprocess.integrationCpis>2?
+    track_before_detect::detectorPassCount(config_.postprocess.integrationCpis):1;
+   const uint64_t bank=m*std::max(1u,config_.fusion.beams)*8,statistics=m*passes*40;
+   if(bank>limit.maxStorageBufferRange||statistics>limit.maxStorageBufferRange||
+      limit.maxPerStageDescriptorStorageBuffers<10||limit.maxDescriptorSetStorageBuffers<10||
+      bank>config_.replayMaxBytes||statistics>config_.replayMaxBytes-bank)
+    throw std::runtime_error("GPU_RESIDENT_UNAVAILABLE replay observer capacity");
+  }
   if(ambiguityBytes>budget || lateBytes>budget-ambiguityBytes ||
     std::max({r*g.channels*8,m*g.channels*8,uint64_t(g.clutterSamples)*g.channels*16,m*16})>limit.maxStorageBufferRange ||
     limit.maxComputeWorkGroupInvocations<128 || limit.maxComputeWorkGroupSize[0]<128 || limit.maxComputeWorkGroupCount[0]<65535)
