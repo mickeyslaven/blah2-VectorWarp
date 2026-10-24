@@ -3,9 +3,10 @@ const MAX_EVENTS = 20;
 const GITHUB_API_VERSION = '2026-03-10';
 const IPV6_PATTERN = /(?<![A-Fa-f0-9:])(?:(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,7}:|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|[A-Fa-f0-9]{1,4}:(?:(?::[A-Fa-f0-9]{1,4}){1,6})|:(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:))(?![A-Fa-f0-9:])/g;
 const REPORT_KEYS = new Set([
-  'schema', 'consent', 'incident', 'build', 'system', 'receiver', 'runtime',
+  'schema', 'consent', 'submissionId', 'incident', 'build', 'system', 'receiver', 'runtime',
   'recentEvents', 'comment'
 ]);
+const SENSITIVE_KEY = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight)/;
 
 const responseHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -43,16 +44,19 @@ function redactText(value, maximum, name, required = false) {
   let result = value.normalize('NFKC')
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/`/g, "'")
-    .replace(/\bhttps?:\/\/[^\s<>]+/gi, '[URL redacted]')
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, '[URL redacted]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email redacted]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP redacted]')
     .replace(IPV6_PATTERN, '[IP redacted]')
-    .replace(/\b(?:serial|token|password|secret|hostname|host|endpoint|address)\s*[:=]\s*[^\s,;]+/gi,
+    .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi,
+      'Bearer [redacted]')
+    .replace(/["']?(?:serial(?:number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address)["']?\s*[:=]\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
       match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
-    .replace(/\b(?:lat(?:itude)?|lon(?:gitude)?)\s*[:=]\s*-?\d+(?:\.\d+)?/gi,
+    .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
       match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
+    .replace(/\\\\[^\s\\/]+[\\/][^\s"'<>]*/g, '[path redacted]')
     .replace(/[A-Za-z]:\\(?:[^\s<>:"|?*]+\\)*[^\s<>:"|?*]*/g, '[path redacted]')
-    .replace(/(^|[\s("'=])\/(?:Users|home|etc|var|opt|private|tmp|run)\/[^\s"'<>]*/g,
+    .replace(/(^|[\s("'=])\/(?:Users|Volumes|home|mnt|etc|var|opt|private|tmp|run)\/[^\s"'<>]*/g,
       (_, prefix) => `${prefix}[path redacted]`)
     .replace(/\s+/g, ' ').trim();
   if (!result && required) throw new ReportError(`${name} is required`);
@@ -95,6 +99,13 @@ function identifier(value, maximum, name, required = false) {
   return result;
 }
 
+function releaseIdentifier(value, maximum, name, required = false) {
+  const result = redactText(value, maximum, name, required);
+  if (result !== null && !/^[A-Za-z0-9][A-Za-z0-9_.+-]*$/.test(result))
+    throw new ReportError(`${name} must be a stable release identifier`);
+  return result;
+}
+
 function safeDetails(value, name) {
   if (value === undefined || value === null) return {};
   if (!isObject(value)) throw new ReportError(`${name} must be an object`);
@@ -102,8 +113,9 @@ function safeDetails(value, name) {
   if (entries.length > 40) throw new ReportError(`${name} has too many fields`);
   const result = {};
   for (const [key, item] of entries) {
-    if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) ||
-        /(serial|token|secret|password|location|latitude|longitude|hostname|address|endpoint|path|file|url|ip)$/i.test(key))
+    const canonical = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
+    if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) || SENSITIVE_KEY.test(canonical) ||
+        canonical === 'lat' || canonical === 'lon' || canonical === 'ip')
       throw new ReportError(`${name} contains a sensitive or unsupported field`);
     if (typeof item === 'boolean') result[key] = item;
     else if (typeof item === 'number' && Number.isFinite(item)) result[key] = item;
@@ -148,6 +160,9 @@ export function normalizeReport(value) {
   onlyKeys(value, REPORT_KEYS, 'report');
   if (value.schema !== 1) throw new ReportError('report.schema must be 1');
   if (value.consent !== true) throw new ReportError('report.consent must be true');
+  if (typeof value.submissionId !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.submissionId))
+    throw new ReportError('report.submissionId must be a UUID');
 
   onlyKeys(value.build, new Set(['version', 'commit', 'package']), 'build');
   const commit = redactText(value.build.commit, 40, 'build.commit', true);
@@ -172,11 +187,12 @@ export function normalizeReport(value) {
 
   return {
     schema: 1,
+    submissionId: value.submissionId.toLowerCase(),
     incident: normalizeIncident(value.incident),
     build: {
-      version: redactText(value.build.version, 64, 'build.version', true),
+      version: releaseIdentifier(value.build.version, 64, 'build.version', true),
       commit: commit.toLowerCase(),
-      package: redactText(value.build.package, 64, 'build.package')
+      package: releaseIdentifier(value.build.package, 64, 'build.package')
     },
     system: {
       os: redactText(value.system.os, 64, 'system.os', true),
@@ -226,7 +242,11 @@ export async function reportFingerprint(report) {
   return (await digest(source)).slice(0, 16);
 }
 
-export function githubIssue(report, fingerprint, labels = '') {
+export async function submissionReceiptId(report) {
+  return (await digest(`vectorwarp-submission\n${report.submissionId}`)).slice(0, 24);
+}
+
+export function githubIssue(report, fingerprint, reportId, labels = '') {
   const title = `[VectorWarp report] ${report.incident.code} in ${report.incident.component}`
     .slice(0, 256);
   const body = [
@@ -238,6 +258,7 @@ export function githubIssue(report, fingerprint, labels = '') {
     `**Build:** ${report.build.version} (${report.build.commit.slice(0, 12)})`,
     `**Receiver:** ${report.receiver.type}`,
     `**Fingerprint:** \`${fingerprint}\``,
+    `**Submission:** \`${reportId}\``,
     '',
     '### Diagnostic report',
     '',
@@ -258,25 +279,42 @@ async function parseBody(request) {
   const declared = Number(request.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES)
     throw new ReportError('Report is too large', 413);
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES)
-    throw new ReportError('Report is too large', 413);
+  if (!request.body?.getReader) throw new ReportError('Report body is required', 400);
+  const reader = request.body.getReader();
+  const chunks = []; let size = 0;
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel('Report is too large').catch(() => {});
+      throw new ReportError('Report is too large', 413);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  let text;
+  try { text = new TextDecoder('utf-8', {fatal: true}).decode(body); }
+  catch (_) { throw new ReportError('Report is not valid UTF-8', 400); }
   try { return JSON.parse(text); }
   catch (_) { throw new ReportError('Report is not valid JSON', 400); }
 }
 
 async function rateLimit(request, env) {
-  if (!env.REPORT_RATE_LIMITER?.limit) return true;
+  if (!env.REPORT_RATE_LIMITER?.limit)
+    throw new ReportError('Reporting service is not configured', 503);
   const source = request.headers.get('cf-connecting-ip') || 'unknown';
   const key = await digest(`vectorwarp-report:${source}`);
   return (await env.REPORT_RATE_LIMITER.limit({key})).success;
 }
 
-async function createIssue(report, env, fetcher) {
+export async function createIssue(report, env, fetcher) {
   if (!env.GITHUB_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY || ''))
     throw new ReportError('Reporting service is not configured', 503);
   const fingerprint = await reportFingerprint(report);
-  const issue = githubIssue(report, fingerprint, env.REPORT_LABELS || '');
+  const reportId = await submissionReceiptId(report);
+  const issue = githubIssue(report, fingerprint, reportId, env.REPORT_LABELS || '');
   const response = await fetcher(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/issues`, {
     method: 'POST',
     headers: {
@@ -295,11 +333,47 @@ async function createIssue(report, env, fetcher) {
   if (!Number.isSafeInteger(result.number) || typeof result.html_url !== 'string' ||
       !result.html_url.startsWith('https://github.com/'))
     throw new ReportError('Report destination returned an invalid response', 502);
-  return {reportId: fingerprint};
+  return {reportId};
+}
+
+export class ReportDeduplicator {
+  constructor(state, env) { this.state = state; this.env = env; this.inflight = null; }
+  async fetch(request) {
+    try {
+      const report = await request.json();
+      const reportId = await submissionReceiptId(report);
+      const existing = await this.state.storage.get('result');
+      if (existing?.reportId === reportId) return json(200, {ok: true, ...existing});
+      if (!this.inflight) this.inflight = (async () => {
+        const result = await createIssue(report, this.env, globalThis.fetch);
+        await this.state.storage.put('result', result);
+        return result;
+      })().finally(() => { this.inflight = null; });
+      return json(201, {ok: true, ...await this.inflight});
+    } catch (error) {
+      if (error instanceof ReportError) return json(error.status, {ok: false, error: error.message});
+      return json(500, {ok: false, error: 'Report could not be submitted'});
+    }
+  }
+}
+
+async function deduplicatedIssue(report, env, dependencies) {
+  if (dependencies.deduplicate) return dependencies.deduplicate(report, env,
+    dependencies.fetch || globalThis.fetch);
+  if (!env.REPORT_DEDUPLICATOR?.idFromName || !env.REPORT_DEDUPLICATOR?.get)
+    throw new ReportError('Reporting service is not configured', 503);
+  const reportId = await submissionReceiptId(report);
+  const stub = env.REPORT_DEDUPLICATOR.get(env.REPORT_DEDUPLICATOR.idFromName(reportId));
+  const response = await stub.fetch('https://report-deduplicator.internal/', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(report)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok !== true || result.reportId !== reportId)
+    throw new ReportError(result.error || 'Report destination is temporarily unavailable', response.status || 502);
+  return {reportId};
 }
 
 export async function handleRequest(request, env = {}, dependencies = {}) {
-  const fetcher = dependencies.fetch || globalThis.fetch;
   const url = new URL(request.url);
   if (request.method === 'OPTIONS') return new Response(null, {status: 204, headers: responseHeaders});
   if (request.method === 'GET' && url.pathname === '/health')
@@ -313,7 +387,7 @@ export async function handleRequest(request, env = {}, dependencies = {}) {
     if (!await rateLimit(request, env))
       return json(429, {ok: false, error: 'Too many reports; try again later'}, {'Retry-After': '60'});
     const report = normalizeReport(await parseBody(request));
-    const created = await createIssue(report, env, fetcher);
+    const created = await deduplicatedIssue(report, env, dependencies);
     return json(201, {ok: true, ...created});
   } catch (error) {
     if (error instanceof ReportError)

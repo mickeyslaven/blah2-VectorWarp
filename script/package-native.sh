@@ -198,6 +198,8 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 STAGE="$WORK_DIR/root"
 run mkdir -p "$STAGE"
 run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE" --target-distro "$DISTRO_NAME"
+SOURCE_COMMIT=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+[[ $SOURCE_COMMIT =~ ^[0-9a-f]{40}$ ]] || die 'could not determine the exact source commit'
 
 # Upstream Suite supplies no repository-wide binary redistribution grant. The
 # package ships only our pinned download/build instructions and patches. Apply
@@ -276,6 +278,8 @@ printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\n
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
   "$backend" "$compiled_receivers" "$local_build_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
+printf '{"schema":1,"version":"%s","sourceCommit":"%s","package":"%s"}\n' \
+  "$VERSION" "$SOURCE_COMMIT" "$FORMAT" >"$STAGE/opt/vectorwarp/BUILD-RECEIPT.json"
 
 install -m 0755 "$SOURCE_DIR/packaging/activate-upgrade" "$STAGE/opt/vectorwarp/libexec/vectorwarp-activate-upgrade"
 

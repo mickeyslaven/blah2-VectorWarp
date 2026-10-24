@@ -18,6 +18,12 @@ VectorWarp repository is intentionally not the automatic-report destination.
   connection metadata as the hosting provider.
 - GitHub failures return a generic error and never expose credentials or
   upstream response bodies.
+- Each click creates a random submission ID. A Durable Object stores the first
+  result for that ID, so network retries return the same receipt without
+  opening duplicate issues. The coarser incident fingerprint is used only to
+  correlate similar failures and is not the receipt shown to the user.
+- The endpoint fails closed if either rate limiting or deduplication is not
+  configured.
 
 ## Local verification
 
@@ -44,8 +50,9 @@ npm run test:live-pathways
    must not be public.
 2. Create a fine-grained GitHub token limited to that repository with
    `Issues: write`. A GitHub App installation token can replace it later.
-3. Ensure the private repository has the `bug` and `vectorwarp-report` labels,
-   then review the rate-limit namespace in `wrangler.jsonc`.
+3. Ensure the private repository has the `bug` and `vectorwarp-report` labels.
+   Review the rate-limit namespace and Durable Object migration in
+   `wrangler.jsonc`; both bindings are mandatory.
 4. Store both the token and private destination as Worker secrets; never put
    either in the config or source:
 

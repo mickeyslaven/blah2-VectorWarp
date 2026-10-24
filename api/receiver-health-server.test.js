@@ -47,7 +47,7 @@ async function reservePorts(count) {
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
       env: {...process.env, BLAH2_PREVIEW: 'true', BLAH2_RECEIVER_TYPES: 'RspDuo',
         BLAH2_CONFIG_RESTART_COMMAND: '', VECTORWARP_VERSION: '9.8.7',
-        VECTORWARP_SOURCE_COMMIT: 'abcdef1', VECTORWARP_PACKAGE: 'test'},
+        VECTORWARP_SOURCE_COMMIT: 'a'.repeat(40), VECTORWARP_PACKAGE: 'test'},
       stdio: ['ignore', 'ignore', 'pipe']});
     child.stderr.on('data', chunk => { errors += chunk; });
     const systemStatus = async () => {
@@ -64,10 +64,12 @@ async function reservePorts(count) {
     }
     assert.equal(ready, true, `API failed to start: ${errors}`);
     let current = await systemStatus();
-    assert.deepEqual(current.build, {version: '9.8.7', commit: 'abcdef1', package: 'test'});
+    assert.deepEqual(current.build, {version: '9.8.7', commit: 'a'.repeat(40), package: 'test'});
     assert.deepEqual(current.system, {os: os.platform(), architecture: os.arch(), kernel: os.release()});
     assert.equal(Number.isSafeInteger(current.uptimeSeconds), true);
     assert.equal(current.processorFresh, false);
+    assert.equal(typeof (current.gainMonitor.status || current.gainMonitor.state), 'string');
+    assert.equal(current.adsb.enabled, config.truth.adsb.enabled === true);
     assert.equal(current.processor, null);
 
     assert.equal((await post({...live, receiverHealth: health})).status, 204);

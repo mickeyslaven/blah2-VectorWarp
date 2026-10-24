@@ -6,6 +6,8 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import plistlib
+import re
 import secrets
 import shutil
 import signal
@@ -192,6 +194,24 @@ class Lifecycle:
             VECTORWARP_MACOS_NODE=self.node, BLAH2_RECEIVER_STATUS_EXECUTABLE=str(self.processor),
             VECTORWARP_MACOS_HEIMDALL_EXECUTABLE=self.env.get('VECTORWARP_MACOS_HEIMDALL_EXECUTABLE', str(self.root / 'bin/heimdall')),
             VECTORWARP_MACOS_HEIMDALL_HTML=self.env.get('VECTORWARP_MACOS_HEIMDALL_HTML', str(self.root / 'share/heimdall/index.html')))
+
+    def release_metadata(self):
+        """Read the signed standalone runtime receipt and enclosing app version."""
+        if self.env.get('VECTORWARP_MACOS_DISTRIBUTION') != 'standalone':
+            return {}
+        try:
+            receipt = json.loads((self.root / 'standalone.json').read_text())
+            info_path = self.root.parents[2] / 'Info.plist'
+            with info_path.open('rb') as stream:
+                info = plistlib.load(stream)
+            version, commit = info.get('CFBundleShortVersionString'), receipt.get('source_revision')
+            if (not isinstance(version, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', version) or
+                    not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit)):
+                raise ValueError('invalid standalone release identity')
+            return {'VECTORWARP_VERSION': version, 'VECTORWARP_SOURCE_COMMIT': commit,
+                    'VECTORWARP_PACKAGE': 'macos-standalone'}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError, plistlib.InvalidFileException):
+            raise RuntimeError('standalone release metadata is missing or invalid')
 
     def record_path(self, name):
         return self.state / f'{name}.json'
@@ -471,7 +491,8 @@ process.stdout.write(yaml.dump(c));'''
     def start_web(self):
         if self.live('api'):
             return
-        env = dict(self.runtime_env(), BLAH2_RECEIVER_TYPES=self.receiver_types(), BLAH2_CONFIG_RESTART_COMMAND='')
+        env = dict(self.runtime_env(), **self.release_metadata(),
+                   BLAH2_RECEIVER_TYPES=self.receiver_types(), BLAH2_CONFIG_RESTART_COMMAND='')
         rsp_builder = self.root / 'script/vectorwarp-build-sdrplay-macos.sh'
         if rsp_builder.is_file() and os.access(rsp_builder, os.X_OK):
             # The browser route receives no build path or arguments. It can

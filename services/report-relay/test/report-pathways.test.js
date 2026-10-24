@@ -8,6 +8,7 @@ function baseReport(pathway) {
   return {
     schema: 1,
     consent: true,
+    submissionId: '123e4567-e89b-42d3-a456-426614174000',
     incident: {
       code: pathway.code,
       component: pathway.component,
@@ -127,7 +128,7 @@ const pathways = [
 test('every classified pathway preserves its bug-fixing evidence in the issue', async t => {
   for (const pathway of pathways) await t.test(pathway.code, async () => {
     const report = normalizeReport(baseReport(pathway));
-    const issue = githubIssue(report, await reportFingerprint(report), 'bug,vectorwarp-report');
+    const issue = githubIssue(report, await reportFingerprint(report), 'test-report-id', 'bug,vectorwarp-report');
     const embedded = JSON.parse(issue.body.match(/```json\n([\s\S]+)\n```/)[1]);
 
     assert.equal(embedded.incident.code, pathway.code);
@@ -161,7 +162,7 @@ test('all sensitive text classes are removed while diagnostic scalars survive', 
   value.comment = '192.168.1.50 2001:db8::1 alice@example.com lat=40.7128 lon=-74.0060 /Users/alice/radar.yml C:\\Users\\alice\\radar.yml';
   value.runtime.details.diagnosticClass = 'stream_callback';
   const report = normalizeReport(value);
-  const issue = githubIssue(report, await reportFingerprint(report));
+  const issue = githubIssue(report, await reportFingerprint(report), 'test-report-id');
 
   assert.doesNotMatch(issue.body, /ABC123|ghp_bad|hunter2|radar\.local|private\.example|192\.168\.1\.50|2001:db8|alice@example\.com|40\.7128|-74\.0060|Users[\\/]alice/);
   assert.match(issue.body, /\[IP redacted\]/);

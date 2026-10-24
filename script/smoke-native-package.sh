@@ -80,6 +80,7 @@ receiver_types=$(sed -n 's/^Environment="BLAH2_RECEIVER_TYPES=\(.*\)"$/\1/p' \
 [[ -n $receiver_types ]] || die 'installed API service lacks receiver-type build metadata'
 metadata=/opt/vectorwarp/PACKAGE-METADATA
 [[ -f $metadata ]] || die 'installed package lacks backend metadata'
+[[ -f /opt/vectorwarp/BUILD-RECEIPT.json ]] || die 'installed package lacks its build receipt'
 metadata_field() {
   local field=$1 value count
   count=$(grep -c "^${field}=" "$metadata" || true)
@@ -139,6 +140,15 @@ for _ in $(seq 1 300); do
 done
 curl --fail --silent --show-error http://127.0.0.1:39080/api/system/status >/dev/null || {
   die 'package-local API did not become ready'; }
+curl --fail --silent --show-error http://127.0.0.1:39080/api/system/status |
+  EXPECTED_VERSION="$(metadata_field version)" EXPECTED_PACKAGE="${package##*.}" "$node" -e '
+  let body=""; process.stdin.on("data", data => { body += data; });
+  process.stdin.on("end", () => {
+    const value = JSON.parse(body), build = value.build;
+    if (build?.version !== process.env.EXPECTED_VERSION || build?.package !== process.env.EXPECTED_PACKAGE ||
+        !/^[0-9a-f]{40}$/.test(build?.commit || "") || build.commit === "0".repeat(40)) process.exit(1);
+  });
+' || die 'packaged API did not expose its exact installed build receipt'
 curl --fail --silent --show-error http://127.0.0.1:39080/api/config/capabilities | "$node" -e '
   let body=""; process.stdin.on("data", data => { body += data; });
   process.stdin.on("end", () => {

@@ -19,5 +19,13 @@
         "period": 60
       }
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {"name": "REPORT_DEDUPLICATOR", "class_name": "ReportDeduplicator"}
+    ]
+  },
+  "migrations": [
+    {"tag": "v1", "new_sqlite_classes": ["ReportDeduplicator"]}
   ]
 }
