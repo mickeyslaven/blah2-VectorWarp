@@ -76,7 +76,7 @@ class HomebrewReleaseTest(unittest.TestCase):
 
     def test_accepts_the_complete_current_git_archive_layout(self):
         prefix = f"blah2-VectorWarp-{COMMIT}/"
-        subprocess.run(["git", "archive", "--worktree-attributes", "--format=tar.gz", f"--prefix={prefix}",
+        subprocess.run(["git", "archive", "--format=tar.gz", f"--prefix={prefix}",
                         f"--output={self.archive}", "HEAD"], cwd=ROOT, check=True)
         with tarfile.open(self.archive, "r:gz") as archive:
             result_prefix = f"{prefix}results/"
