@@ -69,6 +69,7 @@ if(BLAH2_ENABLE_HACKRF)
       ${PROJECT_ROOT}/src/capture/hackrf/HackRf.cpp PkgConfig::HACKRF)
   endif()
   target_include_directories(blah2ReceiverHackrf PRIVATE ${HACKRF_INCLUDE_DIRS})
+  target_link_libraries(blah2ReceiverHackrf PRIVATE blah2RapidJson)
 endif()
 if(BLAH2_ENABLE_RSPDUO)
   blah2_add_receiver(blah2ReceiverRspduo rspduo BLAH2_MODULE_RSPDUO

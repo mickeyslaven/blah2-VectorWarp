@@ -153,12 +153,14 @@ ReceiverSource load_receiver(const std::string& receiver,
     }
     const char* (*startupReceipt)(const Source*) noexcept = nullptr;
     const char* (*health)(const Source*) noexcept = nullptr;
-    if (receiver == "RspDuo" || receiver == "Usrp") {
+    if (receiver == "RspDuo" || receiver == "Usrp" || receiver == "HackRF") {
       const char* startupSymbol = receiver == "RspDuo" ?
-        "blah2_rspduo_startup_receipt_json_v1" :
-        "blah2_usrp_startup_receipt_json_v1";
+        "blah2_rspduo_startup_receipt_json_v1" : receiver == "Usrp" ?
+        "blah2_usrp_startup_receipt_json_v1" :
+        "blah2_hackrf_startup_receipt_json_v1";
       const char* healthSymbol = receiver == "RspDuo" ?
-        "blah2_rspduo_health_json_v1" : "blah2_usrp_health_json_v1";
+        "blah2_rspduo_health_json_v1" : receiver == "Usrp" ?
+        "blah2_usrp_health_json_v1" : "blah2_hackrf_health_json_v1";
       dlerror();
       startupReceipt = reinterpret_cast<decltype(startupReceipt)>(
         dlsym(loaded.library.get(), startupSymbol));

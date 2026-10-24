@@ -1249,6 +1249,8 @@ try
             blah2::kraken_event_time_unavailable() :
             capture->requires_usrp_time_provenance() ?
               blah2::usrp_event_time_unavailable() :
+            capture->requires_hackrf_time_provenance() ?
+              blah2::hackrf_event_time_unavailable() :
               blah2::EventTimeProvenance{};
           if (captureSamplePositionAvailable &&
               capture->requires_usrp_time_provenance())
@@ -1256,6 +1258,10 @@ try
               captureDeviceTimeEpochTick, captureFirstEpochSample,
               captureEndEpochSample, fs, captureClockSource,
               captureTimeSource, captureMotherboard, captureSubdevices);
+          else if (captureSamplePositionAvailable &&
+                   capture->requires_hackrf_time_provenance())
+            eventTime = blah2::hackrf_cpi_sample_epoch(captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
           else if (captureSamplePositionAvailable)
             eventTime = blah2::kraken_cpi_midpoint_time(
               captureEpochEstimateNanoseconds, captureEpoch,

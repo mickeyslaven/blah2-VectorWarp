@@ -226,4 +226,54 @@ const sanitizedUsrp = status({...usrpLive,
 assert.equal(sanitizedUsrp.valid, true);
 assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverStartup, 'injected'), false);
 assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverHealth.deviceTime, 'injected'), false);
+
+const hackrfStartup = {schema: 1, receiver: 'HackRF', status: 'accepted',
+  requested: {frequency: 527000000, sampleRate: 6000000,
+    serials: ['a1', 'b2'], lnaGainDb: [16, 32], vgaGainDb: [20, 40],
+    ampEnabled: [false, true]},
+  synchronization: {policy: 'shared-clock-hardware-trigger-v1',
+    clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+    startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+    hardwareTimestampAvailable: false}};
+const hackrfHealth = {schema: 1, receiver: 'HackRF', monitoring: true,
+  pairing: {policy: 'paired-callback-fail-closed-v1', qualified: true,
+    epoch: '1', callbacks: ['2', '2'], samples: ['4', '4'],
+    pairedCallbacks: '2', pairedSamples: '4', discontinuities: '0',
+    discardedSamples: ['0', '0'],
+    reason: 'paired hardware-triggered callbacks are aligned'}};
+const hackrfLive = {...replay, input: 'live', receiver: 'HackRF', state: 'live',
+  file: '', frequency: 527000000, sampleRate: 6000000,
+  receiverStartup: hackrfStartup, receiverHealth: hackrfHealth};
+assert.deepEqual(status(hackrfLive).value.receiverStartup, hackrfStartup);
+assert.deepEqual(status(hackrfLive).value.receiverHealth, hackrfHealth);
+assert.equal(status({...hackrfLive, receiverHealth: {...hackrfHealth, pairing: {
+  ...hackrfHealth.pairing, callbacks: ['3', '2'], samples: ['6', '4']}}}).valid,
+true, 'One staged callback is a valid transient and cannot publish alone');
+const hackrfFault = {...hackrfHealth, monitoring: false, pairing: {
+  ...hackrfHealth.pairing, qualified: false, epoch: '2', callbacks: ['3', '2'],
+  samples: ['6', '4'], discontinuities: '1', discardedSamples: ['4', '2'],
+  reason: 'HackRF callback progression diverged'}};
+assert.equal(status({...hackrfLive, receiverHealth: hackrfFault}).valid, true);
+for (const receiverStartup of [
+  {...hackrfStartup, requested: {...hackrfStartup.requested, serials: ['a1', 'a1']}},
+  {...hackrfStartup, requested: {...hackrfStartup.requested, lnaGainDb: [15, 32]}},
+  {...hackrfStartup, synchronization: {...hackrfStartup.synchronization,
+    physicalWiringVerified: true}},
+  {...hackrfStartup, status: 'pending'}
+]) assert.equal(status({...hackrfLive, receiverStartup}).valid, false,
+  JSON.stringify(receiverStartup));
+for (const pairing of [
+  {...hackrfHealth.pairing, policy: 'best-effort'},
+  {...hackrfHealth.pairing, callbacks: ['4', '2']},
+  {...hackrfHealth.pairing, pairedSamples: '5'},
+  {...hackrfHealth.pairing, discontinuities: '1'},
+  {...hackrfHealth.pairing, epoch: 1}
+]) assert.equal(status({...hackrfLive,
+  receiverHealth: {...hackrfHealth, pairing}}).valid, false, JSON.stringify(pairing));
+const sanitizedHackrf = status({...hackrfLive,
+  receiverStartup: {...hackrfStartup, injected: '<script>'},
+  receiverHealth: {...hackrfHealth, injected: '<script>',
+    pairing: {...hackrfHealth.pairing, injected: '<script>'}}});
+assert.equal(sanitizedHackrf.valid, true);
+assert.equal(Object.hasOwn(sanitizedHackrf.value.receiverHealth.pairing, 'injected'), false);
 console.log('Processor status validation and freshness tests passed.');

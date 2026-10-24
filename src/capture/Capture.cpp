@@ -293,7 +293,7 @@ std::string Capture::status_json() const {
     document.AddMember("pairedCpiDropped", queue.discardedSamples, a);
     document.AddMember("pairedCpiTrailingSamples", queue.trailingSamples, a);
   }
-  if ((type == "RspDuo" || type == "Usrp") && device) {
+  if ((type == "RspDuo" || type == "Usrp" || type == "HackRF") && device) {
     const auto receiptJson = blah2::receiver_startup_receipt(device);
     rapidjson::Document receipt;
     receipt.Parse(receiptJson.c_str());

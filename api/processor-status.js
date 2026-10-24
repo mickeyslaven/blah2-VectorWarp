@@ -316,6 +316,118 @@ function usrpHealth(payload, outer, errors) {
     deviceTime: {source: 'uhd-device-time', utcMapped: false,
       continuous: timing.continuous, sampleRateHz, epochTick, nextTick, samples, blocks}};
 }
+function hackrfStartup(payload, outer, errors) {
+  const name = 'receiverStartup';
+  if (outer.input !== 'live' || outer.receiver !== 'HackRF' || !object(payload) ||
+      payload.schema !== 1 || payload.receiver !== 'HackRF' ||
+      !['pending', 'accepted'].includes(payload.status) || !object(payload.requested)) {
+    errors.push(`${name} has an invalid live HackRF schema`); return null;
+  }
+  const requested = payload.requested;
+  const frequency = positive32(requested.frequency, `${name}.requested.frequency`, errors);
+  const sampleRate = positive32(requested.sampleRate, `${name}.requested.sampleRate`, errors);
+  if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
+    errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  const serials = Array.isArray(requested.serials) && requested.serials.length === 2 ?
+    requested.serials.map((value, index) => text(value,
+      `${name}.requested.serials[${index}]`, errors)) : [];
+  if (serials.length !== 2 || !serials[0] || !serials[1] || serials[0] === serials[1])
+    errors.push(`${name}.requested.serials requires two distinct values`);
+  const gains = (field, step, maximum) => {
+    const source = requested[field];
+    if (!Array.isArray(source) || source.length !== 2) {
+      errors.push(`${name}.requested.${field} requires two values`); return [];
+    }
+    return source.map((value, index) => {
+      if (!Number.isInteger(value) || value < 0 || value > maximum || value % step)
+        errors.push(`${name}.requested.${field}[${index}] is invalid`);
+      return Number.isInteger(value) && value >= 0 ? value : 0;
+    });
+  };
+  const lnaGainDb = gains('lnaGainDb', 8, 40);
+  const vgaGainDb = gains('vgaGainDb', 2, 62);
+  const ampEnabled = requested.ampEnabled;
+  if (!Array.isArray(ampEnabled) || ampEnabled.length !== 2 ||
+      ampEnabled.some(value => typeof value !== 'boolean'))
+    errors.push(`${name}.requested.ampEnabled requires two booleans`);
+  let synchronization = null;
+  if (payload.status === 'pending') {
+    if (payload.synchronization !== null)
+      errors.push(`${name}.synchronization must be null while pending`);
+  } else if (!object(payload.synchronization)) {
+    errors.push(`${name}.accepted requires synchronization provenance`);
+  } else {
+    const source = payload.synchronization;
+    if (source.policy !== 'shared-clock-hardware-trigger-v1' ||
+        source.clockOutputRole !== 'surveillance' ||
+        source.hardwareTriggerRole !== 'surveillance' ||
+        source.startOrder !== 'surveillance-then-reference' ||
+        source.physicalWiringVerified !== false ||
+        source.hardwareTimestampAvailable !== false)
+      errors.push(`${name}.synchronization has invalid provenance`);
+    synchronization = {policy: 'shared-clock-hardware-trigger-v1',
+      clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+      startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+      hardwareTimestampAvailable: false};
+  }
+  return {schema: 1, receiver: 'HackRF', status: payload.status,
+    requested: {frequency, sampleRate, serials, lnaGainDb, vgaGainDb,
+      ampEnabled: Array.isArray(ampEnabled) ? ampEnabled.slice(0, 2) : []},
+    synchronization};
+}
+function hackrfHealth(payload, outer, errors) {
+  const name = 'receiverHealth';
+  if (outer.input !== 'live' || outer.receiver !== 'HackRF' || !object(payload) ||
+      payload.schema !== 1 || payload.receiver !== 'HackRF' ||
+      typeof payload.monitoring !== 'boolean' || !object(payload.pairing)) {
+    errors.push(`${name} has an invalid live HackRF schema`); return null;
+  }
+  if (outer.state === 'stopped' && payload.monitoring)
+    errors.push(`${name}.monitoring must be false after stop`);
+  const pairing = payload.pairing;
+  if (pairing.policy !== 'paired-callback-fail-closed-v1' ||
+      typeof pairing.qualified !== 'boolean')
+    errors.push(`${name}.pairing has invalid provenance`);
+  const decimal = (value, field) => {
+    if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+      errors.push(`${name}.pairing.${field} must be a decimal integer string`); return '0';
+    }
+    return value;
+  };
+  const pair = (value, field) => {
+    if (!Array.isArray(value) || value.length !== 2) {
+      errors.push(`${name}.pairing.${field} requires two values`); return ['0', '0'];
+    }
+    return value.map((item, index) => decimal(item, `${field}[${index}]`));
+  };
+  const epoch = decimal(pairing.epoch, 'epoch');
+  const callbacks = pair(pairing.callbacks, 'callbacks');
+  const samples = pair(pairing.samples, 'samples');
+  const pairedCallbacks = decimal(pairing.pairedCallbacks, 'pairedCallbacks');
+  const pairedSamples = decimal(pairing.pairedSamples, 'pairedSamples');
+  const discontinuities = decimal(pairing.discontinuities, 'discontinuities');
+  const discardedSamples = pair(pairing.discardedSamples, 'discardedSamples');
+  const reason = text(pairing.reason, `${name}.pairing.reason`, errors);
+  if (pairing.qualified) {
+    const pairedCallbackCount = BigInt(pairedCallbacks);
+    const pairedSampleCount = BigInt(pairedSamples);
+    const callbackCounts = callbacks.map(BigInt);
+    const sampleCounts = samples.map(BigInt);
+    const pending = callbackCounts.filter(value => value === pairedCallbackCount + 1n).length;
+    if (BigInt(epoch) === 0n || pairedCallbackCount === 0n || pairedSampleCount === 0n ||
+        pending > 1 || callbackCounts.some(value => value < pairedCallbackCount ||
+          value > pairedCallbackCount + 1n) ||
+        sampleCounts.some((value, index) => callbackCounts[index] === pairedCallbackCount ?
+          value !== pairedSampleCount : value <= pairedSampleCount))
+      errors.push(`${name}.pairing qualified counters disagree`);
+  }
+  if (payload.monitoring && BigInt(discontinuities) > 0n)
+    errors.push(`${name}.monitoring cannot continue after a pair discontinuity`);
+  return {schema: 1, receiver: 'HackRF', monitoring: payload.monitoring,
+    pairing: {policy: 'paired-callback-fail-closed-v1', qualified: pairing.qualified,
+      epoch, callbacks, samples, pairedCallbacks, pairedSamples, discontinuities,
+      discardedSamples, reason}};
+}
 function status(payload) {
   const errors = [];
   if (!payload || typeof payload !== 'object' || Array.isArray(payload))
@@ -365,10 +477,14 @@ function status(payload) {
   if (payload.receiverStartup !== undefined)
     value.receiverStartup = value.receiver === 'Usrp' ?
       usrpStartup(payload.receiverStartup, value, errors) :
+      value.receiver === 'HackRF' ?
+        hackrfStartup(payload.receiverStartup, value, errors) :
       rspStartup(payload.receiverStartup, value, errors);
   if (payload.receiverHealth !== undefined)
     value.receiverHealth = value.receiver === 'Usrp' ?
       usrpHealth(payload.receiverHealth, value, errors) :
+      value.receiver === 'HackRF' ?
+        hackrfHealth(payload.receiverHealth, value, errors) :
       rspHealth(payload.receiverHealth, value, errors);
   return errors.length ? {valid: false, errors} : {valid: true, value};
 }

@@ -120,6 +120,7 @@ public:
     return type == "Kraken";
   }
   bool requires_usrp_time_provenance() const { return type == "Usrp"; }
+  bool requires_hackrf_time_provenance() const { return type == "HackRF"; }
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

@@ -269,6 +269,18 @@ signal lag check passes. Where supported, configure zero-tolerance HackRF RX
 shortfall stopping. Recording must be block-paired rather than independently
 assembled after a silent FIFO drop.
 
+**Remediation.** `src/capture/hackrf/HackRf.cpp` now stages one callback per
+radio and appends only an equal, progression-matched pair while holding both
+FIFO locks. A short callback, duplicate one-sided callback, unequal callback or
+sample progression, changed FIFO drop counter, asymmetric queue length, or
+insufficient capacity clears both FIFOs, advances an unqualified epoch, stops
+paired recording, and makes both callbacks fail. A new qualified epoch requires
+a hardware-triggered restart; post-gap callbacks are never software-spliced.
+Receiver health and recording sidecars retain per-radio callback/sample/discard
+counters, epoch, discontinuity count, gains, serials, and the terminal reason.
+Published HackRF event time is `exact:false` because libhackrf supplies no
+device sample counter or RF/UTC timestamp.
+
 ## Recording/replay review
 
 ### F7 — portable recording lacks hardware and time provenance (**Medium**)

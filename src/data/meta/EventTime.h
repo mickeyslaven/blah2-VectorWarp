@@ -50,6 +50,29 @@ inline EventTimeProvenance usrp_event_time_unavailable(
   return value;
 }
 
+inline EventTimeProvenance hackrf_event_time_unavailable(
+  std::string reason = "HackRF paired sample epoch is unavailable")
+{
+  EventTimeProvenance value;
+  value.present = true;
+  value.source = "hackrf_shared_trigger_relative_sample_epoch";
+  value.reason = std::move(reason);
+  return value;
+}
+
+inline EventTimeProvenance hackrf_cpi_sample_epoch(uint64_t epoch,
+  uint64_t firstSample, uint64_t endSample, uint32_t sampleRate)
+{
+  auto value = hackrf_event_time_unavailable();
+  value.epoch = epoch;
+  value.firstSample = firstSample;
+  value.endSample = endSample;
+  value.sampleRate = sampleRate;
+  if (!epoch || endSample <= firstSample || !sampleRate) return value;
+  value.reason = "Shared trigger preserves a paired relative sample epoch, but HackRF supplies no RF/UTC timestamp";
+  return value;
+}
+
 inline EventTimeProvenance usrp_cpi_midpoint_time(int64_t epochTick,
   uint64_t firstSample, uint64_t endSample, uint32_t sampleRate,
   std::string clockSource, std::string timeSource,

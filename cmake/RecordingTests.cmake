@@ -80,7 +80,7 @@ if(BLAH2_ENABLE_HACKRF)
   target_include_directories(testHackRfSettings PRIVATE ${HACKRF_INCLUDE_DIRS})
   target_compile_options(testHackRfSettings PRIVATE -UNDEBUG)
   # The fixture supplies SDK functions. Never link/open the actual USB runtime.
-  target_link_libraries(testHackRfSettings PRIVATE blah2CaptureCore Threads::Threads)
+  target_link_libraries(testHackRfSettings PRIVATE blah2CaptureCore Threads::Threads blah2RapidJson)
   add_test(NAME hackrfAppliedSettings COMMAND testHackRfSettings)
 endif()
 

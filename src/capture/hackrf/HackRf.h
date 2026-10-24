@@ -11,6 +11,10 @@
 #include "data/IqData.h"
 
 #include <stdint.h>
+#include <array>
+#include <atomic>
+#include <complex>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <libhackrf/hackrf.h>
@@ -45,8 +49,23 @@ protected:
     HackRf* source = nullptr;
     IqData* buffer = nullptr;
     unsigned channel = 0;
-    uint64_t received = 0;
   } channels[2];
+
+  struct PairingState {
+    std::array<std::vector<std::complex<float>>, 2> pending;
+    std::array<uint64_t, 2> callbacks{}, samples{}, discarded{}, initialDrops{};
+    uint64_t pairedCallbacks = 0, pairedSamples = 0, discontinuities = 0,
+      epoch = 0;
+    bool accepting = false, qualified = false, monitoring = false;
+    std::string reason = "not started";
+  } pairing;
+  mutable std::mutex pairingMutex;
+  std::atomic<bool> qualified{false};
+  std::atomic<uint64_t> epoch{0}, nextSample{0};
+  std::atomic<bool> startupAccepted{false};
+
+  void reset_pairing(IqData* first, IqData* second);
+  void invalidate_pair_locked(const std::string& reason);
 
   /// @brief Callback function for HackRF samples.
   /// @param transfer HackRF transfer object.
@@ -68,15 +87,20 @@ public:
   /// @param buffer1 Pointer to reference buffer.
   /// @param buffer2 Pointer to surveillance buffer.
   /// @return Void.
-  void process(IqData *buffer1, IqData *buffer2);
+  void process(IqData *buffer1, IqData *buffer2) override;
 
   /// @brief Call methods to start capture.
   /// @return Void.
-  void start();
+  void start() override;
 
   /// @brief Call methods to gracefully stop capture.
   /// @return Void.
-  void stop();
+  void stop() override;
+
+  SampleTimePosition sample_time_position() const override;
+  std::string startup_receipt_json() const;
+  std::string health_json() const;
+  std::string recording_provenance_json() const override;
 
   /// @brief Implement replay function on HackRF.
   /// @param buffer1 Pointer to reference buffer.

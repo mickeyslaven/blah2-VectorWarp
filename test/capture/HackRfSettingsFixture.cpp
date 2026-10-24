@@ -1,10 +1,16 @@
 // Real HackRf.cpp with local libhackrf symbols: no USB enumeration or radio IO.
 #include "capture/hackrf/HackRf.h"
+#include "data/meta/EventTime.h"
 #include <array>
 #include <cassert>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 #include <stdexcept>
+#include <unistd.h>
 #include <vector>
 
 struct hackrf_device { unsigned channel; };
@@ -87,6 +93,24 @@ int hackrf_start_rx(hackrf_device* device, hackrf_sample_block_cb_fn callback, v
 
 int main() {
   bool record = false;
+  const auto callback = [](unsigned channel, uint8_t* bytes, int valid, int capacity) {
+    hackrf_transfer transfer{};
+    transfer.device = &devices[channel]; transfer.buffer = bytes;
+    transfer.buffer_length = capacity; transfer.valid_length = valid;
+    transfer.rx_ctx = applied[channel].context;
+    return applied[channel].callback(&transfer);
+  };
+  {
+    const auto event = blah2::hackrf_cpi_sample_epoch(3, 10, 20, 2000000);
+    assert(event.present && !event.estimateAvailable && event.epoch == 3);
+    rapidjson::Document document(rapidjson::kObjectType);
+    document.AddMember("eventTime", blah2::event_time_json(event,
+      document.GetAllocator()), document.GetAllocator());
+    assert(!document["eventTime"]["exact"].GetBool());
+    assert(!document["eventTime"]["uncertaintyBounded"].GetBool());
+    assert(document["eventTime"]["source"] ==
+      "hackrf_shared_trigger_relative_sample_epoch");
+  }
   for (uint32_t rate : {2000000u, 6000000u, 20000000u}) {
     reset();
     HackRf receiver("HackRF", 527000000, rate, "/unused", &record,
@@ -103,19 +127,112 @@ int main() {
     for (unsigned channel = 0; channel < 2; ++channel) {
       assert(applied[channel].frequency == 527000000 && applied[channel].rate == rate);
       assert(applied[channel].context && applied[channel].callback);
-      uint8_t bytes[4]{1, 2, 3, 4};
-      hackrf_transfer transfer{};
-      transfer.device = &devices[channel]; transfer.buffer = bytes;
-      transfer.buffer_length = transfer.valid_length = sizeof(bytes);
-      transfer.rx_ctx = applied[channel].context;
-      assert(applied[channel].callback(&transfer) == 0);
-      transfer.valid_length = 3;
-      assert(applied[channel].callback(&transfer) != 0);
     }
+    uint8_t reference[4]{1, 2, 3, 4}, surveillance[4]{5, 6, 7, 8};
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(first.get_length() == 0 && second.get_length() == 0);
+    assert(callback(1, surveillance, 4, 4) == 0);
     assert(first.get_length() == 2 && second.get_length() == 2);
     assert(first.get_data()[1] == std::complex<double>(3, 4));
+    assert(second.get_data()[1] == std::complex<double>(7, 8));
+    const auto position = receiver.sample_time_position();
+    assert(position.available && position.epoch == 1 && position.nextSample == 2);
+    rapidjson::Document health;
+    health.Parse(receiver.health_json().c_str());
+    assert(!health.HasParseError() && health["pairing"]["qualified"].GetBool());
+    assert(std::string(health["pairing"]["pairedSamples"].GetString()) == "2");
     receiver.stop(); receiver.stop();
     assert(opened == closed && initialized == exited && listed == freed);
+  }
+  // A short callback invalidates the common epoch before either FIFO changes.
+  {
+    reset();
+    HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+    receiver.start();
+    IqData first(16), second(16); receiver.process(&first, &second);
+    uint8_t bytes[4]{1, 2, 3, 4};
+    assert(callback(0, bytes, 2, 4) != 0);
+    assert(!first.get_length() && !second.get_length());
+    assert(!receiver.sample_time_position().available);
+    rapidjson::Document health; health.Parse(receiver.health_json().c_str());
+    assert(std::string(health["pairing"]["discontinuities"].GetString()) == "1");
+    assert(std::string(health["pairing"]["reason"].GetString()).find("short") != std::string::npos);
+    receiver.stop();
+  }
+  // A second callback from one device before its mate is a progression gap.
+  {
+    reset();
+    HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+    receiver.start();
+    IqData first(16), second(16); receiver.process(&first, &second);
+    uint8_t bytes[4]{1, 2, 3, 4};
+    assert(callback(0, bytes, 4, 4) == 0);
+    assert(callback(0, bytes, 4, 4) != 0);
+    assert(!first.get_length() && !second.get_length());
+    assert(callback(1, bytes, 4, 4) != 0);
+    receiver.stop();
+  }
+  // A one-sided software FIFO overflow/drop counter change invalidates both.
+  {
+    reset();
+    HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+    receiver.start();
+    IqData first(2), second(2); receiver.process(&first, &second);
+    first.push_back({1, 1}); first.push_back({2, 2}); first.push_back({3, 3});
+    uint8_t bytes[4]{1, 2, 3, 4};
+    assert(callback(0, bytes, 4, 4) == 0);
+    assert(callback(1, bytes, 4, 4) != 0);
+    assert(!first.get_length() && !second.get_length());
+    rapidjson::Document health; health.Parse(receiver.health_json().c_str());
+    assert(!health["pairing"]["qualified"].GetBool());
+    assert(std::string(health["pairing"]["discardedSamples"][0].GetString()) != "0");
+    receiver.stop();
+  }
+  // Recording is block-paired and its sidecar preserves the terminal epoch,
+  // per-channel discard counts, configured gains and discontinuity reason.
+  {
+    char pattern[] = "/tmp/vectorwarp-hackrf-fixture-XXXXXX";
+    const char* directory = mkdtemp(pattern);
+    assert(directory);
+    reset();
+    HackRf receiver("HackRF", 527000000, 6000000, directory, &record,
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+    receiver.start();
+    IqData first(16), second(16); receiver.process(&first, &second);
+    const auto path = receiver.open_file();
+    uint8_t reference[4]{1, 2, 3, 4}, surveillance[4]{5, 6, 7, 8};
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(callback(1, surveillance, 4, 4) == 0);
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(callback(0, reference, 4, 4) != 0);
+    const auto recording = receiver.recording_status();
+    assert(!recording.active && recording.samples == 2 && !recording.error.empty());
+    std::ifstream provenance(path + ".provenance.json");
+    assert(provenance);
+    rapidjson::IStreamWrapper stream(provenance);
+    rapidjson::Document document; document.ParseStream(stream);
+    assert(!document.HasParseError());
+    assert(document["schema"] == "vectorwarp-hackrf-recording-provenance-v1");
+    assert(document["startup"]["requested"]["lnaGainDb"][0].GetUint() == 16);
+    assert(document["startup"]["requested"]["vgaGainDb"][1].GetUint() == 40);
+    assert(std::string(document["pairing"]["pairing"]["discontinuities"].GetString()) == "1");
+    assert(!document["pairing"]["pairing"]["qualified"].GetBool());
+    blah2::ReplayOptions options;
+    options.receiver = "HackRF"; options.channels = 2;
+    options.sampleRate = 6000000; options.frequency = 527000000;
+    bool incomplete = false;
+    try { blah2::RecordingReader reader(path, options); }
+    catch (const std::exception& error) {
+      incomplete = std::string(error.what()).find("not finished cleanly") != std::string::npos;
+    }
+    assert(incomplete);
+    receiver.stop();
+    std::filesystem::remove(path);
+    std::filesystem::remove(path + ".provenance.json");
+    std::filesystem::remove(directory);
   }
   unsigned failureCases = 0;
   for (const auto& stage : {"init", "list", "open1", "frequency1", "rate1", "amp1", "lna1", "vga1", "sync1", "clock1", "open0", "frequency0", "rate0", "amp0", "lna0", "vga0", "stream1", "stream0"}) {
