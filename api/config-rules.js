@@ -135,7 +135,7 @@ const rules = {
   'truth.adsb.source_timeout': {...numeric(.1, 10), optional: true,
     readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
   'truth.adsb.sources': {type: 'array', optional: true,
-    readOnly: 'Advanced ordered source list; edit the YAML or configuration API.'},
+    structuredControl: 'truth.adsb.tar1090'},
   'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
   'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
   'network.tracker_forward.enabled': {type: 'boolean', optional: true},

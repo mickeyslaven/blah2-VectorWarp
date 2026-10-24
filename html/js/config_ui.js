@@ -1144,6 +1144,9 @@ function group(key, value, path, topLevel = false) {
     const childPath = [...currentPath, childKey];
     // Keep compatibility keys in the draft/YAML, not as nonfunctional controls.
     if (capabilities.fieldRules?.[childPath.join('.')]?.readOnly) return;
+    // Structured controls own their backing values; do not render a second
+    // generic editor for the same setting.
+    if (capabilities.fieldRules?.[childPath.join('.')]?.structuredControl) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;

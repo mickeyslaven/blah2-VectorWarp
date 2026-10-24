@@ -275,10 +275,10 @@ for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
 
   const unchanged = clone(value);
   assert.equal(validateConfig(unchanged, value).valid, true,
-    'An unchanged read-only ADS-B source array must survive an unrelated Apply');
+    'An unchanged ADS-B source array must survive an unrelated Apply');
   unchanged.truth.adsb.sources[1] = 'https://different.example/tar1090';
-  assert.equal(validateConfig(unchanged, value).valid, false,
-    'A changed read-only ADS-B source array must still be rejected');
+  assert.equal(validateConfig(unchanged, value).valid, true,
+    'The structured ADS-B source editor must be able to update its backing array');
 }
 for (const sources of [[], Array(9).fill('local:readsb'),
   ['local:readsb', 'local:readsb'], ['auto', 'https://adsb.example'],
