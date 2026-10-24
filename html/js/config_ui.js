@@ -1341,6 +1341,15 @@ function showMessage(message, kind = '', detail = '') {
   }
 }
 
+let lastReportingStatus = {};
+function reportContext(incident) {
+  return {incident, status: lastReportingStatus, config: activeConfig || {}};
+}
+function showReportAction(target, incident) {
+  if (target && incident && window.VectorWarpReports)
+    window.VectorWarpReports.addContextAction(target, () => reportContext(incident));
+}
+
 function formatHertz(value, unit = 'MHz') {
   return typeof value === 'number' && Number.isFinite(value) ?
     `${value / 1000000} ${unit}` : 'Unavailable';
@@ -2154,6 +2163,12 @@ async function saveConfiguration(mode) {
       `${error.message || 'Connection lost.'} Save not confirmed. No receiver changes or restart requested. Reload saved settings before retrying.` :
       `${error.message || 'Connection lost.'} Save not confirmed; receiver settings may still change. Reload and check receiver status before retrying.` :
       error.message || 'Unable to save configuration.', 'error');
+    const reportIncident = saved ? {code: 'RESTART_FAILED', component: 'lifecycle', stage: 'restart'} :
+      fileOutcomeUnknown || unknownOutcome ? {code: 'CONFIG_PERSISTENCE_FAILED', component: 'configuration', stage: 'persist'} :
+        {code: 'RECEIVER_SYNC_FAILED', component: 'receiver', stage: 'sync'};
+    reportIncident.message = error.message || 'Unable to save configuration.';
+    reportIncident.details = {writeAttempted, responseReceived, saved, fileOutcomeUnknown, unknownOutcome};
+    showReportAction(document.getElementById('config-message'), reportIncident);
     setRestartProgress(100, saved ? 'Saved; restart needs attention.' : unknownOutcome || fileOutcomeUnknown ?
       'Save not confirmed.' : 'Not saved.', 'failed');
     restartRetry = saved && !saveLater && capabilities.restartAvailable;
@@ -2262,6 +2277,10 @@ async function renderConfiguration() {
     else
       showMessage('');
     renderEditor();
+    if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
+      reportContext(window.VectorWarpReports.classify(lastReportingStatus) ||
+        {code: 'MANUAL_REPORT', component: 'support', stage: 'manual', severity: 'degraded',
+          message: 'User requested a diagnostic report'}));
     scheduleValidation();
     refreshConfigDiagnostics();
     refreshUpstreamStatus();
@@ -2288,6 +2307,8 @@ async function renderConfiguration() {
     retry.textContent = 'Try again';
     retry.addEventListener('click', renderConfiguration);
     target.append(message, retry);
+    showReportAction(target, {code: 'API_UNAVAILABLE', component: 'api', stage: 'connect',
+      severity: 'degraded', message: error.message || 'Settings API unavailable'});
   }
 }
 
@@ -2298,6 +2319,7 @@ async function refreshConfigDiagnostics() {
   if (!target) return;
   try {
     const status = await readRadarState();
+    lastReportingStatus = status;
     renderReceiverStartup(status);
     renderReceiverOverload(status);
     const acceleration = document.getElementById('acceleration-status');
@@ -2325,10 +2347,13 @@ async function refreshConfigDiagnostics() {
       status.configRevision !== status.loadedRevision ?
         'Saved settings differ from running settings. Run vectorwarp restart to apply them.' :
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
+    showReportAction(target, window.VectorWarpReports?.classify(status));
   } catch (_) {
     renderReceiverStartup(null);
     renderReceiverOverload(null);
     target.textContent = 'Cannot read service status. Check the connection to VectorWarp.';
+    showReportAction(target, {code: 'API_UNAVAILABLE', component: 'api', stage: 'connect',
+      severity: 'degraded', message: 'Cannot read service status'});
   }
 }
 

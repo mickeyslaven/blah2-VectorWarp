@@ -46,7 +46,9 @@ async function reservePorts(count) {
     const origin = `http://127.0.0.1:${config.network.ports.api}`;
     child = spawn(process.execPath, [path.join(__dirname, 'server.js'), filename], {
       env: {...process.env, BLAH2_PREVIEW: 'true', BLAH2_RECEIVER_TYPES: 'RspDuo',
-        BLAH2_CONFIG_RESTART_COMMAND: ''}, stdio: ['ignore', 'ignore', 'pipe']});
+        BLAH2_CONFIG_RESTART_COMMAND: '', VECTORWARP_VERSION: '9.8.7',
+        VECTORWARP_SOURCE_COMMIT: 'abcdef1', VECTORWARP_PACKAGE: 'test'},
+      stdio: ['ignore', 'ignore', 'pipe']});
     child.stderr.on('data', chunk => { errors += chunk; });
     const systemStatus = async () => {
       const response = await fetch(`${origin}/api/system/status`);
@@ -62,6 +64,9 @@ async function reservePorts(count) {
     }
     assert.equal(ready, true, `API failed to start: ${errors}`);
     let current = await systemStatus();
+    assert.deepEqual(current.build, {version: '9.8.7', commit: 'abcdef1', package: 'test'});
+    assert.deepEqual(current.system, {os: os.platform(), architecture: os.arch(), kernel: os.release()});
+    assert.equal(Number.isSafeInteger(current.uptimeSeconds), true);
     assert.equal(current.processorFresh, false);
     assert.equal(current.processor, null);
 

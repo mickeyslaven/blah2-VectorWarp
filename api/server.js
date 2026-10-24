@@ -6,6 +6,7 @@ const yaml = require('js-yaml');
 const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
+const os = require('os');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
@@ -599,6 +600,12 @@ app.get('/api/system/status', async (req, res) => {
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
   const backend = currentTimingBackend();
   res.json({serverId, configRevision: document.revision,
+    build: {version: process.env.VECTORWARP_VERSION || '0.1.29',
+      commit: /^[a-f0-9]{7,40}$/i.test(process.env.VECTORWARP_SOURCE_COMMIT || '') ?
+        process.env.VECTORWARP_SOURCE_COMMIT : '0000000',
+      package: process.env.VECTORWARP_PACKAGE || (process.env.BLAH2_PREVIEW === 'true' ? 'preview' : 'unknown')},
+    system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
+    uptimeSeconds: Math.floor(process.uptime()),
     acceleration: backend.acceleration || null,
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
