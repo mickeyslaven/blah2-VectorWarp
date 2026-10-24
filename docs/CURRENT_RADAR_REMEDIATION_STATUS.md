@@ -126,9 +126,10 @@ the cross-platform acceptance pass:
   runtime even when `PATH` contains an intentionally unusable `node`; the real
   Homebrew package passed lifecycle, five-channel simulated Heimdall-to-API,
   crash-recovery, retune, replay, formula, and linkage checks on Apple Silicon.
-- The immutable RPM payload keeps the explicitly-invoked Node version helper
-  non-executable so dependency scanning cannot invent a host `/usr/bin/node`
-  requirement.
+- Every packaged Node service (API, health watchdog, config guard and processor
+  preflight) is bound to the pinned private runtime. Explicitly-invoked
+  JavaScript helpers are non-executable in the RPM payload, so dependency
+  scanning cannot invent a host `/usr/bin/node` requirement.
 - Source installs refuse package-owned integration paths, package first-install
   refuses an unmanaged `/opt/vectorwarp` footprint, and custom prefixes require
   `--no-systemd`. Debian/RPM directionality tests cover both collision orders.
