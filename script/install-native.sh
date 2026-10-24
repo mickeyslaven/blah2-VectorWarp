@@ -297,7 +297,7 @@ if $WITH_SYSTEMD; then
   sysusers_dir="$DESTDIR/usr/lib/sysusers.d"
   tmpfiles_dir="$DESTDIR/usr/lib/tmpfiles.d"
   sudoers_dir="$DESTDIR/etc/sudoers.d"
-  run install -d -m 0755 "$unit_dir" "$udev_rule_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir"
+  run install -d -m 0755 "$unit_dir" "$udev_rule_dir" "$sysusers_dir" "$tmpfiles_dir" "$sudoers_dir" "$target_prefix/libexec"
   if $DRY_RUN; then
     temporary=/tmp/vectorwarp-install-dry-run
   else
@@ -307,6 +307,7 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/libexec/vectorwarp" "$temporary/vectorwarp-launcher"
   run install -d -m 0755 "$DESTDIR/usr/bin"
   run install -m 0755 "$temporary/vectorwarp-launcher" "$DESTDIR/usr/bin/vectorwarp"
+  run install -m 0755 "$temporary/vectorwarp-launcher" "$target_prefix/libexec/vectorwarp"
   render "$ARTIFACT/libexec/vectorwarp-quiesce" "$temporary/vectorwarp-quiesce"
   render "$ARTIFACT/systemd/vectorwarp-api.service.in" "$temporary/vectorwarp-api.service"
   render "$ARTIFACT/systemd/vectorwarp-processor.service.in" "$temporary/vectorwarp-processor.service"

@@ -56,7 +56,9 @@ build took 21.6 seconds wall time with a 913 MiB memory peak. Root publication
 and compiler-boundary review passed. Environment/toolchain versions and receipt
 hashes are preserved beside the log; no upstream binaries are committed.
 
-Additional results: Linux installer/build contracts 18/18; kit/security/rollback
+Additional results: Linux installer/build contracts 19/19 (including a fresh
+staged Kraken-kit install with stable helper-directory and launcher assertions);
+kit/security/rollback
 tests 7 passed plus one Node-dependent test skipped in the minimal Fedora
 container (all 8 passed locally); launcher 33/33 locally; package quiescence/
 upgrade 17/17 in Fedora. The general Linux build-contract fixture initially
