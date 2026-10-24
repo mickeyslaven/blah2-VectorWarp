@@ -108,14 +108,32 @@ class ReviewedBuildChangesTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "does not bind"):
                 self.verify(self.record(baseline_source_id="b" * 40))
 
-    def test_rejects_unsafe_paths_and_non_cmake_guarded_changes(self):
-        record = self.record(files={"vendor/unreviewed.c": "a" * 64})
-        self.write_receipt(record)
-        with self.assertRaisesRegex(ValueError, "cannot approve non-CMake"):
-            inputs.reviewed_build_changes(self.checkout, self.source_id, ["vendor/unreviewed.c"], self.receipt)
-        record = self.record(files={"cmake/../outside.cmake": "a" * 64})
-        with self.assertRaisesRegex(ValueError, "exactly match|unsafe path|guarded paths differ"):
-            self.verify(record)
+    def test_rejects_unsafe_guarded_paths(self):
+        for path in ("cmake/../outside.cmake", "vendor/unreviewed.c",
+                     "third_party/unreviewed.c"):
+            with self.subTest(path=path):
+                record = self.record(files={path: "a" * 64})
+                self.write_receipt(record)
+                with self.assertRaisesRegex(ValueError, "unsafe guarded build path"):
+                    inputs.reviewed_build_changes(
+                        self.checkout, self.source_id, [path], self.receipt)
+
+    def test_accepts_exact_review_of_other_guarded_build_inputs(self):
+        (self.checkout / "cmake").mkdir()
+        (self.checkout / "cmake/ReceiverCohort.h.in").write_text("#define RECEIVER_COHORT 1\n")
+        (self.checkout / "script").mkdir()
+        (self.checkout / "script/build-macos.sh").write_text("#!/bin/sh\n")
+        self.commit("review additional native build inputs")
+        guarded = ["CMakeLists.txt", "cmake/ReceiverCohort.h.in", "script/build-macos.sh"]
+        files = {}
+        for path in guarded:
+            content = subprocess.check_output(
+                ["git", "-C", str(self.checkout), "show", self.source_id + ":" + path])
+            files[path] = hashlib.sha256(content).hexdigest()
+        record = self.record(source_id=self.source_id, files=files)
+        review = inputs.reviewed_build_changes(
+            self.checkout, self.source_id, guarded, self.write_receipt(record))
+        self.assertEqual(review["record"], record)
 
     def test_rejects_nonowner_mode_and_symlink(self):
         self.write_receipt(self.record(), mode=0o644)
@@ -149,7 +167,7 @@ class ReviewedBuildChangesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "candidate Git blob"):
             self.verify()
 
-    def test_rejects_nonancestor_and_sensitive_non_cmake_delta(self):
+    def test_rejects_nonancestor_and_unreviewed_sensitive_delta(self):
         self.git("checkout", "-b", "sibling", self.baseline_id)
         (self.checkout / "CMakeLists.txt").write_text("project(VectorWarpReviewed)\n")
         self.commit("sibling equivalent review")
@@ -159,7 +177,7 @@ class ReviewedBuildChangesTest(unittest.TestCase):
         (self.checkout / "script").mkdir()
         (self.checkout / "script/build-macos.sh").write_text("#!/bin/sh\n")
         self.commit("change guarded script")
-        with self.assertRaisesRegex(ValueError, "cannot approve non-CMake"):
+        with self.assertRaisesRegex(ValueError, "guarded paths differ"):
             self.verify()
 
     def test_rejects_missing_reviewed_blob(self):
