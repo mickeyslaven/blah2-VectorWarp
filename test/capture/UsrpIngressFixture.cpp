@@ -90,7 +90,7 @@ int main() {
     }
     // Missing, regressing and jumping UHD device time reject only the bad
     // block, clear pre-fault unpublished IQ, then publish a qualified epoch.
-    for (const auto fault : {std::pair<size_t, long long>{3, 0},
+    for (const auto& fault : {std::pair<size_t, long long>{3, 0},
                              {0, -1}, {0, 1}}) {
       uhd::fake = {}; uhd::fake.failCall = 100;
       if (fault.first) uhd::fake.missingTimeCall = fault.first;
