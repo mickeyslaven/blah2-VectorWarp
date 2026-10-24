@@ -401,7 +401,8 @@ endif()
             with self.subTest(manager=manager):
                 tools = self.temp / f'package-{manager}'
                 tools.mkdir()
-                executable(tools / manager, '#!/bin/sh\nexit 0\n')
+                response = "printf 'installed\\n'\n" if manager == 'dpkg-query' else 'exit 0\n'
+                executable(tools / manager, '#!/bin/sh\n' + response)
                 environment = os.environ | {'PATH': f'{tools}:{os.environ.get("PATH", "")}' }
                 result = subprocess.run([
                     'bash', str(INSTALL_SCRIPT), '--artifact', str(artifact), '--preflight'],
