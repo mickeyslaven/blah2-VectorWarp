@@ -19,13 +19,22 @@ const config = {capture: {fc: 527000000, fs: 2400000, device: {channel_count: 2}
 const queue = new IntegrationShadowQueue(config, {now: () => 1000});
 const recording = path.join(root, 'one.mchq');
 const nativeMetadata = {schema: 'vectorwarp-kraken-iq-clip-v1', frequency: 527000000,
-  sampleRate: 2400000, channels: 2, channelGains: [2.7, 1.4]};
+  sampleRate: 2400000, channels: 2, channelGains: [2.7, 1.4],
+  epoch: 1, firstEpochSample: 0, endEpochSample: 30};
 fs.writeFileSync(recording, 'immutable-iq');
 fs.writeFileSync(`${recording}.json`, JSON.stringify(nativeMetadata));
 const admitted = {state: 'admitted', integrity: {valid: true, data_sha256: 'a'.repeat(64),
   sidecar_sha256: crypto.createHash('sha256').update(fs.readFileSync(`${recording}.json`)).digest('hex')},
   config_epoch: 'config', receiver_epoch: 'receiver', captures: {one: {capture_id: 'one',
-    valid: true, admission_state: 'admitted', processor_cpis: [{}, {}, {}]}}};
+    valid: true, admission_state: 'admitted', processor_cpis:
+      Array.from({length: 3}, () => ({exact_event_time: true}))}}};
+
+for (const exact of [false, undefined]) {
+  const provisional = JSON.parse(JSON.stringify(admitted));
+  provisional.captures.one.processor_cpis[0].exact_event_time = exact;
+  assert.equal(queue.accept(recording, provisional, 3).reason, 'not-strictly-admitted',
+    'shadow admission requires complete provisional timing provenance');
+}
 
 const first = queue.accept(recording, admitted, 4);
 assert.equal(first.accepted, true);
@@ -49,6 +58,8 @@ assert.equal(queue.accept(recording, {...admitted, state: 'quarantined'}, 6).rea
   'not-strictly-admitted');
 fs.mkdirSync(config.process.detection.integration_shadow.results_path, {recursive: true});
 const validResult = {schema: 'vectorwarp-integration-shadow-result-v1',
+  timing_policy: 'exact', decision_grade: true,
+  production_promotion_allowed: false,
   job_id: first.job_id, state: 'complete', shadow_only: true,
   job_binding_sha256: job.job_binding_sha256, production_unchanged: true,
   input: {recording_sha256: job.identity.recording_sha256,
@@ -71,6 +82,27 @@ assert.equal(status.pending, 0);
 assert.equal(status.completed, 1);
 assert.equal(status.reserved_slots, 0);
 assert.equal(status.production_path_changed, false);
+const provisionalConfig = JSON.parse(JSON.stringify(config));
+provisionalConfig.process.detection.integration_shadow.queue_path = path.join(root, 'provisional-queue');
+const provisionalQueue = new IntegrationShadowQueue(provisionalConfig);
+const provisionalAdmission = JSON.parse(JSON.stringify(admitted));
+provisionalAdmission.captures.one.processor_cpis = [1000, 1500, 2000].map((timestamp, index) => ({
+  timestamp_ms: timestamp, epoch: 1, first_epoch_sample: index * 10, end_epoch_sample: (index + 1) * 10,
+  exact_event_time: false, event_time_source: 'kraken_heimdall_host_arrival_estimate',
+  event_time_uncertainty_s: 1, event_time_uncertainty_model: 'bounded-configured-nuisance-radius'}));
+provisionalAdmission.captures.one.truth_samples = [1000, 1500, 2000].map(timestamp => ({
+  timestamp_ms: timestamp, delay_km: 10, doppler_hz: 20, delay_rate_km_s: .1, doppler_rate_hz_s: 7,
+  provenance: {projection_model: 'constant_velocity_ground_track', observation_time_offset_s: 0,
+    maximum_pairwise_projected_disagreement_km: 0}}));
+const provisionalJobResult = provisionalQueue.accept(recording, provisionalAdmission, 20);
+assert.equal(provisionalJobResult.accepted, true, 'qualified provisional capture must produce useful shadow work');
+const provisionalJob = JSON.parse(fs.readFileSync(provisionalJobResult.path));
+assert.equal(provisionalJob.timing_policy, 'provisional');
+assert.equal(provisionalJob.decision_grade, false);
+const outside = JSON.parse(JSON.stringify(provisionalAdmission));
+outside.captures.one.processor_cpis[2].end_epoch_sample = 31;
+assert.equal(provisionalQueue.accept(recording, outside, 21).reason, 'write-failed',
+  'provisional admission must retain native sample containment');
 const wrongGainResult = JSON.parse(JSON.stringify(validResult));
 wrongGainResult.input.native_identity.actual_channel_gains_db[1] = 9.9;
 wrongGainResult.result_binding_sha256 = digestCanonical(Object.fromEntries(

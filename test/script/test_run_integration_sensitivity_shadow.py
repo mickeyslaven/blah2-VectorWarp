@@ -58,6 +58,18 @@ def test_admission_fails_closed_for_incomplete_truth():
         raise AssertionError("incomplete truth was accepted")
 
 
+def test_shadow_rejects_missing_provisional_provenance():
+    for exact in (False, None):
+        try:
+            MODULE.valid_captures({"state": "admitted", "integrity": {"valid": True},
+                "captures": {"x": {"valid": True, "admission_state": "admitted",
+                    "processor_cpis": [{"exact_event_time": exact}] * 3}}})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing provisional timing provenance was accepted")
+
+
 def test_job_binding_and_production_baseline_are_required():
     identity = {"recording": "/tmp/x", "recording_sha256": "a" * 64,
                 "native_sidecar_sha256": "d" * 64,
@@ -82,7 +94,7 @@ def test_job_binding_and_production_baseline_are_required():
         raise AssertionError("forged job was accepted")
 
 
-def test_run_binds_config_admission_and_native_metadata():
+def test_run_binds_config_admission_and_native_metadata(provisional=False):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         receipt_key = b"K" * 32
@@ -105,12 +117,26 @@ def test_run_binds_config_admission_and_native_metadata():
         truth = [{"timestamp_ms": 1000, "delay_km": 10, "doppler_hz": 20},
                  {"timestamp_ms": 1100, "delay_km": 10.1, "doppler_hz": 20},
                  {"timestamp_ms": 1200, "delay_km": 10.2, "doppler_hz": 20}]
+        cpis = [{"exact_event_time": True}] * 3
+        if provisional:
+            native.update(epoch=1, firstEpochSample=0, endEpochSample=30)
+            native_path.write_text(json.dumps(native))
+            native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
+            for row in truth:
+                row.update(delay_rate_km_s=1, doppler_rate_hz_s=7)
+            cpis = [{"exact_event_time": False,
+                "event_time_source": "kraken_heimdall_host_arrival_estimate",
+                "event_time_uncertainty_s": 1,
+                "event_time_uncertainty_model": "bounded-configured-nuisance-radius",
+                "epoch": 1, "first_epoch_sample": index * 10, "end_epoch_sample": (index + 1) * 10,
+                "max_raw_observation_offset_s": 0, "truth_bracket_span_ms": 0}
+                for index in range(3)]
         admission = {"schema": "vectorwarp-capture-admission-v1", "state": "admitted",
                      "revision": 7, "config_epoch": "c", "receiver_epoch": "r",
                      "integrity": {"valid": True, "data_sha256": recording_sha,
                                    "sidecar_sha256": native_sha},
                      "captures": {"one": {"valid": True, "admission_state": "admitted",
-                                            "processor_cpis": [{}, {}, {}],
+                                            "processor_cpis": cpis,
                                             "truth_samples": truth}}}
         admission_path = Path(f"{recording}.admission.json")
         admission_path.write_text(json.dumps(admission))
@@ -125,6 +151,7 @@ def test_run_binds_config_admission_and_native_metadata():
                     "native_identity": native_identity,
                     "native_identity_sha256": MODULE.canonical_digest(native_identity)}
         job = {"schema": "vectorwarp-integration-shadow-job-v1",
+               "timing_policy": "provisional" if provisional else "exact", "decision_grade": not provisional,
                "job_id": MODULE.canonical_digest(identity), "identity": identity,
                "recording": str(recording), "admission_sidecar": str(admission_path),
                "experiment": {"same_iq": True, "shadow_only": True,
@@ -144,6 +171,9 @@ def test_run_binds_config_admission_and_native_metadata():
         finally:
             MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm = original_harness, original_run
         assert result["summary"]["selection_performed"] is False
+        assert result["timing_policy"] == ("provisional" if provisional else "exact")
+        assert result["decision_grade"] is not provisional
+        assert result["production_promotion_allowed"] is False
         assert result["input"]["applied_channel_gains_db"] == [2.7, 1.4]
         assert result["input"]["native_identity_sha256"] == identity["native_identity_sha256"]
         assert result["result_binding_sha256"] == MODULE.canonical_digest(
@@ -153,6 +183,15 @@ def test_run_binds_config_admission_and_native_metadata():
                          if key != "result_authentication"}
         assert result["result_authentication"]["tag"] == hmac.new(
             receipt_key, MODULE.canonical(authenticated).encode(), hashlib.sha256).hexdigest()
+
+
+def test_provisional_score_expands_by_measured_motion_only():
+    truth = [{"timestamp_ms": at, "delay_km": 10, "doppler_hz": 20,
+              "delay_rate_km_s": .1, "doppler_rate_hz_s": 7} for at in (1000, 1500, 2000)]
+    arm = {"detections": [{"timestamp": 1500, "delay": [10], "doppler": [32], "snr": [5]}],
+           "tracks": []}
+    assert MODULE.score_arm(arm, truth, 2400000, .5)["target_detection_cpis"] == 0
+    assert MODULE.score_arm(arm, truth, 2400000, .5, 1)["target_detection_cpis"] == 1
 
 
 def test_integration_diagnostic_reports_motion_and_phase_budget():
@@ -198,7 +237,10 @@ if __name__ == "__main__":
     test_two_channel_plan_has_leave_one_out_arms_and_preserves_production()
     test_score_uses_frame_event_time_and_separates_target_from_nuisance()
     test_admission_fails_closed_for_incomplete_truth()
+    test_shadow_rejects_missing_provisional_provenance()
     test_job_binding_and_production_baseline_are_required()
     test_run_binds_config_admission_and_native_metadata()
+    test_run_binds_config_admission_and_native_metadata(provisional=True)
+    test_provisional_score_expands_by_measured_motion_only()
     test_integration_diagnostic_reports_motion_and_phase_budget()
     print("PASS integration sensitivity shadow regression tests")

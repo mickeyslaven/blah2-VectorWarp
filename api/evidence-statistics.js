@@ -375,9 +375,7 @@ function timingAt(history, timestamp) {
 
 function exactEventTime(frame) {
   const value = frame?.eventTime;
-  // Receivers not yet migrated retain their prior behavior. An explicit
-  // provenance object must prove zero uncertainty or exact scoring is refused.
-  return value === undefined || Boolean(value && value.exact === true &&
+  return Boolean(value && value.exact === true &&
     value.uncertaintyBounded === true && value.uncertaintyNs === 0);
 }
 
@@ -570,7 +568,7 @@ class EvidenceStatistics {
     const exact = exactEventTime(value);
     const provisionalEstimate = value?.eventTime?.exact === false &&
       value.eventTime.estimateAvailable === true && finite(value.timestamp);
-    if (value?.eventTime !== undefined && !exact) {
+    if (!exact) {
       this.eventTimeRejections += 1;
       this.lastEventTimeRejection = {
         timestamp_ms: finite(value?.timestamp) ? value.timestamp : null,
@@ -879,7 +877,13 @@ class EvidenceStatistics {
         item.timestamp_ms >= window.windowStart && item.timestamp_ms <= window.windowEnd);
       const admission = validateTruthWindow(truth, window.windowStart, window.windowEnd,
         {cpiMs, cpiTimestampsMs: processorCpis.map(item => item.timestamp_ms)});
-      result[window.captureId] = {...admission, processor_cpis: processorCpis.map(item => {
+      const exactTiming = processorCpis.length > 0 &&
+        processorCpis.every(item => item.exact_event_time === true);
+      result[window.captureId] = {...admission,
+        timing_policy: exactTiming ? 'exact' : 'provisional',
+        decision_grade: admission.valid && exactTiming,
+        event_time_uncertainty_s: exactTiming ? 0 : this.limits.provisionalTimeUncertaintyS,
+        processor_cpis: processorCpis.map(item => {
         const bracket = admission.cpis.find(cpi => cpi.timestamp_ms === item.timestamp_ms) || {};
         return {...item, truth_left_timestamp_ms: bracket.left_timestamp_ms ?? null,
           truth_right_timestamp_ms: bracket.right_timestamp_ms ?? null,
@@ -1111,7 +1115,18 @@ function createEvidenceStatistics(config, adsbSource, dependencies) {
   return new EvidenceStatistics(config, adsbSource, dependencies);
 }
 
+// Exactly one lane owns operational side effects. It uses qualified exact
+// timing (and zero expansion) when present, otherwise configured provisional
+// uncertainty. The parallel exact scorecard never creates a duplicate capture.
+function createEvidenceStatisticsLanes(config, adsbSource, {exact = {}, operational = {}} = {}) {
+  return {
+    exact: new EvidenceStatistics(config, adsbSource, {...exact, timingPolicy: 'exact',
+      onEligibilityEvent: () => {}, onPeriodicCapture: () => {}, onTrackCapture: () => {}}),
+    operational: new EvidenceStatistics(config, adsbSource, {...operational, timingPolicy: 'provisional'})
+  };
+}
+
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
   TRIGGER_EVENT_TRUTH_SAMPLES, TRUTH_SAMPLE_MS, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
   limits, associationGates, siteKey, siteDescriptor, EvidenceStatistics,
-  createEvidenceStatistics};
+  createEvidenceStatistics, createEvidenceStatisticsLanes};

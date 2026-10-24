@@ -84,9 +84,11 @@ def interpolate(samples, timestamp_ms, key):
     return left[key] + fraction * (right[key] - left[key])
 
 
-def inside(delay, doppler, truth, sample_rate, cpi, track=False):
+def inside(delay, doppler, truth, sample_rate, cpi, track=False, uncertainty_s=0, rates=(0, 0)):
     delay_gate = max(C_KM_S / sample_rate * (3 if track else 2), .25)
     doppler_gate = (4 if track else 3) / cpi
+    delay_gate += abs(rates[0]) * uncertainty_s
+    doppler_gate += abs(rates[1]) * uncertainty_s
     return ((delay - truth[0]) / delay_gate) ** 2 + ((doppler - truth[1]) / doppler_gate) ** 2 <= 1
 
 
@@ -98,7 +100,7 @@ def longest_run(values):
     return best
 
 
-def score_arm(arm, truth_samples, sample_rate, cpi):
+def score_arm(arm, truth_samples, sample_rate, cpi, uncertainty_s=0):
     detected, nuisance_frames, nuisance_cells = [], [], 0
     margins = []
     truth_start = min(row["timestamp_ms"] for row in truth_samples)
@@ -109,12 +111,15 @@ def score_arm(arm, truth_samples, sample_rate, cpi):
             continue
         truth = (interpolate(truth_samples, timestamp, "delay_km"),
                  interpolate(truth_samples, timestamp, "doppler_hz"))
+        rates = tuple(interpolate(truth_samples, timestamp, key) for key in
+                      ("delay_rate_km_s", "doppler_rate_hz_s")) if uncertainty_s else (0, 0)
         vectors = [frame.get("delay", []), frame.get("doppler", []), frame.get("snr", [])]
         if any(not isinstance(values, list) for values in vectors) or len({len(v) for v in vectors}) != 1:
             raise ValueError("detector output vectors have inconsistent lengths")
         cells = list(zip(*vectors))
         candidates = [snr for delay, doppler, snr in cells
-                      if inside(delay, doppler, truth, sample_rate, cpi)]
+                      if inside(delay, doppler, truth, sample_rate, cpi,
+                                uncertainty_s=uncertainty_s, rates=rates)]
         nuisance = len(cells) - len(candidates)
         nuisance_cells += nuisance; nuisance_frames.append(nuisance > 0)
         detected.append(bool(candidates))
@@ -127,9 +132,11 @@ def score_arm(arm, truth_samples, sample_rate, cpi):
             continue
         truth = (interpolate(truth_samples, timestamp, "delay_km"),
                  interpolate(truth_samples, timestamp, "doppler_hz"))
+        rates = tuple(interpolate(truth_samples, timestamp, key) for key in
+                      ("delay_rate_km_s", "doppler_rate_hz_s")) if uncertainty_s else (0, 0)
         matches = [track for track in frame.get("data", []) if inside(
             track["delay"] * C_KM_S / sample_rate, track["doppler"], truth,
-            sample_rate, cpi, True)]
+            sample_rate, cpi, True, uncertainty_s, rates)]
         tracked.append(bool(matches))
         track_ids.update(str(item["id"]) for item in matches)
     detection_frames = len(detected)
@@ -149,8 +156,30 @@ def score_arm(arm, truth_samples, sample_rate, cpi):
                                        for frame in arm["detections"]),
             "all_published_track_ids": len({str(track["id"]) for frame in arm["tracks"]
                                             for track in frame.get("data", [])}),
+            "event_time_uncertainty_s": uncertainty_s,
             "nuisance_published_track_ids": len({str(track["id"]) for frame in arm["tracks"]
                                                   for track in frame.get("data", [])} - track_ids)}
+
+
+def qualified_capture_timing(value):
+    cpis = value.get("processor_cpis", [])
+    if len(cpis) < 3:
+        return False
+    for cpi in cpis:
+        if cpi.get("exact_event_time") is True:
+            continue
+        uncertainty = cpi.get("event_time_uncertainty_s")
+        if cpi.get("exact_event_time") is not False or \
+           not cpi.get("event_time_source") or cpi["event_time_source"] == "unknown" or \
+           cpi.get("event_time_uncertainty_model") != "bounded-configured-nuisance-radius" or \
+           not isinstance(uncertainty, (float, int)) or not 0 <= uncertainty <= 5:
+            return False
+        truth = value.get("truth_samples", [])
+        if len(truth) < 3 or any(not isinstance(row.get(key), (float, int)) or
+            not math.isfinite(row[key]) for row in truth
+            for key in ("delay_rate_km_s", "doppler_rate_hz_s")):
+            return False
+    return True
 
 
 def valid_captures(admission):
@@ -159,7 +188,7 @@ def valid_captures(admission):
     candidates = [(capture_id, value) for capture_id, value in
                   admission.get("captures", {}).items()
                   if value.get("valid") is True and value.get("admission_state") == "admitted"
-                  and len(value.get("processor_cpis", [])) >= 3]
+                  and qualified_capture_timing(value)]
     if not candidates:
         raise ValueError("admission has no complete three-CPI truth trajectory")
     return candidates
@@ -273,6 +302,13 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
        admission.get("receiver_epoch") != identity.get("receiver_epoch"):
         raise ValueError("admission identity does not match the queued capture epochs")
     captures = valid_captures(admission)
+    exact_timing = all(cpi.get("exact_event_time") is True
+                       for _, capture in captures for cpi in capture["processor_cpis"])
+    timing_policy = "exact" if exact_timing else "provisional"
+    if job.get("timing_policy") != timing_policy or job.get("decision_grade") is not exact_timing:
+        raise ValueError("job timing policy differs from admitted CPI provenance")
+    uncertainty_by_capture = {capture_id: max(cpi.get("event_time_uncertainty_s", 0)
+        for cpi in capture["processor_cpis"]) for capture_id, capture in captures}
     primary_capture_id, primary_capture = max(
         captures, key=lambda item: len(item[1]["processor_cpis"]))
     recording_sha = digest(recording_path)
@@ -288,6 +324,20 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
     if not native_sidecar.is_file() or digest(native_sidecar) != expected_native_sha:
         raise ValueError("native recording metadata does not match its admitted digest")
     native_metadata = json.loads(native_sidecar.read_text())
+    if not exact_timing:
+        for _, capture in captures:
+            for cpi in capture["processor_cpis"]:
+                if cpi.get("epoch") != native_metadata.get("epoch") or not (
+                    isinstance(cpi.get("first_epoch_sample"), int) and
+                    isinstance(cpi.get("end_epoch_sample"), int) and
+                    native_metadata.get("firstEpochSample", math.inf) <= cpi["first_epoch_sample"] <
+                    cpi["end_epoch_sample"] <= native_metadata.get("endEpochSample", -math.inf)):
+                    raise ValueError("provisional CPI is not contained in native recording")
+                if not isinstance(cpi.get("max_raw_observation_offset_s"), (int, float)) or \
+                   not 0 <= cpi["max_raw_observation_offset_s"] <= 1 or \
+                   not isinstance(cpi.get("truth_bracket_span_ms"), (int, float)) or \
+                   not 0 <= cpi["truth_bracket_span_ms"] <= 3000:
+                    raise ValueError("provisional CPI lacks fresh projected truth")
     channel_count = int(config["capture"]["device"].get("channel_count", 2))
     gains = native_metadata.get("channelGains")
     if native_metadata.get("schema") != "vectorwarp-kraken-iq-clip-v1" or \
@@ -327,7 +377,8 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                                     acceleration=acceleration, surveillance_channel=physical,
                                     complex_cutout=None)
             elapsed = time.monotonic() - arm_started
-            target_scores = {capture_id: score_arm(replay, target_truth, sample_rate, float(dwell))
+            target_scores = {capture_id: score_arm(replay, target_truth, sample_rate, float(dwell),
+                                                  uncertainty_by_capture[capture_id])
                              for capture_id, target_truth in truth_by_capture.items()}
             output_cpis = len(replay["detections"])
             arms[dwell_key][label] = {"timing": {"wall_seconds": elapsed,
@@ -362,6 +413,8 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
     result = {"schema": "vectorwarp-integration-shadow-result-v1", "job_id": job["job_id"],
             "job_binding_sha256": job["job_binding_sha256"],
             "state": "complete", "completed_at": time.time(), "shadow_only": True,
+            "timing_policy": timing_policy, "decision_grade": exact_timing,
+            "production_promotion_allowed": False,
             "authoritative_output": False, "production_unchanged": True,
             "input": {"recording": str(recording_path), "recording_sha256": recording_sha,
                       "admission": str(admission_path), "admission_sha256": admission_sha,

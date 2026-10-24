@@ -30,6 +30,15 @@ uncertainty is therefore **unbounded/unknown**, not one second. The configured
   contention and clip gaps already do likewise.
 - The diagnostic always declares `boundedRfUtc:false`; event time remains
   inexact and unbounded, so authoritative scoring remains fail-closed.
+- Operational associations, capture triggers/admission, and corpus collection
+  remain enabled for estimated time with the configured nuisance radius and
+  measured delay/Doppler-rate expansion. A single operational lane owns capture
+  callbacks for every receiver; genuinely exact CPI timing uses zero expansion.
+  Admission records label provisional timing separately from decision-grade
+  exact timing. The exact scorecard remains gated. Integration replay accepts
+  provisional captures only with contained samples, fresh projected truth,
+  declared uncertainty, and measured delay/Doppler rates; it binds the timing
+  policy into jobs and authenticated results and forbids production promotion.
 - Existing ADS-B projection projects observation time to CPI and expands only
   provisional association gates by measured delay/Doppler rates. It never
   steers detection, beamforming, cancellation or tracking.

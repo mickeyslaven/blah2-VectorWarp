@@ -7,6 +7,20 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {validateProcessorSampleRanges} = require('./capture-admission');
+
+function captureTimingQualified(item) {
+  if (!Array.isArray(item?.processor_cpis) || item.processor_cpis.length < 3) return false;
+  return item.processor_cpis.every(cpi => cpi.exact_event_time === true ||
+    (cpi.exact_event_time === false && typeof cpi.event_time_source === 'string' &&
+      cpi.event_time_source.length > 0 && cpi.event_time_source !== 'unknown' &&
+      cpi.event_time_uncertainty_model === 'bounded-configured-nuisance-radius' &&
+      Number.isFinite(cpi.event_time_uncertainty_s) && cpi.event_time_uncertainty_s >= 0 &&
+      cpi.event_time_uncertainty_s <= 5 &&
+      Array.isArray(item.truth_samples) && item.truth_samples.length >= 3 &&
+      item.truth_samples.every(row => Number.isFinite(row.delay_rate_km_s) &&
+        Number.isFinite(row.doppler_rate_hz_s))));
+}
 
 const DEFAULT_DWELLS = Object.freeze([0.05, 0.1, 0.2, 0.5]);
 const DEFAULT_MODES = Object.freeze([
@@ -121,6 +135,9 @@ class IntegrationShadowQueue {
             !/^[a-f0-9]{64}$/.test(suppliedTag || '') ||
             !crypto.timingSafeEqual(Buffer.from(expectedTag, 'hex'), Buffer.from(suppliedTag, 'hex')) ||
             result.job_binding_sha256 !== job.job_binding_sha256 ||
+            result.timing_policy !== job.timing_policy ||
+            result.decision_grade !== job.decision_grade ||
+            result.production_promotion_allowed !== false ||
             result.input?.recording_sha256 !== job.identity?.recording_sha256 ||
             result.input?.native_sidecar_sha256 !== job.identity?.native_sidecar_sha256 ||
             result.input?.admission_sha256 !== job.identity?.admission_sha256 ||
@@ -235,7 +252,7 @@ class IntegrationShadowQueue {
     try {
       const captures = Object.entries(artifact?.captures || {}).filter(([, item]) =>
         item?.valid === true && item?.admission_state === 'admitted' &&
-        Array.isArray(item.processor_cpis) && item.processor_cpis.length >= 3);
+        captureTimingQualified(item));
       if (artifact?.state !== 'admitted' || artifact?.integrity?.valid !== true ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.data_sha256 || '') ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.sidecar_sha256 || '') ||
@@ -261,6 +278,13 @@ class IntegrationShadowQueue {
           !Array.isArray(channelGains) || channelGains.length !== channelCount ||
           channelGains.some(value => !Number.isFinite(value)))
         throw new Error('integration shadow native metadata has incompatible RF/gain identity');
+      const exactTiming = captures.every(([, item]) =>
+        item.processor_cpis.every(cpi => cpi.exact_event_time === true));
+      for (const [, item] of captures) if (item.processor_cpis.some(cpi => !cpi.exact_event_time)) {
+        const checked = validateProcessorSampleRanges(item, metadata);
+        if (!checked.valid || checked.processor_cpis.length !== item.processor_cpis.length)
+          throw new Error('provisional shadow sample containment or projected truth failed');
+      }
       const nativeIdentity = {frequency_hz: metadata.frequency, sample_rate_hz: metadata.sampleRate,
         channels: channelCount, actual_channel_gains_db: [...channelGains]};
       const expectedConfig = this.config.capture || {};
@@ -297,6 +321,7 @@ class IntegrationShadowQueue {
       let committed = false;
       try {
         const job = {schema: 'vectorwarp-integration-shadow-job-v1', job_id: jobId,
+          timing_policy: exactTiming ? 'exact' : 'provisional', decision_grade: exactTiming,
           created_at: new Date(this.now()).toISOString(), recording: file,
           admission_sidecar: `${file}.admission.json`, identity,
           experiment: {same_iq: true, shadow_only: true, dwell_seconds: this.options.dwellSeconds,
