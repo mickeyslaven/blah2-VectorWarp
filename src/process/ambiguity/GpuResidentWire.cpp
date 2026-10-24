@@ -108,7 +108,7 @@ void validateConfig(const Config& c){
   "Disabled resident bearing has configuration");
  require(uint64_t(f.manifoldResponses.size())+uint64_t(b.manifoldResponses.size())+
    uint64_t(f.directResponse.size())<=
-  (configBytes-640)/sizeof(std::complex<float>),
+  (configBytes-640-(c.replay.maxBytes?152:0))/sizeof(std::complex<float>),
   "Resident measured manifolds exceed config capacity");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
@@ -335,6 +335,7 @@ const auto&t=c.tracker;
  for(const auto value:c.bearing.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.fusion.directResponse){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  if(c.replay.maxBytes){
+  require(at<=configBytes-152,"Resident replay identity exceeds config capacity");
   w.f64(at,c.replay.frequencyHz);w.f64(at+8,c.replay.configuredPfa);
   w.copy(at+16,c.replay.sourceHash.data(),32);w.copy(at+48,c.replay.rfHash.data(),32);
   w.u32(at+80,uint32_t(c.replay.actualGainDb.size()));
@@ -375,7 +376,7 @@ for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(54
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
  c.replay.maxBytes=r.u64(624);c.replay.maxFrames=r.u32(632);r.zeros(636,4);
-require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640)/8,
+require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640-(c.replay.maxBytes?152:0))/8,
  "Resident measured manifold counts exceed config capacity");
 size_t at=640;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
 for(uint32_t i=0;i<fusionManifoldCount;++i){c.fusion.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
