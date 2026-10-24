@@ -136,8 +136,8 @@ assert.match(packageScript,
   /ExecStart=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-health-watchdog\.service[\s\S]*vectorwarp-config-guard\.service/,
   'Binary packages must bind watchdog and config-guard services to their private Node runtime.');
 assert.match(packageScript,
-  /chmod 0644[\s\S]*vectorwarp-wait-api\.js[\s\S]*vectorwarp-health-watchdog\.js[\s\S]*vectorwarp-config-guard\.js/,
-  'Explicitly invoked Node helpers must not be executable RPM dependency candidates.');
+  /find "\$STAGE\/opt\/vectorwarp\/libexec" -maxdepth 1 -type f -name '\*\.js' -exec chmod 0644/,
+  'Every packaged Node helper must be excluded from executable RPM dependency scanning.');
 assert.doesNotMatch(packageScript,
   /ExecStartPre=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
   'Packaging must not restore the retired restart-looping receiver pre-check.');

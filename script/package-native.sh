@@ -238,10 +238,11 @@ run rm -rf "$STAGE/opt/vectorwarp/current/systemd" \
   "$STAGE/opt/vectorwarp/current/libexec" \
   "$STAGE/opt/vectorwarp/current/api/node_modules/.bin"
 run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-x '{}' +
-run chmod 0644 \
-  "$STAGE/opt/vectorwarp/libexec/vectorwarp-wait-api.js" \
-  "$STAGE/opt/vectorwarp/libexec/vectorwarp-health-watchdog.js" \
-  "$STAGE/opt/vectorwarp/libexec/vectorwarp-config-guard.js"
+# Packaged JavaScript helpers are data for the pinned private Node runtime, not
+# host executables.  Apply this to the entire integration directory so a future
+# helper cannot silently reintroduce an RPM /usr/bin/node or /usr/bin/env
+# dependency merely by carrying an executable shebang.
+run find "$STAGE/opt/vectorwarp/libexec" -maxdepth 1 -type f -name '*.js' -exec chmod 0644 '{}' +
 
 printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
