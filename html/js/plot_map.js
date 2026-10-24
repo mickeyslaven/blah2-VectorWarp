@@ -24,6 +24,8 @@ var layout = {
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
+  // Preserve zoom/pan while live frames update through Plotly.update.
+  uirevision: 'vectorwarp-delay-doppler',
   displayModeBar: false,
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
