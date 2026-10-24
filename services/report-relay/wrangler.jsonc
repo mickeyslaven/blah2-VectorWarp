@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vectorwarp-report-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-24",
+  "workers_dev": true,
+  "observability": {
+    "enabled": false
+  },
+  "vars": {
+    "REPORT_LABELS": "bug,vectorwarp-report"
+  },
+  "ratelimits": [
+    {
+      "name": "REPORT_RATE_LIMITER",
+      "namespace_id": "24102401",
+      "simple": {
+        "limit": 5,
+        "period": 60
+      }
+    }
+  ]
+}
