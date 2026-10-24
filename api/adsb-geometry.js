@@ -87,6 +87,8 @@ class DelayDopplerHistory {
       const transmitterRange = distance(this.tx, target) / 1000;
       const result = {timestamp, flight: typeof aircraft.flight === 'string' ? aircraft.flight.trim() : '',
         delay: delay / 1000, doppler: -median(slopes) / (C / this.frequency),
+        frequency_hz: this.frequency,
+        delay_definition: 'excess_bistatic_path_km',
         position: {latitude: aircraft.lat, longitude: aircraft.lon,
           altitude_geom_ft: aircraft.alt_geom, altitude_baro_ft: optionalNumber(aircraft.alt_baro),
           ground_speed_kt: optionalNumber(aircraft.gs), track_deg_true: optionalNumber(aircraft.track),

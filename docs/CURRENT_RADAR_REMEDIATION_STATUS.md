@@ -472,3 +472,42 @@ bias or multipath distortion, not authorization to change the user-confirmed
 physical mapping or activate a model; the v1 rows lack the new identity and
 timing contract.
 
+## 2026-10-24 live scorecard denominator and geometry audit
+
+The unusually low provisional headline was audited against the live 527 MHz
+configuration and persisted CPI/pass evidence. The geometric prediction is
+correctly three-dimensional: WGS84 ECEF receiver-to-aircraft and
+transmitter-to-aircraft slant paths are used, and delay is excess bistatic path
+length. Delay is independent of carrier frequency. Doppler is path rate divided
+by wavelength and the live predictor is using 527 MHz; a focused regression now
+proves that doubling carrier doubles predicted Doppler while leaving delay
+unchanged.
+
+The old headline was nevertheless not a defensible regression metric. It
+treated the complete 62.457 km excess-delay map as homogeneous proven radar
+reach, did not report receiver slant-range mix, counted the intentionally
+suppressed region below the 0.625 km detector floor as eligible, and silently
+discarded near-tied ADS-B associations. The below-floor defect affected 231
+observed frames in the audited hour but did not explain most of the 71 reported
+misses. Most misses had long opportunities (median 424 eligible CPIs), so a
+real sensitivity/geometry problem likely remains after accounting is fixed.
+
+A focused local correction now:
+
+- separates map eligibility from detector-searchable eligibility;
+- includes the detector floor in the frozen evaluation-contract identity;
+- reports fixed excess-delay and three-dimensional receiver-slant strata;
+- retains raw map-wide yield as descriptive only;
+- reports ambiguous, unmatched and selected association points;
+- computes a current-hour versus previous-hour pooled direct-standardized rate
+  on common excess-delay x slant-range strata, requiring at least 80% common
+  support before the geometry comparison can be decision-grade.
+
+This directly prevents an influx of approximately 45 km aircraft from being
+misreported as a detector regression. The standardized comparison is still
+non-decision-grade on Kraken until exact RF event time exists. Focused geometry,
+scorecard and syntax tests pass. Durable audit:
+`results/20261024-live-scorecard-denominator-audit.json`. The correction is not
+yet live; it must land as a separate follow-up after PR #78's timing/capture
+boundary, then begin a fresh score epoch rather than rewriting historical data.
+
