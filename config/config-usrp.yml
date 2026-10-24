@@ -12,6 +12,7 @@ capture:
     loop: false
     file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
     format: 'auto'
+    provenance: 'legacy-unqualified'
 
 process:
   data:

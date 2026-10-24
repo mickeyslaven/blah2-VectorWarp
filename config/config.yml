@@ -18,6 +18,9 @@ capture:
     loop: false
     file: '/var/lib/vectorwarp/recordings/recording.blah2iq'
     format: 'auto'
+    # Old/no-sidecar recordings remain usable but can never claim exact RF time.
+    # Use 'decision-grade' to reject anything without exact bounded v2 timing.
+    provenance: 'legacy-unqualified'
 
 process:
   data:

@@ -19,6 +19,7 @@
 #include "data/IqData.h"
 #include "UsrpCoherence.h"
 #include "UsrpDeviceTime.h"
+#include "UsrpReadback.h"
 
 #include <stdint.h>
 #include <atomic>
@@ -47,6 +48,8 @@ private:
   mutable std::mutex provenanceMutex;
   bool coherenceAvailable = false;
   UsrpCoherenceAttestation coherence;
+  bool appliedSettingsAvailable = false;
+  UsrpAppliedSettings appliedSettings;
   std::atomic<bool> monitoring{false};
 
 public:

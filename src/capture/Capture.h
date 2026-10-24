@@ -108,7 +108,8 @@ public:
   /// @param file Absolute path of file to replay.
   /// @return Void.
   void set_replay(bool loop, std::string file, std::string format = "auto",
-    uint32_t legacyBlockSamples = 0);
+    uint32_t legacyBlockSamples = 0,
+    std::string provenanceMode = "legacy-unqualified");
   // Optional receiver extension, installed before start when the loaded
   // module supports it. Older modules retain the normal FIFO contract.
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
@@ -121,6 +122,7 @@ public:
   }
   bool requires_usrp_time_provenance() const { return type == "Usrp"; }
   bool requires_hackrf_time_provenance() const { return type == "HackRF"; }
+  bool requires_rspduo_time_provenance() const { return type == "RspDuo"; }
 
 private:
   PairedCpiQueue* pairedCpiQueue = nullptr;

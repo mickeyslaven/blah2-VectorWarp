@@ -29,6 +29,16 @@ Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _pat
 
 Capture::SamplePosition Capture::live_sample_position() const
 {
+  if (replay) {
+    std::lock_guard<std::mutex> lock(statusMutex);
+    const auto& value=replayProgress.provenance;
+    if (!value.contractValid) return {};
+    const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
+    if (replayProgress.samples>UINT64_MAX-base) return {};
+    return {true,value.epoch,base+replayProgress.samples,0,
+      value.deviceTimeEpochTick,replayProgress.sampleRate,value.clockSource,
+      value.deviceTimeSource,value.motherboard,value.subdevices};
+  }
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
   if (kraken) {
     const auto value = kraken->sample_position();
@@ -270,6 +280,20 @@ std::string Capture::status_json() const {
   document.AddMember("totalSamples",replayProgress.total,a);
   document.AddMember("loops",replayProgress.loops,a);
   document.AddMember("trailingSamples",replayProgress.trailingSamples,a);
+  rapidjson::Value provenance(rapidjson::kObjectType);
+  provenance.AddMember("present",replayProgress.provenance.present,a);
+  provenance.AddMember("contractValid",replayProgress.provenance.contractValid,a);
+  provenance.AddMember("legacy",replayProgress.provenance.legacy,a);
+  provenance.AddMember("decisionGrade",replayProgress.provenance.decisionGrade,a);
+  provenance.AddMember("exactTime",replayProgress.provenance.exactTime,a);
+  provenance.AddMember("uncertaintyBounded",replayProgress.provenance.uncertaintyBounded,a);
+  provenance.AddMember("configurationFingerprintValid",replayProgress.provenance.configurationFingerprintValid,a);
+  provenance.AddMember("codeFingerprintMatches",replayProgress.provenance.codeFingerprintMatches,a);
+  provenance.AddMember("schema",rapidjson::Value(replayProgress.provenance.schema.c_str(),a),a);
+  provenance.AddMember("backend",rapidjson::Value(replayProgress.provenance.backend.c_str(),a),a);
+  provenance.AddMember("timeSource",rapidjson::Value(replayProgress.provenance.timeSource.c_str(),a),a);
+  provenance.AddMember("reason",rapidjson::Value(replayProgress.provenance.reason.c_str(),a),a);
+  document.AddMember("replayProvenance",provenance,a);
   const auto recording = device ? device->recording_status() : Source::RecordingStatus{};
   document.AddMember("recording",recording.active,a);
   text("recordingFile",recording.file); text("recordingError",recording.error);
@@ -382,11 +406,12 @@ blah2::ReceiverSource Capture::factory_source(const std::string& type,
 }
 
 void Capture::set_replay(bool _loop, std::string _file, std::string format,
-    uint32_t legacyBlockSamples)
+    uint32_t legacyBlockSamples, std::string provenanceMode)
 {
   replay = true;
   loop = _loop;
   file = _file;
   replayOptions.format = std::move(format);
   replayOptions.legacyBlockSamples = legacyBlockSamples;
+  replayOptions.provenanceMode = std::move(provenanceMode);
 }

@@ -58,6 +58,8 @@ std::string Usrp::startup_receipt_json() const
   std::lock_guard<std::mutex> lock(provenanceMutex);
   document.AddMember("status",
     rapidjson::Value(coherenceAvailable ? "accepted" : "pending", allocator), allocator);
+  document.AddMember("hardwareVerified",appliedSettingsAvailable,allocator);
+  document.AddMember("readbackAvailable",appliedSettingsAvailable,allocator);
   rapidjson::Value requested(rapidjson::kObjectType);
   requested.AddMember("address", rapidjson::Value(address.c_str(), allocator), allocator);
   requested.AddMember("subdevices", rapidjson::Value(subdev.c_str(), allocator), allocator);
@@ -71,6 +73,22 @@ std::string Usrp::startup_receipt_json() const
   requested.AddMember("antennas", antennas, allocator);
   requested.AddMember("gains", gains, allocator);
   document.AddMember("requested", requested, allocator);
+  if(appliedSettingsAvailable) {
+    rapidjson::Value applied(rapidjson::kObjectType),frequencies(rapidjson::kArrayType),
+      rates(rapidjson::kArrayType),gainsApplied(rapidjson::kArrayType),antennasApplied(rapidjson::kArrayType);
+    applied.AddMember("subdevices",rapidjson::Value(appliedSettings.subdevices.c_str(),allocator),allocator);
+    for(unsigned channel=0;channel<2;++channel) {
+      frequencies.PushBack(appliedSettings.frequencyHz[channel],allocator);
+      rates.PushBack(appliedSettings.sampleRateHz[channel],allocator);
+      gainsApplied.PushBack(appliedSettings.gainDb[channel],allocator);
+      antennasApplied.PushBack(rapidjson::Value(appliedSettings.antenna[channel].c_str(),allocator),allocator);
+    }
+    applied.AddMember("perChannelFrequencyHz",frequencies,allocator);
+    applied.AddMember("perChannelSampleRateHz",rates,allocator);
+    applied.AddMember("perChannelGainDb",gainsApplied,allocator);
+    applied.AddMember("perChannelAntenna",antennasApplied,allocator);
+    document.AddMember("appliedReadback",applied,allocator);
+  } else document.AddMember("appliedReadback",rapidjson::Value(rapidjson::kNullType),allocator);
   if (coherenceAvailable) {
     rapidjson::Value applied(rapidjson::kObjectType);
     applied.AddMember("motherboards", static_cast<uint64_t>(coherence.motherboards), allocator);
@@ -151,17 +169,25 @@ void Usrp::process(IqData *buffer1, IqData *buffer2)
 {
     if (!buffer1 || !buffer2 || buffer1 == buffer2)
       throw std::invalid_argument("[USRP] Two distinct IQ queues are required.");
+    {
+      std::lock_guard<std::mutex> lock(provenanceMutex);
+      coherenceAvailable = false;
+      appliedSettingsAvailable = false;
+      appliedSettings = {};
+    }
     // create a USRP object
     uhd::usrp::multi_usrp::sptr usrp = 
       uhd::usrp::multi_usrp::make(address);
 
     // Set and independently read back both channels before opening the stream.
-    apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
+    const auto applied = apply_usrp_settings(*usrp, uhd::usrp::subdev_spec_t(subdev), fc, fs, gain, antenna);
     const auto attestation = attest_usrp_coherence(*usrp, subdev);
     {
       std::lock_guard<std::mutex> lock(provenanceMutex);
       coherence = attestation;
       coherenceAvailable = true;
+      appliedSettings = applied;
+      appliedSettingsAvailable = true;
     }
 
     // create a receive streamer

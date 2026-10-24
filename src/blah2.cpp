@@ -209,6 +209,7 @@ try
   std::string type, path, replayFile, ip_capture;
   bool saveIq, state, loop;
   std::string replayFormat = "auto";
+  std::string replayProvenanceMode = "legacy-unqualified";
   uint32_t legacyReplayBlockSamples = 0;
   tree["capture"]["fs"] >> fs;
   tree["capture"]["fc"] >> fc;
@@ -222,6 +223,8 @@ try
     tree["capture"]["replay"]["format"] >> replayFormat;
   if (tree["capture"]["replay"].has_child("legacy_block_samples"))
     tree["capture"]["replay"]["legacy_block_samples"] >> legacyReplayBlockSamples;
+  if (tree["capture"]["replay"].has_child("provenance"))
+    tree["capture"]["replay"]["provenance"] >> replayProvenanceMode;
   tree["network"]["ip"] >> ip_capture;
   tree["network"]["ports"]["api"] >> port_capture;
   if (fs == 0 || fc == 0 || port_capture == 0)
@@ -555,7 +558,7 @@ try
 
   Capture *capture = new Capture(type, fs, fc, path);
   if (state) capture->set_replay(loop, replayFile, replayFormat,
-    legacyReplayBlockSamples);
+    legacyReplayBlockSamples, replayProvenanceMode);
 
   // Keep one bounded capture queue per coherent input.
   double tCpi, tBuffer;
@@ -1251,6 +1254,8 @@ try
               blah2::usrp_event_time_unavailable() :
             capture->requires_hackrf_time_provenance() ?
               blah2::hackrf_event_time_unavailable() :
+            capture->requires_rspduo_time_provenance() ?
+              blah2::rspduo_event_time_unavailable() :
               blah2::EventTimeProvenance{};
           if (captureSamplePositionAvailable &&
               capture->requires_usrp_time_provenance())
@@ -1261,6 +1266,10 @@ try
           else if (captureSamplePositionAvailable &&
                    capture->requires_hackrf_time_provenance())
             eventTime = blah2::hackrf_cpi_sample_epoch(captureEpoch,
+              captureFirstEpochSample, captureEndEpochSample, fs);
+          else if (captureSamplePositionAvailable &&
+                   capture->requires_rspduo_time_provenance())
+            eventTime = blah2::rspduo_cpi_sample_epoch(captureEpoch,
               captureFirstEpochSample, captureEndEpochSample, fs);
           else if (captureSamplePositionAvailable)
             eventTime = blah2::kraken_cpi_midpoint_time(

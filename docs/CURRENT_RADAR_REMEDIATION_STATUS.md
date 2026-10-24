@@ -56,7 +56,7 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | Code and tests complete | `87952c3`; every GainChange creates a hard epoch boundary, invalidates stale work, and stops recording. Residual boundary is callback-aligned (`sampleAligned:false`) because SDRplay supplies no sample counter |
 | 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, or jumping device time stops before append; scored capture is limited to an attested single-motherboard B210 with two distinct subdevices. Device time remains non-UTC and exact ADS-B scoring fails closed |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Code and tests complete | Callback blocks publish only as matched pairs; short/asymmetric/progression/drop faults clear both FIFOs and leave the new epoch unqualified until hardware-trigger restart. Relative epoch is recorded, but no RF/UTC time exists |
-| 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Pending after backend fixes | Versioned manifest/header with replay round-trip tests |
+| 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Code and tests complete | Portable sidecar v2 records backend receipts, channel/RF settings, identity/topology, relative sample epoch, intervals/discontinuities, and configuration/code fingerprints. Replay validates it against the binary header and exposes explicit `legacy-unqualified` and `decision-grade` modes |
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Pending after recording | Fedora then Debian/Ubuntu/Pi package tests with the actual service restrictions |
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
@@ -86,6 +86,13 @@ provenance while the radar continued processing at the unchanged RF settings.
   short callback, callback-progression divergence, paired recording/status API,
   real libhackrf module, and full processor build checks. No radio hardware was
   opened and the live Kraken node was not changed.
+- Portable recording provenance passed deterministic Kraken, RSPduo, USRP, and
+  HackRF-shaped live-to-record-to-replay round trips, missing/legacy sidecar,
+  receiver mismatch, settings-fingerprint tamper, and decision-grade rejection
+  tests. The actual USRP and HackRF mocked receive-loop fixtures, Kraken socket
+  fixture, and Kraken-only processor build also passed. Existing v1/no-sidecar
+  files remain operational as `legacy-unqualified`; all current live backends
+  remain best-effort/provisional because none attests exact bounded UTC RF time.
 
 ## Supporting artifacts
 

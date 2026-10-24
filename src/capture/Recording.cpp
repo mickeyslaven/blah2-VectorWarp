@@ -3,12 +3,27 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
+#include <fstream>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
+#if __has_include("ReceiverCohort.h")
+#include "ReceiverCohort.h"
+#else
+#define BLAH2_RECEIVER_COHORT "standalone-unqualified-build"
+#define BLAH2_RECEIVER_CODE_FINGERPRINT "standalone-unqualified-build"
+#endif
+#ifndef BLAH2_RECEIVER_CODE_FINGERPRINT
+#define BLAH2_RECEIVER_CODE_FINGERPRINT BLAH2_RECEIVER_COHORT
+#endif
 
 namespace blah2 {
 namespace {
@@ -21,6 +36,14 @@ void put64(uint8_t* p,uint64_t v) { put32(p,v); put32(p+4,v>>32); }
 float floating(const uint8_t* p) { const auto bits=u32(p); float value; std::memcpy(&value,&bits,4); return value; }
 void putFloat(uint8_t* p,float value) { uint32_t bits; std::memcpy(&bits,&value,4); put32(p,bits); }
 void fail(const std::string& message) { throw std::runtime_error(message); }
+std::string fnv1a64(const std::string& value) {
+  uint64_t hash=1469598103934665603ULL;
+  for(unsigned char byte:value) { hash^=byte; hash*=1099511628211ULL; }
+  char output[25]{};
+  std::snprintf(output,sizeof(output),"fnv1a64:%016llx",
+    static_cast<unsigned long long>(hash));
+  return output;
+}
 struct File {
   int fd=-1;
   explicit File(const std::string& path,bool writing=false) {
@@ -58,6 +81,135 @@ void valid(const RecordingMetadata& m) {
 void finite(const IqBlock& block) {
   for(const auto& channel:block) for(auto value:channel)
     if(!std::isfinite(value.real()) || !std::isfinite(value.imag())) fail("Recording contains invalid I/Q samples");
+}
+std::string json_string(const rapidjson::Value& object,const char* name) {
+  if(!object.HasMember(name) || !object[name].IsString() || !object[name].GetStringLength())
+    fail(std::string("Recording provenance is missing ")+name);
+  return {object[name].GetString(),object[name].GetStringLength()};
+}
+uint64_t decimal(const rapidjson::Value& object,const char* name) {
+  if(!object.HasMember(name) || !object[name].IsString() || !object[name].GetStringLength())
+    fail(std::string("Recording provenance is missing ")+name);
+  const std::string value(object[name].GetString(),object[name].GetStringLength());
+  if(value.size()>20 || value.find_first_not_of("0123456789")!=std::string::npos)
+    fail(std::string("Recording provenance has invalid ")+name);
+  try {
+    size_t used=0; const auto result=std::stoull(value,&used);
+    if(used!=value.size()) fail(std::string("Recording provenance has invalid ")+name);
+    return result;
+  } catch(const std::exception&) { fail(std::string("Recording provenance has invalid ")+name); }
+  return 0;
+}
+RecordingProvenance read_provenance(const std::string& path,
+    const ReplayOptions& options,const RecordingMetadata& metadata) {
+  RecordingProvenance result;
+  result.receiver=options.receiver;
+  result.reason="Recording has no replay-qualified v2 provenance sidecar";
+  const std::filesystem::path sidecar(path+".provenance.json");
+  if(!std::filesystem::exists(sidecar)) return result;
+  std::error_code sizeError;
+  const auto size=std::filesystem::file_size(sidecar,sizeError);
+  if(sizeError || !size || size>1048576) fail("Recording provenance sidecar is empty or too large");
+  std::ifstream input(sidecar,std::ios::binary);
+  result.json.assign(std::istreambuf_iterator<char>(input),{});
+  if(input.bad()) fail("Cannot read recording provenance sidecar");
+  rapidjson::Document document; document.Parse(result.json.c_str());
+  if(document.HasParseError() || !document.IsObject()) fail("Recording provenance sidecar is invalid JSON");
+  if(!document.HasMember("schema") || !document["schema"].IsString())
+    fail("Recording provenance sidecar has no schema");
+  result.present=true;
+  result.schema={document["schema"].GetString(),document["schema"].GetStringLength()};
+  if(result.schema!="vectorwarp-recording-provenance-v2") {
+    result.reason="Legacy provenance schema is not replay-qualified";
+    return result;
+  }
+  result.receiver=json_string(document,"receiver");
+  result.backend=json_string(document,"backend");
+  if(result.receiver!=options.receiver) fail("Recording provenance receiver differs from Settings");
+  const auto required_uint=[&](const char* name,uint32_t expected) {
+    if(!document.HasMember(name) || !document[name].IsUint() || document[name].GetUint()!=expected)
+      fail(std::string("Recording provenance ")+name+" differs from the recording header");
+  };
+  required_uint("channels",metadata.channels);
+  required_uint("sampleRateHz",metadata.sampleRate);
+  required_uint("frequencyHz",metadata.frequency);
+  if(!document.HasMember("channelSettings") || !document["channelSettings"].IsArray() ||
+      document["channelSettings"].Size()!=metadata.channels)
+    fail("Recording provenance channel settings are incomplete");
+  if(!document.HasMember("receiverDetails") || !document["receiverDetails"].IsObject() ||
+      !document.HasMember("device") || !document["device"].IsObject() ||
+      !document.HasMember("topology") || !document["topology"].IsObject())
+    fail("Recording provenance receiver/device/topology contract is incomplete");
+  if(!document.HasMember("recording") || !document["recording"].IsObject())
+    fail("Recording provenance recording contract is missing");
+  const auto& recording=document["recording"];
+  if(!recording.HasMember("complete") || !recording["complete"].IsBool() ||
+      !recording["complete"].GetBool() || decimal(recording,"samples")!=metadata.samples)
+    fail("Recording provenance does not describe this completed recording");
+  if(!document.HasMember("timing") || !document["timing"].IsObject())
+    fail("Recording provenance timing contract is missing");
+  const auto& timing=document["timing"];
+  result.timeSource=json_string(timing,"source");
+  if(!timing.HasMember("exact") || !timing["exact"].IsBool() ||
+      !timing.HasMember("uncertaintyBounded") || !timing["uncertaintyBounded"].IsBool() ||
+      !timing.HasMember("continuous") || !timing["continuous"].IsBool() ||
+      !timing.HasMember("gaps") || !timing["gaps"].IsArray() ||
+      !timing.HasMember("discontinuities") || !timing["discontinuities"].IsArray())
+    fail("Recording provenance timing fields are incomplete");
+  result.exactTime=timing["exact"].GetBool();
+  result.uncertaintyBounded=timing["uncertaintyBounded"].GetBool();
+  result.continuous=timing["continuous"].GetBool();
+  result.firstSample=decimal(timing,"firstSample");
+  result.endSample=decimal(timing,"endSample");
+  if(result.firstSample!=0 || result.endSample!=metadata.samples ||
+      !result.continuous || !timing["gaps"].Empty() || !timing["discontinuities"].Empty())
+    fail("Recording provenance sample intervals do not match a continuous recording");
+  if(timing.HasMember("epoch") && timing["epoch"].IsString()) result.epoch=decimal(timing,"epoch");
+  if(timing.HasMember("sourceFirstSample") && timing["sourceFirstSample"].IsString()) {
+    result.sourceFirstSample=decimal(timing,"sourceFirstSample");
+    result.sourceSampleAvailable=true;
+  }
+  if(timing.HasMember("deviceTimeEpochTick") && timing["deviceTimeEpochTick"].IsString()) {
+    const std::string tick(timing["deviceTimeEpochTick"].GetString(),timing["deviceTimeEpochTick"].GetStringLength());
+    try { size_t used=0; result.deviceTimeEpochTick=std::stoll(tick,&used);
+      if(used!=tick.size()) fail("Recording provenance has invalid deviceTimeEpochTick");
+    } catch(const std::exception&) { fail("Recording provenance has invalid deviceTimeEpochTick"); }
+    result.deviceTimeAvailable=true;
+  }
+  const auto& topology=document["topology"];
+  const auto optional_string=[&](const char* name) {
+    return topology.HasMember(name) && topology[name].IsString() ?
+      std::string(topology[name].GetString(),topology[name].GetStringLength()) : std::string{};
+  };
+  result.clockSource=optional_string("clockSource");
+  result.deviceTimeSource=optional_string("timeSource");
+  result.motherboard=optional_string("motherboard");
+  result.subdevices=optional_string("subdevices");
+  if(!document.HasMember("fingerprints") || !document["fingerprints"].IsObject())
+    fail("Recording provenance fingerprints are missing");
+  const auto& fingerprints=document["fingerprints"];
+  result.configurationFingerprint=json_string(fingerprints,"configuration");
+  result.codeFingerprint=json_string(fingerprints,"code");
+  rapidjson::StringBuffer detailsBuffer;
+  rapidjson::Writer<rapidjson::StringBuffer> detailsWriter(detailsBuffer);
+  document["receiverDetails"].Accept(detailsWriter);
+  const auto expectedConfiguration=fnv1a64(std::string(detailsBuffer.GetString(),detailsBuffer.GetSize())+
+    "|"+std::to_string(metadata.channels)+"|"+std::to_string(metadata.sampleRate)+"|"+
+    std::to_string(metadata.frequency));
+  if(result.configurationFingerprint!=expectedConfiguration)
+    fail("Recording provenance configuration fingerprint is invalid");
+  result.configurationFingerprintValid=true;
+  result.codeFingerprintMatches=result.codeFingerprint==
+    std::string("sha256:")+BLAH2_RECEIVER_CODE_FINGERPRINT+
+      ";receiver-cohort:"+BLAH2_RECEIVER_COHORT;
+  result.contractValid=true; result.legacy=false;
+  result.decisionGrade=result.exactTime && result.uncertaintyBounded &&
+    result.codeFingerprintMatches;
+  result.reason=result.decisionGrade ? "Replay provenance is decision-grade" :
+    !result.codeFingerprintMatches ?
+      "Replay provenance is valid but was produced by a different receiver code cohort" :
+      "Replay provenance is valid but RF time is not exact and bounded";
+  return result;
 }
 }
 
@@ -108,6 +260,7 @@ struct RecordingReader::Impl {
   File file;
   ReplayOptions options;
   RecordingMetadata metadata;
+  RecordingProvenance provenance;
   uint64_t fileSize=0,start=0,position=0;
   uint32_t legacySize=0;
   HeimdallFrame::Header firstMchq{};
@@ -163,6 +316,11 @@ struct RecordingReader::Impl {
     if(metadata.sampleRate!=options.sampleRate) fail("Recording sample rate differs from Settings");
     const uint64_t delta=metadata.frequency>options.frequency ? metadata.frequency-options.frequency : options.frequency-metadata.frequency;
     if(delta>(format=="mchq" ? 256U : 0U)) fail("Recording frequency differs from Settings");
+    provenance=read_provenance(path,options,metadata);
+    if(options.provenanceMode!="legacy-unqualified" && options.provenanceMode!="decision-grade")
+      fail("Replay provenance mode must be legacy-unqualified or decision-grade");
+    if(options.provenanceMode=="decision-grade" && !provenance.decisionGrade)
+      fail("Decision-grade replay requires exact, bounded v2 RF-time provenance");
     file.seek(start);
   }
   void skip(uint64_t bytes) { const auto p=file.position(); if(p>fileSize || bytes>fileSize-p) fail("Recording is truncated"); file.seek(p+bytes); }
@@ -185,6 +343,7 @@ struct RecordingReader::Impl {
 RecordingReader::RecordingReader(const std::string& path,ReplayOptions o):impl_(std::make_unique<Impl>(path,std::move(o))) {}
 RecordingReader::~RecordingReader()=default;
 const RecordingMetadata& RecordingReader::metadata() const { return impl_->metadata; }
+const RecordingProvenance& RecordingReader::provenance() const { return impl_->provenance; }
 void RecordingReader::rewind() { impl_->file.seek(impl_->start); impl_->position=0; }
 bool RecordingReader::read(IqBlock& block) {
   auto& s=*impl_; if(s.position==s.metadata.samples) { block.clear(); return false; }

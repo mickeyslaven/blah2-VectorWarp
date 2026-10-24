@@ -26,6 +26,7 @@ private:
   /// @brief Vector of serial numbers.
   /// @details Full serial or a unique, case-sensitive suffix from hackrf_info.
   std::vector<std::string> serial;
+  std::array<std::string,2> resolvedSerial;
 
   /// @brief RX LNA (IF) gain, 0-40dB, 8dB steps.
   std::vector<uint32_t> gainLna;

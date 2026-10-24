@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <mutex>
 
 class Kraken : public Source
 {
@@ -30,6 +31,9 @@ private:
   std::atomic<uint64_t> sampleEpoch{0};
   std::atomic<uint64_t> nextEpochSample{0};
   std::atomic<int64_t> sampleEpochEstimateNanoseconds{0};
+  mutable std::mutex provenanceMutex;
+  HeimdallFrame::Header lastHeader;
+  bool lastHeaderAvailable = false;
 
   void process_heimdall(const std::vector<IqData *>& buffers);
   void stream_heimdall(const std::vector<IqData *>& buffers);
@@ -56,6 +60,8 @@ public:
   void request_clip(const blah2::IqClipRequest& request);
   blah2::IqClipStatus clip_status() const;
   SamplePosition sample_position() const;
+  Source::SampleTimePosition sample_time_position() const override;
+  std::string recording_provenance_json() const override;
 };
 
 #endif

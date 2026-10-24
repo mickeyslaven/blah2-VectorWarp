@@ -270,6 +270,7 @@ public:
   /// SDK call acceptance only; the API offers no independent tuner readback.
   std::string startup_receipt_json() const;
   std::string health_json() const;
+  std::string recording_provenance_json() const override;
 
 
 };

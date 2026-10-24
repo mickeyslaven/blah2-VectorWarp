@@ -184,14 +184,22 @@ int main() {
       document.ParseStream(stream);
       assert(!document.HasParseError());
       assert(std::string(document["schema"].GetString()) ==
+        "vectorwarp-recording-provenance-v2");
+      const auto& details = document["receiverDetails"];
+      assert(std::string(details["schema"].GetString()) ==
         "vectorwarp-usrp-recording-provenance-v1");
-      assert(std::string(document["startup"]["status"].GetString()) == "accepted");
-      assert(document["startup"]["coherence"]["singleMotherboard"].GetBool());
-      assert(std::string(document["startup"]["coherence"]["policy"].GetString()) ==
+      assert(std::string(details["startup"]["status"].GetString()) == "accepted");
+      assert(details["startup"]["hardwareVerified"].GetBool());
+      assert(details["startup"]["appliedReadback"]["perChannelGainDb"][0].GetDouble() == 10);
+      assert(details["startup"]["appliedReadback"]["perChannelGainDb"][1].GetDouble() == 20);
+      assert(details["startup"]["coherence"]["singleMotherboard"].GetBool());
+      assert(std::string(details["startup"]["coherence"]["policy"].GetString()) ==
         "single-motherboard-b210-v1");
-      assert(std::string(document["timing"]["deviceTime"]["epochTick"].GetString()) == "40000000");
-      assert(std::string(document["timing"]["deviceTime"]["nextTick"].GetString()) == "40000007");
-      assert(std::string(document["timing"]["deviceTime"]["samples"].GetString()) == "7");
+      assert(std::string(details["timing"]["deviceTime"]["epochTick"].GetString()) == "40000000");
+      assert(std::string(details["timing"]["deviceTime"]["nextTick"].GetString()) == "40000007");
+      assert(std::string(details["timing"]["deviceTime"]["samples"].GetString()) == "7");
+      assert(!document["recording"]["complete"].GetBool());
+      assert(!document["timing"]["discontinuities"].Empty());
       blah2::ReplayOptions options;
       options.receiver = "Usrp"; options.channels = 2;
       options.sampleRate = 2000000; options.frequency = 527000000;

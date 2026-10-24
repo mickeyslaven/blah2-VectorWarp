@@ -10,6 +10,43 @@
 #include <fstream>
 #include <cctype>
 #include <stdexcept>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
+#if __has_include("ReceiverCohort.h")
+#include "ReceiverCohort.h"
+#else
+#define BLAH2_RECEIVER_COHORT "standalone-unqualified-build"
+#define BLAH2_RECEIVER_CODE_FINGERPRINT "standalone-unqualified-build"
+#endif
+#ifndef BLAH2_RECEIVER_CODE_FINGERPRINT
+#define BLAH2_RECEIVER_CODE_FINGERPRINT BLAH2_RECEIVER_COHORT
+#endif
+
+namespace {
+std::string decimal(uint64_t value) { return std::to_string(value); }
+std::string fnv1a64(const std::string& value) {
+  uint64_t hash=1469598103934665603ULL;
+  for(unsigned char byte:value) { hash^=byte; hash*=1099511628211ULL; }
+  std::ostringstream out; out << "fnv1a64:" << std::hex << std::setw(16)
+    << std::setfill('0') << hash;
+  return out.str();
+}
+std::string backend_name(const std::string& type) {
+  if(type=="Kraken") return "heimdall-v2";
+  if(type=="RspDuo") return "sdrplay-api-v3";
+  if(type=="Usrp") return "uhd";
+  if(type=="HackRF") return "libhackrf";
+  return "test-or-unknown";
+}
+std::string time_source(const std::string& type) {
+  if(type=="Kraken") return "kraken_heimdall_host_arrival_estimate";
+  if(type=="RspDuo") return "sdrplay_callback_sample_counter";
+  if(type=="Usrp") return "usrp_uhd_device_time";
+  if(type=="HackRF") return "hackrf_shared_trigger_relative_sample_epoch";
+  return "unavailable";
+}
+}
 
 Source::Source()
 {
@@ -62,8 +99,9 @@ std::string Source::open_file()
     pendingChannels.assign(recordingChannels, {});
     pendingStarts.assign(recordingChannels, 0);
     channelStarted.assign(recordingChannels, false);
-    recordedSamples = 0; recordingError.clear(); recordingActive = true;
-    write_recording_provenance_locked();
+    recordedSamples = 0; recordingError.clear(); recordingDiscontinuities.clear();
+    recordingStartPosition = sample_time_position(); recordingActive = true;
+    write_recording_provenance_locked(false);
   } catch (const std::exception& error) { recording_failed(error.what()); throw; }
   std::cout << "Recording IQ: " << recordingFile << std::endl;
   return recordingFile;
@@ -80,25 +118,121 @@ void Source::close_file()
     flush_recording_locked();
     for (const auto& pending : pendingChannels)
       if (!pending.empty()) throw std::runtime_error("Recording ended with unpaired input samples");
-    write_recording_provenance_locked();
     recordingWriter->close(); recordedSamples = recordingWriter->samples();
+    write_recording_provenance_locked(true);
   }
   catch (const std::exception& error) { recording_failed(error.what()); throw; }
   recordingWriter.reset(); pendingChannels.clear();
 }
 
 void Source::recording_failed(const std::string& error) {
-  try { write_recording_provenance_locked(); } catch (...) {}
+  recordingError = error;
+  if (recordingDiscontinuities.empty() || recordingDiscontinuities.back()!=error)
+    recordingDiscontinuities.push_back(error);
+  try { write_recording_provenance_locked(false); } catch (...) {}
   if (recordingWriter) recordedSamples = recordingWriter->samples();
-  recordingActive = false; recordingError = error; recordingWriter.reset();
+  recordingActive = false; recordingWriter.reset();
   pendingChannels.clear();
   std::cerr << "Recording stopped: " << error << '\n';
 }
 
-void Source::write_recording_provenance_locked() {
+void Source::write_recording_provenance_locked(bool complete) {
   if (recordingFile.empty()) return;
-  const auto provenance = recording_provenance_json();
-  if (provenance.empty()) return;
+  const auto backendDetails = recording_provenance_json();
+  rapidjson::Document details;
+  details.Parse(backendDetails.c_str());
+  if (details.HasParseError() || !details.IsObject())
+    throw std::runtime_error("Receiver returned invalid recording provenance");
+  const auto current = sample_time_position();
+  rapidjson::StringBuffer canonicalDetailsBuffer;
+  rapidjson::Writer<rapidjson::StringBuffer> canonicalDetailsWriter(canonicalDetailsBuffer);
+  details.Accept(canonicalDetailsWriter);
+  const std::string canonicalDetails(canonicalDetailsBuffer.GetString(),canonicalDetailsBuffer.GetSize());
+  const uint64_t samples = recordingWriter ? recordingWriter->samples() : recordedSamples;
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator=document.GetAllocator();
+  document.AddMember("schema","vectorwarp-recording-provenance-v2",allocator);
+  document.AddMember("receiver",rapidjson::Value(type.c_str(),allocator),allocator);
+  const auto backend=backend_name(type);
+  document.AddMember("backend",rapidjson::Value(backend.c_str(),allocator),allocator);
+  document.AddMember("format","blah2iq-v1+sidecar-v2",allocator);
+  document.AddMember("channels",recordingChannels,allocator);
+  document.AddMember("sampleRateHz",fs,allocator);
+  document.AddMember("frequencyHz",fc,allocator);
+  rapidjson::Value device(rapidjson::kObjectType);
+  device.AddMember("identitySource","receiverDetails",allocator);
+  device.AddMember("identityReadbackRequired",true,allocator);
+  document.AddMember("device",device,allocator);
+  rapidjson::Value channels(rapidjson::kArrayType);
+  for(unsigned channel=0;channel<recordingChannels;++channel) {
+    rapidjson::Value item(rapidjson::kObjectType);
+    item.AddMember("channel",channel,allocator);
+    item.AddMember("identitySource","receiverDetails",allocator);
+    item.AddMember("appliedRfSettingsSource","receiverDetails",allocator);
+    channels.PushBack(item,allocator);
+  }
+  document.AddMember("channelSettings",channels,allocator);
+  rapidjson::Value topology(rapidjson::kObjectType);
+  topology.AddMember("source","receiverDetails",allocator);
+  topology.AddMember("clockSource",rapidjson::Value(current.clockSource.c_str(),allocator),allocator);
+  topology.AddMember("timeSource",rapidjson::Value(current.timeSource.c_str(),allocator),allocator);
+  topology.AddMember("motherboard",rapidjson::Value(current.motherboard.c_str(),allocator),allocator);
+  topology.AddMember("subdevices",rapidjson::Value(current.subdevices.c_str(),allocator),allocator);
+  document.AddMember("topology",topology,allocator);
+  rapidjson::Value timing(rapidjson::kObjectType);
+  const auto timingSource=time_source(type);
+  timing.AddMember("source",rapidjson::Value(timingSource.c_str(),allocator),allocator);
+  timing.AddMember("exact",false,allocator);
+  timing.AddMember("uncertaintyBounded",false,allocator);
+  timing.AddMember("uncertaintyNs",rapidjson::Value(rapidjson::kNullType),allocator);
+  timing.AddMember("continuous",complete && recordingDiscontinuities.empty(),allocator);
+  timing.AddMember("epoch",rapidjson::Value(decimal(recordingStartPosition.epoch).c_str(),allocator),allocator);
+  timing.AddMember("firstSample","0",allocator);
+  timing.AddMember("endSample",rapidjson::Value(decimal(samples).c_str(),allocator),allocator);
+  if(recordingStartPosition.available) {
+    timing.AddMember("sourceFirstSample",rapidjson::Value(decimal(recordingStartPosition.nextSample).c_str(),allocator),allocator);
+  } else timing.AddMember("sourceFirstSample",rapidjson::Value(rapidjson::kNullType),allocator);
+  if(recordingStartPosition.available && recordingStartPosition.deviceTimeEpochTick>=0)
+    timing.AddMember("deviceTimeEpochTick",rapidjson::Value(std::to_string(recordingStartPosition.deviceTimeEpochTick).c_str(),allocator),allocator);
+  else timing.AddMember("deviceTimeEpochTick",rapidjson::Value(rapidjson::kNullType),allocator);
+  if(current.available)
+    timing.AddMember("sourceNextSample",rapidjson::Value(decimal(current.nextSample).c_str(),allocator),allocator);
+  else timing.AddMember("sourceNextSample",rapidjson::Value(rapidjson::kNullType),allocator);
+  rapidjson::Value intervals(rapidjson::kArrayType);
+  if(samples) {
+    rapidjson::Value interval(rapidjson::kObjectType);
+    interval.AddMember("firstSample","0",allocator);
+    interval.AddMember("endSample",rapidjson::Value(decimal(samples).c_str(),allocator),allocator);
+    intervals.PushBack(interval,allocator);
+  }
+  timing.AddMember("intervals",intervals,allocator);
+  timing.AddMember("gaps",rapidjson::Value(rapidjson::kArrayType),allocator);
+  rapidjson::Value discontinuities(rapidjson::kArrayType);
+  for(const auto& reason:recordingDiscontinuities)
+    discontinuities.PushBack(rapidjson::Value(reason.c_str(),allocator),allocator);
+  timing.AddMember("discontinuities",discontinuities,allocator);
+  timing.AddMember("reason","No supported live backend currently supplies an independently attested exact UTC RF epoch",allocator);
+  document.AddMember("timing",timing,allocator);
+  rapidjson::Value fingerprints(rapidjson::kObjectType);
+  const auto configFingerprint=fnv1a64(canonicalDetails+"|"+std::to_string(recordingChannels)+"|"+
+    std::to_string(fs)+"|"+std::to_string(fc));
+  const std::string codeFingerprint=std::string("sha256:")+BLAH2_RECEIVER_CODE_FINGERPRINT+
+    ";receiver-cohort:"+BLAH2_RECEIVER_COHORT;
+  fingerprints.AddMember("configuration",rapidjson::Value(configFingerprint.c_str(),allocator),allocator);
+  fingerprints.AddMember("code",rapidjson::Value(codeFingerprint.c_str(),allocator),allocator);
+  document.AddMember("fingerprints",fingerprints,allocator);
+  rapidjson::Value recording(rapidjson::kObjectType);
+  recording.AddMember("complete",complete,allocator);
+  recording.AddMember("samples",rapidjson::Value(decimal(samples).c_str(),allocator),allocator);
+  recording.AddMember("error",rapidjson::Value(recordingError.c_str(),allocator),allocator);
+  document.AddMember("recording",recording,allocator);
+  rapidjson::Value copied;
+  copied.CopyFrom(details,allocator);
+  document.AddMember("receiverDetails",copied,allocator);
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  document.Accept(writer);
+  const std::string provenance(buffer.GetString(),buffer.GetSize());
   const std::filesystem::path target(recordingFile + ".provenance.json");
   const std::filesystem::path temporary(target.string() + ".tmp");
   {

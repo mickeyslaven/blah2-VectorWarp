@@ -60,6 +60,7 @@ void HackRf::start()
 {
   try {
   startupAccepted = false;
+  resolvedSerial = {};
   // global hackrf config
   int status;
   status = hackrf_init();
@@ -96,6 +97,8 @@ void HackRf::start()
   }
   if (selected[0] == selected[1])
     throw std::runtime_error("[HackRF] Reference and surveillance serials select the same device.");
+  for(unsigned role=0;role<2;++role)
+    resolvedSerial[role]=list->serial_numbers[selected[role]];
 
   // surveillance config
   status = hackrf_device_list_open(list.get(), selected[1], &dev[1]);
@@ -183,6 +186,9 @@ std::string HackRf::startup_receipt_json() const
   document.AddMember("schema", 1, allocator);
   document.AddMember("receiver", "HackRF", allocator);
   document.AddMember("status", rapidjson::Value(accepted ? "accepted" : "pending", allocator), allocator);
+  document.AddMember("hardwareVerified",false,allocator);
+  document.AddMember("readbackAvailable",false,allocator);
+  document.AddMember("setterAcceptance",accepted,allocator);
   rapidjson::Value requested(rapidjson::kObjectType);
   requested.AddMember("frequency", fc, allocator);
   requested.AddMember("sampleRate", fs, allocator);
@@ -199,6 +205,13 @@ std::string HackRf::startup_receipt_json() const
   requested.AddMember("vgaGainDb", vga, allocator);
   requested.AddMember("ampEnabled", amplifiers, allocator);
   document.AddMember("requested", requested, allocator);
+  rapidjson::Value identity(rapidjson::kObjectType),resolved(rapidjson::kArrayType),roles(rapidjson::kArrayType);
+  for(const auto& value:resolvedSerial)
+    resolved.PushBack(rapidjson::Value(value.c_str(),allocator),allocator);
+  roles.PushBack("reference",allocator); roles.PushBack("surveillance",allocator);
+  identity.AddMember("resolvedSerials",resolved,allocator);
+  identity.AddMember("roles",roles,allocator);
+  document.AddMember("deviceIdentity",identity,allocator);
   if (accepted) {
     rapidjson::Value synchronization(rapidjson::kObjectType);
     synchronization.AddMember("policy", "shared-clock-hardware-trigger-v1", allocator);

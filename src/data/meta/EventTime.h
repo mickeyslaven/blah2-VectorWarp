@@ -60,6 +60,29 @@ inline EventTimeProvenance hackrf_event_time_unavailable(
   return value;
 }
 
+inline EventTimeProvenance rspduo_event_time_unavailable(
+  std::string reason = "RSPduo callback sample time has no RF/UTC epoch")
+{
+  EventTimeProvenance value;
+  value.present = true;
+  value.source = "sdrplay_callback_sample_counter";
+  value.reason = std::move(reason);
+  return value;
+}
+
+inline EventTimeProvenance rspduo_cpi_sample_epoch(uint64_t epoch,
+  uint64_t firstSample, uint64_t endSample, uint32_t sampleRate)
+{
+  auto value = rspduo_event_time_unavailable();
+  value.epoch = epoch;
+  value.firstSample = firstSample;
+  value.endSample = endSample;
+  value.sampleRate = sampleRate;
+  if (endSample <= firstSample || !sampleRate) return value;
+  value.reason = "SDRplay callback counters preserve relative sample order, but the API supplies no exact RF/UTC epoch";
+  return value;
+}
+
 inline EventTimeProvenance hackrf_cpi_sample_epoch(uint64_t epoch,
   uint64_t firstSample, uint64_t endSample, uint32_t sampleRate)
 {

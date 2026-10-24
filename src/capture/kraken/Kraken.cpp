@@ -12,6 +12,9 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 
 namespace
 {
@@ -53,6 +56,45 @@ Kraken::SamplePosition Kraken::sample_position() const
     sampleEpoch.load(std::memory_order_relaxed),
     nextEpochSample.load(std::memory_order_relaxed),
     sampleEpochEstimateNanoseconds.load(std::memory_order_relaxed)};
+}
+
+Source::SampleTimePosition Kraken::sample_time_position() const
+{
+  const auto position = sample_position();
+  return {position.available, position.epoch, position.nextSample, 0, fs};
+}
+
+std::string Kraken::recording_provenance_json() const
+{
+  rapidjson::Document document(rapidjson::kObjectType);
+  auto& allocator=document.GetAllocator();
+  document.AddMember("schema","vectorwarp-kraken-recording-details-v1",allocator);
+  document.AddMember("receiver","Kraken",allocator);
+  rapidjson::Value endpoint(rapidjson::kObjectType);
+  endpoint.AddMember("host",rapidjson::Value(heimdallHost.c_str(),allocator),allocator);
+  endpoint.AddMember("port",heimdallPort,allocator);
+  endpoint.AddMember("deviceIdentityAvailable",false,allocator);
+  endpoint.AddMember("deviceIdentityReason","Heimdall V2 does not expose Kraken serial identity",allocator);
+  document.AddMember("heimdall",endpoint,allocator);
+  rapidjson::Value observed(rapidjson::kObjectType);
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  observed.AddMember("available",lastHeaderAvailable,allocator);
+  if(lastHeaderAvailable) {
+    observed.AddMember("phaseState",lastHeader.phaseState,allocator);
+    observed.AddMember("noiseSource",lastHeader.noiseSource,allocator);
+    observed.AddMember("frequencyChangeCounter",lastHeader.frequencyChangeCounter,allocator);
+    observed.AddMember("groupIndex",lastHeader.currentGroupIndex,allocator);
+    rapidjson::Value frequencies(rapidjson::kArrayType),gains(rapidjson::kArrayType);
+    for(float value:lastHeader.frequencies) frequencies.PushBack(value,allocator);
+    for(float value:lastHeader.gains) gains.PushBack(value,allocator);
+    observed.AddMember("perChannelFrequencyHz",frequencies,allocator);
+    observed.AddMember("perChannelGainDb",gains,allocator);
+    observed.AddMember("synchronized",HeimdallFrame::is_synchronized_data(lastHeader),allocator);
+  }
+  document.AddMember("observedFrame",observed,allocator);
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer); document.Accept(writer);
+  return {buffer.GetString(),buffer.GetSize()};
 }
 
 void Kraken::start()
@@ -103,6 +145,10 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
       recording_discontinuity("Kraken input connection was interrupted");
       clipRecorder->discontinuity("Kraken input connection was interrupted");
       samplePositionAvailable.store(false, std::memory_order_release);
+      {
+        std::lock_guard<std::mutex> lock(provenanceMutex);
+        lastHeaderAvailable=false;
+      }
       clear_buffers(buffers);
       std::cerr << "[Kraken] " << error.what()
         << "; retrying in 1 second" << std::endl;
@@ -149,6 +195,10 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
       continue;
+    }
+    {
+      std::lock_guard<std::mutex> lock(provenanceMutex);
+      lastHeader=header; lastHeaderAvailable=true;
     }
     if (resetPending)
     {

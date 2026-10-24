@@ -19,6 +19,16 @@
 
 class Source
 {
+public:
+  struct SampleTimePosition {
+    bool available = false;
+    uint64_t epoch = 0;
+    uint64_t nextSample = 0;
+    int64_t deviceTimeEpochTick = 0;
+    uint32_t sampleRate = 0;
+    std::string clockSource, timeSource, motherboard, subdevices;
+  };
+
 protected:
 
   /// @brief The capture device type.
@@ -48,9 +58,11 @@ private:
   std::vector<std::deque<std::complex<float>>> pendingChannels;
   std::vector<uint64_t> pendingStarts;
   std::vector<bool> channelStarted;
+  SampleTimePosition recordingStartPosition;
+  std::vector<std::string> recordingDiscontinuities;
   void recording_failed(const std::string& error);
   void flush_recording_locked();
-  void write_recording_provenance_locked();
+  void write_recording_provenance_locked(bool complete);
 
 public:
 
@@ -84,17 +96,10 @@ public:
   /// @return Void.
   virtual void stop() = 0;
 
-  struct SampleTimePosition {
-    bool available = false;
-    uint64_t epoch = 0;
-    uint64_t nextSample = 0;
-    int64_t deviceTimeEpochTick = 0;
-    uint32_t sampleRate = 0;
-    std::string clockSource, timeSource, motherboard, subdevices;
-  };
   virtual SampleTimePosition sample_time_position() const { return {}; }
-  // Empty means this receiver has no recording sidecar contract.
-  virtual std::string recording_provenance_json() const { return {}; }
+  // Backend-specific applied settings/readback embedded in the portable v2
+  // recording contract. Empty is represented explicitly, never as exact.
+  virtual std::string recording_provenance_json() const { return "{}"; }
 
   // File replay is receiver-independent and is owned by Capture/ReplayPlayer.
 

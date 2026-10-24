@@ -948,3 +948,11 @@ std::string RspDuo::startup_receipt_json() const
       << ",\"gainUpdateB\":" << stages.gainUpdateB << "}}}";
   return out.str();
 }
+
+std::string RspDuo::recording_provenance_json() const
+{
+  const auto startup=startup_receipt_json();
+  const auto health=health_json();
+  return std::string("{\"schema\":\"vectorwarp-rspduo-recording-details-v1\",\"startup\":")+
+    (startup.empty() ? "null" : startup)+",\"health\":"+health+"}";
+}

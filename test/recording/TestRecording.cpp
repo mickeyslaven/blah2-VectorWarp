@@ -23,6 +23,20 @@ public:
   void start() override {}
   void stop() override {}
 };
+class BackendFixtureSource final : public Source {
+  std::string details;
+public:
+  BackendFixtureSource(const std::string& receiver,const std::string& path,
+      bool* save,std::string provenance)
+    : Source(receiver,527000000,2400000,path,save),details(std::move(provenance)) {}
+  void process(IqData*, IqData*) override {}
+  void start() override {}
+  void stop() override {}
+  SampleTimePosition sample_time_position() const override {
+    return {true,7,1000,40000000,2400000,"external","internal","B210","A:A A:B"};
+  }
+  std::string recording_provenance_json() const override { return details; }
+};
 void require(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
 void rejects(const std::function<void()>& work,const char* message) {
   bool rejected=false; try { work(); } catch(const std::runtime_error&) { rejected=true; }
@@ -56,6 +70,11 @@ int main() try {
       ReplayOptions options{"auto","Kraken",channels,2400000,527000000,0};
       RecordingReader reader(path,options); IqBlock block;
       require(reader.metadata().samples==22,"Reader sample count");
+      require(reader.provenance().legacy && !reader.provenance().exactTime,
+        "Missing sidecar was not exposed as legacy/unqualified");
+      auto decisionGrade=options; decisionGrade.provenanceMode="decision-grade";
+      rejects([&] { RecordingReader invalid(path,decisionGrade); },
+        "Decision-grade replay accepted a recording without provenance");
       for(unsigned repeat=0;repeat<3;++repeat) {
         require(reader.read(block) && block==original,"First recording block differs");
         require(reader.read(block) && block==original,"Second recording block differs");
@@ -104,7 +123,59 @@ int main() try {
     IqBlock sourceBlock;
     require(sourceReader.read(sourceBlock) && sourceBlock[0].size()==3 && sourceBlock[1][2]==std::complex<float>(11,12),
       "Source paired recording differs");
+    require(sourceReader.provenance().contractValid && !sourceReader.provenance().decisionGrade &&
+      sourceReader.provenance().schema=="vectorwarp-recording-provenance-v2",
+      "Source recording provenance was not consumed as explicitly inexact v2");
     std::filesystem::remove(sourcePath);
+    std::filesystem::remove(sourcePath+".provenance.json");
+
+    // Deterministic backend-shaped live -> portable record -> replay contracts.
+    // The backend details deliberately cover distinct identity/gain/topology
+    // shapes while the common reader consumes the same fail-closed envelope.
+    const std::vector<std::pair<std::string,std::string>> backendDetails{
+      {"Kraken",R"({"device":{"identityAvailable":false,"reason":"Heimdall protocol"},"channels":[{"gainDb":19.7},{"gainDb":20.7}],"rf":{"frequencyHz":527000000},"topology":{"transport":"heimdall-v2"}})"},
+      {"RspDuo",R"({"device":{"serial":"RSP-FIXTURE"},"channels":[{"tuner":"A","gainReductionDb":50,"lnaState":1},{"tuner":"B","gainReductionDb":45,"lnaState":1}],"rf":{"frequencyHz":527000000,"bandwidth":5},"topology":{"mode":"Dual_Tuner"}})"},
+      {"Usrp",R"({"device":{"address":"type=b200"},"channels":[{"antenna":"RX2","gainDb":10},{"antenna":"RX2","gainDb":20}],"rf":{"frequencyHz":527000000},"topology":{"subdevices":"A:A A:B","clockSource":"external","timeSource":"internal"}})"},
+      {"HackRF",R"({"device":{"serials":["a1","b2"]},"channels":[{"lnaGainDb":16,"vgaGainDb":20,"amp":false},{"lnaGainDb":32,"vgaGainDb":40,"amp":true}],"rf":{"frequencyHz":527000000},"topology":{"clock":"shared","trigger":"hardware"}})"}
+    };
+    for(const auto& fixture:backendDetails) {
+      BackendFixtureSource live(fixture.first,directory.string(),&save,fixture.second);
+      const auto recorded=live.open_file();
+      live.record_block({{{1,2},{3,4}},{{5,6},{7,8}}});
+      live.close_file();
+      ReplayOptions qualified{"auto",fixture.first,2,2400000,527000000,0};
+      RecordingReader replay(recorded,qualified);
+      IqBlock replayed;
+      require(replay.read(replayed) && replayed[0][1]==std::complex<float>(3,4),
+        "Backend v2 round trip changed samples");
+      require(replay.provenance().contractValid && replay.provenance().receiver==fixture.first &&
+        !replay.provenance().exactTime && !replay.provenance().uncertaintyBounded &&
+        replay.provenance().configurationFingerprintValid &&
+        replay.provenance().codeFingerprintMatches && replay.provenance().sourceSampleAvailable &&
+        replay.provenance().sourceFirstSample==1000,
+        "Backend v2 round trip lost receiver/sample-time provenance");
+      qualified.provenanceMode="decision-grade";
+      rejects([&] { RecordingReader invalid(recorded,qualified); },
+        "Decision-grade replay accepted inexact backend time");
+      if(fixture.first=="Kraken") {
+        qualified.provenanceMode="legacy-unqualified";
+        qualified.receiver="Usrp";
+        rejects([&] { RecordingReader invalid(recorded,qualified); },
+          "Replay accepted a receiver/provenance identity mismatch");
+        qualified.receiver="Kraken";
+        const auto sidecar=recorded+".provenance.json";
+        std::ifstream input(sidecar);
+        std::string tampered(std::istreambuf_iterator<char>(input),{});
+        const auto gain=tampered.find("\"gainDb\":19.7");
+        require(gain!=std::string::npos,"Fixture sidecar omitted Kraken gain");
+        tampered.replace(gain,std::strlen("\"gainDb\":19.7"),"\"gainDb\":19.8");
+        std::ofstream output(sidecar,std::ios::trunc); output << tampered; output.close();
+        rejects([&] { RecordingReader invalid(recorded,qualified); },
+          "Replay accepted tampered receiver settings provenance");
+      }
+      std::filesystem::remove(recorded);
+      std::filesystem::remove(recorded+".provenance.json");
+    }
 
     MockSource unpaired(directory.string(),&save);
     unpaired.open_file();
