@@ -115,7 +115,16 @@ complete; all four OS/package lifecycle passes are complete.
 
 ## Completed validation
 
-### v0.1.23 pre-release hardening
+### v0.1.24 pre-release hardening
+
+The immutable `v0.1.23` candidate tag was cancelled before any release was
+created or published. Its merge-only Homebrew job correctly rejected newly
+tracked public source roots that were absent from the archive allowlist. The
+replacement candidate explicitly admits `examples`, `oprs`, `results`, and
+`schemas`, while a new regression packages the complete current Git archive so
+future top-level source additions fail during pull-request review instead of
+after tagging. Repository policy prevents rewriting or deleting the unpublished
+candidate tag, so the corrected release advances to `v0.1.24`.
 
 The release candidate adds permanent regression gates for defects found during
 the cross-platform acceptance pass:
