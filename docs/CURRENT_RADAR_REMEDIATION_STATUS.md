@@ -48,6 +48,42 @@ available but cannot be used for acceptance decisions. Live validation observed
 the expected coherent sample range and `exact:false`, `uncertaintyBounded:false`
 provenance while the radar continued processing at the unchanged RF settings.
 
+## UTC nuisance accounting
+
+The operational lane no longer treats an inexact SDR timestamp as either exact
+truth or an automatic radar miss. The provisional score contract now has an
+explicit `truth.adsb.provisional_event_time_uncertainty_s` radius (default one
+second, allowed range zero to five seconds). For an inexact CPI, association
+gates are expanded by the aircraft's measured bistatic delay and Doppler rates
+over that declared radius. Every accepted association records the allowance;
+the live scorecard exposes the radius and labels the accounting method. This is
+evaluation-only: ADS-B still cannot steer detection, tracking, cancellation, or
+beamforming. Exact scoring remains separate, while operational scoring remains
+available and explicitly `decision_grade:false`.
+
+Deterministic regression coverage proves that a synthetic echo outside the
+ordinary gate but inside the one-second rate-derived tube is retained, while the
+ordinary exact gate is unchanged. Configuration validation and default profiles
+cover Kraken, RSPduo, USRP, dual HackRF, and generic two-channel systems. This
+fix is code/test complete locally; live deployment and a same-epoch before/after
+scorecard receipt are the next acceptance check.
+
+Backend-specific mitigation remains honest about the hardware boundary:
+
+- Kraken uses coherent Heimdall sample positions and one host-arrival epoch;
+  transport offset is carried as a nuisance radius rather than invented UTC.
+- RSPduo uses vendor `firstSampleNum` for callback blocks. Because `GainChange`
+  events have no event sample number, the ambiguous span is discarded and a
+  new sample/gain epoch starts before publication resumes.
+- Dual HackRF uses paired software sample progression. Any asymmetric callback,
+  FIFO loss, or progression mismatch invalidates both sides and starts a new
+  qualified common epoch; the API cannot provide RF-setting readback that the
+  hardware/driver does not expose.
+- USRP requires continuous UHD `time_spec` and preserves clock/time-source
+  readback. Device time remains relative unless a separately qualified PPS/UTC
+  discipline maps it to UTC; until then the same nuisance-radius contract is
+  used rather than assuming that continuous device time is civil time.
+
 ## Serial remediation ledger
 
 | Order | Finding | State | Evidence / next acceptance check |

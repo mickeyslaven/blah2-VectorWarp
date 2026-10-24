@@ -1049,6 +1049,9 @@ function validateConfig(config, baseline = null, options = {}) {
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});
   if (adsb.association_lag_cpis !== undefined) number(adsb.association_lag_cpis,
     'truth.adsb.association_lag_cpis', {integer: true, min: 0, max: 8});
+  if (adsb.provisional_event_time_uncertainty_s !== undefined)
+    number(adsb.provisional_event_time_uncertainty_s,
+      'truth.adsb.provisional_event_time_uncertainty_s', {min: 0, max: 5});
   if (adsb.delay_tolerance !== undefined) number(adsb.delay_tolerance,
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,

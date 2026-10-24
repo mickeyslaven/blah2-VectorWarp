@@ -198,6 +198,9 @@ truth:
       - 'exchange:https://api.adsb.lol/v2/point/40.44/-80.06/60'
     source_timeout: 1.5
     association_lag_cpis: 4 # two seconds when CPI is 0.5 s
+    # Provisional scoring only. It expands the validation association tube by
+    # aircraft delay/Doppler rate; it never changes detection or tracking.
+    provisional_event_time_uncertainty_s: 1.0
 ```
 
 Do not combine `auto` with other list entries because discovery could rediscover
@@ -220,6 +223,12 @@ observation age and the bounded projection interval.
 `association_lag_cpis` delays ADS-B association—not RF capture or detector
 processing—then projects the newly arrived observation backward or forward to
 the held CPI timestamp.
+When an SDR cannot supply a UTC-qualified RF timestamp,
+`provisional_event_time_uncertainty_s` treats the remaining absolute offset as a
+bounded nuisance parameter. The scorer expands only its validation gates by the
+aircraft's measured delay and Doppler rates over that radius, records the
+allowance on every association, and keeps the result non-decision-grade. It does
+not steer a beam, move a detection cell, or provide ADS-B to radar inference.
 Configure only services whose usage and attribution terms fit the deployment.
 
 Using 3lips with several radar nodes? See [3lips setup](3LIPS_SETUP.md).

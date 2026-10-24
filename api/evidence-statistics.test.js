@@ -39,6 +39,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(trackerGate.dopplerHz, 18.5,
     'Doppler-rate and tracker-lag uncertainty must widen the calibration-only gate');
   assert.ok(trackerGate.delayKm >= span.kmPerBin * 3);
+  const uncertainGate = associationGates(span, prediction, clock, 'detection', 1);
+  assert.equal(uncertainGate.eventTimeUncertaintyS, 1);
+  assert.equal(uncertainGate.dopplerHz, 16.5,
+    'A one-second UTC nuisance radius must add one second of measured Doppler motion');
   const trackCaptures = [];
   const stats = new EvidenceStatistics(config, source, {filename, now: () => clock,
     onTrackCapture(event, timestamp) {
@@ -251,10 +255,17 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
 
   let provisionalTruthCalls = 0;
   const provisionalStats = new EvidenceStatistics(config, {getAt() {
-    provisionalTruthCalls += 1; return Promise.resolve({});
+    provisionalTruthCalls += 1; return Promise.resolve({abc123: {
+      ...prediction, timestamp: 1.5, delay: 10, doppler: 100,
+      provenance: {...prediction.provenance, observation_time_offset_s: 0}}});
   }}, {filename: path.join(directory, 'provisional-event-time.json'),
     timingPolicy: 'provisional',
     setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  // This cell is outside the ordinary detection gate (9.5 Hz here), but
+  // inside the declared one-second timing tube (16.5 Hz). It proves the
+  // nuisance allowance affects validation association only.
+  provisionalStats.acceptDetection({timestamp: 1500, delay: [10],
+    doppler: [112], snr: [5]});
   provisionalStats.acceptTiming({timestamp: 1500, captureSamplePositionAvailable: true,
     captureEpoch: 1, captureFirstEpochSample: 0, captureEndEpochSample: 1200000,
     eventTime: {source: 'kraken_heimdall_host_arrival_estimate', exact: false,
@@ -266,6 +277,13 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   const provisionalStatus = provisionalStats.liveStatus();
   assert.equal(provisionalStatus.decision_grade, false);
   assert.equal(provisionalStatus.timing_policy, 'provisional');
+  assert.equal(provisionalStatus.provisional_event_time_uncertainty_s, 1);
+  assert.equal(provisionalStatus.data_quality.nuisance_accounting,
+    'bounded-event-time-rate-expanded-association-gates');
+  assert.equal(provisionalStats.state.active.abc123.detectedFrames, 1,
+    'bounded timing uncertainty must retain a physically rate-consistent echo association');
+  assert.equal(provisionalStats.state.active.abc123.detectionAssociations[0]
+    .event_time_uncertainty_s, 1);
   assert.match(provisionalStatus.warning, /inexact receiver time estimate/);
   assert.equal(provisionalStatus.data_quality.event_time_rejections, 1,
     'provisional use must retain the explicit exact-time rejection evidence');

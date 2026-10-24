@@ -22,6 +22,7 @@ const MAX_PENDING_SAMPLES = 32;
 const MAX_CPI_AUDIT = 1024;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
+const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -44,6 +45,10 @@ function limits(config) {
   const kmPerBin = SPEED_OF_LIGHT_KM_S / sampleRate;
   const cpiSeconds = finite(config.process?.data?.cpi) && config.process.data.cpi > 0 ?
     config.process.data.cpi : .5;
+  const configuredTimeUncertainty = config.truth?.adsb?.provisional_event_time_uncertainty_s;
+  const provisionalTimeUncertaintyS = finite(configuredTimeUncertainty) ?
+    Math.max(0, Math.min(5, configuredTimeUncertainty)) :
+    DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S;
   return {sampleRate, frequency: config.capture?.fc, kmPerBin, cpiSeconds,
     dopplerResolutionHz: 1 / cpiSeconds,
     delayMinBin: ambiguity.delayMin, delayMaxBin: ambiguity.delayMax,
@@ -56,17 +61,22 @@ function limits(config) {
     clutterMaxKm: finite(clutter.delayMax) ? clutter.delayMax * kmPerBin : null,
     matchDelayKm: config.process?.bearing?.manifold_recorder?.max_delay_error_km ?? .25,
     matchDopplerHz: config.process?.bearing?.manifold_recorder?.max_doppler_error_hz ?? 5,
-    maxTruthAgeS: config.process?.bearing?.manifold_recorder?.max_truth_age_s ?? 3};
+    maxTruthAgeS: config.process?.bearing?.manifold_recorder?.max_truth_age_s ?? 3,
+    provisionalTimeUncertaintyS};
 }
 
-function associationGates(span, prediction, timestamp, kind = 'detection') {
+function associationGates(span, prediction, timestamp, kind = 'detection',
+  eventTimeUncertaintyS = 0) {
   const age = finite(prediction?.timestamp) ?
     Math.min(span.maxTruthAgeS, Math.max(0, timestamp / 1000 - prediction.timestamp)) :
     span.maxTruthAgeS;
   // A tracker estimate can lag several CPIs behind the newest measurement.
   // Account for that bounded motion without borrowing the much tighter bearing
   // calibration gate as the entire radar-association uncertainty model.
-  const horizon = age + span.cpiSeconds * (kind === 'tracker' ? 3 : 1);
+  const boundedTimeUncertainty = finite(eventTimeUncertaintyS) ?
+    Math.max(0, eventTimeUncertaintyS) : 0;
+  const horizon = age + span.cpiSeconds * (kind === 'tracker' ? 3 : 1) +
+    boundedTimeUncertainty;
   const delayMotion = finite(prediction?.delay_rate_km_s) ?
     Math.abs(prediction.delay_rate_km_s) * horizon : 0;
   const dopplerMotion = finite(prediction?.doppler_rate_hz_s) ?
@@ -77,7 +87,8 @@ function associationGates(span, prediction, timestamp, kind = 'detection') {
     delayKm: Math.min(Math.max(span.matchDelayKm, delayFloor + delayMotion),
       Math.max(1, span.kmPerBin * 8)),
     dopplerHz: Math.min(Math.max(span.matchDopplerHz, dopplerFloor + dopplerMotion),
-      Math.max(25, span.dopplerResolutionHz * 12))};
+      Math.max(25, span.dopplerResolutionHz * 12)),
+    eventTimeUncertaintyS: boundedTimeUncertainty};
 }
 
 function siteKey(config) {
@@ -110,6 +121,8 @@ function evaluationContract(span, timingPolicy = 'exact') {
     doppler_max: span?.dopplerMaxHz, timing_trigger: 'native-only-v2',
     exact_timing_required: timingPolicy === 'exact', timing_policy: timingPolicy,
     timing_skew_ms: 100, truth_offset_s: 1,
+    provisional_event_time_uncertainty_s: timingPolicy === 'provisional' ?
+      span?.provisionalTimeUncertaintyS : 0,
     source_disagreement_km: .5, required_cpis: 3, stable_track_associations: 3};
 }
 
@@ -395,6 +408,7 @@ function assignments(points, predictions, gatesForPrediction, kind, frameTimesta
       delay_residual_km: point.delay - (prediction?.delay ?? point.delay),
       doppler_residual_hz: point.doppler - (prediction?.doppler ?? point.doppler),
       gate_delay_km: selected.gates.delayKm, gate_doppler_hz: selected.gates.dopplerHz,
+      event_time_uncertainty_s: selected.gates.eventTimeUncertaintyS || 0,
       normalized_gate_score: selected.score});
   }
   return result;
@@ -538,6 +552,9 @@ class EvidenceStatistics {
       event_time_source: typeof value?.eventTime?.source === 'string' ?
         value.eventTime.source.slice(0, 128) : (exact ? 'legacy_exact_contract' : 'unknown'),
       event_time_uncertainty_bounded: value?.eventTime?.uncertaintyBounded === true,
+      event_time_uncertainty_s: exact ? 0 : this.limits.provisionalTimeUncertaintyS,
+      event_time_uncertainty_model: exact ? 'exact' :
+        'bounded-configured-nuisance-radius',
       capture_dropped_samples: Array.isArray(value.captureDroppedSamples) ?
         value.captureDroppedSamples.filter(Number.isSafeInteger) : []};
     const duplicate = this.recentTiming.some(existing =>
@@ -578,16 +595,21 @@ class EvidenceStatistics {
       const valid = Object.entries(predictions || {}).map(([rawHex, prediction]) =>
         [normalizeHex(rawHex), prediction]).filter(([hex, prediction]) => hex &&
           finite(prediction?.delay) && finite(prediction?.doppler));
+      const timing = timingAt(this.recentTiming, timestamp);
+      const timingUncertaintyS = this.timingPolicy === 'provisional' &&
+        timing?.exact_event_time === false ? timing.event_time_uncertainty_s : 0;
       const detected = assignments(detectionCells, valid, prediction =>
-        associationGates(this.limits, prediction, timestamp, 'detection'),
+        associationGates(this.limits, prediction, timestamp, 'detection',
+          timingUncertaintyS),
       'detection', detectionTimestamp);
       const tracked = assignments(trackerCells, valid, prediction =>
-        associationGates(this.limits, prediction, timestamp, 'tracker'),
+        associationGates(this.limits, prediction, timestamp, 'tracker',
+          timingUncertaintyS),
       'tracker', trackerTimestamp);
       for (const [hex, prediction] of valid) {
         this.observe(hex, prediction, timestamp,
           detected.get(hex) || null, tracked.get(hex) || null,
-          timingAt(this.recentTiming, timestamp));
+          timing);
       }
       this.expire(timestamp);
       this.state.updatedAt = this.now(); this.state.error = null;
@@ -1027,6 +1049,8 @@ class EvidenceStatistics {
       association_lag_cpis: this.config.truth?.adsb?.association_lag_cpis || 0,
       association_lag_ms: (this.config.truth?.adsb?.association_lag_cpis || 0) *
         (this.limits?.cpiSeconds || .5) * 1000,
+      provisional_event_time_uncertainty_s: this.timingPolicy === 'provisional' ?
+        this.limits?.provisionalTimeUncertaintyS : 0,
       limits: this.limits, windows: Object.fromEntries(Object.entries(WINDOWS).map(
         ([name, duration]) => [name, this.summarize(duration, timestamp, contractStartedAt)])),
       data_quality: {audited_cpis: audits.length, exact_timing_cpis: exactTiming,
@@ -1038,7 +1062,8 @@ class EvidenceStatistics {
         pending_delayed_cpis: this.running,
         event_time_rejections: this.eventTimeRejections,
         last_event_time_rejection: this.lastEventTimeRejection,
-        nuisance_accounting: 'not-qualified',
+        nuisance_accounting: this.timingPolicy === 'provisional' ?
+          'bounded-event-time-rate-expanded-association-gates' : 'not-required',
         recent_cpi_joins: [...joinFrames.values()].sort((left, right) =>
           left.timestamp_ms - right.timestamp_ms).slice(-20)},
       active_passes: active, recent_finalized_passes: finalized};

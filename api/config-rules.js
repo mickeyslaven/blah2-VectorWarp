@@ -117,6 +117,8 @@ const rules = {
   'truth.adsb.max_position_age': {...numeric(.1, 300), optional: true},
   'truth.adsb.association_lag_cpis': {...integer(0, 8), optional: true,
     readOnly: 'Advanced ADS-B event-time alignment setting; edit YAML or the configuration API.'},
+  'truth.adsb.provisional_event_time_uncertainty_s': {...numeric(0, 5), optional: true,
+    readOnly: 'Advanced provisional scoring uncertainty; never used by radar inference.'},
   'truth.adsb.source_timeout': {...numeric(.1, 10), optional: true,
     readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
   'truth.adsb.sources': {type: 'array', optional: true,
