@@ -97,4 +97,14 @@ readback.
 1. Fedora/RPM native lifecycle, packages, paths, systemd sandbox and device permissions — **complete**.
 2. Debian/Ubuntu/DEB lifecycle, packages, paths, systemd sandbox and device permissions — **complete**.
 3. Raspberry Pi image/profile/service lifecycle and SDRplay permissions/performance overrides — **complete**.
-4. macOS Homebrew/standalone lifecycle, paths, launch ownership and receiver runtime loading.
+4. macOS Homebrew/standalone lifecycle, paths, launch ownership and receiver runtime loading — **complete**.
+
+### macOS lifecycle trace
+
+| Setting / lifecycle contract | End-to-end trace | State | Residual / operational meaning |
+| --- | --- | --- | --- |
+| State, config, recordings and calibration paths | per-user Application Support default -> launcher-resolved absolute environment -> first-run YAML rewrite -> API/native child argv -> persistent files across Homebrew/app replacement | A P T | There is no systemd sandbox. Paths with spaces are passed as argv/YAML values rather than shell text. Existing user configuration is preserved rather than silently rewritten on upgrade. |
+| Receiver availability and local RSPduo adapter | current processor `--receiver-status` without hardware probing -> API capabilities -> optional hash-bound user adapter -> native module loader | A R P T | Homebrew/standalone ship Kraken and open USRP/HackRF support plus the RSPduo source kit; proprietary SDRplay software remains user-supplied. Module loadability is attested independently of physical hardware presence. |
+| Apply/restart and local Kraken ownership | same-origin config transaction -> candidate local controller -> Suite acknowledgement/readback -> atomic save -> exact birth/argv-owned whole-stack restart -> supervisor recovery | A R T | A partial stack is torn down and boundedly restarted. Physical Kraken has prior Apple-Silicon evidence; physical USRP/HackRF/RSPduo and Intel hardware remain unqualified, not silently inferred from module loading. |
+| Recording and replay provenance | per-user recording path -> portable sidecar v2 -> native replay validation -> source-specific inexact event-time publication for all four receiver identities | P X T | Legacy files remain explicit `legacy-unqualified`. Current macOS tests prove no backend inherits Kraken's source label and no legacy replay invents UHD/device/UTC time. Decision-grade mode still requires exact bounded provenance, which current live backends do not provide. |
+| Homebrew/standalone packaging | pinned source/templates -> per-architecture build and native dependency audit -> immutable Cellar/app payload -> user-writable state outside payload -> upgrade/active-process guards | A R P T | Offline publication, relocation, provenance, transfer and universal-package fixtures pass. Actual installer execution, sleep/wake endurance and physical Intel receivers remain release/hardware acceptance tasks. |

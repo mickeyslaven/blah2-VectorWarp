@@ -59,12 +59,12 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Code and tests complete | Portable sidecar v2 records backend receipts, channel/RF settings, identity/topology, relative sample epoch, intervals/discontinuities, and configuration/code fingerprints. Replay validates it against the binary header and exposes explicit `legacy-unqualified` and `decision-grade` modes |
 | 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Fedora, Debian/Ubuntu and Pi code/tests complete | Packaged units declare the Linux service path policy. Recording is constrained to the shared writable root; relative and `ProtectHome`/`PrivateTmp` replay paths fail before restart, while readable `/srv` replay remains usable. Pi image verification checks both unit flags |
 | 7 | Pi/F9: baked counter scale 3 disables other supported RSPduo modes | Code/tests complete | Pi profile now requests `auto`; SDK descriptors select guarded ratio 3 only for the qualified 2 MS/s geometry and otherwise select ratio 1. Explicit operator ratio 3 remains strict. Builder/verifier also attest the exact seven flags, processor-only `plugdev`, and Linux service policy |
-| 8 | macOS lifecycle parity | Pending | Homebrew/standalone replay and provenance conformance suite |
+| 8 | macOS lifecycle parity | Complete | Current-source processor build, v2 recording contract, all-backend provisional replay, 11 setting/format runtime cases, owned lifecycle/supervisor, local Kraken/RSP Apply, Homebrew release and standalone packaging fixtures pass. Physical non-Kraken hardware remains explicitly unqualified |
+| 9 | macOS/replay acceptance assumed event-time provenance was Kraken-only | Corrected | Full replay now asserts the source-specific inexact contract for Kraken, RSPduo, USRP and HackRF and explicitly selects legacy-unqualified mode; the macOS runtime caller supplies receiver identity. The cold-start lifecycle fixture retains bounded diagnostics and a realistic readiness allowance |
 
 The code-enumerated receiver-setting ledger is maintained in
 `docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken, RSPduo, USRP and dual HackRF are
-complete; Fedora, Debian/Ubuntu and Raspberry Pi lifecycle passes are complete;
-macOS remains queued.
+complete; all four OS/package lifecycle passes are complete.
 
 ## Completed validation
 
@@ -150,6 +150,15 @@ macOS remains queued.
   only HackRF `plugdev` access, and packaged Linux path-policy flags. Full image
   assembly, boot, USB hardware and RF throughput remain arm64 release-host/card
   acceptance tests.
+- The macOS pass rebuilt the current Kraken-only processor and passed the
+  portable recording contract plus all 18 all-backend replay cases and 11
+  settings/legacy-format runtime cases. The acceptance suite formerly rejected
+  valid RSPduo/USRP/HackRF `eventTime` objects merely because it still assumed
+  that provenance was Kraken-only; it now validates each backend's explicit
+  source, `exact:false`, unbounded uncertainty, zero unavailable legacy sample
+  position and nonempty reason. Lifecycle, Apply, Homebrew and standalone
+  packaging suites pass. This is software/replay evidence, not a new physical
+  non-Kraken or Intel qualification.
 
 ## Supporting artifacts
 

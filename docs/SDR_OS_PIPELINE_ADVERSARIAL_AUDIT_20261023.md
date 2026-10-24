@@ -435,13 +435,43 @@ rewrites the initial config to those paths (`script/vectorwarp-macos.py:332-351`
 Its supervisor tears down the partial stack and restarts the owned API/processor/
 Kraken set after child failure (`script/vectorwarp-macos.py:548-580`). GPU
 qualification explicitly falls back to CPU when it fails
-(`docs/MACOS_STANDALONE.md:56-65`). No additional macOS-only correctness defect
-was found in these paths.
+(`docs/MACOS_STANDALONE.md:56-65`). No additional macOS product-path correctness
+defect was found; F10 below corrected acceptance coverage that had drifted from
+the all-backend event-time contract.
 
 F1–F7 apply unchanged. macOS does not have F8's systemd sandbox mismatch, which
 is itself a portability difference. Physical macOS capture remains qualified
 only for Kraken; the repository explicitly marks physical USRP/HackRF/RSPduo and
 sleep/wake/endurance as unverified (`docs/MACOS_TEST_MATRIX.md:289-294`).
+
+### F10 — replay acceptance encoded Kraken-only provenance (**Low, corrected**)
+
+The portable provenance work deliberately publishes a source-specific inexact
+`eventTime` object for every configured backend, including legacy/unqualified
+replay where source sample position is unavailable. The cross-platform replay
+fixture still rejected any such object for RSPduo, USRP or HackRF. On macOS the
+current-source 18-case sweep therefore failed at its first RSPduo case even
+though the emitted source was correctly `sdrplay_callback_sample_counter`.
+The macOS settings-runtime fixture also called the changed assertion without a
+receiver identity, preventing that suite from exercising the new contract.
+
+**Reproduction.** Build the current processor on macOS and run
+`test/recording/processor_replay_test.py --binary <blah2>`, then
+`test/macos/config_runtime_test.py --binary <blah2>`. The former previously
+reported “RSPduo replay unexpectedly received Kraken event-time provenance”; the
+latter raised a missing-argument error.
+
+**Correction.** Replay fixtures now select `legacy-unqualified` explicitly and
+validate the four backend source strings, `exact:false`, unbounded uncertainty,
+unavailable legacy sample position, a nonempty reason, and absent invented UHD
+device time (`test/recording/processor_replay_test.py:208-210,296-320`). The macOS runtime passes
+the receiver identity (`test/macos/config_runtime_test.py:94-103`). The separate macOS
+API lifecycle fixture now retains server stderr and a bounded 30-second cold-load
+allowance instead of a flaky six-second assumption
+(`api/macos-lifecycle-server.test.js:20-50`). Current-source recording format, all 18
+replay, all 11 settings/format, lifecycle/Apply, Homebrew publication and
+standalone package tests pass. This finding affected acceptance coverage, not
+live RF or saved configuration.
 
 ## Prioritized remediation
 

@@ -99,7 +99,7 @@ def run_case(binary, name, changes, receiver='Usrp', channels=2, gpu_capable=Fal
                 log.seek(0)
                 logs = log.read()
             assert 'Setting up device' not in logs, 'Replay attempted live receiver initialization'
-            replay.assert_processor_outputs(sinks)
+            replay.assert_processor_outputs(sinks, receiver)
             map_data = replay.first_json(sinks.payloads['map'], 'map')
             timing = replay.first_json(sinks.payloads['timing'], 'timing')
             ambiguity = config['process']['ambiguity']
