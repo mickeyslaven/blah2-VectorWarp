@@ -363,6 +363,35 @@ After those repairs, the focused gain and anchor regressions passed, the full
 45-test native CTest suite passed serially, `testKrakenMultiChannel` again
 passed 9,369 assertions, and the complete API, DOM, manifold and 11-case receipt
 suites passed. One parallel CTest run transiently failed the pre-existing
+
+## 2026-10-24 live v0.1.28 collection deployment
+
+The signed Fedora v0.1.28 RPM (SHA-256
+`e5ff26437c6ef05d368d11bcd13f48c94d19002735d958f8d12e959b749d359b`)
+was installed on the live Kraken node. Its shipped configuration validator
+incorrectly rejected the new `detection_manifold_automation` block. Commit
+`18b2272` fixes that defect, adds absolute-path and prerequisite validation,
+and adds configuration persistence/regression coverage. The focused patch is
+published as PR #75 and is hot-deployed over the signed v0.1.28 release at
+`/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix`.
+
+The safe Apply completed at config revision
+`7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0`.
+Receiver synchronization returned `already-matched`; the node remains at
+527 MHz, 2.4 MS/s, five coherent channels and physical gains
+`[2.7,2.7,1.4,1.4,3.7]` dB. Frames advanced after restart and the
+GPU-resident backend reported ready. No detection `manifold_file` is loaded,
+so the established ideal/noise-whitened 12-beam detector with the 6 dB direct
+null remains the production path.
+
+The detection-manifold automation is now enabled and reports `collecting`.
+At the first verified checkpoint it had 20 fresh fixed-transmitter reference
+anchor samples and zero admitted aircraft-response samples. The pre-existing
+993 v1 rows were rotated to `*.site-previous` and are not silently admitted to
+the v3 gain/config/RF identity. Production promotion remains false until the
+fresh pass-disjoint corpus and replay acceptance gates are satisfied. This is
+a live collection deployment, not a claim that measured weights are already
+improving detections.
 bounded-recorder fixture; that fixture immediately passed alone and the full
 serial 45-test suite then passed. A fresh independent post-fix adversarial
 review passed after independently reproducing the gain, bank-tamper,
