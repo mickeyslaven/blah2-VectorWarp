@@ -297,6 +297,13 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
        not isinstance(gains, list) or len(gains) != channel_count or \
        any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in gains):
         raise ValueError("native recording RF/gain identity does not match queued configuration")
+    native_identity = {"frequency_hz": native_metadata["frequency"],
+                       "sample_rate_hz": native_metadata["sampleRate"],
+                       "channels": channel_count,
+                       "actual_channel_gains_db": gains}
+    if (identity.get("native_identity") != native_identity or
+            identity.get("native_identity_sha256") != canonical_digest(native_identity)):
+        raise ValueError("native recording RF/gain identity does not match queued receipt")
     truth_by_capture = {capture_id: value["truth_samples"]
                         for capture_id, value in captures}
     truth = primary_capture["truth_samples"]
@@ -360,6 +367,8 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                       "admission": str(admission_path), "admission_sha256": admission_sha,
                       "native_sidecar_sha256": expected_native_sha,
                       "applied_channel_gains_db": gains,
+                      "native_identity": native_identity,
+                      "native_identity_sha256": canonical_digest(native_identity),
                       "config_sha256": config_sha, "config_file_sha256": config_file_sha,
                       "config_epoch": identity.get("config_epoch"),
                       "receiver_epoch": identity.get("receiver_epoch"),

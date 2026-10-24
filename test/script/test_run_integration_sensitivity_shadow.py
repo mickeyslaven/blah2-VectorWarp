@@ -114,12 +114,16 @@ def test_run_binds_config_admission_and_native_metadata():
                                             "truth_samples": truth}}}
         admission_path = Path(f"{recording}.admission.json")
         admission_path.write_text(json.dumps(admission))
+        native_identity = {"frequency_hz": 527000000, "sample_rate_hz": 2400000,
+                           "channels": 2, "actual_channel_gains_db": [2.7, 1.4]}
         identity = {"recording": str(recording), "recording_sha256": recording_sha,
                     "native_sidecar_sha256": native_sha,
                     "admission_sha256": MODULE.canonical_digest(admission),
                     "config_sha256": MODULE.canonical_digest(config),
                     "receipt_key_id": receipt_key_id, "producer_host": "live-node", "revision": 7,
-                    "config_epoch": "c", "receiver_epoch": "r"}
+                    "config_epoch": "c", "receiver_epoch": "r",
+                    "native_identity": native_identity,
+                    "native_identity_sha256": MODULE.canonical_digest(native_identity)}
         job = {"schema": "vectorwarp-integration-shadow-job-v1",
                "job_id": MODULE.canonical_digest(identity), "identity": identity,
                "recording": str(recording), "admission_sidecar": str(admission_path),
@@ -141,6 +145,7 @@ def test_run_binds_config_admission_and_native_metadata():
             MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm = original_harness, original_run
         assert result["summary"]["selection_performed"] is False
         assert result["input"]["applied_channel_gains_db"] == [2.7, 1.4]
+        assert result["input"]["native_identity_sha256"] == identity["native_identity_sha256"]
         assert result["result_binding_sha256"] == MODULE.canonical_digest(
             {key: value for key, value in result.items()
              if key not in ("result_binding_sha256", "result_authentication")})
