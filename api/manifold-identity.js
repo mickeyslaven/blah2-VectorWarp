@@ -1,7 +1,10 @@
 'use strict';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
-const TAG = Buffer.from('vectorwarp-manifold-identity-v2', 'ascii');
+// Actual applied tuner gains are part of the installed electrical manifold.
+// Keeping them outside the compatibility fingerprint allowed captures from
+// materially different hardware gain epochs to share one apparent identity.
+const TAG = Buffer.from('vectorwarp-manifold-identity-v3', 'ascii');
 
 function compatibilityFingerprint(identity) {
   const bytes = [TAG];
@@ -11,6 +14,7 @@ function compatibilityFingerprint(identity) {
   u32(identity.channel_mapping.length);
   identity.channel_mapping.forEach(u32);
   identity.requested_gain_db.forEach(f64);
+  identity.actual_gain_db.forEach(f64);
   identity.positions_m.flat().forEach(f64);
   identity.receiver_location.forEach(f64);
   identity.transmitter_location.forEach(f64);

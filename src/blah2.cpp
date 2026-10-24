@@ -430,6 +430,7 @@ try
   std::string surveillanceManifoldFile;
   bool surveillanceManifoldConfigured = false;
   std::vector<std::complex<float>> surveillanceManifoldResponses;
+  std::vector<std::complex<float>> surveillanceManifoldDirectResponse;
   std::optional<blah2::bearing_manifold::Calibration> surveillanceManifoldCalibration,
     bearingManifoldCalibration;
   std::vector<std::array<double, 3>> coherentPositions;
@@ -674,7 +675,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI10 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI11 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -848,15 +849,20 @@ try
   {
     if (surveillanceManifoldConfigured)
     {
-      surveillanceManifoldCalibration=blah2::bearing_manifold::load(surveillanceManifoldFile,
-        double(fc),coherentBeamCount,uint32_t(coherentPositions.size()),manifoldIdentity);
+      surveillanceManifoldCalibration=blah2::bearing_manifold::loadDetection(surveillanceManifoldFile,
+        double(fc),coherentBeamCount,uint32_t(coherentPositions.size()),manifoldIdentity,
+        blah2::bearing_manifold::DetectionUse::liveProduction);
       surveillanceManifoldResponses = surveillanceManifoldCalibration->responses;
+      surveillanceManifoldDirectResponse = surveillanceManifoldCalibration->directResponse;
     }
     const std::vector<std::complex<double>> surveillanceManifold(
       surveillanceManifoldResponses.begin(), surveillanceManifoldResponses.end());
+    const std::vector<std::complex<double>> surveillanceDirect(
+      surveillanceManifoldDirectResponse.begin(), surveillanceManifoldDirectResponse.end());
     coherentMapFusion = std::make_unique<CoherentBeamBank>(
       CoherentBeamBank::Config{double(fc), coherentBeamCount, coherentPositions,
-        directPathAzimuthRad, directPathNullDb, surveillanceManifold});
+        directPathAzimuthRad, directPathNullDb, surveillanceManifold,
+        surveillanceDirect});
     std::cout << "[SurveillanceFusion] mode=" << surveillanceFusionMode << " beams="
       << coherentBeamCount << " channels=" << coherentPositions.size();
     std::cout << " direct_path_azimuth_deg=" <<
@@ -1095,10 +1101,11 @@ try
         : blah2::resident::FusionMode::coherentRegularPolygon;
       residentConfig.fusion={fusionMode,
         coherentBeamCount,double(fc),radius,angles[0],step,directPathAzimuthRad,
-        directPathNullDb,surveillanceManifoldResponses};
+        directPathNullDb,surveillanceManifoldResponses,
+        surveillanceManifoldDirectResponse};
       if(bearingEnabled){if(bearingChannelMapping.empty())for(uint32_t i=0;i<surveillanceChannels.size();++i)bearingChannelMapping.push_back(i);
        std::vector<std::complex<float>> manifold;
-       if(!bearingManifoldFile.empty()){bearingManifoldCalibration=blah2::bearing_manifold::load(
+       if(!bearingManifoldFile.empty()){bearingManifoldCalibration=blah2::bearing_manifold::loadBearing(
         bearingManifoldFile,double(fc),bearingScanBeams,uint32_t(surveillanceChannels.size()),manifoldIdentity);
         manifold=bearingManifoldCalibration->responses;}
        residentConfig.bearing={true,bearingMethod=="covariance_mvdr"?blah2::resident::BearingMethod::covarianceMvdr:blah2::resident::BearingMethod::coherentBeamBank,

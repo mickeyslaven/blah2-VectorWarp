@@ -107,18 +107,18 @@ function summarizeDetectionManifoldProgress(rawSamples, config, options = {}) {
       imported_replay_rows: corpus.validation.length, independent_passes: validationPasses,
       miss_passes: corpus.miss_passes},
     production_replay: {ready: false, diagnostic_only: true,
-      receipt_generator_available: true, native_emitter_available: true,
+      receipt_generator_available: false, native_emitter_available: false,
       trusted_physical_cohort_required: true,
       imported_passes: productionPasses, miss_passes: productionMissPasses,
       sectors: productionSectors,
-      blocker: 'No trusted physical native full-bank export cohort is configured.'},
+      blocker: 'The current native tool consumes caller-supplied post-CAF vectors; an authenticated raw-IQ exporter is required.'},
     qualification_ready: false,
     requirements, collection_ready: fitReady && validationReady,
     evidence_completion_fraction: requirements.length ? Math.min(...requirements.map(row => row.fraction)) : 0,
     next_actions: requirements.filter(row => !row.complete).map(row => row.comparison === 'at_most' ?
       `Reduce ${row.label.toLowerCase()} to ${row.required} degrees or less.` :
       `Collect ${row.required - row.current} more ${row.label.toLowerCase()}.`),
-    limitation: 'Detected live cells and covariance-normalized truth-selected replay are diagnostic controls only. The replay-only native emitter and receipt harness require a trusted cohort of identical same-IQ CUT/training grids; neither path changes live configuration.'};
+    limitation: 'Detected live cells, covariance-normalized replay, and the current post-CAF native grid tool are diagnostic controls only. Production acceptance requires a future authenticated exporter that derives the complete grid directly from immutable raw IQ; no path changes live configuration.'};
 }
 
 function compareTruthSelectedDiagnostic(corpus, model) {
@@ -188,9 +188,10 @@ function compareProductionReplay(rows, candidateModelSha256, config) {
     ?.trusted_native_generator_sha256;
   const trustedPolicy = Array.isArray(allowlist) && allowlist.length &&
     allowlist.every(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
-  const generatorTrusted = Boolean(matching.length && trustedPolicy && matching.every(row =>
-    allowlist.includes(row.provenance.generator_sha256) &&
-    row.provenance.generator_trust_policy_sha256 === canonicalHash(allowlist)));
+  // No current VectorWarp binary derives this grid directly from raw IQ.  A
+  // hash allowlist cannot authenticate caller-supplied post-CAF vectors, so
+  // this remains false until that exporter exists and is independently bound.
+  const generatorTrusted = false;
   const passes = matching.map(row => {
     const target = row.replay.cuts.find(cut => cut.role === 'target');
     const nuisance = row.replay.cuts.filter(cut => cut.role === 'nuisance');
@@ -224,10 +225,10 @@ function compareProductionReplay(rows, candidateModelSha256, config) {
     baseline_nuisance: baselineNuisance, candidate_nuisance: candidateNuisance,
     nuisance_ratio: baselineNuisance ? candidateNuisance / baselineNuisance :
       (candidateNuisance ? Infinity : 0),
-    receipt_generator_available: true, generator_trusted: generatorTrusted,
-    qualification_blocker: generatorTrusted ?
-      'Production promotion remains hard-disabled for the non-runtime sparse fitter.' :
-      'A trusted physical native full-bank grid export is not present.'};
+    receipt_generator_available: false, generator_trusted: generatorTrusted,
+    qualification_blocker: trustedPolicy ?
+      'Configured generator hashes cannot authenticate caller-supplied post-CAF vectors; a raw-IQ exporter is required.' :
+      'A trusted raw-IQ full-bank exporter is not present.'};
 }
 
 function evaluateDetectionManifoldCandidate(rawSamples, config, options = {}) {

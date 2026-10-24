@@ -276,7 +276,9 @@ template<class Record> inline std::string manifoldEvidence(uint64_t timestamp,
   bearingTrainingRadius<=6&&std::isfinite(bearingDiagonalLoading)&&
   bearingDiagonalLoading>0&&bearingDiagonalLoading<=1,
   "Invalid adaptive manifold replay configuration");
- rapidjson::StringBuffer b;Writer w(b);w.SetMaxDecimalPlaces(8);
+ // Preserve exact applied-gain doubles for the v3 manifold fingerprint and
+ // the later runtime actual-gain equality check.
+ rapidjson::StringBuffer b;Writer w(b);
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v2");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(channels);

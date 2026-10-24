@@ -21,6 +21,8 @@ public:
     double directPathNullDb = 0;
     // Optional row-major measured responses: beams x positionsM.size().
     std::vector<std::complex<double>> measuredResponses;
+    // Fixed-transmitter response is out-of-band from the aircraft beam bank.
+    std::vector<std::complex<double>> measuredDirectResponse;
   };
 
   explicit CoherentBeamBank(const Config& config);
@@ -45,7 +47,7 @@ private:
   double directPathNullDb_ = 0;
   std::vector<std::array<double, 3>> positionsM_;
   std::vector<std::complex<double>> measuredResponses_;
-  std::size_t measuredDirectBeam_ = 0;
+  std::vector<std::complex<double>> measuredDirectResponse_;
   std::vector<std::vector<std::complex<double>>> weights_;
 };
 

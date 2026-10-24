@@ -57,14 +57,19 @@ void validateConfig(const Config& c){
    "Resident coherent fusion configuration invalid");
  else require(!f.beams&&f.frequencyHz==0&&f.radiusM==0&&f.element0Rad==0&&
   f.elementStepRad==0&&f.directPathAzimuthRad==0&&f.directPathNullDb==0&&
-  f.manifoldResponses.empty(),
+  f.manifoldResponses.empty()&&f.directResponse.empty(),
   "Resident noncoherent fusion configuration invalid");
  require(f.manifoldResponses.empty()||
   f.manifoldResponses.size()==uint64_t(f.beams)*g.channels,
   "Resident surveillance manifold dimensions invalid");
+ require(f.manifoldResponses.empty()?f.directResponse.empty():f.directResponse.size()==g.channels,
+  "Resident surveillance direct-anchor dimensions invalid");
  for(const auto& value:f.manifoldResponses)
   require(std::isfinite(value.real())&&std::isfinite(value.imag())&&
    std::norm(value)>1e-12f,"Resident surveillance manifold response invalid");
+ for(const auto& value:f.directResponse)
+  require(std::isfinite(value.real())&&std::isfinite(value.imag())&&
+   std::norm(value)>1e-12f,"Resident surveillance direct-anchor response invalid");
  const auto& d=c.detector;
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
  const auto& b=c.bearing;
@@ -97,7 +102,8 @@ void validateConfig(const Config& c){
  }else require(!b.scanBeams&&b.candidatePeaks==3&&b.guardRadius==1&&
   b.trainingRadius==3&&b.diagonalLoading==.01&&b.channelMapping.empty()&&b.manifoldResponses.empty(),
   "Disabled resident bearing has configuration");
- require(uint64_t(f.manifoldResponses.size())+uint64_t(b.manifoldResponses.size())<=
+ require(uint64_t(f.manifoldResponses.size())+uint64_t(b.manifoldResponses.size())+
+   uint64_t(f.directResponse.size())<=
   (configBytes-640)/sizeof(std::complex<float>),
   "Resident measured manifolds exceed config capacity");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
@@ -234,7 +240,7 @@ const auto&g=c.geometry;
 const auto&r=c.reference;
 const auto&d=c.detector;
 const auto&t=c.tracker;
- w.u32(0,2);
+ w.u32(0,3);
  w.u32(4,configBytes);
  w.u64(8,c.epoch);
  w.u32(16,c.stages());
@@ -314,13 +320,15 @@ const auto&t=c.tracker;
  w.u32(580,uint32_t(c.bearing.manifoldResponses.size()));
  w.u32(600,uint32_t(c.bearing.referenceAnchor));
  w.u32(616,uint32_t(c.fusion.manifoldResponses.size()));
+ w.u32(620,uint32_t(c.fusion.directResponse.size()));
  size_t at=640;
  for(const auto value:c.fusion.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.bearing.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
+ for(const auto value:c.fusion.directResponse){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
-require(r.u32(0)==2&&r.u32(4)==configBytes,"Resident config schema differs");
+require(r.u32(0)==3&&r.u32(4)==configBytes,"Resident config schema differs");
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -334,6 +342,8 @@ c.fusion.directPathAzimuthRad=r.f64(488);
 c.fusion.directPathNullDb=double(r.u32(508))/1000.0;
 const uint32_t fusionManifoldCount=r.u32(616);
 require(fusionManifoldCount<=360*8,"Resident surveillance manifold count invalid");
+const uint32_t fusionDirectCount=r.u32(620);
+require(fusionDirectCount<=8,"Resident surveillance direct-anchor count invalid");
 auto& bearing=c.bearing;
 bearing.enabled=r.u32(512)!=0;
 require(r.u32(512)<=1,"Resident bearing boolean invalid");
@@ -349,13 +359,15 @@ require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
- r.zeros(620,20);
-require(uint64_t(fusionManifoldCount)+manifoldCount<=(configBytes-640)/8,
+ r.zeros(624,16);
+require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640)/8,
  "Resident measured manifold counts exceed config capacity");
 size_t at=640;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
 for(uint32_t i=0;i<fusionManifoldCount;++i){c.fusion.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
 bearing.manifoldResponses.reserve(manifoldCount);
 for(uint32_t i=0;i<manifoldCount;++i){bearing.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
+c.fusion.directResponse.reserve(fusionDirectCount);
+for(uint32_t i=0;i<fusionDirectCount;++i){c.fusion.directResponse.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
 r.zeros(at,configBytes-at);
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));

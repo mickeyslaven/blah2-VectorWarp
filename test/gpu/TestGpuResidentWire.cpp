@@ -70,12 +70,18 @@ void configCases(){
   for(uint32_t channel=0;channel<measuredFusion.geometry.channels;++channel)
    measuredFusion.fusion.manifoldResponses.push_back(
     std::polar(1.0f,float(.11*beam-.23*channel)));
+ measuredFusion.fusion.directResponse={{1,.25f},{.5f,-.75f}};
  const auto measuredFusionBytes=encodeConfig(measuredFusion);
  const auto measuredFusionDecoded=decodeConfig(bytes(measuredFusionBytes),bytes(d),bytes(f));
  check(encodeConfig(measuredFusionDecoded)==measuredFusionBytes&&
   measuredFusionDecoded.fusion.manifoldResponses==measuredFusion.fusion.manifoldResponses&&
+  measuredFusionDecoded.fusion.directResponse==measuredFusion.fusion.directResponse&&
   wire::configHash(measuredFusion)!=wire::configHash(coherent),
   "Measured surveillance manifold did not round trip or bind config identity");
+ auto changedAnchor=measuredFusion;changedAnchor.fusion.directResponse[0]+=
+  std::complex<float>(.125f,-.25f);
+ check(wire::configHash(changedAnchor)!=wire::configHash(measuredFusion),
+  "Measured surveillance direct anchor did not bind config identity");
  auto tbd=coherent;tbd.detector.integrationCpis=8;
  tbd.detector.integrationMotionBins=track_before_detect::encodeMotionBins(1,4);
  const auto tbdBytes=encodeConfig(tbd);
@@ -174,6 +180,9 @@ void configCases(){
  mutate([](auto&v){v.device=std::string(96,'x');});mutate([](auto&v){v.geometry.kind=blah2::GpuWorkKind::fir;});
  mutate([](auto&v){v.fusion.mode=FusionMode::coherentRegularPolygon;});
  mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses={{1,0}};});
+ mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});});
+ mutate([&](auto&v){v=measuredFusion;v.fusion.directResponse.pop_back();});
+ mutate([&](auto&v){v=measuredFusion;v.fusion.directResponse[0]={0,0};});
  mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});
   v.fusion.manifoldResponses[0]={0,0};});
  mutate([&](auto&v){v=coherent;v.fusion.manifoldResponses.assign(24,{1,0});
@@ -186,6 +195,7 @@ void configCases(){
   auto b=canonical;b[at]=1;reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Noncanonical reserved config accepted");
  }
  auto b=canonical;wire::Writer{{b.data(),b.size()}}.u32(232,2);reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Nonbinary feature accepted");
+ b=canonical;wire::Writer{{b.data(),b.size()}}.u32(620,9);reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Oversize direct-anchor count accepted");
  b=canonical;std::fill(b.begin()+368,b.begin()+464,'x');reject([&]{decodeConfig(bytes(b),bytes(d),bytes(f));},"Unterminated selector accepted");
  reject([&]{decodeConfig(bytes(canonical),{d.data(),8},bytes(f));},"Short delay axis accepted");
  auto changed=c;changed.sampleRate=256000;changed.tracker.cpi=63.0/256000;

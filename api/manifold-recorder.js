@@ -408,12 +408,14 @@ class ManifoldRecorder {
       if (usedEvidence.has(candidate.index) || usedAircraft.has(candidate.icao)) continue;
       usedEvidence.add(candidate.index); usedAircraft.add(candidate.icao);
       const evidence = frame.data[candidate.index];
+      const receiverGain = {...fingerprintDescriptor(this.config).receiver_gain_v2,
+        actual_channel_gains_db: [...identity.actual_gain_db]};
       records.push({schema: 'vectorwarp-manifold-sample-v2', recorded_at: new Date().toISOString(),
         radar_timestamp_ms: frame.timestamp, frequency_hz: frame.frequency_hz,
         sample_rate_hz: frame.sample_rate_hz, channels: frame.channels,
         config_fingerprint: identityFingerprint,
         manifold_identity: identity,
-        receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2,
+        receiver_gain_v2: receiverGain,
         icao: candidate.icao,
         flight: typeof candidate.aircraft.flight === 'string' ? candidate.aircraft.flight.trim() : '',
         truth: {bearing_deg_true: candidate.direction.bearingDeg,
@@ -428,7 +430,7 @@ class ManifoldRecorder {
         configuration: {frequency_hz: frame.frequency_hz,
           sample_rate_hz: frame.sample_rate_hz,
           config_fingerprint: identityFingerprint,
-          receiver_gain_v2: fingerprintDescriptor(this.config).receiver_gain_v2},
+          receiver_gain_v2: receiverGain},
         support: {adsb_label_only: true, covariance_samples: evidence.covariance_samples || 0,
           local_nuisance_cells: evidence.detection_context?.nuisance?.length || 0},
         uncertainty: {truth_age_s: Math.abs(frame.timestamp / 1000 - candidate.truth.timestamp),

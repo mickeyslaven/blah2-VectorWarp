@@ -8,7 +8,8 @@ const path = require('path');
 const {validateDetectionSample, validateDetectionReplay, validateProductionReplay,
   productionCfarAlpha,
   buildDetectionCorpus} = require('./detection-manifold-corpus');
-const {fitDetectionManifold, denseRuntimeCandidate, cfarThreshold} = require('./detection-manifold-fitter');
+const {BANK_HASH_CONTRACT, detectionBankHash, fitDetectionManifold,
+  denseRuntimeCandidate, cfarThreshold} = require('./detection-manifold-fitter');
 const {evaluateDetectionManifoldCandidate, summarizeDetectionManifoldProgress,
   DetectionManifoldAutomation} = require('./detection-manifold-automation');
 const {compatibilityFingerprint} = require('./manifold-identity');
@@ -35,7 +36,8 @@ for (let sector = 0; sector < 8; ++sector) for (let pass = 0; pass < 20; ++pass)
   samples.push({schema: 'vectorwarp-manifold-sample-v2', frequency_hz: 539000000,
     sample_rate_hz: 2400000, channels: 3, config_fingerprint: 'detection-site',
     manifold_identity: manifoldIdentity,
-    receiver_gain_v2: {requested_common_gain: 12, requested_channel_gains: null},
+    receiver_gain_v2: {requested_common_gain: 12, requested_channel_gains: null,
+      actual_channel_gains_db: [12, 12, 12]},
     icao: `d${sector.toString(16)}${pass.toString(16).padStart(2, '0')}`,
     radar_timestamp_ms: (sector * 100 + pass) * 1000000,
     direct_path_local_azimuth_deg: 0,
@@ -45,7 +47,8 @@ for (let sector = 0; sector < 8; ++sector) for (let pass = 0; pass < 20; ++pass)
     detection: {snr_db: 12}, response, reference_weights: response,
     configuration: {frequency_hz: 539000000, sample_rate_hz: 2400000,
       config_fingerprint: 'detection-site', receiver_gain_v2: {
-        requested_common_gain: 12, requested_channel_gains: null}},
+        requested_common_gain: 12, requested_channel_gains: null,
+        actual_channel_gains_db: [12, 12, 12]}},
     local_context: {covariance, covariance_samples: 32, detection: {same_iq: true,
       target: {baseline_statistic: 1, baseline_detected: false},
       nuisance: nuisance.map(item => ({response: item,
@@ -70,6 +73,10 @@ const replay = samples.map((row, index) => ({...row,
 const evidence = [...samples, ...replay];
 
 assert.doesNotThrow(() => validateDetectionSample(samples[0]));
+const wrongActualGain = JSON.parse(JSON.stringify(samples[0]));
+wrongActualGain.configuration.receiver_gain_v2.actual_channel_gains_db[0] += 1;
+assert.throws(() => validateDetectionSample(wrongActualGain), /gain|sample/i,
+  'the recorded hardware-gain vector must match the installed manifold identity');
 assert.doesNotThrow(() => validateDetectionReplay(replay[0]));
 assert.throws(() => validateDetectionReplay({...replay[0], provenance: {...replay[0].provenance,
   iq_sha256: 'not-a-sha'}}), /provenance/);
@@ -79,6 +86,12 @@ assert.doesNotThrow(() => validateDetectionSample(fitOnly),
   'positive-control fitting must accept the existing live v2 producer without replay context');
 assert.throws(() => validateDetectionReplay({...replay[0], local_context: {}}),
   /same-IQ|Detection replay/);
+const missingCovariance = JSON.parse(JSON.stringify(replay[0]));
+delete missingCovariance.local_context.covariance;
+delete missingCovariance.local_context.covariance_samples;
+delete missingCovariance.support.covariance_samples;
+assert.throws(() => validateDetectionReplay(missingCovariance), /covariance-backed/,
+  'a detection context must not pass with mutually absent covariance metadata');
 const corpus = buildDetectionCorpus(evidence, {corpusSha256});
 assert.equal(corpus.accepted.length, samples.length);
 assert.equal(corpus.validation.length, replay.length);
@@ -115,7 +128,9 @@ assert.equal(model.calibration.adsb_role, 'adsb-collection-and-validation-only')
 const runtimeCandidate = denseRuntimeCandidate(model);
 assert.equal(runtimeCandidate.runtime_compatible, true);
 assert.equal(runtimeCandidate.responses.length, 8);
-assert.equal(runtimeCandidate.bank_sha256, canonicalHash(runtimeCandidate.responses));
+assert.equal(runtimeCandidate.bank_hash_contract, BANK_HASH_CONTRACT);
+assert.equal(runtimeCandidate.bank_sha256, detectionBankHash(runtimeCandidate.responses,
+  runtimeCandidate.direct_anchor.response));
 assert.throws(() => denseRuntimeCandidate({...model, elevation_bins: 2}),
   /not exactly convertible/);
 assert.throws(() => denseRuntimeCandidate({...model, responses: model.responses.slice(1)}),
@@ -133,7 +148,7 @@ const productionReceipt = {schema: 'vectorwarp-detection-manifold-production-rep
   pass: {id: 'production-pass-1', label: 'positive', truth: {
     selection: 'target-cut-only-no-beam-selection', target_cut_id: 'target',
     local_azimuth_deg: 45, elevation_deg: 5}},
-  provenance: {source: 'vectorwarp-native-full-bank-replay',
+  provenance: {source: 'vectorwarp-native-raw-iq-full-bank-replay', raw_iq_consumed: true,
     independent_from_positive_corpus: true, corpus_sha256: corpusSha256,
     iq_sha256: '1'.repeat(64), replay_id: '2'.repeat(64), input_grid_sha256: '3'.repeat(64),
     generator_sha256: '4'.repeat(64), config_sha256: '7'.repeat(64),
@@ -237,9 +252,13 @@ const trustedReceipt = {...productionReceipt, provenance: {...productionReceipt.
       .trusted_native_generator_sha256)}};
 const trustedImported = evaluateDetectionManifoldCandidate([...evidence, trustedReceipt],
   trustedConfig, relaxed);
-assert.equal(trustedImported.evaluation.production_replay.generator_trusted, true);
+assert.equal(trustedImported.evaluation.production_replay.generator_trusted, false,
+  'receipts remain untrusted until the authenticated raw-IQ exporter exists');
 assert.equal(trustedImported.evaluation.qualified, false,
   'a trusted receipt cannot make the sparse offline fitter runtime-compatible');
+assert.throws(() => validateProductionReplay({...productionReceipt,
+  pass: {...productionReceipt.pass, label: 'miss'}}), /label disagrees/,
+  'a receipt must not relabel a baseline detection as a miss');
 
 const regressing = evidence.map(row => ({...row, local_context: {...row.local_context,
   covariance: covariance.map(line => line.map(value => [value[0] * 1000, value[1]])),

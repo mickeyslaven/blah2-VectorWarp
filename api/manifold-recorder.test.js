@@ -102,7 +102,8 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   assert.equal(newGainRows.length, 1);
   assert.notEqual(oldGainRows[0].config_fingerprint, newGainRows[0].config_fingerprint);
   assert.deepEqual(newGainRows[0].receiver_gain_v2,
-    {requested_common_gain: 1, requested_channel_gains: null});
+    {requested_common_gain: 1, requested_channel_gains: null,
+      actual_channel_gains_db: [14.2, 14.1]});
   assert.deepEqual(newGainRows[0].manifold_identity.requested_gain_db, [1, 1]);
   const changedSite = JSON.parse(JSON.stringify(automaticConfig));
   changedSite.location.rx.longitude = -80.01;

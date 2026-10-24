@@ -1,4 +1,4 @@
-// Adjacent resident ABI10 module. Older cohorts are separate targets.
+// Adjacent resident ABI11 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -37,7 +37,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.fusion={uint32_t(c.fusion.mode),c.fusion.beams,c.fusion.frequencyHz,
   c.fusion.radiusM,c.fusion.element0Rad,c.fusion.elementStepRad,
   c.fusion.directPathAzimuthRad,c.fusion.directPathNullDb,
-  c.fusion.manifoldResponses};
+  c.fusion.manifoldResponses,c.fusion.directResponse};
  v.stages=c.stages();
  const auto& r=c.reference;
  v.reference={ReferenceMode::capturedArray,r.channels,r.analysisSamples,r.analysisInterval,r.powerIterations,r.covarianceSmoothing,r.diagonalLoading,r.bandwidthHz,r.centreHz,c.epoch};
@@ -465,7 +465,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI10 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI11 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

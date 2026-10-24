@@ -79,15 +79,18 @@ and the baseline/candidate full-bank hashes. For the identical target and local
 nuisance CUT/training grids, both arms must retain beam count, raw CUT power,
 training mean, alpha, threshold, and decision. The importer recomputes the CFAR
 accounting and rejects truth-selected steering or partial support. The
-default-off `detectionManifoldGridReplay` executable is the trusted native
-generator for the single-CPI, unwhitened coherent-beam-bank case. It exports
-every beam on the identical CUT/training grid and binds the exact response
-matrix consumed; the wrapper rejects candidate-content, installed-geometry,
-fixed-transmitter, gain, detector-geometry, and cross-language canonical-hash
-mismatches. It explicitly rejects whitening, multi-CPI integration, motion
-banks, and TBD until their covariance/temporal evidence is represented, so
-valid imports remain offline evidence rather than live authorization. The
-candidate receipt key is the artifact's
+default-off `detectionManifoldGridReplay` executable is only a post-CAF
+arithmetic diagnostic. It consumes caller-supplied channel vectors rather than
+immutable raw IQ and emits `same_iq:false` / `production_equivalent:false`;
+therefore the production wrapper always rejects it and it cannot create an
+importable qualification receipt. It still exports every beam on the supplied
+CUT/training grid and binds the exact aircraft bank plus separate direct anchor
+using the cross-language `vectorwarp-detection-bank-ieee754-v1` binary hash.
+A future allowlisted native exporter must itself open immutable raw IQ and run
+the production reference, clutter, ambiguity, fusion and full-bank CA-CFAR
+path, with exact sample-range provenance. Whitening, multi-CPI integration,
+motion banks and TBD also remain unqualified until their covariance/temporal
+state is represented. The candidate receipt key is the artifact's
 `calibration.candidate_model_sha256`, computed over the deterministic fitted
 candidate before that key and its evaluation block are attached.
 

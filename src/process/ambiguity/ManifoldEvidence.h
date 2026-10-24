@@ -27,7 +27,10 @@ inline std::string cpu(uint64_t timestamp,double frequencyHz,double sampleRate,
   "CPU manifold evidence map geometry differs");
  for(auto* map:maps)require(map&&map->get_nRows()==first->get_nRows()&&
   map->get_nCols()==first->get_nCols(),"CPU manifold evidence channel maps differ");
- rapidjson::StringBuffer b;Writer w(b);w.SetMaxDecimalPlaces(8);
+ // Gain values originate in receiver metadata and are part of the exact
+ // installed-manifold identity. Eight-decimal output can change a float->double
+ // value and make VectorWarp reject its own calibration on reload.
+ rapidjson::StringBuffer b;Writer w(b);
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v1");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(uint32_t(maps.size()));

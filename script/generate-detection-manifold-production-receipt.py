@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Build a strict production-replay receipt from a native full-bank grid export.
+"""Audit a full-bank grid export without granting production qualification.
 
 This program does not form beams or reconstruct radar samples.  The native
 export must contain every baseline and candidate beam power for the identical
 CUT and every CA-CFAR training cell.  This wrapper verifies the complete grid,
 applies the production beam-max and CA-CFAR/trial contract, and binds all input
-artifacts into one importable receipt.
+artifacts into a non-importable audit receipt.  Production qualification stays
+closed until the wrapper itself invokes an allowlisted native exporter that
+derives the grid directly from immutable raw IQ.
 """
 
 import argparse
@@ -13,6 +15,7 @@ import hashlib
 import json
 import math
 import os
+import struct
 import subprocess
 from pathlib import Path
 
@@ -43,6 +46,29 @@ def canonical_hash(value):
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         raise ValueError(f"cannot canonicalize receipt value with Node JSON contract: {error}") from error
     return sha256_bytes(result.stdout)
+
+
+BANK_HASH_CONTRACT = "vectorwarp-detection-bank-ieee754-v1"
+
+
+def detection_bank_hash(responses, direct_response):
+    if (not isinstance(responses, list) or not responses or
+            not isinstance(direct_response, list) or not direct_response):
+        raise ValueError("invalid detection bank hash input")
+    channels = len(direct_response)
+    rows = [direct_response, *responses]
+    if any(not isinstance(row, list) or len(row) != channels for row in rows):
+        raise ValueError("invalid detection bank hash dimensions")
+    digest = hashlib.sha256(BANK_HASH_CONTRACT.encode("ascii"))
+    digest.update(struct.pack("<II", len(responses), channels))
+    for row in rows:
+        for value in row:
+            if (not isinstance(value, list) or len(value) != 2 or
+                    not all(finite(component) for component in value)):
+                raise ValueError("invalid detection bank hash component")
+            digest.update(struct.pack("<dd", 0.0 if value[0] == 0 else value[0],
+                                      0.0 if value[1] == 0 else value[1]))
+    return digest.hexdigest()
 
 
 def finite(value):
@@ -238,10 +264,16 @@ def generate(corpus_path, candidate_path, iq_path, config_path, native_export_pa
     hashes.update({"frequency_sha256": canonical_hash(identity["frequency_hz"]),
                    "sample_rate_sha256": canonical_hash(identity["sample_rate_hz"]),
                    "channel_layout_sha256": canonical_hash(identity["channel_layout"])})
-    if (native.get("schema") != "vectorwarp-native-detection-full-bank-grid-v1" or
+    # Only a future native exporter that derives the complete grid directly
+    # from the immutable raw-IQ artifact may enter this acceptance lane.  The
+    # current DetectionManifoldGridReplay executable consumes caller-supplied
+    # post-CAF channel vectors and deliberately emits a diagnostic schema.
+    if (native.get("schema") != "vectorwarp-native-detection-raw-iq-full-bank-grid-v1" or
             native.get("production_equivalent") is not True or native.get("same_iq") is not True or
-            native.get("truth_selected_beam") is not False):
-        raise ValueError("native export is not a production-equivalent same-IQ full-bank grid")
+            native.get("truth_selected_beam") is not False or
+            provenance.get("raw_iq_consumed") is not True or
+            provenance.get("iq_sha256") != hashes["iq_sha256"]):
+        raise ValueError("native export is not an authenticated raw-IQ full-bank grid")
     for key in ("candidate_model_sha256", "iq_sha256", "config_sha256", "generator_sha256",
                 "frequency_sha256", "sample_rate_sha256", "channel_layout_sha256"):
         if provenance.get(key) != hashes[key]:
@@ -305,15 +337,30 @@ def generate(corpus_path, candidate_path, iq_path, config_path, native_export_pa
         raise ValueError("native ideal baseline bank identity is not bound to its exact geometry")
     responses = candidate.get("responses")
     native_responses = banks.get("candidate", {}).get("responses")
+    direct_anchor = candidate.get("direct_anchor", {})
+    direct_response = direct_anchor.get("response")
+    native_direct_response = banks.get("candidate", {}).get("direct_response")
     if (not isinstance(responses, list) or len(responses) != banks["candidate"]["beams"] or
             any(not isinstance(response, list) or len(response) != identity["channels"] or
                 any(not isinstance(value, list) or len(value) != 2 or
                     not all(finite(component) for component in value) for value in response)
                 for response in responses) or
-            native_responses != responses or
-            banks["candidate"]["sha256"] != canonical_hash(native_responses) or
+            not isinstance(direct_response, list) or len(direct_response) != identity["channels"] or
+            any(not isinstance(value, list) or len(value) != 2 or
+                not all(finite(component) for component in value) for value in direct_response) or
+            native_responses != responses or native_direct_response != direct_response or
+            candidate.get("bank_hash_contract") != BANK_HASH_CONTRACT or
+            banks["candidate"].get("bank_hash_contract") != BANK_HASH_CONTRACT or
+            banks["candidate"]["sha256"] != detection_bank_hash(
+                native_responses, native_direct_response) or
             candidate.get("bank_sha256") != banks["candidate"]["sha256"] or
-            candidate.get("beams") != banks["candidate"]["beams"]):
+            candidate.get("beams") != banks["candidate"]["beams"] or
+            candidate.get("frequency_hz") != identity["frequency_hz"] or
+            candidate.get("sample_rate_hz") != identity["sample_rate_hz"] or
+            candidate.get("channels") != identity["channels"] or
+            candidate.get("channel_mapping") != identity["channel_layout"] or
+            candidate.get("config_fingerprint") != exported.get("config_fingerprint") or
+            candidate.get("positive_corpus_sha256") != hashes["corpus_sha256"]):
         raise ValueError("native candidate bank is not the exact dense runtime candidate contents")
     support = banks["candidate"].get("elevation_range_deg")
     if (banks["candidate"].get("runtime_compatible") is not True or
@@ -354,12 +401,16 @@ def generate(corpus_path, candidate_path, iq_path, config_path, native_export_pa
         raise ValueError("truth may label exactly one target CUT/pass but may not select a beam")
     if not support[0] <= truth["elevation_deg"] <= support[1]:
         raise ValueError("truth elevation is outside candidate bank support")
+    target = next(cut for cut in cuts if cut["role"] == "target")
+    baseline_detected = target["baseline"]["detected"]
+    if (label == "positive") != baseline_detected:
+        raise ValueError("pass label disagrees with the baseline target decision")
     replay_id = sha256_bytes("\0".join([hashes[key] for key in ("corpus_sha256",
         "candidate_model_sha256", "iq_sha256", "native_export_sha256", "generator_sha256")] +
         [pass_id]).encode())
-    return {"schema": "vectorwarp-detection-manifold-production-replay-v1",
+    return {"schema": "vectorwarp-detection-manifold-untrusted-full-bank-replay-v1",
             "pass": {"id": pass_id, "label": label, "truth": truth},
-            "provenance": {"source": "vectorwarp-native-full-bank-replay",
+            "provenance": {"source": "vectorwarp-native-untrusted-full-bank-replay",
                 "independent_from_positive_corpus": True, "replay_id": replay_id,
                 "input_grid_sha256": hashes["native_export_sha256"], **hashes},
             "configuration": {"config_fingerprint": exported.get("config_fingerprint"),

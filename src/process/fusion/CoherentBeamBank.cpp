@@ -15,7 +15,8 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
     directPathAzimuthRad_(config.directPathAzimuthRad),
     directPathNullDb_(config.directPathNullDb),
     positionsM_(config.positionsM),
-    measuredResponses_(config.measuredResponses)
+    measuredResponses_(config.measuredResponses),
+    measuredDirectResponse_(config.measuredDirectResponse)
 {
   if (!std::isfinite(config.frequencyHz) || config.frequencyHz <= 0)
     throw std::invalid_argument("Coherent fusion requires a positive RF frequency");
@@ -33,15 +34,19 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
     const uint64_t expected = uint64_t(config.beams) * config.positionsM.size();
     if (expected != measuredResponses_.size())
       throw std::invalid_argument("Coherent fusion measured manifold dimensions do not match the beam bank");
+    if (measuredDirectResponse_.size() != config.positionsM.size())
+      throw std::invalid_argument("Coherent fusion measured direct-anchor dimensions do not match the array");
     for (const auto response : measuredResponses_)
       if (!std::isfinite(response.real()) || !std::isfinite(response.imag()) ||
           !(std::norm(response) > 1e-12))
         throw std::invalid_argument("Coherent fusion measured manifold contains a nonfinite or zero response");
-    const double direct = std::fmod(std::fmod(config.directPathAzimuthRad, TWO_PI) +
-      TWO_PI, TWO_PI);
-    measuredDirectBeam_ = std::size_t(std::llround(direct * config.beams / TWO_PI)) %
-      config.beams;
+    for (const auto response : measuredDirectResponse_)
+      if (!std::isfinite(response.real()) || !std::isfinite(response.imag()) ||
+          !(std::norm(response) > 1e-12))
+        throw std::invalid_argument("Coherent fusion measured direct anchor contains a nonfinite or zero response");
   }
+  else if (!measuredDirectResponse_.empty())
+    throw std::invalid_argument("Coherent fusion direct anchor requires a measured manifold");
 
   const double normalization = 1.0 / std::sqrt(double(config.positionsM.size()));
   weights_.resize(config.beams);
@@ -106,7 +111,7 @@ void CoherentBeamBank::calibrate(
       for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
       {
         const auto target = measuredResponses_[beam * positionsM_.size() + channel];
-        const auto direct = measuredResponses_[measuredDirectBeam_ * positionsM_.size() + channel];
+        const auto direct = measuredDirectResponse_[channel];
         steering[channel] = directPathWeights[channel] * target / direct;
         steeringNorm += std::norm(steering[channel]);
       }

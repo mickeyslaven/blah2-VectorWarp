@@ -29,10 +29,19 @@ class ProductionReceiptTest(unittest.TestCase):
         responses = [[[1, 0], [0, 1], [-1, 0]],
                      [[0, 1], [-1, 0], [0, -1]],
                      [[-1, 0], [0, -1], [1, 0]]]
-        candidate_bank_sha256 = MODULE.canonical_hash(responses)
+        direct_response = [[1, 0], [1, 0], [1, 0]]
+        candidate_bank_sha256 = MODULE.detection_bank_hash(responses, direct_response)
         self.candidate.write_text(json.dumps({"schema": "vectorwarp-detection-manifold-runtime-v1",
                                               "runtime_compatible": True,
+                                              "frequency_hz": 539000000,
+                                              "sample_rate_hz": 2400000,
+                                              "channels": 3,
+                                              "channel_mapping": [0, 1, 2],
+                                              "config_fingerprint": "site",
+                                              "positive_corpus_sha256": digest(self.corpus),
                                               "beams": 3,
+                                              "direct_anchor": {"response": direct_response},
+                                              "bank_hash_contract": MODULE.BANK_HASH_CONTRACT,
                                               "bank_sha256": candidate_bank_sha256,
                                               "elevation_range_deg": [0, 10],
                                               "responses": responses}))
@@ -65,7 +74,7 @@ class ProductionReceiptTest(unittest.TestCase):
                               "training_power_by_offset_beam": [
                                   {"offset": offset, "power_by_beam": [power / 2, power, power / 3]}
                                   for offset, power in zip((-3, -2, 2, 3), (1, 2, 3, 4))]}
-        native = {"schema": "vectorwarp-native-detection-full-bank-grid-v1",
+        native = {"schema": "vectorwarp-native-detection-raw-iq-full-bank-grid-v1",
                   "production_equivalent": True, "same_iq": True, "truth_selected_beam": False,
                   "configuration": {"config_fingerprint": "site", "frequency_hz": 539000000,
                       "sample_rate_hz": 2400000, "channels": 3, "channel_layout": [0, 1, 2],
@@ -84,8 +93,9 @@ class ProductionReceiptTest(unittest.TestCase):
                   "banks": {"baseline": {"sha256": baseline_bank_sha256, "beams": 3,
                                               "descriptor": baseline_descriptor},
                             "candidate": {"sha256": candidate_bank_sha256, "beams": 3,
+                                "bank_hash_contract": MODULE.BANK_HASH_CONTRACT,
                                 "runtime_compatible": True, "elevation_range_deg": [0, 10],
-                                "responses": responses}},
+                                "responses": responses, "direct_response": direct_response}},
                   "truth_label": {"selection": "target-cut-only-no-beam-selection",
                                   "target_cut_id": "target",
                                   "local_azimuth_deg": 45, "elevation_deg": 5},
@@ -95,6 +105,7 @@ class ProductionReceiptTest(unittest.TestCase):
                             "baseline": bank(baseline_bank_sha256), "candidate": bank(candidate_bank_sha256)}],
                   "provenance": {"candidate_model_sha256": digest(self.candidate),
                                   "iq_sha256": digest(self.iq), "config_sha256": digest(self.config),
+                                  "raw_iq_consumed": True,
                                   "generator_sha256": self.generator_sha256,
                                   "frequency_sha256": MODULE.canonical_hash(539000000),
                                   "sample_rate_sha256": MODULE.canonical_hash(2400000),
@@ -111,7 +122,7 @@ class ProductionReceiptTest(unittest.TestCase):
 
     def test_complete_full_bank_receipt_is_bound_and_trial_corrected(self):
         receipt = self.generate()
-        self.assertEqual(receipt["schema"], "vectorwarp-detection-manifold-production-replay-v1")
+        self.assertEqual(receipt["schema"], "vectorwarp-detection-manifold-untrusted-full-bank-replay-v1")
         self.assertFalse(receipt["replay"]["truth_selected_beam"])
         self.assertEqual(receipt["provenance"]["input_grid_sha256"], digest(self.native))
         self.assertEqual(receipt["provenance"]["corpus_sha256"], digest(self.corpus))
@@ -158,10 +169,12 @@ class ProductionReceiptTest(unittest.TestCase):
         self.assertEqual(receipt["provenance"]["native_export_sha256"], digest(self.native))
         self.assertFalse(output.with_name(f"{output.name}.tmp").exists())
         validator = Path(__file__).parents[2] / "api" / "detection-manifold-corpus.js"
-        subprocess.run(["node", "-e",
+        rejected = subprocess.run(["node", "-e",
             "const fs=require('fs'); const {validateProductionReplay}=require(process.argv[1]); "
             "validateProductionReplay(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')));",
-            str(validator), str(output)], check=True)
+            str(validator), str(output)], capture_output=True, text=True)
+        self.assertNotEqual(rejected.returncode, 0,
+            'unauthenticated wrapper output entered the production acceptance lane')
 
     def test_rejects_incomplete_bank_tampering_and_nonruntime_candidate(self):
         native = json.loads(self.native.read_text())
@@ -175,15 +188,30 @@ class ProductionReceiptTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not a runtime-compatible"):
             self.generate()
 
+    def test_rejects_unbound_direct_anchor_and_candidate_identity(self):
+        native = json.loads(self.native.read_text())
+        native["banks"]["candidate"]["direct_response"][0] = [0, 1]
+        self.native.write_text(json.dumps(native, sort_keys=True))
+        with self.assertRaisesRegex(ValueError, "exact dense runtime candidate contents"):
+            self.generate()
+        native["banks"]["candidate"]["direct_response"][0] = [1, 0]
+        candidate = json.loads(self.candidate.read_text())
+        candidate["frequency_hz"] += 1
+        self.candidate.write_text(json.dumps(candidate, sort_keys=True))
+        native["provenance"]["candidate_model_sha256"] = digest(self.candidate)
+        self.native.write_text(json.dumps(native, sort_keys=True))
+        with self.assertRaisesRegex(ValueError, "exact dense runtime candidate contents"):
+            self.generate()
+
     def test_rejects_renamed_or_mismatched_iq_and_truth_beam_selection(self):
         self.iq.write_bytes(b"different bytes under the same path")
-        with self.assertRaisesRegex(ValueError, "iq_sha256"):
+        with self.assertRaisesRegex(ValueError, "authenticated raw-IQ"):
             self.generate()
         self.iq.write_bytes(b"same iq bytes")
         native = json.loads(self.native.read_text())
         native["truth_selected_beam"] = True
         self.native.write_text(json.dumps(native, sort_keys=True))
-        with self.assertRaisesRegex(ValueError, "same-IQ full-bank grid"):
+        with self.assertRaisesRegex(ValueError, "authenticated raw-IQ"):
             self.generate()
 
     def test_rejects_unpinned_or_nonallowlisted_generator_and_bank_mismatch(self):

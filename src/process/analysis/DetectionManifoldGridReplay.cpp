@@ -1,4 +1,5 @@
 #include "process/fusion/CoherentBeamBank.h"
+#include "process/ambiguity/GpuResidentHash.h"
 #include "../../../core/TrackBeforeDetect.private.h"
 
 #include <rapidjson/document.h>
@@ -7,7 +8,10 @@
 #include <rapidjson/writer.h>
 
 #include <cmath>
+#include <array>
 #include <complex>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -90,6 +94,49 @@ std::vector<std::array<double, 3>> positions(const Value& value,
   return result;
 }
 
+std::string candidateBankHash(const Value& responses,
+  const Value& directResponse) {
+  static constexpr char contract[] = "vectorwarp-detection-bank-ieee754-v1";
+  if (!responses.IsArray() || responses.Empty() || !directResponse.IsArray() ||
+      directResponse.Empty())
+    throw std::invalid_argument("Invalid native replay bank hash dimensions");
+  const uint32_t beams = responses.Size(), channels = directResponse.Size();
+  blah2::resident::Sha256 hash;
+  hash.add(contract, sizeof(contract) - 1);
+  const auto add32 = [&](uint32_t value) {
+    std::array<uint8_t, 4> bytes{};
+    for (unsigned index = 0; index < 4; ++index) bytes[index] = uint8_t(value >> (8 * index));
+    hash.add(bytes.data(), bytes.size());
+  };
+  const auto addDouble = [&](double value) {
+    uint64_t bits = 0;
+    // JSON does not preserve a zero sign bit, so both forms are one identity.
+    if (value != 0) std::memcpy(&bits, &value, sizeof(bits));
+    std::array<uint8_t, 8> bytes{};
+    for (unsigned index = 0; index < 8; ++index) bytes[index] = uint8_t(bits >> (8 * index));
+    hash.add(bytes.data(), bytes.size());
+  };
+  add32(beams); add32(channels);
+  const auto addRow = [&](const Value& row) {
+    if (!row.IsArray() || row.Size() != channels)
+      throw std::invalid_argument("Invalid native replay bank hash row");
+    for (const auto& value : row.GetArray()) {
+      const auto complex = complexValue(value);
+      addDouble(complex.real()); addDouble(complex.imag());
+    }
+  };
+  addRow(directResponse);
+  for (const auto& response : responses.GetArray()) addRow(response);
+  const auto digest = hash.finish();
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string result(64, '0');
+  for (size_t index = 0; index < digest.size(); ++index) {
+    result[2 * index] = hex[digest[index] >> 4];
+    result[2 * index + 1] = hex[digest[index] & 15];
+  }
+  return result;
+}
+
 void powers(rapidjson::Writer<rapidjson::OStreamWrapper>& writer,
   const CoherentBeamBank& bank, const std::vector<std::complex<double>>& channels) {
   writer.StartArray();
@@ -127,13 +174,14 @@ int main(int argc, char** argv) try {
   std::ifstream input(argv[1]);
   if (!input) throw std::runtime_error("Cannot open native replay input");
   rapidjson::IStreamWrapper inputStream(input);
-  rapidjson::Document document; document.ParseStream(inputStream);
+  rapidjson::Document document;
+  document.ParseStream<rapidjson::kParseFullPrecisionFlag>(inputStream);
   if (document.HasParseError() || !document.IsObject() ||
-      text(document, "schema") != "vectorwarp-detection-manifold-native-input-v1" ||
-      !member(document, "same_iq").IsTrue() ||
-      !member(document, "production_equivalent").IsTrue() ||
+      text(document, "schema") != "vectorwarp-detection-manifold-post-caf-grid-input-v1" ||
+      !member(document, "same_iq").IsFalse() ||
+      !member(document, "production_equivalent").IsFalse() ||
       !member(document, "truth_selected_beam").IsFalse())
-    throw std::invalid_argument("Invalid native full-bank replay input contract");
+    throw std::invalid_argument("Invalid post-CAF full-bank diagnostic input contract");
 
   const auto& configuration = member(document, "configuration");
   if (text(configuration, "fusion_mode") != "coherent_beam_bank")
@@ -148,6 +196,9 @@ int main(int argc, char** argv) try {
   const auto& banks = member(document, "banks");
   const auto& baselineMetadata = member(banks, "baseline");
   const auto& candidateMetadata = member(banks, "candidate");
+  if (text(candidateMetadata, "bank_hash_contract") !=
+      "vectorwarp-detection-bank-ieee754-v1")
+    throw std::invalid_argument("Native replay candidate bank hash contract differs");
   const uint32_t baselineBeams = positiveUint(baselineMetadata, "beams");
   const uint32_t candidateBeams = positiveUint(candidateMetadata, "beams");
   if (baselineBeams != candidateBeams || !member(candidateMetadata, "runtime_compatible").IsTrue())
@@ -157,13 +208,20 @@ int main(int argc, char** argv) try {
     directAzimuth, directNull, {}};
   CoherentBeamBank::Config candidateConfig = baselineConfig;
   const auto& responses = member(candidateMetadata, "responses");
+  const auto& directResponse = member(candidateMetadata, "direct_response");
   if (!responses.IsArray() || responses.Size() != candidateBeams)
     throw std::invalid_argument("Native replay dense candidate bank is incomplete");
+  const auto computedCandidateHash = candidateBankHash(responses, directResponse);
+  if (computedCandidateHash != text(candidateMetadata, "sha256"))
+    throw std::invalid_argument(
+      "Native replay candidate bank SHA does not cover consumed responses and direct anchor");
   for (const auto& response : responses.GetArray()) {
     const auto vector = complexVector(response, channels);
     candidateConfig.measuredResponses.insert(candidateConfig.measuredResponses.end(),
       vector.begin(), vector.end());
   }
+  candidateConfig.measuredDirectResponse =
+    complexVector(directResponse, channels);
   CoherentBeamBank baseline(baselineConfig), candidate(candidateConfig);
   baseline.calibrate(reference); candidate.calibrate(reference);
 
@@ -207,10 +265,11 @@ int main(int argc, char** argv) try {
   if (!output) throw std::runtime_error("Cannot open native replay output");
   rapidjson::OStreamWrapper outputStream(output);
   rapidjson::Writer<rapidjson::OStreamWrapper> writer(outputStream);
-  writer.SetMaxDecimalPlaces(17); writer.StartObject();
-  writer.Key("schema"); writer.String("vectorwarp-native-detection-full-bank-grid-v1");
-  writer.Key("production_equivalent"); writer.Bool(true);
-  writer.Key("same_iq"); writer.Bool(true);
+  writer.StartObject();
+  writer.Key("schema"); writer.String("vectorwarp-native-detection-post-caf-grid-v1");
+  writer.Key("production_equivalent"); writer.Bool(false);
+  writer.Key("same_iq"); writer.Bool(false);
+  writer.Key("input_contract"); writer.String("caller-supplied-post-caf-channel-vectors");
   writer.Key("truth_selected_beam"); writer.Bool(false);
   writer.Key("configuration"); configuration.Accept(writer);
   writer.Key("detector"); writer.StartObject();
@@ -228,13 +287,16 @@ int main(int argc, char** argv) try {
   writer.Key("direct_path_null_db"); writer.Double(directNull); writer.EndObject();
   writer.EndObject();
   writer.Key("candidate"); writer.StartObject(); writer.Key("sha256");
-  writer.String(text(candidateMetadata, "sha256").c_str()); writer.Key("beams"); writer.Uint(candidateBeams);
+  writer.String(computedCandidateHash.c_str()); writer.Key("beams"); writer.Uint(candidateBeams);
+  writer.Key("bank_hash_contract"); writer.String("vectorwarp-detection-bank-ieee754-v1");
   writer.Key("runtime_compatible"); writer.Bool(true); writer.Key("elevation_range_deg");
   member(candidateMetadata, "elevation_range_deg").Accept(writer);
   // Preserve the exact response matrix consumed above.  The trusted receipt
   // generator compares this matrix with the immutable candidate artifact, so
   // a caller cannot substitute weights while retaining its declared SHA.
-  writer.Key("responses"); responses.Accept(writer); writer.EndObject(); writer.EndObject();
+  writer.Key("responses"); responses.Accept(writer);
+  writer.Key("direct_response"); directResponse.Accept(writer);
+  writer.EndObject(); writer.EndObject();
   writer.Key("truth_label"); member(document, "truth_label").Accept(writer);
   writer.Key("cuts"); writer.StartArray();
   for (const auto& cut : cuts.GetArray()) {
@@ -242,7 +304,7 @@ int main(int argc, char** argv) try {
     writer.Key("role"); writer.String(text(cut, "role").c_str());
     writer.Key("baseline"); arm(writer, text(baselineMetadata, "sha256").c_str(),
       baseline, member(cut, "cut"), member(cut, "training"), channels, offsets);
-    writer.Key("candidate"); arm(writer, text(candidateMetadata, "sha256").c_str(),
+    writer.Key("candidate"); arm(writer, computedCandidateHash.c_str(),
       candidate, member(cut, "cut"), member(cut, "training"), channels, offsets);
     writer.EndObject();
   }

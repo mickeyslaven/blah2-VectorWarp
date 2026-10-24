@@ -33,21 +33,32 @@ function validateDetectionSample(sample, {requireDetectionContext = false} = {})
   validateSample(sample);
   const local = sample.local_context || {};
   const covariance = local.covariance || sample.covariance;
-  const covarianceSamples = local.covariance_samples || sample.covariance_samples;
+  const covarianceSamples = local.covariance_samples ?? sample.covariance_samples;
   const context = local.detection;
   const gain = sample.configuration?.receiver_gain_v2;
   const captureGain = gain?.requested_capture_channel_gains;
+  const actualGain = gain?.actual_channel_gains_db;
+  const identity = sample.manifold_identity;
+  const requestedGain = Array.isArray(gain?.requested_channel_gains) ?
+    gain.requested_channel_gains : finite(gain?.requested_common_gain) ?
+      Array(sample.channels).fill(gain.requested_common_gain) : null;
   const validGain = gain && (gain.requested_common_gain === 'keep' ||
     finite(gain.requested_common_gain)) && (gain.requested_channel_gains === null ||
     (Array.isArray(gain.requested_channel_gains) &&
      gain.requested_channel_gains.length === sample.channels &&
      gain.requested_channel_gains.every(finite))) &&
     (captureGain === undefined || (Array.isArray(captureGain) &&
-      captureGain.length >= sample.channels && captureGain.every(finite)));
+      captureGain.length >= sample.channels && captureGain.every(finite))) &&
+    Array.isArray(actualGain) && actualGain.length === sample.channels &&
+    actualGain.every(finite) && Array.isArray(requestedGain) &&
+    canonical(requestedGain) === canonical(identity?.requested_gain_db) &&
+    canonical(actualGain) === canonical(identity?.actual_gain_db);
   const validCovariance = covariance === undefined ||
     (complexMatrix(covariance, sample.channels) && Number.isInteger(covarianceSamples) &&
      covarianceSamples >= 1);
-  const validContext = context && validCovariance && context.same_iq === true &&
+  const validContext = context && covariance !== undefined &&
+    complexMatrix(covariance, sample.channels) && Number.isInteger(covarianceSamples) &&
+    covarianceSamples >= 1 && context.same_iq === true &&
     finite(context.target?.baseline_statistic) &&
     typeof context.target.baseline_detected === 'boolean' &&
     Array.isArray(context.nuisance) && context.nuisance.length >= 1 &&
@@ -155,7 +166,8 @@ function validateProductionReplay(record) {
   if (record?.schema !== 'vectorwarp-detection-manifold-production-replay-v1' ||
       typeof pass.id !== 'string' || !pass.id.trim() ||
       !['positive', 'miss', 'subthreshold'].includes(pass.label) ||
-      provenance.source !== 'vectorwarp-native-full-bank-replay' ||
+      provenance.source !== 'vectorwarp-native-raw-iq-full-bank-replay' ||
+      provenance.raw_iq_consumed !== true ||
       provenance.independent_from_positive_corpus !== true ||
       !sha256(provenance.corpus_sha256) || !sha256(provenance.iq_sha256) ||
       !sha256(provenance.replay_id) || !sha256(provenance.input_grid_sha256) ||
@@ -259,6 +271,9 @@ function validateProductionReplay(record) {
     throw new Error('Production replay requires one target CUT and local nuisance CUTs');
   if (!replay.cuts.some(cut => cut.role === 'target' && cut.id === truth.target_cut_id))
     throw new Error('Production truth label does not identify the target CUT');
+  const target = replay.cuts.find(cut => cut.role === 'target');
+  if ((pass.label === 'positive') !== target.baseline.detected)
+    throw new Error('Production pass label disagrees with the baseline target decision');
   return {...record, _pass_id: pass.id.trim(), _baseline_outcome: pass.label,
     _production_replay: true};
 }
@@ -275,13 +290,15 @@ function buildDetectionCorpus(rawSamples, {corpusSha256 = null} = {}) {
   catch (error) { invalid.push(error.message); }
   const latest = accepted.at(-1) || replay.at(-1);
   const fingerprint = latest?.config_fingerprint || null;
-  const gain = JSON.stringify(latest?.configuration?.receiver_gain_v2);
+  const gain = canonical(latest?.configuration?.receiver_gain_v2);
   const current = fingerprint ? accepted.filter(row => row.config_fingerprint === fingerprint &&
     row.channels === latest.channels && row.frequency_hz === latest.frequency_hz &&
-    JSON.stringify(row.configuration.receiver_gain_v2) === gain) : [];
+    canonical(row.configuration.receiver_gain_v2) === gain &&
+    canonical(row.manifold_identity) === canonical(latest.manifold_identity)) : [];
   const validation = fingerprint ? replay.filter(row => row.config_fingerprint === fingerprint &&
     row.channels === latest.channels && row.frequency_hz === latest.frequency_hz &&
-    JSON.stringify(row.configuration.receiver_gain_v2) === gain) : [];
+    canonical(row.configuration.receiver_gain_v2) === gain &&
+    canonical(row.manifold_identity) === canonical(latest.manifold_identity)) : [];
   const productionValidation = fingerprint ? productionReplay.filter(row =>
     row.configuration.config_fingerprint === fingerprint &&
     row.configuration.channels === latest.channels &&
@@ -291,8 +308,9 @@ function buildDetectionCorpus(rawSamples, {corpusSha256 = null} = {}) {
       requested_channel_gains: row.configuration.receiver_gain_v2.requested_channel_gains,
       ...(row.configuration.receiver_gain_v2.requested_capture_channel_gains !== undefined ?
         {requested_capture_channel_gains:
-          row.configuration.receiver_gain_v2.requested_capture_channel_gains} : {})}) ===
-      canonical(latest?.configuration?.receiver_gain_v2)) : [];
+          row.configuration.receiver_gain_v2.requested_capture_channel_gains} : {}),
+      actual_channel_gains_db: row.configuration.receiver_gain_v2.actual_channel_gains_db}) ===
+      gain) : [];
   const labelled = labelPasses(current);
   if (validation.length) {
     if (!/^[a-f0-9]{64}$/.test(corpusSha256 || ''))

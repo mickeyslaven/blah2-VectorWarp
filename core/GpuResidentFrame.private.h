@@ -30,6 +30,7 @@ struct ResidentFrameConfig {
     double frequencyHz = 0, radiusM = 0, element0Rad = 0, elementStepRad = 0,
       directPathAzimuthRad = 0, directPathNullDb = 0;
     std::vector<std::complex<float>> manifoldResponses;
+    std::vector<std::complex<float>> directResponse;
   } fusion;
   // Supplied canonical reference, native clutter, ambiguity, shift/fusion.
   // Captured mode explicitly adds GPU synthesis/dedicated selection and spectrum.
@@ -284,15 +285,22 @@ inline ResidentFrameConfig validate(ResidentFrameConfig config){
      config.fusion.directPathNullDb>40)) ||
     (!config.fusion.manifoldResponses.empty()&&
      config.fusion.manifoldResponses.size()!=uint64_t(config.fusion.beams)*g.channels) ||
+    (!config.fusion.manifoldResponses.empty()&&
+     config.fusion.directResponse.size()!=g.channels) ||
+    (config.fusion.manifoldResponses.empty()&&!config.fusion.directResponse.empty()) ||
     (config.fusion.mode==0&&(config.fusion.beams||config.fusion.frequencyHz||config.fusion.radiusM||
      config.fusion.element0Rad||config.fusion.elementStepRad||
      config.fusion.directPathAzimuthRad||config.fusion.directPathNullDb||
-     !config.fusion.manifoldResponses.empty())))
+     !config.fusion.manifoldResponses.empty()||!config.fusion.directResponse.empty())))
   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED surveillance fusion");
  for(const auto& value:config.fusion.manifoldResponses)
   if(!std::isfinite(value.real())||!std::isfinite(value.imag())||
      !(std::norm(value)>1e-12f))
    throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED measured surveillance manifold");
+ for(const auto& value:config.fusion.directResponse)
+  if(!std::isfinite(value.real())||!std::isfinite(value.imag())||
+     !(std::norm(value)>1e-12f))
+   throw std::invalid_argument("GPU_RESIDENT_UNSUPPORTED measured surveillance direct anchor");
  if(g.kind!=GpuWorkKind::radar || g.firSamples || g.firTaps || g.firFft || g.firPercent ||
     !g.range || g.range>65535 || !g.doppler || g.doppler>65535 || !g.delays || g.delays>65535 ||
     !g.channels || g.channels>8 || !g.clutterSamples || g.clutterSamples>INT32_MAX ||
@@ -616,7 +624,7 @@ class ResidentFramePipeline {
    for(uint32_t beam=0;beam<beams;++beam){
     if(measuredFusion){
      const auto combined=blah2::resident_fusion::measuredWeights(
-      config.fusion.manifoldResponses,beams,channels,beam,directBeam,
+      config.fusion.manifoldResponses,config.fusion.directResponse,beams,channels,beam,
       checkpoint.weights.data(),channelScale.data(),nullFraction,whiten);
      for(uint32_t channel=0;channel<channels;++channel)
       target[uint64_t(beam)*channels+channel]=std::complex<float>(std::conj(combined[channel]));

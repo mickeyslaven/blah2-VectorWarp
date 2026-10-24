@@ -1,5 +1,6 @@
 #include "GpuResultJson.private.h"
 #include "ManifoldEvidence.h"
+#include "BearingManifold.h"
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "data/Detection.h"
@@ -10,6 +11,8 @@
 #include <deque>
 #include <iostream>
 #include <limits>
+#include <filesystem>
+#include <fstream>
 namespace {
 using namespace blah2::gpu_result_json;
 void check(bool yes,const char*why){if(!yes)throw std::runtime_error(why);}
@@ -63,8 +66,10 @@ void detectionCases(){
  std::vector<std::complex<float>>channelMaps(12);channelMaps[3]={1,2};channelMaps[9]={3,4};
  const std::vector<std::complex<double>>weights{{.5,.25},{-.5,.75}};
  const std::vector<uint32_t>mapping{0,1};
- const std::vector<double>actualGains{14.2,14.1};
- rapidjson::Document evidence;evidence.Parse(manifoldEvidence(5,539e6,2.4e6,3,2,2,
+ // Model the real metadata path: tuner gains originate as floats and are then
+ // widened to doubles before the evidence serializer sees them.
+ const std::vector<double>actualGains{double(float(14.2f)),double(float(14.1f))};
+ rapidjson::Document evidence;evidence.Parse<rapidjson::kParseFullPrecisionFlag>(manifoldEvidence(5,539e6,2.4e6,3,2,2,
   View<Record>{evidenceRecords.data(),evidenceRecords.size()},{cells.data(),cells.size()},
   {channelMaps.data(),channelMaps.size()},{weights.data(),weights.size()},20,2,.8,6.1,1.2,1,1,60,0,1,.01,
   {mapping.data(),mapping.size()},{actualGains.data(),actualGains.size()}).c_str());
@@ -75,9 +80,56 @@ void detectionCases(){
   evidence["reference_state"]["coherent_gain_db"].GetDouble()==6.1&&
   evidence["data"][0]["covariance"].Size()==2&&
   std::string(evidence["bearing_replay"]["reference_anchor"].GetString())=="fixed_site"&&
-  evidence["bearing_replay"]["channel_mapping"].Size()==2&&
-  evidence["actual_gain_db"].Size()==2&&evidence["actual_gain_db"][0].GetDouble()==14.2,
+  evidence["bearing_replay"]["channel_mapping"].Size()==2,
   "Sparse manifold evidence serialization differs");
+ check(evidence["actual_gain_db"].Size()==2&&
+  evidence["actual_gain_db"][0].GetDouble()==actualGains[0]&&
+  evidence["actual_gain_db"][1].GetDouble()==actualGains[1],
+  "Sparse manifold evidence gain serialization is not lossless");
+ // Exercise the complete contract that regressed: real evidence serialization
+ // -> parsed corpus identity -> runtime loader -> exact applied-gain check.
+ blah2::bearing_manifold::Identity manifoldIdentity{
+  {0,1},{14,14},{{{0,0,0}},{{.1,0,0}}},{40,-80,300},{40.1,-79.9,400},
+  539e6,2.4e6,80,90};
+ std::vector<double>serializedGains{
+  evidence["actual_gain_db"][0].GetDouble(),evidence["actual_gain_db"][1].GetDouble()};
+ const auto fingerprint=blah2::bearing_manifold::compatibilityFingerprint(
+  manifoldIdentity,serializedGains);
+ rapidjson::StringBuffer artifactBuffer;rapidjson::Writer<rapidjson::StringBuffer> artifact(artifactBuffer);
+ artifact.StartObject();
+ artifact.Key("schema");artifact.String("vectorwarp-detection-manifold-runtime-v1");
+ artifact.Key("frequency_hz");artifact.Double(539e6);artifact.Key("sample_rate_hz");artifact.Double(2.4e6);
+ artifact.Key("channels");artifact.Uint(2);artifact.Key("beams");artifact.Uint(2);
+ artifact.Key("runtime_compatible");artifact.Bool(true);artifact.Key("intended_use");
+ artifact.String("offline-production-equivalent-replay-only");
+ artifact.Key("channel_mapping");artifact.StartArray();artifact.Uint(0);artifact.Uint(1);artifact.EndArray();
+ artifact.Key("direct_path_local_azimuth_deg");artifact.Double(90);artifact.Key("direct_path_beam");artifact.Uint(1);
+ artifact.Key("manifold_identity");artifact.StartObject();
+ artifact.Key("frequency_hz");artifact.Double(539e6);artifact.Key("sample_rate_hz");artifact.Double(2.4e6);
+ artifact.Key("compatibility_fingerprint");artifact.String(fingerprint.c_str());
+ artifact.Key("channel_mapping");artifact.StartArray();artifact.Uint(0);artifact.Uint(1);artifact.EndArray();
+ artifact.Key("requested_gain_db");artifact.StartArray();artifact.Double(14);artifact.Double(14);artifact.EndArray();
+ artifact.Key("actual_gain_db");evidence["actual_gain_db"].Accept(artifact);
+ artifact.Key("positions_m");artifact.StartArray();
+ artifact.StartArray();artifact.Double(0);artifact.Double(0);artifact.Double(0);artifact.EndArray();
+ artifact.StartArray();artifact.Double(.1);artifact.Double(0);artifact.Double(0);artifact.EndArray();artifact.EndArray();
+ artifact.Key("receiver_location");artifact.StartArray();artifact.Double(40);artifact.Double(-80);artifact.Double(300);artifact.EndArray();
+ artifact.Key("transmitter_location");artifact.StartArray();artifact.Double(40.1);artifact.Double(-79.9);artifact.Double(400);artifact.EndArray();
+ artifact.Key("x_axis_bearing_deg_true");artifact.Double(80);artifact.EndObject();
+ artifact.Key("direct_anchor");artifact.StartObject();artifact.Key("local_azimuth_deg");artifact.Double(90);
+ artifact.Key("beam");artifact.Uint(1);artifact.Key("response");artifact.StartArray();
+ artifact.StartArray();artifact.Double(1);artifact.Double(0);artifact.EndArray();
+ artifact.StartArray();artifact.Double(0);artifact.Double(1);artifact.EndArray();artifact.EndArray();artifact.EndObject();
+ artifact.Key("responses");artifact.StartArray();
+ artifact.StartArray();artifact.StartArray();artifact.Double(1);artifact.Double(0);artifact.EndArray();artifact.StartArray();artifact.Double(1);artifact.Double(0);artifact.EndArray();artifact.EndArray();
+ artifact.StartArray();artifact.StartArray();artifact.Double(1);artifact.Double(0);artifact.EndArray();artifact.StartArray();artifact.Double(0);artifact.Double(1);artifact.EndArray();artifact.EndArray();artifact.EndArray();
+ artifact.EndObject();
+ const auto manifoldPath=std::filesystem::temp_directory_path()/"vectorwarp-gain-roundtrip-manifold.json";
+ {std::ofstream out(manifoldPath);out.write(artifactBuffer.GetString(),std::streamsize(artifactBuffer.GetSize()));}
+ const auto loaded=blah2::bearing_manifold::loadDetection(manifoldPath.string(),539e6,2,2,
+  manifoldIdentity,blah2::bearing_manifold::DetectionUse::offlineReplay);
+ blah2::bearing_manifold::validateActualGains(loaded,actualGains);
+ std::error_code removeError;std::filesystem::remove(manifoldPath,removeError);
  // The initial analysis is update one while the completed-frame counter is
  // still zero. Those counters have different meanings and no ordering rule.
  auto initial=manifoldEvidence(5,539e6,2.4e6,3,2,2,

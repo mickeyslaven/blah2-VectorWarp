@@ -281,19 +281,94 @@ touch the live 527 MHz node.
 
 ## Detection-manifold implementation (2026-10-24, not deployed)
 
-The measured installed-array response can now be consumed by both the existing
-CPU coherent beam bank and the GPU-resident coherent/noise-whitened detection
-paths.  The resident route transports the full complex beam-by-channel matrix
-through a versioned ABI and uses the same target/direct response-ratio
-calibration as `CoherentBeamBank`.  Whitening is applied before the calibrated
-direct-anchor projection, so unequal channel scales cannot reintroduce the
-fixed-transmitter response; a 40 dB-null regression covers this ordering.  A
-v2 installed-state identity binds RF and sample rate, channel count/order,
-requested and observed gains, element coordinates and orientation, receiver
-and fixed-transmitter coordinates, a canonical compatibility fingerprint, and
-the recomputed direct-path bearing/beam.  Mismatches fail closed.  The feature
-remains default-off; the live 527 MHz configuration and release were not
-changed.
+Pull request #74 (`codex/detection-manifold-runtime`) has completed independent
+adversarial acceptance for merge/release as default-off infrastructure. The
+feature remains unqualified for live activation, and the live 527 MHz
+configuration/release has not changed.
+
+The intended detector has two distinct measured inputs: a B-by-C bank of
+aircraft responses and a separate C-channel fixed-transmitter anchor. Runtime
+weights use `current_reference[c] * aircraft_response[b,c] /
+direct_anchor[c]`, followed by gain normalization, the configured direct-path
+projection and then optional diagonal noise whitening. The anchor is never a
+searched aircraft beam. CPU and GPU paths must share this ordering so an A/B
+cannot appear better merely because the ideal and measured arms applied the
+null differently.
+
+The first adversarial review found that the initial implementation was not
+releaseable: its native tool consumed caller-supplied post-CAF vectors while
+claiming raw-IQ equivalence; the fitted fixed-transmitter anchor overwrote the
+nearest aircraft beam; JavaScript identity v3 did not match the C++ v2 loader;
+the detection artifact schema was not loadable by the runtime; global elevation
+support admitted unobserved azimuth/elevation combinations; actual gain epochs
+could be mixed; candidate RF/corpus identity and baseline labels were not fully
+bound; and ideal/measured GPU comparison used different null/whitening order.
+
+Repairs now implemented include: diagnostic-only naming for the post-CAF
+native tool; an acceptance boundary that remains closed until an authenticated
+raw-IQ exporter exists; pass-balanced fixed-transmitter anchoring; a separate
+anchor that does not consume an aircraft beam; common observed elevation
+support across every retained aircraft beam; actual per-channel gains in the
+v3 installed identity; exact candidate RF/rate/channel/config/corpus binding;
+baseline-label consistency; and a shared GPU calibration helper. The bank hash
+binds both aircraft responses and the separate direct response. Schema-specific
+C++ loaders prevent bearing/detection artifact confusion, match the JavaScript
+v3 fingerprint exactly, and retain the per-frame exact actual-gain check. The
+resident transport is now ABI/protocol 11 with config schema 3; ABI10 peers
+cannot accept the new anchor field. Replay-only artifacts are explicitly
+rejected by the live-production load call.
+
+Focused acceptance passed on macOS: the real loader consumed a generated
+detection JSON artifact; the CPU bank and resident helper retained the aircraft
+beam nearest the transmitter; the separate anchor survived float conversion
+and wire round-trip and changed the config hash; invalid anchor shapes/values
+failed closed; `testKrakenMultiChannel` passed 9,369 assertions/27 cases,
+resident wire passed 190 checks plus 101 rejection checks, resident processing
+passed 49 checks, frame diagnostics passed, the native diagnostic test passed,
+and `blah2` built. This is software acceptance, not physical aircraft evidence.
+
+A second independent acceptance review found two additional integrity defects
+before publication. First, eight-decimal gain serialization could change a
+binary32 tuner gain after JSON reload while the runtime correctly required an
+exact gain epoch. Manifold evidence now uses lossless RapidJSON output, trusted
+manifold/native inputs use full-precision number parsing, and the GPU-result
+suite exercises the complete evidence-serialization -> identity-fingerprint ->
+C++ loader -> actual-gain-validation round trip using widened `14.2f` and
+`14.1f` values. Second, the post-CAF diagnostic consumed a separate direct
+anchor without exporting it or proving that its declared bank hash covered it.
+The native tool now recomputes SHA-256 over both `direct_response` and
+`responses`, rejects either kind of tampering, exports the exact consumed
+anchor, and uses the recomputed identity in every result. A fresh post-fix
+review then demonstrated that JSON number rendering is not cross-language
+canonical: RapidJSON and `JSON.stringify` can print the same IEEE-754 value
+differently. The bank identity therefore uses the explicit
+`vectorwarp-detection-bank-ieee754-v1` contract (tag, little-endian beam/channel
+dimensions, then little-endian binary64 direct-anchor and aircraft-response
+components), reproduced independently by JavaScript, Python and C++.
+The review also caught an unintended change to the active ideal beam bank's
+null/whitening order. That change was removed: with no detection manifold the
+resident path is byte-for-byte the established ideal algorithm, while the
+default-off measured arm follows the same null-before-whitening order. This
+preserves release behavior but also preserves a known limitation: unequal
+whitening and final normalization can weaken the requested soft-null depth.
+Changing that live behavior requires a separate positive-controlled A/B, not a
+manifold-infrastructure release.
+Detection replay validation now also requires an actually present complex
+covariance matrix and positive sample count whenever a detection context is
+claimed. Previously, mutually absent covariance fields could satisfy an
+`undefined === undefined` support check and crash later scoring; fit-only live
+positive samples may still omit the replay context as intended.
+
+After those repairs, the focused gain and anchor regressions passed, the full
+45-test native CTest suite passed serially, `testKrakenMultiChannel` again
+passed 9,369 assertions, and the complete API, DOM, manifold and 11-case receipt
+suites passed. One parallel CTest run transiently failed the pre-existing
+bounded-recorder fixture; that fixture immediately passed alone and the full
+serial 45-test suite then passed. A fresh independent post-fix adversarial
+review passed after independently reproducing the gain, bank-tamper,
+cross-language fractional-value, signed-zero and missing-covariance cases.
+Physical qualification and authenticated raw-IQ production receipts remain
+separate live-activation gates.
 
 The API now has a separate, default-off detection-manifold campaign.  It shows
 positive-control fit coverage independently from replay-diagnostic coverage,
@@ -304,49 +379,13 @@ ADS-B truth and therefore is **diagnostic only**: it is not the production
 full-bank maximum surface and its noise denominator is not the production CFAR
 training mean.  It can never set `qualified:true`.
 
-The API now also validates a strict
-`vectorwarp-detection-manifold-production-replay-v1` import receipt.  A receipt
-must bind the exact positive corpus and candidate hashes, independent IQ/replay/
-input-grid/generator hashes, frozen frequency/sample-rate/configuration and
-actual per-channel gains.  It must prove that baseline and candidate evaluated
-every beam on the same complete CUT/training grid and retain raw CUT power,
-training mean, production alpha, threshold and decision for one target plus
-local nuisance CUTs.  The importer recomputes alpha, threshold and decisions and
-rejects truth-selected beams, incomplete support, reused captures/grids and
-candidate hash mismatches.  The trusted producer must be operator-pinned and
-allowlisted by SHA-256; candidate and ideal banks are also bound by canonical
-content/geometry hashes.  Candidate artifacts remain replay-only and automation
-cannot promote them or mutate radar configuration.
-
-The final adversarial pass closed receipt/provenance defects before
-publication.  The Python receipt carries the native geometry/direct-path fields
-required by the JavaScript importer and uses that importer's exact JSON-number
-canonicalization (including native C++ values rendered as `.0`).  The native
-export carries the exact measured response matrix it consumed, and the receipt
-rejects any matrix that differs from the immutable candidate artifact even if a
-caller preserves the old declared hash.  Full capture gain vectors are mapped
-through `surveillance_channels` while retaining the original capture vector.
-The strict receipt also derives and binds selected element positions, confirmed
-orientation, receiver/fixed-transmitter coordinates, direct-path azimuth, null
-depth, beam count, and exact CFAR guard/training geometry from the frozen config.
-
-The default-off native `detectionManifoldGridReplay` tool now supplies the
-missing production-equivalent export.  It uses `CoherentBeamBank` and the
-production Gamma CA-CFAR primitive to emit every baseline/candidate beam for
-the identical target and training-cell grid, with no truth-selected beam.
-Sparse fits can become a dense replay artifact only when one observed elevation
-band contains every azimuth bin; there is no interpolation, clamping, or
-extrapolation.  Synthetic end-to-end tests cover native export through strict
-receipt validation and reject incomplete training grids.  This proves the
-software contract, not aircraft performance.
-
-The native replay tool fails closed outside the statistic it currently
-implements: unwhitened `coherent_beam_bank`, one CPI, no motion/TBD, and exact
-configured guard/training geometry.  It will not label a single-vector replay
-as production-equivalent to noise-whitened or multi-CPI processing.  The live
-resident path does implement measured noise-whitened weights and the calibrated
-direct-path null, but qualifying that mode requires a later native replay input
-contract carrying its covariance/whitening and temporal evidence.
+The current `detectionManifoldGridReplay` executable is explicitly a post-CAF
+diagnostic. It does not read immutable raw IQ and cannot produce an importable
+production receipt. Hash allowlisting cannot repair that provenance gap. A
+future exporter must itself open the raw-IQ artifact, apply the production
+reference/clutter/ambiguity/fusion path, bind its exact sample ranges and emit
+the complete same-IQ target/training grid. Until then `qualified` and automatic
+promotion remain false even when diagnostic replay improves.
 
 `script/evaluate-detection-manifold-replay.py` supplies an isolated same-IQ
 diagnostic lane for ideal, coherent, noise-whitened, measured, MVDR/LCMV,
@@ -360,3 +399,4 @@ positive/miss cohort with compatible frequency, installed-state and full gain-
 vector fingerprints.  Only a dense manifold that passes that held-out replay
 may be considered for a separately authorized live A/B.
 
+suites passed. One parallel CTest run transiently failed the pre-existing
