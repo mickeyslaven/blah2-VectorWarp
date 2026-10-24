@@ -42,10 +42,16 @@ Capture::SamplePosition Capture::live_sample_position() const
   const auto* kraken = dynamic_cast<const Kraken*>(device.get());
   if (kraken) {
     const auto value = kraken->sample_position();
-    return {value.available, value.epoch, value.nextSample,
-      value.epochEstimateNanoseconds, 0, 0, value.hostReceiptResidualNanoseconds,
-      value.hostReceiptMaximumResidualNanoseconds, value.hostReceiptDriftPpm,
-      value.hostReceiptAnchors};
+    SamplePosition result;
+    result.available = value.available;
+    result.epoch = value.epoch;
+    result.nextSample = value.nextSample;
+    result.epochEstimateNanoseconds = value.epochEstimateNanoseconds;
+    result.hostReceiptResidualNanoseconds = value.hostReceiptResidualNanoseconds;
+    result.hostReceiptMaximumResidualNanoseconds = value.hostReceiptMaximumResidualNanoseconds;
+    result.hostReceiptDriftPpm = value.hostReceiptDriftPpm;
+    result.hostReceiptAnchors = value.hostReceiptAnchors;
+    return result;
   }
   if (!device) return {};
   const auto value = device->sample_time_position();
