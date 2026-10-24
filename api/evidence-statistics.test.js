@@ -4,7 +4,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates, limits} = require('./evidence-statistics');
+const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates,
+  assignments, delayBand, limits, standardizedComparison} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -332,6 +333,56 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     assert.equal(admission.event_time_uncertainty_s, exactTime ? 0 : 1);
     Object.values(lanes).forEach(lane => lane.close());
   }
+
+  const ambiguityDiagnostics = {};
+  const ambiguous = assignments([{index: 0, rawDelay: 10, delay: 10, doppler: 100}],
+    [['abc123', prediction], ['def456', {...prediction, delay: 10.01}]],
+    () => ({delayKm: 1, dopplerHz: 25, eventTimeUncertaintyS: 0}),
+    'detection', clock, ambiguityDiagnostics);
+  assert.equal(ambiguous.size, 0, 'Near-tied aircraft must not receive invented associations');
+  assert.equal(ambiguityDiagnostics.ambiguous_points, 1,
+    'Discarded near-tied detections must remain visible in scorecard diagnostics');
+
+  const floorStats = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'detector-floor.json'), now: () => clock,
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  const belowFloor = {...prediction, delay: span.detectionMinDelayKm / 2,
+    timestamp: clock / 1000};
+  floorStats.observe('abc123', belowFloor, clock, null, null);
+  assert.equal(floorStats.state.active.abc123.physicalEligibleFrames, 1,
+    'A below-floor point is still inside the computed ambiguity map');
+  assert.equal(floorStats.state.active.abc123.detectorEligibleFrames, 0);
+  assert.equal(floorStats.state.active.abc123.eligibleFrames, 0,
+    'A point intentionally suppressed by minDelay must never count as a radar miss');
+  const inBand = {...prediction, delay: span.detectionMinDelayKm * 2};
+  for (let index = 1; index <= 3; ++index)
+    floorStats.observe('abc123', {...inBand, timestamp: (clock + index * 500) / 1000},
+      clock + index * 500, {frame_timestamp_ms: clock + index * 500,
+        kind: 'detection', cell_index: index}, null);
+  assert.equal(floorStats.state.active.abc123.detectorEligibleFrames, 3);
+  assert.equal(floorStats.state.active.abc123.eligibleFrames, 3);
+  assert.equal(floorStats.state.active.abc123.maxSlantRangeKm, 10);
+  assert.equal(floorStats.state.active.abc123.maxTransmitterRangeKm, 20);
+  assert.equal(floorStats.state.active.abc123.maxBistaticRangeProductKm2, 200);
+  floorStats.close();
+  const floorStatus = floorStats.status().windows.lifetime;
+  assert.equal(floorStatus.map_eligible_passes, 1);
+  assert.equal(floorStatus.detector_eligible_passes, 1);
+  assert.equal(floorStatus.eligible_passes, 1);
+  const floorBand = delayBand(span, inBand.delay);
+  assert.equal(floorStatus.delay_strata.bands[floorBand.id].eligible_passes, 1);
+  assert.equal(floorStatus.delay_strata.bands[floorBand.id].detected_passes, 1);
+  assert.equal(floorStatus.receiver_slant_range_strata.bands['10-20'].eligible_passes, 1,
+    'Scorecard must stratify the denominator by 3-D receiver slant range');
+
+  const pass = (band, detected) => ({geometryBands: {[band]: {eligibleFrames: 10}},
+    detectedFrames: detected ? 3 : 0, trackedFrames: detected ? 3 : 0});
+  const mixAdjusted = standardizedComparison(
+    [pass('near', true), pass('far', false), pass('far', false), pass('far', false)],
+    [pass('near', true), pass('near', true), pass('near', true), pass('far', false)], 1);
+  assert.equal(mixAdjusted.current.detection_yield, mixAdjusted.baseline.detection_yield,
+    'Direct standardization must not call a changed near/far traffic mix a regression');
+  assert.equal(mixAdjusted.common_support_coverage, 1);
 
   // Synthetic delayed truth: all CPI identities must survive concurrent four-CPI
   // association waits. Resolve them out of order to catch accidental latest-frame joins.
