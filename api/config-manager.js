@@ -86,9 +86,53 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validateConfig(config, baseline = null) {
+function linuxServicePathPolicy(environment = process.env) {
+  if (environment.VECTORWARP_LINUX_SERVICE !== '1') return null;
+  return Object.freeze({kind: 'systemd-linux',
+    recordingRoot: '/var/lib/vectorwarp/recordings',
+    hiddenReplayRoots: Object.freeze(['/home', '/root', '/run/user', '/tmp', '/var/tmp'])});
+}
+
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) &&
+    relative !== '..' && !path.isAbsolute(relative));
+}
+
+function nearestExistingRealPath(candidate) {
+  let current = path.resolve(candidate);
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+  try { return fs.realpathSync(current); }
+  catch (_) { return null; }
+}
+
+function servicePathWithin(root, candidate) {
+  if (!pathWithin(root, candidate)) return false;
+  if (!fs.existsSync(root)) return true;
+  const realRoot = nearestExistingRealPath(root);
+  const realCandidate = nearestExistingRealPath(candidate);
+  return !realRoot || !realCandidate || pathWithin(realRoot, realCandidate);
+}
+
+function servicePathHidden(roots, candidate) {
+  if (roots.some(root => pathWithin(root, candidate))) return true;
+  const realCandidate = nearestExistingRealPath(candidate);
+  return realCandidate !== null && roots.some(root => {
+    if (!fs.existsSync(root)) return false;
+    const realRoot = nearestExistingRealPath(root);
+    return realRoot !== null && pathWithin(realRoot, realCandidate);
+  });
+}
+
+function validateConfig(config, baseline = null, options = {}) {
   const errors = [];
   const notices = [];
+  const pathPolicy = options.pathPolicy === undefined ?
+    linuxServicePathPolicy(options.environment || process.env) : options.pathPolicy;
   const advise = (field, message) => notices.push({field, message});
   const inspectKeys = (value, name = 'configuration') => {
     if (name === 'configuration.capture.device.array_geometry') return;
@@ -250,6 +294,12 @@ function validateConfig(config, baseline = null) {
   boolean(replay.state, 'capture.replay.state');
   boolean(replay.loop, 'capture.replay.loop');
   string(replay.file, 'capture.replay.file');
+  if (typeof replay.file === 'string' && !path.isAbsolute(replay.file))
+    errors.push('capture.replay.file must be a full absolute path');
+  if (pathPolicy?.kind === 'systemd-linux' && typeof replay.file === 'string' &&
+      path.isAbsolute(replay.file) &&
+      servicePathHidden(pathPolicy.hiddenReplayRoots, replay.file))
+    errors.push('capture.replay.file is hidden by the packaged Linux service sandbox; use /var/lib/vectorwarp/recordings/ or another service-readable system path');
   if (replay.format !== undefined)
     oneOf(replay.format, 'capture.replay.format', ['auto', 'blah2', 'mchq', 's16-interleaved', 's8-interleaved', 'usrp-blocks']);
   if (replay.provenance !== undefined)
@@ -1011,6 +1061,9 @@ function validateConfig(config, baseline = null) {
   string(save.path, 'save.path');
   if (typeof save.path === 'string' && (!path.isAbsolute(save.path) || !save.path.endsWith('/')))
     errors.push('save.path must be a full directory path ending in /');
+  if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
+      path.isAbsolute(save.path) && !servicePathWithin(pathPolicy.recordingRoot, save.path))
+    errors.push(`save.path must remain under ${pathPolicy.recordingRoot}/ for the packaged Linux service`);
   return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
     warnings: notices.map(notice => notice.message),
     estimatedMemoryBytes: Number.isFinite(estimatedBytes) ? estimatedBytes : null};
@@ -1043,5 +1096,6 @@ function writeConfigAtomically(filename, config) {
   }
 }
 
-module.exports = {KRAKEN_MAX_CHANNELS, getDeviceProfiles, validateConfig, FIELD_RULES,
+module.exports = {KRAKEN_MAX_CHANNELS, getDeviceProfiles, validateConfig,
+  linuxServicePathPolicy, FIELD_RULES,
   writeConfigAtomically};

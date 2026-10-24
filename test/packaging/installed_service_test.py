@@ -238,6 +238,19 @@ def main():
     _, config, headers = request('/api/config')
     revision = headers['ETag']
     assert config['capture']['device']['type'] == 'RspDuo', 'Test expects neutral packaged defaults'
+    path_candidate = copy.deepcopy(config)
+    path_candidate['save']['path'] = '/srv/vectorwarp-recordings/'
+    code, result, _ = request('/api/config/validate', 'POST', path_candidate)
+    assert code == 422 and any('packaged Linux service' in error for error in result['errors']), result
+    for hidden in ('/home/operator/replay.blah2iq', '/tmp/replay.blah2iq'):
+        path_candidate = copy.deepcopy(config)
+        path_candidate['capture']['replay']['file'] = hidden
+        code, result, _ = request('/api/config/validate', 'POST', path_candidate)
+        assert code == 422 and any('service sandbox' in error for error in result['errors']), result
+    path_candidate = copy.deepcopy(config)
+    path_candidate['capture']['replay']['file'] = '/srv/radar/readable-replay.blah2iq'
+    assert request('/api/config/validate', 'POST', path_candidate)[0] == 200
+    checks.append('Linux service validation matches recording write and replay visibility sandboxes')
     write_intent = intent(revision)
     invalid = json.loads(json.dumps(config))
     invalid['capture']['fs'] = 0

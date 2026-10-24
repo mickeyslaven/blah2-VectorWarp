@@ -13,6 +13,7 @@ The checks start the installed systemd units and verify:
 - A missing replay file produces a visible error without reusing old frames. Correcting the path and restarting must produce new frames again.
 - Missing SDRplay software produces setup guidance and the official download link, without downloading the SDK.
 - Invalid settings and requests from unapproved browser origins cannot change configuration.
+- Recording paths outside the packaged writable root and replay paths hidden by `ProtectHome`/`PrivateTmp` are rejected before restart; a system-readable `/srv` replay path remains valid.
 - A restart request crosses the real unprivileged-to-root broker boundary; missing receiver software produces an error instead of an endless restart screen.
 - The installed processor handles synthetic recording/replay inputs for the supported receiver profiles, including Kraken channel counts from two through eight.
 - Real service accounts try to open a synthetic file with the distro's HackRF device permissions. The processor must have access; the web API and unrelated users must not. Debian/Ubuntu retain the vendor `plugdev` group; Fedora uses a narrowly matched HackRF rule.

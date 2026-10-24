@@ -348,7 +348,7 @@ HackRF udev rule assigns the service group while retaining distro mode/ACL polic
 (`contrib/systemd/72-vectorwarp-hackrf.rules:1-4`). No additional Fedora-only SDR
 data-path bug was found.
 
-F1–F7 still apply. In addition, F8 applies to the packaged service path below.
+F1–F7 were remediated by the serial backend passes. F8 is corrected below.
 
 ## OS review 2 — Debian/Ubuntu/Raspberry Pi (**Complete**)
 
@@ -363,11 +363,10 @@ F1–F8 apply. F2 is especially exposed by the supplied Pi profile because AGC i
 enabled by default. The paired-CPI queue improves A/B sample pairing but does not
 make ignored gain changes safe.
 
-### F8 — Linux config path contract disagrees with systemd sandbox (**Medium**)
+### F8 — Linux config path contract disagrees with systemd sandbox (**Medium, corrected**)
 
-The common config validator accepts any absolute `save.path` ending in `/` and
-only requires replay file to be a string (`api/config-manager.js:250-258`,
-`api/config-manager.js:1008-1010`). The processor systemd unit has
+The original common config validator accepted any absolute `save.path` ending
+in `/` and required only that replay file be a string. The processor systemd unit has
 `ProtectSystem=strict`, `ProtectHome=yes`, and only
 `ReadWritePaths=/var/lib/vectorwarp` (`contrib/systemd/vectorwarp-processor.service.in:10-30`).
 Consequently `/srv/radar/` is valid configuration but unwritable in packaged
@@ -380,10 +379,20 @@ directory, and request recording. Compare direct processor execution with the
 systemd unit; only the latter is denied. Repeat replay from the service user's
 home.
 
-**Fix.** Make deployment-aware validation constrain packaged Linux state to
-approved paths and present a clear Settings error, or generate an administrator-
-owned systemd drop-in granting the exact selected directory after ownership/
-symlink validation. Do not broadly relax the sandbox.
+**Correction.** Both packaged service units declare
+`VECTORWARP_LINUX_SERVICE=1`
+(`contrib/systemd/vectorwarp-api.service.in:14`,
+`contrib/systemd/vectorwarp-processor.service.in:16`). Deployment-aware
+validation (`api/config-manager.js:89-135`, `api/config-manager.js:294-302`,
+`api/config-manager.js:1061-1066`) now requires recording
+output below `/var/lib/vectorwarp/recordings/`, rejects relative replay paths,
+and rejects replay roots hidden by the installed `ProtectHome`/`PrivateTmp`
+sandbox. It deliberately retains readable system paths such as `/srv` instead
+of globally restricting replay to the recording directory. Source and macOS
+deployments do not inherit the systemd-only rule. Deterministic API validation
+tests cover lexical `..` escape, lookalike prefixes, every hidden root, nested
+recording directories, and `/srv` replay; the installed-service fixture checks
+the real unit environment and HTTP contract.
 
 ## OS review 3 — macOS (**Complete**)
 

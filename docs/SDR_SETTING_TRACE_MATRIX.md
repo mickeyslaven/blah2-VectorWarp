@@ -92,9 +92,9 @@ serial-to-role mapping. Fresh processor status and Settings now preserve both,
 while explicitly separating them from unavailable RF-value, wiring and time
 readback.
 
-## OS lifecycle passes (pending after all four backend traces)
+## OS lifecycle passes
 
-1. Fedora/RPM native lifecycle, packages, paths, systemd sandbox and device permissions.
+1. Fedora/RPM native lifecycle, packages, paths, systemd sandbox and device permissions — **complete**.
 2. Debian/Ubuntu/DEB lifecycle, packages, paths, systemd sandbox and device permissions.
 3. Raspberry Pi image/profile/service lifecycle and SDRplay permissions/performance overrides.
 4. macOS Homebrew/standalone lifecycle, paths, launch ownership and receiver runtime loading.
