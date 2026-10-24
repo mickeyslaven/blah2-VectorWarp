@@ -57,7 +57,7 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, jumping, or discontinuous UHD time rejects only the corrupt epoch, clears unpublished IQ, rolls recording incomplete, and automatically republishes after two continuous timed blocks. Status records degraded/requalifying state and counters. Topology remains limited to an attested single-motherboard B210; device time is non-UTC and exact ADS-B scoring remains unavailable |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Code and tests complete | Callback blocks publish only as matched pairs. A short/asymmetric/progression/drop fault discards the ambiguous epoch, rolls recording incomplete, drains one callback per radio, and automatically republishes only after two matched callback pairs. Recovery is bounded to eight consecutive faults. Relative time remains provisional because libhackrf has no device counter or RF/UTC timestamp |
 | 5 | Recording/F7: `.blah2iq` omits gain, receiver, epoch, and gap provenance | Code and tests complete | Portable sidecar v2 records backend receipts, channel/RF settings, identity/topology, relative sample epoch, intervals/discontinuities, and configuration/code fingerprints. Replay validates it against the binary header and exposes explicit `legacy-unqualified` and `decision-grade` modes |
-| 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Fedora code and tests complete | Packaged units declare the Linux service path policy. Recording is constrained to the shared writable root; relative and `ProtectHome`/`PrivateTmp` replay paths fail before restart, while readable `/srv` replay remains usable. Debian/Ubuntu/Pi lifecycle verification follows serially |
+| 6 | Linux/F8: validation accepts paths blocked by packaged systemd sandbox | Fedora and Debian/Ubuntu code/tests complete | Packaged units declare the Linux service path policy. Recording is constrained to the shared writable root; relative and `ProtectHome`/`PrivateTmp` replay paths fail before restart, while readable `/srv` replay remains usable. Raspberry Pi lifecycle verification follows serially |
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
 The code-enumerated receiver-setting ledger is maintained in
@@ -134,6 +134,11 @@ complete; the four OS/package lifecycle passes remain serially queued.
   and readable `/srv` replay remains allowed. Both installed units explicitly
   opt into the policy; the disposable Fedora package fixture is the final
   release-host acceptance check and cannot run on this macOS development host.
+- Debian/Ubuntu retained distro-owned HackRF `plugdev` permissions without a
+  competing udev rule, while the API account remains outside the device group.
+  The APT transaction suite (10 tests), install-document suite (15 tests), and
+  shared path/group/rule contract passed. Full DEB/systemd/udev acceptance is
+  intentionally confined to the disposable Linux package job.
 
 ## Supporting artifacts
 

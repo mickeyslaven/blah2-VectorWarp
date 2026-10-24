@@ -64,6 +64,19 @@ for (const unit of ['vectorwarp-api.service.in', 'vectorwarp-processor.service.i
   assert.match(fs.readFileSync(path.join(__dirname, '..', 'contrib', 'systemd', unit), 'utf8'),
     /^Environment=VECTORWARP_LINUX_SERVICE=1$/m,
     `${unit} must opt into the packaged path contract`);
+const debPostinst = fs.readFileSync(path.join(__dirname, '..', 'packaging', 'deb',
+  'postinst'), 'utf8');
+assert.match(debPostinst,
+  /getent group plugdev[\s\S]*getent passwd vectorwarp[\s\S]*usermod --append --groups plugdev vectorwarp/,
+  'Debian-family installs must enroll only the processor account in vendor plugdev access');
+const nativeInstaller = fs.readFileSync(path.join(__dirname, '..', 'script',
+  'install-native.sh'), 'utf8');
+assert.match(nativeInstaller,
+  /TARGET_DISTRO == fedora && \$RECEIVER_TYPES == \*HackRF\*/,
+  'The VectorWarp HackRF udev rule must remain Fedora-only');
+assert.match(nativeInstaller,
+  /RECEIVER_TYPES == \*HackRF\* && \$TARGET_DISTRO != fedora[\s\S]*usermod --append --groups plugdev vectorwarp/,
+  'Direct Debian-family installs must retain vendor plugdev ownership');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-path-policy-'));
 try {

@@ -95,6 +95,6 @@ readback.
 ## OS lifecycle passes
 
 1. Fedora/RPM native lifecycle, packages, paths, systemd sandbox and device permissions — **complete**.
-2. Debian/Ubuntu/DEB lifecycle, packages, paths, systemd sandbox and device permissions.
+2. Debian/Ubuntu/DEB lifecycle, packages, paths, systemd sandbox and device permissions — **complete**.
 3. Raspberry Pi image/profile/service lifecycle and SDRplay permissions/performance overrides.
 4. macOS Homebrew/standalone lifecycle, paths, launch ownership and receiver runtime loading.

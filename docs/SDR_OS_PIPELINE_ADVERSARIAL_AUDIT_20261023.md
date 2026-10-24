@@ -350,18 +350,26 @@ data-path bug was found.
 
 F1–F7 were remediated by the serial backend passes. F8 is corrected below.
 
-## OS review 2 — Debian/Ubuntu/Raspberry Pi (**Complete**)
+## OS review 2 — Debian/Ubuntu (**Complete**)
 
 Debian post-install creates system users/state and adds the processor account to
 the distro `plugdev` group for HackRF (`packaging/deb/postinst:4-25`). The Pi image
-actually installs and verifies the seven-variable RSPduo drop-in
-(`packaging/pi/build-pi4-image.sh:210-215`,
-`packaging/pi/build-pi4-image.sh:260-273`). No additional Debian/Ubuntu-only
-sample-format bug was found.
+is reviewed separately below. The DEB derives ABI dependencies from every
+processor/worker/receiver ELF (`script/package-native.sh:242-270`), bundles its
+private Node runtime, and preserves the vendor HackRF rule instead of installing
+Fedora's competing rule (`script/install-native.sh:282-310`). The shared F8
+correction is active in both Debian-family service units. APT transaction tests,
+documentation checks and the deterministic group/rule/path contract pass; the
+full DEB install and USB-node fixture remains a Linux release-host acceptance
+test. No additional Debian/Ubuntu-only sample-format or receiver-setting defect
+was found.
 
-F1–F8 apply. F2 is especially exposed by the supplied Pi profile because AGC is
-enabled by default. The paired-CPI queue improves A/B sample pairing but does not
-make ignored gain changes safe.
+## OS review 3 — Raspberry Pi (**serial review pending**)
+
+The Pi image installs and verifies the seven-variable RSPduo drop-in
+(`packaging/pi/build-pi4-image.sh:210-215`,
+`packaging/pi/build-pi4-image.sh:260-273`). Its profile enables AGC, so the
+bounded RSPduo gain-epoch recovery is the relevant next acceptance check.
 
 ### F8 — Linux config path contract disagrees with systemd sandbox (**Medium, corrected**)
 
@@ -394,7 +402,7 @@ tests cover lexical `..` escape, lookalike prefixes, every hidden root, nested
 recording directories, and `/srv` replay; the installed-service fixture checks
 the real unit environment and HTTP contract.
 
-## OS review 3 — macOS (**Complete**)
+## OS review 4 — macOS (**Complete**)
 
 The macOS lifecycle creates per-user recordings/calibration directories and
 rewrites the initial config to those paths (`script/vectorwarp-macos.py:332-351`).
