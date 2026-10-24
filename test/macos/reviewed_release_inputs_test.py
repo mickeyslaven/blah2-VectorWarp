@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -247,6 +248,89 @@ class BaselineNoticeValidationTest(unittest.TestCase):
             inputs.validated_baseline_notices(self.root)
 
 
+class FormulaSourceClaimTransitionTest(unittest.TestCase):
+    @staticmethod
+    def inventory(*components):
+        return {"schema": 1, "components": list(components)}
+
+    @staticmethod
+    def component(name="example", version="1.0", source="a" * 64,
+                  recipe="b" * 64, notice="c" * 64):
+        return {
+            "formula": name,
+            "version": version,
+            "input": f"lib/lib{name}.dylib",
+            "formula_recipe": {"sha256": recipe, "source_sha256": [source]},
+            "notice_files": [{"path": "LICENSE", "sha256": notice}],
+            "copied_files": [{"path": f".brew/{name}.rb", "sha256": recipe}],
+        }
+
+    def test_accepts_dependency_removal(self):
+        retained = self.component()
+        removed = self.component(name="removed")
+        self.assertIsNone(inputs.verify_source_claim_transition(
+            self.inventory(retained), self.inventory(retained, removed), "arm64"))
+
+    def test_rejects_added_dependency(self):
+        retained = self.component()
+        added = self.component(name="added")
+        with self.assertRaisesRegex(ValueError, "new source review"):
+            inputs.verify_source_claim_transition(
+                self.inventory(retained, added), self.inventory(retained), "arm64")
+
+    def test_rejects_changed_recipe_source_or_notice(self):
+        prior = self.component()
+        for field, value in (("recipe", "d" * 64),
+                             ("source", "e" * 64),
+                             ("notice", "f" * 64)):
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    ValueError, "new source review"):
+                inputs.verify_source_claim_transition(
+                    self.inventory(self.component(**{field: value})),
+                    self.inventory(prior), "arm64")
+
+
+class ReviewedNodeRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        (self.root / "packaging").mkdir()
+        shutil.copyfile(ROOT / "packaging/node-runtime.env",
+                        self.root / "packaging/node-runtime.env")
+        self.runtimes = {}
+        for arch in inputs.package.ARCHES:
+            runtime = self.root / arch
+            (runtime / "bin").mkdir(parents=True)
+            (runtime / "bin/node").write_bytes((arch + " node").encode())
+            (runtime / "standalone.json").write_text(json.dumps({
+                "node_version": inputs.NODE_REVIEW["version"],
+                "dependencies": [{
+                    "file": "node",
+                    "sha256": inputs.NODE_REVIEW["binary_sha256"][arch],
+                }],
+            }))
+            self.runtimes[arch] = runtime
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_accepts_exact_pinned_node_runtime(self):
+        self.assertIsNone(inputs.verify_node_runtimes(self.root, self.runtimes))
+
+    def test_rejects_changed_node_binary_or_source_pin(self):
+        value = json.loads((self.runtimes["arm64"] / "standalone.json").read_text())
+        value["dependencies"][0]["sha256"] = "0" * 64
+        (self.runtimes["arm64"] / "standalone.json").write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "Node provenance"):
+            inputs.verify_node_runtimes(self.root, self.runtimes)
+        shutil.copyfile(ROOT / "packaging/node-runtime.env",
+                        self.root / "packaging/node-runtime.env")
+        with (self.root / "packaging/node-runtime.env").open("a") as stream:
+            stream.write("UNREVIEWED=1\n")
+        with self.assertRaisesRegex(ValueError, "Node runtime or source inputs"):
+            inputs.node_environment(self.root)
+
+
 class ReviewedNpmLockTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -287,6 +371,8 @@ class ReboundNpmNoticeTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.baseline = self.root / "baseline"
         self.output = self.root / "output"
+        self.node_license = self.root / "node-LICENSE"
+        self.node_license.write_bytes(b"reviewed node license\n")
         self.baseline.mkdir()
         index = {
             "source_id": inputs.BASELINE_SOURCE_ID,
@@ -315,22 +401,28 @@ class ReboundNpmNoticeTest(unittest.TestCase):
             (runtime / "standalone.json").write_text("{}")
             self.runtimes[arch] = runtime
         self.license_sha = inputs.PROXY_ADDR_REVIEW["license_sha256"]
+        self.node_license_sha = inputs.NODE_REVIEW["license_sha256"]
         inputs.PROXY_ADDR_REVIEW["license_sha256"] = hashlib.sha256(
             b"reviewed proxy license\n").hexdigest()
+        inputs.NODE_REVIEW["license_sha256"] = inputs.sha256(self.node_license)
 
     def tearDown(self):
         inputs.PROXY_ADDR_REVIEW["license_sha256"] = self.license_sha
+        inputs.NODE_REVIEW["license_sha256"] = self.node_license_sha
         self.temporary.cleanup()
 
     def test_rebinds_exact_runtime_notice_version(self):
         with mock.patch.object(inputs, "validated_baseline_notices"), \
                 mock.patch.object(inputs.package, "validated_notices"):
             inputs.rebind_notices(
-                self.baseline, self.output, "a" * 40, self.runtimes)
+                self.baseline, self.output, "a" * 40, self.runtimes, self.node_license)
         index = json.loads((self.output / "INDEX.json").read_text())
         record = next(item for item in index["api_packages"]
                       if item["name"] == "proxy-addr")
         self.assertEqual(record["version"], "2.0.8")
+        node = next(item for item in index["input_notices"]
+                    if item["file"].startswith("embedded/node-"))
+        self.assertEqual(node["sha256"], inputs.NODE_REVIEW["license_sha256"])
 
     def test_rejects_runtime_notice_mismatch(self):
         (self.runtimes["arm64"] / "api/node_modules/proxy-addr/LICENSE").write_text(
@@ -339,7 +431,7 @@ class ReboundNpmNoticeTest(unittest.TestCase):
                 mock.patch.object(inputs.package, "validated_notices"):
             with self.assertRaisesRegex(ValueError, "runtime identity or notice"):
                 inputs.rebind_notices(
-                    self.baseline, self.output, "a" * 40, self.runtimes)
+                    self.baseline, self.output, "a" * 40, self.runtimes, self.node_license)
 
 
 if __name__ == "__main__":
