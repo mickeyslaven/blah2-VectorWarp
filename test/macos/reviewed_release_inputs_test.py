@@ -297,11 +297,15 @@ class ReviewedNodeRuntimeTest(unittest.TestCase):
         (self.root / "packaging").mkdir()
         shutil.copyfile(ROOT / "packaging/node-runtime.env",
                         self.root / "packaging/node-runtime.env")
+        self.staged_hashes = inputs.NODE_REVIEW["staged_binary_sha256"]
+        inputs.NODE_REVIEW["staged_binary_sha256"] = {}
         self.runtimes = {}
         for arch in inputs.package.ARCHES:
             runtime = self.root / arch
             (runtime / "bin").mkdir(parents=True)
             (runtime / "bin/node").write_bytes((arch + " node").encode())
+            inputs.NODE_REVIEW["staged_binary_sha256"][arch] = inputs.sha256(
+                runtime / "bin/node")
             (runtime / "standalone.json").write_text(json.dumps({
                 "node_version": inputs.NODE_REVIEW["version"],
                 "dependencies": [{
@@ -312,12 +316,17 @@ class ReviewedNodeRuntimeTest(unittest.TestCase):
             self.runtimes[arch] = runtime
 
     def tearDown(self):
+        inputs.NODE_REVIEW["staged_binary_sha256"] = self.staged_hashes
         self.temporary.cleanup()
 
     def test_accepts_exact_pinned_node_runtime(self):
         self.assertIsNone(inputs.verify_node_runtimes(self.root, self.runtimes))
 
     def test_rejects_changed_node_binary_or_source_pin(self):
+        (self.runtimes["arm64"] / "bin/node").write_bytes(b"tampered node")
+        with self.assertRaisesRegex(ValueError, "Node provenance"):
+            inputs.verify_node_runtimes(self.root, self.runtimes)
+        (self.runtimes["arm64"] / "bin/node").write_bytes(b"arm64 node")
         value = json.loads((self.runtimes["arm64"] / "standalone.json").read_text())
         value["dependencies"][0]["sha256"] = "0" * 64
         (self.runtimes["arm64"] / "standalone.json").write_text(json.dumps(value))

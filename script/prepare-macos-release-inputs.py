@@ -48,6 +48,10 @@ NODE_REVIEW = {
         "arm64": "6f32069480ec14d52b6d7b1f3c7124cfbbc46203abf5ddf5c65b127435f3f329",
         "x86_64": "cc6f41f72e3eb4460154952e56a35afdd96b6995cea51cd25e637355a2955a51",
     },
+    "staged_binary_sha256": {
+        "arm64": "614a59e57b84783a088d8f1da0d1d2d7023348d04a4453794d6ce0ac4328c269",
+        "x86_64": "632ad205dfab5ba73e3eb91fe257de5eb986c42ba57368b31ba71a061d76d121",
+    },
     "license_sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
 }
 NODE_GAP = {"index": 0, "reason": "dependency lacks formula, version, file, or sha256"}
@@ -140,10 +144,13 @@ def node_environment(checkout):
 def verify_node_runtimes(checkout, runtimes):
     node_environment(checkout)
     for arch, runtime in runtimes.items():
+        node_path = runtime / "bin/node"
         manifest = read_json(runtime / "standalone.json")
         dependencies = manifest.get("dependencies")
         node = dependencies[0] if isinstance(dependencies, list) and dependencies else None
-        if (manifest.get("node_version") != NODE_REVIEW["version"] or
+        if (node_path.is_symlink() or not node_path.is_file() or
+                sha256(node_path) != NODE_REVIEW["staged_binary_sha256"][arch] or
+                manifest.get("node_version") != NODE_REVIEW["version"] or
                 node is None or set(node) != {"file", "sha256"} or
                 node.get("file") != "node" or
                 node.get("sha256") != NODE_REVIEW["binary_sha256"][arch]):
