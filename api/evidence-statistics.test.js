@@ -336,6 +336,30 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'Held/fallback truth must be audited but never scored as a radar miss');
   assert.equal(exactPass.cpiAudit.at(-1).truth_reason, 'invalid-projection');
   exact.close();
+
+  const boundedState = new EvidenceStatistics(config, source, {
+    filename: path.join(directory, 'bounded-state.json'),
+    setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}});
+  for (let index = 0; index < 501; ++index) {
+    const hex = index.toString(16).padStart(6, '0');
+    boundedState.state.active[hex] = {id: `pass-${index}`, hex,
+      siteKey: boundedState.key, startedAt: index, lastAt: index, frames: 80,
+      physicalEligibleFrames: 80, eligibleFrames: 80, detectedFrames: 4,
+      trackedFrames: 3,
+      cpiAudit: Array.from({length: 80}, (_, row) => ({timestamp_ms: row})),
+      truthHistory: Array.from({length: 80}, (_, row) => ({timestamp_ms: row}))};
+    boundedState.finish(hex);
+  }
+  assert.equal(boundedState.state.passes.length, 500,
+    'Detailed finalized passes must remain bounded for restart-safe persistence');
+  assert.equal(boundedState.state.rollup.passes, 1);
+  assert.equal(boundedState.state.rollup.tracked, 1);
+  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 64);
+  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 64);
+  boundedState.persist();
+  assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
+    'Bounded synthetic state must remain well below the loader safety cap');
+  boundedState.close();
   fs.rmSync(directory, {recursive: true, force: true});
   console.log('PASS eligibility-filtered persistent evidence statistics');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -65,8 +65,18 @@ Deterministic regression coverage proves that a synthetic echo outside the
 ordinary gate but inside the one-second rate-derived tube is retained, while the
 ordinary exact gate is unchanged. Configuration validation and default profiles
 cover Kraken, RSPduo, USRP, dual HackRF, and generic two-channel systems. This
-fix is code/test complete locally; live deployment and a same-epoch before/after
-scorecard receipt are the next acceptance check.
+fix is deployed in `/opt/vectorwarp/releases/20261024T022506Z-time-nuisance-v1`.
+The unchanged config revision was re-attested, all three live services are
+active, processor frames advance, and the provisional endpoint reports the
+one-second radius and `bounded-event-time-rate-expanded-association-gates`.
+
+The deployment exposed a separate long-soak defect: detailed finalized passes
+and eligibility events could grow until the persisted scorecard exceeded its
+loader safety limit. The repaired persistence contract keeps a bounded detailed
+working set, compacts finalized CPI/truth histories, and rolls evicted lifetime
+headline counts forward. A 501-pass synthetic restart-state regression remains
+well below the loader cap. This storage follow-up is code/test complete and is
+the next API-only deployment acceptance check.
 
 Backend-specific mitigation remains honest about the hardware boundary:
 

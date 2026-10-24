@@ -6,8 +6,15 @@ const path = require('path');
 const {validateTruthWindow} = require('./capture-admission');
 
 const SPEED_OF_LIGHT_KM_S = 299792.458;
-const MAX_PASSES = 200000;
-const MAX_ELIGIBILITY_EVENTS = 10000;
+// Detailed finalized evidence is a bounded working set; lifetime headline
+// counts roll into state.rollup. Without this boundary a long-running node can
+// exceed the loader's safety cap and lose operational score visibility on the
+// next API restart.
+const MAX_PASSES = 500;
+const MAX_ELIGIBILITY_EVENTS = 250;
+const MAX_FINALIZED_CPI_AUDIT = 64;
+const MAX_FINALIZED_TRUTH_SAMPLES = 64;
+const MAX_STATE_INPUT_BYTES = 256 * 1024 * 1024;
 // Keep the trigger window permanently while retaining a recent tail for pass
 // diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
 // with an IQ clip when an aircraft remains eligible for more than 30 seconds.
@@ -155,6 +162,32 @@ function emptyPass(hex, flight, at, key) {
     firstTruth: null, lastTruth: null, truthHistory: [], cpiAudit: [],
     firstDetectionAt: null, firstTrackAt: null,
     detectionTimestamps: [], trackTimestamps: [], sampledBuckets: []};
+}
+
+function compactFinalizedPass(pass) {
+  if (!pass || typeof pass !== 'object') return pass;
+  if (Array.isArray(pass.cpiAudit) && pass.cpiAudit.length > MAX_FINALIZED_CPI_AUDIT)
+    pass.cpiAudit = pass.cpiAudit.slice(-MAX_FINALIZED_CPI_AUDIT);
+  if (Array.isArray(pass.truthHistory) &&
+      pass.truthHistory.length > MAX_FINALIZED_TRUTH_SAMPLES)
+    pass.truthHistory = pass.truthHistory.slice(-MAX_FINALIZED_TRUTH_SAMPLES);
+  return pass;
+}
+
+function accumulateRollup(state, key, old) {
+  const eligible = old.eligibleFrames >= 3;
+  if (old.siteKey !== key) return;
+  state.rollup.passes += 1;
+  if (old.physicalEligibleFrames < 3) state.rollup.outOfConfig += 1;
+  if (old.physicalEligibleFrames >= 3 && !eligible) state.rollup.truthUnusable += 1;
+  if (eligible) state.rollup.eligible += 1;
+  if (eligible && old.detectedFrames >= 3) state.rollup.detected += 1;
+  if (eligible && old.trackedFrames >= 3) state.rollup.tracked += 1;
+  if (eligible && old.trackedFrames < 3) state.rollup.missed += 1;
+  if (eligible && old.detectedFrames < 3 && old.trackedFrames < 3)
+    state.rollup.eligibleNoRadar += 1;
+  if (eligible && old.detectedFrames >= 3 && old.trackedFrames < 3)
+    state.rollup.detectedNotTracked += 1;
 }
 
 function associationTimestamp(value) {
@@ -479,7 +512,8 @@ class EvidenceStatistics {
   load() {
     try {
       const stat = this.fs.statSync(this.filename);
-      if (!stat.isFile() || stat.size > 64 * 1024 * 1024) throw new Error('Statistics file is invalid or oversized');
+      if (!stat.isFile() || stat.size > MAX_STATE_INPUT_BYTES)
+        throw new Error('Statistics file is invalid or exceeds the 256 MiB migration limit');
       const value = JSON.parse(this.fs.readFileSync(this.filename, 'utf8'));
       if (!['vectorwarp-evidence-statistics-v1', this.state.schema].includes(value?.schema) || !Array.isArray(value.passes) ||
           !value.active || typeof value.active !== 'object') throw new Error('Statistics file has an invalid schema');
@@ -508,6 +542,10 @@ class EvidenceStatistics {
         siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
         missed: 0, outOfConfig: 0, truthUnusable: 0,
         eligibleNoRadar: 0, detectedNotTracked: 0};
+      for (const pass of this.state.passes) compactFinalizedPass(pass);
+      while (this.state.passes.length > MAX_PASSES)
+        accumulateRollup(this.state, this.key, this.state.passes.shift());
+      this.trimEligibilityEvents();
     } catch (error) {
       if (error.code !== 'ENOENT') this.state.error = error.message;
     }
@@ -891,21 +929,10 @@ class EvidenceStatistics {
     }
     delete pass.detectionTimestamps;
     delete pass.trackTimestamps;
+    compactFinalizedPass(pass);
     this.state.passes.push(pass); delete this.state.active[hex];
     while (this.state.passes.length > MAX_PASSES) {
-      const old = this.state.passes.shift(); const eligible = old.eligibleFrames >= 3;
-      if (old.siteKey !== this.key) continue;
-      this.state.rollup.passes += 1;
-      if (old.physicalEligibleFrames < 3) this.state.rollup.outOfConfig += 1;
-      if (old.physicalEligibleFrames >= 3 && !eligible) this.state.rollup.truthUnusable += 1;
-      if (eligible) this.state.rollup.eligible += 1;
-      if (eligible && old.detectedFrames >= 3) this.state.rollup.detected += 1;
-      if (eligible && old.trackedFrames >= 3) this.state.rollup.tracked += 1;
-      if (eligible && old.trackedFrames < 3) this.state.rollup.missed += 1;
-      if (eligible && old.detectedFrames < 3 && old.trackedFrames < 3)
-        this.state.rollup.eligibleNoRadar += 1;
-      if (eligible && old.detectedFrames >= 3 && old.trackedFrames < 3)
-        this.state.rollup.detectedNotTracked += 1;
+      accumulateRollup(this.state, this.key, this.state.passes.shift());
     }
   }
 
