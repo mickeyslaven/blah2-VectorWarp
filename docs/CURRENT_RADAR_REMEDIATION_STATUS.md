@@ -115,7 +115,19 @@ complete; all four OS/package lifecycle passes are complete.
 
 ## Completed validation
 
-### v0.1.23 pre-release hardening
+### v0.1.24 pre-release hardening
+
+The immutable `v0.1.23` candidate tag was cancelled before any release was
+created or published. Its merge-only Homebrew job correctly rejected newly
+tracked public source roots that were absent from the archive allowlist. The
+replacement candidate explicitly admits `examples`, `oprs`, and `schemas`.
+Operational `results/` remain excluded with `export-ignore`, and the release
+test rejects a synthetic results tree so ADS-B positions, RF settings, host
+paths, hashes, and other site telemetry cannot enter a public source archive.
+A second regression packages the complete current Git archive so future
+top-level source additions fail during pull-request review instead of after
+tagging. Repository policy prevents rewriting or deleting the unpublished
+candidate tag, so the corrected release advances to `v0.1.24`.
 
 The release candidate adds permanent regression gates for defects found during
 the cross-platform acceptance pass:
@@ -136,6 +148,18 @@ the cross-platform acceptance pass:
 - Linux package/source collision tests remain required in the Fedora/Debian CI
   jobs because their GNU `stat`, `realpath`, systemd, and package-manager
   semantics cannot be accepted from macOS fixtures.
+- A release-matrix browser run exposed that a transient API timeout remained in
+  the diagnostic state after a later successful refresh. Frame and view errors
+  now clear only after the corresponding update succeeds; deterministic fake-
+  clock and real-Chromium tests force one timeout and prove recovery.
+- Strix Flash-Next is controller-owned and must never be started directly with
+  `systemctl`. A direct start correctly fails without a compute lease. The
+  supported interactive lease path passed admission, runtime-provenance,
+  model-readiness and normal-release checks on 2026-10-24, then retained the
+  model as `FLASH_IDLE` with the model service active and the tailnet proxy
+  inactive until claimed. Monitoring now checks controller readiness/residency
+  instead of misclassifying the default heavy-batch admission snapshot, whose
+  retired local-radar recorder evidence is irrelevant to interactive Qwen.
 
 Independent pre-release review passed the API and macOS universal/standalone
 fixture suites and found no additional reproducible runtime defect. It requires

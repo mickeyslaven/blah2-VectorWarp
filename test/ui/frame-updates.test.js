@@ -95,8 +95,11 @@ function clockedPage(cpi = .5) {
   await plot.advance(200);
   assert.equal(rendered.length, 0, 'No fake or empty frame is rendered');
   plot.state.frame = {timestamp: 100, data: [[1]]};
+  await plot.advance(200);
+  assert.equal(plot.context.window.blah2FrameError, 'render failed', 'Expose the current refresh failure');
   await plot.advance(400);
   assert.deepEqual(rendered, [100], 'Retry the same frame after a render error');
+  assert.equal(plot.context.window.blah2FrameError, null, 'A successful refresh clears a recovered error');
   await plot.advance(400);
   assert.deepEqual(rendered, [100], 'Do not repaint unchanged data');
   plot.state.fail = true;

@@ -722,6 +722,7 @@
     refreshing = true;
     try {
       await renderers[view]();
+      window.blah2ViewLastError = null;
     } catch (error) {
       window.blah2ViewLastError = error?.message || String(error);
       setState('Data unavailable', 'bad');

@@ -1,2 +1,3 @@
 # Unified patches retain upstream context whitespace for exact application.
 script/patches/*.patch -whitespace
+results export-ignore
