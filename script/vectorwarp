@@ -238,11 +238,13 @@ def main(args):
         print(action(command))
     elif command == 'status':
         return subprocess.run([SYSTEMCTL, '--no-pager', '--full', 'status', API,
-                               SOCKET, BROKER, PROCESSOR, RESTART], check=False).returncode
+                               SOCKET, BROKER, PROCESSOR, RESTART,
+                               'vectorwarp-heimdall.service', 'vectorwarp-kraken-build.service'], check=False).returncode
     elif command == 'logs':
         return subprocess.run(['/usr/bin/journalctl', '--no-pager', '-n', '100',
                                '-u', API, '-u', BROKER, '-u', PROCESSOR,
-                               '-u', RESTART], check=False).returncode
+                               '-u', RESTART, '-u', 'vectorwarp-heimdall.service',
+                               '-u', 'vectorwarp-kraken-build.service'], check=False).returncode
     elif command in ('version', '--version'):
         metadata = PREFIX / 'PACKAGE-METADATA'
         if not metadata.is_file():

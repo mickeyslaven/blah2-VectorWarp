@@ -108,6 +108,7 @@ starting radar. `vectorwarp --help` lists its fixed actions:
 | `vectorwarp restart` | Stop and start the full stack with saved settings. |
 | `vectorwarp status` | Show service status. |
 | `vectorwarp logs` | Show recent logs. |
+| `vectorwarp build-kraken` | Build the pinned local Kraken companion from source; never start RF. |
 | `vectorwarp version` | Show the installed version. |
 | `vectorwarp help` | Show all commands and examples. |
 
@@ -420,7 +421,13 @@ administrator must inspect that installation's units and stop them manually.
 In **Settings**, select a receiver profile; supply its endpoint or device
 details; set frequency, sample rate, site coordinates, and a writable recording
 directory; then correct any validation errors. Install and configure
-KrakenSDR Suite separately before using its endpoint.
+the pinned local Kraken companion with `vectorwarp build-kraken` when using a
+DEB/RPM package and the loopback endpoint `127.0.0.1`. This explicit administrator
+action downloads checksum-pinned sources and builds under a restricted compiler
+account; package installation and ordinary start never download or build it.
+The packages do not redistribute the upstream Heimdall binary. Native source
+builds already include the companion. A remote Kraken endpoint remains separately
+managed. Do not run an unrelated local Heimdall on the same ports.
 Follow the [receiver-specific steps](SETUP.md) for Kraken, RSPduo, USRP or HackRF.
 
 For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.

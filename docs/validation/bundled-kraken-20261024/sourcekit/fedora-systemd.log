@@ -1,0 +1,77 @@
+podman
+Failed to connect to audit log, ignoring: Invalid argument
+Pinned Kraken source build complete. No receiver was started.
+Job for vectorwarp-kraken-build.service failed because the control process exited with error code.
+See "systemctl status vectorwarp-kraken-build.service" and "journalctl -xeu vectorwarp-kraken-build.service" for details.
+{
+  "ok": true,
+  "kit_id": "2f77e9ad702a4499fda52ab27f3dd05f873b28f89f312ef8da32bd7011376a53",
+  "companion": "/var/lib/vectorwarp-adapters/kraken/2f77e9ad702a4499fda52ab27f3dd05f873b28f89f312ef8da32bd7011376a53/generations/dc3255c42edd20a400747010f6c9e6b4188ba9ed7b0be6c7823a60f22c6b5cc7",
+  "sourceReceipt": {
+    "schema": 2,
+    "sources": {
+      "suite": {
+        "revision": "3a95e19f7f81b078e60a4f6eb86e738418756f5e",
+        "url": "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/3a95e19f7f81b078e60a4f6eb86e738418756f5e",
+        "sha256": "b8c33ba26a20b10fa186f09af4a6ee76bc4b7e436a68287346227d4e8b2e80d0"
+      },
+      "rtlsdr": {
+        "revision": "08fb08165ecfcdd954c7a20cb1bbfbc159294f0e",
+        "url": "https://codeload.github.com/krakenrf/librtlsdr/tar.gz/08fb08165ecfcdd954c7a20cb1bbfbc159294f0e",
+        "sha256": "6163c70a895b0fd8e310f54650353a58441d2b24b7a650c8086055af910d1079"
+      },
+      "uwebsockets": {
+        "revision": "3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5",
+        "url": "https://codeload.github.com/uNetworking/uWebSockets/tar.gz/3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5",
+        "sha256": "8b51c1457bfd873e44f72f6660d9aef6672eeb1c62739522a242e6904fff8356"
+      },
+      "usockets": {
+        "revision": "86097c490263ab662d62e8e7b541390bdec7d149",
+        "url": "https://codeload.github.com/uNetworking/uSockets/tar.gz/86097c490263ab662d62e8e7b541390bdec7d149",
+        "sha256": "0d341b94157720d9081d47348a8cba87ae350b6607c2f7d2ccf102353cbda553"
+      }
+    },
+    "platform": "linux",
+    "architecture": "x86_64",
+    "protocol": "MCHT-v1;MCHQ-v2",
+    "sourceManifestSha256": "af13520465bbcd88a94eb759aa77ed20e3a81f2691d86acb5bc0c9cee0e60d3d",
+    "toolchain": {
+      "compiler": "c++ (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)",
+      "cmake": "cmake version 4.3.0"
+    },
+    "buildFlags": [
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+      "-DCMAKE_PREFIX_PATH=/usr",
+      "DETACH_KERNEL_DRIVER=ON"
+    ],
+    "binaryReproducibilityClaimed": false,
+    "patches": {
+      "heimdall-v2-macos.patch": "6d388f764fee98efc6ff4b35970b78640e34a2c213da0115c862c544ebded411",
+      "heimdall-v2-coherent-channel-gains.patch": "490d09972d3f91796a96e0701fb359538a5fb812f99430e18dd453242066d4b1",
+      "heimdall-v2-ingest-timing.patch": "17eca842bef5d8caeceba79bbfa11b65fa2cf777ce2062cf9e25ac2d6bcf9461",
+      "heimdall-v2-portable-cpu.patch": "050ba85e94539127023ad6bd00586e5ea862113568535d722e8b6f117aefe4f8",
+      "kraken-librtlsdr-macos.patch": "5e8a061b3b9fa766a7616ded1ad23800e862e06b3a964dd9d7213190c3cf49ce"
+    },
+    "artifacts": {
+      "bin/heimdall": "0d2d9d627471fc9bbffa19d79c43315b6e85ed379731f3488834985b192a5dda"
+    },
+    "driverLinkage": "pinned-static",
+    "patchSha256": "6d388f764fee98efc6ff4b35970b78640e34a2c213da0115c862c544ebded411",
+    "coherentChannelGainsPatchSha256": "490d09972d3f91796a96e0701fb359538a5fb812f99430e18dd453242066d4b1",
+    "driverPatchSha256": "5e8a061b3b9fa766a7616ded1ad23800e862e06b3a964dd9d7213190c3cf49ce",
+    "hardwareTested": false,
+    "suiteLicense": "No repository-wide license file supplied by this pinned upstream revision."
+  },
+  "hardwareTested": false,
+  "checks": [
+    "real-systemd-sandbox",
+    "unprivileged-compiler",
+    "root-owned-publication",
+    "kit-mismatch-fails",
+    "prior-generation-retained",
+    "no-usb"
+  ]
+}

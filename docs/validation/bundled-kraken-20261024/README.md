@@ -40,10 +40,33 @@ are documented in `docs/INSTALL.md`. CI adds Ubuntu x86/arm64, Fedora and Debian
 12 arm64 (Pi userspace) source-build checks; those remote CI results are not
 included in the local pass claims above.
 
-Not accepted for release: the pinned upstream Suite has no repository-wide
-redistribution terms, and the existing Homebrew contract forbids binary bottles.
-Published native packages are deliberately blocked pending the same local
-source-build-kit experience for package users. Full DEB/RPM install/upgrade/
-rollback testing and real systemd ownership validation remain required after
-that path exists. Physical PPS/ADC UTC and measured real USB/RF latency remain
-hardware limitations; software host clocks do not remove them.
+## Local source-kit completion
+
+The earlier binary-redistribution blocker is addressed by shipping only our
+pinned build instructions/patches in DEB/RPM packages and stripping Heimdall,
+its private driver and upstream assets. `vectorwarp build-kraken` explicitly
+downloads and builds locally, under a dedicated unprivileged compiler identity.
+Package installation and ordinary start never download software or start RF.
+
+`sourcekit/fedora-systemd.log` records the real installed CLI/systemd path in a
+disposable Fedora 44 container on Strix with no USB devices mounted. It compiled
+the pinned sources, published a verified root-owned generation, rejected a
+subsequently tampered source kit, and retained the prior generation. The final
+build took 21.6 seconds wall time with a 913 MiB memory peak. Root publication
+and compiler-boundary review passed. Environment/toolchain versions and receipt
+hashes are preserved beside the log; no upstream binaries are committed.
+
+Additional results: Linux installer/build contracts 18/18; kit/security/rollback
+tests 7 passed plus one Node-dependent test skipped in the minimal Fedora
+container (all 8 passed locally); launcher 33/33 locally; package quiescence/
+upgrade 17/17 in Fedora. The general Linux build-contract fixture initially
+lacked FFTW development libraries; installing `fftw-devel` inside the disposable
+container made all 18 pass. The minimal container lacks Node, so its launcher
+configuration-reader case was not counted as a Fedora pass. The new GitHub
+installed-source-kit systemd job also passed on the eeda0e3 head.
+
+Complete DEB/RPM package matrices run when this stacked PR targets main; their
+results are separate from the source-kit acceptance above. Physical PPS/ADC UTC
+and measured real USB/RF latency remain hardware limitations; software host
+clocks do not remove them. Timing remains provisional and missing PPS does not
+suppress coherent detections, provisional associations or corpus collection.

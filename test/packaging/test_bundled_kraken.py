@@ -155,6 +155,13 @@ class BundledKraken(unittest.TestCase):
         for item in ('bin/heimdall', 'share/heimdall/build.json', 'share/heimdall/sbom.cdx.json'):
             self.assertIn(item, package)
         self.assertIn('--node /opt/vectorwarp/runtime/node/bin/node', package)
+        self.assertIn('run rm -f "$STAGE/opt/vectorwarp/current/bin/heimdall"', package)
+        self.assertIn('"$STAGE/opt/vectorwarp/current/share/heimdall"', package)
+        self.assertNotIn('"$STAGE/opt/vectorwarp/current/bin/heimdall"\n    "$STAGE', package)
+        build_unit = (ROOT / 'contrib/systemd/vectorwarp-kraken-build.service.in').read_text()
+        self.assertIn('PrivateDevices=yes', build_unit)
+        self.assertIn('ProtectSystem=strict', build_unit)
+        self.assertNotIn('[Install]', build_unit)
 
 
 if __name__ == '__main__': unittest.main()
