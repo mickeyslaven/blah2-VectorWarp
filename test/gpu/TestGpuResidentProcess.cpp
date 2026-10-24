@@ -1,5 +1,6 @@
 #include "GpuResidentWire.h"
 #include "CpuEvidenceDouble.h"
+#include "ResidentReplayFixture.h"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -60,6 +61,13 @@ public:
  void abort(const Packet&p)override{proof_.control(p,Phase::rejected);}
  void restore(const Packet&p)override{check(p.restoreTrackerSlot==0,"Restore did not use input slot");proof_.control(p,Phase::idle);}
  void settle(const Packet&p)override{proof_.control(p,Phase::settled);}
+ void snapshot(const Packet&p)override{namespace rr=blah2::resident_replay;
+  auto s=rr::test::fixture(c_,1,p.frame,p.tracker.transaction);
+  const auto raw=m_.read(Section::canonical);s.blocks[13].bytes.assign(raw.data,raw.data+raw.size);
+  Sha256 hash;hash.add(raw.data,raw.size);s.identity.rawIqHash=hash.finish();
+  const auto device=m_.read(Section::device);Sha256 deviceHash;deviceHash.add(device.data,device.size);s.identity.deviceHash=deviceHash.finish();
+  auto encoded=rr::encode(s,c_);if(mode_=="snapshot-corrupt")encoded.back()^=1;
+  const auto out=m_.bytes(Section::replaySnapshot);std::memcpy(out.data,encoded.data(),encoded.size());proof_.control(p,Phase::settled);}
  void shutdown(const Packet&p)override{proof_.control(p,Phase::settled);}
 };
 void reaped(){
@@ -82,6 +90,16 @@ void normal(const std::string&exe){
  check(s->phase()==Phase::settled,"Rejected alias destroyed usable session");s->restore({reference.data(),reference.size()},{tracker.data(),tracker.size()});check(s->phase()==Phase::idle,"Independent restore failed");
  v=prepared(*s,2);{const auto cp=referenceState(v.referenceCheckpoint);check(cp.frames==1&&cp.updates==2,"Second Ready source counters changed");}s->commit(v.trackerToken);s->published();s.reset();reaped();
 }
+void snapshots(const std::string& exe){for(const char* mode:{"snapshot","snapshot-corrupt"}){
+ ++cases;setenv("VECTORWARP_TEST_RESIDENT_MODE",mode,1);auto config=configuration();blah2::resident_replay::test::enable(config);
+ blah2::GpuProcessOptions options;options.executable=exe;options.startupMs=2000;options.frameMs=2000;
+ auto s=createProcess(config,options);reject([&]{s->snapshot();},"Idle snapshot accepted");
+ auto v=prepared(*s,1);reject([&]{s->snapshot();},"Prepared snapshot accepted");
+ s->commit(v.trackerToken);reject([&]{s->snapshot();},"Unsettled snapshot accepted");s->published();
+ if(std::string(mode)=="snapshot-corrupt"){reject([&]{s->snapshot();},"Malformed worker snapshot accepted");check(s->phase()==Phase::poisoned,"Corrupt snapshot did not poison worker");}
+ else{check(!s->snapshot().empty(),"Snapshot empty");reject([&]{s->snapshot();},"Duplicate snapshot accepted");
+  check(s->phase()==Phase::settled,"Duplicate snapshot changed settled state");}
+ s.reset();reaped();}}
 void failure(const std::string&exe,const char*mode){
  ++cases;const auto start=std::chrono::steady_clock::now();bool failed=false;std::unique_ptr<Session>s;
  try{s=session(exe,mode);auto v=prepared(*s,1);s->commit(v.trackerToken);s->published();}catch(const std::exception&){failed=true;}
@@ -91,7 +109,7 @@ void failure(const std::string&exe,const char*mode){
 }
 int main(int argc,char**argv)try{
  if(argc==2&&std::strcmp(argv[1],"--resident-v5")==0)return runWorker([](const Config&c,const Mapping&m){return std::make_unique<Double>(c,m);});
- check(argc==1,"Unexpected CPU process fixture argument");const std::string exe=argv[0];normal(exe);
+ check(argc==1,"Unexpected CPU process fixture argument");const std::string exe=argv[0];normal(exe);snapshots(exe);
  for(const char*mode:{"init-error","init-timeout","reference-error","radar-exit","frame-timeout","commit-exit","mask-substitution"})failure(exe,mode);
  unsetenv("VECTORWARP_TEST_RESIDENT_MODE");std::cout<<"COMPLETE resident-process CPU-only cases="<<cases<<" checks="<<checks<<" gpu_execution=0\n";return 0;
 }catch(const std::exception&e){std::cerr<<"FAIL resident-process: "<<e.what()<<'\n';return 1;}

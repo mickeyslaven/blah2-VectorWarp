@@ -110,6 +110,7 @@ set_tests_properties(gpuDriverDiagnostics PROPERTIES TIMEOUT 30)
 
 # CPU-only resident ABI11 and result-publication regressions; no device/module is loaded.
 add_executable(testGpuResidentWire ${PROJECT_ROOT}/test/gpu/TestGpuResidentWire.cpp
+  ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
 target_compile_features(testGpuResidentWire PRIVATE cxx_std_17)
 target_include_directories(testGpuResidentWire PRIVATE
@@ -120,6 +121,7 @@ set_tests_properties(residentWireCpuBoundary PROPERTIES TIMEOUT 10)
 # Compile these four exact sources directly: the CPU double deliberately owns
 # gpuSiblingPath, so linking blah2GpuProcess would duplicate that definition.
 add_executable(testGpuResidentProcess ${PROJECT_ROOT}/test/gpu/TestGpuResidentProcess.cpp
+  ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProcess.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProof.cpp)
@@ -129,6 +131,24 @@ target_include_directories(testGpuResidentProcess PRIVATE
 target_link_libraries(testGpuResidentProcess PRIVATE Threads::Threads)
 add_test(NAME residentProcessCpuBoundary COMMAND testGpuResidentProcess)
 set_tests_properties(residentProcessCpuBoundary PROPERTIES TIMEOUT 10)
+
+add_executable(testResidentReplaySnapshot ${PROJECT_ROOT}/test/gpu/TestResidentReplaySnapshot.cpp)
+target_compile_features(testResidentReplaySnapshot PRIVATE cxx_std_17)
+target_include_directories(testResidentReplaySnapshot PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+target_link_libraries(testResidentReplaySnapshot PRIVATE blah2GpuResidentProcess)
+add_test(NAME residentReplaySnapshotCpuContract COMMAND testResidentReplaySnapshot)
+set_tests_properties(residentReplaySnapshotCpuContract PROPERTIES TIMEOUT 10)
+if(TARGET blah2GpuResidentVulkan)
+  add_executable(testResidentReplayShaders ${PROJECT_ROOT}/test/gpu/TestResidentReplayShaders.cpp)
+  target_compile_features(testResidentReplayShaders PRIVATE cxx_std_17)
+  target_compile_definitions(testResidentReplayShaders PRIVATE VKFFT_BACKEND=0)
+  target_compile_options(testResidentReplayShaders PRIVATE -Wno-missing-field-initializers)
+  target_include_directories(testResidentReplayShaders PRIVATE ${PROJECT_ROOT}/src ${PROJECT_ROOT}/src/process/ambiguity)
+  target_include_directories(testResidentReplayShaders SYSTEM PRIVATE ${VKFFT_ROOT}/vkFFT ${Vulkan_INCLUDE_DIRS} ${GLSLANG_C_INCLUDE})
+  target_link_libraries(testResidentReplayShaders PRIVATE Vulkan::Vulkan glslang::glslang glslang::SPIRV glslang::glslang-default-resource-limits Threads::Threads)
+  add_test(NAME residentReplayShaderCpuCompile COMMAND testResidentReplayShaders)
+  set_tests_properties(residentReplayShaderCpuCompile PROPERTIES TIMEOUT 30)
+endif()
 
 add_executable(testGpuResultJson ${PROJECT_ROOT}/test/gpu/TestGpuResultJson.cpp
   ${PROJECT_ROOT}/src/data/IqData.cpp ${PROJECT_ROOT}/src/data/Map.cpp
@@ -196,12 +216,14 @@ if(BLAH2_TEST_PHYSICAL_GPU)
   if(BLAH2_TEST_GPU_DEVICE AND TARGET testGpuResidentTbdPhysical)
     add_test(NAME gpuPhysicalResidentTbd COMMAND testGpuResidentTbdPhysical
       $<TARGET_FILE:blah2GpuWorker> ${BLAH2_TEST_GPU_DEVICE})
+    add_test(NAME gpuPhysicalResidentReplay COMMAND testGpuResidentTbdPhysical
+      $<TARGET_FILE:blah2GpuWorker> ${BLAH2_TEST_GPU_DEVICE} --snapshot-parity)
   endif()
   add_test(NAME gpuPhysicalEndurance COMMAND testAcceleration auto --endurance)
   set(physicalGpuTests gpuPhysicalDirectDft gpuPhysicalNumerics gpuPhysicalClutter
     gpuPhysicalCapacity gpuPhysicalEndurance)
   if(BLAH2_TEST_GPU_DEVICE AND TARGET testGpuResidentTbdPhysical)
-    list(APPEND physicalGpuTests gpuPhysicalResidentTbd)
+    list(APPEND physicalGpuTests gpuPhysicalResidentTbd gpuPhysicalResidentReplay)
   endif()
   set_tests_properties(${physicalGpuTests} PROPERTIES
     TIMEOUT 240 RUN_SERIAL TRUE LABELS physical-gpu)
