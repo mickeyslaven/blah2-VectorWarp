@@ -669,10 +669,12 @@
 
   async function renderCalibration() {
     setupPlotScaffold('insight-content-wide');
-    const campaign = await apiJson('/api/bearing/manifold-progress');
-    const progress = campaign?.progress || {};
-    const automation = campaign?.automation || {};
-    const recorder = campaign?.recorder || {};
+    const campaign = await apiJson('/api/array-calibration/status');
+    const bearingCampaign = campaign?.bearing || {};
+    const progress = bearingCampaign.progress || {};
+    const automation = bearingCampaign.automation || {};
+    const recorder = campaign?.corpus || {};
+    const reference = campaign?.reference || {};
     const detectionCampaign = campaign?.detection || {};
     const detectionProgress = detectionCampaign.progress || {};
     const detectionAutomation = detectionCampaign.automation || {};
@@ -689,22 +691,22 @@
     const blockers = array(progress.next_actions);
     const failureText = array(automation.failures).filter(Boolean);
     const detectionFailureText = array(detectionAutomation.failures).filter(Boolean);
-    const active = Boolean(campaign.active_model);
+    const active = Boolean(bearingCampaign.active_model);
     const frequencyHz = finite(campaign.frequency_hz);
     document.getElementById('view-detail').innerHTML = `<div class="overview-grid">
       <section class="info-card"><h2>Campaign state</h2><dl>
         <div><dt>Frequency</dt><dd>${frequencyHz === null ? '—' : `${number(frequencyHz / 1e6, 3)} MHz`}</dd></div>
-        <div><dt>Recorder</dt><dd>${recorder.enabled ? 'Collecting automatically' : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
+        <div><dt>Shared corpus recorder</dt><dd>${recorder.enabled ? (recorder.automatic ? 'Collecting automatically' : 'Collecting — explicitly enabled') : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
         <div><dt>Fitter</dt><dd>${escapeHtml(humanize(automation.state))}${automation.running ? ' · running now' : ''}</dd></div>
         <div><dt>Candidate</dt><dd>${automation.qualified ? 'Qualified on held-out passes' : 'Not qualified'}</dd></div>
-        <div><dt>Live manifold</dt><dd>${active ? escapeHtml(campaign.active_model) : 'Ideal steering remains active'}</dd></div>
+        <div><dt>Live bearing manifold</dt><dd>${active ? escapeHtml(bearingCampaign.active_model) : 'Ideal steering remains active'}</dd></div>
         <div><dt>Last sample</dt><dd>${progress.last_sample_at ? escapeHtml(timeLabel(progress.last_sample_at)) : 'Waiting for accepted evidence'}</dd></div>
       </dl><p class="view-note">${escapeHtml(progress.limitation || 'Collection and production qualification are separate.')}</p></section>
       <section class="info-card"><h2>Next evidence needed</h2>${blockers.length ? `<ul class="calibration-blockers">${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : '<p class="view-note">Collection gates are complete. Held-out performance gates determine whether the candidate can activate.</p>'}${failureText.length ? `<p class="view-note evaluation-note">Latest fit: ${escapeHtml(failureText.join(' '))}</p>` : ''}</section>
       <section class="info-card"><h2>Reference stability</h2><dl>
-        <div><dt>Reference samples</dt><dd>${integer(recorder.referenceSamples)}</dd></div>
-        <div><dt>Latest phase step</dt><dd>${number(recorder.maxReferencePhaseStepDeg, 2)}°</dd></div>
-        <div><dt>Latest amplitude step</dt><dd>${number(recorder.maxReferenceAmplitudeStepDb, 2)} dB</dd></div>
+        <div><dt>Reference samples</dt><dd>${integer(reference.samples)}</dd></div>
+        <div><dt>Latest phase step</dt><dd>${number(reference.maximum_phase_step_deg, 2)}°</dd></div>
+        <div><dt>Latest amplitude step</dt><dd>${number(reference.maximum_amplitude_step_db, 2)} dB</dd></div>
         <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
       </dl></section>
       <section class="info-card"><h2>Detection manifold shadow</h2><dl>
@@ -715,7 +717,7 @@
         <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · receipt harness ready / native export required</dd></div>
         <div><dt>Supported sectors / bins</dt><dd>${integer(detectionProgress.covered_sectors)} / ${integer(detectionProgress.fit_bins)}</dd></div>
         <div><dt>Candidate</dt><dd>Diagnostic only — production qualification disabled</dd></div>
-        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtimeCandidatePath ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
+        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtime_candidate_path ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
         <div><dt>Promotion</dt><dd>Never automatic</dd></div>
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
       </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>

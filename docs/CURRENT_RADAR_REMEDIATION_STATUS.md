@@ -392,3 +392,76 @@ the configured memory threshold), and the guarded service is currently
 inactive. No guard was bypassed; the independent Codex red-team review was used
 for release gating instead.
 
+## 2026-10-24 527 MHz live and bearing-recorder checkpoint
+
+The live chain is healthy on release
+`/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix`:
+Heimdall, API and processor are active, frames advance, the receiver readback is
+527 MHz / 2.4 MS/s / five coherent channels with applied gains
+`[2.7,2.7,1.4,1.4,3.7]` dB, GPU/clutter state is ready, and no rail or numeric
+fault is present. ADS-B is online through both local feeds and adsb.fi;
+adsb.lol is independently degraded and does not take the aggregate feed down.
+
+The current one-hour provisional scorecard has 45 finalized eligible passes:
+4 raw-detected, 3 tracked, 42 missed, and 1 detected-but-not-tracked. Thus raw
+detection yield is 8.9% and tracking yield is 6.7%. These figures are
+operationally useful but remain `decision_grade:false` because Kraken/Heimdall
+does not provide a qualified RF UTC epoch.
+
+The bearing-manifold recorder is active without error. It currently holds 15
+accepted aircraft samples from 3 independent passes / 2 aircraft, concentrated
+in the 315--45 degree azimuth region; no 45-degree sector or 60-beam fit bin is
+ready and no measured bearing model is active. The separate fixed-transmitter
+anchor has 699 JSONL rows (the status snapshot reported 658 accepted reference
+samples) and remains highly repeatable, while its correlation with the ideal
+manifold remains poor. The corpus must not be promoted until pass, aircraft,
+sector, holdout and bin gates pass.
+
+A diagnostic compatibility defect was found: the recorder writes
+`vectorwarp-manifold-sample-v2`, while `evaluateBearing()` accepted only v1,
+causing the diagnostic to falsely report no replay-capable samples. The local
+fix accepts both schemas and has a focused v2 regression test; both bearing
+diagnostic and cache test suites pass. It is not yet deployed in this
+checkpoint.
+
+## 2026-10-24 shared corpus / separate manifold cleanup
+
+Bearing and detection are now described explicitly as two independent models
+fed by one immutable installed-array response corpus. The canonical status
+contract is `/api/array-calibration/status`; it separates the aircraft corpus,
+the fixed-transmitter reference stream, bearing model state and detection model
+state. The old bearing-prefixed endpoints remain compatibility views. The UI
+uses the canonical contract and no longer implies that the detection runtime
+candidate or reference anchor is part of the bearing model. A missing API field
+that hid the detection runtime-candidate path was also corrected.
+
+The bearing diagnostic now accepts both v1 and v2 recorder rows and uses the
+recorded physical channel response and local covariance independently of the
+upstream detection-fusion mode. This permits a covariance-MVDR bearing replay
+while live detection uses noise-whitened fusion; it does not mix or activate a
+model.
+
+Two historical 527 MHz v1 corpora were copied into a non-rotating bearing-only
+archive without changing the radar:
+
+- `bearing-history/527mhz-bearing-v1-20261023-24.jsonl`: 993 rows, SHA-256
+  `e6020fbce766772442b50c2ddabdaaa8eac54bb1a77704ec9f6b9ba538f871c8`;
+- `bearing-history/527mhz-bearing-v1-20261023.jsonl`: 1,083 rows, SHA-256
+  `bd8ebb997068b5534548d5cc35e956665b62a5407d2515695e8d175d28341fcc`.
+
+These 2,076 rows are retained for bearing-only diagnostic evaluation. They are
+not part of the live v2 corpus or detection fitting. Both lack the complete v2
+applied-gain/identity contract, and the older block also lacks receiver-gain
+metadata, so neither is eligible for automatic production promotion.
+
+The cleaned bearing-only replay can read both archives even while live
+detection uses noise-whitened fusion. The 993-row block covers 38 aircraft / 5
+sectors; its best channel-order hypothesis has 29.24 degree aircraft-macro
+median error and 63.2% within 45 degrees. The 1,083-row block covers 63 aircraft
+/ 7 sectors; its best hypothesis has 35.94 degree median error and 57.1% within
+45 degrees. The configured order's uncorrected medians are 128.06 and 115.74
+degrees. These are useful diagnostic evidence of a large installed phase-axis
+bias or multipath distortion, not authorization to change the user-confirmed
+physical mapping or activate a model; the v1 rows lack the new identity and
+timing contract.
+

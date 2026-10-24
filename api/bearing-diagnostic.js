@@ -375,14 +375,14 @@ function evaluateBearing(samples, config) {
   if (config.process?.bearing?.reference_anchor === 'fixed_site_projected' ||
       samples.some(sample => sample?.bearing_replay?.reference_anchor === 'fixed_site_projected'))
     return {available: false, reason: 'Experimental projected replay evidence is excluded from ordinary bearing diagnostics.'};
-  const fusion = config.process?.surveillance_fusion?.mode;
   if (config.process?.bearing?.manifold_file) return {available: false,
     reason: 'Channel-order replay is disabled while a measured manifold is active; its channel identities are already site-specific.'};
-  if (!['coherent_beam_bank'].includes(fusion)) return {available: false,
-    reason: fusion === 'noise_whitened_beam_bank' ?
-      'Exact mapping replay needs the reference whitening covariance.' :
-      'Mapping replay requires coherent regular-polygon fusion.'};
-  const valid = samples.filter(sample => sample?.schema === 'vectorwarp-manifold-sample-v1' &&
+  // These rows contain the physical per-channel complex response and, for
+  // covariance-MVDR, the local covariance needed by the bearing replay. The
+  // upstream detection-fusion mode therefore does not determine whether the
+  // bearing-only replay is valid.
+  const validSchemas = new Set(['vectorwarp-manifold-sample-v1', 'vectorwarp-manifold-sample-v2']);
+  const valid = samples.filter(sample => validSchemas.has(sample?.schema) &&
     Array.isArray(sample.response) && Array.isArray(sample.reference_weights) &&
     sample.bearing_replay && (sample.bearing_replay.method !== 'covariance_mvdr' || Array.isArray(sample.covariance)) &&
     finite(sample.truth?.bearing_deg_true));
