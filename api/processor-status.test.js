@@ -306,9 +306,17 @@ assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverStartup, 'injected'), fal
 assert.equal(Object.hasOwn(sanitizedUsrp.value.receiverHealth.deviceTime, 'injected'), false);
 
 const hackrfStartup = {schema: 1, receiver: 'HackRF', status: 'accepted',
+  hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+  setterAcceptance: true,
   requested: {frequency: 527000000, sampleRate: 6000000,
     serials: ['a1', 'b2'], lnaGainDb: [16, 32], vgaGainDb: [20, 40],
     ampEnabled: [false, true]},
+  derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+    independentReadback: false},
+  deviceIdentity: {complete: true,
+    resolvedSerials: ['000000000000000000000000000000a1',
+      '000000000000000000000000000000b2'],
+    roles: ['reference', 'surveillance']},
   synchronization: {policy: 'shared-clock-hardware-trigger-v1',
     clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
     startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
@@ -345,11 +353,22 @@ assert.equal(status({...hackrfLive, receiverHealth: hackrfRecovering}).valid, tr
 for (const receiverStartup of [
   {...hackrfStartup, requested: {...hackrfStartup.requested, serials: ['a1', 'a1']}},
   {...hackrfStartup, requested: {...hackrfStartup.requested, lnaGainDb: [15, 32]}},
+  {...hackrfStartup, setterAcceptance: false},
+  {...hackrfStartup, hardwareVerified: true},
+  {...hackrfStartup, derived: {...hackrfStartup.derived, independentReadback: true}},
+  {...hackrfStartup, deviceIdentity: {...hackrfStartup.deviceIdentity,
+    resolvedSerials: ['000000000000000000000000000000b2',
+      '000000000000000000000000000000a1']}},
   {...hackrfStartup, synchronization: {...hackrfStartup.synchronization,
     physicalWiringVerified: true}},
   {...hackrfStartup, status: 'pending'}
 ]) assert.equal(status({...hackrfLive, receiverStartup}).valid, false,
   JSON.stringify(receiverStartup));
+const pendingHackrf = {...hackrfStartup, status: 'pending', setterAcceptance: false,
+  deviceIdentity: {complete: false, resolvedSerials: ['', ''],
+    roles: ['reference', 'surveillance']}, synchronization: null};
+assert.equal(status({...hackrfLive, receiverStartup: pendingHackrf}).valid, true,
+  'A fully qualified pending receipt is a valid transient');
 for (const pairing of [
   {...hackrfHealth.pairing, policy: 'best-effort'},
   {...hackrfHealth.pairing, state: 'requalifying'},

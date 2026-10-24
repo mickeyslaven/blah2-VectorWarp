@@ -75,12 +75,22 @@ acceptance UI claimed that radar status could not confirm the settings. The
 validated status contract now preserves all per-channel getter values and the
 Settings UI renders them with the physical-RF and exact-UTC limitations.
 
-## Backend 4 — dual HackRF (pending serial trace)
+## Backend 4 — dual HackRF (complete)
 
-Settings enumerated from code: two serial identities/roles, centre frequency,
-sample rate, per-radio LNA gain, per-radio VGA gain, per-radio RF amplifier,
-hardware-sync role, clock-output role, start order, paired callback/FIFO epoch,
-bounded drain/requalification state, and retry budget.
+| Setting / contract | End-to-end trace | State | Residual / operational meaning |
+| --- | --- | --- | --- |
+| Serial identities and roles | HackRF profile/default/UI requires two distinct serials -> YAML parser/factory -> one libhackrf enumeration snapshot -> unique suffix resolution -> exact list-index open -> status/UI/sidecar -> replay backend validation | A R P X T | Enumeration attests the two full USB serial strings and their reference/surveillance role mapping. It does not prove external RF, clock or trigger wiring. |
+| Centre frequency and sample rate | `capture.fc/fs` -> factory -> both device setters with checked return codes -> status/UI/sidecar -> binary header/replay validation | A P X T | libhackrf has no post-set getter for these values. The receipt therefore says setter acceptance, `hardwareVerified:false`, `readbackAvailable:false` and `physicalRfVerified:false`. Fixtures cover 2, 6 and 20 MS/s without claiming sustained USB throughput. |
+| Baseband filter | libhackrf `hackrf_set_sample_rate` automatic filter selection -> explicit derived-policy provenance in status/UI/sidecar | A P X T | The library documents a bandwidth at most 0.75 times the sample rate. VectorWarp neither overrides nor independently reads back the analog filter, so it records the policy rather than inventing an exact bandwidth. |
+| Per-radio LNA/VGA gain and RF amplifier | schema/default/UI step/range validation -> separate role-indexed setters -> checked return codes -> status/UI/sidecar -> replay settings fingerprint | A P X T | Values remain reference/surveillance specific. Replay consumes already captured signed-byte IQ; it does not rerun setters or normalize unequal gain. No independent gain readback exists. |
+| Shared-clock and trigger topology | fixed policy -> surveillance CLKOUT enable and hardware-sync input enable -> surveillance stream start before reference -> status/UI/sidecar | A P T | API success proves calls were accepted, not that cables, clock lock or RF sample phase are correct. The operator must wire and test the official topology; `physicalWiringVerified:false`. |
+| Paired callback continuity and recovery | each callback length/progression plus both FIFO lengths/drop counters -> atomic equal-size pair publication -> common relative epoch -> status/sidecar/replay | A P X T | Short, asymmetric, overflow or divergent spans clear both FIFOs and roll recording incomplete. Capture drains one callback per device, then automatically requalifies on two matched pairs. Nine consecutive faults exhaust the eight-retry budget. |
+| Relative time and conditioning | signed-byte interleaved callbacks -> complex sample pairs -> relative sample epoch/CPI provenance -> portable recording/replay | A P X T | There is no device sample counter or RF/UTC timestamp. Event time stays `exact:false`, `uncertaintyBounded:false`; recovered pairing is provisional. No hidden DC removal or gain equalization is applied. |
+
+The API formerly discarded native setter acceptance and the resolved full
+serial-to-role mapping. Fresh processor status and Settings now preserve both,
+while explicitly separating them from unavailable RF-value, wiring and time
+readback.
 
 ## OS lifecycle passes (pending after all four backend traces)
 

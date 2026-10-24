@@ -91,8 +91,8 @@ const SETTINGS_SYNC = Object.freeze({
     'capture.device.gain_lna', 'capture.device.gain_vga',
     'capture.device.amp_enable'
   ].map(configField => Object.freeze({configField, authority: 'vectorwarp',
-    direction: 'direct-tuning', confirmation: 'unsupported-readback',
-    hardwareReadback: false})))
+    direction: 'direct-tuning', confirmation: 'processor-startup-setter-acceptance',
+    hardwareReadback: false, physicalRfVerified: false})))
 });
 
 function plainObject(value) {

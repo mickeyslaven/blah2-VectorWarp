@@ -61,8 +61,8 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
 The code-enumerated receiver-setting ledger is maintained in
-`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken, RSPduo and USRP are complete;
-HackRF, then the four OS/package lifecycle passes remain serially queued.
+`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken, RSPduo, USRP and dual HackRF are
+complete; the four OS/package lifecycle passes remain serially queued.
 
 ## Completed validation
 
@@ -116,6 +116,11 @@ HackRF, then the four OS/package lifecycle passes remain serially queued.
   additionally proves fault-to-drain-to-two-pair requalification, post-fault CPI
   publication, incomplete old recording, automatic clean successor recording,
   provisional replay, and an eight-fault terminal retry budget.
+  The setting-trace follow-up preserves unique full serial-to-role resolution,
+  per-radio setting acceptance and libhackrf's derived baseband-filter policy
+  through validated status, Settings and recording provenance. These are
+  explicitly not presented as RF-setting, external-wiring or hardware-time
+  readback.
 - Portable recording provenance passed deterministic Kraken, RSPduo, USRP, and
   HackRF-shaped live-to-record-to-replay round trips, missing/legacy sidecar,
   receiver mismatch, settings-fingerprint tamper, and decision-grade rejection

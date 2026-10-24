@@ -639,9 +639,9 @@ function receiverAcceptanceBoundary(config) {
   if (receiverType === 'HackRF') return {receiverType, mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through two serial-selected libhackrf devices',
-    acknowledgement: 'Every current open/set/start return code is checked and can report failure',
-    positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'No post-set frequency, rate, gain, amplifier, clock, or synchronization readback is implemented.',
+    acknowledgement: 'processor startup receipt confirms exact serial resolution and successful open/set/start return codes',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'Setter acceptance is preserved in fresh radar status, but no post-set frequency, rate, gain, amplifier, clock, or synchronization readback is available.',
     hardwareReadback: false, physicalReceiverVerified: false};
   return {receiverType, mode: 'unknown', configurationAuthority: 'none',
     writePath: 'unsupported', acknowledgement: 'none', hardwareReadback: false,

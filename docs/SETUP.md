@@ -146,9 +146,15 @@ endurance test; defensive error handling is not evidence that it is resolved.
 4. Set frequency, sample rate, LNA/VGA gain and amplifier selection, then choose
    **Save & Restart**.
 
-The adapter checks both devices' open, setting and start return codes. It does
-not read back frequency, gain or clock synchronization afterward. The 6 MS/s
-replay check is not a physical USB-throughput or coherence test.
+The adapter resolves each configured serial suffix uniquely from one device
+enumeration, opens those exact reference/surveillance devices, and checks every
+open, setting and start return code. Fresh processor status and the Settings
+startup panel preserve the resolved full serials and per-radio settings.
+libhackrf automatically chooses a baseband filter no wider than 0.75 times the
+sample rate; VectorWarp records that policy but cannot read back its exact
+analog state. Frequency, gain, clock/trigger wiring and hardware time likewise
+have no post-set readback. Setter acceptance is therefore useful operational
+evidence, not a physical RF or coherence test.
 
 ## Receiver settings: application and verification
 

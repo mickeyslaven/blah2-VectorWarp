@@ -501,6 +501,16 @@ async function rejected(promise, code, pattern) {
     readbackBoundary: 'UHD startup getters and radar status confirm frequency, rate, gain, antenna, and subdevice mapping before streaming; this is device-API configuration readback, not physical RF verification.',
     hardwareReadback: true, physicalReceiverVerified: false
   });
+  const hackrfDirect = {capture: {replay: {state: false}, device: {type: 'HackRF'}}};
+  assert.deepEqual(receiverAcceptanceBoundary(hackrfDirect), {
+    receiverType: 'HackRF', mode: 'live',
+    configurationAuthority: 'VectorWarp startup configuration',
+    writePath: 'processor startup through two serial-selected libhackrf devices',
+    acknowledgement: 'processor startup receipt confirms exact serial resolution and successful open/set/start return codes',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'Setter acceptance is preserved in fresh radar status, but no post-set frequency, rate, gain, amplifier, clock, or synchronization readback is available.',
+    hardwareReadback: false, physicalReceiverVerified: false
+  });
   const synchronizer = createReceiverSynchronizer({kraken: {
     synchronize: async () => assert.fail('Direct receivers have no external synchronization call.')
   }});

@@ -14,6 +14,14 @@ building VectorWarp.
 
 ## Pairing and discontinuity contract
 
+At startup VectorWarp resolves each configured suffix uniquely against one
+libhackrf enumeration, preserves the full serial-to-role mapping, and checks all
+frequency, sample-rate, per-radio LNA/VGA/amplifier, clock-output, hardware-sync
+and stream-start return codes. libhackrf's sample-rate setter automatically
+selects a baseband filter at most 0.75 times the rate; that derived policy is
+recorded, but the exact filter and the other RF settings have no independent
+readback.
+
 VectorWarp stages callbacks from both radios and publishes IQ only after an
 equal-sized reference/surveillance callback pair has arrived. A short callback,
 two callbacks from one radio before its mate, unequal pair size, a FIFO

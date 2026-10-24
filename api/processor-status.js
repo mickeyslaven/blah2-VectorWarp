@@ -483,6 +483,10 @@ function hackrfStartup(payload, outer, errors) {
     errors.push(`${name} has an invalid live HackRF schema`); return null;
   }
   const requested = payload.requested;
+  if (payload.hardwareVerified !== false || payload.readbackAvailable !== false ||
+      payload.physicalRfVerified !== false ||
+      payload.setterAcceptance !== (payload.status === 'accepted'))
+    errors.push(`${name} has invalid application/readback boundaries`);
   const frequency = positive32(requested.frequency, `${name}.requested.frequency`, errors);
   const sampleRate = positive32(requested.sampleRate, `${name}.requested.sampleRate`, errors);
   if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
@@ -509,6 +513,34 @@ function hackrfStartup(payload, outer, errors) {
   if (!Array.isArray(ampEnabled) || ampEnabled.length !== 2 ||
       ampEnabled.some(value => typeof value !== 'boolean'))
     errors.push(`${name}.requested.ampEnabled requires two booleans`);
+  if (!object(payload.derived) ||
+      payload.derived.basebandFilterPolicy !==
+        'libhackrf-sample-rate-auto-at-most-0.75-fs' ||
+      payload.derived.independentReadback !== false)
+    errors.push(`${name}.derived has invalid baseband-filter provenance`);
+  const identitySource = payload.deviceIdentity;
+  let deviceIdentity = null;
+  if (!object(identitySource) || typeof identitySource.complete !== 'boolean' ||
+      !Array.isArray(identitySource.resolvedSerials) ||
+      identitySource.resolvedSerials.length !== 2 ||
+      !Array.isArray(identitySource.roles) || identitySource.roles.length !== 2 ||
+      identitySource.roles[0] !== 'reference' ||
+      identitySource.roles[1] !== 'surveillance') {
+    errors.push(`${name}.deviceIdentity has an invalid schema`);
+  } else {
+    const resolvedSerials = identitySource.resolvedSerials.map((value, index) =>
+      text(value, `${name}.deviceIdentity.resolvedSerials[${index}]`, errors, false));
+    if (payload.status === 'accepted') {
+      if (!identitySource.complete || !resolvedSerials[0] || !resolvedSerials[1] ||
+          resolvedSerials[0] === resolvedSerials[1] ||
+          !resolvedSerials.every((value, index) => value.endsWith(serials[index] || '\0')))
+        errors.push(`${name}.deviceIdentity does not uniquely match the requested roles`);
+    } else if (identitySource.complete || resolvedSerials.some(Boolean)) {
+      errors.push(`${name}.pending deviceIdentity must be incomplete`);
+    }
+    deviceIdentity = {complete: identitySource.complete, resolvedSerials,
+      roles: ['reference', 'surveillance']};
+  }
   let synchronization = null;
   if (payload.status === 'pending') {
     if (payload.synchronization !== null)
@@ -530,9 +562,12 @@ function hackrfStartup(payload, outer, errors) {
       hardwareTimestampAvailable: false};
   }
   return {schema: 1, receiver: 'HackRF', status: payload.status,
+    hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+    setterAcceptance: payload.setterAcceptance,
     requested: {frequency, sampleRate, serials, lnaGainDb, vgaGainDb,
       ampEnabled: Array.isArray(ampEnabled) ? ampEnabled.slice(0, 2) : []},
-    synchronization};
+    derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+      independentReadback: false}, deviceIdentity, synchronization};
 }
 function hackrfHealth(payload, outer, errors) {
   const name = 'receiverHealth';

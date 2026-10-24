@@ -114,6 +114,10 @@ async function expectReject(promise, pattern) {
     item.direction === 'direct-tuning' &&
     item.confirmation === 'processor-startup-uhd-readback' &&
     item.hardwareReadback === true && item.physicalRfVerified === false));
+  assert.ok(getSettingsMapping('HackRF').every(item =>
+    item.direction === 'direct-tuning' &&
+    item.confirmation === 'processor-startup-setter-acceptance' &&
+    item.hardwareReadback === false && item.physicalRfVerified === false));
 
   const readyPlan = manager.plan({receiverType: 'Kraken'}, result);
   assert.equal(readyPlan.executable, false);

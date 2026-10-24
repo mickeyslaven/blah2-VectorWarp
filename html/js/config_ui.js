@@ -1617,7 +1617,7 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
-      if (['RspDuo', 'Usrp'].includes(activeConfig.capture?.device?.type)) {
+      if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
         startup.className = 'upstream-status receiver-startup';
@@ -1651,6 +1651,10 @@ function renderReceiverOverload(status, target = document.getElementById('receiv
 
 function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
+  if (activeConfig.capture?.device?.type === 'HackRF') {
+    renderHackrfStartup(status, target);
+    return;
+  }
   if (activeConfig.capture?.device?.type === 'Usrp') {
     renderUsrpStartup(status, target);
     return;
@@ -1715,6 +1719,75 @@ function renderReceiverStartup(status, target = document.getElementById('receive
   }
   const note = document.createElement('p');
   note.textContent = 'These checks do not measure RF performance, filtering or phase coherence.';
+  details.append(summary, table, note);
+  target.appendChild(details);
+}
+
+function renderHackrfStartup(status, target = document.getElementById('receiver-startup')) {
+  if (!target) return;
+  const detailsOpen = target.querySelector('details')?.open === true;
+  const heading = document.createElement('h3');
+  heading.textContent = 'Dual HackRF startup';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  const processor = status?.processorFresh && status.processor?.receiver === 'HackRF' &&
+    status.processor?.input === 'live' ? status.processor : null;
+  const receipt = processor?.receiverStartup;
+  if (!processor) message.textContent = 'No current HackRF status. Saved settings apply at startup.';
+  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (!receipt) message.textContent = 'HackRF startup receipt unavailable. Rebuild HackRF support to see it.';
+  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through libhackrf…';
+  else if (!receipt.setterAcceptance) message.textContent = 'HackRF started without qualified setter acceptance.';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. The last HackRF startup calls were accepted.';
+  else message.textContent = status.radar === 'receiving' ?
+    'Both HackRF startup paths accepted settings; receiving provisional paired frames.' :
+    'Both HackRF startup paths accepted settings; waiting for provisional paired frames.';
+  target.replaceChildren(heading, message);
+  if (!receipt) return;
+  const requested = receipt.requested;
+  const device = activeConfig.capture.device;
+  const matches = requested.frequency === activeConfig.capture.fc &&
+    requested.sampleRate === activeConfig.capture.fs &&
+    JSON.stringify(requested.serials) === JSON.stringify(device.serial) &&
+    JSON.stringify(requested.lnaGainDb) === JSON.stringify(device.gain_lna) &&
+    JSON.stringify(requested.vgaGainDb) === JSON.stringify(device.gain_vga) &&
+    JSON.stringify(requested.ampEnabled) === JSON.stringify(device.amp_enable);
+  if (!matches) {
+    const mismatch = document.createElement('p');
+    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
+    target.appendChild(mismatch);
+  }
+  const details = document.createElement('details');
+  details.open = detailsOpen;
+  const summary = document.createElement('summary');
+  summary.textContent = 'Startup setter details';
+  const table = document.createElement('table');
+  const caption = document.createElement('caption');
+  caption.textContent = 'libhackrf setter acceptance, not RF or synchronization readback';
+  table.appendChild(caption);
+  const resolved = receipt.deviceIdentity?.resolvedSerials || [];
+  const yesNo = values => Array.isArray(values) ?
+    values.map(value => value ? 'On' : 'Off').join(' / ') : 'Unavailable';
+  const rows = [
+    ['Resolved reference / surveillance', resolved.join(' / ') || 'Unavailable'],
+    ['Frequency', `${requested.frequency} Hz`],
+    ['Sample rate', `${requested.sampleRate} S/s`],
+    ['LNA gain reference / surveillance', `${requested.lnaGainDb.join(' / ')} dB`],
+    ['VGA gain reference / surveillance', `${requested.vgaGainDb.join(' / ')} dB`],
+    ['RF amplifier reference / surveillance', yesNo(requested.ampEnabled)],
+    ['Clock output / trigger input role', `${receipt.synchronization?.clockOutputRole || 'Unavailable'} / ${receipt.synchronization?.hardwareTriggerRole || 'Unavailable'}`],
+    ['Baseband filter', 'libhackrf automatic (at most 0.75 × sample rate)']
+  ];
+  for (const [name, value] of rows) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row'; label.textContent = name;
+    const cell = document.createElement('td');
+    cell.textContent = String(value);
+    row.append(label, cell); table.appendChild(row);
+  }
+  const note = document.createElement('p');
+  note.textContent = 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.';
   details.append(summary, table, note);
   target.appendChild(details);
 }

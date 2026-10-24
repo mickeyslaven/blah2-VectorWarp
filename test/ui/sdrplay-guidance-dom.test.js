@@ -149,6 +149,44 @@ const check = async () => {
     usrpReceipt.requested.gains[1] = 21;
     window.renderReceiverStartup(usrpLive);
     assert.match(usrpTarget.textContent, /Running settings differ/);
+
+    Object.assign(saved, setupDefaults());
+    saved.capture.device = {type: 'HackRF',
+      serial: ['a1', 'b2'], gain_lna: [16, 32], gain_vga: [20, 40],
+      amp_enable: [false, true]};
+    saved.capture.fs = 6000000;
+    await window.renderConfiguration();
+    const hackrfTarget = window.document.getElementById('receiver-startup');
+    assert.match(hackrfTarget.textContent, /No current HackRF status/);
+    const hackrfReceipt = {schema: 1, receiver: 'HackRF', status: 'accepted',
+      hardwareVerified: false, readbackAvailable: false, physicalRfVerified: false,
+      setterAcceptance: true,
+      requested: {frequency: saved.capture.fc, sampleRate: saved.capture.fs,
+        serials: ['a1', 'b2'], lnaGainDb: [16, 32], vgaGainDb: [20, 40],
+        ampEnabled: [false, true]},
+      derived: {basebandFilterPolicy: 'libhackrf-sample-rate-auto-at-most-0.75-fs',
+        independentReadback: false},
+      deviceIdentity: {complete: true,
+        resolvedSerials: ['000000000000000000000000000000a1',
+          '<img src=x onerror=alert(1)>'], roles: ['reference', 'surveillance']},
+      synchronization: {policy: 'shared-clock-hardware-trigger-v1',
+        clockOutputRole: 'surveillance', hardwareTriggerRole: 'surveillance',
+        startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
+        hardwareTimestampAvailable: false}};
+    const hackrfLive = {radar: 'receiving', processorFresh: true,
+      processor: {receiver: 'HackRF', input: 'live', state: 'live',
+        receiverStartup: hackrfReceipt}};
+    window.renderReceiverStartup(hackrfLive);
+    assert.match(hackrfTarget.textContent, /accepted settings; receiving provisional paired frames/);
+    assert.match(hackrfTarget.textContent, /setter acceptance, not RF or synchronization readback/);
+    assert.match(hackrfTarget.textContent, /at most 0.75 × sample rate/);
+    assert.match(hackrfTarget.textContent, /Pairing and event time remain provisional/);
+    assert.equal(hackrfTarget.querySelector('img'), null,
+      'HackRF receipt strings must be text, not HTML');
+    assert.doesNotMatch(hackrfTarget.textContent, /Running settings differ/);
+    hackrfReceipt.requested.lnaGainDb[1] = 24;
+    window.renderReceiverStartup(hackrfLive);
+    assert.match(hackrfTarget.textContent, /Running settings differ/);
     console.log('SDRplay guidance DOM fixture passed.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

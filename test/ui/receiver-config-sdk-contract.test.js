@@ -68,6 +68,10 @@ assert.ok(gainIndex >= 0 && readbackIndex >= 0 && gainIndex < readbackIndex,
 // libhackrf reports success/failure for the current open/set/start calls. The
 // path checks those codes, but does not independently query the applied RF
 // values after setting them.
+assert.match(hackrf, /libhackrf-sample-rate-auto-at-most-0\.75-fs/,
+  'HackRF must preserve libhackrf derived baseband-filter behavior');
+assert.match(hackrf, /"deviceIdentity"/,
+  'HackRF must preserve the resolved serial-to-role mapping');
 for (const call of ['hackrf_set_freq', 'hackrf_set_sample_rate',
   'hackrf_set_amp_enable', 'hackrf_set_lna_gain', 'hackrf_set_vga_gain'])
   assert.match(hackrf, new RegExp(`status = ${call}\\([^;]+;\\s*check_status\\(status,`),

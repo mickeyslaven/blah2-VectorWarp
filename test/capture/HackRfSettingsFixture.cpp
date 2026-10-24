@@ -116,6 +116,20 @@ int main() {
     HackRf receiver("HackRF", 527000000, rate, "/unused", &record,
       {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
     receiver.start();
+    rapidjson::Document startup;
+    startup.Parse(receiver.startup_receipt_json().c_str());
+    assert(!startup.HasParseError() && startup["setterAcceptance"].GetBool());
+    assert(!startup["hardwareVerified"].GetBool() &&
+      !startup["readbackAvailable"].GetBool() &&
+      !startup["physicalRfVerified"].GetBool());
+    assert(startup["derived"]["basebandFilterPolicy"] ==
+      "libhackrf-sample-rate-auto-at-most-0.75-fs");
+    assert(!startup["derived"]["independentReadback"].GetBool());
+    assert(startup["deviceIdentity"]["complete"].GetBool());
+    assert(std::string(startup["deviceIdentity"]["resolvedSerials"][0].GetString()) ==
+      "000000000000000000000000000000a1");
+    assert(std::string(startup["deviceIdentity"]["resolvedSerials"][1].GetString()) ==
+      "000000000000000000000000000000b2");
     IqData first(16), second(16);
     receiver.process(&first, &second);
     assert(applied[0].lna == 16 && applied[1].lna == 32);

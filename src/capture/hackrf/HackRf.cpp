@@ -188,6 +188,7 @@ std::string HackRf::startup_receipt_json() const
   document.AddMember("status", rapidjson::Value(accepted ? "accepted" : "pending", allocator), allocator);
   document.AddMember("hardwareVerified",false,allocator);
   document.AddMember("readbackAvailable",false,allocator);
+  document.AddMember("physicalRfVerified",false,allocator);
   document.AddMember("setterAcceptance",accepted,allocator);
   rapidjson::Value requested(rapidjson::kObjectType);
   requested.AddMember("frequency", fc, allocator);
@@ -205,10 +206,17 @@ std::string HackRf::startup_receipt_json() const
   requested.AddMember("vgaGainDb", vga, allocator);
   requested.AddMember("ampEnabled", amplifiers, allocator);
   document.AddMember("requested", requested, allocator);
+  rapidjson::Value derived(rapidjson::kObjectType);
+  derived.AddMember("basebandFilterPolicy",
+    "libhackrf-sample-rate-auto-at-most-0.75-fs", allocator);
+  derived.AddMember("independentReadback", false, allocator);
+  document.AddMember("derived", derived, allocator);
   rapidjson::Value identity(rapidjson::kObjectType),resolved(rapidjson::kArrayType),roles(rapidjson::kArrayType);
   for(const auto& value:resolvedSerial)
     resolved.PushBack(rapidjson::Value(value.c_str(),allocator),allocator);
   roles.PushBack("reference",allocator); roles.PushBack("surveillance",allocator);
+  identity.AddMember("complete", accepted && !resolvedSerial[0].empty() &&
+    !resolvedSerial[1].empty() && resolvedSerial[0] != resolvedSerial[1], allocator);
   identity.AddMember("resolvedSerials",resolved,allocator);
   identity.AddMember("roles",roles,allocator);
   document.AddMember("deviceIdentity",identity,allocator);
