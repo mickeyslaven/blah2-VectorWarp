@@ -5,10 +5,12 @@ const fs = require('fs');
 const http = require('http');
 const {execFileSync} = require('child_process');
 const path = require('path');
-const {readConfig} = require('../api/config-store');
-const {createReceiverJournal} = require('../api/receiver-journal');
-const {createReceiverSynchronizer} = require('../api/receiver-sync');
-const {evaluateFrameLiveness} = require('../api/frame-liveness');
+// Source checkout: ../api. Installed stable helpers: ../current/api.
+const apiRoot = path.join(__dirname, fs.existsSync(path.join(__dirname, '../current/api/config-store.js')) ? '../current/api' : '../api');
+const {readConfig} = require(path.join(apiRoot, 'config-store'));
+const {createReceiverJournal} = require(path.join(apiRoot, 'receiver-journal'));
+const {createReceiverSynchronizer} = require(path.join(apiRoot, 'receiver-sync'));
+const {evaluateFrameLiveness} = require(path.join(apiRoot, 'frame-liveness'));
 
 const PROCESSOR = 'vectorwarp-processor.service';
 const HEIMDALL = 'vectorwarp-heimdall.service';

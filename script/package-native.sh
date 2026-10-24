@@ -109,6 +109,7 @@ esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
 for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
+  bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
@@ -133,6 +134,10 @@ if $TEST_ONLY; then
   [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
     die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
 else
+  # Same restriction as Formula/vectorwarp-heimdall.rb.in: source builds are
+  # supported, but the pinned Suite has no repository-wide redistribution grant.
+  # A release must ship a local source-build kit before this gate can be removed.
+  die 'bundled Heimdall binary redistribution is not cleared; use --test-only or a local source/native install'
   [[ $backend == all ]] || die 'published packages require all receiver support in one build'
   [[ $compiled_receivers == Usrp,HackRF,Kraken && $local_build_receivers == RspDuo && $artifact_test_only == false ]] ||
     die 'published package receiver manifest is incomplete'
@@ -203,6 +208,8 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 
 # The source/native installer intentionally uses the administrator's system
 # Node. Binary release packages instead use the verified private runtime.
+sed -i 's|--node /usr/bin/node|--node /opt/vectorwarp/runtime/node/bin/node|' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-heimdall.service"
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" \
   "$STAGE/usr/lib/systemd/system/vectorwarp-health-watchdog.service" \
@@ -274,6 +281,7 @@ if [[ $FORMAT == deb ]]; then
   printf 'libblah2-capture-core 1 vectorwarp (= %s-%s)\n' \
     "$VERSION" "$PACKAGE_RELEASE" >"$WORK_DIR/debian/shlibs.local"
   binaries=(
+    "$STAGE/opt/vectorwarp/current/bin/heimdall"
     "$STAGE/opt/vectorwarp/current/bin/blah2"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-mixed-worker"

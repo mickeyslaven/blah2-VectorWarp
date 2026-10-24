@@ -243,6 +243,9 @@ fi
 if [[ $GPU != OFF ]]; then cmake_args+=("-DVKFFT_ROOT=$DEPS_DIR/VkFFT"); fi
 run "${cmake_args[@]}"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
+run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
+run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
+run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
 run rm -f "$ARTIFACT_TMP/bin/testAcceleration" "$ARTIFACT_TMP/bin/testAccelerationFallback"
 
 run cp -a "$SOURCE_DIR/api" "$ARTIFACT_TMP/api"

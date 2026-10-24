@@ -340,11 +340,17 @@ bool KrakenClipRecorder::ingest(
     reset_epoch_locked("Kraken clip input dimensions changed");
     return false;
   }
-  if (!ring.empty() && (ring.back()->metadata != metadata ||
+  if (!ring.empty() && (ring.back()->metadata.size() != metadata.size() ||
+      !std::equal(metadata.begin(), metadata.begin() + header.numChannels * 8,
+        ring.back()->metadata.begin()) ||
       !std::equal(fixed.begin() + 20, fixed.begin() + 28,
         ring.back()->fixed.begin() + 20)))
     reset_epoch_locked("Kraken clip tuning or gain metadata changed");
   if (!receiptNanoseconds) receiptNanoseconds = now_nanoseconds();
+  // The USB callback anchor excludes Heimdall DSP/socket queueing. Its unknown
+  // USB/ADC delay still makes this a provisional host estimate, never ADC UTC.
+  if (header.timing.available)
+    receiptNanoseconds = static_cast<int64_t>(header.timing.realtimeNanoseconds);
   if (!haveEpoch) { nextSample = 0; haveEpoch = true; }
   hostArrivalDiscontinuity = false;
   auto timing = hostArrivalClock.observe(nextSample + header.samplesPerChannel,
@@ -582,7 +588,16 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
       auto fixed = frame->fixed;
       put_be_u32(fixed.data() + 8, count);
       output.write(fixed.data(), fixed.size());
-      output.write(frame->metadata.data(), frame->metadata.size());
+      auto metadata = frame->metadata;
+      if (fixed[3] == 'T') {
+        auto original = HeimdallFrame::decode_header(frame->fixed);
+        HeimdallFrame::decode_metadata(original, frame->metadata);
+        const auto firstSample = original.timing.firstSample + offset;
+        auto* destination = metadata.data() + channels * 8 + 24;
+        put_be_u32(destination, static_cast<uint32_t>(firstSample >> 32));
+        put_be_u32(destination + 4, static_cast<uint32_t>(firstSample));
+      }
+      output.write(metadata.data(), metadata.size());
       dataBytes += fixed.size() + frame->metadata.size();
       for (uint32_t channel = 0; channel < channels; ++channel)
       {
@@ -626,6 +641,29 @@ IqClipStatus KrakenClipRecorder::write_job(const Job& job)
       job.epochEstimateNanoseconds, job.epoch, job.firstSample,
       job.endSample, sampleRate);
     document.AddMember("eventTime", event_time_json(eventTime, allocator), allocator);
+    if (firstHeader.timing.available) {
+      const auto& t = firstHeader.timing;
+      rapidjson::Value upstream(rapidjson::kObjectType);
+      upstream.AddMember("protocol", "MCHT-v1", allocator);
+      upstream.AddMember("basis", "usb-callback-host-receipt", allocator);
+      upstream.AddMember("hardwareUtc", false, allocator);
+      upstream.AddMember("decisionGrade", false, allocator);
+      upstream.AddMember("usbAdcLatencyKnown", false, allocator);
+      upstream.AddMember("hostClockDisciplined", bool(t.flags & 4), allocator);
+      upstream.AddMember("acquisitionEpoch", t.epoch, allocator);
+      upstream.AddMember("firstUsbBufferSample", t.firstSample, allocator);
+      upstream.AddMember("firstSample", t.firstSample +
+        (std::max(job.firstSample, job.frames.front()->firstSample) - job.frames.front()->firstSample), allocator);
+      upstream.AddMember("anchorSample", t.anchorSample, allocator);
+      upstream.AddMember("transferSequence", t.transferSequence, allocator);
+      upstream.AddMember("bufferSequence", t.bufferSequence, allocator);
+      upstream.AddMember("monotonicRawNanoseconds", t.monotonicNanoseconds, allocator);
+      upstream.AddMember("taiNanoseconds", t.taiNanoseconds, allocator);
+      upstream.AddMember("realtimeNanoseconds", t.realtimeNanoseconds, allocator);
+      upstream.AddMember("clockReadSpanNanoseconds", t.clockReadSpanNanoseconds, allocator);
+      upstream.AddMember("systemMaxErrorNanoseconds", t.systemMaxErrorNanoseconds, allocator);
+      document.AddMember("upstreamTiming", upstream, allocator);
+    }
     document.AddMember("frequencyChangeCounter",
       firstHeader.frequencyChangeCounter, allocator);
     document.AddMember("groupIndex", firstHeader.currentGroupIndex, allocator);

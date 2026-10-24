@@ -302,14 +302,14 @@ the build dependencies below. On Ubuntu or Debian:
 ```bash
 sudo apt update && \
 sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
-  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
+  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
 ```
 
 On Fedora:
 
 ```bash
 sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm \
-  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel
+  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
 ```
 
 The native installer requires Node.js 22 or newer at `/usr/bin/node`, not only

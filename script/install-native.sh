@@ -317,6 +317,11 @@ if $WITH_SYSTEMD; then
   render "$ARTIFACT/systemd/vectorwarp.sudoers.in" "$temporary/vectorwarp"
   run install -m 0644 "$temporary/vectorwarp-api.service" "$unit_dir/vectorwarp-api.service"
   run install -m 0644 "$temporary/vectorwarp-processor.service" "$unit_dir/vectorwarp-processor.service"
+  if [[ -f $ARTIFACT/share/heimdall/build.json ]]; then
+    render "$ARTIFACT/systemd/vectorwarp-heimdall.service.in" "$temporary/vectorwarp-heimdall.service"
+    run install -m 0644 "$temporary/vectorwarp-heimdall.service" "$unit_dir/vectorwarp-heimdall.service"
+    run install -m 0644 "$ARTIFACT/systemd/72-vectorwarp-kraken.rules" "$udev_rule_dir/72-vectorwarp-kraken.rules"
+  fi
   run install -m 0644 "$temporary/vectorwarp-restart.service" "$unit_dir/vectorwarp-restart.service"
   run install -m 0644 "$temporary/vectorwarp-health-watchdog.service" "$unit_dir/vectorwarp-health-watchdog.service"
   run install -m 0644 "$ARTIFACT/systemd/vectorwarp-health-watchdog.timer" "$unit_dir/vectorwarp-health-watchdog.timer"

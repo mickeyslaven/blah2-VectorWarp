@@ -55,6 +55,21 @@ class RecorderTest(unittest.TestCase):
         self.assertFalse(manifest["complete"])
         self.assertIsNone(saved)
 
+    def test_timed_raw_capture_preserves_host_anchor_without_claiming_adc_utc(self):
+        packets = []
+        for sequence in range(2):
+            legacy = bytearray(fixture()); legacy[3] = ord('T')
+            extension = struct.pack('>4I10Q', 1, 96, 1, 0, 1, sequence * 4096,
+                sequence, 1000000 + sequence * 1706667, 0, 1800000000000000000,
+                100, 0, sequence, (sequence + 1) * 4096)
+            packets.append(legacy[:72] + extension + legacy[72:])
+        payload = b''.join(packets)
+        result, manifest, saved = self.run_capture(payload)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(saved, payload)
+        self.assertTrue(manifest['source_sequence_counter_available'])
+        self.assertFalse(manifest['first_header']['ingest_timing']['hardware_utc'])
+
     def test_calibration_change_rejected(self):
         result, manifest, saved = self.run_capture(fixture() + fixture(phase=3))
         self.assertNotEqual(result.returncode, 0)
