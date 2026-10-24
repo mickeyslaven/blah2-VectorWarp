@@ -20,6 +20,8 @@ var layout = {
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
+  // Live points should not reset a zoomed timing investigation.
+  uirevision: 'vectorwarp-timing',
   displayModeBar: false,
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',

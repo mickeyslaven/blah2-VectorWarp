@@ -13,7 +13,10 @@
     font: {color: '#f3eee9', family: 'Inter, system-ui, sans-serif'},
     margin: {l: 72, r: 38, t: 24, b: 58},
     hoverlabel: {namelength: 24},
-    legend: {orientation: 'h', x: 0, y: 1.08, bgcolor: 'rgba(0,0,0,0)'}
+    legend: {orientation: 'h', x: 0, y: 1.08, bgcolor: 'rgba(0,0,0,0)'},
+    // Plotly.react is used for the live insight charts. A stable revision keeps
+    // an operator's zoom/pan while fresh traces arrive.
+    uirevision: view
   };
   let refreshing = false;
 
@@ -130,6 +133,67 @@
     return `<div class="view-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>${action}</div>`;
   }
 
+  // Polling views used to assign root.innerHTML on every frame. Besides making
+  // mobile browsers visibly flash, that discards the focused table/scroll node
+  // and any browser-managed state inside it. Reconcile the small HTML views in
+  // place instead; plot views already keep a stable scaffold and use Plotly.react.
+  function renderHtml(target, markup) {
+    if (!target || target.innerHTML === markup) return;
+    // Keep the lightweight non-DOM smoke-test fixture compatible.
+    if (!document.createElement || !target.childNodes) {
+      target.innerHTML = markup;
+      return;
+    }
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    const patchNode = (current, next) => {
+      if (current.nodeType !== next.nodeType ||
+          (current.nodeType === 1 && current.tagName !== next.tagName))
+        return next.cloneNode(true);
+      if (current.nodeType === 3) {
+        if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
+        return current;
+      }
+      if (current.nodeType !== 1) return current;
+      for (const attribute of Array.from(current.attributes)) {
+        if (!next.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+      }
+      for (const attribute of Array.from(next.attributes)) {
+        if (current.getAttribute(attribute.name) !== attribute.value)
+          current.setAttribute(attribute.name, attribute.value);
+      }
+      const oldChildren = Array.from(current.childNodes);
+      const newChildren = Array.from(next.childNodes);
+      for (let index = 0; index < newChildren.length; index++) {
+        const oldChild = oldChildren[index];
+        if (!oldChild) current.appendChild(newChildren[index].cloneNode(true));
+        else {
+          const patched = patchNode(oldChild, newChildren[index]);
+          if (patched !== oldChild) current.replaceChild(patched, oldChild);
+        }
+      }
+      while (current.childNodes.length > newChildren.length)
+        current.removeChild(current.lastChild);
+      return current;
+    };
+    const oldChildren = Array.from(target.childNodes);
+    const newChildren = Array.from(template.content.childNodes);
+    for (let index = 0; index < newChildren.length; index++) {
+      const oldChild = oldChildren[index];
+      if (!oldChild) target.appendChild(newChildren[index].cloneNode(true));
+      else {
+        const patched = patchNode(oldChild, newChildren[index]);
+        if (patched !== oldChild) target.replaceChild(patched, oldChild);
+      }
+    }
+    while (target.childNodes.length > newChildren.length)
+      target.removeChild(target.lastChild);
+  }
+
+  function renderDetail(markup) {
+    renderHtml(document.getElementById('view-detail'), markup);
+  }
+
   function table(headers, rows) {
     return `<div class="data-table-wrap" tabindex="0" role="region" aria-label="Data table"><table class="data-table"><thead><tr>${headers.map(item => `<th>${escapeHtml(item)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.join('') : `<tr><td colspan="${headers.length}" class="table-empty">No current rows</td></tr>`}</tbody></table></div>`;
   }
@@ -175,7 +239,7 @@
     const load = hop && finite(timing?.cpi) !== null ? timing.cpi / hop * 100 : null;
     const receiver = config?.location?.rx?.name || 'Receiver site';
     const transmitter = config?.location?.tx?.name || 'Illuminator site';
-    root.innerHTML = `<div class="insight-stats insight-stats-four">
+    renderHtml(root, `<div class="insight-stats insight-stats-four">
       ${card(detections.length, 'Detections in latest CPI')}
       ${card(tracks.length, 'Persistent tracks')}
       ${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest detection')}
@@ -184,7 +248,7 @@
       <section class="info-card"><h2>Radar</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver)}</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter)}</dd></div><div><dt>Radio</dt><dd>${escapeHtml(config?.capture?.device?.type || 'Receiver')} · ${escapeHtml(frequencyLabel(config))}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(channelCount(config) ?? 'Unknown')} channels</dd></div></dl></section>
       <section class="info-card"><h2>Current activity</h2>${strongest ? `<dl><div><dt>Bistatic range</dt><dd>${number(strongest.delay, 2)} km</dd></div><div><dt>Doppler</dt><dd>${number(strongest.doppler, 1)} Hz</dd></div><div><dt>Signal-to-noise ratio</dt><dd>${number(strongest.snr, 1)} dB</dd></div><div><dt>Frame</dt><dd>${escapeHtml(timeLabel(detection?.timestamp))}</dd></div></dl>` : empty('No detections in the latest CPI', 'The radar is running; no return currently passes the configured detector.')}</section>
       <section class="info-card overview-links"><h2>Open a view</h2><a href="/display/locations">Possible locations <b>→</b></a><a href="/display/detections">Current detections <b>→</b></a><a href="/display/tracks">Tracks <b>→</b></a><a href="/display/health">System health <b>→</b></a><a href="/display/site">Site geometry <b>→</b></a></section>
-    </div>`;
+    </div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, 'good');
   }
 
@@ -193,7 +257,7 @@
     const rows = detectionRows(detection).sort((left, right) => (right.snr ?? -Infinity) - (left.snr ?? -Infinity));
     const strongest = rows[0];
     const body = rows.map(item => `<tr><td>${item.index + 1}</td><td>${number(item.delay, 2)}</td><td>${number(item.doppler, 1)}</td><td>${number(item.snr, 1)}</td></tr>`);
-    root.innerHTML = `<div class="insight-stats">${card(rows.length, 'Latest CPI')}${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest return')}</div>${rows.length ? table(['#', 'Bistatic range (km)', 'Doppler (Hz)', 'SNR (dB)'], body) : empty('No detections in the latest CPI', 'This is a valid live result; nothing currently passes the configured detector.')}`;
+    renderHtml(root, `<div class="insight-stats">${card(rows.length, 'Latest CPI')}${card(strongest ? `${number(strongest.snr, 1)} dB` : 'None', 'Strongest return')}</div>${rows.length ? table(['#', 'Bistatic range (km)', 'Doppler (Hz)', 'SNR (dB)'], body) : empty('No detections in the latest CPI', 'This is a valid live result; nothing currently passes the configured detector.')}`);
     setState(`Frame ${timeLabel(detection?.timestamp)}`, 'good');
   }
 
@@ -222,7 +286,7 @@
     const overall = tones.includes('bad') ? 'Attention needed' : tones.includes('warning') ? 'Monitor' : 'Healthy';
     const overallTone = tones.includes('bad') ? 'bad' : tones.includes('warning') ? 'warning' : 'good';
     const stages = Object.entries(timing || {}).filter(([key, value]) => typeof value === 'number' && finite(value) !== null && !['timestamp', 'nCpi', 'uptime_s', 'uptime_days', 'cpi_data_ms', 'cpi_hop_ms', 'cpi_overlap_fraction', 'capture_backlog_ms', 'cpi'].includes(key)).sort((left, right) => Number(right[1]) - Number(left[1]));
-    root.innerHTML = `<div class="insight-stats">${card(overall, 'Overall state', overallTone)}${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', loadTone)}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone)}${healthRow('Load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone)}${healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone)}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}${healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone)}${healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone)}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`;
+    renderHtml(root, `<div class="insight-stats">${card(overall, 'Overall state', overallTone)}${card(load === null ? '—' : `${number(load, 0)}%`, 'Load', loadTone)}${card(`${channelCount(config) ?? '—'}`, 'Channels')}${card(timing?.uptime_s === undefined ? '—' : `${number(timing.uptime_s / 3600, 1)} h`, 'Uptime')}</div><div class="health-grid"><section class="health-list">${healthRow('Radar frames', ageMs === null ? 'Unavailable' : ageMs < 1000 ? 'Live' : `${number(ageMs / 1000, 1)} s old`, `Updates every ${number(hop, 0)} ms`, freshnessTone)}${healthRow('Load', load === null ? 'Unavailable' : `${number(load, 0)}%`, processMs === null ? 'No timing data' : `${number(processMs, 1)} ms per ${number(hop, 1)} ms update`, loadTone)}${healthRow('Capture backlog', backlog === null ? 'Unavailable' : `${number(backlog, 1)} ms`, 'Captured data waiting to be processed', backlogTone)}${healthRow('Detection', config?.process?.detection?.enable === false ? 'Disabled' : 'Enabled', 'Shows current detections', config?.process?.detection?.enable === false ? 'neutral' : 'good')}${healthRow('Tracking', trackerEnabled ? 'Enabled' : 'Disabled', trackerEnabled ? `${integer(tracker?.n ?? 0)} track candidates` : 'Optional processing is off', trackerTone)}${healthRow('ADS-B', adsb.disabledForReplay ? 'Not replayed' : !adsb.enabled ? 'Disabled' : adsb.online ? 'Online' : 'Offline', adsb.disabledForReplay ? 'Not shown during replay.' : adsb.enabled ? 'For comparison only; not used by radar.' : 'Optional feed is off', adsbTone)}</section><section class="info-card"><h2>Stage times</h2>${table(['Stage', 'Latest time (ms)'], stages.map(([name, value]) => `<tr><td>${escapeHtml(humanize(name))}</td><td>${number(value, 2)}</td></tr>`))}</section></div>`);
     setState(`Updated ${timeLabel(timing?.timestamp)}`, overallTone);
   }
 
@@ -242,8 +306,8 @@
       try { sessionStorage.setItem('blah2-activity-history', JSON.stringify(activityHistory)); } catch (_) { /* Storage is optional. */ }
     }
     const latest = activityHistory[activityHistory.length - 1] || {};
-    document.getElementById('view-summary').innerHTML = `${card(latest.detections ?? 0, 'Latest detections')}${card(latest.tracks ?? 0, 'Persistent tracks')}${card(Number.isFinite(latest.snr) ? `${number(latest.snr, 1)} dB` : 'None', 'Strongest return')}${card(activityHistory.length, 'Samples this browser session')}`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">History is collected in this browser tab and is not written to the radar server.</div>`;
+    renderHtml(document.getElementById('view-summary'), `${card(latest.detections ?? 0, 'Latest detections')}${card(latest.tracks ?? 0, 'Persistent tracks')}${card(Number.isFinite(latest.snr) ? `${number(latest.snr, 1)} dB` : 'None', 'Strongest return')}${card(activityHistory.length, 'Samples this browser session')}`);
+    renderDetail(`<div class="view-note">History is collected in this browser tab and is not written to the radar server.</div>`);
     const x = activityHistory.map(item => new Date(item.time));
     const traces = [
       {x, y: activityHistory.map(item => item.detections), name: 'Detections', type: 'scatter', mode: 'lines', line: {color: colors[0], width: 2}, yaxis: 'y'},
@@ -290,8 +354,8 @@
     const receiver = config?.location?.rx || {};
     const transmitter = config?.location?.tx || {};
     if ([receiver.latitude, receiver.longitude, transmitter.latitude, transmitter.longitude].some(value => finite(value) === null)) {
-      document.getElementById('view-summary').innerHTML = card('Unavailable', 'Site coordinates');
-      document.getElementById('view-detail').innerHTML = empty('Site geometry is unavailable', 'Configure receiver and illuminator latitude and longitude in Settings.');
+      renderHtml(document.getElementById('view-summary'), card('Unavailable', 'Site coordinates'));
+      renderDetail(empty('Site geometry is unavailable', 'Configure receiver and illuminator latitude and longitude in Settings.'));
       await emptyPlot('Receiver and illuminator coordinates are required.');
       setState('Configuration incomplete', 'warning');
       return;
@@ -308,8 +372,8 @@
       return {x: path.x, y: path.y, type: 'scatter', mode: 'lines', name: `${number(value, 1)} km bistatic range`, line: {color: colors[(index + 2) % colors.length], width: 1, dash: 'dot'}, hoverinfo: 'name'};
     });
     traces.push({x: [0, tx.x], y: [0, tx.y], type: 'scatter', mode: 'lines+markers+text', name: 'Sites', text: [receiver.name || 'Receiver', transmitter.name || 'Illuminator'], textposition: ['bottom center', 'top center'], marker: {size: [13, 13], color: [colors[0], colors[1]], symbol: ['circle', 'diamond']}, line: {color: '#ac9e94', width: 2}});
-    document.getElementById('view-summary').innerHTML = `${card(`${number(baseline, 2)} km`, 'Site baseline')}${card(resolution === null ? '—' : `${number(resolution, 3)} km`, 'Range-bin resolution')}${card(frequencyLabel(config), 'Carrier frequency')}`;
-    document.getElementById('view-detail').innerHTML = `<section class="info-card"><h2>Configured sites</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver.name || 'Receiver')} · ${number(receiver.latitude, 5)}, ${number(receiver.longitude, 5)} · ${number(receiver.altitude, 0)} m</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter.name || 'Illuminator')} · ${number(transmitter.latitude, 5)}, ${number(transmitter.longitude, 5)} · ${number(transmitter.altitude, 0)} m</dd></div><div><dt>Contours</dt><dd>Constant excess-path range derived from the configured delay window</dd></div></dl></section>`;
+    renderHtml(document.getElementById('view-summary'), `${card(`${number(baseline, 2)} km`, 'Site baseline')}${card(resolution === null ? '—' : `${number(resolution, 3)} km`, 'Range-bin resolution')}${card(frequencyLabel(config), 'Carrier frequency')}`);
+    renderDetail(`<section class="info-card"><h2>Configured sites</h2><dl><div><dt>Receiver</dt><dd>${escapeHtml(receiver.name || 'Receiver')} · ${number(receiver.latitude, 5)}, ${number(receiver.longitude, 5)} · ${number(receiver.altitude, 0)} m</dd></div><div><dt>Illuminator</dt><dd>${escapeHtml(transmitter.name || 'Illuminator')} · ${number(transmitter.latitude, 5)}, ${number(transmitter.longitude, 5)} · ${number(transmitter.altitude, 0)} m</dd></div><div><dt>Contours</dt><dd>Constant excess-path range derived from the configured delay window</dd></div></dl></section>`);
     await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'East / west from receiver (km)', gridcolor: '#47362e', zerolinecolor: '#47362e'}, yaxis: {title: 'North / south from receiver (km)', gridcolor: '#47362e', zerolinecolor: '#47362e', scaleanchor: 'x', scaleratio: 1}}, plotConfig);
     setState('From active configuration', 'good');
   }
@@ -400,8 +464,8 @@
     const transmitter = config?.location?.tx || {};
     if ([receiver.latitude, receiver.longitude, transmitter.latitude, transmitter.longitude]
       .some(value => finite(value) === null)) {
-      document.getElementById('view-summary').innerHTML = card('Unavailable', 'Site coordinates');
-      document.getElementById('view-detail').innerHTML = empty('Possible locations are unavailable', 'Configure receiver and illuminator coordinates in Settings.');
+      renderHtml(document.getElementById('view-summary'), card('Unavailable', 'Site coordinates'));
+      renderDetail(empty('Possible locations are unavailable', 'Configure receiver and illuminator coordinates in Settings.'));
       await emptyPlot('Receiver and illuminator coordinates are required.');
       setState('Configuration incomplete', 'warning');
       return;
@@ -523,7 +587,7 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    document.getElementById('view-summary').innerHTML = `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`;
+    renderHtml(document.getElementById('view-summary'), `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`);
     const reference = bearingDiagnostic?.known_angle_reference;
     const referenceDiagnostic = !reference ? '' : reference.available ?
       `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
@@ -543,7 +607,7 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    document.getElementById('view-detail').innerHTML = `<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}${referenceDiagnostic}`;
+    renderDetail(`<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}${referenceDiagnostic}`);
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
@@ -573,22 +637,22 @@
       Object.entries(feed).map(([id, item]) => ({id, ...item})) : [];
     const radar = detectionRows(detection);
     const truth = config?.truth?.adsb || {};
-    document.getElementById('view-summary').innerHTML = `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Source range' : `${number(truth.display_range_km, 0)} km`, 'Range')}`;
+    renderHtml(document.getElementById('view-summary'), `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Source range' : `${number(truth.display_range_km, 0)} km`, 'Range')}`);
     const detail = document.getElementById('view-detail');
     if (!enabled) {
-      detail.innerHTML = empty('ADS-B is disabled', 'Enable ADS-B in Settings to use this page.', '<a class="button-link" href="/display/configuration">Open Settings</a>');
+      renderHtml(detail, empty('ADS-B is disabled', 'Enable ADS-B in Settings to use this page.', '<a class="button-link" href="/display/configuration">Open Settings</a>'));
       await emptyPlot('ADS-B is disabled.');
       setState('Disabled', 'warning');
       return;
     }
     if (replayTruthDisabled) {
-      detail.innerHTML = empty('ADS-B is not replayed', 'Live ADS-B overlays are hidden during replay.');
+      renderHtml(detail, empty('ADS-B is not replayed', 'Live ADS-B overlays are hidden during replay.'));
       await emptyPlot('Live ADS-B is hidden during replay.');
       setState('Not replayed', 'warning');
       return;
     }
     if (feedError) {
-      detail.innerHTML = empty('ADS-B is unavailable', 'Radar continues without it.');
+      renderHtml(detail, empty('ADS-B is unavailable', 'Radar continues without it.'));
       await emptyPlot('ADS-B feed unavailable; radar detections are not affected.');
       setState('ADS-B offline', 'bad');
       return;
@@ -597,7 +661,7 @@
       const age = sourceAgeSeconds(item.timestamp);
       return `<tr><td>${escapeHtml(item.flight || item.callsign || item.hex || item.id)}</td><td>${number(item.delay, 2)}</td><td>${number(item.doppler, 1)}</td><td>${age === null ? '—' : `${number(age, 1)} s`}</td></tr>`;
     });
-    detail.innerHTML = aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.');
+    renderHtml(detail, aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.'));
     const traces = [
       {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: 'Radar detections', marker: {size: 10, color: colors[0]}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
       {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(item => item.flight || item.callsign || ''), textposition: 'top center', marker: {size: 10, color: colors[1], symbol: 'circle-open', line: {width: 2}}, hovertemplate: '%{text}<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<extra></extra>'}
@@ -611,16 +675,16 @@
     const [config, tracker] = await Promise.all([getConfig(), apiJson('/api/tracker')]);
     const enabled = config?.process?.tracker?.enable === true;
     const tracks = array(tracker?.data);
-    document.getElementById('view-summary').innerHTML = `${card(tracker?.nActive ?? 0, 'Active')}${card(tracker?.nAssociated ?? 0, 'Associated')}${card(tracker?.nCoasting ?? 0, 'Coasting')}${card(tracker?.nTentative ?? 0, 'Tentative')}`;
+    renderHtml(document.getElementById('view-summary'), `${card(tracker?.nActive ?? 0, 'Active')}${card(tracker?.nAssociated ?? 0, 'Associated')}${card(tracker?.nCoasting ?? 0, 'Coasting')}${card(tracker?.nTentative ?? 0, 'Tentative')}`);
     const detail = document.getElementById('view-detail');
     if (!enabled) {
-      detail.innerHTML = empty('Tracking is disabled', 'Enable the tracker in Settings and restart radar processing.', '<a class="button-link" href="/display/configuration">Open Settings</a>');
+      renderHtml(detail, empty('Tracking is disabled', 'Enable the tracker in Settings and restart radar processing.', '<a class="button-link" href="/display/configuration">Open Settings</a>'));
       await emptyPlot('Tracking is disabled.');
       setState('Disabled', 'warning');
       return;
     }
     const rows = tracks.map(track => `<tr><td>${escapeHtml(track.id)}</td><td><span class="state-pill ${escapeHtml(String(track.state || '').toLowerCase())}">${escapeHtml(humanize(track.state))}</span></td><td>${number(trackRangeKm(track.delay, config), 2)}</td><td>${number(track.doppler, 1)}</td><td>${integer(track.n)}</td></tr>`);
-    detail.innerHTML = tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.');
+    renderHtml(detail, tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.'));
     const traces = [];
     tracks.forEach((track, index) => {
       const ranges = array(track.associated_delay).map(value => trackRangeKm(value, config));
@@ -658,7 +722,7 @@
     const geometryRows = [
       ...stratumRows('Excess delay km', hour.delay_strata?.bands),
       ...stratumRows('Receiver slant km', hour.receiver_slant_range_strata?.bands)];
-    root.innerHTML = `${decisionGrade ? '' : `<div class="evaluation-note"><strong>Provisional timing:</strong> ${escapeHtml(statistics.warning || 'Receiver time is not hardware-UTC-exact.')} Authoritative scorecard remains fail-closed (${integer(authoritative?.data_quality?.event_time_rejections)} rejected timing frames).</div>`}<div class="insight-stats insight-stats-four">
+    renderHtml(root, `${decisionGrade ? '' : `<div class="evaluation-note"><strong>Provisional timing:</strong> ${escapeHtml(statistics.warning || 'Receiver time is not hardware-UTC-exact.')} Authoritative scorecard remains fail-closed (${integer(authoritative?.data_quality?.event_time_rejections)} rejected timing frames).</div>`}<div class="insight-stats insight-stats-four">
       ${card(integer(lifetime.eligible_passes), 'Eligible aircraft passes')}
       ${card(percent(lifetime.tracking_yield, 1), decisionGrade ? 'Lifetime tracking yield' : 'Provisional tracking yield', decisionGrade ? undefined : 'warning')}
       ${card(integer(statistics.active_passes?.length), 'Aircraft live now')}
@@ -671,7 +735,7 @@
       <section class="info-card"><h2>Aircraft live now</h2>${activeRows.length ? table(['Aircraft', 'Status', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Delay km', 'Doppler Hz'], activeRows) : empty('No eligible aircraft live', 'Waiting for exact-timed ADS-B opportunities.')}</section>
       <section class="info-card"><h2>Recent finalized passes</h2>${finalizedRows.length ? table(['Aircraft', 'Outcome', 'Eligible CPIs', 'Detected', 'Stable tracked', 'Finalized'], finalizedRows) : empty('No finalized passes yet', 'Passes finalize after the aircraft leaves the eligible region.')}</section>
       <section class="info-card"><h2>Scoring integrity</h2><dl><div><dt>Decision grade</dt><dd>${decisionGrade ? 'Yes' : 'No — provisional operational lane'}</dd></div><div><dt>Timing policy</dt><dd>${escapeHtml(humanize(statistics.timing_policy))}</dd></div><div><dt>Association delay</dt><dd>${integer(statistics.association_lag_cpis)} CPIs · ${integer(statistics.association_lag_ms)} ms</dd></div><div><dt>UTC nuisance radius</dt><dd>±${number(statistics.provisional_event_time_uncertainty_s, 2)} s (scoring only)</dd></div><div><dt>Exact CPI frames</dt><dd>${integer(quality.exact_timed_cpi_frames)} / ${integer(quality.unique_cpi_frames)}</dd></div><div><dt>Aircraft-CPI rows</dt><dd>${integer(quality.exact_timed_aircraft_cpis)} / ${integer(quality.audited_aircraft_cpis)}</dd></div><div><dt>Pending delayed CPIs</dt><dd>${integer(quality.pending_delayed_cpis)}</dd></div><div><dt>Contract</dt><dd>${escapeHtml(String(statistics.evaluation_contract_hash || '').slice(0, 12))}</dd></div><div><dt>Nuisance accounting</dt><dd>${escapeHtml(humanize(quality.nuisance_accounting))}</dd></div></dl><p class="view-note">Live states are provisional until a pass finalizes. Tracking credit requires at least three ACTIVE, measurement-supported associations. Truth held, stale, or disagreeing beyond the contract is excluded rather than scored as a miss. The UTC nuisance radius expands validation gates using measured trajectory rates; it never steers radar processing. A provisional timing lane is never valid for acceptance decisions.</p></section>
-    </div>`;
+    </div>`);
     setState(statistics.error ? `Collection warning · ${statistics.error}` :
       !decisionGrade ? 'Provisional receiver timing · authoritative scoring blocked' :
       statistics.updated_at ? `Updated ${timeLabel(statistics.updated_at)}` : 'Waiting for eligible ADS-B evidence',
@@ -692,11 +756,11 @@
     const sectors = array(progress.sectors);
     const requirements = array(progress.requirements);
     const completion = finite(progress.evidence_completion_fraction) ?? 0;
-    document.getElementById('view-summary').innerHTML =
+    renderHtml(document.getElementById('view-summary'),
       `${card(percent(completion, 0), 'Collection gate progress', progress.collection_ready ? 'good' : 'warning')}` +
       `${card(integer(progress.independent_passes), 'Independent passes')}` +
       `${card(integer(progress.unique_aircraft), 'Unique aircraft')}` +
-      `${card(`${integer(progress.covered_sectors)}/${integer(progress.required_covered_sectors)}`, 'Covered sectors')}`;
+      `${card(`${integer(progress.covered_sectors)}/${integer(progress.required_covered_sectors)}`, 'Covered sectors')}`);
     const requirementRows = requirements.map(item => `<tr><td>${escapeHtml(item.label)}</td><td>${item.comparison === 'at_most' ? `≤ ${number(item.required, 1)}` : integer(item.required)}</td><td>${item.comparison === 'at_most' ? number(item.current, 1) : integer(item.current)}</td><td><span class="state-pill ${item.complete ? 'active' : 'coasting'}">${item.complete ? 'Ready' : 'Collecting'}</span></td></tr>`);
     const sectorRows = sectors.map(item => `<tr><td>${integer(item.from_deg)}–${integer(item.to_deg)}°</td><td>${integer(item.samples)}</td><td>${integer(item.passes)}</td><td>${integer(item.aircraft)}</td><td><span class="state-pill ${item.ready ? 'active' : 'coasting'}">${item.ready ? 'Covered' : `${integer(item.passes_needed)} passes / ${integer(item.aircraft_needed)} aircraft needed`}</span></td></tr>`);
     const blockers = array(progress.next_actions);
@@ -704,7 +768,7 @@
     const detectionFailureText = array(detectionAutomation.failures).filter(Boolean);
     const active = Boolean(bearingCampaign.active_model);
     const frequencyHz = finite(campaign.frequency_hz);
-    document.getElementById('view-detail').innerHTML = `<div class="overview-grid">
+    renderDetail(`<div class="overview-grid">
       <section class="info-card"><h2>Campaign state</h2><dl>
         <div><dt>Frequency</dt><dd>${frequencyHz === null ? '—' : `${number(frequencyHz / 1e6, 3)} MHz`}</dd></div>
         <div><dt>Shared corpus recorder</dt><dd>${recorder.enabled ? (recorder.automatic ? 'Collecting automatically' : 'Collecting — explicitly enabled') : 'Disabled'} · ${integer(progress.samples)} retained samples</dd></div>
@@ -733,7 +797,7 @@
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
       </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
-    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`;
+    <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`);
     const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
     await Plotly.react('data', [
       {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},

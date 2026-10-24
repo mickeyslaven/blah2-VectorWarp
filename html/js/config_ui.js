@@ -42,7 +42,7 @@ const CONFIG_META = {
   'capture.replay.state': ['Replay a recording', 'Use the replay file instead of live input'],
   'capture.replay.loop': ['Loop replay', 'Start the recording again after its end.'],
   'capture.replay.file': ['Replay file', 'Full path to the recording used when replay is enabled.'],
-  'capture.replay.provenance': ['Replay provenance', 'Legacy accepts unqualified recordings. Decision-grade requires bounded RF-time provenance.'],
+  'capture.replay.provenance': ['Replay provenance', 'Older recordings remain unqualified; decision-grade requires bounded RF-time provenance.'],
   'capture.replay.format': ['Recording format', 'Auto detects portable recordings; select a legacy format only when needed.'],
   'capture.replay.legacy_block_samples': ['Legacy USRP block samples', 'Required only for old USRP blocks; use the original receiver block size.'],
   'process.performance': ['Performance', 'CPU and GPU settings'],
@@ -2185,22 +2185,14 @@ async function syncConfigurationFromServer() {
     const serialized = serializeConfig(liveConfig);
     const revision = response.headers.get('ETag')?.replace(/^"|"$/g, '');
     if (serialized === originalConfig) { configRevision = revision; return; }
-    const dirty = serializeConfig(activeConfig) !== originalConfig;
-    if (dirty) {
-      pendingLiveConfig = liveConfig;
-      pendingRevision = revision;
-      updateDirtyState();
-      showMessage('Settings changed elsewhere. Reload saved settings before saving your edits.', 'warning');
-      return;
-    }
-    activeConfig = liveConfig;
-    configRevision = revision;
-    originalConfig = serialized;
-    pendingLiveConfig = null;
-    renderEditor();
-    showMessage('Loaded saved settings. Running settings may differ.', 'success');
-    scheduleValidation();
-    refreshUpstreamStatus();
+    // Never replace the editor from a background poll. Even a clean form can
+    // have a focused field, a native picker, or an expanded receiver section.
+    // Keep the confirmed remote revision pending and let the explicit Reload
+    // action apply it through the existing reset handler.
+    pendingLiveConfig = liveConfig;
+    pendingRevision = revision;
+    updateDirtyState();
+    showMessage('Settings changed elsewhere. Reload saved settings when ready.', 'warning');
   } catch (_) {
     /* The header reports connectivity; keep the last verified values visible. */
   } finally {

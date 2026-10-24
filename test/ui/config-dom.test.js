@@ -346,6 +346,27 @@ function change(input, value, event = 'input') {
       assert.equal(window.document.querySelectorAll('#settings-panel-location [data-site-action=add]').length, 2);
       if (profile.type !== 'Kraken') assert.equal(query('process.reference_synthesis.mode'), null);
     }
+      // A background revision check must not recreate a clean editor while an
+      // operator is focused in it. The explicit reload button remains the
+      // opt-in boundary for applying the remote version.
+      window.switchDevice('Kraken');
+      const focusedFrequency = query('capture.fc').querySelector('input');
+      focusedFrequency.focus();
+      saved = clone(saved);
+      saved.capture.fc += 1000;
+      revision = 'external-change';
+      Object.defineProperty(window.document, 'hidden', {configurable: true, value: false});
+      await window.syncConfigurationFromServer();
+      assert.strictEqual(query('capture.fc').querySelector('input'), focusedFrequency,
+        'Config polling must preserve the focused form control');
+      assert.strictEqual(window.document.activeElement, focusedFrequency,
+        'Config polling must not reset focus');
+      const reload = window.document.getElementById('config-reset');
+      assert.equal(reload.textContent, 'Reload saved config');
+      assert.equal(reload.disabled, false);
+      reload.click();
+      assert.notStrictEqual(query('capture.fc').querySelector('input'), focusedFrequency,
+        'Explicit reload is allowed to rebuild the editor');
     const previousGet = window.Storage.prototype.getItem;
     const previousSet = window.Storage.prototype.setItem;
     try {
