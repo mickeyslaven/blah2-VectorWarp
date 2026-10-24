@@ -68,6 +68,24 @@ measuredFusion.capture.device.heimdall.gain_control = 'fixed';
 measuredFusion.process.surveillance_fusion.manifold_file = '/tmp/detection-manifold.json';
 assert.equal(validateConfig(measuredFusion).valid, true,
   'coherent beam-bank fusion accepts a distinct detection manifold path');
+const detectionCollection = clone(measuredFusion);
+delete detectionCollection.process.surveillance_fusion.manifold_file;
+detectionCollection.truth.adsb.enabled = true;
+detectionCollection.process.surveillance_fusion.detection_manifold_automation = {
+  enabled: true,
+  corpus_path: '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl',
+  validation_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-validation.jsonl',
+  candidate_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-candidate.json'
+};
+assert.equal(validateConfig(detectionCollection).valid, true,
+  'live detection manifold collection settings survive validation');
+for (const [name, value] of [['enabled', 'true'], ['corpus_path', 'relative.jsonl'],
+  ['validation_path', 7], ['candidate_path', 'candidate.json']]) {
+  const invalid = clone(detectionCollection);
+  invalid.process.surveillance_fusion.detection_manifold_automation[name] = value;
+  assert.equal(validateConfig(invalid).valid, false,
+    `reject invalid detection manifold automation ${name}`);
+}
 for (const manifold of ['', '   ', 7, null]) {
   const invalid = clone(coherentFusion);
   invalid.process.surveillance_fusion.manifold_file = manifold;

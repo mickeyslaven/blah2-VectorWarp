@@ -399,4 +399,162 @@ positive/miss cohort with compatible frequency, installed-state and full gain-
 vector fingerprints.  Only a dense manifold that passes that held-out replay
 may be considered for a separately authorized live A/B.
 
-suites passed. One parallel CTest run transiently failed the pre-existing
+## 2026-10-24 live v0.1.28 collection deployment
+
+The signed v0.1.28 Fedora package is installed on the live Kraken node. A
+shipped configuration-validation defect blocked its new collection settings;
+commit `18b2272` repairs the schema/semantic validation and adds persistence and
+invalid-input regressions. The patch is published as PR #75 and is presently
+hot-deployed at
+`/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix`.
+
+Safe Apply produced config revision
+`7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0`
+without changing 527 MHz, 2.4 MS/s, five coherent channels, mapping or physical
+gains `[2.7,2.7,1.4,1.4,3.7]` dB. Frames advance and GPU-resident processing
+is ready. Detection-manifold automation reports `collecting`; the first
+verified checkpoint contained 20 fresh fixed-transmitter anchor samples and
+zero admitted aircraft-response samples. The old 993-row v1 corpus was rotated
+aside and is not mixed into the new identity epoch.
+
+No measured detection manifold is loaded into production. The unchanged
+ideal/noise-whitened 12-beam path with its 6 dB direct null remains active.
+Candidate promotion stays false until fresh pass-disjoint corpus and replay
+gates pass; this is live evidence collection, not a measured-weight performance
+claim.
+
+The next asynchronous corpus evaluation admitted all eight v2 response samples
+from the first post-enable aircraft pass (N523ME): 8 accepted, 0 rejected and
+1 independent pass. The fixed-transmitter anchor simultaneously advanced to
+69 samples. This first pass is in the pass-disjoint holdout partition, so it
+does not yet increment training-sector or fit-bin coverage.
+
+## 2026-10-24 integration-sensitivity live shadow
+
+Implementation is in branch `codex/integration-sensitivity-shadow`. The live
+API portion is deliberately scheduler-only: after recording integrity, exact
+sample containment, and at least three admitted CPI truth rows pass, it writes
+one immutable bounded job. It never launches replay DSP on the receiver node,
+so live processor work added by the feature is zero. Queue depth and per-clip
+wall time are hard-bounded and status is exposed at
+`/api/detection/integration-shadow`.
+
+The external worker compares 50/100/200/500 ms dwell on identical IQ across the
+deployed fusion mode, ideal coherent, noise-whitened, noncoherent, and every
+physical channel. A physical channel is excluded from its own synthesized
+reference, including on two-channel systems. ADS-B is used only after detector
+decisions for event-time scoring. One pre-fusion complex cutout per dwell also
+reports fixed-cell noncoherent, trajectory-migrated noncoherent, and
+common-phase-corrected coherent accumulation plus the phase-coherence budget.
+IQ/config hashes, atomic results, configuration immutability and the external
+wall-clock budget are enforced.
+
+Regression evidence currently includes the API queue/admission/overflow/
+deduplication suite, 2-channel reference isolation, event-time target/nuisance
+separation, incomplete-truth rejection, coherent moving-target synthetic test,
+configuration inventory persistence, and the full API pretest chain. A complete
+local processor replay ran the worker on synthetic five-channel IQ in 5.67 s,
+published an atomic result, added zero live processor work, and measured direct
+pilot phase-increment coherence above 0.9999999999. This validates execution and
+accounting, not aircraft sensitivity.
+
+The independent adversarial review initially rejected this implementation for
+real provenance, denominator, concurrency, and receipt-authentication defects.
+Those findings are now corrected. Jobs bind the exact admission document,
+native recorder sidecar, IQ, canonical config, config/receiver epochs, applied
+gain vector, producer host, and receipt-key identity. The worker requires one
+production arm, reports explicit detection/track denominators, emits no
+short-dwell-biased winner, labels the target-informed complex diagnostic as
+post-detection oracle-only, and refuses the live producer host. Result receipts
+are HMAC-SHA-256 authenticated with an owner-only key; spool writers cannot
+forge completion. Atomic slot files enforce `max_pending` across API processes,
+and an old unpublished reservation can be reclaimed only after proving its
+same-host owner PID is dead. Worker claims likewise use host/PID/binding-aware
+bounded crash recovery. Hot scans are capped by archiving completed pairs.
+
+Focused queue, worker, configuration and UI tests pass; the full API `npm test`
+chain passes; CTest discovers and passes `integrationSensitivityShadow` in a
+Kraken-only configuration. The final independent re-review passed with no
+remaining P0/P1 release blocker, including the live-owner slot regression.
+
+Deployment remains pending commit/release packaging and creation/distribution
+of the owner-only receipt key. When deployed, the queue may collect immediately,
+but Strix execution must wait for a controller compute lease and must not
+contend with Qwen. A supported Qwen lease/review was attempted; the controller
+returned conflict because its current admission state is not ready (including
+the configured memory threshold), and the guarded service is currently
+inactive. No guard was bypassed; the independent Codex red-team review was used
+for release gating instead.
+
+## 2026-10-24 527 MHz live and bearing-recorder checkpoint
+
+The live chain is healthy on release
+`/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix`:
+Heimdall, API and processor are active, frames advance, the receiver readback is
+527 MHz / 2.4 MS/s / five coherent channels with applied gains
+`[2.7,2.7,1.4,1.4,3.7]` dB, GPU/clutter state is ready, and no rail or numeric
+fault is present. ADS-B is online through both local feeds and adsb.fi;
+adsb.lol is independently degraded and does not take the aggregate feed down.
+
+The current one-hour provisional scorecard has 45 finalized eligible passes:
+4 raw-detected, 3 tracked, 42 missed, and 1 detected-but-not-tracked. Thus raw
+detection yield is 8.9% and tracking yield is 6.7%. These figures are
+operationally useful but remain `decision_grade:false` because Kraken/Heimdall
+does not provide a qualified RF UTC epoch.
+
+The bearing-manifold recorder is active without error. It currently holds 15
+accepted aircraft samples from 3 independent passes / 2 aircraft, concentrated
+in the 315--45 degree azimuth region; no 45-degree sector or 60-beam fit bin is
+ready and no measured bearing model is active. The separate fixed-transmitter
+anchor has 699 JSONL rows (the status snapshot reported 658 accepted reference
+samples) and remains highly repeatable, while its correlation with the ideal
+manifold remains poor. The corpus must not be promoted until pass, aircraft,
+sector, holdout and bin gates pass.
+
+A diagnostic compatibility defect was found: the recorder writes
+`vectorwarp-manifold-sample-v2`, while `evaluateBearing()` accepted only v1,
+causing the diagnostic to falsely report no replay-capable samples. The local
+fix accepts both schemas and has a focused v2 regression test; both bearing
+diagnostic and cache test suites pass. It is not yet deployed in this
+checkpoint.
+
+## 2026-10-24 shared corpus / separate manifold cleanup
+
+Bearing and detection are now described explicitly as two independent models
+fed by one immutable installed-array response corpus. The canonical status
+contract is `/api/array-calibration/status`; it separates the aircraft corpus,
+the fixed-transmitter reference stream, bearing model state and detection model
+state. The old bearing-prefixed endpoints remain compatibility views. The UI
+uses the canonical contract and no longer implies that the detection runtime
+candidate or reference anchor is part of the bearing model. A missing API field
+that hid the detection runtime-candidate path was also corrected.
+
+The bearing diagnostic now accepts both v1 and v2 recorder rows and uses the
+recorded physical channel response and local covariance independently of the
+upstream detection-fusion mode. This permits a covariance-MVDR bearing replay
+while live detection uses noise-whitened fusion; it does not mix or activate a
+model.
+
+Two historical 527 MHz v1 corpora were copied into a non-rotating bearing-only
+archive without changing the radar:
+
+- `bearing-history/527mhz-bearing-v1-20261023-24.jsonl`: 993 rows, SHA-256
+  `e6020fbce766772442b50c2ddabdaaa8eac54bb1a77704ec9f6b9ba538f871c8`;
+- `bearing-history/527mhz-bearing-v1-20261023.jsonl`: 1,083 rows, SHA-256
+  `bd8ebb997068b5534548d5cc35e956665b62a5407d2515695e8d175d28341fcc`.
+
+These 2,076 rows are retained for bearing-only diagnostic evaluation. They are
+not part of the live v2 corpus or detection fitting. Both lack the complete v2
+applied-gain/identity contract, and the older block also lacks receiver-gain
+metadata, so neither is eligible for automatic production promotion.
+
+The cleaned bearing-only replay can read both archives even while live
+detection uses noise-whitened fusion. The 993-row block covers 38 aircraft / 5
+sectors; its best channel-order hypothesis has 29.24 degree aircraft-macro
+median error and 63.2% within 45 degrees. The 1,083-row block covers 63 aircraft
+/ 7 sectors; its best hypothesis has 35.94 degree median error and 57.1% within
+45 degrees. The configured order's uncorrected medians are 128.06 and 115.74
+degrees. These are useful diagnostic evidence of a large installed phase-axis
+bias or multipath distortion, not authorization to change the user-confirmed
+physical mapping or activate a model; the v1 rows lack the new identity and
+timing contract.

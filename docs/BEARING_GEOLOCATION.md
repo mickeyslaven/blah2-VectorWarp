@@ -161,6 +161,16 @@ effects. Invalid files stop startup rather than falling back silently.
 
 ## Built-in installed-array recorder
 
+The recorder is shared evidence infrastructure, not a combined bearing and
+detection model. Each accepted v2 row contains the installed array's complex
+aircraft response, local covariance/detection context, RF identity and truth
+label. The bearing fitter uses direction-labelled responses to estimate DOA;
+the detection fitter uses pass-balanced same-IQ responses and nuisance context
+to construct and test a surveillance beam bank. They retain separate candidate
+files, validation gates and activation settings. The fixed-transmitter direct
+anchor is stored in a separate reference stream and is never treated as an
+aircraft response.
+
 VectorWarp can learn the response in its actual installation without a
 site-specific external recorder. Collection starts automatically when coherent
 Kraken detection, confirmed geometry/orientation, and ADS-B truth are available;
@@ -192,8 +202,9 @@ network:
     manifold: 3005
 ```
 
-Recorder health and counts are available at
-`/api/bearing/manifold-recorder`. A slow truth source cannot back-pressure the
+Canonical combined status is available at `/api/array-calibration/status`.
+The older `/api/bearing/manifold-recorder` and
+`/api/bearing/manifold-progress` routes remain compatibility views. A slow truth source cannot back-pressure the
 radar: the API keeps at most the newest evidence frame while matching or writing.
 Full ambiguity maps are never copied or stored.
 
@@ -210,9 +221,15 @@ worker writes `<path>.candidate.json`; it promotes only a qualified model to
 current frequency/site-fingerprint corpus, accepted samples, independent
 passes, aircraft, per-sector coverage, fit-ready angular bins, held-out
 evidence, unsupported azimuth gap and every remaining collection or validation
-gate. Its JSON contract is `/api/bearing/manifold-progress`. Opening the view
+gate. Its JSON contract is `/api/array-calibration/status`. Opening the view
 requests a signature-cached background refresh; fitting unchanged data is not
 repeated and no work runs in the radar processor.
+
+Historical v1 rows may be retained for bearing-only diagnostics when their
+frequency, sample rate, channel order, geometry and truth provenance remain
+auditable. They are never silently merged with a current v2 identity epoch,
+and rows lacking applied-gain/identity or same-IQ nuisance provenance cannot
+qualify a production bearing model or enter detection-manifold fitting.
 
 Promotion is deliberately pass-balanced. Frames from the same aircraft pass
 share one vote, and complete passes are withheld from fitting. The candidate

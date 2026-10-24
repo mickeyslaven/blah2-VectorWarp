@@ -25,6 +25,7 @@ const {createAdsbSource} = require('./adsb-source.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
 const {DetectionManifoldAutomation} = require('./detection-manifold-automation.js');
+const {buildArrayCalibrationStatus} = require('./array-calibration-status.js');
 const {createBearingDiagnosticCache} = require('./bearing-diagnostic-cache.js');
 const {createFrequencyResolvedShadow} = require('./frequency-resolved-shadow.js');
 const {createTrackerForwarder} = require('./tracker-forward.js');
@@ -34,6 +35,7 @@ const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
+const {IntegrationShadowQueue} = require('./integration-shadow-queue.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
@@ -91,6 +93,7 @@ const provisionalEvidenceStatistics = createEvidenceStatistics(config, adsbSourc
   timingPolicy: 'provisional'});
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
+const integrationShadowQueue = new IntegrationShadowQueue(config);
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -135,6 +138,10 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   evidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
   evidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
+  // Bind shadow work to the exact immutable admission document written above.
+  // Later in-memory bookkeeping adds admission_sidecar to `integrity`; that
+  // field is deliberately not allowed to change the queued sidecar digest.
+  if (admissionSidecar) integrationShadowQueue.accept(file, artifact, revision);
 }
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
@@ -473,6 +480,9 @@ app.get('/api/tracker-forward', (req, res) => {
 });
 app.get('/api/tracker/guided-shadow', (req, res) => {
   res.json(trackGuidedShadowRecorder.status());
+});
+app.get('/api/detection/integration-shadow', (req, res) => {
+  res.json(integrationShadowQueue.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -1033,6 +1043,20 @@ app.get('/api/bearing/manifold-recorder', (req, res) => {
 app.get('/api/bearing/manifold-automation', (req, res) => {
   res.json(manifoldAutomation.status());
 });
+function arrayCalibrationStatus() {
+  const bearing = manifoldAutomation.status();
+  const detection = detectionManifoldAutomation.status();
+  return buildArrayCalibrationStatus({config,
+    recorderStatus: manifoldRecorder.status(), bearingStatus: bearing,
+    detectionStatus: detection,
+    frequencyResolvedStatus: frequencyResolvedShadow.status()});
+}
+app.get('/api/array-calibration/status', (req, res) => {
+  // Both evaluators are signature-cached and run away from the API thread.
+  void manifoldAutomation.evaluate();
+  void detectionManifoldAutomation.evaluate();
+  res.json(arrayCalibrationStatus());
+});
 app.get('/api/bearing/manifold-progress', (req, res) => {
   // Evaluation is signature-cached and runs off the API thread. Polling this
   // view refreshes a changed corpus promptly without loading the radar
@@ -1056,6 +1080,8 @@ app.get('/api/bearing/manifold-progress', (req, res) => {
         running: detectionAutomation.running, qualified: detectionAutomation.qualified,
         promotion_allowed: false, failures: detectionAutomation.failures || [],
         validation_path: detectionAutomation.validationPath || null,
+        candidate_path: detectionAutomation.candidatePath || null,
+        runtime_candidate_path: detectionAutomation.runtimeCandidatePath || null,
         error: detectionAutomation.error,
         last_evaluation_at: detectionAutomation.lastEvaluationAt || null},
       progress: detectionAutomation.progress},

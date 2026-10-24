@@ -570,6 +570,54 @@ function validateConfig(config, baseline = null, options = {}) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
+  if (detection.integration_shadow !== undefined) {
+    const shadow = requireObject(detection.integration_shadow,
+      'process.detection.integration_shadow');
+    boolean(shadow.enabled, 'process.detection.integration_shadow.enabled');
+    for (const field of ['queue_path', 'results_path', 'receipt_key_path']) if (shadow[field] !== undefined) {
+      string(shadow[field], `process.detection.integration_shadow.${field}`);
+      if (typeof shadow[field] === 'string' && !path.isAbsolute(shadow[field]))
+        errors.push(`process.detection.integration_shadow.${field} must be an absolute path`);
+    }
+    if (shadow.enabled === true && !shadow.receipt_key_path)
+      errors.push('process.detection.integration_shadow.receipt_key_path is required when enabled');
+    if (shadow.dwell_seconds !== undefined) {
+      if (!Array.isArray(shadow.dwell_seconds) || !shadow.dwell_seconds.length ||
+          shadow.dwell_seconds.length > 8)
+        errors.push('process.detection.integration_shadow.dwell_seconds must contain 1 through 8 dwell lengths');
+      else {
+        shadow.dwell_seconds.forEach((value, index) => number(value,
+          `process.detection.integration_shadow.dwell_seconds[${index}]`,
+          {min: .02, max: 2}));
+        if (new Set(shadow.dwell_seconds).size !== shadow.dwell_seconds.length)
+          errors.push('process.detection.integration_shadow.dwell_seconds must not contain duplicates');
+      }
+    }
+    const modes = ['production', 'coherent_beam_bank', 'noise_whitened_beam_bank',
+      'noncoherent', 'physical_channels'];
+    if (shadow.fusion_modes !== undefined) {
+      if (!Array.isArray(shadow.fusion_modes) || !shadow.fusion_modes.length)
+        errors.push('process.detection.integration_shadow.fusion_modes must not be empty');
+      else {
+        shadow.fusion_modes.forEach((value, index) => {
+          string(value, `process.detection.integration_shadow.fusion_modes[${index}]`);
+          if (!modes.includes(value))
+            errors.push(`process.detection.integration_shadow.fusion_modes[${index}] is not supported`);
+        });
+        if (new Set(shadow.fusion_modes).size !== shadow.fusion_modes.length)
+          errors.push('process.detection.integration_shadow.fusion_modes must not contain duplicates');
+        if (shadow.enabled === true && shadow.fusion_modes.filter(value => value === 'production').length !== 1)
+          errors.push('process.detection.integration_shadow.fusion_modes must contain exactly one production baseline when enabled');
+      }
+    }
+    if (shadow.max_pending !== undefined)
+      number(shadow.max_pending, 'process.detection.integration_shadow.max_pending',
+        {integer: true, min: 1, max: 1024});
+    if (shadow.max_wall_seconds_per_clip !== undefined)
+      number(shadow.max_wall_seconds_per_clip,
+        'process.detection.integration_shadow.max_wall_seconds_per_clip',
+        {integer: true, min: 30, max: 86400});
+  }
   let trackBeforeDetect = null;
   if (detection.track_before_detect !== undefined) {
     trackBeforeDetect = requireObject(detection.track_before_detect,
@@ -747,6 +795,29 @@ function validateConfig(config, baseline = null, options = {}) {
     if (fusion.manifold_file !== undefined &&
         !['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
       errors.push('process.surveillance_fusion.manifold_file requires coherent surveillance fusion');
+    if (fusion.detection_manifold_automation !== undefined) {
+      const automation = requireObject(fusion.detection_manifold_automation,
+        'process.surveillance_fusion.detection_manifold_automation');
+      if (automation.enabled !== undefined)
+        boolean(automation.enabled,
+          'process.surveillance_fusion.detection_manifold_automation.enabled');
+      for (const name of ['corpus_path', 'validation_path', 'candidate_path']) {
+        const value = automation[name];
+        if (value !== undefined && (typeof value !== 'string' || !path.isAbsolute(value)))
+          errors.push(`process.surveillance_fusion.detection_manifold_automation.${name} must be an absolute path`);
+      }
+      if (automation.enabled === true) {
+        const corpusPath = automation.corpus_path ||
+          processConfig.bearing?.manifold_recorder?.path;
+        if (typeof corpusPath !== 'string' || !path.isAbsolute(corpusPath))
+          errors.push('enabled detection manifold automation requires an absolute corpus path');
+        if (!['coherent_beam_bank', 'noise_whitened_beam_bank'].includes(fusion.mode))
+          errors.push('detection manifold automation requires coherent surveillance fusion');
+        if (device.type !== 'Kraken' || processConfig.detection?.enable !== true ||
+            root.truth?.adsb?.enabled !== true)
+          errors.push('detection manifold automation requires Kraken coherent detection and ADS-B truth');
+      }
+    }
     if (fusion.manifold_file !== undefined) {
       const heimdall=device.heimdall||{},geometry=device.array_geometry||{};
       const commonFixed=typeof heimdall.gain==='number'&&Number.isFinite(heimdall.gain)&&heimdall.gain>=0;
