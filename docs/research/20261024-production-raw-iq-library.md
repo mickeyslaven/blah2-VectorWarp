@@ -1,4 +1,4 @@
-# Production raw-IQ library: verified parity slice and remaining resident seam
+# Production raw-IQ library and bounded native snapshot contract
 
 ## Implemented and accepted locally
 
@@ -43,9 +43,76 @@ All five focused suites passed. The first 48-CPI parity run completed in 1.18 s;
 the five-suite regression run completed in 4.66 s. The mixed-fallback regression
 was added after review and the library plus live executable were rebuilt.
 
+## Native snapshot implementation (qualification pending)
+
+ABI12 / config schema4 adds a default-disabled `Config::replay` and idle-only
+`Session::snapshot()`. No live configuration enables it. Opt-in requires source
+and RF digests, full actual per-channel gains, RF frequency, original configured
+PFA, a byte ceiling (at most 256 MiB) and a frame ceiling (at most 128). The
+session exports each newly settled/committed frame at most once, before the next
+frame; it rejects pending, uncommitted, duplicate, disabled and over-budget
+requests locally. A malformed worker result poisons the isolated session.
+
+`ResidentReplaySnapshot` is a canonical little-endian envelope: a 2048-byte
+header, 20 fixed-order typed blocks, exact dimensions and no truncation. SHA256
+binds the entire envelope with its digest field zeroed. Identity includes
+source/RF/config/module/device/raw-IQ digests, epoch/frame/consumed sequence,
+timestamp, full gain vector, sample rate, beam/refinement counts, per-pass PFA,
+beam and motion/temporal trial correction. Configuration bytes retain channel
+mapping, measured manifolds, reference/clutter settings and bearing options.
+
+The blocks contain the reference checkpoint plus its otherwise transient
+covariance/validity, actual calibrated fusion/refinement weights, complete
+postprocess metadata, rolling power/angle history, current power, all TBD
+detector banks, every native fusion-beam power, every pass/CUT's exact power,
+training mean **and pre-division sum**, threshold and decision, fused/channel
+maps, original raw IQ, synthesized reference, complete filtered IQ, final
+decision flags/detections and the committed tracker checkpoint. CFAR statistics
+are five FP64 values per pass/cell: CUT, training mean, training sum, threshold,
+flags (0 skipped, 1 evaluated, 3 passed, 5 two-CPI warmup). Metadata preserves
+edge-dependent training membership/count/alpha and the exact axis values.
+
+Temporal snapshots are **after** the production advance: metadata word79 is the
+next write counter, modulo the 4/8-CPI depth; for 1/2 CPI it remains zero and
+history holds the current power. Unfilled power slots retain NaN; undefined
+angle slots alone are canonicalized to zero in the exported host copy. Disabled
+angle banks are empty. This is an export-only ABI: it deliberately provides no
+device-state restore operation and does not claim arbitrary-CPI restart parity.
+
+With export disabled, shader strings, bindings, command graphs and allocations
+are unchanged. Opt-in adds native observer buffers and saves raw/reference IQ
+before workspace reuse; it uses the already-existing full residual path. The
+explicit idle export batches all resident buffer copies in one command with one
+fence and one mapped-memory invalidation; it does not enable ordinary CFAR or
+centroid diagnostic pointers. Envelope construction, validation and publication
+happen afterward in temporary storage. Neither raw-IQ processing nor the
+detector is emulated by this exporter.
+
+Validation on 2026-10-24:
+
+- Apple Silicon: live executable builds; `productionRawIqParity`,
+  `residentWireCpuBoundary`, `residentProcessCpuBoundary`,
+  `residentReplaySnapshotCpuContract` (402 checks) and `trackBeforeDetectMath`
+  pass. Contract tests cover 1/2/4/8 warmup, complete banks, bounds, RF/gain/hash
+  corruption, edge training alpha, immutable failure, invalid beam/history and
+  temporal state. CPU process doubles exercise early/duplicate export rejection
+  and malformed-result poisoning; they are not hardware evidence.
+- Strix CPU only: the complete native module links with undefined-symbol
+  rejection; native module/contract/physical-test/shader-test sources also pass
+  `g++ -Wall -Werror -fsyntax-only` with the repository's system dependency
+  include policy. All 32
+  normal/observer shader variants pass GLSL-to-SPIR-V compilation with the
+  repository-pinned VkFFT commit `066a17c17068c0f11c9298d848c2976c71fad1c1`.
+  The work directory is `/var/tmp/vectorwarp-replay-compile.05qFHt`. No Vulkan
+  instance/device or replay job was created by those checks.
+- `gpuPhysicalResidentReplay` is added behind the existing explicit physical-GPU
+  option/device selector. It compares 144 native frames, exact outputs with
+  opt-in off/on across 1/2/4/8 CPIs and whitening off/on, taking validated
+  snapshots through warmup and reference-analysis updates. It has **not run**.
+
 ## Explicitly not complete
 
-There is no production-equivalent full-bank raw-IQ exporter in this slice.
+There is no hardware-qualified production-equivalent export claim in this slice.
 `detectionManifoldGridReplay` remains a post-CAF diagnostic and must continue to
 report `same_iq=false` and `production_equivalent=false`. CPU orchestration
 parity cannot qualify GPU fusion, noise whitening, or multi-CPI/TBD behavior.
@@ -53,12 +120,26 @@ No replay result or held-out detection gain is claimed here.
 
 ## External qualification gate
 
-The authorized non-live FP64 Vulkan host is Strix. On 2026-10-24 the supported
-controller `GET /v1/compute-lease` reported an active, resident `FLASH_ACTIVE`
-lease owned by `codex-vectorwarp-adversarial-review`, runtime
-`qwen-code-vulkan-flash-next`. Available memory was 16,742 MiB, below the
-controller's 96 GiB heavy-work admission minimum. No lease was taken, service
-started/stopped, or guard bypassed. Its installed acquisition handler accepts
+The authorized non-live FP64 Vulkan host is Strix. On 2026-10-24, at the user's
+explicit request, the exact controller lease owned by
+`codex-vectorwarp-adversarial-review` was released through
+`POST /v1/compute-lease/release`. The controller confirmed `active=false` but
+retained `qwen-code-vulkan-flash-next` in `FLASH_IDLE`, `resident=true`, with
+`idle_expires_at=null`. Available memory remained approximately 16.7 GiB; GPU
+memory was **not** reclaimed. The renewal job then failed normally because its
+lease was revoked. Existing review directory
+`/var/tmp/vectorwarp-qwen-audit.CpkOmR` was preserved. No model process/service
+was directly started/stopped and no guard was bypassed.
+
+The installed controller defaults to indefinite Flash retention when
+`CASS_AI_NODE_FLASH_WARM_IDLE_SECONDS` is unset; a nonzero override is capped at
+3600 seconds, and zero disables retention. Its authenticated HTTP API has no
+cold-release/drain parameter or endpoint. `_drain_flash_warm` is internal safety
+machinery, not an operator API. A supported authenticated operator drain or
+bounded-idle configuration/reload workflow is needed to reclaim it. Do not
+invoke private functions or edit service environment as a workaround.
+
+Its installed acquisition handler accepts
 Qwen runtime profiles and Ollama only; it does not presently expose a native
 radar replay runtime. Reusing a model lease for Vulkan replay would not be an
 authorized controller path. Local CMake enables the resident module on Linux
@@ -67,17 +148,17 @@ only, so the macOS CPU result cannot substitute for resident qualification.
 Resume with an admitted native-test lease and sufficient resources on Strix;
 do not run heavy replay on the live receiver or stop the resident model directly.
 
-## Next implementation boundary
+## Native seam reference and remaining acceptance boundary
 
 The production resident pipeline already starts from canonical raw IQ.
 `GpuResidentModule.cpp::privateConfig` maps the actual detector and fusion
 configuration into `ResidentFrameConfig`; `finishRadar` exposes maps/fused
-outputs but not the internal detector state. The required extraction is a
+outputs but not the internal detector state. The new extraction is a
 private, default-disabled snapshot/export interface on
 `core/GpuResidentFrame.private.h::ResidentFramePipeline`, with corresponding
 state access on `core/GpuPostprocess.private.h::gpu_postprocess::Stage`.
-Keep ordinary output records and the existing ABI11 layout unchanged until a
-separately versioned optional export section has complete coverage tests.
+Ordinary output records are unchanged; ABI12/config4 explicitly rejects older
+cohorts instead of reinterpreting their object or wire layouts.
 
 The export must originate from the same native raw-IQ execution, before any
 truth-selected cell/beam restriction, and carry all of the following:
@@ -121,6 +202,14 @@ semantics unchanged and mark the artifact incomplete.
    mutation. Compare uninterrupted raw-IQ execution with restore at every
    warmup depth. Reject partial/stale snapshots and full-gain/RF mismatches.
 
-The next deliverable is this native parity plus default-off export slice in a
-stacked PR. Updating evaluation claims waits for a complete exported full-bank
-artifact and its held-out replay validation.
+The next acceptance step is running `gpuPhysicalResidentReplay` under a supported
+native-test lease, inspecting an actual exported full-bank artifact and measuring
+the promised single-export-fence behavior. Add full snapshot restoration only
+with uninterrupted-versus-restored native parity; reference-only restore remains
+distinct and resets whitening validity. Adaptive bearing refinement's per-CUT
+inversion/score workspace and per-batch clutter solve coefficients are not a
+restart image: this export carries their configuration, source maps/reference,
+actual calibrated weights and final residual instead. If qualification requires
+those intermediate arithmetic observations, add them explicitly before claiming
+that scope. No held-out detection gain, deployment or RF change is authorized by
+these CPU/compiler checks.

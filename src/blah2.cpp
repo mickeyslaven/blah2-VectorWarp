@@ -653,7 +653,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI11 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI12 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO

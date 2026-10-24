@@ -38,7 +38,7 @@ void packetCases(){
  auto withDiagnostic=p;withDiagnostic.op=Op::begin;withDiagnostic.restoreTrackerSlot=0;withDiagnostic.presence|=bit(Section::filtered);withDiagnostic.diagnosticPresence=bit(Section::filtered);
  check(decode(bytes(encode(withDiagnostic))).diagnosticPresence==bit(Section::filtered),"Requested diagnostic mask did not round trip");
  auto bad32=[&](size_t at,uint32_t value){auto b=raw;wire::Writer{{b.data(),b.size()}}.u32(at,value);reject([&]{decode(bytes(b));},"Malformed packet accepted");};
- bad32(0,0x42475004);bad32(4,159);bad32(8,0);bad32(8,17);bad32(12,1);
+ bad32(0,0x42475004);bad32(4,159);bad32(8,0);bad32(8,19);bad32(12,1);
  bad32(80,33);bad32(84,6);bad32(128,8);bad32(132,2);bad32(136,1);bad32(140,513);bad32(144,1);bad32(144,uint32_t(bit(Section::filtered)));bad32(152,1);
  auto b=raw;wire::Writer w{{b.data(),b.size()}};w.u64(16,0);w.u64(24,0);reject([&]{decode(bytes(b));},"Zero nonce accepted");
  b=raw;w.u32(8,uint32_t(Op::begin));reject([&]{decode(bytes(b));},"Non-restore input slot accepted");

@@ -5,6 +5,7 @@
 #include "GpuClutterBatch.h"
 #include "GpuDriverStatus.h"
 #include "GpuMemory.h"
+#include "process/analysis/ResidentReplaySnapshot.h"
 // Private Linux proof: importing the host bulk baseline is deliberately forbidden.
 #ifdef __APPLE__
 #error "GPU-native arithmetic proof is Linux-only; production platform policy is unchanged"

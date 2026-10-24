@@ -42,6 +42,7 @@ struct ResidentFrameConfig {
   ReferenceSpectrumConfig reference;
   PostprocessConfig postprocess;
   TrackerConfig tracker;
+  uint64_t replayMaxBytes=0;
 };
 struct ResidentFrameOutputs {
   // Original unshifted layout: channel, delay, Doppler (FP32 diagnostic maps).
@@ -240,6 +241,21 @@ void main(){
  fused[i]=dvec2(result,double(bestBeam));
  if((i&127u)==0u){uint covered=min(128u,p.count-i);atomicAdd(s[6],covered*p.channels);atomicAdd(s[7],covered);}
 })glsl";
+// The observer adds a store to the production beam loop; it does not implement
+// a second beamformer or alter the normal shader when export is disabled.
+inline std::string fusionShader(bool coherent,bool replay){
+ std::string source=coherent?coherentFusionSource:fusionSource;
+ if(!replay)return source;
+ const auto replace=[&](const std::string& before,const std::string& after){const auto at=source.find(before);
+  if(at==std::string::npos)throw std::logic_error("Replay fusion observer seam changed");
+  source.replace(at,before.size(),after);};
+ replace("void main(){",std::string("layout(binding=")+(coherent?"4":"3")+
+  ") buffer ReplayBank { double replayBank[]; };\nvoid main(){");
+ if(coherent)replace("if(power>best)","replayBank[b*p.count+i]=double(power);if(power>best)");
+ else replace("precise double result=sqrt(power/double(p.channels));",
+  "replayBank[i]=power/double(p.channels);precise double result=sqrt(power/double(p.channels));");
+ return source;
+}
 struct Commands {
  Context& context;
  std::vector<VkCommandBuffer> handles;
@@ -271,6 +287,10 @@ inline void hostRead(VkCommandBuffer command){
 inline ResidentFrameConfig validate(ResidentFrameConfig config){
  const auto& g=config.geometry;
  const bool supplied=config.reference.mode==ReferenceMode::supplied;
+ if(bool(config.replayMaxBytes)!=config.postprocess.replaySnapshot||
+    config.replayMaxBytes>resident_replay::byteLimit||
+    (config.replayMaxBytes&&(supplied||!config.postprocess.detection)))
+  throw std::invalid_argument("Resident replay export configuration invalid");
  const uint32_t expectedStages=(supplied?residentSupportedStages:residentCapturedSupportedStages)|
   (config.postprocess.enabled?residentMapDisplay:0u)|(config.postprocess.detection?residentDetection:0u)|(config.tracker.enabled?residentTracker:0u);
  if(config.postprocess.tracker||(!config.postprocess.enabled&&config.postprocess.detection)||(config.tracker.enabled&&(!config.postprocess.enabled||!config.postprocess.detection))||
@@ -356,6 +376,7 @@ class ResidentFramePipeline {
   const ResidentFrameConfig& config;
   std::unique_ptr<ClutterPipeline> clutter;
   std::unique_ptr<Buffer> canonical,fused,status,fusionWeights,refinementWeights;
+  std::unique_ptr<Buffer> replayRaw,replayReference,replayBank;
   // Stage descriptors/plans die before the canonical and borrowed native storage.
   std::unique_ptr<gpu_reference::Stage> referenceStage;
   std::unique_ptr<gpu_postprocess::Stage> postprocessStage;
@@ -388,6 +409,13 @@ class ResidentFramePipeline {
    canonical=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*config.geometry.channels*16,host,preferred);
    fused=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*16,host,preferred);
    status=std::make_unique<Buffer>(context,gpu_resident::words*4,host,preferred);
+   if(config.replayMaxBytes){
+    if(config.replayMaxBytes>resident_replay::byteLimit||!config.postprocess.replaySnapshot||!config.postprocess.detection||!referenceStage)
+     throw std::invalid_argument("Resident replay requires bounded captured detector state");
+    replayRaw=std::make_unique<Buffer>(context,canonical->bytes,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    replayReference=std::make_unique<Buffer>(context,uint64_t(g.clutterSamples)*16,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    replayBank=std::make_unique<Buffer>(context,uint64_t(g.doppler)*g.delays*std::max(1u,config.fusion.beams)*8,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+   }
    if(referenceStage)referenceStage->bind(*canonical);
    Buffer* referenceInput=referenceStage?&referenceStage->referenceBuffer():canonical.get();
    referenceCast=std::make_unique<Kernel>(context,gpu_resident::referenceSource,
@@ -428,10 +456,12 @@ class ResidentFramePipeline {
        target[uint64_t(beam)*config.geometry.channels+channel]=std::complex<float>(normalization*std::cos(phase),normalization*std::sin(phase));}}
      refinementWeights->flush(0,refinementWeights->bytes);
     }
-    fusion=std::make_unique<Kernel>(context,gpu_resident::coherentFusionSource,
-      std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()});
-   }else fusion=std::make_unique<Kernel>(context,gpu_resident::fusionSource,
-     std::vector<Buffer*>{owner.doppler_.get(),fused.get(),status.get()});
+    std::vector<Buffer*> bindings{owner.doppler_.get(),fused.get(),status.get(),fusionWeights.get()};
+    if(replayBank)bindings.push_back(replayBank.get());
+    fusion=std::make_unique<Kernel>(context,gpu_resident::fusionShader(true,bool(replayBank)).c_str(),bindings);
+   }else {std::vector<Buffer*> bindings{owner.doppler_.get(),fused.get(),status.get()};
+    if(replayBank)bindings.push_back(replayBank.get());
+    fusion=std::make_unique<Kernel>(context,gpu_resident::fusionShader(false,bool(replayBank)).c_str(),bindings);}
    if(config.postprocess.enabled){
     Buffer* scratch=&clutter->borrowedReference();
     const auto required=gpu_postprocess::layout(config.geometry.doppler,config.geometry.delays).bytes;
@@ -462,6 +492,9 @@ class ResidentFramePipeline {
    barrier(command);
    referencePack->append(command,{g.range*g.doppler,g.range,config.correlation,0,0});
    barrier(command);
+   if(replayRaw){VkBufferCopy rawCopy{0,0,replayRaw->bytes},referenceCopy{0,0,replayReference->bytes};
+    vkCmdCopyBuffer(command,canonical->handle,replayRaw->handle,1,&rawCopy);
+    vkCmdCopyBuffer(command,referenceInput->handle,replayReference->handle,1,&referenceCopy);barrier(command);}
    timestamps->end(command,0);
    gpu_resident::hostRead(command);
    check(vkEndCommandBuffer(command),"resident reference recording");
@@ -907,6 +940,58 @@ public:
   try{return work_->referenceStage->exportCheckpoint();}catch(...){fail();
   throw;}
  }
+ // Explicit settled/idle diagnostic: all resident state is gathered in one
+ // command and one fence. No normal-frame output pointer enables this path.
+ std::vector<resident_replay::Block> exportReplayBlocks(){
+  requireCaptured(true);
+  if(!config_.replayMaxBytes||!work_->replayRaw||!work_->postprocessStage||
+     !finalEvidence_[gpu_resident::fusedCells])
+   throw std::logic_error("Resident replay snapshot needs an enabled completed frame");
+  using K=resident_replay::BlockKind;
+  struct Copy {K kind;Buffer* source;uint64_t offset,bytes;};
+  auto& p=*work_->postprocessStage;const auto cells=uint64_t(config_.geometry.doppler)*config_.geometry.delays;
+  std::vector<Copy> copies;
+  const auto add=[&](K kind,Buffer* source,uint64_t offset=0,uint64_t bytes=0){if(source){
+   const auto count=bytes?bytes:source->bytes;
+   if(offset>source->bytes||count>source->bytes-offset)throw std::logic_error("Resident replay buffer range invalid");
+   copies.push_back({kind,source,offset,count});}else copies.push_back({kind,nullptr,0,0});};
+  add(K::fusionWeights,work_->fusionWeights.get());add(K::refinementWeights,work_->refinementWeights.get());
+  add(K::postprocessMetadata,&p.metadataBuffer());add(K::powerHistory,&p.integrationBuffer());
+  add(K::angleHistory,config_.postprocess.integrationCpis<=2||config_.postprocess.integrationBeamTolerance==UINT32_MAX?nullptr:&p.angleHistoryBuffer());
+  add(K::currentPower,&p.currentPowerBuffer());add(K::temporalBanks,p.temporalBanksBuffer());
+  add(K::beamPower,work_->replayBank.get());add(K::cfarStatistics,p.replayStatisticsBuffer());
+  add(K::fused,work_->fused.get());add(K::channelMaps,doppler_.get());
+  add(K::rawIq,work_->replayRaw.get());add(K::referenceIq,work_->replayReference.get());
+  add(K::filteredIq,work_->canonical.get());
+  add(K::decisionFlags,&work_->postprocessScratch(),uint64_t(p.scratchLayout().flags)*4,cells*4);
+  uint64_t total=0;for(const auto& c:copies){if(c.bytes>config_.replayMaxBytes-total)
+    throw std::invalid_argument("Resident replay transfer exceeds explicit bound");
+   total+=c.bytes;}
+  Buffer staging(context_,total,VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+  gpu_reference::CommandOwner command(context_);command.allocate();
+  VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+  check(vkBeginCommandBuffer(command.command,&begin),"replay snapshot recording");
+  gpu_resident::hostWrite(command.command);barrier(command.command);
+  uint64_t offset=0;for(const auto& c:copies){if(c.bytes){VkBufferCopy region{c.offset,offset,c.bytes};
+   vkCmdCopyBuffer(command.command,c.source->handle,staging.handle,1,&region);}offset+=c.bytes;}
+  barrier(command.command);gpu_resident::hostRead(command.command);
+  check(vkEndCommandBuffer(command.command),"replay snapshot recording");
+  try{submit(command.command,"replay snapshot batched readback");staging.invalidate(0,total);}
+  catch(...){fail();throw;}
+  std::vector<resident_replay::Block> result;offset=0;
+  for(const auto& c:copies){resident_replay::Block b{c.kind,{}};b.bytes.resize(size_t(c.bytes));
+   if(c.bytes)std::memcpy(b.bytes.data(),static_cast<uint8_t*>(staging.mapped)+offset,size_t(c.bytes));
+   result.push_back(std::move(b));offset+=c.bytes;}
+  // Unused angle slots are never initialized/read by the detector. Canonicalize
+  // only those undefined bytes; active history remains an exact device copy.
+  if(config_.postprocess.integrationCpis>2&&config_.postprocess.integrationBeamTolerance!=UINT32_MAX){
+   const auto& metadata=result[2].bytes;uint32_t available=0;std::memcpy(&available,metadata.data()+79*4,4);
+   const auto depth=config_.postprocess.integrationCpis;
+   if(available<depth){auto& angles=result[4].bytes;const size_t first=size_t(available*cells*4);
+    std::fill(angles.begin()+first,angles.end(),0);}}
+  return result;
+ }
  // Restore is an explicit idle checkpoint operation. It never alters an already
  // prepared frame, nor attempts to revive a route with an unknown device failure.
  void restoreReferenceCheckpoint(const ReferenceCheckpoint& cp){
@@ -1062,7 +1147,7 @@ private:
      context_.diagnostics.flush();
      return false;
     }
-    const bool diagnosticResidual=out.filtered||out.tail;
+    const bool diagnosticResidual=out.filtered||out.tail||config_.replayMaxBytes;
     {gpu_host::Scope timer(context_.hostTiming,"radar.subtract_pack",first);
     submit(work_->commands.handles[(diagnosticResidual?3:4)+3*batch],diagnosticResidual?
      "resident subtraction and ambiguity packing":"resident fused subtraction and ambiguity packing");
