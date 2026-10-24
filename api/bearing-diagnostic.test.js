@@ -44,9 +44,18 @@ assert.match(result.identifiability, /mathematically degenerate/i);
 assert.deepEqual(inverse([[[2, 0], [0, 0]], [[0, 0], [4, 0]]]),
   [[[.5, 0], [0, 0]], [[0, 0], [.25, 0]]]);
 
-const unsupported = JSON.parse(JSON.stringify(config));
-unsupported.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
-assert.equal(evaluateBearing(samples, unsupported).available, false);
+const whitenedDetection = JSON.parse(JSON.stringify(config));
+whitenedDetection.process.surveillance_fusion.mode = 'noise_whitened_beam_bank';
+assert.equal(evaluateBearing(samples, whitenedDetection).available, true,
+  'bearing replay uses recorded physical channel responses and covariance, not the detection fusion output');
+
+const v2Result = evaluateBearing(samples.map(sample => ({
+  ...sample,
+  schema: 'vectorwarp-manifold-sample-v2'
+})), config);
+assert.equal(v2Result.available, true,
+  'the live v2 manifold recorder schema must remain replay-compatible with bearing diagnostics');
+assert.equal(v2Result.samples, result.samples);
 const transmitterBearing = 0, knownMapping = mappings(channels).find(item => item.id === 'forward-3');
 function expectedReference(mapping, heading, bearing = transmitterBearing, frequency = 539000000) {
   const direct = (heading - bearing) * Math.PI / 180;
