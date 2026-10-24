@@ -3,6 +3,7 @@
 #endif
 #include "GpuResidentWire.h"
 #include "GpuResidentProof.h"
+#include "GpuResidentHash.h"
 #include <complex>
 #include "data/meta/Constants.h"
 #include <algorithm>
@@ -90,6 +91,9 @@ class Process final:public Session {
  bool haveFrame_=false;
  Packet active_{};
  Token token_{};
+ Hash rawIqHash_{};
+ uint32_t snapshotCount_=0;
+ uint64_t snapshotLogical_=0;
  Clock::time_point deadline_{};
  std::vector<double> delayKm_;
  Packet request(Op op){require(child_&&sequence_!=UINT64_MAX,"Resident session unavailable/exhausted");
@@ -156,6 +160,8 @@ public:
  void begin(Frame frame,uint64_t diagnosticPresence)override{inactive();
  require(!(diagnosticPresence&~diagnosticMask)&&!(diagnosticPresence&~config_.presence),"Resident requested diagnostic mask invalid");
  require(frame.logicalId&&(!haveFrame_||(frame.logicalId>lastLogical_&&frame.consumedSequence>lastConsumed_)),"Resident frame identity not advancing");
+ if(config_.replay.maxBytes){const auto input=map_.read(Section::canonical);Sha256 hash;
+  hash.add(input.data,input.size);rawIqHash_=hash.finish();}
  guarded([&]{active_=request(Op::begin);active_.frame=frame;active_.tracker={};active_.diagnosticPresence=diagnosticPresence;deadline_=Clock::now()+std::chrono::milliseconds(options_.frameMs);transport::sendPacket(child_->fd(),active_);phase_=Phase::begun;});}
  OutputViews receiveReferenceReady()override{require(phase_==Phase::begun,"Resident reference acknowledgment out of order");
  return guarded([&]{auto reply=response(active_,Op::referenceReady,Phase::referenceReady);require(wire::same(reply.tracker,{}),"ReferenceReady unexpectedly carries tracker token");phase_=Phase::referenceReady;return outputs(reply);});}
@@ -168,6 +174,24 @@ public:
  guarded([&]{auto p=request(Op::abort);p.tracker=token;transport::sendPacket(child_->fd(),p);response(p,Op::aborted,Phase::rejected);phase_=Phase::rejected;});}
  void published()override{require(phase_==Phase::committed,"Resident publication before commit");
  guarded([&]{auto p=request(Op::published);p.tracker=token_;transport::sendPacket(child_->fd(),p);response(p,Op::settled,Phase::settled);phase_=Phase::settled;haveFrame_=true;lastLogical_=active_.frame.logicalId;lastConsumed_=active_.frame.consumedSequence;});}
+ std::vector<uint8_t> snapshot()override{inactive();
+  require(config_.replay.maxBytes&&phase_==Phase::settled&&haveFrame_&&
+   snapshotCount_<config_.replay.maxFrames&&snapshotLogical_!=active_.frame.logicalId,
+   "Resident snapshot requires a new settled frame within its bound");
+  return guarded([&]{auto p=request(Op::snapshot);p.tracker=token_;
+   deadline_=Clock::now()+std::chrono::milliseconds(options_.startupMs);
+   transport::sendPacket(child_->fd(),p);response(p,Op::snapshotted,Phase::settled);
+   const auto evidence=map_.read(Section::preparedEvidence);const auto proof=preparedProof(evidence);
+   resident_replay::Identity expected{config_.epoch,p.frame.logicalId,proof.residentGeneration,
+    p.frame.consumedSequence,p.frame.signalTimestampMs,token_.transaction,wire::configHash(config_),{},rawIqHash_};
+   std::memcpy(expected.moduleHash.data(),evidence.data+160,32);
+   const auto device=map_.read(Section::device);Sha256 deviceHash;
+   deviceHash.add(device.data,device.size);expected.deviceHash=deviceHash.finish();
+   const auto source=map_.read(Section::replaySnapshot);
+   std::vector<uint8_t> copy(source.data,source.data+source.size);
+   resident_replay::decode(copy.data(),copy.size(),config_,expected);
+   ++snapshotCount_;snapshotLogical_=p.frame.logicalId;return copy;});
+ }
  void restore(ConstBytes reference,Span<const uint32_t> tracker)override{inactive();
  require(reference.data&&reference.size==256,"Resident restore reference shape");
   // Views returned by this Session name mutable shared storage. Reject aliases
@@ -297,6 +321,10 @@ int runWorker(Factory create){
    lastLogical=frame.logicalId;
    lastConsumed=frame.consumedSequence;
    reply(p,Op::settled,Phase::settled);}
+   else if(p.op==Op::snapshot){require(phase==Phase::settled&&completed&&config.replay.maxBytes,
+    "Resident Snapshot before settlement or without opt-in");
+   backend->snapshot(p);
+   reply(p,Op::snapshotted,Phase::settled);}
    else throw std::invalid_argument("Resident operation out of order");
   }
   munmap(address,bytes);

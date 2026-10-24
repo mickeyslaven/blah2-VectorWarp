@@ -2,6 +2,7 @@
 #include "../../../core/TrackBeforeDetect.private.h"
 #include "GpuResidentHash.h"
 #include "GpuMemory.h"
+#include "process/analysis/ProductionReplayContract.h"
 #include <algorithm>
 #include <cmath>
 #include <climits>
@@ -15,6 +16,7 @@ for(unsigned i=25;i<=29;++i)m|=uint64_t(1)<<i;
 if(c.tracker.enabled)m|=bit(Section::tracker0)|bit(Section::tracker1);
 if(c.tracker.trackGuidedShadow)m|=bit(Section::guidedRecoveries);
 if(c.detector.enabled)m|=bit(Section::detections);
+if(c.replay.maxBytes)m|=bit(Section::replaySnapshot);
 return m;}
 void validateConfig(const Config& c){
  uint32_t endian=1;
@@ -72,6 +74,8 @@ void validateConfig(const Config& c){
    std::norm(value)>1e-12f,"Resident surveillance direct-anchor response invalid");
  const auto& d=c.detector;
  const auto motion=track_before_detect::decodeMotionBins(d.integrationMotionBins);
+ production_replay::temporal(d.integrationCpis,motion.delay,motion.doppler,
+  f.mode!=FusionMode::noncoherent);
  const auto& b=c.bearing;
  require(b.method==BearingMethod::coherentBeamBank||b.method==BearingMethod::covarianceMvdr,
   "Resident bearing method invalid");
@@ -104,7 +108,7 @@ void validateConfig(const Config& c){
   "Disabled resident bearing has configuration");
  require(uint64_t(f.manifoldResponses.size())+uint64_t(b.manifoldResponses.size())+
    uint64_t(f.directResponse.size())<=
-  (configBytes-640)/sizeof(std::complex<float>),
+  (configBytes-640-(c.replay.maxBytes?152:0))/sizeof(std::complex<float>),
   "Resident measured manifolds exceed config capacity");
  const double spectrumResolution=c.sampleRate/g.clutterSamples;
  const uint32_t decimation=uint32_t(std::min<double>(g.clutterSamples,std::max(1.0,std::ceil(r.bandwidthHz/spectrumResolution))));
@@ -123,11 +127,13 @@ void validateConfig(const Config& c){
  require(!t.trackGuidedShadow||d.integrationCpis>2,"Track-guided shadow requires rolling track-before-detect history");}
  else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.trackGuidedShadow&&!t.trackGuidedPromote&&!t.trackGuidedShadowMaxTracks,"Disabled resident tracker has configuration");
  require(!c.device.empty()&&c.device.size()<96&&c.device.find('\0')==std::string::npos,"Resident device selector invalid");
- const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<31)-2);
+ resident_replay::validateExportConfig(c);
+ const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<32)-2);
  require((c.presence&mandatory)==mandatory&&!(c.presence&~known),"Resident required/presence bits invalid");
  require(t.enabled||!(c.presence&(bit(Section::tracker0)|bit(Section::tracker1))),"Disabled tracker checkpoint supplied");
  const uint64_t detectorOnly=bit(Section::detections)|bit(Section::unflooredSnr)|bit(Section::cfar)|bit(Section::centroid)|bit(Section::flags)|bit(Section::detectionCells);
  require(d.enabled||!(c.presence&detectorOnly),"Disabled detector output supplied");
+ require(bool(c.presence&bit(Section::replaySnapshot))==bool(c.replay.maxBytes),"Resident replay allocation differs from enablement");
 }
 const Descriptor& Layout::at(Section id)const{for(uint32_t i=0;i<count;++i)if(sections[i].id==uint32_t(id))return sections[i];
 throw std::invalid_argument("Absent resident section");}
@@ -176,6 +182,7 @@ const uint64_t m=mul(g.doppler,g.delays),n=g.clutterSamples,k=c.spectrumBins,s=g
  put(Section::preparedEvidence,1,1,preparedEvidenceBytes,2);
  put(Section::controlEvidence,1,1,controlEvidenceBytes,2);
  put(Section::guidedRecoveries,2,4,mul(c.tracker.trackGuidedShadowMaxTracks,24),2);
+ put(Section::replaySnapshot,1,1,c.replay.maxBytes?resident_replay::requiredBytes(c):0,2);
  l.bytes=align(at,pageBytes);
  require(l.bytes<=sharedLimit&&l.bytes<=SIZE_MAX&&l.bytes<=INT64_MAX,"Resident shared-memory budget exceeded");
  return l;}
@@ -212,7 +219,7 @@ r.zeros(12,4);
 r.zeros(152,8);
 Packet p;
 p.op=Op(r.u32(8));
-require(uint32_t(p.op)>=1&&uint32_t(p.op)<=16,"Resident unknown operation");
+require(uint32_t(p.op)>=1&&uint32_t(p.op)<=18,"Resident unknown operation");
 p.session={r.u64(16),r.u64(24)};
 require(p.session[0]||p.session[1],"Resident zero session");
 p.requestId=r.u64(32);
@@ -240,7 +247,7 @@ const auto&g=c.geometry;
 const auto&r=c.reference;
 const auto&d=c.detector;
 const auto&t=c.tracker;
- w.u32(0,3);
+ w.u32(0,4);
  w.u32(4,configBytes);
  w.u64(8,c.epoch);
  w.u32(16,c.stages());
@@ -321,14 +328,24 @@ const auto&t=c.tracker;
  w.u32(600,uint32_t(c.bearing.referenceAnchor));
  w.u32(616,uint32_t(c.fusion.manifoldResponses.size()));
  w.u32(620,uint32_t(c.fusion.directResponse.size()));
+ w.u64(624,c.replay.maxBytes);
+ w.u32(632,c.replay.maxFrames);
  size_t at=640;
  for(const auto value:c.fusion.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.bearing.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.fusion.directResponse){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
+ if(c.replay.maxBytes){
+  require(at<=configBytes-152,"Resident replay identity exceeds config capacity");
+  at=configBytes-152; // Fixed reserved trailer; preceding manifold padding stays zero.
+  w.f64(at,c.replay.frequencyHz);w.f64(at+8,c.replay.configuredPfa);
+  w.copy(at+16,c.replay.sourceHash.data(),32);w.copy(at+48,c.replay.rfHash.data(),32);
+  w.u32(at+80,uint32_t(c.replay.actualGainDb.size()));
+  for(size_t i=0;i<c.replay.actualGainDb.size();++i)w.f64(at+88+8*i,c.replay.actualGainDb[i]);
+ }
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
-require(r.u32(0)==3&&r.u32(4)==configBytes,"Resident config schema differs");
+require(r.u32(0)==4&&r.u32(4)==configBytes,"Resident config schema differs");
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -359,8 +376,8 @@ require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
- r.zeros(624,16);
-require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640)/8,
+ c.replay.maxBytes=r.u64(624);c.replay.maxFrames=r.u32(632);r.zeros(636,4);
+require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640-(c.replay.maxBytes?152:0))/8,
  "Resident measured manifold counts exceed config capacity");
 size_t at=640;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
 for(uint32_t i=0;i<fusionManifoldCount;++i){c.fusion.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
@@ -368,6 +385,15 @@ bearing.manifoldResponses.reserve(manifoldCount);
 for(uint32_t i=0;i<manifoldCount;++i){bearing.manifoldResponses.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
 c.fusion.directResponse.reserve(fusionDirectCount);
 for(uint32_t i=0;i<fusionDirectCount;++i){c.fusion.directResponse.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
+if(c.replay.maxBytes){
+ r.zeros(at,configBytes-152-at);at=configBytes-152;
+ c.replay.frequencyHz=r.f64(at);c.replay.configuredPfa=r.f64(at+8);
+ r.range(at+16,64);std::memcpy(c.replay.sourceHash.data(),b.data+at+16,32);
+ std::memcpy(c.replay.rfHash.data(),b.data+at+48,32);
+ const auto gains=r.u32(at+80);require(gains<=8,"Resident replay gain count invalid");r.zeros(at+84,4);
+ for(uint32_t i=0;i<gains;++i)c.replay.actualGainDb.push_back(r.f64(at+88+8*i));
+ r.zeros(at+88+8*gains,8*(8-gains));at+=152;
+}
 r.zeros(at,configBytes-at);
 auto&g=c.geometry;
 g.clutterSamples=narrow(r.u64(24));
