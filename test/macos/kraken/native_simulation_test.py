@@ -200,8 +200,13 @@ class Frames:
             while not self.stopped.is_set():
                 fields = struct.unpack(">8I", self.exact(32))
                 magic, channels, samples, phase, noise, epoch, group, retuning = fields
-                assert magic == 0x4D434851 and channels == 5 and 0 < samples <= 262144, fields
+                assert magic in (0x4D434851, 0x4D434854) and channels == 5 and 0 < samples <= 262144, fields
                 metadata = struct.unpack("<" + "ff" * channels, self.exact(channels * 8))
+                timing = None
+                if magic == 0x4D434854:
+                    timing = struct.unpack('>4I10Q', self.exact(96))
+                    assert timing[0:2] == (1, 96) and timing[3] == 0 and timing[4] > 0
+                    assert timing[7] > 0 and timing[9] > 0 and timing[-1] == timing[5] + samples
                 payload = self.exact(channels * samples * 2)
                 valid = (phase & 0xff) == 4 and not phase & 0xe00 and noise == 0 and retuning == 0
                 # Deterministic test driver has a twofold noise-on envelope.
@@ -217,7 +222,7 @@ class Frames:
                     self.count += 1
                     frame = dict(number=self.count, phase=phase, noise=noise, epoch=epoch,
                                  retuning=retuning, frequency=metadata[0], gain=metadata[1],
-                                 channelGains=list(metadata[1::2]),
+                                 channelGains=list(metadata[1::2]), ingestTiming=timing,
                                  valid=valid, samples=samples, referenceRms=envelope)
                     self.frames.append(frame)
                     if valid:
@@ -469,7 +474,7 @@ def run_case(args, binary, work, name, fail=None, count=5):
     env = {k: v for k, v in os.environ.items() if not k.startswith(
         ("DYLD_", "LD_", "VECTORWARP_KRAKEN_SIM_", "HEIMDALL_")) and k != "LIBRTLSDR_OPT"}
     env.update(VECTORWARP_KRAKEN_SIM_ROOT=str(case), VECTORWARP_KRAKEN_SIM_COUNT=str(count),
-               HEIMDALL_VERBOSE_LOG="1", HOME=str(case), HEIMDALL_BIND_HOST="127.0.0.1",
+               HEIMDALL_VERBOSE_LOG="1", HEIMDALL_TIMING_V1="1", HOME=str(case), HEIMDALL_BIND_HOST="127.0.0.1",
                HEIMDALL_DATA_PORT=str(args.data_port), HEIMDALL_CONTROL_PORT=str(args.control_port),
                HEIMDALL_WEB_PORT=str(args.web_port), HEIMDALL_RTL_PORT=str(args.rtl_port))
     if fail:

@@ -59,6 +59,18 @@ async function loopback(t, onConnection) {
   return server.address().port;
 }
 
+test('timed frames keep automatic gain operational without disciplined UTC', async () => {
+  const c = config(), {socket, promise} = injected(c, {captureSeconds: .25});
+  const legacy = frame(c, {samples: 10});
+  const timing = Buffer.alloc(96); timing.writeUInt32BE(1, 0); timing.writeUInt32BE(96, 4);
+  timing.writeBigUInt64BE(10n, 88);
+  const timed = Buffer.concat([legacy.subarray(0, 48), timing, legacy.subarray(48)]);
+  timed.writeUInt32BE(0x4d434854, 0);
+  socket.emit('data', timed.subarray(0, 97)); socket.emit('data', timed.subarray(97));
+  const result = await promise;
+  assert.equal(result.samplesPerChannel, 10);
+});
+
 test('wire metrics preserve signed component DC, component clipping and rare peaks', () => {
   const samples = 2000, payload = Buffer.alloc(3 * samples * 2);
   for (let n = 0; n < samples; ++n) {
@@ -209,7 +221,7 @@ test('bounded assembly handles coalesced maximal packets and rejects forged dime
   assert.equal(result.samplesPerChannel, 600000);
   assert.equal(result.packets, 3);
   assert.equal(result.peakBufferedBytes, one.length);
-  assert.equal(result.maxBufferedBytes, one.length);
+  assert.equal(result.maxBufferedBytes, one.length + 96);
   assert.ok(result.maxBufferedBytes <= LIMITS.maxFrameBytes);
   for (const [offset, value] of [[4, 17], [4, 0], [8, LIMITS.maxPacketSamples + 1], [8, 0], [0, 1]]) {
     const header = Buffer.from(one.subarray(0, 32)); header.writeUInt32BE(value, offset);

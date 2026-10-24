@@ -270,7 +270,8 @@ struct RecordingReader::Impl {
     std::string format=options.format;
     if(format=="auto") {
       if(prefix==magic) format="blah2";
-      else if(std::equal(prefix.begin(),prefix.begin()+4,"MCHQ")) format="mchq";
+      else if(std::equal(prefix.begin(),prefix.begin()+4,"MCHQ") ||
+              std::equal(prefix.begin(),prefix.begin()+4,"MCHT")) format="mchq";
       else if(options.receiver=="RspDuo") format="s16-interleaved";
       else if(options.receiver=="Usrp" && options.legacyBlockSamples) format="usrp-blocks";
       else fail("File format is unknown. Select its format; old USRP files also need the original block size");
