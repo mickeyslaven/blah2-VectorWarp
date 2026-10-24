@@ -252,6 +252,9 @@ function validateConfig(config, baseline = null) {
   string(replay.file, 'capture.replay.file');
   if (replay.format !== undefined)
     oneOf(replay.format, 'capture.replay.format', ['auto', 'blah2', 'mchq', 's16-interleaved', 's8-interleaved', 'usrp-blocks']);
+  if (replay.provenance !== undefined)
+    oneOf(replay.provenance, 'capture.replay.provenance',
+      ['legacy-unqualified', 'decision-grade']);
   if (replay.legacy_block_samples !== undefined)
     number(replay.legacy_block_samples, 'capture.replay.legacy_block_samples', {integer: true, min: 1, max: 262144});
   if (replay.format === 'usrp-blocks' && replay.legacy_block_samples === undefined)

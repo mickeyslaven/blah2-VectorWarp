@@ -497,4 +497,12 @@ legacyUsrp.capture.replay = {...legacyUsrp.capture.replay, state: true,
 assert.equal(validateConfig(legacyUsrp).valid, true, 'USRP legacy replay block size');
 delete legacyUsrp.capture.replay.legacy_block_samples;
 assert.equal(validateConfig(legacyUsrp).valid, false, 'USRP legacy replay requires block size');
+for (const provenance of ['legacy-unqualified', 'decision-grade']) {
+  const replay = clone(sixChannel); replay.capture.replay.provenance = provenance;
+  assert.equal(validateConfig(replay).valid, true, provenance);
+}
+const invalidProvenance = clone(sixChannel);
+invalidProvenance.capture.replay.provenance = 'best-effort';
+assert.equal(validateConfig(invalidProvenance).valid, false,
+  'Replay must not silently invent an unqualified provenance mode');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);

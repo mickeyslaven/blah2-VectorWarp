@@ -168,5 +168,7 @@ for (const name of ['capture.device.surveillance_channels','capture.device.seria
 for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
 rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
 rules['capture.device.serial'] = {type: 'serial'};
+rules['capture.replay.provenance'] = {type: 'string',
+  choices: ['legacy-unqualified', 'decision-grade']};
 
 module.exports = rules;

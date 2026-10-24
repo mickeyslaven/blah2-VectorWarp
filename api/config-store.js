@@ -17,7 +17,9 @@ function setupDefaults() {
   return {
     capture: {fs: 2000000, fc: 204640000,
       device: getDeviceProfiles().find(item => item.type === 'RspDuo').device,
-      replay: {state: false, loop: false, file: '/var/lib/vectorwarp/recordings/recording.blah2iq', format: 'auto'}},
+      replay: {state: false, loop: false,
+        file: '/var/lib/vectorwarp/recordings/recording.blah2iq', format: 'auto',
+        provenance: 'legacy-unqualified'}},
     process: {
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
       data: {cpi: 0.5, buffer: 2, overlap: 0},
