@@ -204,7 +204,9 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 # The source/native installer intentionally uses the administrator's system
 # Node. Binary release packages instead use the verified private runtime.
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
-  "$STAGE/usr/lib/systemd/system/vectorwarp-api.service"
+  "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-health-watchdog.service" \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-config-guard.service"
 sed -i 's|ExecCondition=/usr/bin/node |ExecCondition=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" \
   "$STAGE/usr/lib/systemd/system/vectorwarp-processor.service"
@@ -214,6 +216,12 @@ sed -i 's|  /usr/bin/node /opt/vectorwarp/|  /opt/vectorwarp/runtime/node/bin/no
   "$STAGE/opt/vectorwarp/libexec/vectorwarp-restart"
 grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API unit to private Node'
+grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-health-watchdog.service" ||
+  die 'could not bind health watchdog to private Node'
+grep -q '^ExecStart=/opt/vectorwarp/runtime/node/bin/node ' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-config-guard.service" ||
+  die 'could not bind config guard to private Node'
 grep -q '^ExecCondition=/opt/vectorwarp/runtime/node/bin/node ' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" || die 'could not bind API version check to private Node'
 grep -q '^ExecCondition=/opt/vectorwarp/runtime/node/bin/node ' \
@@ -230,7 +238,10 @@ run rm -rf "$STAGE/opt/vectorwarp/current/systemd" \
   "$STAGE/opt/vectorwarp/current/libexec" \
   "$STAGE/opt/vectorwarp/current/api/node_modules/.bin"
 run find "$STAGE/opt/vectorwarp/current/api/node_modules" -type f -exec chmod a-x '{}' +
-run chmod 0644 "$STAGE/opt/vectorwarp/libexec/vectorwarp-wait-api.js"
+run chmod 0644 \
+  "$STAGE/opt/vectorwarp/libexec/vectorwarp-wait-api.js" \
+  "$STAGE/opt/vectorwarp/libexec/vectorwarp-health-watchdog.js" \
+  "$STAGE/opt/vectorwarp/libexec/vectorwarp-config-guard.js"
 
 printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
   "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \

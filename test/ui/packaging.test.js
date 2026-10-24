@@ -132,6 +132,12 @@ assert.match(packageScript, /Node runtime architecture mismatch/);
 assert.match(packageScript,
   /ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-api\.service[\s\S]*ExecCondition=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-processor\.service/,
   'Binary packages must bind API and receiver conditions to their private Node runtime.');
+assert.match(packageScript,
+  /ExecStart=\/opt\/vectorwarp\/runtime\/node\/bin\/node[\s\S]*vectorwarp-health-watchdog\.service[\s\S]*vectorwarp-config-guard\.service/,
+  'Binary packages must bind watchdog and config-guard services to their private Node runtime.');
+assert.match(packageScript,
+  /chmod 0644[\s\S]*vectorwarp-wait-api\.js[\s\S]*vectorwarp-health-watchdog\.js[\s\S]*vectorwarp-config-guard\.js/,
+  'Explicitly invoked Node helpers must not be executable RPM dependency candidates.');
 assert.doesNotMatch(packageScript,
   /ExecStartPre=\/opt\/vectorwarp\/runtime\/node\/bin\/node /,
   'Packaging must not restore the retired restart-looping receiver pre-check.');
