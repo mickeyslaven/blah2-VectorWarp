@@ -1,6 +1,7 @@
 #include "capture/Recording.h"
 #include "capture/kraken/HeimdallFrame.h"
 #include "capture/kraken/KrakenClipRecorder.h"
+#include "capture/kraken/HostArrivalClock.h"
 #include "data/meta/EventTime.h"
 
 #include <atomic>
@@ -116,6 +117,21 @@ int main()
   const std::filesystem::path directory(temporary);
   try
   {
+    // Stable sample progression is fit against host receipts with a robust
+    // estimator. A delivery step creates a fresh relative epoch; it does not
+    // make the estimate hardware UTC.
+    {
+      blah2::kraken_timing::HostArrivalClock anchors(SAMPLE_RATE);
+      for (uint64_t frame = 1; frame <= 5; ++frame) {
+        const auto estimate = anchors.observe(frame * FRAME_SAMPLES,
+          1000000000LL + static_cast<int64_t>(frame) * 1000000LL);
+        assert(estimate.available && !estimate.discontinuity &&
+          estimate.maximumResidualNanoseconds == 0 && estimate.driftPpm == 0);
+      }
+      const auto discontinuity = anchors.observe(6 * FRAME_SAMPLES, 1306000000LL);
+      assert(discontinuity.discontinuity && discontinuity.anchors == 1 &&
+        discontinuity.epochNanoseconds == 1300000000LL);
+    }
     int64_t clock = 1000000000LL;
     blah2::KrakenClipRecorder::Options options;
     options.ringSeconds = 0.02;
