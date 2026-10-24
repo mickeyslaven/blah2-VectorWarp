@@ -1,44 +1,48 @@
 diff --git a/heimdall_v2/CMakeLists.txt b/heimdall_v2/CMakeLists.txt
-index a8a92e2..22d113e 100644
+index b3a891b..5ded56b 100644
 --- a/heimdall_v2/CMakeLists.txt
 +++ b/heimdall_v2/CMakeLists.txt
-@@ -10,10 +10,17 @@ find_package(PkgConfig REQUIRED)
+@@ -10,7 +10,7 @@ find_package(PkgConfig REQUIRED)
  find_package(Threads REQUIRED)
  
  # Find Eigen3
--find_package(Eigen3 3.3 REQUIRED NO_MODULE)
-+find_package(Eigen3 REQUIRED NO_MODULE)
+-if(WIN32)
++if(WIN32 OR APPLE)
+     # MSYS2 ships Eigen 5, whose config file refuses a "3.3" request
+     # (same-major-version rule) - any Eigen will do
+     find_package(Eigen3 REQUIRED NO_MODULE)
+@@ -19,7 +19,13 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+ endif()
  
  # Find other dependencies using pkg-config
 -pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 +if(NOT APPLE)
 +    pkg_check_modules(LIBUSB REQUIRED IMPORTED_TARGET libusb-1.0)
-+endif()
-+if(APPLE)
-+    # Managed macOS loads the companion's private dynamic fork; do not link
-+    # the Linux static archive or let a system librtlsdr override it.
++else()
++    # Managed macOS loads the companion's private dynamic fork; do not let a
++    # system librtlsdr shadow the source-kit driver.
 +    pkg_check_modules(RTLSDR REQUIRED librtlsdr)
 +endif()
  
- # FFT: pffft, vendored in external/pffft (plain C, BSD-style licence; replaced
- # FFTW 2026-10-17) - no system FFT library
-@@ -30,6 +37,7 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
-     target_compile_options(pffft PRIVATE -march=native)
- endif()
- 
-+if(NOT APPLE)
+ # Windows: a native build with MSYS2's UCRT64 toolchain (MinGW-w64 GCC; run
+ # cmake in the UCRT64 shell, e.g. `cmake -G Ninja ..`), mirroring the
+@@ -60,6 +66,7 @@ endif()
  # KrakenSDR librtlsdr fork, linked STATICALLY so a distro librtlsdr0 (earlier
  # in the loader's search path than /usr/local/lib) can never shadow it - see
  # the Makefile. Built by ../install.sh or by `make` in this directory.
-@@ -39,6 +47,7 @@ if(NOT EXISTS "${RTLSDR_STATIC_LIB}")
-     message(FATAL_ERROR "KrakenSDR librtlsdr fork not built (${RTLSDR_STATIC_LIB}). "
-                         "Run ../install.sh, or `make ../librtlsdr/build/src/librtlsdr.a` in heimdall_v2.")
++if(NOT APPLE)
+ set(RTLSDR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../librtlsdr)
+ if(WIN32)
+     # the fork's CMake names the static library librtlsdr_static.a there
+@@ -113,6 +120,7 @@ foreach(src ${RTLSDR_SRCS})
+ endforeach()
+ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${RTLSDR_SRCS} ${RTLSDR_STATIC_LIB})
  endif()
 +endif()
  
  # Check for uWebSockets
  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets")
-@@ -109,8 +118,12 @@ target_include_directories(heimdall PRIVATE
+@@ -199,8 +207,12 @@ target_include_directories(heimdall PRIVATE
      ${CMAKE_CURRENT_SOURCE_DIR}/external
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/src
      ${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/src
@@ -52,10 +56,10 @@ index a8a92e2..22d113e 100644
  
  # Add Eigen3 include directories
  target_include_directories(heimdall PRIVATE ${EIGEN3_INCLUDE_DIR})
-@@ -140,23 +153,32 @@ endif()
- file(GLOB USOCKETS_OBJS "${CMAKE_CURRENT_SOURCE_DIR}/uWebSockets/uSockets/*.o")
- 
- # Link libraries
+@@ -275,23 +287,27 @@ if(WIN32)
+         ${LIBUV_STATIC_LIBRARY_DIRS}
+     )
+ else()
 -target_link_libraries(heimdall
 -    ${RTLSDR_STATIC_LIB}
 -    ${LIBUSB_LIBRARIES}
@@ -68,33 +72,29 @@ index a8a92e2..22d113e 100644
      z
 -    ssl
 -    crypto
- )
- 
+-)
+-
 -# Link directories
 -target_link_directories(heimdall PRIVATE
 -    ${LIBUSB_LIBRARY_DIRS}
--)
+ )
 +if(APPLE)
 +    target_compile_definitions(heimdall PRIVATE HEIMDALL_DARWIN_LOCAL_ONLY=1)
 +    set_target_properties(heimdall PROPERTIES BUILD_RPATH "@loader_path/../lib/kraken" INSTALL_RPATH "@loader_path/../lib/kraken")
-+    # The private .pc exposes libusb as well. Link only this exact driver;
-+    # its own load commands resolve USB, and simulator replacement stays isolated.
-+    find_library(HEIMDALL_PRIVATE_RTLSDR NAMES rtlsdr
-+        PATHS ${RTLSDR_LIBRARY_DIRS} NO_DEFAULT_PATH)
++    find_library(HEIMDALL_PRIVATE_RTLSDR NAMES rtlsdr PATHS ${RTLSDR_LIBRARY_DIRS} NO_DEFAULT_PATH)
 +    if(NOT HEIMDALL_PRIVATE_RTLSDR OR NOT HEIMDALL_PRIVATE_RTLSDR MATCHES "[.]dylib$")
 +        message(FATAL_ERROR "Private Kraken librtlsdr dylib not found in ${RTLSDR_LIBRARY_DIRS}")
 +    endif()
 +    target_link_libraries(heimdall PRIVATE ${HEIMDALL_PRIVATE_RTLSDR})
 +    set(HEIMDALL_RTLSDR_STATUS "private Kraken librtlsdr dylib (${HEIMDALL_PRIVATE_RTLSDR})")
 +else()
-+    target_link_libraries(heimdall PRIVATE ${RTLSDR_STATIC_LIB} PkgConfig::LIBUSB)
-+    target_link_libraries(heimdall PRIVATE ssl crypto)
++    target_link_libraries(heimdall PRIVATE ${RTLSDR_STATIC_LIB} PkgConfig::LIBUSB ssl crypto)
 +    set(HEIMDALL_RTLSDR_STATUS "KrakenSDR fork, static (${RTLSDR_STATIC_LIB})")
 +endif()
+ endif()
  
  # Installation
- install(TARGETS heimdall DESTINATION bin)
-@@ -181,7 +203,7 @@ add_custom_target(status
+@@ -317,7 +333,7 @@ add_custom_target(status
      COMMAND ${CMAKE_COMMAND} -E echo "=== Build Status ==="
      COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 found: ${EIGEN3_FOUND}"
      COMMAND ${CMAKE_COMMAND} -E echo "Eigen3 version: ${EIGEN3_VERSION}"
@@ -103,7 +103,7 @@ index a8a92e2..22d113e 100644
      COMMAND ${CMAKE_COMMAND} -E echo "FFT: pffft (vendored, external/pffft)"
      COMMENT "Checking build status..."
  )
-@@ -191,9 +213,9 @@ message(STATUS "")
+@@ -327,9 +343,9 @@ message(STATUS "")
  message(STATUS "=== Heimdall Configuration ===")
  message(STATUS "C++ Standard: C++20")
  message(STATUS "Eigen3: ${EIGEN3_VERSION} (${EIGEN3_INCLUDE_DIR})")
@@ -139,20 +139,103 @@ index 11c6d88..846d7ee 100644
  
  // Serial number configuration - channel N is the device with serial
  // expected_serials[N]. Defaults to "1000".."1007" (the KrakenSDR factory
+diff --git a/heimdall_v2/src/core/fs_compat.cpp b/heimdall_v2/src/core/fs_compat.cpp
+index 954d2d2..c774544 100644
+--- a/heimdall_v2/src/core/fs_compat.cpp
++++ b/heimdall_v2/src/core/fs_compat.cpp
+@@ -226,7 +226,11 @@ void fs_fsync_dir(const std::string& dir) {
+ int64_t fs_mtime_ms(const std::string& path) {
+     struct stat st{};
+     if (stat(path.c_str(), &st) != 0) return 0;
++#if defined(__APPLE__)
++    return static_cast<int64_t>(st.st_mtimespec.tv_sec) * 1000 + st.st_mtimespec.tv_nsec / 1000000;
++#else
+     return static_cast<int64_t>(st.st_mtim.tv_sec) * 1000 + st.st_mtim.tv_nsec / 1000000;
++#endif
+ }
+ 
+ uint64_t fs_mem_available() {
+diff --git a/heimdall_v2/src/core/net_compat.hpp b/heimdall_v2/src/core/net_compat.hpp
+index 9891344..4bd82b0 100644
+--- a/heimdall_v2/src/core/net_compat.hpp
++++ b/heimdall_v2/src/core/net_compat.hpp
+@@ -425,6 +425,13 @@ inline bool sock_fits_fd_set(int fd, int sockets_in_set) {
+ #include <sys/types.h>
+ #include <unistd.h>
+ 
++#ifndef SOCK_CLOEXEC
++#define SOCK_CLOEXEC 0
++#endif
++#ifndef SOCK_NONBLOCK
++#define SOCK_NONBLOCK 0
++#endif
++
+ inline bool sock_startup() { return true; }
+ inline int sock_socket(int domain, int type, int protocol) { return ::socket(domain, type, protocol); }
+ inline int sock_close(int fd) { return ::close(fd); }
+@@ -433,7 +440,26 @@ inline bool sock_set_nonblocking(int fd, bool on = true) {
+     return fl >= 0 && fcntl(fd, F_SETFL, on ? (fl | O_NONBLOCK) : (fl & ~O_NONBLOCK)) >= 0;
+ }
+ inline int sock_accept(int fd, sockaddr* addr, socklen_t* len) { return ::accept(fd, addr, len); }
+-inline int sock_accept4(int fd, sockaddr* addr, socklen_t* len, int flags) { return ::accept4(fd, addr, len, flags); }
++inline int sock_accept4(int fd, sockaddr* addr, socklen_t* len, int flags) {
++#if defined(__APPLE__)
++    const int accepted = ::accept(fd, addr, len);
++    if (accepted < 0) return accepted;
++    if (flags & SOCK_CLOEXEC) {
++        const int old = fcntl(accepted, F_GETFD);
++        if (old < 0 || fcntl(accepted, F_SETFD, old | FD_CLOEXEC) < 0) {
++            ::close(accepted);
++            return -1;
++        }
++    }
++    if ((flags & SOCK_NONBLOCK) && !sock_set_nonblocking(accepted)) {
++        ::close(accepted);
++        return -1;
++    }
++    return accepted;
++#else
++    return ::accept4(fd, addr, len, flags);
++#endif
++}
+ inline int sock_bind(int fd, const sockaddr* addr, socklen_t len) { return ::bind(fd, addr, len); }
+ inline int sock_listen(int fd, int backlog) { return ::listen(fd, backlog); }
+ inline int sock_connect(int fd, const sockaddr* addr, socklen_t len) { return ::connect(fd, addr, len); }
+@@ -458,10 +484,18 @@ inline int sock_poll(pollfd* fds, unsigned long n, int timeout_ms) {
+ inline int sock_select(int nfds, fd_set* r, fd_set* w, fd_set* e, timeval* tv) { return ::select(nfds, r, w, e, tv); }
+ inline bool sock_set_keepalive(int fd, int idle_s, int interval_s, int count) {
+     int on = 1;
+-    return setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on) == 0 &&
+-           setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_s, sizeof idle_s) == 0 &&
++    if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof on) != 0) return false;
++#ifdef __APPLE__
++    // Darwin names the idle threshold TCP_KEEPALIVE and does not expose a
++    // portable per-socket probe-count option.
++    (void)count;
++    return setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle_s, sizeof idle_s) == 0 &&
++           setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval_s, sizeof interval_s) == 0;
++#else
++    return setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle_s, sizeof idle_s) == 0 &&
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval_s, sizeof interval_s) == 0 &&
+            setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof count) == 0;
++#endif
+ }
+ inline int sock_connect_timeout(int fd, const sockaddr* addr, socklen_t len, int timeout_ms) {
+     const int fl = fcntl(fd, F_GETFL);
 diff --git a/heimdall_v2/src/core/status_dashboard.cpp b/heimdall_v2/src/core/status_dashboard.cpp
-index 8ca5562..e8b24ee 100644
+index bac023c..c5ab78e 100644
 --- a/heimdall_v2/src/core/status_dashboard.cpp
 +++ b/heimdall_v2/src/core/status_dashboard.cpp
-@@ -214,7 +214,7 @@ string web_url() {
+@@ -219,7 +219,7 @@ string web_url() {
      static const string url = [] {
-         char h[256] = {0};
-         string host = (gethostname(h, sizeof(h) - 1) == 0 && h[0]) ? string(h) : string("localhost");
+         string host = platform::host_name();
+         if (host.empty()) host = "localhost";
 -        return "http://" + host + ":" + to_string(WEB_PORT);
 +        return "http://" + host + ":" + to_string(web_port);
      }();
      return url;
  }
-@@ -562,10 +562,10 @@ void render() {
+@@ -560,10 +560,10 @@ void render() {
          int rtl_ch = rtl_tcp_server ? rtl_tcp_server->get_source_channel() : 0;
          ostringstream o;
          o << label("NETWORK")
@@ -213,37 +296,35 @@ index 543ceb7..67768e7 100644
  extern DiscreteScannerConfig discrete_scanner;
  
 diff --git a/heimdall_v2/src/core/utils.cpp b/heimdall_v2/src/core/utils.cpp
-index 3f19bc4..5a11f84 100644
+index 39d5bb4..e19cbf1 100644
 --- a/heimdall_v2/src/core/utils.cpp
 +++ b/heimdall_v2/src/core/utils.cpp
-@@ -18,16 +18,24 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
-     bool ok = true;
+@@ -38,7 +38,13 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
  
      // Thread name for `top -H`/htop/perf (Linux caps it at 15 chars + NUL).
+     // (winpthreads sets the Win32 thread description - debuggers, Process Explorer)
 -    if (name) pthread_setname_np(self, name);
 +    if (name) {
 +#if defined(__APPLE__)
 +        pthread_setname_np(name);
-+#else
++#elif defined(__linux__)
 +        pthread_setname_np(self, name);
 +#endif
 +    }
  
+ #ifdef _WIN32
+     // Windows has no SCHED_RR (winpthreads' pthread_setschedparam returns
+@@ -77,7 +83,7 @@ bool set_thread_realtime(const char* name, int rt_priority, int cpu) {
+             if (!raised) ok = false;
+         }
+     }
+-#else
++#elif defined(__linux__)
      // Optional CPU pinning. Off by default (cpu < 0): real isolation needs
      // isolcpus on the kernel cmdline, which we can't assume on an arbitrary Pi.
-+#if defined(__linux__)
      if (cpu >= 0) {
-         cpu_set_t set;
-         CPU_ZERO(&set);
-         CPU_SET(cpu, &set);
-         if (pthread_setaffinity_np(self, sizeof(set), &set) != 0) ok = false;
-     }
-+#endif
- 
-     // SCHED_RR (round-robin), NOT SCHED_FIFO. We run up to NUM_DEVICES (5) USB
-     // reader threads at the SAME priority on a 4-core Pi. Under SCHED_FIFO equal
 diff --git a/heimdall_v2/src/dsp/compensation.cpp b/heimdall_v2/src/dsp/compensation.cpp
-index 78c499c..6b30b86 100644
+index 7ef5f45..e111d51 100644
 --- a/heimdall_v2/src/dsp/compensation.cpp
 +++ b/heimdall_v2/src/dsp/compensation.cpp
 @@ -159,6 +159,7 @@ static bool design_per_bin_equalizers() {
@@ -297,7 +378,7 @@ index 78c499c..6b30b86 100644
      // --kerberos: no automatic recalibration after a settings change (the
      // noise couples into the connected antennas). Keep the old compensation
      // applied - approximately valid nearby - and mark it STALE for the UIs.
-@@ -435,6 +446,7 @@ void begin_retune_cooldown(const char* what) {
+@@ -440,6 +451,7 @@ void begin_retune_cooldown(const char* what) {
  }
  
  void reset_lag_compensation_all_channels() {
@@ -305,7 +386,7 @@ index 78c499c..6b30b86 100644
      std::cout << "Resetting lag compensation for all channels..." << std::endl;
  
      for (const auto& device : devices) {
-@@ -480,6 +492,7 @@ const char* kerberos_calibration_state() {
+@@ -485,6 +497,7 @@ const char* kerberos_calibration_state() {
  // machine can converge (or latch a bogus calibration) until a manual
  // recalibration re-enables everything through recover_coherence(true).
  void kerberos_enter_uncalibrated(const char* reason) {
@@ -313,7 +394,7 @@ index 78c499c..6b30b86 100644
      set_bias_tee_all_devices(false, devices);
      // Parked, not calibrating: the steady-state L2-raw cushion (C5). The boot
      // value is the tight calibration cap, which otherwise stayed for the whole
-@@ -519,6 +532,8 @@ void kerberos_enter_uncalibrated(const char* reason) {
+@@ -524,6 +537,8 @@ void kerberos_enter_uncalibrated(const char* reason) {
  // full-packet slip (phase compensation cannot represent it, and a locked lag
  // state will not re-measure on its own). Runs only on the watchdog thread.
  void recover_coherence(bool manual) {
@@ -322,7 +403,7 @@ index 78c499c..6b30b86 100644
      // Under state_mutex: begin_retune_cooldown / the periodic check's restore
      // test the flag under it and then switch the noise source off - set
      // outside it, one could pass the test just before the recovery started and
-@@ -624,36 +639,26 @@ void recover_coherence(bool manual) {
+@@ -629,26 +644,20 @@ void recover_coherence(bool manual) {
  }
  
  // Watchdog thread: drives coherence recovery off the coherence_lost flag.
@@ -357,6 +438,10 @@ index 78c499c..6b30b86 100644
 +        if (reconfig_in_progress.load(std::memory_order_acquire) ||
 +            hardware_settings_failed.load(std::memory_order_acquire)) continue;
  
+         // A drag is over (no retune for 400 ms): its tuners back in the
+         // resting PLL state well before the cooldown's calibration
+@@ -656,13 +665,9 @@ void coherence_watchdog() {
+ 
          const auto now = std::chrono::steady_clock::now();
          bool recovering = recovery_in_progress.load(std::memory_order_acquire);
 -
@@ -372,7 +457,7 @@ index 78c499c..6b30b86 100644
              std::cerr << "Coherence watchdog: recovery exceeded 120s, aborting (noise source off)" << std::endl;
              if (operating_mode.load() == OperatingMode::COHERENT) {
                  set_bias_tee_all_devices(false, devices);
-@@ -670,40 +675,36 @@ void coherence_watchdog() {
+@@ -679,40 +684,36 @@ void coherence_watchdog() {
                  fft_control.auto_disabled = true;
                  fft_control.user_override = false;
              }
@@ -434,7 +519,7 @@ index 78c499c..6b30b86 100644
      }
      std::cout << "Coherence watchdog exiting" << std::endl;
  }
-@@ -720,6 +721,16 @@ void coherence_watchdog() {
+@@ -729,6 +730,16 @@ void coherence_watchdog() {
  // existing post-calibration monitor already computes.
  static void run_calibration_check(CorrelationResult& correlation_result) {
      using namespace std::chrono;
@@ -451,7 +536,7 @@ index 78c499c..6b30b86 100644
  
      // Snapshot what the user already had on.
      const bool noise_was_on = bias_tee_enabled.load();
-@@ -776,7 +787,9 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+@@ -785,7 +796,9 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
              // sets (zeros / previous values, published before the FFT
              // override took effect) counted as perfect readings and diluted
              // a real drift below the threshold
@@ -462,7 +547,7 @@ index 78c499c..6b30b86 100644
                  last_seq = correlation_result.data_sequence;
                  for (int ch = 0; ch < NUM_DEVICES; ++ch) {
                      if (ch == REF_CHANNEL) continue;
-@@ -801,6 +814,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+@@ -810,6 +823,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
      // device lock order as complete_phase_calibration_locked).
      bool still_converged = false;
      if (phase_compensation) {
@@ -470,7 +555,7 @@ index 78c499c..6b30b86 100644
          std::lock_guard<std::mutex> sl(phase_compensation->state_mutex);
          still_converged = phase_compensation->state == PhaseCompensatorState::CONVERGED &&
                            !recovery_in_progress.load(std::memory_order_acquire);
-@@ -858,6 +872,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+@@ -867,6 +881,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
      if (bad) {
          if (bad_lag)   periodic_recal_lag_fail_count.fetch_add(1, std::memory_order_relaxed);
          if (bad_phase) periodic_recal_phase_fail_count.fetch_add(1, std::memory_order_relaxed);
@@ -478,7 +563,7 @@ index 78c499c..6b30b86 100644
          std::cerr << "Periodic calibration check: DRIFTED ("
                    << (bad_lag ? "lag " : "") << (bad_phase ? "phase " : "")
                    << "out of tolerance; worst |lag|=" << worst_lag
-@@ -867,8 +882,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
+@@ -876,8 +891,7 @@ static void run_calibration_check(CorrelationResult& correlation_result) {
                    << "]" << std::endl;
          force_recalibration.store(true, std::memory_order_release);
      } else {
@@ -488,7 +573,7 @@ index 78c499c..6b30b86 100644
      }
  }
  
-@@ -1225,9 +1239,35 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+@@ -1234,9 +1248,35 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
      auto last_fresh = std::chrono::steady_clock::now();
  
      while (global_running && pipeline_running.load(std::memory_order_acquire)) {
@@ -524,7 +609,7 @@ index 78c499c..6b30b86 100644
          // With FFT off the correlation thread still advances data_sequence
          // (it drives the time-based states below, e.g. the retune cooldown)
          // but produces no measurement: data_ready is false, lags keep their
-@@ -1251,7 +1291,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+@@ -1260,7 +1300,9 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
              std::lock_guard<std::mutex> lock(correlation_result.data_mutex);
              current_sequence = correlation_result.data_sequence;
              if (current_sequence > last_processed_sequence) {
@@ -535,7 +620,7 @@ index 78c499c..6b30b86 100644
                  current_lag = correlation_result.lags[channel];
                  current_phases = correlation_result.phases;
                  phases_measured = correlation_result.phases_measured;
-@@ -1309,6 +1351,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+@@ -1318,6 +1360,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                  
                  if (!fft_enabled) {
                      // Calibration complete and FFT disabled - stop all compensation processing
@@ -543,7 +628,7 @@ index 78c499c..6b30b86 100644
                      std::this_thread::sleep_for(std::chrono::milliseconds(500));
                      continue;
                  }
-@@ -1453,6 +1496,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
+@@ -1462,6 +1505,7 @@ void channel_lag_compensation_processor(int channel, CorrelationResult& correlat
                  tick_ms = 20;
              }
          }
@@ -782,21 +867,28 @@ index b6ffd47..623eef1 100644
                  // The zeroed phases below are placeholders, not a measurement
                  // (the periodic check counts only phases_measured sets)
 diff --git a/heimdall_v2/src/main.cpp b/heimdall_v2/src/main.cpp
-index 21b3333..062c747 100644
+index 0fe7186..c3a685f 100644
 --- a/heimdall_v2/src/main.cpp
 +++ b/heimdall_v2/src/main.cpp
-@@ -29,6 +29,97 @@
+@@ -20,6 +20,7 @@
+ #include "web/html_loader.hpp"
+ #include "core/status_dashboard.hpp"
+ #include "core/platform.hpp"
++#include "core/net_compat.hpp"
+ #include <algorithm>
+ #include <iostream>
+ #include <iomanip>
+@@ -30,6 +31,128 @@
  #include <cstdlib>
  #include <cstdio>
  #include <unistd.h>
-+#include <arpa/inet.h>
 +#include <filesystem>
 +#include <limits>
 +#include <cerrno>
 +#include <cctype>
 +
-+// Runtime ports remain upstream-compatible unless the managed launcher supplies
-+// validated HEIMDALL_* values. They are initialized before any device enumeration.
++// Runtime endpoints remain upstream-compatible unless the managed launcher
++// supplies validated HEIMDALL_* values before any device enumeration.
 +int tcp_data_port = 8091;
 +int tcp_control_port = 8092;
 +int rtl_tcp_port = 1234;
@@ -809,7 +901,6 @@ index 21b3333..062c747 100644
 +std::string heimdall_instance_token;
 +std::string heimdall_html_path;
 +
-+// Defined below; declarations allow startup validation to set them before USB discovery.
 +extern std::atomic<uint64_t> current_frequency;
 +extern std::atomic<int> current_gain;
 +extern std::atomic<pid_t> expected_parent_pid;
@@ -818,19 +909,27 @@ index 21b3333..062c747 100644
 +bool parse_env_port(const char* name, int& target) {
 +    const char* value = std::getenv(name);
 +    if (!value) return true;
-+    char* end = nullptr; errno = 0;
++    char* end = nullptr;
++    errno = 0;
 +    const long parsed = std::strtol(value, &end, 10);
 +    if (errno || end == value || *end != '\0' || parsed < 1 || parsed > 65535) {
 +        std::cerr << "Invalid " << name << ": expected port 1-65535" << std::endl;
 +        return false;
 +    }
-+    target = static_cast<int>(parsed); return true;
++    target = static_cast<int>(parsed);
++    return true;
 +}
++
 +bool configure_managed_environment() {
 +    const char* host = std::getenv("HEIMDALL_BIND_HOST");
 +    if (host) {
 +        in_addr address{};
-+        if (inet_pton(AF_INET, host, &address) != 1) {
++#ifdef _WIN32
++        const bool valid = InetPtonA(AF_INET, host, &address) == 1;
++#else
++        const bool valid = inet_pton(AF_INET, host, &address) == 1;
++#endif
++        if (!valid) {
 +            std::cerr << "Invalid HEIMDALL_BIND_HOST: expected numeric IPv4 address" << std::endl;
 +            return false;
 +        }
@@ -848,42 +947,67 @@ index 21b3333..062c747 100644
 +        !parse_env_port("HEIMDALL_RTL_PORT", rtl_tcp_port)) return false;
 +    if (const char* token = std::getenv("HEIMDALL_INSTANCE_TOKEN")) {
 +        const std::string value(token);
-+        if (value.empty() || value.size() > 128 || !std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isxdigit(c); })) {
++        if (value.empty() || value.size() > 128 ||
++            !std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isxdigit(c); })) {
 +            std::cerr << "Invalid HEIMDALL_INSTANCE_TOKEN: expected 1-128 hexadecimal characters" << std::endl;
 +            return false;
 +        }
 +        heimdall_instance_token = value;
 +    }
 +    if (const char* parent = std::getenv("HEIMDALL_PARENT_PID")) {
-+        char* end = nullptr; errno = 0; const long pid = std::strtol(parent, &end, 10);
-+        if (errno || end == parent || *end != '\0' || pid <= 1 || pid > std::numeric_limits<pid_t>::max()) {
-+            std::cerr << "Invalid HEIMDALL_PARENT_PID" << std::endl; return false;
++        char* end = nullptr;
++        errno = 0;
++        const long pid = std::strtol(parent, &end, 10);
++        if (errno || end == parent || *end != '\0' || pid <= 1 ||
++            pid > std::numeric_limits<pid_t>::max()) {
++            std::cerr << "Invalid HEIMDALL_PARENT_PID" << std::endl;
++            return false;
 +        }
 +        expected_parent_pid.store(static_cast<pid_t>(pid), std::memory_order_release);
 +    }
 +    if (const char* html = std::getenv("HEIMDALL_HTML_PATH")) {
 +        std::error_code ec;
-+        const std::filesystem::path p(html);
-+        if (!p.is_absolute() || !std::filesystem::is_regular_file(p, ec)) {
++        const std::filesystem::path path(html);
++        if (!path.is_absolute() || !std::filesystem::is_regular_file(path, ec)) {
 +            std::cerr << "Invalid HEIMDALL_HTML_PATH: expected an absolute readable file" << std::endl;
 +            return false;
 +        }
-+        heimdall_html_path = p.string();
++        heimdall_html_path = path.string();
 +    }
-+    auto parse_uint = [](const char* name, std::atomic<uint64_t>& target) -> bool {
-+        const char* v = std::getenv(name); if (!v) return true; char* e = nullptr; errno = 0;
-+        unsigned long long n = std::strtoull(v, &e, 10);
-+        if (errno || e == v || *e != '\0' || n == 0 || n > std::numeric_limits<uint32_t>::max()) { std::cerr << "Invalid " << name << std::endl; return false; }
-+        target.store(n); return true;
++    auto parse_frequency = [](const char* name, std::atomic<uint64_t>& target) {
++        const char* value = std::getenv(name);
++        if (!value) return true;
++        char* end = nullptr;
++        errno = 0;
++        const unsigned long long parsed = std::strtoull(value, &end, 10);
++        if (errno || end == value || *end != '\0' || parsed == 0 ||
++            parsed > std::numeric_limits<uint32_t>::max()) {
++            std::cerr << "Invalid " << name << std::endl;
++            return false;
++        }
++        target.store(parsed);
++        return true;
 +    };
-+    auto parse_gain = []() -> bool { const char* v = std::getenv("HEIMDALL_GAIN_TENTHS"); if (!v) return true; char* e = nullptr; errno = 0; long n = std::strtol(v, &e, 10); if (errno || e == v || *e != '\0' || n < -1 || n > 500) { std::cerr << "Invalid HEIMDALL_GAIN_TENTHS" << std::endl; return false; } current_gain.store((int)n); return true; };
-+    return parse_uint("HEIMDALL_CENTER_FREQ_HZ", current_frequency) && parse_gain();
++    auto parse_gain = [] {
++        const char* value = std::getenv("HEIMDALL_GAIN_TENTHS");
++        if (!value) return true;
++        char* end = nullptr;
++        errno = 0;
++        const long parsed = std::strtol(value, &end, 10);
++        if (errno || end == value || *end != '\0' || parsed < -1 || parsed > 500) {
++            std::cerr << "Invalid HEIMDALL_GAIN_TENTHS" << std::endl;
++            return false;
++        }
++        current_gain.store(static_cast<int>(parsed));
++        return true;
++    };
++    return parse_frequency("HEIMDALL_CENTER_FREQ_HZ", current_frequency) && parse_gain();
 +}
-+} // namespace
++}  // namespace
  
  // Global state variables (definitions for extern declarations in types.hpp)
  std::atomic<uint64_t> current_frequency{CENTER_FREQ};
-@@ -70,6 +161,15 @@ std::atomic<bool> external_noise_mode{false};
+@@ -71,6 +194,15 @@ std::atomic<bool> external_noise_mode{false};
  std::atomic<bool> coherence_lost{false};
  std::atomic<bool> recovery_in_progress{false};
  std::atomic<uint32_t> coherence_event_count{0};
@@ -899,7 +1023,7 @@ index 21b3333..062c747 100644
  std::atomic<bool> force_recalibration{false};
  std::atomic<bool> periodic_recal_enabled{PERIODIC_RECAL_DEFAULT_ENABLED != 0};
  std::atomic<int> periodic_recal_minutes{PERIODIC_RECAL_DEFAULT_MINUTES};
-@@ -182,6 +282,7 @@ void discrete_scanner_thread() {
+@@ -186,6 +318,7 @@ void discrete_scanner_thread() {
          // Read before settings_mutex (state_mutex is never taken under it here)
          const bool cal_converged = get_phase_compensation_state() == PhaseCompensatorState::CONVERGED;
          {
@@ -907,7 +1031,7 @@ index 21b3333..062c747 100644
              std::lock_guard<std::mutex> lock(settings_mutex);
              bool hop_ok = true;
              // Stopped / restarted during the flushes above (e.g. a signal lock
-@@ -293,70 +394,24 @@ void discrete_scanner_thread() {
+@@ -297,72 +430,19 @@ void discrete_scanner_thread() {
  // close the dongles so they are clean for the next run. The workers only touch
  // device QUEUES, never the librtlsdr handle, so closing here can't race them.
  static void release_hardware() {
@@ -917,10 +1041,16 @@ index 21b3333..062c747 100644
 -    // (use after free at exit). Bounded - a stuck holder must not hang the
 -    // exit - and never released: the process is about to _Exit, and a
 -    // reconfiguration starting after this must not reopen anything.
--    const auto lock_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+-    // Windows ends the process about 5 s after its console window was closed
+-    // (or at logoff / shutdown): wait less there, so the noise source is still
+-    // switched off and the dongles closed within that time.
+-    const bool urgent = platform::stop_is_urgent();
+-    const auto lock_deadline = std::chrono::steady_clock::now() +
+-                               (urgent ? std::chrono::milliseconds(1500) : std::chrono::milliseconds(5000));
 -    while (!settings_mutex.try_lock()) {
 -        if (std::chrono::steady_clock::now() > lock_deadline) {
--            std::cerr << "Shutdown: settings lock still held after 5 s - releasing the devices anyway" << std::endl;
+-            std::cerr << "Shutdown: settings lock still held after " << (urgent ? "1.5" : "5")
+-                      << " s - releasing the devices anyway" << std::endl;
 -            break;
 -        }
 -        std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -987,12 +1117,16 @@ index 21b3333..062c747 100644
      kerberos_gpio_cleanup();
  }
  
- int main(int argc, char* argv[]) {
+@@ -378,6 +458,8 @@ int main(int argc, char* argv[]) {
+     // are all cwd-relative (run.sh cds there on Linux). No-op on Linux.
+     platform::chdir_to_exe_dir_if_missing("index.html");
+ 
 +    if (!configure_managed_environment()) return 2;
++
      // Parse command line arguments
      int num_elements_cli = 0;  // 0 = not given on the command line
  
-@@ -562,10 +617,10 @@ int main(int argc, char* argv[]) {
+@@ -596,10 +678,10 @@ int main(int argc, char* argv[]) {
           << (external_noise_mode.load()
                   ? "Mode: EXTERNAL noise source (add-on array, powered from the CH0 bias tee)\n"
                   : "")
@@ -1006,32 +1140,33 @@ index 21b3333..062c747 100644
 +         << "TCP Control Port: " << tcp_control_port << " (JSON commands)\n"
           << "=========================================================================================================\n" << std::endl;
      
-     signal(SIGINT, signal_handler);
-@@ -661,7 +716,7 @@ int main(int argc, char* argv[]) {
-         // An optional tap: a stock rtl_tcp on a spare dongle (the default
+     // SIGINT, SIGTERM and SIGHUP (core/platform.cpp). SIGHUP too: tmux
+@@ -709,7 +791,7 @@ int main(int argc, char* argv[]) {
          // port 1234) must not keep the array from starting - that made the
          // supervisor restart-loop. Run without it.
--        std::cerr << "RTL-TCP: port " << RTL_TCP_PORT << " is busy - running without the RTL-TCP tap" << std::endl;
-+        std::cerr << "RTL-TCP: port " << rtl_tcp_port << " is busy - running without the RTL-TCP tap" << std::endl;
+         const int err = errno;
+-        std::cerr << "RTL-TCP: port " << RTL_TCP_PORT << " is busy" << listen_error_detail(err)
++        std::cerr << "RTL-TCP: port " << rtl_tcp_port << " is busy" << listen_error_detail(err)
+                   << " - running without the RTL-TCP tap" << std::endl;
      }
      
-     // Start TCP servers
-@@ -669,12 +724,12 @@ int main(int argc, char* argv[]) {
-     tcp_control_server = std::make_unique<TcpControlServer>();
+@@ -719,13 +801,13 @@ int main(int argc, char* argv[]) {
      
      if (!tcp_data_server->start()) {
--        std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << std::endl;
-+        std::cerr << "Failed to start TCP data server on port " << tcp_data_port << std::endl;
+         const int err = errno;
+-        std::cerr << "Failed to start TCP data server on port " << TCP_DATA_PORT << listen_error_detail(err) << std::endl;
++        std::cerr << "Failed to start TCP data server on port " << tcp_data_port << listen_error_detail(err) << std::endl;
          fail_startup();
      }
      
      if (!tcp_control_server->start()) {
--        std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << std::endl;
-+        std::cerr << "Failed to start TCP control server on port " << tcp_control_port << std::endl;
+         const int err = errno;
+-        std::cerr << "Failed to start TCP control server on port " << TCP_CONTROL_PORT << listen_error_detail(err)
++        std::cerr << "Failed to start TCP control server on port " << tcp_control_port << listen_error_detail(err)
+                   << std::endl;
          fail_startup();
      }
-     
-@@ -709,33 +764,35 @@ int main(int argc, char* argv[]) {
+@@ -761,9 +843,9 @@ int main(int argc, char* argv[]) {
      start_pipeline_threads();
  
      std::cout << "System running - press Ctrl+C to stop" << std::endl;
@@ -1043,93 +1178,67 @@ index 21b3333..062c747 100644
      std::cout << "Use the web interface to select which RTL-SDR channel to stream via RTL-TCP" << std::endl;
  
      // Everything is up (devices open, servers running, calibration starting):
-     // switch the dashboard from the loading screen to the full status view.
-     StatusDashboard::mark_ready();
- 
+@@ -773,8 +855,13 @@ int main(int argc, char* argv[]) {
+     // A 500 ms poll; on Windows a stop request ends the wait at once - after
+     // the console window was closed (or at logoff / shutdown) the OS gives the
+     // shutdown ~5 s in all
 -    while (global_running) {
--        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+-        platform::wait_stop_request(500);
 +    while (global_running && !shutdown_signal) {
 +        const pid_t parent = expected_parent_pid.load(std::memory_order_acquire);
-+        if (parent && getppid() != parent) { std::cerr << "Managed parent exited; shutting down" << std::endl; break; }
-+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
++        if (parent && getppid() != parent) {
++            std::cerr << "Managed parent exited; shutting down" << std::endl;
++            break;
++        }
++        platform::wait_stop_request(100);
      }
  
--    // Restore the terminal (stop + join the dashboard thread) before the
--    // shutdown logs so they print normally on the restored screen.
-+    global_running = false;
-     dash.stop();
- 
-     if (shutdown_signal) std::cout << "\nReceived signal " << shutdown_signal << ", shutting down..." << std::endl;
-     else std::cout << "\nShutting down..." << std::endl;
-     global_running = false;  // signal every worker loop to stop
- 
--    // Bulletproof shutdown: DO NOT join the worker threads. The uWebSockets
--    // event loop never returns from run(), and other workers (and the TCP
--    // server stop() calls) can block on their queues/condition variables, so
--    // ANY join here risks hanging shutdown (which it did). Instead we release
--    // just the RTL-SDR hardware and _Exit; the OS reclaims the threads, the
--    // listening sockets (TCP ports) and all remaining handles on exit.
-+    // Global-running is already false; these bounded worker loops must finish
-+    // before hardware close. The process-owned uWS loop exits with _Exit below.
-+    if (correlation_processor_thread.joinable()) correlation_processor_thread.join();
-+    if (tcp_status_thread.joinable()) tcp_status_thread.join();
-+    if (scanner_thread.joinable()) scanner_thread.join();
-+    if (coherence_watchdog_thread.joinable()) coherence_watchdog_thread.join();
-+    if (periodic_recal_thread.joinable()) periodic_recal_thread.join();
-     release_hardware();
- 
-     // _Exit skips static/global destructors that the still-live worker threads
-@@ -743,4 +800,4 @@ int main(int argc, char* argv[]) {
+     // Restore the terminal (stop + join the dashboard thread) before the
+@@ -801,4 +888,4 @@ int main(int argc, char* argv[]) {
      std::cout << "Heimdall shutdown complete." << std::endl;
      std::cout.flush();
-     _Exit(fatal_exit.load() ? 1 : 0);
+     platform::fast_exit(fatal_exit.load() ? 1 : 0);
 -}
 \ No newline at end of file
 +}
 diff --git a/heimdall_v2/src/net/rtl_tcp_server.cpp b/heimdall_v2/src/net/rtl_tcp_server.cpp
-index d2afc3a..8fe8730 100644
+index a118ada..44dfd6b 100644
 --- a/heimdall_v2/src/net/rtl_tcp_server.cpp
 +++ b/heimdall_v2/src/net/rtl_tcp_server.cpp
-@@ -1,4 +1,7 @@
- #include "rtl_tcp_server.hpp"
-+#if defined(__APPLE__) && !defined(TCP_KEEPIDLE)
-+#define TCP_KEEPIDLE TCP_KEEPALIVE
-+#endif
- #include "tcp_common.hpp"  // For socket headers and utilities
- #include "../sdr/sdr_device.hpp"  // Need full SDRDevice definition
- #include "../core/config.hpp"
-@@ -40,51 +43,49 @@ int RtlTcpServer::get_source_channel() const {
+@@ -40,59 +40,47 @@ int RtlTcpServer::get_source_channel() const {
  }
  
  bool RtlTcpServer::start() {
--    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+-    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
 -    if (server_socket < 0) return false;
 -    
+-    // Exclusive on Windows (sock_setsockopt, see set_socket_reuse): there a
+-    // plain SO_REUSEADDR co-bound 1234 with a stock rtl_tcp.exe (which sets
+-    // it too) instead of failing, and SDR# connections landed on either one
 -    int opt = 1;
--    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
--    
+-    sock_setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 +    if (server_thread.joinable() || server_socket >= 0) return false;
-+    // Publish only a fully configured listener. Failed starts own and close
-+    // their local fd; stop()/the destructor must never close a reused number.
-+    const int listener = socket(AF_INET, SOCK_STREAM, 0);
++    const int listener = sock_socket(AF_INET, SOCK_STREAM, 0);
 +    if (listener < 0) return false;
-+    auto fail = [&]() { close(listener); return false; };
++    auto fail = [&]() { sock_close(listener); return false; };
 +    if (listener >= FD_SETSIZE || !set_socket_reuse(listener) ||
 +        !set_socket_nonblocking(listener)) return fail();
-+
+     
      sockaddr_in addr{};
      addr.sin_family = AF_INET;
 -    addr.sin_addr.s_addr = INADDR_ANY;
 -    addr.sin_port = htons(RTL_TCP_PORT);
 -    
--    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 1) < 0) {
--        close(server_socket);
+-    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || sock_listen(server_socket, 1) < 0) {
+-        const int err = errno;  // for main's message (listen_error_detail)
+-        sock_close(server_socket);
 -        server_socket = -1;  // stop() (the destructor) must not close the number again
+-        errno = err;
 -        return false;
 +    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) return fail();
 +    addr.sin_port = htons(rtl_tcp_port);
-+    if (bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
-+        listen(listener, 1) < 0) return fail();
++    if (sock_bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
++        sock_listen(listener, 1) < 0) return fail();
 +
 +    server_socket = listener;
 +    running = true;
@@ -1140,28 +1249,29 @@ index d2afc3a..8fe8730 100644
 +        server_socket = -1;
 +        return fail();
      }
--    
+     
 -    server_thread = std::thread(&RtlTcpServer::server_loop, this);
 -    
 -    std::cout << "RTL-TCP Server listening on port " << RTL_TCP_PORT 
--         << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
-+    std::cout << "RTL-TCP Server listening on port " << rtl_tcp_port << std::endl;
++    std::cout << "RTL-TCP Server listening on port " << rtl_tcp_port
+          << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
      return true;
  }
  
  void RtlTcpServer::stop() {
      running = false;
 +    buffer_cv.notify_all();
-+    // server_loop alone joins its worker and closes its client. Neither fd
-+    // may be closed/reassigned while a select/send still references it.
 +    if (server_thread.joinable()) server_thread.join();
      if (server_socket >= 0) {
--        shutdown(server_socket, SHUT_RDWR);  // wakes the accept(); close() alone doesn't
-         close(server_socket);
+-        // Linux: the shutdown wakes the accept(); close() alone doesn't.
+-        // Windows: the shutdown fails (not connected) and it is the
+-        // closesocket() that wakes it.
+-        sock_shutdown(server_socket, SHUT_RDWR);
+         sock_close(server_socket);
          server_socket = -1;
      }
 -    if (client_socket >= 0) {
--        close(client_socket);
+-        sock_close(client_socket);
 -        client_socket = -1;
 -    }
 -    
@@ -1178,26 +1288,21 @@ index d2afc3a..8fe8730 100644
      // Send proper RTL-TCP dongle info header (12 bytes)
      uint8_t rtl_tcp_header[12];
      memcpy(rtl_tcp_header, "RTL0", 4);  // Magic
-@@ -99,11 +100,12 @@ void RtlTcpServer::send_dongle_info() {
+@@ -107,7 +95,8 @@ void RtlTcpServer::send_dongle_info() {
      uint32_t gain_count = htonl(29);
      memcpy(rtl_tcp_header + 8, &gain_count, 4);
      
--    send(client_socket, rtl_tcp_header, 12, MSG_NOSIGNAL);
+-    sock_send(client_socket, rtl_tcp_header, 12, MSG_NOSIGNAL);
 +    return send_packet_with_deadline(client_fd, rtl_tcp_header, sizeof(rtl_tcp_header),
 +                                     std::chrono::milliseconds(250)).complete;
  }
  
  void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data) {
--    if (client_socket < 0 || channel_data.empty()) return;
-+    if (!running || client_socket.load() < 0 || channel_data.empty()) return;
-     
-     int current_source = rtl_tcp_channel.load();
-     if (current_source < 0 || static_cast<size_t>(current_source) >= channel_data.size()) {
-@@ -136,52 +138,52 @@ void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
+@@ -144,46 +133,40 @@ void RtlTcpServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
  }
  
  void RtlTcpServer::server_loop() {
-+    const int listener = server_socket;  // immutable until this thread joins
++    const int listener = server_socket;
 +    if (listener < 0 || listener >= FD_SETSIZE) return;
      while (running) {
 -        std::cout << "RTL-TCP: Waiting for client connection..." << std::endl;
@@ -1206,58 +1311,41 @@ index d2afc3a..8fe8730 100644
 +        FD_ZERO(&read_fds);
 +        FD_SET(listener, &read_fds);
 +        timeval timeout{0, 100000};
-+        const int ready = select(listener + 1, &read_fds, nullptr, nullptr, &timeout);
++        const int ready = sock_select(listener + 1, &read_fds, nullptr, nullptr, &timeout);
 +        if (!running) break;
 +        if (ready < 0 && errno != EINTR) break;
 +        if (ready <= 0 || !FD_ISSET(listener, &read_fds)) continue;
 +
          sockaddr_in client_addr{};
          socklen_t addr_len = sizeof(client_addr);
--        client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
+-        // sock_accept: on Windows also not inherited by child processes
+-        client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
 -        
 -        if (client_socket < 0) {
 -            if (running) {
 -                std::this_thread::sleep_for(std::chrono::milliseconds(100));
 -            }
-+        const int accepted = accept(listener, (sockaddr*)&client_addr, &addr_len);
++        const int accepted = sock_accept(listener, (sockaddr*)&client_addr, &addr_len);
 +        if (accepted < 0) continue;
 +        if (!running || accepted >= FD_SETSIZE || !set_socket_nonblocking(accepted)) {
-+            close(accepted);
++            sock_close(accepted);
              continue;
          }
 -        
 -        // Keepalive: a client that vanished without a FIN (powered off, Wi-Fi
 -        // dropped) held the single slot until the kernel gave up on the
--        // send - 15-30 min. Now it's found within ~25 s.
--        {
--            int on = 1, idle = 10, intvl = 5, cnt = 3;
--            setsockopt(client_socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
--            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
--            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
--            setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
--        }
-+#if defined(__APPLE__)
-+        int no_sigpipe = 1;
-+        setsockopt(accepted, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
-+#endif
-+        // Keepalive detects vanished clients without waiting for TCP's long
-+        // default timeout. All writes remain nonblocking for bounded stop().
-+        int on = 1, idle = 10, intvl = 5, cnt = 3;
-+        setsockopt(accepted, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
-+        setsockopt(accepted, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
-+        setsockopt(accepted, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
-+        setsockopt(accepted, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+-        // send - 15-30 min. Now it's found within ~25 s (10 s idle, 3 probes
+-        // 5 s apart; Windows 10 before 1709 can't set the probe count: ~60 s).
+-        sock_set_keepalive(client_socket, 10, 5, 3);
++        sock_set_keepalive(accepted, 10, 5, 3);
          ignored_cmds_logged = 0;
          cmd_carry_len = 0;
+-
 +        client_socket.store(accepted);
-+        std::cout << "RTL-TCP: Client connected from " << inet_ntoa(client_addr.sin_addr)
-+                  << ":" << ntohs(client_addr.sin_port)
-+                  << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
- 
--        std::cout << "RTL-TCP: Client connected from " << inet_ntoa(client_addr.sin_addr) 
--             << ":" << ntohs(client_addr.sin_port) 
--             << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
--        
+         std::cout << "RTL-TCP: Client connected from " << inet_ntoa(client_addr.sin_addr) 
+              << ":" << ntohs(client_addr.sin_port) 
+              << " (streaming channel " << rtl_tcp_channel.load() << ")" << std::endl;
+         
 -        // Send dongle info immediately
 -        send_dongle_info();
 -        
@@ -1271,17 +1359,14 @@ index d2afc3a..8fe8730 100644
              worker_thread.join();
          }
 -        
--        close(client_socket);
+-        sock_close(client_socket);
 -        client_socket = -1;
-+        // Sole close owner: stop() never changes the number seen by the worker.
 +        client_socket.store(-1);
-+        close(accepted);
++        sock_close(accepted);
          clear_buffers();
--        
+         
          std::cout << "RTL-TCP: Client disconnected" << std::endl;
-     }
- }
-@@ -192,12 +194,12 @@ void RtlTcpServer::server_loop() {
+@@ -196,14 +179,14 @@ void RtlTcpServer::server_loop() {
  // send their own on connect - applying them would retune the whole DF array
  // and force a recalibration. So they're read (a client's close is noticed
  // here, instead of only by a failed send) and logged once per type.
@@ -1291,12 +1376,14 @@ index d2afc3a..8fe8730 100644
      for (int reads = 0; reads < 8; reads++) {
          uint8_t buf[5 + 510];  // carry-over + a whole number of commands
          std::memcpy(buf, cmd_carry, cmd_carry_len);
--        const ssize_t n = recv(client_socket, buf + cmd_carry_len, 510, MSG_DONTWAIT);
-+        const ssize_t n = recv(client_fd, buf + cmd_carry_len, 510, MSG_DONTWAIT);
+         // MSG_DONTWAIT: the socket stays blocking for the sends below
+         // (Winsock has no such flag - sock_recv checks readability first)
+-        const ssize_t n = sock_recv(client_socket, buf + cmd_carry_len, 510, MSG_DONTWAIT);
++        const ssize_t n = sock_recv(client_fd, buf + cmd_carry_len, 510, MSG_DONTWAIT);
          if (n == 0) return false;  // orderly close
          if (n < 0) return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR;
          const size_t total = cmd_carry_len + static_cast<size_t>(n);
-@@ -225,12 +227,13 @@ bool RtlTcpServer::read_client_commands() {
+@@ -231,12 +214,13 @@ bool RtlTcpServer::read_client_commands() {
      return true;  // still connected; the rest is read on the next call
  }
  
@@ -1313,7 +1400,7 @@ index d2afc3a..8fe8730 100644
              std::cout << "RTL-TCP: client closed the connection" << std::endl;
              return;
          }
-@@ -240,12 +243,9 @@ void RtlTcpServer::worker_loop() {
+@@ -246,12 +230,9 @@ void RtlTcpServer::worker_loop() {
          // Wait for data (like original rtl_tcp.c)
          {
              std::unique_lock<std::mutex> lock(buffer_mutex);
@@ -1329,13 +1416,12 @@ index d2afc3a..8fe8730 100644
              if (buffer_head) {
                  current_buffer = buffer_head;
                  buffer_head = buffer_head->next;
-@@ -263,19 +263,28 @@ void RtlTcpServer::worker_loop() {
+@@ -269,19 +250,26 @@ void RtlTcpServer::worker_loop() {
          size_t index = 0;
          auto last_progress = std::chrono::steady_clock::now();
          
 -        while (bytes_left > 0 && running && client_socket >= 0) {
 +        while (bytes_left > 0 && running) {
-+            // Also bound repeated transient sends after spurious readiness.
 +            if (std::chrono::steady_clock::now() - last_progress > std::chrono::seconds(10)) {
 +                std::cout << "RTL-TCP: client stopped reading for 10 s, disconnecting" << std::endl;
 +                delete current_buffer;
@@ -1348,22 +1434,22 @@ index d2afc3a..8fe8730 100644
              tv.tv_sec = 1;
              tv.tv_usec = 0;
              
--            int r = select(client_socket + 1, nullptr, &writefds, nullptr, &tv);
+-            int r = sock_select(client_socket + 1, nullptr, &writefds, nullptr, &tv);
 -            if (r > 0 && FD_ISSET(client_socket, &writefds)) {
--                ssize_t bytes_sent = send(client_socket, 
-+            int r = select(client_fd + 1, nullptr, &writefds, nullptr, &tv);
+-                ssize_t bytes_sent = sock_send(client_socket,
++            int r = sock_select(client_fd + 1, nullptr, &writefds, nullptr, &tv);
 +            if (!running) break;
 +            if (r < 0 && errno == EINTR) continue;
 +            if (r > 0 && FD_ISSET(client_fd, &writefds)) {
-+                ssize_t bytes_sent = send(client_fd,
++                ssize_t bytes_sent = sock_send(client_fd,
                                          current_buffer->data.data() + index, 
                                          bytes_left, MSG_NOSIGNAL);
-                 
+-                
 +                if (bytes_sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) continue;
                  if (bytes_sent <= 0) {
                      std::cout << "RTL-TCP: Send failed, client disconnected" << std::endl;
                      delete current_buffer;
-@@ -286,15 +295,7 @@ void RtlTcpServer::worker_loop() {
+@@ -292,14 +280,6 @@ void RtlTcpServer::worker_loop() {
                  index += bytes_sent;
                  last_progress = std::chrono::steady_clock::now();
              } else if (r == 0) {
@@ -1375,24 +1461,22 @@ index d2afc3a..8fe8730 100644
 -                    delete current_buffer;
 -                    return;
 -                }
--                continue;
-+                continue;  // bounded by last_progress at the top of the loop
+                 continue;
              } else {
                  // Error
-                 std::cout << "RTL-TCP: Select error, client disconnected" << std::endl;
-@@ -312,6 +313,11 @@ void RtlTcpServer::add_to_buffer(const uint8_t* data, size_t len) {
+@@ -317,6 +297,11 @@ void RtlTcpServer::add_to_buffer(const uint8_t* data, size_t len) {
+     auto* new_node = new BufferNode(data, len);
      
      std::lock_guard<std::mutex> lock(buffer_mutex);
-     
++
 +    if (!running || client_socket.load() < 0) {
 +        delete new_node;
 +        return;
 +    }
-+
+     
      // If buffer is full, drop oldest (like original rtl_tcp.c)
      if (buffer_count >= MAX_BUFFER_COUNT && buffer_head) {
-         auto* old_head = buffer_head;
-@@ -345,4 +351,4 @@ void RtlTcpServer::clear_buffers() {
+@@ -351,4 +336,4 @@ void RtlTcpServer::clear_buffers() {
      }
      buffer_tail = nullptr;
      buffer_count = 0;
@@ -1440,73 +1524,69 @@ index 928e84e..0902584 100644
 +    bool has_client() const { return client_socket.load() >= 0; }
  };
 diff --git a/heimdall_v2/src/net/tcp_common.cpp b/heimdall_v2/src/net/tcp_common.cpp
-index 74017fa..b829bd7 100644
+index 2546e6f..7339a34 100644
 --- a/heimdall_v2/src/net/tcp_common.cpp
 +++ b/heimdall_v2/src/net/tcp_common.cpp
-@@ -1,6 +1,13 @@
+@@ -1,5 +1,6 @@
  #include "tcp_common.hpp"
-+#include <poll.h>
+ #include <cstring>
 +#include <chrono>
  
--TcpClient::TcpClient(int s) : socket(s), active(true) {}
-+TcpClient::TcpClient(int s) : socket(s), active(true) {
-+#if defined(__APPLE__)
-+    int one = 1;
-+    (void)setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-+#endif
-+}
+ TcpClient::TcpClient(int s) : socket(s), active(true) {}
  
- TcpClient::~TcpClient() { 
-     if (socket >= 0) close(socket); 
-@@ -13,4 +20,41 @@ bool set_socket_nonblocking(int socket) {
- bool set_socket_reuse(int socket) {
-     int opt = 1;
-     return setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) >= 0;
--}
-\ No newline at end of file
-+}
-+
-+PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size, std::chrono::milliseconds deadline) {
+@@ -21,6 +22,47 @@ bool set_socket_reuse(int socket) {
+     return sock_setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) >= 0;
+ }
+ 
++PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size,
++                                            std::chrono::milliseconds deadline) {
 +    const auto started = std::chrono::steady_clock::now();
 +    const auto until = started + deadline;
 +    size_t offset = 0;
 +    auto failed = [&](PacketWriteFailure failure, int error_number) {
 +        return PacketWriteResult{false, offset, failure, error_number,
-+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()};
++            std::chrono::duration_cast<std::chrono::milliseconds>(
++                std::chrono::steady_clock::now() - started).count()};
 +    };
 +    while (offset < size) {
-+        if (std::chrono::steady_clock::now() >= until) return failed(PacketWriteFailure::deadline, 0);
-+        const ssize_t sent = send(socket, data + offset, size - offset, MSG_NOSIGNAL);
++        const auto now = std::chrono::steady_clock::now();
++        if (now >= until) return failed(PacketWriteFailure::deadline, 0);
++        const ssize_t sent = sock_send(socket, data + offset, size - offset, MSG_NOSIGNAL);
 +        if (sent > 0) { offset += static_cast<size_t>(sent); continue; }
 +        if (sent == 0) return failed(PacketWriteFailure::peer_closed, 0);
 +        if (errno == EINTR) continue;
 +        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-+            const auto now = std::chrono::steady_clock::now();
-+            if (now >= until) return failed(PacketWriteFailure::deadline, 0);
-+            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(until - now).count();
-+            pollfd fd{socket, POLLOUT, 0};
-+            const int rc = poll(&fd, 1, static_cast<int>(std::max<long long>(1, remaining)));
-+            const int poll_errno = rc < 0 ? errno : 0;
-+            if (rc > 0 && (fd.revents & POLLOUT)) continue;
-+            if (rc < 0 && poll_errno == EINTR) continue;
++            const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(
++                until - std::chrono::steady_clock::now());
++            if (remaining.count() <= 0) return failed(PacketWriteFailure::deadline, 0);
++            fd_set write_fds;
++            FD_ZERO(&write_fds);
++            FD_SET(socket, &write_fds);
++            timeval timeout{};
++            timeout.tv_sec = static_cast<decltype(timeout.tv_sec)>(remaining.count() / 1000000);
++            timeout.tv_usec = static_cast<decltype(timeout.tv_usec)>(remaining.count() % 1000000);
++            const int rc = sock_select(socket + 1, nullptr, &write_fds, nullptr, &timeout);
++            if (rc > 0 && FD_ISSET(socket, &write_fds)) continue;
++            if (rc < 0 && errno == EINTR) continue;
 +            if (rc == 0) return failed(PacketWriteFailure::deadline, 0);
-+            if (rc < 0) return failed(PacketWriteFailure::socket_error, poll_errno);
-+            if (fd.revents & POLLHUP) return failed(PacketWriteFailure::peer_closed, 0);
-+            // POLLERR/POLLNVAL and unusual revents are local/socket errors;
-+            // never reuse errno from the earlier EAGAIN send.
-+            if (fd.revents & POLLNVAL) return failed(PacketWriteFailure::socket_error, EBADF);
-+            return failed(PacketWriteFailure::socket_error, 0);
++            return failed(PacketWriteFailure::socket_error, rc < 0 ? errno : 0);
 +        }
-+        return failed((errno == EPIPE || errno == ECONNRESET) ? PacketWriteFailure::peer_closed : PacketWriteFailure::socket_error, errno);
++        return failed((errno == EPIPE || errno == ECONNRESET)
++            ? PacketWriteFailure::peer_closed : PacketWriteFailure::socket_error, errno);
 +    }
 +    return PacketWriteResult{true, offset, PacketWriteFailure::none, 0,
-+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()};
++        std::chrono::duration_cast<std::chrono::milliseconds>(
++            std::chrono::steady_clock::now() - started).count()};
 +}
++
+ std::string listen_error_detail(int err) {
+ #ifdef _WIN32
+     if (err == 0) return std::string();
 diff --git a/heimdall_v2/src/net/tcp_common.hpp b/heimdall_v2/src/net/tcp_common.hpp
-index 52759e3..5e83715 100644
+index 3fcf394..ae59b15 100644
 --- a/heimdall_v2/src/net/tcp_common.hpp
 +++ b/heimdall_v2/src/net/tcp_common.hpp
-@@ -11,11 +11,20 @@
+@@ -9,11 +9,18 @@
  #include <vector>
  #include <cstdint>
  #include <string>
@@ -1517,8 +1597,6 @@ index 52759e3..5e83715 100644
  struct TcpClient {
      int socket;
      bool active;
-+    // Data-only continuity offset: whole dropped frames advance this client's
-+    // MCHQ epoch without disturbing healthy clients or an in-flight frame.
 +    uint32_t data_gap_counter = 0;
 +    uint32_t data_last_gap_counter = 0;
 +    uint32_t data_last_source_counter = 0;
@@ -1527,64 +1605,65 @@ index 52759e3..5e83715 100644
      std::string rx_buffer;  // partial-command accumulator (control server)
      std::string tx_buffer;  // pending output, flushed when the socket is writable
                              // (control server; the data server keeps the unsent
-@@ -28,4 +37,8 @@ struct TcpClient {
- 
+@@ -27,6 +34,16 @@ struct TcpClient {
  // Socket helper functions
  bool set_socket_nonblocking(int socket);
--bool set_socket_reuse(int socket);
-\ No newline at end of file
-+bool set_socket_reuse(int socket);
+ bool set_socket_reuse(int socket);
 +enum class PacketWriteFailure { none, deadline, peer_closed, socket_error };
-+struct PacketWriteResult { bool complete; size_t bytes_written; PacketWriteFailure failure; int error_number; long long elapsed_ms; };
-+// Writes one complete frame within deadline; never exposes partial frame as success.
-+PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size, std::chrono::milliseconds deadline);
-\ No newline at end of file
++struct PacketWriteResult {
++    bool complete;
++    size_t bytes_written;
++    PacketWriteFailure failure;
++    int error_number;
++    long long elapsed_ms;
++};
++PacketWriteResult send_packet_with_deadline(int socket, const uint8_t* data, size_t size,
++                                            std::chrono::milliseconds deadline);
+ 
+ // Why a listening socket couldn't be set up, for the caller's error message,
+ // from the errno of the failed bind()/listen() (start() keeps it): "" on
 diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
-index 787ed0b..c212645 100644
+index 607ae54..a4895d9 100644
 --- a/heimdall_v2/src/net/tcp_control_server.cpp
 +++ b/heimdall_v2/src/net/tcp_control_server.cpp
-@@ -6,6 +6,7 @@
- #include "../sdr/sdr_pipeline.hpp"
- #include "../dsp/compensation.hpp"
- #include "../core/config.hpp"
-+#include "../sdr/pipeline_control.hpp"
- #include <iostream>
- #include <sstream>
- #include <algorithm>
-@@ -65,26 +66,32 @@ TcpControlServer::~TcpControlServer() {
+@@ -189,35 +189,29 @@ TcpControlServer::~TcpControlServer() {
  }
  
  bool TcpControlServer::start() {
--    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+-    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
 -    if (server_socket < 0) return false;
 -    
--    if (!set_socket_reuse(server_socket)) {
--        close(server_socket);
+-    // On a failure errno stays the error of the failed call (main's message
+-    // shows it on Windows - listen_error_detail), and the socket is closed
+-    // once: stop() (the destructor) must not close the number again.
+-    auto fail = [this]() {
+-        const int err = errno;
+-        sock_close(server_socket);
+-        server_socket = -1;
+-        errno = err;
 -        return false;
+-    };
+-
+-    if (!set_socket_reuse(server_socket)) {
+-        return fail();
 -    }
--    
 +    if (server_thread.joinable() || server_socket >= 0) return false;
-+    // Publish only a fully configured listener. Failed starts own and close
-+    // their local fd; stop()/the destructor must never close a reused number.
-+    const int listener = socket(AF_INET, SOCK_STREAM, 0);
++    const int listener = sock_socket(AF_INET, SOCK_STREAM, 0);
 +    if (listener < 0) return false;
-+    auto fail = [&]() { close(listener); return false; };
++    auto fail = [&]() { sock_close(listener); return false; };
 +    if (listener >= FD_SETSIZE || !set_socket_reuse(listener) ||
 +        !set_socket_nonblocking(listener)) return fail();
-+
+     
      sockaddr_in addr{};
      addr.sin_family = AF_INET;
 -    addr.sin_addr.s_addr = INADDR_ANY;
 -    addr.sin_port = htons(TCP_CONTROL_PORT);
 -    
--    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || listen(server_socket, 5) < 0) {
--        close(server_socket);
--        return false;
+-    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0 || sock_listen(server_socket, 5) < 0) {
 +    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) return fail();
 +    addr.sin_port = htons(tcp_control_port);
-+    if (bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
-+        listen(listener, 5) < 0) return fail();
-+
++    if (sock_bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
++        sock_listen(listener, 5) < 0) return fail();
 +    server_socket = listener;
 +    running = true;
 +    try {
@@ -1592,7 +1671,7 @@ index 787ed0b..c212645 100644
 +    } catch (...) {
 +        running = false;
 +        server_socket = -1;
-+        return fail();
+         return fail();
      }
 -    
 -    server_thread = std::thread(&TcpControlServer::control_loop, this);
@@ -1601,15 +1680,13 @@ index 787ed0b..c212645 100644
      return true;
  }
  
-@@ -112,13 +119,15 @@ std::string rf_range_error(const std::string& given) {
+@@ -245,13 +239,13 @@ std::string rf_range_error(const std::string& given) {
  
  void TcpControlServer::stop() {
      running = false;
-+    // The loop has a bounded select and a nonblocking accept. Keep its fd
-+    // alive and unchanged until join: close/reset here raced FD_ISSET(-1).
 +    if (server_thread.joinable()) server_thread.join();
      if (server_socket >= 0) {
-         close(server_socket);
+         sock_close(server_socket);
          server_socket = -1;
      }
 -    if (server_thread.joinable()) {
@@ -1620,7 +1697,7 @@ index 787ed0b..c212645 100644
  }
  
  // The status object: broadcast at 2 Hz (as_reply = false) and returned by
-@@ -126,6 +135,7 @@ void TcpControlServer::stop() {
+@@ -259,6 +253,7 @@ void TcpControlServer::stop() {
  // like every other command reply - clients tell replies from broadcasts by
  // that field). No trailing newline.
  std::string TcpControlServer::build_status_json(bool as_reply) {
@@ -1628,7 +1705,7 @@ index 787ed0b..c212645 100644
      // Build status JSON including RTL-TCP channel info and wideband mode
      std::stringstream status_json;
      status_json << "{"
-@@ -142,6 +152,20 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+@@ -275,6 +270,26 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
                 << "\"operating_mode\":\"" << operating_mode_name(operating_mode.load()) << "\","
                 << "\"wideband_enabled\":" << (wideband_config.enabled.load() ? "true" : "false");
  
@@ -1639,24 +1716,28 @@ index 787ed0b..c212645 100644
 +        const uint32_t phase_value = state ? static_cast<uint32_t>(*state) : 0;
 +        const bool valid = state && *state == PhaseCompensatorState::CONVERGED &&
 +            !bias_tee_enabled.load() && !coherence_lost.load() &&
-+            !recovery_in_progress.load() && !reconfig_in_progress.load() && acquisition_transition_barrier_ready() &&
-+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() >= output_holdoff_until_ns.load(std::memory_order_acquire);
-+        status_json << ",\"phase_state\":" << (valid ? phase_value : static_cast<uint32_t>(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION))
++            !recovery_in_progress.load() && !reconfig_in_progress.load() &&
++            acquisition_transition_barrier_ready() &&
++            std::chrono::duration_cast<std::chrono::nanoseconds>(
++                std::chrono::steady_clock::now().time_since_epoch()).count() >=
++                output_holdoff_until_ns.load(std::memory_order_acquire);
++        status_json << ",\"phase_state\":"
++                    << (valid ? phase_value : static_cast<uint32_t>(PhaseCompensatorState::WAITING_FOR_LAG_COMPLETION))
 +                    << ",\"noise_source\":" << (bias_tee_enabled.load() ? "true" : "false")
-+                    << ",\"calibration_state\":\"" << ((hardware_settings_failed.load() || calibration_failed.load()) ? "FAILED" : (valid ? "CONVERGED" : "PENDING")) << "\"";
++                    << ",\"calibration_state\":\""
++                    << ((hardware_settings_failed.load() || calibration_failed.load())
++                            ? "FAILED" : (valid ? "CONVERGED" : "PENDING")) << "\"";
 +    }
 +
      // KerberosSDR support mode: manual-calibration workflow state for client UIs.
      status_json << ",\"external_noise\":" << (external_noise_mode.load() ? "true" : "false");
      if (kerberos_mode.load()) {
-@@ -184,6 +208,66 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+@@ -317,6 +332,66 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
          status_json << "]";
      }
  
 +    // Raw ADC headroom is measured in each RTL callback before calibration,
 +    // floating-point conversion, DC removal and MCHQ uint8 requantization.
-+    // Histograms are sampled 1/64 for low overhead; rail counts cover every
-+    // I/Q component. Counters reset after a successful gain change.
 +    status_json << ",\"adc_headroom\":{\"schema\":1,"
 +                << "\"source\":\"rtl2832_uint8_precalibration\","
 +                << "\"sample_stride\":" << AdcHeadroomCounters::SAMPLE_STRIDE << ","
@@ -1697,7 +1778,9 @@ index 787ed0b..c212645 100644
 +        const double rms_fraction = sampled == 0 ? 0.0 :
 +            std::sqrt(static_cast<double>(squared) / static_cast<double>(sampled)) / 255.0;
 +        status_json << "{\"channel\":" << i
-+                    << ",\"actual_gain_db\":" << (devices[i]->actual_gain_tenths.load() < 0 ? -1.0f : devices[i]->actual_gain_tenths.load() / 10.0f)
++                    << ",\"actual_gain_db\":"
++                    << (devices[i]->actual_gain_tenths.load() < 0
++                            ? -1.0f : devices[i]->actual_gain_tenths.load() / 10.0f)
 +                    << ",\"generation\":" << generation
 +                    << ",\"components\":" << components
 +                    << ",\"rail_components\":" << rails
@@ -1716,21 +1799,18 @@ index 787ed0b..c212645 100644
      // Add cooldown status for drag-to-scroll feature
      if (phase_compensation) {
          bool cooldown = phase_compensation->cooldown_active.load();
-@@ -224,16 +308,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+@@ -357,16 +432,11 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
  }
  
  void TcpControlServer::broadcast_status() {
-+    // Command handlers take clients -> calibration. Build and release the
-+    // calibration snapshot before clients, never the reverse on this thread.
 +    const std::string status_str = build_status_json(false) + "\n";
      std::lock_guard<std::mutex> lock(clients_mutex);
- 
+-
 -    // Remove inactive clients
 -    clients.erase(std::remove_if(clients.begin(), clients.end(),
 -        [](const auto& client) { return !client->active; }), clients.end());
-+    // Only control_loop reaps: it may currently be selecting these fds.
+-
 +    if (!running) return;
- 
      if (clients.empty()) return;
  
 -    const std::string status_str = build_status_json(false) + "\n";
@@ -1738,11 +1818,11 @@ index 787ed0b..c212645 100644
      // Send to all connected clients. Queued, never blocking: this runs on the
      // status broadcaster thread while holding clients_mutex, so a blocking
      // send() here would freeze the control loop (no accepts, no commands) and
-@@ -246,26 +330,31 @@ void TcpControlServer::broadcast_status() {
+@@ -379,26 +449,30 @@ void TcpControlServer::broadcast_status() {
  }
  
  void TcpControlServer::control_loop() {
-+    const int listener = server_socket;  // immutable until this thread joins
++    const int listener = server_socket;
 +    if (listener < 0 || listener >= FD_SETSIZE) return;
      while (running) {
          fd_set read_fds, write_fds;
@@ -1762,75 +1842,67 @@ index 787ed0b..c212645 100644
 -            // TcpClient destructor closes the fd. Pruning used to happen only
 -            // in broadcast_status(), so a stalled broadcaster leaked one fd per
 -            // reconnect until accept() started failing.
-+            // Only this loop reaps clients, before building its next fd set.
-+            // The broadcaster may mark inactive but cannot close/reuse an fd
-+            // while select is running without clients_mutex held.
++            // Only this loop closes inactive client fds, before building the
++            // next fd set. Broadcasters may mark inactive but never reap.
              clients.erase(std::remove_if(clients.begin(), clients.end(),
                  [](const auto& client) { return !client->active; }), clients.end());
  
              for (const auto& client : clients) {
-+                if (client->socket < 0 || client->socket >= FD_SETSIZE) {
++                if (!sock_fits_fd_set(client->socket, static_cast<int>(clients.size()) + 1)) {
 +                    client->active = false;
 +                    continue;
 +                }
                  if (client->active) {
                      FD_SET(client->socket, &read_fds);
                      // Only watch for writability while output is pending -
-@@ -281,25 +370,30 @@ void TcpControlServer::control_loop() {
-         timeval timeout{0, 100000}; // 100ms timeout
-         int result = select(max_fd + 1, &read_fds, &write_fds, nullptr, &timeout);
+@@ -413,21 +487,16 @@ void TcpControlServer::control_loop() {
  
+         timeval timeout{0, 100000}; // 100ms timeout
+         int result = sock_select(max_fd + 1, &read_fds, &write_fds, nullptr, &timeout);
+-        if (result < 0) {
+-            // A failing select() returns at once: don't spin on it. (Windows
+-            // fails the whole call when broadcast_status() closed a reaped
+-            // client's socket after the sets were built.)
+-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+-            continue;
+-        }
 +        if (!running) break;
 +        if (result < 0 && errno != EINTR) break;
+ 
          if (result > 0) {
              // Check for new connections
 -            if (FD_ISSET(server_socket, &read_fds)) {
 +            if (FD_ISSET(listener, &read_fds)) {
                  sockaddr_in client_addr{};
                  socklen_t addr_len = sizeof(client_addr);
--                int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
-+                int client_socket = accept(listener, (sockaddr*)&client_addr, &addr_len);
+                 // sock_accept: on Windows also not inherited by child processes
+-                int client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
++                int client_socket = sock_accept(listener, (sockaddr*)&client_addr, &addr_len);
                  
                  if (client_socket >= 0) {
                      std::lock_guard<std::mutex> lock(clients_mutex);
-                     // select() cannot watch an fd at or beyond FD_SETSIZE, and
-                     // FD_SET on one corrupts memory - refuse rather than risk it.
--                    if (client_socket >= FD_SETSIZE || clients.size() >= MAX_CONTROL_CLIENTS) {
-+                    if (!running || client_socket >= FD_SETSIZE || clients.size() >= MAX_CONTROL_CLIENTS) {
+@@ -436,7 +505,7 @@ void TcpControlServer::control_loop() {
+                     // (Windows: an fd_set is a list of FD_SETSIZE sockets of any
+                     // handle value - there it is the count that matters, the
+                     // listener + the clients already in the set.)
+-                    if (!sock_fits_fd_set(client_socket, static_cast<int>(clients.size()) + 1) ||
++                    if (!running || !sock_fits_fd_set(client_socket, static_cast<int>(clients.size()) + 1) ||
+                         clients.size() >= MAX_CONTROL_CLIENTS) {
                          std::cerr << "TCP Control: refusing connection (fd " << client_socket
                                    << ", " << clients.size() << " clients)" << std::endl;
-                         close(client_socket);
+@@ -444,7 +513,10 @@ void TcpControlServer::control_loop() {
                      } else {
                          // Non-blocking: every write to this socket goes through
                          // flush_output(), which treats EAGAIN as back-pressure.
 -                        set_socket_nonblocking(client_socket);
 +                        if (!set_socket_nonblocking(client_socket)) {
-+                            close(client_socket);
++                            sock_close(client_socket);
 +                            continue;
 +                        }
-                         clients.push_back(std::make_unique<TcpClient>(client_socket));
-                         std::cout << "TCP Control: Client connected from " << inet_ntoa(client_addr.sin_addr) << std::endl;
-                     }
-@@ -407,6 +501,10 @@ void TcpControlServer::handle_client_data(TcpClient* client) {
- }
- 
- std::string TcpControlServer::process_command(const std::string& json_str) {
-+    std::lock_guard<std::mutex> command_lock(device_command_mutex);
-+    if (!global_running.load(std::memory_order_acquire))
-+        return "{\"status\":\"error\",\"message\":\"shutting down\"}";
-+    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
-     // While an element-count reconfiguration owns the devices, refuse every
-     // command except get_status: most handlers touch device handles that are
-     // being closed/reopened on another thread.
-@@ -509,6 +607,7 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
-             return "{\"status\":\"error\",\"message\":\"" + err + "\"}";
-         }
-         std::thread([n]() {
-+            if (!global_running.load(std::memory_order_acquire)) return;
-             std::string err;
-             if (!reconfigure_num_elements(n, err)) {
-                 std::cerr << "Element-count change to " << n << " failed: " << err << std::endl;
-@@ -694,6 +793,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+                         // Small commands, each answered at once: no Nagle.
+                         // A reply queued while the 2 Hz status broadcast is
+                         // still unacknowledged otherwise waits for the
+@@ -869,6 +941,8 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
      // {"command":"set_if_vga","index":0-15}. Not persisted; the next gain
      // change re-applies the configured step (R820T_IF_VGA_* in config.h).
      if (json_str.find("\"set_if_vga\"") != std::string::npos) {
@@ -1839,7 +1911,7 @@ index 787ed0b..c212645 100644
          size_t pos = json_str.find("\"index\":");
          if (pos == std::string::npos) {
              return "{\"status\":\"error\",\"message\":\"Missing index field (0-15)\"}";
-@@ -1134,4 +1235,4 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+@@ -1311,4 +1385,4 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
      }
  
      return "{\"status\":\"error\",\"message\":\"Unknown command\"}";
@@ -1847,56 +1919,60 @@ index 787ed0b..c212645 100644
 \ No newline at end of file
 +}
 diff --git a/heimdall_v2/src/net/tcp_data_server.cpp b/heimdall_v2/src/net/tcp_data_server.cpp
-index 86838ea..37a1dab 100644
+index abc3c4c..d2aab11 100644
 --- a/heimdall_v2/src/net/tcp_data_server.cpp
 +++ b/heimdall_v2/src/net/tcp_data_server.cpp
-@@ -2,6 +2,7 @@
+@@ -2,6 +2,8 @@
  #include "../core/config.hpp"
  #include "../core/utils.hpp"
  #include "../dsp/compensation.hpp"
 +#include "../sdr/pipeline_control.hpp"
++#include "../sdr/sdr_device.hpp"
  #include <iostream>
  #include <algorithm>
  #include <chrono>
-@@ -24,50 +25,55 @@ TcpDataServer::~TcpDataServer() {
+@@ -24,57 +26,54 @@ TcpDataServer::~TcpDataServer() {
  }
  
  bool TcpDataServer::start() {
--    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+-    server_socket = sock_socket(AF_INET, SOCK_STREAM, 0);
 -    if (server_socket < 0) return false;
 -    
--    if (!set_socket_reuse(server_socket)) {
--        close(server_socket);
+-    // On a failure errno stays the error of the failed call (main's message
+-    // shows it on Windows - listen_error_detail), and the socket is closed
+-    // once: stop() (the destructor) must not close the number again.
+-    auto fail = [this]() {
+-        const int err = errno;
+-        sock_close(server_socket);
+-        server_socket = -1;
+-        errno = err;
 -        return false;
+-    };
+-
+-    if (!set_socket_reuse(server_socket)) {
+-        return fail();
 -    }
--    
 +    if (server_thread.joinable() || server_socket >= 0) return false;
-+    // Publish only a fully configured listener. Failed starts own and close
-+    // their local fd; stop()/the destructor must never close a reused number.
-+    const int listener = socket(AF_INET, SOCK_STREAM, 0);
++    const int listener = sock_socket(AF_INET, SOCK_STREAM, 0);
 +    if (listener < 0) return false;
-+    auto fail = [&]() { close(listener); return false; };
++    auto fail = [&]() { sock_close(listener); return false; };
 +    if (listener >= FD_SETSIZE || !set_socket_reuse(listener) ||
 +        !set_socket_nonblocking(listener)) return fail();
-+
+     
      sockaddr_in addr{};
      addr.sin_family = AF_INET;
 -    addr.sin_addr.s_addr = INADDR_ANY;
 -    addr.sin_port = htons(TCP_DATA_PORT);
 -    
--    if (bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
--        close(server_socket);
--        return false;
+-    if (sock_bind(server_socket, (sockaddr*)&addr, sizeof(addr)) < 0) {
+-        return fail();
 -    }
 -    
--    if (listen(server_socket, 5) < 0) {
--        close(server_socket);
--        return false;
+-    if (sock_listen(server_socket, 5) < 0) {
 +    if (inet_pton(AF_INET, heimdall_bind_host.c_str(), &addr.sin_addr) != 1) return fail();
 +    addr.sin_port = htons(tcp_data_port);
-+    if (bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
-+        listen(listener, 5) < 0) return fail();
-+
++    if (sock_bind(listener, (sockaddr*)&addr, sizeof(addr)) < 0 ||
++        sock_listen(listener, 5) < 0) return fail();
 +    server_socket = listener;
 +    running = true;
 +    try {
@@ -1904,7 +1980,7 @@ index 86838ea..37a1dab 100644
 +    } catch (...) {
 +        running = false;
 +        server_socket = -1;
-+        return fail();
+         return fail();
      }
 -    
 -    server_thread = std::thread(&TcpDataServer::accept_loop, this);
@@ -1915,11 +1991,9 @@ index 86838ea..37a1dab 100644
  
  void TcpDataServer::stop() {
      running = false;
-+    // The loop has a bounded select and a nonblocking accept. Keep its fd
-+    // alive and unchanged until join: close/reset here raced FD_ISSET(-1).
 +    if (server_thread.joinable()) server_thread.join();
      if (server_socket >= 0) {
-         close(server_socket);
+         sock_close(server_socket);
          server_socket = -1;
      }
 -    if (server_thread.joinable()) {
@@ -1930,17 +2004,36 @@ index 86838ea..37a1dab 100644
  }
  
 -void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data) {
-+void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data, uint32_t phase_state_value, uint32_t noise_source_active) {
++void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data,
++                                  uint32_t phase_state_value, uint32_t noise_source_active,
++                                  const IngestTiming* timing, uint64_t acquisition_epoch) {
      if (channel_data.empty()) return;
++    static uint64_t buffer_sequence = 0;
++    const uint64_t sequence = buffer_sequence++;
++    const char* timing_setting = std::getenv("HEIMDALL_TIMING_V1");
++    const bool with_timing = timing && timing_setting && std::string(timing_setting) == "1";
      
      std::lock_guard<std::mutex> lock(clients_mutex);
-     
 +    if (!running) return;
-+
+     
      // Remove inactive clients
      clients.erase(std::remove_if(clients.begin(), clients.end(),
-         [](const auto& client) { return !client->active; }), clients.end());
-@@ -158,25 +164,8 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+@@ -105,12 +104,14 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+     // Header: magic(4) + channels(4) + samples(4) + phase_state(4) + noise_source(4) +
+     //         freq_change_counter(4) + current_group_index(4) + retuning_in_progress(4) + per-channel(8*N)
+     size_t header_size = 32 + (num_channels * 8);  // Basic header + status + scanner fields + retuning flag + per-channel freq/gain
++    if (with_timing) header_size += 96;
+ 
+     std::vector<uint8_t> packet;
+     packet.reserve(header_size + channel_data.size() * expected_samples * 2);
+ 
+     // Basic Header: magic, num_channels, num_samples
+     uint32_t magic = TCP_MAGIC;
++    if (with_timing) magic = 0x4d434854; // MCHT: old clients fail rather than decode timestamps as IQ.
+ 
+     // Get gain from global state (same for all channels)
+     float gain_db = (current_gain.load() == -1) ? -1.0f : (current_gain.load() / 10.0f);
+@@ -166,26 +167,6 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
      append_big_endian(packet, num_channels);
      append_big_endian(packet, num_samples);
  
@@ -1963,12 +2056,50 @@ index 86838ea..37a1dab 100644
 -    if (mode == OperatingMode::WIDEBAND_SCAN) phase_state_value |= 0x400u;
 -    if (independent) phase_state_value |= 0x800u;
 -    uint32_t noise_source_active = bias_tee_enabled.load() ? 1 : 0;
-+    // These are a conversion-time snapshot. Keeping them paired with the
-+    // sample epoch prevents a packet from claiming a later calibration state.
- 
+-
      append_big_endian(packet, phase_state_value);
      append_big_endian(packet, noise_source_active);
-@@ -283,14 +272,31 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+ 
+@@ -213,6 +194,10 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+         packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_frequency_hz),
+                       reinterpret_cast<const uint8_t*>(&ch_frequency_hz) + sizeof(float));
+         float ch_gain_db = gain_db;
++        if (mode == OperatingMode::COHERENT && ch < devices.size() && devices[ch]) {
++            const int actual = devices[ch]->actual_gain_tenths.load(std::memory_order_acquire);
++            if (actual >= 0) ch_gain_db = actual / 10.0f;
++        }
+         if (independent) {
+             const int g = wideband_config.get_tuner_gain(ch);
+             ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
+@@ -220,6 +205,27 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+         packet.insert(packet.end(), reinterpret_cast<const uint8_t*>(&ch_gain_db),
+                       reinterpret_cast<const uint8_t*>(&ch_gain_db) + sizeof(float));
+     }
++
++    if (with_timing) {
++        append_big_endian(packet, uint32_t(1));
++        append_big_endian(packet, uint32_t(96));
++        append_big_endian(packet, timing->flags);
++        append_big_endian(packet, uint32_t(0));
++        auto append64 = [&packet](uint64_t value) {
++            append_big_endian(packet, uint32_t(value >> 32));
++            append_big_endian(packet, uint32_t(value));
++        };
++        append64(acquisition_epoch);
++        append64(timing->first_sample);
++        append64(timing->transfer_sequence);
++        append64(timing->monotonic_ns);
++        append64(timing->tai_ns);
++        append64(timing->realtime_ns);
++        append64(timing->clock_read_span_ns);
++        append64(timing->system_maxerror_ns);
++        append64(sequence);
++        append64(timing->anchor_sample);
++    }
+     
+     // Convert complex samples back to interleaved uint8 IQ
+     // Data layout: [All Ch0 samples][All Ch1 samples][All Ch2 samples]...
+@@ -293,14 +299,27 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
              if (n < 0) continue;
              client->tx_buffer.erase(0, static_cast<size_t>(n));
              if (!client->tx_buffer.empty()) {
@@ -1978,16 +2109,12 @@ index 86838ea..37a1dab 100644
              }
          }
  
-+        // Seed from the source, then advance an unsigned continuity epoch for
-+        // either source transitions or dropped frames. Do not add the counters:
-+        // source scanner resets could otherwise cancel a simultaneous local gap.
-+        // An in-flight tail always keeps the header it originally started with.
 +        if (!client->data_epoch_initialized) {
 +            client->data_continuity_epoch = frequency_change_counter;
 +            client->data_epoch_initialized = true;
 +        } else if (frequency_change_counter != client->data_last_source_counter ||
 +                   client->data_gap_counter != client->data_last_gap_counter) {
-+            ++client->data_continuity_epoch;  // intentional modulo-2^32 epoch
++            ++client->data_continuity_epoch;
 +        }
 +        client->data_last_source_counter = frequency_change_counter;
 +        client->data_last_gap_counter = client->data_gap_counter;
@@ -2000,7 +2127,7 @@ index 86838ea..37a1dab 100644
              dropped_since_warn++;  // nothing of it went out: drop it whole
          } else if (static_cast<size_t>(n) < packet.size()) {
              client->tx_buffer.assign(reinterpret_cast<const char*>(packet.data()) + n,
-@@ -304,34 +310,43 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
+@@ -314,40 +333,44 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_dat
                    << " packet(s) since the last report" << std::endl;
          dropped_since_warn = 0;
      }
@@ -2009,7 +2136,7 @@ index 86838ea..37a1dab 100644
  }
  
  void TcpDataServer::accept_loop() {
-+    const int listener = server_socket;  // immutable until this thread joins
++    const int listener = server_socket;
 +    if (listener < 0 || listener >= FD_SETSIZE) return;
      while (running) {
          fd_set read_fds;
@@ -2018,17 +2145,23 @@ index 86838ea..37a1dab 100644
 +        FD_SET(listener, &read_fds);
          
          timeval timeout{0, 100000}; // 100ms timeout
--        int result = select(server_socket + 1, &read_fds, nullptr, nullptr, &timeout);
-+        int result = select(listener + 1, &read_fds, nullptr, nullptr, &timeout);
-         
--        if (result > 0 && FD_ISSET(server_socket, &read_fds)) {
+-        int result = sock_select(server_socket + 1, &read_fds, nullptr, nullptr, &timeout);
+-        if (result < 0) {
+-            // a failing select() returns at once: don't spin on it
+-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+-            continue;
+-        }
++        int result = sock_select(listener + 1, &read_fds, nullptr, nullptr, &timeout);
 +        if (!running) break;
 +        if (result < 0 && errno != EINTR) break;
+         
+-        if (result > 0 && FD_ISSET(server_socket, &read_fds)) {
 +        if (result > 0 && FD_ISSET(listener, &read_fds)) {
              sockaddr_in client_addr{};
              socklen_t addr_len = sizeof(client_addr);
--            int client_socket = accept(server_socket, (sockaddr*)&client_addr, &addr_len);
-+            int client_socket = accept(listener, (sockaddr*)&client_addr, &addr_len);
+             // sock_accept: on Windows also not inherited by child processes
+-            int client_socket = sock_accept(server_socket, (sockaddr*)&client_addr, &addr_len);
++            int client_socket = sock_accept(listener, (sockaddr*)&client_addr, &addr_len);
              
              if (client_socket >= 0) {
                  std::lock_guard<std::mutex> lock(clients_mutex);
@@ -2038,19 +2171,19 @@ index 86838ea..37a1dab 100644
 +                if (!running || clients.size() >= MAX_DATA_CLIENTS) {
                      std::cerr << "TCP Data: refusing connection from " << inet_ntoa(client_addr.sin_addr)
                                << " (" << clients.size() << " clients connected)" << std::endl;
-                     close(client_socket);
+                     sock_close(client_socket);
                      continue;
                  }
                  // Set non-blocking mode
 -                set_socket_nonblocking(client_socket);
 +                if (!set_socket_nonblocking(client_socket)) {
-+                    close(client_socket);
++                    sock_close(client_socket);
 +                    continue;
 +                }
  
                  clients.push_back(std::make_unique<TcpClient>(client_socket));
                  std::cout << "TCP Data: FFT Viewer connected from " << inet_ntoa(client_addr.sin_addr) 
-@@ -340,4 +355,4 @@ void TcpDataServer::accept_loop() {
+@@ -356,4 +379,4 @@ void TcpDataServer::accept_loop() {
              }
          }
      }
@@ -2071,7 +2204,7 @@ index 3ff0664..7330451 100644
      // Live connected-client count for the status dashboard.
      size_t client_count() { std::lock_guard<std::mutex> lk(clients_mutex); return clients.size(); }
 diff --git a/heimdall_v2/src/sdr/downconverter.cpp b/heimdall_v2/src/sdr/downconverter.cpp
-index ee9e5d5..6787ad1 100644
+index 62c8fea..fb9316b 100644
 --- a/heimdall_v2/src/sdr/downconverter.cpp
 +++ b/heimdall_v2/src/sdr/downconverter.cpp
 @@ -1,3 +1,4 @@
@@ -2079,9 +2212,9 @@ index ee9e5d5..6787ad1 100644
  #include "downconverter.hpp"
  #include "../../config.h"
  
-@@ -257,3 +258,20 @@ void downconverter_close() {
-         mrf_fd = -1;
-     }
+@@ -435,3 +436,20 @@ void downconverter_close() {
+     std::lock_guard<std::mutex> lock(mrf_mutex);
+     close_morfeus_locked();
  }
 +
 +#else
@@ -2100,34 +2233,12 @@ index ee9e5d5..6787ad1 100644
 +bool downconverter_set_side(MixerSide, uint64_t) { return false; }
 +bool downconverter_set_current(int) { return false; }
 +#endif
-diff --git a/heimdall_v2/src/sdr/kerberos_gpio.cpp b/heimdall_v2/src/sdr/kerberos_gpio.cpp
-index 59b088f..89e4b3f 100644
---- a/heimdall_v2/src/sdr/kerberos_gpio.cpp
-+++ b/heimdall_v2/src/sdr/kerberos_gpio.cpp
-@@ -1,3 +1,4 @@
-+#if defined(__linux__)
- #include "kerberos_gpio.hpp"
- #include "../core/config.hpp"
- 
-@@ -160,3 +161,12 @@ void kerberos_gpio_cleanup() {
-     close(line_fd);
-     line_fd = -1;
- }
-+
-+#else
-+#include "kerberos_gpio.hpp"
-+#include <iostream>
-+bool kerberos_gpio_init() { std::cerr << "Kerberos switches unsupported on this platform" << std::endl; return false; }
-+bool kerberos_gpio_active() { return false; }
-+void kerberos_gpio_set_noise_path(bool) {}
-+void kerberos_gpio_cleanup() {}
-+#endif
 diff --git a/heimdall_v2/src/sdr/pipeline_control.cpp b/heimdall_v2/src/sdr/pipeline_control.cpp
-index 96a49c5..016ed00 100644
+index 184b885..1774493 100644
 --- a/heimdall_v2/src/sdr/pipeline_control.cpp
 +++ b/heimdall_v2/src/sdr/pipeline_control.cpp
-@@ -32,6 +32,37 @@ std::thread conversion_thread;
- std::vector<std::thread> compensation_threads;
+@@ -105,6 +105,37 @@ void read_async_supervised(SDRDevice* dev_ptr, int device_index) {
+ #endif
  }  // namespace
  
 +
@@ -2164,7 +2275,7 @@ index 96a49c5..016ed00 100644
  void start_pipeline_threads() {
      // Shutting down (release_hardware is waiting for the reconfiguration that
      // got here): starting readers now would hand them handles about to close.
-@@ -165,6 +196,9 @@ bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
+@@ -244,6 +275,9 @@ bool reconfigure_num_elements_precheck(int new_n, std::string& err) {
  }
  
  bool reconfigure_num_elements(int new_n, std::string& err) {
@@ -2174,7 +2285,7 @@ index 96a49c5..016ed00 100644
      const int max_n = static_cast<int>(expected_serials.size());
      if (new_n < 2 || new_n > max_n) {
          err = "num_elements must be between 2 and " + std::to_string(max_n);
-@@ -204,6 +238,10 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+@@ -283,6 +317,10 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
                    << " elements: stopping pipeline, reopening devices, full recalibration follows" << std::endl;
      }
  
@@ -2185,7 +2296,7 @@ index 96a49c5..016ed00 100644
      bool ok;
      {
          // Hold settings_mutex across the close/reopen so a concurrent retune
-@@ -211,8 +249,6 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+@@ -290,8 +328,6 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
          // additionally refuse work while reconfig_in_progress is set.
          std::lock_guard<std::mutex> lock(settings_mutex);
  
@@ -2194,7 +2305,7 @@ index 96a49c5..016ed00 100644
          // Every other handle user takes device_io_mutex, so nothing can touch
          // a handle while it is closed or being reopened. Taken only AFTER the
          // pipeline threads are joined (one may be waiting on it).
-@@ -271,6 +307,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
+@@ -350,6 +386,7 @@ bool reconfigure_num_elements(int new_n, std::string& err) {
              initialize_correlation_result(correlation_result);
          }
  
@@ -2364,7 +2475,7 @@ index 6f69731..ce83fee 100644
      mutable std::mutex compensation_mutex;
  
 diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
-index 33b22e1..58f0f97 100644
+index 21c0cb6..f79624a 100644
 --- a/heimdall_v2/src/sdr/sdr_init.cpp
 +++ b/heimdall_v2/src/sdr/sdr_init.cpp
 @@ -2,6 +2,7 @@
@@ -2375,23 +2486,7 @@ index 33b22e1..58f0f97 100644
  #include "../core/config.hpp"
  #include "../dsp/compensation.hpp"
  #include "../core/settings.hpp"
-@@ -15,6 +16,7 @@
- #include <array>
- #include <iomanip>
- #include <optional>
-+#include <stdexcept>
- 
- // Serializes every librtlsdr handle operation outside the USB reader threads
- // (tuning, gain, bias tee / noise source, GPIO switch banks) against each
-@@ -33,6 +35,7 @@ std::recursive_mutex device_io_mutex;
- static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<SDRDevice>>& devices);
- 
- // Forward declarations for functions defined elsewhere
-+extern void clear_l1_buffer();
- extern void clear_l2_buffer();
- extern std::atomic<size_t> l2_raw_cap;  // C5: runtime L2-raw depth cap (defined in sdr_pipeline.cpp)
- 
-@@ -138,8 +141,30 @@ static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
+@@ -324,8 +325,28 @@ static int set_fixed_if_vga(rtlsdr_dev_t* dev, bool auto_gain) {
                                                              : R820T_IF_VGA_MANUAL_IDX));
  }
  
@@ -2417,31 +2512,24 @@ index 33b22e1..58f0f97 100644
  bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 -    if (index < 0 || index > 15) return false;
 +    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
-+    // The direct diagnostic bypasses the coherent gain/calibration contract.
-+    // Normal startup/manual/auto gain uses set_fixed_if_vga and is unchanged.
 +    if (operating_mode.load() == OperatingMode::COHERENT || index < 0 || index > 15) return false;
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      bool ok = true;
      for (const auto& d : devices) {
-@@ -179,7 +204,7 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
-         if (fatal) ok = false;
-     };
- 
--    check(rtlsdr_set_dithering(sdr->dev, 0), "disabling dithering", false);
-+    check(rtlsdr_set_dithering(sdr->dev, 0), "disabling dithering", true);
-     check(rtlsdr_set_sample_rate(sdr->dev, SAMPLE_RATE), "setting the sample rate", true);
-     // Wideband variant: every tuner is parked at the IF for good - the RF is
-     // reached by programming the downconverter LO (current_frequency stays the
-@@ -192,14 +217,20 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
-                                                : static_cast<uint32_t>(current_frequency.load())),
+@@ -392,13 +413,21 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
            "setting the center frequency", true);
      const int gain_now = current_gain.load();
--    check(rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1), "setting the gain mode", false);
+     check(rtlsdr_set_tuner_gain_mode(sdr->dev, gain_now < 0 ? 0 : 1), "setting the gain mode", false);
 -    if (gain_now >= 0) {
 -        check(rtlsdr_set_tuner_gain(sdr->dev, gain_now), "setting the gain", false);
+-    }
 +    int actual_gain = -999;
 +    if (!apply_validated_gain(sdr->dev, gain_now, &actual_gain)) ok = false;
 +    else sdr->actual_gain_tenths.store(actual_gain, std::memory_order_release);
+     check(set_fixed_if_vga(sdr->dev, gain_now < 0), "fixing the IF VGA gain", false);
+-    // -2 = already at this value (a freshly opened handle starts at 0)
+-    if (const int rc = rtlsdr_set_freq_correction(sdr->dev, 0); rc != -2)
+-        check(rc, "clearing the frequency correction", false);
 +    // This fork returns -2 for an already-zero correction. Do not write that
 +    // no-op; independently verify the setting after any required write.
 +    if (rtlsdr_get_freq_correction(sdr->dev) != 0)
@@ -2452,68 +2540,46 @@ index 33b22e1..58f0f97 100644
 +            ? static_cast<uint32_t>(WB_VARIANT_IF_HZ) : static_cast<uint32_t>(current_frequency.load()))) {
 +        std::cerr << "RTL-SDR setup readback mismatch on channel " << sdr->index << std::endl;
 +        ok = false;
-     }
--    check(set_fixed_if_vga(sdr->dev, gain_now < 0), "fixing the IF VGA gain", false);
--    // -2 = already at this value (a freshly opened handle starts at 0)
--    if (const int rc = rtlsdr_set_freq_correction(sdr->dev, 0); rc != -2)
--        check(rc, "clearing the frequency correction", false);
++    }
  
  #if ENABLE_BIAS_TEE
      // --kerberos: the noise source couples straight into the antenna path, so
-@@ -208,9 +239,9 @@ bool init_rtlsdr_device(SDRDevice* sdr) {
-     // the GPIO state across close/open); the add-on array's source is powered
-     // from the CH0 bias tee once channel 0 is open (open_active_devices).
-     if (external_noise_mode.load(std::memory_order_relaxed))
--        check(rtlsdr_set_bias_tee(sdr->dev, 0), "disabling the internal noise source", false);
-+        check(rtlsdr_set_bias_tee(sdr->dev, 0), "disabling the internal noise source", true);
-     else if (!kerberos_manual_cal_only())
--        check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", false);
-+        check(rtlsdr_set_bias_tee(sdr->dev, 1), "enabling the noise source", true);
- #endif
- 
- #if USB_RESET_ON_INIT
-@@ -293,7 +324,7 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
- 
-     for (int i = 0; i < num_to_open; i++) {
-         init_threads.emplace_back([i, &init_results, &devices]() {
--            init_results[i] = init_rtlsdr_device(devices[i].get());
-+            init_results[i] = init_rtlsdr_device(devices[i].get()) ? 1 : 0;
-         });
+@@ -536,9 +565,15 @@ bool open_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
+              << ", Physical RTL-SDR #" << devices[i]->device_id << ")" << std::endl;
      }
  
-@@ -347,6 +378,9 @@ void close_active_devices(std::vector<std::unique_ptr<SDRDevice>>& devices) {
-     // freed here; a concurrent rtlsdr_read_async on it would be use-after-free).
-     for (auto& device : devices) {
-         if (device && device->dev) {
-+            // The fork intentionally leaves GPIO/bias state unchanged on close.
-+            // Always attempt noise-source power-off before releasing a partial or full open.
-+            (void)rtlsdr_set_bias_tee(device->dev, 0);
-             rtlsdr_close(device->dev);
-             device->dev = nullptr;
-             device->init_success = false;
-@@ -427,21 +461,32 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
+-    // A partial open must not leave stray handles behind (the caller may retry
+-    // with a different count or roll back).
+-    if (!all_success) close_active_devices(devices);
++    // A partial open must not leave either powered calibration noise or stray
++    // handles behind. init_rtlsdr_device deliberately completes its remaining
++    // setup calls after one required setting fails so every channel reports its
++    // diagnostics; that can leave GPIO0 on even though all_success is false.
++    // Turn it off while the handles are still valid, before close/retry.
++    if (!all_success) {
++        set_bias_tee_all_devices(false, devices);
++        close_active_devices(devices);
++    }
+ 
+     return all_success;
+ }
+@@ -633,6 +668,10 @@ static bool set_external_noise_power(bool on, const std::vector<std::unique_ptr<
  }
  
  void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
 +    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
- #if ENABLE_BIAS_TEE
++#if ENABLE_BIAS_TEE
 +    begin_acquisition_transition();
++#endif
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
-     // --ext_noise: the KrakenSDR's own noise source (GPIO0) stays OFF - the
-     // add-on array's noise source, on the CH0 bias tee, is switched instead
-     const bool ext = external_noise_mode.load(std::memory_order_relaxed);
-     const bool internal_on = enable && !ext;
-+    bool all_success = true;
-     std::cout << "Bias Tee: " << (internal_on ? "Enabling" : "Disabling") << " on all devices..." << std::endl;
-     for (const auto& device : devices) {
-         if (device && device->dev) {
-             bool success = (rtlsdr_set_bias_tee(device->dev, internal_on ? 1 : 0) == 0);
-+            all_success = all_success && success;
-             std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
-                  << (success ? (internal_on ? "ON" : "OFF") : "FAILED") << std::endl;
-         }
+     // Every calibration switches the noise source on through here (cooldown
+     // expiry, recovery, periodic check, scanner resume, BIAS_TEE_ENABLE):
+@@ -667,7 +706,15 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+         std::cout << "Bias Tee: Ch" << device->index << " (Serial " << device->serial_number << ") "
+              << (bias_ok[i] ? (internal_on ? "ON" : "OFF") : "FAILED") << std::endl;
      }
 -    if (ext) set_external_noise_power(enable, devices);
++    bool all_success = std::all_of(bias_ok.begin(), bias_ok.end(), [](int ok) { return ok != 0; });
 +    if (ext) all_success = set_external_noise_power(enable, devices) && all_success;
 +    if (!all_success) {
 +        std::cerr << "Bias Tee transition failed; retaining prior state and invalidating coherence" << std::endl;
@@ -2525,15 +2591,11 @@ index 33b22e1..58f0f97 100644
      // Wideband variant: GPIO0 only powers the noise source; the RF switches
      // must also be thrown or the tuners keep looking at the antennas.
      wideband_set_noise_path(enable, devices);
-@@ -450,7 +495,17 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+@@ -676,7 +723,13 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
      // noise in via a directional coupler, not an RF switch. No-op unless the
      // switch GPIOs were claimed at startup.
      kerberos_gpio_set_noise_path(enable);
 +    if (!enable) {
-+        // Flush samples queued while calibration noise was enabled, then keep
-+        // their replacement packets explicitly uncalibrated for longer than
-+        // the RTL USB ring. This is conservative but never publishes old
-+        // noise-source IQ as a valid coherent frame.
 +        const auto until = std::chrono::duration_cast<std::chrono::nanoseconds>(
 +            std::chrono::steady_clock::now().time_since_epoch() + std::chrono::milliseconds(350)).count();
 +        output_holdoff_until_ns.store(until, std::memory_order_release);
@@ -2543,7 +2605,7 @@ index 33b22e1..58f0f97 100644
      // Anchor the phase-cal settle gate to the moment the noise source comes ON. Only on
      // ENABLE: a retune turns it on just before measuring, so the gate then waits out the
      // in-flight pre-noise USB samples and the tuner AGC ramp. Startup turns the bias tee on per-device in
-@@ -472,6 +527,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
+@@ -698,6 +751,7 @@ void set_bias_tee_all_devices(bool enable, const std::vector<std::unique_ptr<SDR
  }
  
  void apply_antenna_bias_tees(uint32_t mask, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2551,15 +2613,15 @@ index 33b22e1..58f0f97 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      // One GPIO per OPEN channel (GPIO ch+1 on the channel-0 chip) - the RTL2832
      // only has GPIO0-7, so never sweep the compile-time ceiling here.
-@@ -576,6 +632,7 @@ bool rf_frequency_valid(uint64_t rf_hz) {
- }
+@@ -803,6 +857,7 @@ bool rf_frequency_valid(uint64_t rf_hz) {
  
- bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
+ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::unique_ptr<SDRDevice>>& devices,
+                          SdrUpdateResult* result) {
 +    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
-     if (frequency > 0 && !rf_frequency_valid(frequency)) {
-         uint64_t min_hz, max_hz;
-         rf_frequency_range(min_hz, max_hz);
-@@ -586,6 +643,8 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     SdrUpdateResult local;
+     SdrUpdateResult& res = result ? *result : local;
+     res = SdrUpdateResult{};
+@@ -825,6 +880,8 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
      }
  
      std::lock_guard<std::mutex> lock(settings_mutex);
@@ -2568,16 +2630,13 @@ index 33b22e1..58f0f97 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
  
      const uint64_t prev_frequency = current_frequency.load();
-@@ -611,14 +670,32 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+@@ -850,6 +907,19 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
      else if (gain >= 0) std::cout << "Gain: " << gain/10.0 << " dB";
      std::cout << std::endl;
  
-+    // Invalidate publication before any PLL/gain write. The transition barrier
-+    // keeps delayed callbacks ordered but unusable until fresh acquisition.
 +    if (hardware_settings_failed.load(std::memory_order_acquire))
 +        throw std::runtime_error("hardware settings failed; restart required");
 +    begin_acquisition_transition();
-+    // Invalidate phase before writes, not in a later command-handler step.
 +    if (phase_compensation && !recovery_in_progress.load(std::memory_order_acquire)) {
 +        std::lock_guard<std::mutex> state_lock(phase_compensation->state_mutex);
 +        phase_compensation->state = PhaseCompensatorState::WAITING_FOR_STABILITY;
@@ -2591,70 +2650,52 @@ index 33b22e1..58f0f97 100644
      // Wideband variant: a frequency change is an LO reprogram; the tuners stay
      // parked at the IF (no per-device retune, no PLL resettle). Gain changes
      // still go to the tuners below.
-     const bool wb_variant = downconverter.enabled.load();
-     if (wb_variant && frequency > 0 && !wideband_retune_rf(frequency, devices)) {
+@@ -858,7 +928,12 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
          std::cerr << "SDR: LO retune to " << frequency / 1e6 << " MHz failed - frequency unchanged" << std::endl;
--        frequency = 0;
--        if (gain == -999) return false;
-+        hardware_settings_failed.store(true, std::memory_order_release);
-+        coherence_lost.store(true, std::memory_order_release);
-+        complete_acquisition_transition();
-+        throw std::runtime_error("downconverter settings update failed; restart required");
+         frequency = 0;
+         res.lo_retune_failed = true;
+-        if (gain == -999) return done(false);
++        if (gain == -999) {
++            hardware_settings_failed.store(true, std::memory_order_release);
++            coherence_lost.store(true, std::memory_order_release);
++            complete_acquisition_transition();
++            throw std::runtime_error("downconverter settings update failed; restart required");
++        }
      }
      const bool tune_tuners = !wb_variant && frequency > 0;
  
-@@ -634,12 +711,14 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
-             if (!devices[i] || !devices[i]->dev) continue;
-             threads.emplace_back([i, f, g, &devices, &f_ok, &g_ok]() {
+@@ -884,10 +959,9 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
                  rtlsdr_dev_t* dev = devices[i]->dev;
--                if (f > 0 && rtlsdr_set_center_freq(dev, static_cast<uint32_t>(f)) < 0) f_ok[i] = 0;
--                if (g == -999) return;
+                 if (f > 0 && retune_tuner(dev, static_cast<uint32_t>(f), fast_path) < 0) f_ok[i] = 0;
+                 if (g == -999) return;
 -                bool ok = (g == -1) ? rtlsdr_set_tuner_gain_mode(dev, 0) >= 0
 -                                    : rtlsdr_set_tuner_gain_mode(dev, 1) >= 0 && rtlsdr_set_tuner_gain(dev, g) >= 0;
 -                if (set_fixed_if_vga(dev, g == -1) < 0) ok = false;
 -                g_ok[i] = ok;
-+                if (f > 0 && (rtlsdr_set_center_freq(dev, static_cast<uint32_t>(f)) < 0 ||
-+                              rtlsdr_get_center_freq(dev) != static_cast<uint32_t>(f))) f_ok[i] = 0;
-+                if (rtlsdr_get_sample_rate(dev) != SAMPLE_RATE) f_ok[i] = 0;
-+                if (g != -999) {
-+                    int actual = -999;
-+                    g_ok[i] = apply_validated_gain(dev, g, &actual) ? 1 : 0;
-+                    if (g_ok[i]) devices[i]->actual_gain_tenths.store(actual, std::memory_order_release);
-+                }
-             });
-         }
-         for (auto& t : threads) t.join();
-@@ -663,6 +742,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
-     // previous settings instead, so the array stays coherent, and still report
-     // a change so the caller recalibrates (the PLLs were rewritten).
-     const std::string failed = failed_channels(f_ok, g_ok);
-+    const bool all_success = failed.empty();
-     if (independent) {
-         // No common array to keep together: record what each tuner took
-         if (!failed.empty())
-@@ -695,6 +775,21 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
-         if (gain != -999) current_gain = gain;
++                int actual = -999;
++                g_ok[i] = apply_validated_gain(dev, g, &actual) ? 1 : 0;
++                if (g_ok[i]) devices[i]->actual_gain_tenths.store(actual, std::memory_order_release);
+         });
+     };
+     auto failed_channels = [&](const std::vector<char>& f_ok, const std::vector<char>& g_ok) {
+@@ -947,6 +1021,16 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
          settings::note_tuning(frequency > 0 ? current_frequency.load() : 0, gain);  // saved once stable
      }
-+    if (!all_success) {
-+        // Calibration cannot repair a partial tuning/gain write. Latch failure
-+        // before releasing the transition; no later watchdog may claim validity.
+ 
++    if (!failed.empty()) {
 +        hardware_settings_failed.store(true, std::memory_order_release);
 +        coherence_lost.store(true, std::memory_order_release);
-+    }
-+    if (all_success) {
-+        // Frequency/gain changes define a new raw-headroom measurement epoch.
-+        // Reset while publication is still quarantined so no old-setting
-+        // samples are attributed to the new receiver tuple.
++    } else {
 +        for (const auto& device : devices)
 +            if (device && device->dev) device->adc_headroom.request_reset();
 +    }
 +    complete_acquisition_transition();
-+    if (!all_success) throw std::runtime_error("partial hardware settings update; restart required");
- 
++    if (!failed.empty()) throw std::runtime_error("partial hardware settings update; restart required");
++
      // Re-interpolate the S2P forward correction at the new center frequency so
      // the differential insertion phase tracks retunes. Cheap (a handful of
-@@ -708,6 +803,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     // interpolations + atomic stores) and only when forward comp is enabled.
+@@ -959,6 +1043,7 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
  }
  
  void handle_settings_change() {
@@ -2662,17 +2703,15 @@ index 33b22e1..58f0f97 100644
      // Wideband scan / independent: no phase calibration exists to redo (the
      // phase stages skip those modes), so switching the noise source on here
      // would leave it injected. Returning to coherent recalibrates anyway.
-@@ -987,6 +1083,9 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
+@@ -1238,6 +1323,7 @@ static bool return_to_coherent_locked(const std::vector<std::unique_ptr<SDRDevic
  }
  
  bool set_operating_mode(OperatingMode target, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
-+    // set_operating_mode holds settings/state and may switch the noise path;
-+    // make calibration ownership outermost to retain the device lock ordering.
 +    std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
      // The tuner-spread scan and independent tuners need to retune individual
      // tuners, but the Wideband (downconverter) variant requires every tuner
      // parked at the IF - mutually exclusive.
-@@ -1045,6 +1144,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
+@@ -1296,6 +1382,7 @@ bool set_wideband_mode(bool enable, const std::vector<std::unique_ptr<SDRDevice>
  
  bool set_independent_tuner(int tuner_index, uint64_t frequency, int gain,
                             const std::vector<std::unique_ptr<SDRDevice>>& devices, std::string* err) {
@@ -2680,7 +2719,7 @@ index 33b22e1..58f0f97 100644
      auto fail = [&](const std::string& e) {
          if (err) *err = e;
          std::cerr << "Independent: " << e << std::endl;
-@@ -1099,6 +1199,7 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
+@@ -1350,6 +1437,7 @@ void restore_operating_mode(const std::vector<std::unique_ptr<SDRDevice>>& devic
  }
  
  void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::unique_ptr<SDRDevice>>& devices) {
@@ -2688,13 +2727,28 @@ index 33b22e1..58f0f97 100644
      std::lock_guard<std::recursive_mutex> dev_lock(device_io_mutex);
      if (operating_mode.load() != OperatingMode::WIDEBAND_SCAN) {
          std::cerr << "Wideband: Not in wideband scan mode" << std::endl;
-@@ -1169,4 +1270,4 @@ void setup_wideband_frequencies(uint64_t base_frequency, const std::vector<std::
- 
-     std::cout << "Wideband: " << success_count << "/" << num_tuners << " tuners configured in parallel" << std::endl;
-     std::cout << "Wideband: Total coverage = " << (num_tuners * usable_bandwidth) / 1e6 << " MHz" << std::endl;
--}
+@@ -1491,4 +1579,4 @@ bool reopen_device_after_stream_loss(SDRDevice* sdr) {
+ #endif
+     return true;
+ }
+-#endif
 \ No newline at end of file
-+}
++#endif
+diff --git a/heimdall_v2/src/sdr/sdr_init.hpp b/heimdall_v2/src/sdr/sdr_init.hpp
+index 88ecb0e..2c21e7e 100644
+--- a/heimdall_v2/src/sdr/sdr_init.hpp
++++ b/heimdall_v2/src/sdr/sdr_init.hpp
+@@ -105,6 +105,10 @@ struct SdrUpdateResult {
+ // was applied, see SdrUpdateResult.
+ bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {},
+                          SdrUpdateResult* result = nullptr);
++// Apply exact fixed gains per active coherent channel as one transactional
++// settings change. Rolls all tuners back if any write/readback fails.
++bool update_coherent_channel_gains(const std::vector<int>& gains,
++                                   const std::vector<std::unique_ptr<SDRDevice>>& devices);
+ // The end of a drag: update_sdr_settings (coherent) and
+ // setup_wideband_frequencies (wideband scan) retunes that follow one another
+ // within 400 ms (or before this finished the previous one, up to 1 s) take
 diff --git a/heimdall_v2/src/sdr/sdr_pipeline.cpp b/heimdall_v2/src/sdr/sdr_pipeline.cpp
 index 16de89d..903d25c 100644
 --- a/heimdall_v2/src/sdr/sdr_pipeline.cpp
@@ -2957,10 +3011,19 @@ index 472f85e..704d1df 100644
          
          // JSON array of the runtime serial list (--serials aware) for the UI's
 diff --git a/heimdall_v2/src/web/web_server.cpp b/heimdall_v2/src/web/web_server.cpp
-index 143e574..c4fa89c 100644
+index 6e750ee..e97cbb9 100644
 --- a/heimdall_v2/src/web/web_server.cpp
 +++ b/heimdall_v2/src/web/web_server.cpp
-@@ -64,6 +64,12 @@ static bool origin_allowed(uWS::HttpRequest* req) {
+@@ -42,7 +42,7 @@ static std::string web_port_error_detail() {
+     sockaddr_in addr{};
+     addr.sin_family = AF_INET;
+     addr.sin_addr.s_addr = INADDR_ANY;
+-    addr.sin_port = htons(WEB_PORT);
++    addr.sin_port = htons(web_port);
+     const int err = sock_bind(s, (sockaddr*)&addr, sizeof(addr)) < 0 ? errno : 0;
+     sock_close(s);
+     return listen_error_detail(err);
+@@ -88,6 +88,12 @@ static bool origin_allowed(uWS::HttpRequest* req) {
      // by (core/host_check.hpp; KRAKEN_ALLOWED_HOSTS adds names).
      if (!host_allowed(req->getHeader("host"))) return false;
      const std::string_view origin = req->getHeader("origin");
@@ -2973,7 +3036,7 @@ index 143e574..c4fa89c 100644
      if (origin.empty()) return true;
      const size_t scheme_end = origin.find("://");
      if (scheme_end == std::string_view::npos) return false;
-@@ -268,6 +274,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+@@ -292,6 +298,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
          },
          
          .message = [&](auto* ws, std::string_view message, uWS::OpCode) {
@@ -2983,7 +3046,7 @@ index 143e574..c4fa89c 100644
              // While an element-count reconfiguration owns the devices, every
              // command is refused: most handlers below touch device handles that
              // are being closed/reopened on another thread.
-@@ -575,9 +584,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+@@ -604,9 +613,9 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
      // Exclusive port: uWS defaults to SO_REUSEPORT, which lets a second
      // heimdall instance bind the same port silently - the kernel then splits
      // incoming connections randomly between the processes. Fail loudly instead.
@@ -2995,16 +3058,16 @@ index 143e574..c4fa89c 100644
              
              auto* uws_loop = uWS::Loop::get();
              struct us_loop_t* native_loop = (struct us_loop_t*)uws_loop;
-@@ -601,7 +610,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+@@ -630,7 +639,7 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
                  }
              }, 50, 50);
          } else {
 -            std::cerr << "FATAL: cannot listen on web port " << WEB_PORT
 +            std::cerr << "FATAL: cannot listen on web port " << web_port
-                       << " - is another heimdall instance already running?" << std::endl;
-             fatal_exit = true;       // exit status 1, not a clean stop
-             global_running = false;  // trigger the normal clean shutdown in main()
-@@ -610,4 +619,4 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
+ #ifdef _WIN32
+                       << web_port_error_detail()
+ #endif
+@@ -642,4 +651,4 @@ void web_server_main(CorrelationResult& correlation_result, FFTProcessingControl
  
      global_app = &app;
      app.run();

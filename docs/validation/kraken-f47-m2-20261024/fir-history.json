@@ -1,0 +1,38 @@
+{
+  "case": "restart_retry",
+  "simulatedOnly": true,
+  "numerical": [
+    {
+      "channel": 1,
+      "phaseDegrees": 0.08613760227380911,
+      "amplitudeDb": -0.9117321219310239,
+      "expectedAmplitudeDb": -0.9151498112135024,
+      "integerLag": 0
+    },
+    {
+      "channel": 2,
+      "phaseDegrees": -0.09630478237449039,
+      "amplitudeDb": 0.8250201864608533,
+      "expectedAmplitudeDb": 0.8278537031645016,
+      "integerLag": 0
+    },
+    {
+      "channel": 3,
+      "phaseDegrees": 0.18741839551009365,
+      "amplitudeDb": -1.4099625463692698,
+      "expectedAmplitudeDb": -1.4116214857141456,
+      "integerLag": 0
+    },
+    {
+      "channel": 4,
+      "phaseDegrees": -0.18212373253656403,
+      "amplitudeDb": 0.42343365548190726,
+      "expectedAmplitudeDb": 0.42378598139876184,
+      "integerLag": 0
+    }
+  ],
+  "explicitRestartRecovered": true,
+  "orderedShutdown": true,
+  "driverEvents": 471,
+  "freshFirHistoryVerified": true
+}

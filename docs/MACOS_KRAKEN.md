@@ -103,14 +103,11 @@ Intel receiver behavior; local runs only qualify the architecture actually used.
 ## Source provenance
 
 `config/kraken-macos-sources.json` pins Suite commit
-`3a95e19f7f81b078e60a4f6eb86e738418756f5e`, Kraken RTL-SDR commit
-`08fb08165ecfcdd954c7a20cb1bbfbc159294f0e`, uWebSockets and uSockets.
-See the [current compatibility record](KRAKEN_SUITE_UPDATE_2026_10_17.md)
-for the upstream pffft change and the software checks for this revision.
-The [24 October observation review](KRAKEN_SUITE_UPDATE_2026_10_24.md)
-acknowledges newer upstream `f47ed2fb48ab` without changing these validated
-pins because the companion patches and required RTL-SDR revision need a full
-rebase and regression run.
+`f47ed2fb48ab5dba888b7d45fd08c9745ae22199`, Kraken RTL-SDR commit
+`578b43ddd971786e84e2a6ab3c338ee48c8739c3`, uWebSockets and uSockets.
+The [24 October promotion review](KRAKEN_SUITE_UPDATE_2026_10_24.md) records
+the four-patch port, source hashes, M2 clean build/native simulations and the
+remaining bounded physical-hardware gate.
 The build installs dependency license files supplied upstream. The pinned
 Suite repository has no repository-wide license file; its code is not
 relicensed under VectorWarp's MIT license. These development formulas build

@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "date": "2026-10-24",
+  "host": "Apple Silicon M2",
+  "hardwareTouched": false,
+  "sources": {
+    "suite": {"revision": "f47ed2fb48ab5dba888b7d45fd08c9745ae22199", "archiveSha256": "f8a875dfff025ad83b62fa4edb362bf46aa5d580566a9976c258db56a1b6a3d6"},
+    "rtlsdr": {"revision": "578b43ddd971786e84e2a6ab3c338ee48c8739c3", "archiveSha256": "3683e33424b668224988acc367cf9b4c458d0765a5dfb7532db640de73e20614"}
+  },
+  "portCommits": ["38dfde3", "f583ff7", "e9154aa", "69b9b86"],
+  "candidate": {
+    "localTar": "/private/tmp/vectorwarp-f47-candidate-immutable.tar",
+    "tarSha256": "2492c14f12285c6ad956834efa48914db0fa35ee51c280afc3679a18d9ae6e9b",
+    "bytes": 1347584,
+    "readOnly": true,
+    "heimdallSha256": "8d8b43053c977c2dc0b43c56cbf00630858e803afedc8da14f8ac3ea8a67e79b",
+    "driverSha256": "8d8331691fecba01cece01c8f0725e4b274d4fdfd4be50f3f043bdf2c66ad26f",
+    "architecture": "arm64",
+    "strictCodeSignVerified": true
+  },
+  "evidence": {
+    "buildJsonSha256": "fc41f5bc4c3a664ad0a83f689349824ce20cd68657edd8839aa54fa542efb411",
+    "sbomSha256": "0ea572196a6e28d0b07ff8ade707d48b7b6a20193142c840f4ee77488f813228",
+    "nativeSimulationSha256": "ce6c4e4fd2aa967aeef35655ed74c675712a4f4d0a962f1603aba4ca163ab311",
+    "fastTuneAbiSha256": "85a6863dca97d21c00d355072aa156b27dd5856cc7fd3534d93699c0da4b18a5",
+    "firHistorySha256": "4477205bbe6c8382944d21c4e81d4bd2bd19a994c4da6113ea1502271c2da0d1"
+  },
+  "gates": {
+    "cleanBuildAndSourceOracles": "pass",
+    "nativeSimulationSevenCases": "pass",
+    "freshFirHistory": "pass",
+    "controlReaderUnitTests": "3/3 pass",
+    "driverEventsUnitTests": "5/5 pass",
+    "shutdownProcessUnitTests": "5/5 pass",
+    "liveHardware": "not run"
+  },
+  "liveBaseline": {
+    "expectedCanonicalConfigSha256": "7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0",
+    "frequencyHz": 527000000,
+    "sampleRateHz": 2400000,
+    "channels": 5,
+    "gainsDb": [2.7, 2.7, 1.4, 1.4, 3.7]
+  },
+  "decision": "GO for separately authorized bounded live test with immediate rollback; not deployed"
+}

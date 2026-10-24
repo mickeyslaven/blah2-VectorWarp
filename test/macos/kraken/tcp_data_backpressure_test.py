@@ -12,7 +12,8 @@ ap.add_argument('--source', type=pathlib.Path,
                 default=ROOT / 'build/kraken-macos/upstream/krakensdr_suite/heimdall_v2')
 source = ap.parse_args().source.resolve()
 needed = ('src/net/tcp_data_server.cpp', 'src/net/tcp_data_server.hpp',
-          'src/net/tcp_common.cpp', 'src/net/tcp_common.hpp', 'src/core/ingest_timing.hpp')
+          'src/net/tcp_common.cpp', 'src/net/tcp_common.hpp', 'src/core/ingest_timing.hpp',
+          'src/core/net_compat.hpp')
 for name in needed:
     if not (source / name).is_file():
         raise SystemExit(f'missing source input: {source / name}')
