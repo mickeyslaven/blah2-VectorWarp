@@ -335,3 +335,60 @@ from the first post-enable aircraft pass (N523ME): 8 accepted, 0 rejected and
 69 samples. This first pass is in the pass-disjoint holdout partition, so it
 does not yet increment training-sector or fit-bin coverage.
 
+## 2026-10-24 integration-sensitivity live shadow
+
+Implementation is in branch `codex/integration-sensitivity-shadow`. The live
+API portion is deliberately scheduler-only: after recording integrity, exact
+sample containment, and at least three admitted CPI truth rows pass, it writes
+one immutable bounded job. It never launches replay DSP on the receiver node,
+so live processor work added by the feature is zero. Queue depth and per-clip
+wall time are hard-bounded and status is exposed at
+`/api/detection/integration-shadow`.
+
+The external worker compares 50/100/200/500 ms dwell on identical IQ across the
+deployed fusion mode, ideal coherent, noise-whitened, noncoherent, and every
+physical channel. A physical channel is excluded from its own synthesized
+reference, including on two-channel systems. ADS-B is used only after detector
+decisions for event-time scoring. One pre-fusion complex cutout per dwell also
+reports fixed-cell noncoherent, trajectory-migrated noncoherent, and
+common-phase-corrected coherent accumulation plus the phase-coherence budget.
+IQ/config hashes, atomic results, configuration immutability and the external
+wall-clock budget are enforced.
+
+Regression evidence currently includes the API queue/admission/overflow/
+deduplication suite, 2-channel reference isolation, event-time target/nuisance
+separation, incomplete-truth rejection, coherent moving-target synthetic test,
+configuration inventory persistence, and the full API pretest chain. A complete
+local processor replay ran the worker on synthetic five-channel IQ in 5.67 s,
+published an atomic result, added zero live processor work, and measured direct
+pilot phase-increment coherence above 0.9999999999. This validates execution and
+accounting, not aircraft sensitivity.
+
+The independent adversarial review initially rejected this implementation for
+real provenance, denominator, concurrency, and receipt-authentication defects.
+Those findings are now corrected. Jobs bind the exact admission document,
+native recorder sidecar, IQ, canonical config, config/receiver epochs, applied
+gain vector, producer host, and receipt-key identity. The worker requires one
+production arm, reports explicit detection/track denominators, emits no
+short-dwell-biased winner, labels the target-informed complex diagnostic as
+post-detection oracle-only, and refuses the live producer host. Result receipts
+are HMAC-SHA-256 authenticated with an owner-only key; spool writers cannot
+forge completion. Atomic slot files enforce `max_pending` across API processes,
+and an old unpublished reservation can be reclaimed only after proving its
+same-host owner PID is dead. Worker claims likewise use host/PID/binding-aware
+bounded crash recovery. Hot scans are capped by archiving completed pairs.
+
+Focused queue, worker, configuration and UI tests pass; the full API `npm test`
+chain passes; CTest discovers and passes `integrationSensitivityShadow` in a
+Kraken-only configuration. The final independent re-review passed with no
+remaining P0/P1 release blocker, including the live-owner slot regression.
+
+Deployment remains pending commit/release packaging and creation/distribution
+of the owner-only receipt key. When deployed, the queue may collect immediately,
+but Strix execution must wait for a controller compute lease and must not
+contend with Qwen. A supported Qwen lease/review was attempted; the controller
+returned conflict because its current admission state is not ready (including
+the configured memory threshold), and the guarded service is currently
+inactive. No guard was bypassed; the independent Codex red-team review was used
+for release gating instead.
+
