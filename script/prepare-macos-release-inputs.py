@@ -51,7 +51,11 @@ SENSITIVE_PATHS = ("CMakeLists.txt", "cmake/", "script/build-macos.sh",
 REVIEW_PURPOSE = "first-party-build-only"
 REVIEW_ARCHIVE_MEMBER = "VectorWarp-corresponding-source/build-source-review.json"
 REVIEW_MAX_BYTES = 64 * 1024
-REVIEW_PATH = re.compile(r"(?:CMakeLists\.txt|cmake/[A-Za-z0-9][A-Za-z0-9._-]*\.cmake)")
+REVIEW_PATH = re.compile(
+    r"(?:CMakeLists\.txt|script/build-macos\.sh|"
+    r"cmake/[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*|"
+    r"(?:third_party|third-party|vendor)/[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*)")
 
 
 def sha256(path):
@@ -266,12 +270,12 @@ def owner_only_bytes(path):
 
 
 def reviewed_build_changes(checkout, source_id, guarded, receipt_path):
-    """Validate reviewed CMake post-images for this candidate and return immutable bytes."""
+    """Validate reviewed native-build post-images and return immutable bytes."""
     if not isinstance(source_id, str) or not re.fullmatch(r"[0-9a-f]{40}", source_id):
         raise ValueError("review receipt source commit is invalid")
     guarded = sorted(guarded)
     if not guarded or len(set(guarded)) != len(guarded) or any(not REVIEW_PATH.fullmatch(path) for path in guarded):
-        raise ValueError("review receipt cannot approve non-CMake guarded paths")
+        raise ValueError("review receipt contains an unsafe guarded build path")
     raw = owner_only_bytes(receipt_path)
     record = review_json(raw)
     if set(record) != {"schema", "purpose", "source_id", "baseline_source_id", "files"}:
