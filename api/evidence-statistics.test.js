@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {EvidenceStatistics, associationGates, limits} = require('./evidence-statistics');
+const {EvidenceStatistics, createEvidenceStatisticsLanes, associationGates, limits} = require('./evidence-statistics');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-statistics-'));
 const filename = path.join(directory, 'statistics.json');
@@ -218,7 +218,7 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     Array.from({length: 6}, (_, index) =>
       ({timestamp_ms: index * 500, provenance: truthProvenance}))});
   for (const [timestamp, first] of [[250, 100], [750, 200], [1250, 300]])
-    timingStats.acceptTiming({timestamp, captureSamplePositionAvailable: true,
+    timingStats.acceptTiming({timestamp, eventTime: {exact: true, uncertaintyBounded: true, uncertaintyNs: 0}, captureSamplePositionAvailable: true,
       captureEpoch: 7, captureFirstEpochSample: first,
       captureEndEpochSample: first + 100, captureDroppedSamples: [0, 0, 0, 0, 0]});
   const timingAdmissions = timingStats.prepareCaptureAdmissions([{eventId: 'timing-event',
@@ -289,6 +289,50 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'provisional use must retain the explicit exact-time rejection evidence');
   provisionalStats.close();
 
+  for (const [receiver, timingSource, exactTime] of [
+    ['Kraken', 'kraken_heimdall_host_arrival_estimate', false],
+    ['RspDuo', 'rspduo_host_arrival_estimate', false],
+    ['HackRF', 'hackrf_host_arrival_estimate', false],
+    ['Usrp', 'usrp_device_time_without_utc', false],
+    ['Usrp', 'usrp_device_time_utc', true]
+  ]) {
+    let captures = 0;
+    const dependencies = {now: () => 1500,
+      setIntervalFn() { return {unref() {}}; }, clearIntervalFn() {}};
+    const lanes = createEvidenceStatisticsLanes({...config,
+      capture: {...config.capture, device: {type: receiver}}}, {
+      getAt(_kind, at) { return Promise.resolve({abc123: {...prediction,
+        timestamp: at / 1000, provenance: {...prediction.provenance,
+          observation_time_offset_s: 0}}}); }
+    }, {
+      exact: {...dependencies, filename: path.join(directory, `${timingSource}-exact.json`),
+        onEligibilityEvent() { throw new Error('Exact scorecard must not duplicate captures'); }},
+      operational: {...dependencies, filename: path.join(directory, `${timingSource}-operational.json`),
+        onEligibilityEvent() { ++captures; return {accepted: true}; }}
+    });
+    for (const lane of Object.values(lanes)) {
+      lane.acceptDetection({timestamp: 1500, delay: [10], doppler: [100], snr: [5]});
+      lane.acceptTiming({timestamp: 1500, captureSamplePositionAvailable: true,
+        captureEpoch: 1, captureFirstEpochSample: 0, captureEndEpochSample: 1200000,
+        eventTime: {source: timingSource, exact: exactTime, estimateAvailable: true,
+          uncertaintyBounded: exactTime, uncertaintyNs: exactTime ? 0 : null}});
+    }
+    while (Object.values(lanes).some(lane => lane.running))
+      await new Promise(resolve => setImmediate(resolve));
+    assert.equal(captures, 1, `${receiver}: timing capability must leave exactly one capture owner`);
+    assert.equal(lanes.exact.liveStatus().decision_grade, exactTime);
+    assert.equal(lanes.operational.state.active.abc123.detectedFrames, 1);
+    const event = lanes.operational.state.eligibilityEvents[0];
+    const admission = lanes.operational.prepareCaptureAdmissions([{eventId: event.id,
+      captureWindows: [{captureId: 'operational-clip', revision: 1,
+        windowStart: 1400, windowEnd: 1600}]}], 1)['operational-clip'];
+    assert.equal(admission.valid, true, `${receiver}: provisional timing must retain capture admission`);
+    assert.equal(admission.decision_grade, exactTime);
+    assert.equal(admission.timing_policy, exactTime ? 'exact' : 'provisional');
+    assert.equal(admission.event_time_uncertainty_s, exactTime ? 0 : 1);
+    Object.values(lanes).forEach(lane => lane.close());
+  }
+
   // Synthetic delayed truth: all CPI identities must survive concurrent four-CPI
   // association waits. Resolve them out of order to catch accidental latest-frame joins.
   const exactFilename = path.join(directory, 'exact-delayed-cpi.json');
@@ -305,7 +349,7 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     exact.acceptTracker({timestamp, data: [{id: 'exact-track', state: 'ACTIVE',
       n: index ? 4 : 2, delay: 10 / limits(config).kmPerBin, doppler: 100}]});
     exact.acceptDetection({timestamp, delay: [10], doppler: [100], snr: [7]});
-    exact.acceptTiming({timestamp: timestamp + 2, captureSamplePositionAvailable: true,
+    exact.acceptTiming({timestamp: timestamp + 2, eventTime: {exact: true, uncertaintyBounded: true, uncertaintyNs: 0}, captureSamplePositionAvailable: true,
       captureEpoch: 12, captureFirstEpochSample: index * 1200000,
       captureEndEpochSample: (index + 1) * 1200000, captureDroppedSamples: [0, 0, 0, 0, 0]});
   }
@@ -326,7 +370,7 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
 
   const invalidAt = exactTimes.at(-1) + 500;
   exact.acceptDetection({timestamp: invalidAt, delay: [10], doppler: [100]});
-  exact.acceptTiming({timestamp: invalidAt + 2, captureSamplePositionAvailable: true,
+  exact.acceptTiming({timestamp: invalidAt + 2, eventTime: {exact: true, uncertaintyBounded: true, uncertaintyNs: 0}, captureSamplePositionAvailable: true,
     captureEpoch: 12, captureFirstEpochSample: 4800000,
     captureEndEpochSample: 6000000, captureDroppedSamples: [0, 0, 0, 0, 0]});
   delayed.get(invalidAt + 2)({abc123: {...prediction, timestamp: (invalidAt + 2) / 1000,

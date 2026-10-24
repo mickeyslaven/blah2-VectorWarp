@@ -53,6 +53,10 @@ public:
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
     int64_t epochEstimateNanoseconds = 0;
+    int64_t hostReceiptResidualNanoseconds = 0;
+    int64_t hostReceiptMaximumResidualNanoseconds = 0;
+    int64_t hostReceiptDriftPpm = 0;
+    uint32_t hostReceiptAnchors = 0;
     int64_t deviceTimeEpochTick = 0;
     uint32_t sampleRate = 0;
     std::string clockSource, timeSource, motherboard, subdevices;

@@ -234,7 +234,7 @@ KrakenClipRecorder::KrakenClipRecorder(std::string directory,
 KrakenClipRecorder::KrakenClipRecorder(std::string directory,
   uint32_t channels, uint32_t sampleRate, uint32_t frequency, Options options)
   : directory(std::move(directory)), channels(channels), sampleRate(sampleRate),
-    frequency(frequency), options(std::move(options))
+    frequency(frequency), options(std::move(options)), hostArrivalClock(sampleRate)
 {
   if (channels == 0 || channels > 8 || sampleRate == 0 || frequency == 0)
     throw std::invalid_argument("Invalid Kraken clip recording metadata");
@@ -302,6 +302,8 @@ void KrakenClipRecorder::reset_epoch_locked(const std::string& reason)
   ring.clear();
   haveEpoch = false;
   epochNanoseconds = 0;
+  hostArrivalClock.reset(); hostArrivalEstimate = {};
+  hostArrivalDiscontinuity = false;
   nextSample = 0;
   ++epoch;
 }
@@ -320,7 +322,8 @@ void KrakenClipRecorder::discontinuity(const std::string& reason)
 bool KrakenClipRecorder::ingest(
   const std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE>& fixed,
   std::vector<uint8_t> metadata, std::vector<uint8_t> payload,
-  const HeimdallFrame::Header& header, Position* position)
+  const HeimdallFrame::Header& header, Position* position,
+  int64_t receiptNanoseconds)
 {
   if (!mutex.try_lock())
   {
@@ -341,14 +344,19 @@ bool KrakenClipRecorder::ingest(
       !std::equal(fixed.begin() + 20, fixed.begin() + 28,
         ring.back()->fixed.begin() + 20)))
     reset_epoch_locked("Kraken clip tuning or gain metadata changed");
-  if (!haveEpoch)
-  {
-    const auto duration = static_cast<int64_t>((static_cast<__int128>(
-      header.samplesPerChannel) * NS_PER_SECOND) / sampleRate);
-    epochNanoseconds = now_nanoseconds() - duration;
-    nextSample = 0;
-    haveEpoch = true;
+  if (!receiptNanoseconds) receiptNanoseconds = now_nanoseconds();
+  if (!haveEpoch) { nextSample = 0; haveEpoch = true; }
+  hostArrivalDiscontinuity = false;
+  auto timing = hostArrivalClock.observe(nextSample + header.samplesPerChannel,
+    receiptNanoseconds);
+  if (timing.discontinuity) {
+    reset_epoch_locked("Kraken host-receipt/sample anchor discontinuity");
+    nextSample = 0; haveEpoch = true;
+    timing = hostArrivalClock.observe(header.samplesPerChannel, receiptNanoseconds);
+    hostArrivalDiscontinuity = true;
   }
+  epochNanoseconds = timing.epochNanoseconds;
+  hostArrivalEstimate = timing;
 
   auto frame = std::make_shared<Frame>();
   frame->fixed = fixed;
@@ -370,15 +378,20 @@ bool KrakenClipRecorder::ingest(
       active->frames.push_back(frame);
     if (nextSample >= active->endSample) finish_active_locked();
   }
-  if (position) *position = {haveEpoch, epoch, nextSample,
-    haveEpoch ? epochNanoseconds : 0};
+  if (position) *position = {haveEpoch, hostArrivalDiscontinuity, epoch, nextSample,
+    haveEpoch ? epochNanoseconds : 0, hostArrivalEstimate.residualNanoseconds,
+    hostArrivalEstimate.maximumResidualNanoseconds, hostArrivalEstimate.driftPpm,
+    hostArrivalEstimate.anchors};
   return true;
 }
 
 KrakenClipRecorder::Position KrakenClipRecorder::position() const
 {
   std::lock_guard<std::mutex> lock(mutex);
-  return {haveEpoch, epoch, nextSample, haveEpoch ? epochNanoseconds : 0};
+  return {haveEpoch, hostArrivalDiscontinuity, epoch, nextSample, haveEpoch ? epochNanoseconds : 0,
+    hostArrivalEstimate.residualNanoseconds,
+    hostArrivalEstimate.maximumResidualNanoseconds, hostArrivalEstimate.driftPpm,
+    hostArrivalEstimate.anchors};
 }
 
 void KrakenClipRecorder::request(const IqClipRequest& value)

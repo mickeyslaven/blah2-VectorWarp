@@ -1,6 +1,7 @@
 #include "capture/Recording.h"
 #include "capture/kraken/HeimdallFrame.h"
 #include "capture/kraken/KrakenClipRecorder.h"
+#include "capture/kraken/HostArrivalClock.h"
 #include "data/meta/EventTime.h"
 
 #include <atomic>
@@ -73,8 +74,15 @@ WireFrame frame(unsigned sequence, uint32_t samplesPerFrame = FRAME_SAMPLES)
 
 void ingest(blah2::KrakenClipRecorder& recorder, WireFrame value)
 {
+  // These sample-exact recorder fixtures model paced delivery. The first
+  // receipt comes from the injected clock; subsequent receipts advance by
+  // the actual frame duration, including the non-millisecond trim case.
+  const auto previous = recorder.position();
+  const int64_t receipt = previous.available ? previous.epochEstimateNanoseconds +
+    static_cast<int64_t>((static_cast<__int128>(previous.nextSample +
+      value.header.samplesPerChannel) * 1000000000LL) / SAMPLE_RATE) : 0;
   assert(recorder.ingest(value.fixed, std::move(value.metadata),
-    std::move(value.payload), value.header));
+    std::move(value.payload), value.header, nullptr, receipt));
 }
 
 blah2::IqClipRequest request(uint64_t revision, int64_t start, int64_t end)
@@ -116,6 +124,37 @@ int main()
   const std::filesystem::path directory(temporary);
   try
   {
+    // Stable sample progression is fit against host receipts with a robust
+    // estimator. A delivery step creates a fresh relative epoch; it does not
+    // make the estimate hardware UTC.
+    {
+      blah2::kraken_timing::HostArrivalClock anchors(SAMPLE_RATE);
+      for (uint64_t frame = 1; frame <= 5; ++frame) {
+        const auto estimate = anchors.observe(frame * FRAME_SAMPLES,
+          1000000000LL + static_cast<int64_t>(frame) * 1000000LL);
+        assert(estimate.available && !estimate.discontinuity &&
+          estimate.maximumResidualNanoseconds == 0 && estimate.driftPpm == 0);
+      }
+      const auto discontinuity = anchors.observe(6 * FRAME_SAMPLES, 1306000000LL);
+      assert(discontinuity.discontinuity && discontinuity.anchors == 1 &&
+        discontinuity.epochNanoseconds == 1300000000LL);
+    }
+    {
+      blah2::kraken_timing::HostArrivalClock anchors(SAMPLE_RATE);
+      for (uint64_t second = 10000; second < 10005; ++second) {
+        const uint64_t sample = second * SAMPLE_RATE;
+        const int64_t receipt = 1000000000LL + second * 1000100000LL;
+        const auto estimate = anchors.observe(sample, receipt);
+        if (second > 10000) {
+          assert(estimate.driftPpm == 100 &&
+            estimate.maximumResidualNanoseconds == 0);
+          // The published nominal-rate epoch must recover the most recent
+          // fitted receipt even after hours of sample progression.
+          assert(estimate.epochNanoseconds +
+            static_cast<int64_t>(second) * 1000000000LL == receipt);
+        }
+      }
+    }
     int64_t clock = 1000000000LL;
     blah2::KrakenClipRecorder::Options options;
     options.ringSeconds = 0.02;

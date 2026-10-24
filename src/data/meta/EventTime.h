@@ -24,6 +24,10 @@ struct EventTimeProvenance
   uint64_t firstSample = 0;
   uint64_t endSample = 0;
   uint32_t sampleRate = 0;
+  int64_t hostReceiptResidualNanoseconds = 0;
+  int64_t hostReceiptMaximumResidualNanoseconds = 0;
+  int64_t hostReceiptDriftPpm = 0;
+  uint32_t hostReceiptAnchors = 0;
   std::string source = "kraken_heimdall_host_arrival_estimate";
   bool deviceTimeAvailable = false;
   int64_t deviceTimeEpochTick = 0;
@@ -122,7 +126,9 @@ inline EventTimeProvenance usrp_cpi_midpoint_time(int64_t epochTick,
 
 inline EventTimeProvenance kraken_cpi_midpoint_time(int64_t epochNanoseconds,
   uint64_t epoch, uint64_t firstSample, uint64_t endSample,
-  uint32_t sampleRate)
+  uint32_t sampleRate, int64_t hostReceiptResidualNanoseconds = 0,
+  int64_t hostReceiptMaximumResidualNanoseconds = 0,
+  int64_t hostReceiptDriftPpm = 0, uint32_t hostReceiptAnchors = 0)
 {
   auto value = kraken_event_time_unavailable();
   value.epochEstimateNanoseconds = epochNanoseconds;
@@ -130,6 +136,10 @@ inline EventTimeProvenance kraken_cpi_midpoint_time(int64_t epochNanoseconds,
   value.firstSample = firstSample;
   value.endSample = endSample;
   value.sampleRate = sampleRate;
+  value.hostReceiptResidualNanoseconds = hostReceiptResidualNanoseconds;
+  value.hostReceiptMaximumResidualNanoseconds = hostReceiptMaximumResidualNanoseconds;
+  value.hostReceiptDriftPpm = hostReceiptDriftPpm;
+  value.hostReceiptAnchors = hostReceiptAnchors;
   if (epochNanoseconds <= 0 || endSample <= firstSample || sampleRate == 0)
     return value;
   const __int128 sampleNumerator = static_cast<__int128>(firstSample) +
@@ -180,6 +190,16 @@ inline rapidjson::Value event_time_json(const EventTimeProvenance& value,
   result.AddMember("firstSample", unsignedText(value.firstSample), allocator);
   result.AddMember("endSample", unsignedText(value.endSample), allocator);
   result.AddMember("sampleRateHz", value.sampleRate, allocator);
+  if (value.source == "kraken_heimdall_host_arrival_estimate") {
+    rapidjson::Value hostReceipt(rapidjson::kObjectType);
+    hostReceipt.AddMember("anchors", value.hostReceiptAnchors, allocator);
+    hostReceipt.AddMember("residualNs", text(value.hostReceiptResidualNanoseconds), allocator);
+    hostReceipt.AddMember("maximumResidualNs", text(value.hostReceiptMaximumResidualNanoseconds), allocator);
+    hostReceipt.AddMember("driftPpm", text(value.hostReceiptDriftPpm), allocator);
+    hostReceipt.AddMember("boundedRfUtc", false, allocator);
+    hostReceipt.AddMember("note", "Robust host-receipt/sample fit; USB/TCP latency remains unbounded", allocator);
+    result.AddMember("hostReceipt", hostReceipt, allocator);
+  }
   if (value.source == "usrp_uhd_device_time") {
     result.AddMember("deviceTimeAvailable", value.deviceTimeAvailable, allocator);
     if (value.deviceTimeAvailable) {

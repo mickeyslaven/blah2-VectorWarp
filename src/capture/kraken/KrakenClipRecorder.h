@@ -2,6 +2,7 @@
 #define KRAKEN_CLIP_RECORDER_H
 
 #include "HeimdallFrame.h"
+#include "HostArrivalClock.h"
 
 #include <array>
 #include <atomic>
@@ -46,9 +47,14 @@ public:
   struct Position
   {
     bool available = false;
+    bool discontinuity = false;
     uint64_t epoch = 0;
     uint64_t nextSample = 0;
     int64_t epochEstimateNanoseconds = 0;
+    int64_t hostReceiptResidualNanoseconds = 0;
+    int64_t hostReceiptMaximumResidualNanoseconds = 0;
+    int64_t hostReceiptDriftPpm = 0;
+    uint32_t hostReceiptAnchors = 0;
   };
   struct Options
   {
@@ -77,7 +83,8 @@ public:
   // waiting; radar ingress remains unaffected.
   bool ingest(const std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE>& fixed,
     std::vector<uint8_t> metadata, std::vector<uint8_t> payload,
-    const HeimdallFrame::Header& header, Position* position = nullptr);
+    const HeimdallFrame::Header& header, Position* position = nullptr,
+    int64_t receiptNanoseconds = 0);
   Position position() const;
 
 private:
@@ -106,6 +113,9 @@ private:
   uint64_t nextSample = 0;
   uint64_t epoch = 0;
   uint64_t fileSequence = 0;
+  kraken_timing::HostArrivalClock hostArrivalClock;
+  kraken_timing::Estimate hostArrivalEstimate;
+  bool hostArrivalDiscontinuity = false;
   std::atomic<bool> ingressContention{false};
 
   int64_t now_nanoseconds() const;

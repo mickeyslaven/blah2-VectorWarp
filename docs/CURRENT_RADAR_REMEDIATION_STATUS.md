@@ -48,6 +48,12 @@ available but cannot be used for acceptance decisions. Live validation observed
 the expected coherent sample range and `exact:false`, `uncertaintyBounded:false`
 provenance while the radar continued processing at the unchanged RF settings.
 
+The current worktree adds a software-only host-receipt/sample-anchor diagnostic:
+a robust rolling offset/drift fit reports residuals and starts a fresh relative
+epoch on a receipt discontinuity. It remains explicitly inexact and unbounded;
+see `docs/KRAKEN_TIMING_SOFTWARE_BOUNDARY.md`. It is not deployed and did not
+alter live RF/configuration.
+
 ## UTC nuisance accounting
 
 The operational lane no longer treats an inexact SDR timestamp as either exact
@@ -100,6 +106,7 @@ Backend-specific mitigation remains honest about the hardware boundary:
 | Order | Finding | State | Evidence / next acceptance check |
 | --- | --- | --- | --- |
 | 1 | Kraken/F1/F5: dequeue/TCP-arrival time presented as exact RF time | Deployed with fail-closed authoritative lane | `096e7e4`, `b02ba18`, `ccbef6b`; exact acceptance remains blocked until Heimdall supplies qualified RF time |
+| 1a | Kraken timing: host-receipt/sample offset could jump or drift without quantitative provenance | Code/tests complete; not deployed | Rolling robust host-anchor fit, residual/drift provenance, and >100 ms receipt-step epoch break are diagnostics only; `docs/KRAKEN_TIMING_SOFTWARE_BOUNDARY.md` records the unbounded UTC blocker and 527 MHz mapping |
 | 2 | RSPduo/F2: mid-CPI AGC gain changes are not epoch boundaries | Code and tests complete | `87952c3` plus bounded-resume follow-up; every GainChange invalidates only ambiguous stale work, closes only the affected recording epoch incomplete, and automatically resumes CPI/recording publication on the next matched A/B pair. Output remains provisional and `sampleAligned:false` because SDRplay supplies no event sample counter |
 | 3 | USRP/F3/F6: UHD `time_spec` continuity and coherent topology are not proved | Code and tests complete | Missing, regressing, jumping, or discontinuous UHD time rejects only the corrupt epoch, clears unpublished IQ, rolls recording incomplete, and automatically republishes after two continuous timed blocks. Status records degraded/requalifying state and counters. Topology remains limited to an attested single-motherboard B210; device time is non-UTC and exact ADS-B scoring remains unavailable |
 | 4 | dual HackRF/F4: asymmetric callback/FIFO loss can silently shift pairing | Code and tests complete | Callback blocks publish only as matched pairs. A short/asymmetric/progression/drop fault discards the ambiguous epoch, rolls recording incomplete, drains one callback per radio, and automatically republishes only after two matched callback pairs. Recovery is bounded to eight consecutive faults. Relative time remains provisional because libhackrf has no device counter or RF/UTC timestamp |
