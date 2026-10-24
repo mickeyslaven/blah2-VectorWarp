@@ -64,6 +64,13 @@ Source::SampleTimePosition Kraken::sample_time_position() const
   return {position.available, position.epoch, position.nextSample, 0, fs};
 }
 
+std::vector<double> Kraken::actual_gain_db() const
+{
+  std::lock_guard<std::mutex> lock(provenanceMutex);
+  if(!lastHeaderAvailable)return {};
+  return {lastHeader.gains.begin(),lastHeader.gains.end()};
+}
+
 std::string Kraken::recording_provenance_json() const
 {
   rapidjson::Document document(rapidjson::kObjectType);

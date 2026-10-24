@@ -82,7 +82,8 @@ public:
  struct Publication {std::string spectrum,map,detections,tracks,bearing,manifoldEvidence;};
  Publication format(uint64_t timestamp,const gpu_result_json::BearingConfig& bearing={},
   bool publishManifoldEvidence=false,
-  const resident::BearingConfig& evidenceBearing={}){const auto& v=receivePrepared();
+  const resident::BearingConfig& evidenceBearing={},
+  gpu_result_json::View<double> actualGainDb={}){const auto& v=receivePrepared();
  if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle not completed");
  namespace json=gpu_result_json;
  Publication result;
@@ -100,7 +101,7 @@ public:
     uint32_t(evidenceBearing.method),uint32_t(evidenceBearing.referenceAnchor),
     evidenceBearing.scanBeams,
     evidenceBearing.guardRadius,evidenceBearing.trainingRadius,evidenceBearing.diagonalLoading,
-    {evidenceBearing.channelMapping.data(),evidenceBearing.channelMapping.size()});}}
+    {evidenceBearing.channelMapping.data(),evidenceBearing.channelMapping.size()},actualGainDb);}}
  if(config().tracker.enabled){const auto* w=v.trackerCheckpoint.data;
  wire::require(v.trackerCheckpoint.size>=32,"Resident tracker checkpoint missing");
  const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};

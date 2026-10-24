@@ -279,3 +279,84 @@ touch the live 527 MHz node.
 - Commits `37e1bf4`, `aba2e45`, `5e4abac`, `096e7e4`, `b02ba18`,
   `ccbef6b`, `87952c3`
 
+## Detection-manifold implementation (2026-10-24, not deployed)
+
+The measured installed-array response can now be consumed by both the existing
+CPU coherent beam bank and the GPU-resident coherent/noise-whitened detection
+paths.  The resident route transports the full complex beam-by-channel matrix
+through a versioned ABI and uses the same target/direct response-ratio
+calibration as `CoherentBeamBank`.  Whitening is applied before the calibrated
+direct-anchor projection, so unequal channel scales cannot reintroduce the
+fixed-transmitter response; a 40 dB-null regression covers this ordering.  A
+v2 installed-state identity binds RF and sample rate, channel count/order,
+requested and observed gains, element coordinates and orientation, receiver
+and fixed-transmitter coordinates, a canonical compatibility fingerprint, and
+the recomputed direct-path bearing/beam.  Mismatches fail closed.  The feature
+remains default-off; the live 527 MHz configuration and release were not
+changed.
+
+The API now has a separate, default-off detection-manifold campaign.  It shows
+positive-control fit coverage independently from replay-diagnostic coverage,
+including pass counts, azimuth/elevation support, unsupported gaps, nuisance
+cells and miss/subthreshold passes.  Live detected cells are positive controls
+only.  The earlier covariance-normalized replay selects a sparse response from
+ADS-B truth and therefore is **diagnostic only**: it is not the production
+full-bank maximum surface and its noise denominator is not the production CFAR
+training mean.  It can never set `qualified:true`.
+
+The API now also validates a strict
+`vectorwarp-detection-manifold-production-replay-v1` import receipt.  A receipt
+must bind the exact positive corpus and candidate hashes, independent IQ/replay/
+input-grid/generator hashes, frozen frequency/sample-rate/configuration and
+actual per-channel gains.  It must prove that baseline and candidate evaluated
+every beam on the same complete CUT/training grid and retain raw CUT power,
+training mean, production alpha, threshold and decision for one target plus
+local nuisance CUTs.  The importer recomputes alpha, threshold and decisions and
+rejects truth-selected beams, incomplete support, reused captures/grids and
+candidate hash mismatches.  The trusted producer must be operator-pinned and
+allowlisted by SHA-256; candidate and ideal banks are also bound by canonical
+content/geometry hashes.  Candidate artifacts remain replay-only and automation
+cannot promote them or mutate radar configuration.
+
+The final adversarial pass closed receipt/provenance defects before
+publication.  The Python receipt carries the native geometry/direct-path fields
+required by the JavaScript importer and uses that importer's exact JSON-number
+canonicalization (including native C++ values rendered as `.0`).  The native
+export carries the exact measured response matrix it consumed, and the receipt
+rejects any matrix that differs from the immutable candidate artifact even if a
+caller preserves the old declared hash.  Full capture gain vectors are mapped
+through `surveillance_channels` while retaining the original capture vector.
+The strict receipt also derives and binds selected element positions, confirmed
+orientation, receiver/fixed-transmitter coordinates, direct-path azimuth, null
+depth, beam count, and exact CFAR guard/training geometry from the frozen config.
+
+The default-off native `detectionManifoldGridReplay` tool now supplies the
+missing production-equivalent export.  It uses `CoherentBeamBank` and the
+production Gamma CA-CFAR primitive to emit every baseline/candidate beam for
+the identical target and training-cell grid, with no truth-selected beam.
+Sparse fits can become a dense replay artifact only when one observed elevation
+band contains every azimuth bin; there is no interpolation, clamping, or
+extrapolation.  Synthetic end-to-end tests cover native export through strict
+receipt validation and reject incomplete training grids.  This proves the
+software contract, not aircraft performance.
+
+The native replay tool fails closed outside the statistic it currently
+implements: unwhitened `coherent_beam_bank`, one CPI, no motion/TBD, and exact
+configured guard/training geometry.  It will not label a single-vector replay
+as production-equivalent to noise-whitened or multi-CPI processing.  The live
+resident path does implement measured noise-whitened weights and the calibrated
+direct-path null, but qualifying that mode requires a later native replay input
+contract carrying its covariance/whitening and temporal evidence.
+
+`script/evaluate-detection-manifold-replay.py` supplies an isolated same-IQ
+diagnostic lane for ideal, coherent, noise-whitened, measured, MVDR/LCMV,
+direct-plus-reflection constrained, and experimental frequency-resolved arms.
+It preserves raw scores/ranks/margins and support masks.  Its acceptance check
+now uses raw empirical p-values with full-search familywise correction at
+alpha 0.05; the earlier tautological corrected-p check is covered by a failing
+regression fixture.  ADS-B is scoring-only and never selects a beam or cell in
+that tool.  The remaining acceptance check is a frozen pass-disjoint physical
+positive/miss cohort with compatible frequency, installed-state and full gain-
+vector fingerprints.  Only a dense manifold that passes that held-out replay
+may be considered for a separately authorized live A/B.
+

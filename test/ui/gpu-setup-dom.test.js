@@ -2,7 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const {JSDOM} = require('jsdom');
+const {JSDOM} = require('./jsdom');
 const dom = new JSDOM('<div id="config-diagnostics"></div><div id="acceleration-status"></div>',
   {url: 'http://localhost:3000', runScripts: 'outside-only', pretendToBeVisual: true});
 const window = dom.window;

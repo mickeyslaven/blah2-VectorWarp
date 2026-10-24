@@ -157,7 +157,12 @@ try {
       'process.detection.track_before_detect.delay_motion_bins',
       'process.detection.track_before_detect.doppler_motion_bins',
       'process.tracker.beam_tolerance']);
-  const measuredFusion = clone(fusion);
+  const measuredBaseline = clone(fusion);
+  Object.assign(measuredBaseline.capture.device.array_geometry,
+    {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});
+  measuredBaseline.capture.device.heimdall.gain = 14;
+  measuredBaseline.capture.device.heimdall.gain_control = 'fixed';
+  const measuredFusion = clone(measuredBaseline);
   measuredFusion.process.performance.acceleration = 'cpu';
   measuredFusion.process.detection.integration_cpis = 1;
   measuredFusion.process.detection.integration_motion_bins = 0;
@@ -165,12 +170,15 @@ try {
     enable: false, max_cpis: 8, motion_bins: 1};
   measuredFusion.process.surveillance_fusion.manifold_file =
     '/etc/vectorwarp/detection-manifold.json';
-  persistGroup('kraken-measured-fusion', fusion, measuredFusion,
+  persistGroup('kraken-measured-fusion', measuredBaseline, measuredFusion,
     ['process.surveillance_fusion.manifold_file']);
-  const bearing = clone(fusion);
-  Object.assign(bearing.capture.device.array_geometry, {
+  const bearingBaseline = clone(fusion);
+  Object.assign(bearingBaseline.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true
   });
+  bearingBaseline.capture.device.heimdall.gain = 14;
+  bearingBaseline.capture.device.heimdall.gain_control = 'fixed';
+  const bearing = clone(bearingBaseline);
   bearing.process.bearing.enable = true;
   bearing.process.bearing.method = 'covariance_mvdr';
   bearing.process.bearing.reference_anchor = 'fixed_site';
@@ -188,7 +196,7 @@ try {
   bearing.process.bearing.manifold_recorder.enabled = true;
   bearing.truth.adsb.enabled = true;
   bearing.network.ports.bearing = 3014;
-  persistGroup('kraken-bearing-output', fusion, bearing,
+  persistGroup('kraken-bearing-output', bearingBaseline, bearing,
     ['process.bearing.enable', 'process.bearing.method', 'process.bearing.reference_anchor',
       'process.bearing.scan_beams',
       'process.bearing.guard_radius', 'process.bearing.training_radius',

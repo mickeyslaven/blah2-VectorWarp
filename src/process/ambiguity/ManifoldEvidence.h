@@ -12,10 +12,12 @@
 namespace blah2::manifold_evidence {
 inline std::string cpu(uint64_t timestamp,double frequencyHz,double sampleRate,
  Detection& detection,const std::vector<Map<std::complex<double>>*>& maps,
- const std::vector<std::complex<double>>& referenceWeights){
+ const std::vector<std::complex<double>>& referenceWeights,
+ const std::vector<double>& actualGainDb){
  using namespace gpu_result_json;
  require(std::isfinite(frequencyHz)&&frequencyHz>0&&std::isfinite(sampleRate)&&sampleRate>0&&
-  maps.size()>=2&&maps.size()<=8&&referenceWeights.size()==maps.size(),
+  maps.size()>=2&&maps.size()<=8&&referenceWeights.size()==maps.size()&&
+  actualGainDb.size()==maps.size(),
   "Invalid CPU manifold evidence geometry");
  const auto delays=detection.get_delay(),dopplers=detection.get_doppler(),snr=detection.get_snr();
  require(delays.size()==dopplers.size()&&delays.size()==snr.size(),
@@ -29,6 +31,7 @@ inline std::string cpu(uint64_t timestamp,double frequencyHz,double sampleRate,
  w.StartObject();w.Key("schema");w.String("vectorwarp-manifold-evidence-v1");
  w.Key("timestamp");w.Uint64(timestamp);w.Key("frequency_hz");w.Double(frequencyHz);
  w.Key("sample_rate_hz");w.Double(sampleRate);w.Key("channels");w.Uint(uint32_t(maps.size()));
+ w.Key("actual_gain_db");w.StartArray();for(double gain:actualGainDb){finite(gain);w.Double(gain);}w.EndArray();
  w.Key("reference_weights");w.StartArray();for(const auto value:referenceWeights){
   finite(value.real());finite(value.imag());w.StartArray();w.Double(value.real());w.Double(value.imag());w.EndArray();}
  w.EndArray();w.Key("data");w.StartArray();

@@ -3,7 +3,10 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const yaml = require('js-yaml');
+const {createRequire} = require('module');
+// Resolve UI-test dependencies from the API package that declares and locks
+// them, independent of the caller's cwd or NODE_PATH.
+const yaml = createRequire(path.join(__dirname, '..', '..', 'api', 'package.json'))('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
 const {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS} =

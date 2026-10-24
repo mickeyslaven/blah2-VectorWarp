@@ -2,7 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const {JSDOM} = require('jsdom');
+const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
 const {setupDefaults} = require('../../api/config-store');
 const {emptyRecord} = require('../../html/js/kraken_geometry');

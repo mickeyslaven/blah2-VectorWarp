@@ -673,6 +673,9 @@
     const progress = campaign?.progress || {};
     const automation = campaign?.automation || {};
     const recorder = campaign?.recorder || {};
+    const detectionCampaign = campaign?.detection || {};
+    const detectionProgress = detectionCampaign.progress || {};
+    const detectionAutomation = detectionCampaign.automation || {};
     const sectors = array(progress.sectors);
     const requirements = array(progress.requirements);
     const completion = finite(progress.evidence_completion_fraction) ?? 0;
@@ -685,6 +688,7 @@
     const sectorRows = sectors.map(item => `<tr><td>${integer(item.from_deg)}–${integer(item.to_deg)}°</td><td>${integer(item.samples)}</td><td>${integer(item.passes)}</td><td>${integer(item.aircraft)}</td><td><span class="state-pill ${item.ready ? 'active' : 'coasting'}">${item.ready ? 'Covered' : `${integer(item.passes_needed)} passes / ${integer(item.aircraft_needed)} aircraft needed`}</span></td></tr>`);
     const blockers = array(progress.next_actions);
     const failureText = array(automation.failures).filter(Boolean);
+    const detectionFailureText = array(detectionAutomation.failures).filter(Boolean);
     const active = Boolean(campaign.active_model);
     const frequencyHz = finite(campaign.frequency_hz);
     document.getElementById('view-detail').innerHTML = `<div class="overview-grid">
@@ -703,6 +707,18 @@
         <div><dt>Latest amplitude step</dt><dd>${number(recorder.maxReferenceAmplitudeStepDb, 2)} dB</dd></div>
         <div><dt>Recorder errors</dt><dd>${recorder.error ? escapeHtml(recorder.error) : 'None'}</dd></div>
       </dl></section>
+      <section class="info-card"><h2>Detection manifold shadow</h2><dl>
+        <div><dt>Automation</dt><dd>${detectionAutomation.enabled ? escapeHtml(humanize(detectionAutomation.state)) : 'Disabled by default'}</dd></div>
+        <div><dt>Positive-control samples</dt><dd>${integer(detectionProgress.accepted_samples)}</dd></div>
+        <div><dt>Positive-control fit</dt><dd>${detectionProgress.positive_control?.fit_ready ? 'Ready' : 'Collecting detected cells'}</dd></div>
+        <div><dt>Truth-selected replay diagnostic</dt><dd>${detectionProgress.validation?.ready ? 'Coverage ready' : 'Coverage incomplete'} · ${integer(detectionProgress.validation_passes)} passes / ${integer(detectionProgress.miss_passes)} misses</dd></div>
+        <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · receipt harness ready / native export required</dd></div>
+        <div><dt>Supported sectors / bins</dt><dd>${integer(detectionProgress.covered_sectors)} / ${integer(detectionProgress.fit_bins)}</dd></div>
+        <div><dt>Candidate</dt><dd>Diagnostic only — production qualification disabled</dd></div>
+        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtimeCandidatePath ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
+        <div><dt>Promotion</dt><dd>Never automatic</dd></div>
+        <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
+      </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>
     <section class="info-card"><h2>Azimuth-sector corpus</h2>${table(['Local azimuth', 'Samples', 'Passes', 'Aircraft', 'Coverage'], sectorRows)}</section>`;
     const labels = sectors.map(item => `${integer(item.from_deg)}–${integer(item.to_deg)}°`);
@@ -710,8 +726,8 @@
       {x: labels, y: sectors.map(item => item.passes), name: 'Independent passes', type: 'bar', marker: {color: colors[0]}},
       {x: labels, y: sectors.map(item => item.aircraft), name: 'Unique aircraft', type: 'bar', marker: {color: colors[1]}}
     ], {...plotBase, barmode: 'group', xaxis: {title: 'Local array azimuth sector', gridcolor: '#47362e'}, yaxis: {title: 'Independent evidence', rangemode: 'tozero', gridcolor: '#47362e'}}, plotConfig);
-    const tone = recorder.error || automation.error ? 'bad' : automation.qualified ? 'good' : 'warning';
-    setState(recorder.error || automation.error ? `Calibration warning · ${recorder.error || automation.error}` :
+    const tone = recorder.error || automation.error || detectionAutomation.error ? 'bad' : automation.qualified ? 'good' : 'warning';
+    setState(recorder.error || automation.error || detectionAutomation.error ? `Calibration warning · ${recorder.error || automation.error || detectionAutomation.error}` :
       automation.qualified ? 'Qualified measured manifold' : `Collecting · ${percent(completion, 0)} of minimum evidence gates`, tone);
   }
 
