@@ -19,7 +19,7 @@ TAP = "mickeyslaven/vectorwarp"
 SOURCE_REPOSITORY = "mickeyslaven/blah2-VectorWarp"
 ALLOWED_ROOT_DIRS = {
     ".github", "Formula", "api", "bench", "cmake", "config", "contrib", "core", "docs",
-    "examples", "html", "lib", "oprs", "packaging", "results", "schemas", "script", "src", "test",
+    "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test",
 }
 ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md"}
 DENIED_ROOTS = {".git", "bin", "build", "data", "node_modules", "private", "sdk", "secrets"}

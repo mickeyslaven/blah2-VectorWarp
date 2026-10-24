@@ -76,8 +76,11 @@ class HomebrewReleaseTest(unittest.TestCase):
 
     def test_accepts_the_complete_current_git_archive_layout(self):
         prefix = f"blah2-VectorWarp-{COMMIT}/"
-        subprocess.run(["git", "archive", "--format=tar.gz", f"--prefix={prefix}",
+        subprocess.run(["git", "archive", "--worktree-attributes", "--format=tar.gz", f"--prefix={prefix}",
                         f"--output={self.archive}", "HEAD"], cwd=ROOT, check=True)
+        with tarfile.open(self.archive, "r:gz") as archive:
+            result_prefix = f"{prefix}results/"
+            self.assertFalse(any(member.name.startswith(result_prefix) for member in archive.getmembers()))
         output = self.root / "current-tree"
         self.command("--output-tap-dir", str(output))
         self.assertTrue((output / "homebrew-release.json").is_file())
@@ -101,6 +104,9 @@ class HomebrewReleaseTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, bad_url)
         self.write_archive("private/secret.txt")
         result = self.command("--output-tap-dir", str(self.root / "private"), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.write_archive("results/operational-telemetry.json", b'{"lat":40.0,"lon":-80.0}\n')
+        result = self.command("--output-tap-dir", str(self.root / "results"), check=False)
         self.assertNotEqual(result.returncode, 0)
         result = self.command("--revision", "0", "--output-tap-dir", str(self.root / "revision"), check=False)
         self.assertNotEqual(result.returncode, 0)
