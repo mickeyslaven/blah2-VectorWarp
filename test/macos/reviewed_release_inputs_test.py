@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -226,6 +227,101 @@ class BaselineNoticeValidationTest(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest, sort_keys=True))
         with self.assertRaisesRegex(ValueError, "notice index"):
             inputs.validated_baseline_notices(self.root)
+
+
+class ReviewedNpmLockTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.candidate = (ROOT / "api/package-lock.json").read_bytes()
+        cls.baseline = inputs.reconstructed_baseline_npm_lock(cls.candidate)
+
+    def test_accepts_only_reviewed_proxy_addr_transition(self):
+        self.assertIsNone(inputs.reviewed_npm_lock_delta(
+            self.baseline, self.candidate))
+
+    def test_reconstructs_exact_reviewed_baseline_without_git_history(self):
+        self.assertEqual(hashlib.sha256(self.baseline).hexdigest(),
+                         inputs.BASELINE_NPM_LOCK_SHA256)
+
+    def test_rejects_unreviewed_lock_change_even_with_matching_outer_hash(self):
+        value = json.loads(self.candidate)
+        value["packages"]["node_modules/proxy-addr"]["funding"]["url"] = \
+            "https://example.invalid/unreviewed"
+        mutated = json.dumps(value, separators=(",", ":")).encode()
+        with mock.patch.object(inputs, "REVIEWED_NPM_LOCK_SHA256",
+                               hashlib.sha256(mutated).hexdigest()):
+            with self.assertRaisesRegex(ValueError, "proxy-addr lock entry"):
+                inputs.reviewed_npm_lock_delta(self.baseline, mutated)
+
+    def test_rejects_an_additional_package_change(self):
+        value = json.loads(self.candidate)
+        value["packages"]["node_modules/express"]["version"] = "0.0.0"
+        mutated = json.dumps(value, separators=(",", ":")).encode()
+        with mock.patch.object(inputs, "REVIEWED_NPM_LOCK_SHA256",
+                               hashlib.sha256(mutated).hexdigest()):
+            with self.assertRaisesRegex(ValueError, "unreviewed change"):
+                inputs.reviewed_npm_lock_delta(self.baseline, mutated)
+
+
+class ReboundNpmNoticeTest(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.baseline = self.root / "baseline"
+        self.output = self.root / "output"
+        self.baseline.mkdir()
+        index = {
+            "source_id": inputs.BASELINE_SOURCE_ID,
+            "api_packages": [{
+                "name": "proxy-addr", "version": "2.0.7", "license": "MIT",
+                "notice_files_in_each_runtime": [
+                    "api/node_modules/proxy-addr/LICENSE"],
+            }],
+            "input_notices": [{
+                "file": "embedded/cpp-httplib/LICENSE",
+                "sha256": inputs.CPP_LICENSE_SHA256,
+                "origin": "reviewed arm64 source",
+            }],
+        }
+        (self.baseline / "INDEX.json").write_text(json.dumps(index))
+        (self.baseline / "notices.json").write_text(json.dumps(
+            {"schema": 1, "source_id": inputs.BASELINE_SOURCE_ID, "files": {}}))
+        self.runtimes = {}
+        for arch in inputs.package.ARCHES:
+            runtime = self.root / arch
+            package_dir = runtime / "api/node_modules/proxy-addr"
+            package_dir.mkdir(parents=True)
+            (package_dir / "package.json").write_text(json.dumps(
+                {"name": "proxy-addr", "version": "2.0.8", "license": "MIT"}))
+            (package_dir / "LICENSE").write_bytes(b"reviewed proxy license\n")
+            (runtime / "standalone.json").write_text("{}")
+            self.runtimes[arch] = runtime
+        self.license_sha = inputs.PROXY_ADDR_REVIEW["license_sha256"]
+        inputs.PROXY_ADDR_REVIEW["license_sha256"] = hashlib.sha256(
+            b"reviewed proxy license\n").hexdigest()
+
+    def tearDown(self):
+        inputs.PROXY_ADDR_REVIEW["license_sha256"] = self.license_sha
+        self.temporary.cleanup()
+
+    def test_rebinds_exact_runtime_notice_version(self):
+        with mock.patch.object(inputs, "validated_baseline_notices"), \
+                mock.patch.object(inputs.package, "validated_notices"):
+            inputs.rebind_notices(
+                self.baseline, self.output, "a" * 40, self.runtimes)
+        index = json.loads((self.output / "INDEX.json").read_text())
+        record = next(item for item in index["api_packages"]
+                      if item["name"] == "proxy-addr")
+        self.assertEqual(record["version"], "2.0.8")
+
+    def test_rejects_runtime_notice_mismatch(self):
+        (self.runtimes["arm64"] / "api/node_modules/proxy-addr/LICENSE").write_text(
+            "different\n")
+        with mock.patch.object(inputs, "validated_baseline_notices"), \
+                mock.patch.object(inputs.package, "validated_notices"):
+            with self.assertRaisesRegex(ValueError, "runtime identity or notice"):
+                inputs.rebind_notices(
+                    self.baseline, self.output, "a" * 40, self.runtimes)
 
 
 if __name__ == "__main__":

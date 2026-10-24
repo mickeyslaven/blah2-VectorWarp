@@ -160,6 +160,17 @@ the cross-platform acceptance pass:
   inactive until claimed. Monitoring now checks controller readiness/residency
   instead of misclassifying the default heavy-batch admission snapshot, whose
   retired local-radar recorder evidence is irrelevant to interactive Qwen.
+- The `v0.1.24` tag's Linux and macOS CI builds passed, but the local Mac
+  signing/notarization agent correctly stopped before publication because the
+  production npm lock had advanced `proxy-addr` from 2.0.7 to 2.0.8 while its
+  reviewed source/notices baseline still named 2.0.7. The reviewed delta is
+  exactly one lock entry: the package remains MIT, its LICENSE is byte-for-byte
+  unchanged, and the 2.0.8 registry tarball is pinned by both npm integrity and
+  SHA-256. Release input generation now rejects every other lock difference,
+  verifies both packaged runtimes and their license bytes, updates the notice
+  index, and includes the exact 2.0.8 source archive in corresponding source.
+  Because release tags are immutable, this tooling correction must ship in the
+  next patch tag; the `v0.1.24` draft remains unpublished.
 
 Independent pre-release review passed the API and macOS universal/standalone
 fixture suites and found no additional reproducible runtime defect. It requires
