@@ -1,6 +1,6 @@
 {
   "schema": "vectorwarp-detection-manifold-live-deployment-v1",
-  "recorded_at": "2026-10-24T18:33:00Z",
+  "recorded_at": "2026-10-24T18:36:00Z",
   "package_version": "0.1.28",
   "package_sha256": "e5ff26437c6ef05d368d11bcd13f48c94d19002735d958f8d12e959b749d359b",
   "release_path": "/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix",
@@ -21,8 +21,10 @@
   "collection": {
     "enabled": true,
     "state": "collecting",
-    "fresh_reference_anchor_samples": 20,
-    "admitted_aircraft_response_samples": 0,
+    "fresh_reference_anchor_samples": 69,
+    "admitted_aircraft_response_samples": 8,
+    "rejected_aircraft_response_samples": 0,
+    "independent_aircraft_passes": 1,
     "old_v1_rows_rotated": 993
   },
   "production": {

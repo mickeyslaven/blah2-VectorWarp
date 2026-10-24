@@ -329,3 +329,9 @@ Candidate promotion stays false until fresh pass-disjoint corpus and replay
 gates pass; this is live evidence collection, not a measured-weight performance
 claim.
 
+The next asynchronous corpus evaluation admitted all eight v2 response samples
+from the first post-enable aircraft pass (N523ME): 8 accepted, 0 rejected and
+1 independent pass. The fixed-transmitter anchor simultaneously advanced to
+69 samples. This first pass is in the pass-disjoint holdout partition, so it
+does not yet increment training-sector or fit-bin coverage.
+
