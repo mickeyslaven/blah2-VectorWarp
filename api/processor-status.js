@@ -154,8 +154,68 @@ function rspHealth(payload, outer, errors) {
     overload[tuner] = {active: source.active, detectedCount, correctedCount,
       lastDetectedAt, lastCorrectedAt};
   }
-  return {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring, overload,
-    ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
+  let gain;
+  if (payload.gain !== undefined) {
+    const source = payload.gain;
+    if (!object(source) || source.policy !== 'epoch-on-vendor-change' ||
+        source.sampleAligned !== false || !object(source.tuners)) {
+      errors.push(`${name}.gain has an invalid schema`);
+    } else {
+      const epoch = count(source.epoch, `${name}.gain.epoch`, errors);
+      const tuners = {};
+      for (const [index, tuner] of ['A', 'B'].entries()) {
+        const event = source.tuners[tuner];
+        const field = `${name}.gain.tuners.${tuner}`;
+        if (!object(event)) {
+          errors.push(`${field} must be an object`); continue;
+        }
+        const unsigned32 = (value, suffix) => {
+          if (!Number.isSafeInteger(value) || value < 0 || value > 4294967295)
+            errors.push(`${field}.${suffix} must be a non-negative 32-bit integer`);
+          return Number.isSafeInteger(value) && value >= 0 && value <= 4294967295 ? value : 0;
+        };
+        const requestedGainReductionDb = unsigned32(event.requestedGainReductionDb,
+          'requestedGainReductionDb');
+        const requestedLnaState = unsigned32(event.requestedLnaState,
+          'requestedLnaState');
+        const eventCount = count(event.eventCount, `${field}.eventCount`, errors);
+        const lastEventAt = count(event.lastEventAt, `${field}.lastEventAt`, errors);
+        const eventEpoch = count(event.epoch, `${field}.epoch`, errors);
+        if (eventEpoch > epoch) errors.push(`${field}.epoch exceeds capture gain epoch`);
+        if ((eventCount === 0) !== (lastEventAt === 0 && eventEpoch === 0))
+          errors.push(`${field} event count and provenance disagree`);
+        if (typeof event.metadataAvailable !== 'boolean')
+          errors.push(`${field}.metadataAvailable must be boolean`);
+        let reported = null;
+        if (event.metadataAvailable) {
+          if (!object(event.reported)) errors.push(`${field}.reported must be an object`);
+          else {
+            const gRdB = unsigned32(event.reported.gRdB, 'reported.gRdB');
+            const lnaGRdB = unsigned32(event.reported.lnaGRdB, 'reported.lnaGRdB');
+            const currGain = event.reported.currGain;
+            if (typeof currGain !== 'number' || !Number.isFinite(currGain))
+              errors.push(`${field}.reported.currGain must be finite`);
+            reported = {gRdB, lnaGRdB,
+              currGain: typeof currGain === 'number' && Number.isFinite(currGain) ? currGain : 0};
+          }
+        } else if (event.reported !== null) {
+          errors.push(`${field}.reported must be null when metadata is unavailable`);
+        }
+        const requested = outer.receiverStartup?.requested;
+        if (requested && (requested.gainReduction[index] !== requestedGainReductionDb ||
+            requested.lnaState !== requestedLnaState))
+          errors.push(`${field} requested gain does not match startup receipt`);
+        tuners[tuner] = {requestedGainReductionDb, requestedLnaState,
+          eventCount, lastEventAt, epoch: eventEpoch,
+          metadataAvailable: event.metadataAvailable, reported};
+      }
+      gain = {policy: 'epoch-on-vendor-change', sampleAligned: false, epoch, tuners};
+    }
+  }
+  const result = {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring,
+    overload, ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
+  if (gain !== undefined) result.gain = gain;
+  return result;
 }
 function status(payload) {
   const errors = [];

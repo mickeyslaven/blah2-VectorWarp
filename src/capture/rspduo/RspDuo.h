@@ -62,6 +62,18 @@ private:
   std::atomic<bool> streamEstablished{false};
   // Diagnostic counters only; no per-event I/O on the SDK event thread.
   std::atomic<uint64_t> gainEventsA{0}, gainEventsB{0};
+  struct GainEventState {
+    uint64_t count = 0;
+    uint64_t lastEventAt = 0;
+    uint64_t epoch = 0;
+    bool metadataAvailable = false;
+    unsigned int gRdB = 0;
+    unsigned int lnaGRdB = 0;
+    double currGain = 0;
+  };
+  mutable std::mutex gainEventMutex;
+  std::array<GainEventState, 2> gainEventState{};
+  uint64_t gainEpoch = 0;
   std::atomic<uint64_t> overloadEventsA{0}, overloadEventsB{0};
   RspDuoOverloadStatus overloadHealth;
   std::atomic<uint64_t> ackCount{0}, ackErrorCount{0}, ackMaxUs{0};
@@ -90,6 +102,8 @@ private:
   PairedCpiQueue* pairedCpiQueue = nullptr;
   uint32_t pairedPublishedSamples = 0;
   void clear_pending_locked() noexcept;
+  void gain_change(sdrplay_api_TunerSelectT tuner,
+    const sdrplay_api_EventParamsT* params);
   void signal_callback_fault(const char* discontinuity = nullptr) noexcept;
   void cleanup_api() noexcept;
   /// @brief AGC bandwidth (Hz)

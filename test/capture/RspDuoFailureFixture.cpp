@@ -44,7 +44,7 @@ sdrplay_api_DevParamsT deviceParameters{};
 sdrplay_api_RxChannelParamsT tunerA{}, tunerB{};
 sdrplay_api_DeviceParamsT parameters{&deviceParameters, &tunerA, &tunerB};
 bool nullParameters = false, removeOnInit = false, multipleDevices = false, stopAfterGain = false;
-enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
+enum class CallbackScenario { None, Matched, BFirst, DuplicateA, LengthMismatch, EpochMismatch, Wraparound, Reset, ResetAfterPair, Removed, GapAfterPair, MalformedA, OversizedB, ConcurrentPairHandoff, GainEpoch, ScaledCounterInvalidRaw, ScaledFsChangedA, ScaledFsChangedB };
 CallbackScenario callbackScenario = CallbackScenario::None;
 std::string selectedSerial;
 std::string mockSerial = "mock-only";
@@ -119,6 +119,14 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
     sdrplay_api_StreamCbParamsT params{}; params.firstSampleNum = first;
     callbacks->StreamBCbFn(bx2, bq2, &params, 2, 0, context);
   };
+  auto gain = [&](sdrplay_api_TunerSelectT tuner, unsigned gRdB,
+                  unsigned lnaGRdB, double currGain) {
+    sdrplay_api_EventParamsT event{};
+    event.gainParams.gRdB = gRdB;
+    event.gainParams.lnaGRdB = lnaGRdB;
+    event.gainParams.currGain = currGain;
+    callbacks->EventCbFn(sdrplay_api_GainChange, tuner, &event, context);
+  };
   switch (callbackScenario) {
     case CallbackScenario::Matched: callA(100); callB(100); run_fg = false; break;
     case CallbackScenario::BFirst: callB(100); callA(100); callB(100); run_fg = false; break;
@@ -160,6 +168,12 @@ sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, v
       first.join(); second.join(); callB2(104); run_fg = false;
       break;
     }
+    case CallbackScenario::GainEpoch:
+      // Retire a pending A half-pair, then a complete queued/FIFO pair. Only
+      // samples captured after the last vendor gain event may survive.
+      callA(100); gain(sdrplay_api_Tuner_A, 37, 12, 23.5); callB(100);
+      callA(102); callB(102); gain(sdrplay_api_Tuner_B, 41, 15, 19.25);
+      callA2(104); callB2(104); run_fg = false; break;
     case CallbackScenario::None: break;
   }
   return result("init");
@@ -391,7 +405,8 @@ int main() {
     CallbackScenario::BFirst, CallbackScenario::Reset, CallbackScenario::DuplicateA,
     CallbackScenario::LengthMismatch, CallbackScenario::EpochMismatch, CallbackScenario::ResetAfterPair,
     CallbackScenario::Removed, CallbackScenario::GapAfterPair, CallbackScenario::MalformedA, CallbackScenario::OversizedB,
-    CallbackScenario::ConcurrentPairHandoff, CallbackScenario::ScaledCounterInvalidRaw,
+    CallbackScenario::ConcurrentPairHandoff, CallbackScenario::GainEpoch,
+    CallbackScenario::ScaledCounterInvalidRaw,
     CallbackScenario::ScaledFsChangedA, CallbackScenario::ScaledFsChangedB}) {
     reset(); callbackScenario = scenario;
     if (scenario == CallbackScenario::ScaledCounterInvalidRaw ||
@@ -406,7 +421,8 @@ int main() {
     catch (const std::exception& error) { failed = true; message = error.what(); }
     const bool matched = scenario == CallbackScenario::Matched || scenario == CallbackScenario::Wraparound ||
       scenario == CallbackScenario::BFirst || scenario == CallbackScenario::Reset ||
-      scenario == CallbackScenario::ConcurrentPairHandoff;
+      scenario == CallbackScenario::ConcurrentPairHandoff ||
+      scenario == CallbackScenario::GainEpoch;
     assert(failed != matched);
     if (failed) {
       rapidjson::Document health;
@@ -418,8 +434,32 @@ int main() {
       const unsigned expected = scenario == CallbackScenario::ConcurrentPairHandoff ? 6 :
         scenario == CallbackScenario::Wraparound ? 4 : 2;
       assert(a.size() == expected && b.size() == expected);
-      assert(a.front() == std::complex<double>(1, 2));
-      assert(b.front() == std::complex<double>(7, 8));
+      const bool afterGain = scenario == CallbackScenario::GainEpoch;
+      assert(a.front() == (afterGain ? std::complex<double>(21, 22) :
+        std::complex<double>(1, 2)));
+      assert(b.front() == (afterGain ? std::complex<double>(27, 28) :
+        std::complex<double>(7, 8)));
+      if (afterGain) {
+        rapidjson::Document health;
+        health.Parse(receiver.health_json().c_str());
+        assert(!health.HasParseError());
+        assert(std::strcmp(health["gain"]["policy"].GetString(),
+          "epoch-on-vendor-change") == 0);
+        assert(!health["gain"]["sampleAligned"].GetBool());
+        assert(health["gain"]["epoch"].GetUint64() == 2);
+        const auto& gainA = health["gain"]["tuners"]["A"];
+        const auto& gainB = health["gain"]["tuners"]["B"];
+        assert(gainA["eventCount"].GetUint64() == 1 &&
+          gainA["epoch"].GetUint64() == 1 &&
+          gainA["reported"]["gRdB"].GetUint() == 37 &&
+          gainA["reported"]["lnaGRdB"].GetUint() == 12 &&
+          gainA["reported"]["currGain"].GetDouble() == 23.5);
+        assert(gainB["eventCount"].GetUint64() == 1 &&
+          gainB["epoch"].GetUint64() == 2 &&
+          gainB["reported"]["gRdB"].GetUint() == 41 &&
+          gainB["reported"]["lnaGRdB"].GetUint() == 15 &&
+          gainB["reported"]["currGain"].GetDouble() == 19.25);
+      }
       if (scenario == CallbackScenario::ConcurrentPairHandoff) {
         assert(a[2] == std::complex<double>(21, 22));
         assert(b[2] == std::complex<double>(27, 28));
@@ -444,16 +484,21 @@ int main() {
   // The opt-in queue takes complete paired IIQQ blocks before any FIFO
   // conversion.  The mock SDK proves callback pairing and direct handoff
   // without opening an SDRplay runtime.
-  reset(); callbackScenario = CallbackScenario::Matched;
+  reset(); callbackScenario = CallbackScenario::GainEpoch;
   RspDuo queued("RspDuo", 204640000, 2000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, true);
-  PairedCpiQueue queue(2, 1);
+  PairedCpiQueue queue(2, 2);
   queued.set_paired_cpi_queue(&queue);
   queued.start(); queued.process(nullptr, nullptr); queued.stop(); queue.close();
   size_t queueSlot = 0; assert(queue.acquire(queueSlot));
   const auto& queuedBlock = queue.block(queueSlot);
-  assert(queuedBlock.first == 0 && queuedBlock.iq[0] == 1 &&
-    queuedBlock.iq[1] == 2 && queuedBlock.iq[2] == 7 && queuedBlock.iq[3] == 8);
+  assert(queuedBlock.first == 2 && queuedBlock.epoch == 2 &&
+    queuedBlock.iq[0] == 21 && queuedBlock.iq[1] == 22 &&
+    queuedBlock.iq[2] == 27 && queuedBlock.iq[3] == 28);
   queue.release(queueSlot);
+  assert(!queue.acquire(queueSlot));
+  const auto queueStats = queue.stats();
+  assert(queueStats.discontinuities == 2 && queueStats.droppedCpis == 1 &&
+    queueStats.discardedSamples == 2);
   std::cout << "RSPduo mocked API: dual-tuner settings, startup failures, and real-IQ callback pairing/reset/removal faults passed. No hardware opened.\n";
 }

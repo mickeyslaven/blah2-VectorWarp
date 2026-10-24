@@ -26,3 +26,13 @@ This keeps packed input available to the isolated mixed worker while retaining
 independent CPU recovery inputs. Without that opt-in, capture uses the existing
 two `IqData` buffers. See the [Pi 4 setup profile](../../../docs/PI4_GUIDE.md)
 for the tested service environment, workload and qualification limits.
+
+Every SDRplay `GainChange` callback is a hard capture-epoch boundary. Pending
+A/B pairs, FIFO samples, ready or partial paired CPIs, and a paired CPI borrowed
+during the transition are discarded; an active portable recording is stopped
+as discontinuous. Receiver health preserves the vendor event count, epoch,
+wall-clock arrival, `gRdB`, `lnaGRdB`, and `currGain` separately for tuners A
+and B. The callback has no sample number, so this provenance is explicitly
+`sampleAligned: false`: a CPI already handed to processing before the serialized
+callback boundary cannot be retroactively located against the hardware gain
+transition.

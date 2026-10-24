@@ -104,6 +104,32 @@ const onset = {...idleTuner, active: true, detectedCount: 1, lastDetectedAt: 172
 const corrected = {...onset, active: false, correctedCount: 1, lastCorrectedAt: 1720000001000};
 const activeHealth = {...health, monitoring: true, overload: {A: onset, B: corrected}, ackFailures: 2};
 assert.deepEqual(status({...live, receiverHealth: activeHealth}).value.receiverHealth, activeHealth);
+const idleGain = requestedGainReductionDb => ({requestedGainReductionDb,
+  requestedLnaState: 3, eventCount: 0, lastEventAt: 0, epoch: 0,
+  metadataAvailable: false, reported: null});
+const gainHealth = {...health, gain: {policy: 'epoch-on-vendor-change',
+  sampleAligned: false, epoch: 2, tuners: {
+    A: {...idleGain(30), eventCount: 1, lastEventAt: 1720000002000, epoch: 1,
+      metadataAvailable: true, reported: {gRdB: 37, lnaGRdB: 12, currGain: 23.5}},
+    B: {...idleGain(31), eventCount: 1, lastEventAt: 1720000003000, epoch: 2,
+      metadataAvailable: true, reported: {gRdB: 41, lnaGRdB: 15, currGain: 19.25}}
+  }}};
+assert.deepEqual(status({...live, receiverHealth: gainHealth}).value.receiverHealth,
+  gainHealth, 'Per-tuner vendor gain events and capture epochs survive validation');
+for (const invalidGain of [
+  null, [], {...gainHealth.gain, policy: 'ignore'},
+  {...gainHealth.gain, sampleAligned: true},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, requestedGainReductionDb: 31}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, epoch: 3}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, metadataAvailable: false}}},
+  {...gainHealth.gain, tuners: {...gainHealth.gain.tuners,
+    A: {...gainHealth.gain.tuners.A, reported: {...gainHealth.gain.tuners.A.reported,
+      currGain: Infinity}}}}
+]) assert.equal(status({...live, receiverHealth: {...health, gain: invalidGain}}).valid,
+  false, JSON.stringify(invalidGain));
 for (const state of ['stopped', 'error']) {
   const stopped = {...live, state, error: state === 'error' ? 'Receiver disconnected' : '',
     receiverHealth: {...activeHealth, monitoring: false}};

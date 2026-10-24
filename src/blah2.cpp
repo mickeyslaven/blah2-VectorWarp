@@ -1190,7 +1190,7 @@ try
               }
               ready = true;
             } catch (...) { pairedCpiQueue->release(slot); throw; }
-            pairedCpiQueue->release(slot);
+            if (!pairedCpiQueue->release(slot)) ready = false;
           }
           const auto queue = pairedCpiQueue->stats();
           captureBacklogSamples.resize(2);

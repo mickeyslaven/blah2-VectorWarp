@@ -155,12 +155,18 @@ void RspDuo::start()
   callbackFault = false;
   callbackFaultReason = nullptr;
   streamEstablished = false;
+  pairedPublishedSamples = 0;
   {
     std::lock_guard<std::mutex> pairingLock(callbackMutex);
     pendingHead = pendingCount = 0;
     callbackSlotBusy.fill(false);
     expectedFirstSampleValid = false;
     sampleClock.clear();
+  }
+  {
+    std::lock_guard<std::mutex> gainLock(gainEventMutex);
+    gainEventState = {};
+    gainEpoch = 0;
   }
   try {
     open_api();
@@ -271,6 +277,62 @@ void RspDuo::clear_pending_locked() noexcept
     --pendingCount;
   }
   pendingHead = 0;
+}
+
+void RspDuo::gain_change(sdrplay_api_TunerSelectT tuner,
+  const sdrplay_api_EventParamsT* params)
+{
+  const bool tunerA = tuner == sdrplay_api_Tuner_A ||
+    tuner == sdrplay_api_Tuner_Both;
+  const bool tunerB = tuner == sdrplay_api_Tuner_B ||
+    tuner == sdrplay_api_Tuner_Both;
+  // This lock is the capture-epoch linearization point: a B publication that
+  // already completed belongs to the old epoch; a borrowed old-epoch block is
+  // invalidated below; no new B publication can cross this event.
+  std::lock_guard<std::mutex> processingLock(callbackBProcessingMutex);
+  const auto at = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::system_clock::now().time_since_epoch()).count();
+  uint64_t eventEpoch = 0;
+  {
+    std::lock_guard<std::mutex> gainLock(gainEventMutex);
+    eventEpoch = ++gainEpoch;
+    for (unsigned channel = 0; channel < gainEventState.size(); ++channel) {
+      if ((channel == 0 && !tunerA) || (channel == 1 && !tunerB)) continue;
+      auto& state = gainEventState[channel];
+      ++state.count;
+      state.lastEventAt = at > 0 ? static_cast<uint64_t>(at) : 0;
+      state.epoch = eventEpoch;
+      state.metadataAvailable = params && std::isfinite(params->gainParams.currGain);
+      if (state.metadataAvailable) {
+        state.gRdB = params->gainParams.gRdB;
+        state.lnaGRdB = params->gainParams.lnaGRdB;
+        state.currGain = params->gainParams.currGain;
+      }
+    }
+  }
+  if (tunerA) gainEventsA.fetch_add(1, std::memory_order_relaxed);
+  if (tunerB) gainEventsB.fetch_add(1, std::memory_order_relaxed);
+
+  // GainChange is not sample-aligned by the vendor API. Serialize against the
+  // entire B-side conversion/publication path and retire every sample whose
+  // gain epoch is ambiguous; the next matched A/B callback starts cleanly.
+  {
+    std::lock_guard<std::mutex> pairingLock(callbackMutex);
+    clear_pending_locked();
+    expectedFirstSampleValid = false;
+    sampleClock.clear();
+  }
+  if (pairedCpiQueue) pairedCpiQueue->discontinuity();
+  if (outputBuffer1 && outputBuffer2) {
+    std::unique_lock<IqData> outputLock1(*outputBuffer1);
+    std::unique_lock<IqData> outputLock2(*outputBuffer2);
+    outputBuffer1->clear();
+    outputBuffer2->clear();
+  }
+  const char* tunerName = tunerA && tunerB ? "both tuners" :
+    tunerA ? "tuner A" : tunerB ? "tuner B" : "unknown tuner";
+  recording_discontinuity(std::string("RSPduo ") + tunerName +
+    " GainChange started capture epoch " + std::to_string(eventEpoch));
 }
 
 void RspDuo::set_paired_cpi_queue(PairedCpiQueue* queue)
@@ -707,7 +769,7 @@ void RspDuo::event_callback(sdrplay_api_EventT eventId,
   const bool tunerA = tuner == sdrplay_api_Tuner_A;
   switch (eventId) {
   case sdrplay_api_GainChange:
-    (tunerA ? gainEventsA : gainEventsB).fetch_add(1, std::memory_order_relaxed);
+    gain_change(tuner, params);
     break;
   case sdrplay_api_PowerOverloadChange: {
     (tunerA ? overloadEventsA : overloadEventsB).fetch_add(1, std::memory_order_relaxed);
@@ -786,13 +848,21 @@ void RspDuo::cleanup_api() noexcept
 std::string RspDuo::health_json() const
 {
   auto health = overloadHealth.snapshot();
+  std::array<GainEventState, 2> gain;
+  uint64_t currentGainEpoch = 0;
+  {
+    std::lock_guard<std::mutex> lock(gainEventMutex);
+    gain = gainEventState;
+    currentGainEpoch = gainEpoch;
+  }
   // Init completion and a concurrent failure/stop can overlap. Never let an
   // earlier monitoring=true snapshot override the current lifecycle flags.
   health.monitoring = health.monitoring && !deviceRemoved.load() &&
     !callbackFault.load() && !stopRequested.load();
   std::ostringstream out;
   out.imbue(std::locale::classic());
-  out << std::boolalpha << "{\"schema\":1,\"receiver\":\"RspDuo\",\"monitoring\":"
+  out << std::boolalpha << std::setprecision(std::numeric_limits<double>::max_digits10)
+      << "{\"schema\":1,\"receiver\":\"RspDuo\",\"monitoring\":"
       << health.monitoring << ",\"overload\":{";
   for (unsigned i = 0; i < health.channels.size(); ++i) {
     const auto& c = health.channels[i];
@@ -803,7 +873,27 @@ std::string RspDuo::health_json() const
         << ",\"lastDetectedAt\":" << c.lastDetectedAt
         << ",\"lastCorrectedAt\":" << c.lastCorrectedAt << '}';
   }
-  out << "},\"ackFailures\":" << health.ackFailures << '}';
+  out << "},\"ackFailures\":" << health.ackFailures
+      << ",\"gain\":{\"policy\":\"epoch-on-vendor-change\",\"sampleAligned\":false"
+      << ",\"epoch\":" << currentGainEpoch << ",\"tuners\":{";
+  for (unsigned i = 0; i < gain.size(); ++i) {
+    if (i) out << ',';
+    const auto& event = gain[i];
+    out << '"' << (i == 0 ? 'A' : 'B') << "\":{\"requestedGainReductionDb\":"
+        << (i == 0 ? gain_reduction_nr_a : gain_reduction_nr_b)
+        << ",\"requestedLnaState\":" << lna_state_nr
+        << ",\"eventCount\":" << event.count
+        << ",\"lastEventAt\":" << event.lastEventAt
+        << ",\"epoch\":" << event.epoch
+        << ",\"metadataAvailable\":" << event.metadataAvailable
+        << ",\"reported\":";
+    if (event.metadataAvailable)
+      out << "{\"gRdB\":" << event.gRdB << ",\"lnaGRdB\":" << event.lnaGRdB
+          << ",\"currGain\":" << event.currGain << '}';
+    else out << "null";
+    out << '}';
+  }
+  out << "}}}";
   return out.str();
 }
 
