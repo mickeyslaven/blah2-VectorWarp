@@ -416,7 +416,8 @@ function hackrfHealth(payload, outer, errors) {
   if (outer.state === 'stopped' && payload.monitoring)
     errors.push(`${name}.monitoring must be false after stop`);
   const pairing = payload.pairing;
-  if (pairing.policy !== 'paired-callback-fail-closed-v1' ||
+  if (pairing.policy !== 'paired-callback-requalify-v2' ||
+      !['unavailable', 'requalifying', 'qualified'].includes(pairing.state) ||
       typeof pairing.qualified !== 'boolean')
     errors.push(`${name}.pairing has invalid provenance`);
   const decimal = (value, field) => {
@@ -437,27 +438,57 @@ function hackrfHealth(payload, outer, errors) {
   const pairedCallbacks = decimal(pairing.pairedCallbacks, 'pairedCallbacks');
   const pairedSamples = decimal(pairing.pairedSamples, 'pairedSamples');
   const discontinuities = decimal(pairing.discontinuities, 'discontinuities');
+  const requalifications = decimal(pairing.requalifications, 'requalifications');
+  const consecutiveDiscontinuities = decimal(pairing.consecutiveDiscontinuities,
+    'consecutiveDiscontinuities');
+  const retryBudget = decimal(pairing.retryBudget, 'retryBudget');
   const discardedSamples = pair(pairing.discardedSamples, 'discardedSamples');
+  const qualificationRequiredPairs = count(pairing.qualificationRequiredPairs,
+    `${name}.pairing.qualificationRequiredPairs`, errors);
+  const qualificationObservedPairs = count(pairing.qualificationObservedPairs,
+    `${name}.pairing.qualificationObservedPairs`, errors);
+  if (typeof pairing.drainRequired !== 'boolean' || !Array.isArray(pairing.drainSeen) ||
+      pairing.drainSeen.length !== 2 ||
+      pairing.drainSeen.some(value => typeof value !== 'boolean'))
+    errors.push(`${name}.pairing drain guard has an invalid schema`);
+  const drainSeen = Array.isArray(pairing.drainSeen) ? pairing.drainSeen.slice(0, 2) : [];
   const reason = text(pairing.reason, `${name}.pairing.reason`, errors);
+  const pairedCallbackCount = BigInt(pairedCallbacks);
+  const pairedSampleCount = BigInt(pairedSamples);
+  const callbackCounts = callbacks.map(BigInt);
+  const sampleCounts = samples.map(BigInt);
+  if (pairedCallbackCount > callbackCounts[0] || pairedCallbackCount > callbackCounts[1] ||
+      pairedSampleCount > sampleCounts[0] || pairedSampleCount > sampleCounts[1])
+    errors.push(`${name}.pairing published counters exceed received counters`);
+  if (qualificationRequiredPairs !== 2 ||
+      qualificationObservedPairs > qualificationRequiredPairs)
+    errors.push(`${name}.pairing qualification bounds are invalid`);
+  if ((pairing.state === 'qualified') !== pairing.qualified ||
+      (pairing.qualified && (qualificationObservedPairs !== qualificationRequiredPairs ||
+        pairing.drainRequired)) ||
+      (pairing.state === 'unavailable' && payload.monitoring) ||
+      (pairing.drainRequired && pairing.state !== 'requalifying'))
+    errors.push(`${name}.pairing state is inconsistent`);
+  if (BigInt(requalifications) > BigInt(discontinuities) ||
+      BigInt(consecutiveDiscontinuities) > BigInt(discontinuities) ||
+      BigInt(retryBudget) !== 8n ||
+      (pairing.state === 'unavailable' && BigInt(discontinuities) > 0n &&
+        BigInt(consecutiveDiscontinuities) <= BigInt(retryBudget)) ||
+      (pairing.qualified && BigInt(consecutiveDiscontinuities) !== 0n))
+    errors.push(`${name}.pairing recovery counters are inconsistent`);
   if (pairing.qualified) {
-    const pairedCallbackCount = BigInt(pairedCallbacks);
-    const pairedSampleCount = BigInt(pairedSamples);
-    const callbackCounts = callbacks.map(BigInt);
-    const sampleCounts = samples.map(BigInt);
-    const pending = callbackCounts.filter(value => value === pairedCallbackCount + 1n).length;
     if (BigInt(epoch) === 0n || pairedCallbackCount === 0n || pairedSampleCount === 0n ||
-        pending > 1 || callbackCounts.some(value => value < pairedCallbackCount ||
-          value > pairedCallbackCount + 1n) ||
-        sampleCounts.some((value, index) => callbackCounts[index] === pairedCallbackCount ?
-          value !== pairedSampleCount : value <= pairedSampleCount))
+        callbackCounts.some(value => value < pairedCallbackCount) ||
+        sampleCounts.some(value => value < pairedSampleCount))
       errors.push(`${name}.pairing qualified counters disagree`);
   }
-  if (payload.monitoring && BigInt(discontinuities) > 0n)
-    errors.push(`${name}.monitoring cannot continue after a pair discontinuity`);
   return {schema: 1, receiver: 'HackRF', monitoring: payload.monitoring,
-    pairing: {policy: 'paired-callback-fail-closed-v1', qualified: pairing.qualified,
+    pairing: {policy: 'paired-callback-requalify-v2', state: pairing.state,
+      qualified: pairing.qualified,
       epoch, callbacks, samples, pairedCallbacks, pairedSamples, discontinuities,
-      discardedSamples, reason}};
+      requalifications, consecutiveDiscontinuities, retryBudget,
+      qualificationRequiredPairs, qualificationObservedPairs,
+      drainRequired: pairing.drainRequired, drainSeen, discardedSamples, reason}};
 }
 function status(payload) {
   const errors = [];

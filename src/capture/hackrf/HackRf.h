@@ -54,19 +54,26 @@ protected:
 
   struct PairingState {
     std::array<std::vector<std::complex<float>>, 2> pending;
+    std::array<std::vector<std::complex<float>>, 2> candidate;
     std::array<uint64_t, 2> callbacks{}, samples{}, discarded{}, initialDrops{};
+    std::array<bool, 2> drainSeen{};
     uint64_t pairedCallbacks = 0, pairedSamples = 0, discontinuities = 0,
-      epoch = 0;
+      requalifications = 0, consecutiveDiscontinuities = 0,
+      qualificationObserved = 0, epochSamples = 0, epoch = 0;
     bool accepting = false, qualified = false, monitoring = false;
+    bool drainRequired = false;
+    std::string state = "unavailable";
     std::string reason = "not started";
   } pairing;
+  static constexpr uint64_t REQUALIFICATION_PAIRS = 2;
+  static constexpr uint64_t MAX_CONSECUTIVE_DISCONTINUITIES = 8;
   mutable std::mutex pairingMutex;
   std::atomic<bool> qualified{false};
   std::atomic<uint64_t> epoch{0}, nextSample{0};
   std::atomic<bool> startupAccepted{false};
 
   void reset_pairing(IqData* first, IqData* second);
-  void invalidate_pair_locked(const std::string& reason);
+  bool invalidate_pair_locked(const std::string& reason);
 
   /// @brief Callback function for HackRF samples.
   /// @param transfer HackRF transfer object.

@@ -132,19 +132,25 @@ int main() {
     assert(callback(0, reference, 4, 4) == 0);
     assert(first.get_length() == 0 && second.get_length() == 0);
     assert(callback(1, surveillance, 4, 4) == 0);
-    assert(first.get_length() == 2 && second.get_length() == 2);
-    assert(first.get_data()[1] == std::complex<double>(3, 4));
-    assert(second.get_data()[1] == std::complex<double>(7, 8));
+    assert(first.get_length() == 0 && second.get_length() == 0);
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(callback(1, surveillance, 4, 4) == 0);
+    assert(first.get_length() == 4 && second.get_length() == 4);
+    assert(first.get_data()[3] == std::complex<double>(3, 4));
+    assert(second.get_data()[3] == std::complex<double>(7, 8));
     const auto position = receiver.sample_time_position();
-    assert(position.available && position.epoch == 1 && position.nextSample == 2);
+    assert(position.available && position.epoch == 1 && position.nextSample == 4);
     rapidjson::Document health;
     health.Parse(receiver.health_json().c_str());
     assert(!health.HasParseError() && health["pairing"]["qualified"].GetBool());
-    assert(std::string(health["pairing"]["pairedSamples"].GetString()) == "2");
+    assert(health["pairing"]["state"] == "qualified");
+    assert(health["pairing"]["qualificationObservedPairs"].GetUint64() == 2);
+    assert(std::string(health["pairing"]["pairedSamples"].GetString()) == "4");
     receiver.stop(); receiver.stop();
     assert(opened == closed && initialized == exited && listed == freed);
   }
-  // A short callback invalidates the common epoch before either FIFO changes.
+  // A short callback invalidates only the ambiguous epoch. One callback from
+  // each radio is drained, then two matched pairs automatically requalify.
   {
     reset();
     HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
@@ -152,12 +158,26 @@ int main() {
     receiver.start();
     IqData first(16), second(16); receiver.process(&first, &second);
     uint8_t bytes[4]{1, 2, 3, 4};
-    assert(callback(0, bytes, 2, 4) != 0);
+    assert(callback(0, bytes, 2, 4) == 0);
     assert(!first.get_length() && !second.get_length());
     assert(!receiver.sample_time_position().available);
     rapidjson::Document health; health.Parse(receiver.health_json().c_str());
     assert(std::string(health["pairing"]["discontinuities"].GetString()) == "1");
     assert(std::string(health["pairing"]["reason"].GetString()).find("short") != std::string::npos);
+    assert(health["monitoring"].GetBool() && health["pairing"]["state"] == "requalifying");
+    assert(callback(0, bytes, 4, 4) == 0); // drain guard
+    assert(callback(1, bytes, 4, 4) == 0); // drain guard
+    for (unsigned pair = 0; pair < 2; ++pair) {
+      assert(callback(0, bytes, 4, 4) == 0);
+      assert(callback(1, bytes, 4, 4) == 0);
+    }
+    assert(first.get_length() == 4 && second.get_length() == 4);
+    const auto position = receiver.sample_time_position();
+    assert(position.available && position.epoch == 2 && position.nextSample == 4);
+    health.Parse(receiver.health_json().c_str());
+    assert(health["pairing"]["state"] == "qualified");
+    assert(std::string(health["pairing"]["requalifications"].GetString()) == "1");
+    assert(std::string(health["pairing"]["consecutiveDiscontinuities"].GetString()) == "0");
     receiver.stop();
   }
   // A second callback from one device before its mate is a progression gap.
@@ -169,9 +189,16 @@ int main() {
     IqData first(16), second(16); receiver.process(&first, &second);
     uint8_t bytes[4]{1, 2, 3, 4};
     assert(callback(0, bytes, 4, 4) == 0);
-    assert(callback(0, bytes, 4, 4) != 0);
+    assert(callback(0, bytes, 4, 4) == 0);
     assert(!first.get_length() && !second.get_length());
-    assert(callback(1, bytes, 4, 4) != 0);
+    assert(callback(0, bytes, 4, 4) == 0); // drain guard
+    assert(callback(1, bytes, 4, 4) == 0); // drain guard
+    for (unsigned pair = 0; pair < 2; ++pair) {
+      assert(callback(0, bytes, 4, 4) == 0);
+      assert(callback(1, bytes, 4, 4) == 0);
+    }
+    assert(first.get_length() == 4 && second.get_length() == 4);
+    assert(receiver.sample_time_position().available);
     receiver.stop();
   }
   // A one-sided software FIFO overflow/drop counter change invalidates both.
@@ -180,19 +207,47 @@ int main() {
     HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
       {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
     receiver.start();
-    IqData first(2), second(2); receiver.process(&first, &second);
-    first.push_back({1, 1}); first.push_back({2, 2}); first.push_back({3, 3});
+    IqData first(8), second(8); receiver.process(&first, &second);
+    for (unsigned sample = 0; sample < 9; ++sample) first.push_back({1, 1});
     uint8_t bytes[4]{1, 2, 3, 4};
     assert(callback(0, bytes, 4, 4) == 0);
-    assert(callback(1, bytes, 4, 4) != 0);
+    assert(callback(1, bytes, 4, 4) == 0);
+    assert(callback(0, bytes, 4, 4) == 0);
+    assert(callback(1, bytes, 4, 4) == 0);
     assert(!first.get_length() && !second.get_length());
     rapidjson::Document health; health.Parse(receiver.health_json().c_str());
     assert(!health["pairing"]["qualified"].GetBool());
     assert(std::string(health["pairing"]["discardedSamples"][0].GetString()) != "0");
+    assert(callback(0, bytes, 4, 4) == 0); // drain guard
+    assert(callback(1, bytes, 4, 4) == 0); // drain guard
+    for (unsigned pair = 0; pair < 2; ++pair) {
+      assert(callback(0, bytes, 4, 4) == 0);
+      assert(callback(1, bytes, 4, 4) == 0);
+    }
+    assert(first.get_length() == 4 && second.get_length() == 4);
+    assert(receiver.sample_time_position().available);
     receiver.stop();
   }
-  // Recording is block-paired and its sidecar preserves the terminal epoch,
-  // per-channel discard counts, configured gains and discontinuity reason.
+  // Repeated demonstrable faults eventually exhaust the declared retry budget.
+  {
+    reset();
+    HackRf receiver("HackRF", 527000000, 6000000, "/unused", &record,
+      {"a1", "b2"}, {16, 32}, {20, 40}, {false, true});
+    receiver.start();
+    IqData first(16), second(16); receiver.process(&first, &second);
+    uint8_t bytes[4]{1, 2, 3, 4};
+    for (unsigned fault = 0; fault < 8; ++fault)
+      assert(callback(0, bytes, 2, 4) == 0);
+    assert(callback(0, bytes, 2, 4) != 0);
+    rapidjson::Document health; health.Parse(receiver.health_json().c_str());
+    assert(!health["monitoring"].GetBool());
+    assert(health["pairing"]["state"] == "unavailable");
+    assert(std::string(health["pairing"]["retryBudget"].GetString()) == "8");
+    assert(std::string(health["pairing"]["consecutiveDiscontinuities"].GetString()) == "9");
+    receiver.stop();
+  }
+  // A pairing fault closes only the corrupt recording epoch. Requalification
+  // lazily starts a new provisional file and replay preserves that boundary.
   {
     char pattern[] = "/tmp/vectorwarp-hackrf-fixture-XXXXXX";
     const char* directory = mkdtemp(pattern);
@@ -204,12 +259,15 @@ int main() {
     IqData first(16), second(16); receiver.process(&first, &second);
     const auto path = receiver.open_file();
     uint8_t reference[4]{1, 2, 3, 4}, surveillance[4]{5, 6, 7, 8};
+    for (unsigned pair = 0; pair < 2; ++pair) {
+      assert(callback(0, reference, 4, 4) == 0);
+      assert(callback(1, surveillance, 4, 4) == 0);
+    }
     assert(callback(0, reference, 4, 4) == 0);
-    assert(callback(1, surveillance, 4, 4) == 0);
     assert(callback(0, reference, 4, 4) == 0);
-    assert(callback(0, reference, 4, 4) != 0);
-    const auto recording = receiver.recording_status();
-    assert(!recording.active && recording.samples == 2 && !recording.error.empty());
+    const auto incompleteRecording = receiver.recording_status();
+    assert(!incompleteRecording.active && incompleteRecording.resumePending &&
+      incompleteRecording.samples == 4 && !incompleteRecording.error.empty());
     std::ifstream provenance(path + ".provenance.json");
     assert(provenance);
     rapidjson::IStreamWrapper stream(provenance);
@@ -225,6 +283,7 @@ int main() {
     assert(std::string(details["startup"]["deviceIdentity"]["resolvedSerials"][1].GetString()) == "000000000000000000000000000000b2");
     assert(std::string(details["pairing"]["pairing"]["discontinuities"].GetString()) == "1");
     assert(!details["pairing"]["pairing"]["qualified"].GetBool());
+    assert(details["pairing"]["pairing"]["state"] == "requalifying");
     assert(!document["recording"]["complete"].GetBool());
     assert(!document["timing"]["discontinuities"].Empty());
     blah2::ReplayOptions options;
@@ -236,9 +295,48 @@ int main() {
       incomplete = std::string(error.what()).find("not finished cleanly") != std::string::npos;
     }
     assert(incomplete);
+    // Discard one post-fault callback from each radio, then buffer two matched
+    // pairs before publishing and rolling to the new recording epoch.
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(callback(1, surveillance, 4, 4) == 0);
+    for (unsigned pair = 0; pair < 2; ++pair) {
+      assert(callback(0, reference, 4, 4) == 0);
+      assert(callback(1, surveillance, 4, 4) == 0);
+    }
+    assert(callback(0, reference, 4, 4) == 0);
+    assert(callback(1, surveillance, 4, 4) == 0);
+    auto recoveredRecording = receiver.recording_status();
+    assert(recoveredRecording.active && !recoveredRecording.resumePending &&
+      recoveredRecording.samples == 6 && recoveredRecording.file != path);
+    const auto recoveredPath = recoveredRecording.file;
+    receiver.close_file();
+    std::ifstream recoveredProvenance(recoveredPath + ".provenance.json");
+    assert(recoveredProvenance);
+    rapidjson::IStreamWrapper recoveredStream(recoveredProvenance);
+    rapidjson::Document recoveredDocument; recoveredDocument.ParseStream(recoveredStream);
+    assert(!recoveredDocument.HasParseError());
+    assert(recoveredDocument["recording"]["complete"].GetBool());
+    assert(recoveredDocument["timing"]["epoch"] == "2");
+    assert(recoveredDocument["timing"]["sourceFirstSample"] == "0");
+    const auto& recoveredPairing = recoveredDocument["receiverDetails"]["pairing"]["pairing"];
+    assert(recoveredPairing["state"] == "qualified");
+    assert(std::string(recoveredPairing["requalifications"].GetString()) == "1");
+    blah2::RecordingReader recoveredReader(recoveredPath, options);
+    assert(recoveredReader.provenance().contractValid);
+    assert(recoveredReader.provenance().continuous);
+    assert(!recoveredReader.provenance().exactTime);
+    assert(!recoveredReader.provenance().decisionGrade);
+    blah2::IqBlock replayed;
+    assert(recoveredReader.read(replayed) && replayed.size() == 2 &&
+      replayed[0].size() == 4 && replayed[1].size() == 4);
+    assert(recoveredReader.read(replayed) && replayed[0].size() == 2 &&
+      replayed[1].size() == 2);
+    assert(!recoveredReader.read(replayed));
     receiver.stop();
     std::filesystem::remove(path);
     std::filesystem::remove(path + ".provenance.json");
+    std::filesystem::remove(recoveredPath);
+    std::filesystem::remove(recoveredPath + ".provenance.json");
     std::filesystem::remove(directory);
   }
   unsigned failureCases = 0;

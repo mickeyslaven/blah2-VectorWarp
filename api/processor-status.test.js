@@ -266,10 +266,12 @@ const hackrfStartup = {schema: 1, receiver: 'HackRF', status: 'accepted',
     startOrder: 'surveillance-then-reference', physicalWiringVerified: false,
     hardwareTimestampAvailable: false}};
 const hackrfHealth = {schema: 1, receiver: 'HackRF', monitoring: true,
-  pairing: {policy: 'paired-callback-fail-closed-v1', qualified: true,
+  pairing: {policy: 'paired-callback-requalify-v2', state: 'qualified', qualified: true,
     epoch: '1', callbacks: ['2', '2'], samples: ['4', '4'],
     pairedCallbacks: '2', pairedSamples: '4', discontinuities: '0',
-    discardedSamples: ['0', '0'],
+    requalifications: '0', consecutiveDiscontinuities: '0', retryBudget: '8',
+    qualificationRequiredPairs: 2, qualificationObservedPairs: 2,
+    drainRequired: false, drainSeen: [false, false], discardedSamples: ['0', '0'],
     reason: 'paired hardware-triggered callbacks are aligned'}};
 const hackrfLive = {...replay, input: 'live', receiver: 'HackRF', state: 'live',
   file: '', frequency: 527000000, sampleRate: 6000000,
@@ -280,10 +282,18 @@ assert.equal(status({...hackrfLive, receiverHealth: {...hackrfHealth, pairing: {
   ...hackrfHealth.pairing, callbacks: ['3', '2'], samples: ['6', '4']}}}).valid,
 true, 'One staged callback is a valid transient and cannot publish alone');
 const hackrfFault = {...hackrfHealth, monitoring: false, pairing: {
-  ...hackrfHealth.pairing, qualified: false, epoch: '2', callbacks: ['3', '2'],
-  samples: ['6', '4'], discontinuities: '1', discardedSamples: ['4', '2'],
+  ...hackrfHealth.pairing, state: 'unavailable', qualified: false, epoch: '10', callbacks: ['11', '2'],
+  samples: ['20', '4'], discontinuities: '9', discardedSamples: ['20', '2'],
+  consecutiveDiscontinuities: '9', qualificationObservedPairs: 0,
   reason: 'HackRF callback progression diverged'}};
 assert.equal(status({...hackrfLive, receiverHealth: hackrfFault}).valid, true);
+const hackrfRecovering = {...hackrfHealth, pairing: {
+  ...hackrfHealth.pairing, state: 'requalifying', qualified: false, epoch: '2',
+  callbacks: ['5', '4'], samples: ['10', '8'], discontinuities: '1',
+  requalifications: '0', consecutiveDiscontinuities: '1',
+  qualificationObservedPairs: 1, drainRequired: false, drainSeen: [true, true],
+  discardedSamples: ['4', '4'], reason: 'awaiting second matched callback pair'}};
+assert.equal(status({...hackrfLive, receiverHealth: hackrfRecovering}).valid, true);
 for (const receiverStartup of [
   {...hackrfStartup, requested: {...hackrfStartup.requested, serials: ['a1', 'a1']}},
   {...hackrfStartup, requested: {...hackrfStartup.requested, lnaGainDb: [15, 32]}},
@@ -294,9 +304,11 @@ for (const receiverStartup of [
   JSON.stringify(receiverStartup));
 for (const pairing of [
   {...hackrfHealth.pairing, policy: 'best-effort'},
-  {...hackrfHealth.pairing, callbacks: ['4', '2']},
-  {...hackrfHealth.pairing, pairedSamples: '5'},
-  {...hackrfHealth.pairing, discontinuities: '1'},
+  {...hackrfHealth.pairing, state: 'requalifying'},
+  {...hackrfHealth.pairing, retryBudget: '9'},
+  {...hackrfHealth.pairing, qualificationRequiredPairs: 1},
+  {...hackrfHealth.pairing, drainRequired: true},
+  {...hackrfHealth.pairing, requalifications: '1'},
   {...hackrfHealth.pairing, epoch: 1}
 ]) assert.equal(status({...hackrfLive,
   receiverHealth: {...hackrfHealth, pairing}}).valid, false, JSON.stringify(pairing));

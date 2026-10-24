@@ -269,23 +269,30 @@ the processor to drain. Assert that a CPI is currently produced with different
 drop counters and a known reference/surveillance impulse offset.
 
 **Fix.** Treat any drop-count change or unequal callback/sample progression as a
-fatal pair discontinuity: clear both FIFOs, stop/reattach the hardware-triggered
-pair, reset tracker/recording epoch, and refuse scored output until a common-
-signal lag check passes. Where supported, configure zero-tolerance HackRF RX
-shortfall stopping. Recording must be block-paired rather than independently
-assembled after a silent FIFO drop.
+pair discontinuity: clear both FIFOs, close the ambiguous recording epoch, and
+refuse publication until bounded automatic pairing qualification succeeds.
+Recording must be block-paired rather than independently assembled after a
+silent FIFO drop.
 
 **Remediation.** `src/capture/hackrf/HackRf.cpp` now stages one callback per
 radio and appends only an equal, progression-matched pair while holding both
 FIFO locks. A short callback, duplicate one-sided callback, unequal callback or
 sample progression, changed FIFO drop counter, asymmetric queue length, or
-insufficient capacity clears both FIFOs, advances an unqualified epoch, stops
-paired recording, and makes both callbacks fail. A new qualified epoch requires
-a hardware-triggered restart; post-gap callbacks are never software-spliced.
-Receiver health and recording sidecars retain per-radio callback/sample/discard
-counters, epoch, discontinuity count, gains, serials, and the terminal reason.
-Published HackRF event time is `exact:false` because libhackrf supplies no
-device sample counter or RF/UTC timestamp.
+insufficient capacity clears both FIFOs, advances an unqualified epoch, and
+closes only the affected recording epoch incomplete. While streaming remains
+healthy, recovery discards one callback from each radio as a bounded drain
+guard and buffers two equal post-fault pairs before atomically publishing a new
+CPI epoch. A new discontinuity restarts that qualification; nine consecutive
+faults exhaust the declared eight-retry budget and stop the callbacks.
+Receiver health and recording sidecars expose `unavailable`, `requalifying`,
+or `qualified`, plus per-radio callback/sample/discard counters, drain state,
+epoch, discontinuities, requalifications, retry budget, gains, serials, and the
+reason. The old recording stays replay-rejected as incomplete; the successor
+file resumes lazily at source sample zero and replays provisionally. This is
+automatic operational recovery, not proof of RF phase coherence: published
+HackRF event time remains `exact:false` because libhackrf supplies no device
+sample counter or RF/UTC timestamp. A physical common-signal lag/phase test is
+still required for decision-grade coherent qualification.
 
 ## Recording/replay review
 

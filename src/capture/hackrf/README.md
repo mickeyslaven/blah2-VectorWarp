@@ -16,16 +16,20 @@ building VectorWarp.
 
 VectorWarp stages callbacks from both radios and publishes IQ only after an
 equal-sized reference/surveillance callback pair has arrived. A short callback,
-two callbacks from one radio before its mate, unequal cumulative sample
-progression, a FIFO drop-counter change, or insufficient space on either FIFO
-invalidates the common epoch and clears both FIFOs. Capture does not attempt to
-splice later USB data onto the old epoch: both radios must be stopped and
-hardware-triggered again before a new epoch can qualify.
+two callbacks from one radio before its mate, unequal pair size, a FIFO
+drop-counter change, or insufficient space on either FIFO invalidates the common
+epoch, clears both FIFOs, and closes an active recording epoch incomplete.
+Streaming then drains one callback from each radio and requires two matched
+callback pairs before atomically publishing the new relative epoch. Another
+fault restarts qualification; nine consecutive faults exhaust the declared
+eight-retry budget and stop RX callbacks.
 
 Status and recording sidecars preserve the epoch, per-radio callback/sample and
-discard counts, discontinuity count, configured gains/serials, and the last
-qualification reason. HackRF provides neither a hardware sample counter nor an
-RF/UTC timestamp, so published event time is explicitly inexact and exact-time
-ADS-B/OPRS scoring fails closed.
+discard counts, drain/qualification state, discontinuity/requalification counts,
+retry budget, configured gains/serials, and the last reason. This automatic
+recovery is provisional: without a hardware sample counter it cannot prove that
+the two post-fault callback streams have the same RF sample origin. HackRF also
+provides no RF/UTC timestamp, so published event time is explicitly inexact and
+exact-time ADS-B/OPRS scoring remains unavailable.
 - Note the [official guide](https://hackrf.readthedocs.io/en/latest/hardware_triggering.html) on setting up the shared clock and hardware trigger.
 ![Two HackRF units with shared clock and trigger](./hackrf-blah2.png "HackRF")

@@ -237,7 +237,8 @@ std::string HackRf::health_json() const
   document.AddMember("receiver", "HackRF", allocator);
   document.AddMember("monitoring", pairing.monitoring, allocator);
   rapidjson::Value state(rapidjson::kObjectType);
-  state.AddMember("policy", "paired-callback-fail-closed-v1", allocator);
+  state.AddMember("policy", "paired-callback-requalify-v2", allocator);
+  state.AddMember("state", rapidjson::Value(pairing.state.c_str(), allocator), allocator);
   state.AddMember("qualified", pairing.qualified, allocator);
   const auto decimal = [&](uint64_t value) {
     const auto text = std::to_string(value);
@@ -256,6 +257,17 @@ std::string HackRf::health_json() const
   state.AddMember("pairedCallbacks", decimal(pairing.pairedCallbacks), allocator);
   state.AddMember("pairedSamples", decimal(pairing.pairedSamples), allocator);
   state.AddMember("discontinuities", decimal(pairing.discontinuities), allocator);
+  state.AddMember("requalifications", decimal(pairing.requalifications), allocator);
+  state.AddMember("consecutiveDiscontinuities",
+    decimal(pairing.consecutiveDiscontinuities), allocator);
+  state.AddMember("retryBudget", decimal(MAX_CONSECUTIVE_DISCONTINUITIES), allocator);
+  state.AddMember("qualificationRequiredPairs", REQUALIFICATION_PAIRS, allocator);
+  state.AddMember("qualificationObservedPairs", pairing.qualificationObserved, allocator);
+  state.AddMember("drainRequired", pairing.drainRequired, allocator);
+  rapidjson::Value drainSeen(rapidjson::kArrayType);
+  drainSeen.PushBack(pairing.drainSeen[0], allocator);
+  drainSeen.PushBack(pairing.drainSeen[1], allocator);
+  state.AddMember("drainSeen", drainSeen, allocator);
   state.AddMember("discardedSamples", discarded, allocator);
   state.AddMember("reason", rapidjson::Value(pairing.reason.c_str(), allocator), allocator);
   document.AddMember("pairing", state, allocator);
@@ -290,47 +302,59 @@ void HackRf::reset_pairing(IqData* first, IqData* second)
 {
   std::lock_guard<std::mutex> state(pairingMutex);
   std::unique_lock<IqData> firstLock(*first), secondLock(*second);
-  pairing.discarded[0] += first->get_length();
-  pairing.discarded[1] += second->get_length();
+  const std::array<uint64_t, 2> discarded{{first->get_length(), second->get_length()}};
+  const auto previousEpoch = pairing.epoch;
   first->clear(); second->clear();
-  pairing.pending = {};
-  pairing.callbacks = {};
-  pairing.samples = {};
-  pairing.pairedCallbacks = 0;
-  pairing.pairedSamples = 0;
+  pairing = PairingState{};
+  pairing.discarded = discarded;
   pairing.initialDrops = {first->get_dropped_samples(), second->get_dropped_samples()};
-  if (pairing.epoch == UINT64_MAX)
+  if (previousEpoch == UINT64_MAX)
     throw std::overflow_error("[HackRF] Pairing epoch exhausted.");
-  ++pairing.epoch;
+  pairing.epoch = previousEpoch + 1;
   pairing.accepting = true;
   pairing.qualified = false;
   pairing.monitoring = false;
-  pairing.reason = "awaiting first matched hardware-triggered callback pair";
+  pairing.state = "requalifying";
+  pairing.reason = "awaiting two matched hardware-triggered callback pairs";
   epoch.store(pairing.epoch, std::memory_order_release);
   nextSample.store(0, std::memory_order_release);
   qualified.store(false, std::memory_order_release);
 }
 
-void HackRf::invalidate_pair_locked(const std::string& reason)
+bool HackRf::invalidate_pair_locked(const std::string& reason)
 {
   auto* first = channels[0].buffer;
   auto* second = channels[1].buffer;
   std::unique_lock<IqData> firstLock(*first), secondLock(*second);
-  pairing.discarded[0] += first->get_length() + pairing.pending[0].size();
-  pairing.discarded[1] += second->get_length() + pairing.pending[1].size();
+  pairing.discarded[0] += first->get_length() + pairing.pending[0].size() +
+    pairing.candidate[0].size();
+  pairing.discarded[1] += second->get_length() + pairing.pending[1].size() +
+    pairing.candidate[1].size();
   first->clear(); second->clear();
   pairing.pending = {};
-  if (pairing.epoch == UINT64_MAX)
-    pairing.reason = "pairing epoch exhausted after discontinuity";
-  else ++pairing.epoch;
+  pairing.candidate = {};
+  const bool epochAvailable = pairing.epoch != UINT64_MAX;
+  if (epochAvailable) ++pairing.epoch;
   ++pairing.discontinuities;
-  pairing.accepting = false;
+  ++pairing.consecutiveDiscontinuities;
+  pairing.epochSamples = 0;
+  pairing.qualificationObserved = 0;
+  pairing.drainSeen = {};
+  pairing.drainRequired = true;
+  pairing.initialDrops = {first->get_dropped_samples(), second->get_dropped_samples()};
+  const bool recovering = epochAvailable &&
+    pairing.consecutiveDiscontinuities <= MAX_CONSECUTIVE_DISCONTINUITIES;
+  pairing.accepting = recovering;
   pairing.qualified = false;
-  pairing.monitoring = false;
-  pairing.reason = reason;
+  pairing.monitoring = recovering;
+  pairing.state = recovering ? "requalifying" : "unavailable";
+  pairing.reason = recovering ? reason +
+    "; draining one callback per channel before two-pair requalification" :
+    reason + "; bounded automatic recovery retry budget exhausted";
   epoch.store(pairing.epoch, std::memory_order_release);
   nextSample.store(0, std::memory_order_release);
   qualified.store(false, std::memory_order_release);
+  return recovering;
 }
 
 int HackRf::rx_callback(hackrf_transfer* transfer)
@@ -353,31 +377,59 @@ int HackRf::rx_callback(hackrf_transfer* transfer)
 
   std::string discontinuity;
   blah2::IqBlock recorded;
+  SampleTimePosition recordedStart;
+  bool terminal = false;
   {
     std::lock_guard<std::mutex> state(source.pairingMutex);
     auto& pairing = source.pairing;
     if (!pairing.accepting) return -1;
     ++pairing.callbacks[channel.channel];
     pairing.samples[channel.channel] += count;
-    if (!validLength)
+    if (!validLength) {
+      pairing.discarded[channel.channel] += count;
       discontinuity = "HackRF callback was short or had an invalid sample length";
-    else if (!pairing.pending[channel.channel].empty())
+    } else if (pairing.state == "requalifying" && pairing.drainRequired) {
+      pairing.discarded[channel.channel] += count;
+      if (pairing.drainSeen[channel.channel])
+        discontinuity = "HackRF drain callback progression diverged";
+      else {
+        pairing.drainSeen[channel.channel] = true;
+        if (pairing.drainSeen[0] && pairing.drainSeen[1]) {
+          pairing.drainRequired = false;
+          pairing.reason = "drain guard complete; awaiting two matched callback pairs";
+        }
+      }
+    } else if (!pairing.pending[channel.channel].empty()) {
+      pairing.discarded[channel.channel] += count;
       discontinuity = "HackRF callback progression diverged before its paired callback arrived";
-    else pairing.pending[channel.channel] = std::move(incoming);
+    } else pairing.pending[channel.channel] = std::move(incoming);
 
     if (discontinuity.empty() && !pairing.pending[0].empty() &&
         !pairing.pending[1].empty()) {
-      if (pairing.pending[0].size() != pairing.pending[1].size() ||
-          pairing.callbacks[0] != pairing.callbacks[1] ||
-          pairing.samples[0] != pairing.samples[1]) {
+      if (pairing.pending[0].size() != pairing.pending[1].size()) {
         discontinuity = "HackRF paired callback sample progression diverged";
       } else {
+        uint64_t pairsToPublish = 1;
+        if (pairing.state == "requalifying") {
+          for (unsigned role = 0; role < 2; ++role)
+            pairing.candidate[role].insert(pairing.candidate[role].end(),
+              pairing.pending[role].begin(), pairing.pending[role].end());
+          pairing.pending = {};
+          ++pairing.qualificationObserved;
+          pairsToPublish = pairing.qualificationObserved;
+          if (pairing.qualificationObserved < REQUALIFICATION_PAIRS) {
+            pairing.reason = "awaiting second matched callback pair";
+            return 0;
+          }
+        }
+        const auto& publish = pairing.state == "requalifying" ?
+          pairing.candidate : pairing.pending;
         auto* first = source.channels[0].buffer;
         auto* second = source.channels[1].buffer;
         std::unique_lock<IqData> firstLock(*first), secondLock(*second);
         const auto currentFirst = first->get_length();
         const auto currentSecond = second->get_length();
-        const auto pairSamples = pairing.pending[0].size();
+        const auto pairSamples = publish[0].size();
         const bool dropChanged =
           first->get_dropped_samples() != pairing.initialDrops[0] ||
           second->get_dropped_samples() != pairing.initialDrops[1];
@@ -386,29 +438,40 @@ int HackRf::rx_callback(hackrf_transfer* transfer)
             pairSamples > second->get_n() - std::min<uint64_t>(currentSecond, second->get_n())) {
           discontinuity = "HackRF paired FIFO overflow or asymmetric queue progression";
         } else {
-          first->append_unlocked(pairing.pending[0]);
-          second->append_unlocked(pairing.pending[1]);
-          ++pairing.pairedCallbacks;
+          first->append_unlocked(publish[0]);
+          second->append_unlocked(publish[1]);
+          pairing.pairedCallbacks += pairsToPublish;
           pairing.pairedSamples += pairSamples;
+          recordedStart = {true, pairing.epoch, pairing.epochSamples, 0, source.fs};
+          pairing.epochSamples += pairSamples;
+          const bool wasRequalifying = pairing.state == "requalifying";
           pairing.qualified = true;
+          pairing.state = "qualified";
+          pairing.qualificationObserved = REQUALIFICATION_PAIRS;
+          pairing.drainRequired = false;
+          pairing.drainSeen = {};
+          if (wasRequalifying && pairing.discontinuities) ++pairing.requalifications;
+          pairing.consecutiveDiscontinuities = 0;
           pairing.reason = "paired hardware-triggered callbacks are aligned";
-          source.nextSample.store(pairing.pairedSamples, std::memory_order_release);
+          source.nextSample.store(pairing.epochSamples, std::memory_order_release);
           source.qualified.store(true, std::memory_order_release);
-          if (source.is_recording()) {
+          if (source.recording_wants_samples()) {
             recorded.resize(2);
-            recorded[0] = pairing.pending[0];
-            recorded[1] = pairing.pending[1];
+            recorded[0] = publish[0];
+            recorded[1] = publish[1];
           }
           pairing.pending = {};
+          pairing.candidate = {};
         }
       }
     }
-    if (!discontinuity.empty()) source.invalidate_pair_locked(discontinuity);
+    if (!discontinuity.empty()) terminal = !source.invalidate_pair_locked(discontinuity);
   }
   if (!discontinuity.empty()) {
-    source.recording_discontinuity(discontinuity);
-    return -1;
+    source.recording_epoch_discontinuity(discontinuity);
+    if (terminal) source.close_file();
+    return terminal ? -1 : 0;
   }
-  if (!recorded.empty()) source.record_block(recorded);
+  if (!recorded.empty()) source.record_block(recorded, recordedStart);
   return 0;
 }
