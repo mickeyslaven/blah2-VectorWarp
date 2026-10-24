@@ -1194,6 +1194,15 @@ try
                 captureData[0]->assign_paired_i16(block.iq.data(), nSamples,
                   *captureData[1]);
               }
+              // PairedCpiQueue is the RSPduo capture-epoch authority. Its
+              // generation advances on gain/reset/gap boundaries and its
+              // first offset is delivered-sample-relative, never UTC.
+              if (block.epoch != UINT64_MAX) {
+                captureSamplePositionAvailable = true;
+                captureEpoch = block.epoch + 1;
+                captureFirstEpochSample = block.first;
+                captureEndEpochSample = uint64_t(block.first) + nSamples;
+              }
               ready = true;
             } catch (...) { pairedCpiQueue->release(slot); throw; }
             if (!pairedCpiQueue->release(slot)) ready = false;

@@ -64,6 +64,7 @@ void reset() {
   overloadAcks = 0;
   opened = closed = locked = unlocked = selected = released = initialized = uninitialized = 0;
   deviceParameters = {}; tunerA = {}; tunerB = {};
+  deviceParameters.fsFreq.fsHz = 6000000;
   parameters = {&deviceParameters, &tunerA, &tunerB};
   failAt.clear(); nullParameters = removeOnInit = multipleDevices = stopAfterGain = false;
   callbackScenario = CallbackScenario::None;
@@ -83,6 +84,7 @@ sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi() { ++unlocked; return sdrplay_api_
 sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT* devices, unsigned* count, unsigned) {
   *count = failAt == "none" ? 0 : (multipleDevices ? 2 : 1);
   devices[0] = {}; devices[0].hwVer = failAt == "wrong-model" ? SDRPLAY_RSP1_ID : SDRPLAY_RSPduo_ID;
+  devices[0].rspDuoSampleFreq = 6000000;
   std::strcpy(devices[0].SerNo, mockSerial.c_str());
   if (failAt == "bad-serial") std::strcpy(devices[0].SerNo, "bad\nserial");
   if (multipleDevices) { devices[1] = devices[0]; std::strcpy(devices[1].SerNo, "mock-second"); }
@@ -99,6 +101,7 @@ sdrplay_api_ErrT sdrplay_api_ReleaseDevice(sdrplay_api_DeviceT*) { ++released; r
 const char* sdrplay_api_GetErrorString(sdrplay_api_ErrT) { return "injected failure"; }
 sdrplay_api_ErrT sdrplay_api_DebugEnable(HANDLE, sdrplay_api_DbgLvl_t) { return result("debug"); }
 sdrplay_api_ErrT sdrplay_api_GetDeviceParams(HANDLE, sdrplay_api_DeviceParamsT** output) {
+  if (failAt == "invalid-clock") deviceParameters.fsFreq.fsHz = NAN;
   *output = nullParameters ? nullptr : &parameters; return result("parameters");
 }
 sdrplay_api_ErrT sdrplay_api_Init(HANDLE, sdrplay_api_CallbackFnsT* callbacks, void* context) {
@@ -267,6 +270,11 @@ int main() {
       assert(std::strcmp(accepted["status"].GetString(), "accepted") == 0);
       assert(accepted["hardwareVerified"].GetBool() == false);
       assert(accepted["readbackAvailable"].GetBool() == false);
+      assert(accepted["requested"]["usbMode"] == "isoch");
+      assert(accepted["requested"]["sampleCounterScale"].GetUint() == 1);
+      assert(accepted["requested"]["sdkDebugLevel"] == "error");
+      assert(accepted["sdk"]["parameters"]["adcSampleRateHz"].GetDouble() == 6000000);
+      assert(accepted["sdk"]["parameters"]["descriptorSampleRateHz"].GetDouble() == 6000000);
       assert(accepted["sdk"]["stages"]["gainUpdateA"].GetBool());
       assert(accepted["sdk"]["stages"]["gainUpdateB"].GetBool());
       assert(initialized == 1 && callbackContext == &receiver);
@@ -292,12 +300,16 @@ int main() {
   escaped.stop();
   reset(); stopAfterGain = true;
   setenv("VECTORWARP_RSPDUO_USB_MODE", "bulk", 1);
+  setenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL", "verbose", 1);
   RspDuo bulk("RspDuo", 204640000, 2000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
   bulk.start();
   assert(deviceParameters.mode == sdrplay_api_BULK);
+  assert(receipt(bulk)["requested"]["usbMode"] == "bulk");
+  assert(receipt(bulk)["requested"]["sdkDebugLevel"] == "verbose");
   bulk.process(nullptr, nullptr); bulk.stop();
   unsetenv("VECTORWARP_RSPDUO_USB_MODE");
+  unsetenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
   setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "2", 1);
   try {
     RspDuo invalidScale("RspDuo", 204640000, 2000000, "/unused", &record,
@@ -305,11 +317,20 @@ int main() {
     assert(false);
   } catch (const std::invalid_argument&) {}
   unsetenv("VECTORWARP_RSPDUO_COUNTER_SCALE");
+  setenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL", "chatty", 1);
+  try {
+    RspDuo invalidDebug("RspDuo", 204640000, 2000000, "/unused", &record,
+      -30, 50, 30, 31, 3, true, false);
+    assert(false);
+  } catch (const std::invalid_argument&) {}
+  unsetenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
   reset(); stopAfterGain = true; deviceParameters.fsFreq.fsHz = 6000000;
   setenv("VECTORWARP_RSPDUO_COUNTER_SCALE", "3", 1);
   RspDuo scaled("RspDuo", 204640000, 2000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
-  scaled.start(); scaled.process(nullptr, nullptr); scaled.stop();
+  scaled.start();
+  assert(receipt(scaled)["requested"]["sampleCounterScale"].GetUint() == 3);
+  scaled.process(nullptr, nullptr); scaled.stop();
   reset(); deviceParameters.fsFreq.fsHz = 6000000;
   RspDuo invalidScaledRate("RspDuo", 204640000, 1000000, "/unused", &record,
     -30, 50, 30, 31, 3, true, false);
@@ -329,7 +350,7 @@ int main() {
   try { tooFast.start(); assert(false); } catch (const std::exception&) {}
   assert(tooFast.startup_receipt_json().empty());
   assert(opened == 0); // Six-MS/s output is not offered by this dual-tuner adapter.
-  for (const auto& stage : {"open", "version", "version-mismatch", "version-unusual", "lock", "enumerate", "none", "wrong-model", "bad-serial", "select", "debug", "parameters"}) {
+  for (const auto& stage : {"open", "version", "version-mismatch", "version-unusual", "lock", "enumerate", "none", "wrong-model", "bad-serial", "select", "debug", "parameters", "invalid-clock"}) {
     reset(); failAt = stage;
     RspDuo receiver("RspDuo", 204640000, 2000000, "/unused", &record, -30, 50, 30, 31, 3, true, true);
     bool failed = false;
@@ -463,6 +484,12 @@ int main() {
           gainB["reported"]["gRdB"].GetUint() == 41 &&
           gainB["reported"]["lnaGRdB"].GetUint() == 15 &&
           gainB["reported"]["currGain"].GetDouble() == 19.25);
+        const auto position = receiver.sample_time_position();
+        assert(position.available && position.epoch == 3 && position.nextSample == 2);
+        assert(health["sampleTime"]["source"] ==
+          "sdrplay-delivered-relative-sample-epoch");
+        assert(!health["sampleTime"]["exact"].GetBool() &&
+          !health["sampleTime"]["sampleAligned"].GetBool());
       }
       if (scenario == CallbackScenario::ConcurrentPairHandoff) {
         assert(a[2] == std::complex<double>(21, 22));
@@ -504,7 +531,7 @@ int main() {
   queued.close_file(); queued.stop(); queue.close();
   size_t queueSlot = 0; assert(queue.acquire(queueSlot));
   const auto& queuedBlock = queue.block(queueSlot);
-  assert(queuedBlock.first == 2 && queuedBlock.epoch == 2 &&
+  assert(queuedBlock.first == 0 && queuedBlock.epoch == 2 &&
     queuedBlock.iq[0] == 21 && queuedBlock.iq[1] == 22 &&
     queuedBlock.iq[2] == 27 && queuedBlock.iq[3] == 28);
   queue.release(queueSlot);
@@ -533,6 +560,9 @@ int main() {
       assert(!provenance["timing"]["exact"].GetBool());
       assert(!provenance["receiverDetails"]["health"]["gain"]["sampleAligned"].GetBool());
       assert(provenance["receiverDetails"]["health"]["gain"]["epoch"].GetUint64() == 2);
+      assert(provenance["timing"]["epoch"] == "3");
+      assert(provenance["timing"]["sourceFirstSample"] == "0");
+      assert(provenance["receiverDetails"]["startup"]["requested"]["usbMode"] == "isoch");
     } else {
       ++incompleteRecordings;
       assert(provenance["timing"]["discontinuities"].Size() == 1);

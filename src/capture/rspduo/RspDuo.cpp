@@ -124,6 +124,11 @@ RspDuo::RspDuo(std::string _type, uint32_t _fc,
   if (counterScale && std::strcmp(counterScale, "1") != 0 && std::strcmp(counterScale, "3") != 0)
     throw std::invalid_argument("VECTORWARP_RSPDUO_COUNTER_SCALE must be 1 or 3");
   scaledSampleCounter = counterScale && std::strcmp(counterScale, "3") == 0;
+  const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
+  if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
+      std::strcmp(debugLevel, "error") != 0)
+    throw std::invalid_argument("VECTORWARP_SDRPLAY_DEBUG_LEVEL must be error or verbose");
+  sdkDebugLevel = debugLevel ? debugLevel : "error";
   sampleClock.configure(scaledSampleCounter ? 3 : 1);
   for (auto& slot : callbackStorage)
     slot.resize(static_cast<std::size_t>(MAX_CALLBACK_SAMPLES) * 4);
@@ -156,6 +161,9 @@ void RspDuo::start()
   callbackFaultReason = nullptr;
   streamEstablished = false;
   pairedPublishedSamples = 0;
+  sampleEpoch.store(1, std::memory_order_release);
+  nextEpochSample.store(0, std::memory_order_release);
+  samplePositionAvailable.store(false, std::memory_order_release);
   {
     std::lock_guard<std::mutex> pairingLock(callbackMutex);
     pendingHead = pendingCount = 0;
@@ -185,6 +193,13 @@ void RspDuo::stop()
   run_fg = false;
   std::lock_guard<std::mutex> lock(lifecycleMutex);
   uninitialise_device();
+}
+
+Source::SampleTimePosition RspDuo::sample_time_position() const
+{
+  if (!samplePositionAvailable.load(std::memory_order_acquire)) return {};
+  return {true, sampleEpoch.load(std::memory_order_acquire),
+    nextEpochSample.load(std::memory_order_acquire), 0, fs};
 }
 
 void RspDuo::process(IqData *_buffer1, IqData *_buffer2)
@@ -323,6 +338,12 @@ void RspDuo::gain_change(sdrplay_api_TunerSelectT tuner,
     sampleClock.clear();
   }
   if (pairedCpiQueue) pairedCpiQueue->discontinuity();
+  if (sampleEpoch.load(std::memory_order_relaxed) == UINT64_MAX)
+    throw std::overflow_error("RSPduo sample epoch exhausted");
+  sampleEpoch.fetch_add(1, std::memory_order_release);
+  samplePositionAvailable.store(false, std::memory_order_release);
+  nextEpochSample.store(0, std::memory_order_release);
+  pairedPublishedSamples = 0;
   if (outputBuffer1 && outputBuffer2) {
     std::unique_lock<IqData> outputLock1(*outputBuffer1);
     std::unique_lock<IqData> outputLock2(*outputBuffer2);
@@ -499,12 +520,8 @@ void RspDuo::get_device()
   // Keep SDK errors, but avoid emitting thousands of
   // verbose service/journal lines during an RF overload/AGC burst. A caller
   // may opt back into the exact original behavior for comparison.
-  const char* debugLevel = std::getenv("VECTORWARP_SDRPLAY_DEBUG_LEVEL");
-  if (debugLevel && std::strcmp(debugLevel, "verbose") != 0 &&
-      std::strcmp(debugLevel, "error") != 0)
-    throw std::invalid_argument("VECTORWARP_SDRPLAY_DEBUG_LEVEL must be error or verbose");
   require_api(sdrplay_api_DebugEnable(chosenDevice->dev,
-    debugLevel && std::strcmp(debugLevel, "verbose") == 0 ?
+    sdkDebugLevel == "verbose" ?
       sdrplay_api_DbgLvl_Verbose : sdrplay_api_DbgLvl_Error),
     "Enable API diagnostic logging");
   { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.debugEnable = true; }
@@ -528,7 +545,22 @@ void RspDuo::set_device_parameters()
   if (deviceParams->devParams == NULL || deviceParams->rxChannelA == NULL ||
       deviceParams->rxChannelB == NULL)
     throw std::runtime_error("[RspDuo] API omitted device or dual-tuner parameters.");
-  { std::lock_guard<std::mutex> lock(receiptMutex); startupStages.getDeviceParams = true; }
+  if (!std::isfinite(deviceParams->devParams->fsFreq.fsHz) ||
+      deviceParams->devParams->fsFreq.fsHz <= 0 ||
+      deviceParams->devParams->fsFreq.fsHz > 100000000 ||
+      !std::isfinite(chosenDevice->rspDuoSampleFreq) ||
+      chosenDevice->rspDuoSampleFreq < 0 ||
+      chosenDevice->rspDuoSampleFreq > 100000000)
+    throw std::runtime_error("[RspDuo] API returned invalid sample-clock descriptors.");
+  {
+    std::lock_guard<std::mutex> lock(receiptMutex);
+    startupStages.getDeviceParams = true;
+    // These are SDK-reported configuration descriptors, not an independent
+    // measurement of the physical sample clock. Preserve both rather than
+    // silently assuming the selected dual-tuner mode is always 6 MHz.
+    startupStages.adcSampleRateHz = deviceParams->devParams->fsFreq.fsHz;
+    startupStages.descriptorSampleRateHz = chosenDevice->rspDuoSampleFreq;
+  }
 
   if (scaledSampleCounter && !SdkSampleClock::supportsRatio3({
       deviceParams->devParams->fsFreq.fsHz, fs, static_cast<unsigned>(nDecimation),
@@ -707,6 +739,10 @@ unsigned int reset, void *cbContext)
     paired[j++] = xq[i];
   }
 
+  const auto blockEpoch = sampleEpoch.load(std::memory_order_acquire);
+  const auto blockFirstSample = nextEpochSample.load(std::memory_order_acquire);
+  if (blockFirstSample > UINT64_MAX - numSamples)
+    throw std::overflow_error("RSPduo relative sample position exhausted");
   if (!pairedCpiQueue) {
     // Fixed order avoids inter-channel deadlock; RAII releases both locks if
     // a FIFO allocation throws and the C callback wrapper converts it to a
@@ -718,6 +754,8 @@ unsigned int reset, void *cbContext)
       outputBuffer1->push_back({(double)paired[i], (double)paired[i+1]});
       outputBuffer2->push_back({(double)paired[i+2], (double)paired[i+3]});
     }
+    nextEpochSample.store(blockFirstSample + numSamples, std::memory_order_release);
+    samplePositionAvailable.store(true, std::memory_order_release);
   }
 
   if (pairedCpiQueue) {
@@ -727,6 +765,8 @@ unsigned int reset, void *cbContext)
     pairedCpiQueue->push(reinterpret_cast<const int16_t*>(paired), numSamples,
       pairedPublishedSamples);
     pairedPublishedSamples += numSamples;
+    nextEpochSample.store(blockFirstSample + numSamples, std::memory_order_release);
+    samplePositionAvailable.store(true, std::memory_order_release);
   }
 
   // write data to file
@@ -735,7 +775,7 @@ unsigned int reset, void *cbContext)
     for (unsigned sample=0; sample<numSamples; ++sample)
       for (unsigned ch=0; ch<2; ++ch)
         block[ch][sample] = {float(paired[sample*4+ch*2]), float(paired[sample*4+ch*2+1])};
-    record_block(block);
+    record_block(block, {true, blockEpoch, blockFirstSample, 0, fs});
   }
 
   // find max for stats
@@ -893,7 +933,12 @@ std::string RspDuo::health_json() const
     else out << "null";
     out << '}';
   }
-  out << "}}}";
+  out << "}},\"sampleTime\":{\"source\":\"sdrplay-delivered-relative-sample-epoch\""
+      << ",\"exact\":false,\"uncertaintyBounded\":false,\"sampleAligned\":false"
+      << ",\"available\":" << samplePositionAvailable.load(std::memory_order_acquire)
+      << ",\"epoch\":\"" << sampleEpoch.load(std::memory_order_acquire)
+      << "\",\"nextSample\":\"" << nextEpochSample.load(std::memory_order_acquire)
+      << "\"}}";
   return out.str();
 }
 
@@ -925,7 +970,10 @@ std::string RspDuo::startup_receipt_json() const
       << ",\"dabNotch\":" << dab_notch_fg << ",\"rfNotch\":" << rf_notch_fg
       << ",\"ifBandwidthKhz\":" << static_cast<int>(bwType)
       << ",\"ifFrequencyKhz\":" << static_cast<int>(ifType)
-      << ",\"decimation\":" << nDecimation << "},\"selected\":";
+      << ",\"decimation\":" << nDecimation
+      << ",\"usbMode\":\"" << (usb_bulk_fg ? "bulk" : "isoch") << '"'
+      << ",\"sampleCounterScale\":" << (scaledSampleCounter ? 3 : 1)
+      << ",\"sdkDebugLevel\":\"" << sdkDebugLevel << "\"},\"selected\":";
   if (stages.select)
     out << "{\"serial\":" << json_string(stages.selectedSerial)
         << ",\"deviceIndex\":" << stages.deviceIndex
@@ -935,7 +983,9 @@ std::string RspDuo::startup_receipt_json() const
   out << ",\"sdk\":{\"version\":";
   if (stages.sdkVersion > 0) out << stages.sdkVersion;
   else out << "null";
-  out << ",\"stages\":{\"open\":" << stages.open
+  out << ",\"parameters\":{\"adcSampleRateHz\":" << stages.adcSampleRateHz
+      << ",\"descriptorSampleRateHz\":" << stages.descriptorSampleRateHz
+      << "},\"stages\":{\"open\":" << stages.open
       << ",\"apiVersion\":" << stages.apiVersion
       << ",\"lock\":" << stages.lock
       << ",\"enumerate\":" << stages.enumerate

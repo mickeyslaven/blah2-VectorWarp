@@ -49,6 +49,7 @@ private:
     bool select = false, unlock = false, debugEnable = false;
     bool getDeviceParams = false, init = false, gainUpdateA = false, gainUpdateB = false;
     float sdkVersion = 0;
+    double adcSampleRateHz = 0, descriptorSampleRateHz = 0;
     std::string selectedSerial;
     unsigned deviceIndex = 0, hardwareVersion = 0;
   } startupStages;
@@ -96,11 +97,14 @@ private:
   uint32_t expectedFirstSample = 0;
   bool expectedFirstSampleValid = false;
   bool scaledSampleCounter = false;
+  std::string sdkDebugLevel = "error";
   SdkSampleClock sampleClock;
   IqData* outputBuffer1 = nullptr;
   IqData* outputBuffer2 = nullptr;
   PairedCpiQueue* pairedCpiQueue = nullptr;
   uint32_t pairedPublishedSamples = 0;
+  std::atomic<bool> samplePositionAvailable{false};
+  std::atomic<uint64_t> sampleEpoch{1}, nextEpochSample{0};
   void clear_pending_locked() noexcept;
   void gain_change(sdrplay_api_TunerSelectT tuner,
     const sdrplay_api_EventParamsT* params);
@@ -254,6 +258,7 @@ public:
   /// @param buffer2 Pointer to surveillance buffer.
   /// @return Void.
   void process(IqData *buffer1, IqData *buffer2) override;
+  SampleTimePosition sample_time_position() const override;
 
   /// @brief Get file name from path.
   /// @return String of file name based on current time.

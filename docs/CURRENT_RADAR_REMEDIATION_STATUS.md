@@ -61,8 +61,8 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
 The code-enumerated receiver-setting ledger is maintained in
-`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken is complete; RSPduo, USRP, HackRF,
-then the four OS/package lifecycle passes remain serially queued.
+`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken and RSPduo are complete; USRP,
+HackRF, then the four OS/package lifecycle passes remain serially queued.
 
 ## Completed validation
 
@@ -90,7 +90,12 @@ then the four OS/package lifecycle passes remain serially queued.
   additionally proves that two consecutive vendor gain callbacks leave only the
   overlapping recording epochs incomplete, publish the next matched CPI, start
   a fresh portable recording lazily, and retain provisional `sampleAligned:false`
-  gain provenance.
+  gain provenance. The setting-trace follow-up preserves the construction-time
+  USB transport, SDK diagnostic level, counter scale, SDK-reported ADC and
+  descriptor clocks, and a delivered-sample-relative epoch in status and
+  recording. The mocked receive loop proves every supported output-rate/IF/
+  decimation combination and per-tuner RF/gain/notch application. Independent
+  physical RF readback remains unavailable and is never claimed.
 - USRP device-time/topology changes passed deterministic missing/regressing/
   jumping timestamp and topology tests, API provenance validation, and a full
   processor plus receiver-module build against Homebrew UHD 4.10 headers. No

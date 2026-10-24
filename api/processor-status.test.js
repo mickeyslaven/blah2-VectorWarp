@@ -30,10 +30,12 @@ const startup = {
   requested: {serial: 'mock-only', frequency: 204640000, sampleRate: 2000000,
     agcSetPoint: -30, bandwidthNumber: 50, gainReduction: [30, 31],
     lnaState: 3, dabNotch: true, rfNotch: false,
-    ifBandwidthKhz: 1536, ifFrequencyKhz: 1620, decimation: 1},
+    ifBandwidthKhz: 1536, ifFrequencyKhz: 1620, decimation: 1,
+    usbMode: 'isoch', sampleCounterScale: 1, sdkDebugLevel: 'error'},
   selected: {serial: 'mock-only', deviceIndex: 0, hardwareVersion: 3,
     tuner: 'Both', mode: 'Dual_Tuner'},
-  sdk: {version: 3.15, stages}
+  sdk: {version: 3.15, parameters: {adcSampleRateHz: 6000000,
+    descriptorSampleRateHz: 6000000}, stages}
 };
 const live = {...replay, input: 'live', receiver: 'RspDuo', state: 'live',
   file: '', frequency: 204640000, sampleRate: 2000000,
@@ -88,6 +90,8 @@ for (const receiverStartup of [
   {...startup, status: 'accepted', sdk: {...startup.sdk, stages: {...stages, gainUpdateB: false}}},
   {...startup, requested: {...startup.requested, frequency: 204650000}},
   {...startup, selected: {...startup.selected, serial: 'other'}},
+  {...startup, sdk: {...startup.sdk, parameters: {...startup.sdk.parameters, adcSampleRateHz: 0}}},
+  {...startup, sdk: {...startup.sdk, parameters: {...startup.sdk.parameters, descriptorSampleRateHz: Infinity}}},
   {...startup, requested: {...startup.requested, lnaState: 9, frequency: 1000000000}},
   {...startup, selected: null}
 ]) assert.equal(status({...live, receiverStartup}).valid, false);
@@ -113,7 +117,9 @@ const gainHealth = {...health, gain: {policy: 'epoch-on-vendor-change',
       metadataAvailable: true, reported: {gRdB: 37, lnaGRdB: 12, currGain: 23.5}},
     B: {...idleGain(31), eventCount: 1, lastEventAt: 1720000003000, epoch: 2,
       metadataAvailable: true, reported: {gRdB: 41, lnaGRdB: 15, currGain: 19.25}}
-  }}};
+  }}, sampleTime: {source: 'sdrplay-delivered-relative-sample-epoch',
+    exact: false, uncertaintyBounded: false, sampleAligned: false,
+    available: true, epoch: '3', nextSample: '4096'}};
 assert.deepEqual(status({...live, receiverHealth: gainHealth}).value.receiverHealth,
   gainHealth, 'Per-tuner vendor gain events and capture epochs survive validation');
 for (const invalidGain of [
@@ -130,6 +136,14 @@ for (const invalidGain of [
       currGain: Infinity}}}}
 ]) assert.equal(status({...live, receiverHealth: {...health, gain: invalidGain}}).valid,
   false, JSON.stringify(invalidGain));
+for (const sampleTime of [
+  {...gainHealth.sampleTime, exact: true},
+  {...gainHealth.sampleTime, source: 'wall-clock'},
+  {...gainHealth.sampleTime, epoch: 3},
+  {...gainHealth.sampleTime, available: false},
+  {...gainHealth.sampleTime, nextSample: '-1'}
+]) assert.equal(status({...live,
+  receiverHealth: {...gainHealth, sampleTime}}).valid, false, JSON.stringify(sampleTime));
 for (const state of ['stopped', 'error']) {
   const stopped = {...live, state, error: state === 'error' ? 'Receiver disconnected' : '',
     receiverHealth: {...activeHealth, monitoring: false}};

@@ -89,6 +89,12 @@ function rspStartup(payload, outer, errors) {
     errors.push(`${name}.requested IF and decimation do not match output rate`);
   if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
     errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  if (!['isoch', 'bulk'].includes(requested.usbMode))
+    errors.push(`${name}.requested.usbMode is invalid`);
+  if (![1, 3].includes(requested.sampleCounterScale))
+    errors.push(`${name}.requested.sampleCounterScale is invalid`);
+  if (!['error', 'verbose'].includes(requested.sdkDebugLevel))
+    errors.push(`${name}.requested.sdkDebugLevel is invalid`);
   if (selected !== null && (!selected || typeof selected !== 'object' || Array.isArray(selected)))
     errors.push(`${name}.selected must be an object or null`);
   if (selected && typeof selected === 'object' && !Array.isArray(selected)) {
@@ -107,6 +113,18 @@ function rspStartup(payload, outer, errors) {
     errors.push(`${name}.sdk.version is invalid`);
   if (stages.apiVersion && sdk.version === null)
     errors.push(`${name}.sdk.version is required after the version check`);
+  const sdkParameters = sdk.parameters;
+  if (!object(sdkParameters)) errors.push(`${name}.sdk.parameters must be an object`);
+  const sdkRate = field => {
+    const value = sdkParameters?.[field];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100000000)
+      errors.push(`${name}.sdk.parameters.${field} is invalid`);
+    return value;
+  };
+  const adcSampleRateHz = sdkRate('adcSampleRateHz');
+  const descriptorSampleRateHz = sdkRate('descriptorSampleRateHz');
+  if (stages.getDeviceParams && !(adcSampleRateHz > 0))
+    errors.push(`${name}.sdk.parameters.adcSampleRateHz is required after parameter retrieval`);
   const allAccepted = RSP_STAGES.every(stage => stages[stage] === true);
   if ((payload.status === 'accepted') !== allAccepted)
     errors.push(`${name}.status disagrees with SDK stages`);
@@ -116,10 +134,13 @@ function rspStartup(payload, outer, errors) {
     hardwareVerified: false, readbackAvailable: false,
     requested: {serial, frequency, sampleRate, agcSetPoint, bandwidthNumber,
       gainReduction, lnaState, dabNotch: requested.dabNotch, rfNotch: requested.rfNotch,
-      ifBandwidthKhz, ifFrequencyKhz, decimation},
+      ifBandwidthKhz, ifFrequencyKhz, decimation, usbMode: requested.usbMode,
+      sampleCounterScale: requested.sampleCounterScale,
+      sdkDebugLevel: requested.sdkDebugLevel},
     selected: selected ? {serial: selected.serial, deviceIndex: selected.deviceIndex,
       hardwareVersion: selected.hardwareVersion, tuner: 'Both', mode: 'Dual_Tuner'} : null,
-    sdk: {version: sdk.version, stages: Object.fromEntries(RSP_STAGES.map(stage => [stage, stages[stage]]))}};
+    sdk: {version: sdk.version, parameters: {adcSampleRateHz, descriptorSampleRateHz},
+      stages: Object.fromEntries(RSP_STAGES.map(stage => [stage, stages[stage]]))}};
 }
 function rspHealth(payload, outer, errors) {
   const name = 'receiverHealth';
@@ -215,6 +236,30 @@ function rspHealth(payload, outer, errors) {
   const result = {schema: 1, receiver: 'RspDuo', monitoring: payload.monitoring,
     overload, ackFailures: count(payload.ackFailures, `${name}.ackFailures`, errors)};
   if (gain !== undefined) result.gain = gain;
+  if (payload.sampleTime !== undefined) {
+    const source = payload.sampleTime;
+    const decimal = (value, field) => {
+      if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)$/.test(value)) {
+        errors.push(`${name}.sampleTime.${field} must be a decimal integer string`);
+        return '0';
+      }
+      return value;
+    };
+    if (!object(source) ||
+        source.source !== 'sdrplay-delivered-relative-sample-epoch' ||
+        source.exact !== false || source.uncertaintyBounded !== false ||
+        source.sampleAligned !== false || typeof source.available !== 'boolean') {
+      errors.push(`${name}.sampleTime has an invalid schema`);
+    } else {
+      const epoch = decimal(source.epoch, 'epoch');
+      const nextSample = decimal(source.nextSample, 'nextSample');
+      if (BigInt(epoch) === 0n || (!source.available && BigInt(nextSample) !== 0n))
+        errors.push(`${name}.sampleTime availability disagrees with its position`);
+      result.sampleTime = {source: source.source, exact: false,
+        uncertaintyBounded: false, sampleAligned: false,
+        available: source.available, epoch, nextSample};
+    }
+  }
   return result;
 }
 function usrpStartup(payload, outer, errors) {
