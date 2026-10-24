@@ -1011,10 +1011,14 @@ class EvidenceStatistics {
         timing_timestamp_ms: item.timing?.timestamp_ms ?? null};
       row.aircraft += 1; joinFrames.set(item.timestamp_ms, row);
     }
+    const decisionGrade = this.timingPolicy === 'exact' && exactTiming > 0;
+    const warning = this.timingPolicy === 'provisional' ?
+      'Operational association uses an inexact receiver time estimate; do not use for acceptance decisions.' :
+      (!decisionGrade && this.eventTimeRejections > 0 ?
+        'Authoritative scoring is blocked because the receiver has not supplied exact RF event time.' :
+        (!decisionGrade ? 'Authoritative scoring is waiting for an exact-timed CPI.' : null));
     return {schema: 'vectorwarp-live-aircraft-scorecard-v1', updated_at: this.state.updatedAt,
-      timing_policy: this.timingPolicy, decision_grade: this.timingPolicy === 'exact',
-      warning: this.timingPolicy === 'provisional' ?
-        'Operational association uses an inexact receiver time estimate; do not use for acceptance decisions.' : null,
+      timing_policy: this.timingPolicy, decision_grade: decisionGrade, warning,
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, config_epoch: this.configEpoch,
       receiver_epoch: this.receiverEpoch, site_epoch: this.key,

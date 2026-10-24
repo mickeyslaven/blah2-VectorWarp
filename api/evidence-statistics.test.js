@@ -240,8 +240,12 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
       reason: 'Heimdall V2 has no device timestamp'}});
   assert.equal(uncertainTruthCalls, 0,
     'inexact Kraken host-arrival time must not request exact ADS-B truth');
-  assert.equal(uncertainStats.liveStatus().data_quality.event_time_rejections, 1);
-  assert.equal(uncertainStats.liveStatus().data_quality.last_event_time_rejection.source,
+  const uncertainStatus = uncertainStats.liveStatus();
+  assert.equal(uncertainStatus.decision_grade, false,
+    'an exact-policy lane without exact RF time must fail closed');
+  assert.match(uncertainStatus.warning, /blocked.*exact RF event time/i);
+  assert.equal(uncertainStatus.data_quality.event_time_rejections, 1);
+  assert.equal(uncertainStatus.data_quality.last_event_time_rejection.source,
     'kraken_heimdall_host_arrival_estimate');
   uncertainStats.close();
 
