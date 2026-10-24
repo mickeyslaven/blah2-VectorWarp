@@ -2,6 +2,8 @@
 Description=VectorWarp radar processor
 Documentation=https://github.com/mickeyslaven/blah2-VectorWarp
 After=network-online.target vectorwarp-api.service
+After=vectorwarp-heimdall.service
+Wants=vectorwarp-heimdall.service
 Wants=network-online.target
 # A direct API restart closes the processor's output socket. Propagate that
 # restart so the processor is quiesced first and never remains active/no-frame.

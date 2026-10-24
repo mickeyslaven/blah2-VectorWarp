@@ -1,0 +1,6 @@
+{
+  "driverCommit": "578b43ddd971786e84e2a6ab3c338ee48c8739c3",
+  "fastTuneFrequencyHz": 101000000,
+  "keepAutotuneFlag": 1,
+  "finishObservedPendingTune": true
+}

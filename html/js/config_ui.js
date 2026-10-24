@@ -24,7 +24,7 @@ const CONFIG_META = {
   'capture.device.heimdall.gain': ['Receiver gain', 'Shared gain in dB. Automatic adjustment updates this after checking all channels.'],
   'capture.device.heimdall.channel_gains': ['Coherent channel gains', 'Optional fixed dB vector, one physical tuner-table gain per channel.'],
   'capture.device.heimdall.gain_control': ['Gain adjustment', 'Automatic checks each Apply and monitors overload. Fixed holds gain for comparisons.'],
-  'capture.device.address': ['USRP address', 'UHD device address or hostname'],
+  'capture.device.address': ['USRP address', 'UHD key=value selector, such as type=b200 or type=b200,serial=…'],
   'capture.device.subdev': ['USRP subdevices', 'UHD mapping for the two receive channels.'],
   'capture.device.antenna': ['USRP antennas', 'Antenna port for each receive channel.'],
   'capture.device.gain': ['Channel gains', 'Gain for each receive channel, in dB.'],
@@ -42,7 +42,7 @@ const CONFIG_META = {
   'capture.replay.state': ['Replay a recording', 'Use the replay file instead of live input'],
   'capture.replay.loop': ['Loop replay', 'Start the recording again after its end.'],
   'capture.replay.file': ['Replay file', 'Full path to the recording used when replay is enabled.'],
-  'capture.replay.provenance': ['Replay provenance', 'Legacy accepts unqualified recordings. Decision-grade requires bounded RF-time provenance.'],
+  'capture.replay.provenance': ['Replay provenance', 'Older recordings remain unqualified; decision-grade requires bounded RF-time provenance.'],
   'capture.replay.format': ['Recording format', 'Auto detects portable recordings; select a legacy format only when needed.'],
   'capture.replay.legacy_block_samples': ['Legacy USRP block samples', 'Required only for old USRP blocks; use the original receiver block size.'],
   'process.performance': ['Performance', 'CPU and GPU settings'],
@@ -1144,6 +1144,9 @@ function group(key, value, path, topLevel = false) {
     const childPath = [...currentPath, childKey];
     // Keep compatibility keys in the draft/YAML, not as nonfunctional controls.
     if (capabilities.fieldRules?.[childPath.join('.')]?.readOnly) return;
+    // Structured controls own their backing values; do not render a second
+    // generic editor for the same setting.
+    if (capabilities.fieldRules?.[childPath.join('.')]?.structuredControl) return;
     if (dotted === 'process.data' && childKey === 'buffer') return;
     if (dotted === 'capture.device' && childKey === 'type') return;
     if (dotted === 'capture.device' && childKey === 'array_geometry') return;
@@ -1660,6 +1663,79 @@ function renderReceiverOverload(status, target = document.getElementById('receiv
     renderReceiverHealth(status, target, true);
 }
 
+function receiverStartupShell(target, title, text) {
+  let heading = target.querySelector('[data-receiver-startup-heading]');
+  if (!heading) {
+    heading = document.createElement('h3');
+    heading.dataset.receiverStartupHeading = '';
+    target.appendChild(heading);
+  }
+  heading.textContent = title;
+  let message = target.querySelector('[data-receiver-startup-message]');
+  if (!message) {
+    message = document.createElement('p');
+    message.dataset.receiverStartupMessage = '';
+    message.setAttribute('role', 'status');
+    target.appendChild(message);
+  }
+  message.textContent = text;
+}
+
+function receiverStartupMismatch(target, visible) {
+  let mismatch = target.querySelector('[data-receiver-startup-mismatch]');
+  if (!visible) { mismatch?.remove(); return; }
+  if (!mismatch) {
+    mismatch = document.createElement('p');
+    mismatch.dataset.receiverStartupMismatch = '';
+    const details = target.querySelector('[data-receiver-startup-details]');
+    target.insertBefore(mismatch, details || null);
+  }
+  mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
+}
+
+function receiverStartupDetails(target, {summaryText, captionText, rows, noteText}) {
+  let details = target.querySelector('[data-receiver-startup-details]');
+  if (!details) {
+    details = document.createElement('details');
+    details.dataset.receiverStartupDetails = '';
+    const summary = document.createElement('summary');
+    summary.dataset.receiverStartupSummary = '';
+    const table = document.createElement('table');
+    table.dataset.receiverStartupTable = '';
+    const caption = document.createElement('caption');
+    caption.dataset.receiverStartupCaption = '';
+    const body = document.createElement('tbody');
+    body.dataset.receiverStartupRows = '';
+    table.append(caption, body);
+    const note = document.createElement('p');
+    note.dataset.receiverStartupNote = '';
+    details.append(summary, table, note);
+    target.appendChild(details);
+  }
+  details.querySelector('[data-receiver-startup-summary]').textContent = summaryText;
+  details.querySelector('[data-receiver-startup-caption]').textContent = captionText;
+  details.querySelector('[data-receiver-startup-note]').textContent = noteText;
+  const body = details.querySelector('[data-receiver-startup-rows]');
+  while (body.rows.length > rows.length) body.deleteRow(-1);
+  rows.forEach(([name, value], index) => {
+    let row = body.rows[index];
+    if (!row) {
+      row = body.insertRow();
+      const label = document.createElement('th');
+      label.scope = 'row';
+      const cell = document.createElement('td');
+      row.append(label, cell);
+    }
+    row.cells[0].textContent = name;
+    row.cells[1].textContent = String(value);
+  });
+}
+
+function clearReceiverStartupDetails(target) {
+  target.querySelector('[data-receiver-startup-mismatch]')?.remove();
+  target.querySelector('[data-receiver-startup-details]')?.remove();
+}
+
 function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
   if (activeConfig.capture?.device?.type === 'HackRF') {
@@ -1670,43 +1746,25 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     renderUsrpStartup(status, target);
     return;
   }
-  const detailsOpen = target.querySelector('details')?.open === true;
-  const heading = document.createElement('h3');
-  heading.textContent = 'SDRplay startup';
-  const message = document.createElement('p');
-  message.setAttribute('role', 'status');
   const processor = status?.processorFresh && status.processor?.receiver === 'RspDuo' &&
     status.processor?.input === 'live' ? status.processor : null;
   const receipt = processor?.receiverStartup;
-  if (!processor) message.textContent = 'No current RSPduo status. Saved settings apply at startup.';
-  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
-  else if (!receipt) message.textContent = 'Startup settings unavailable. Rebuild SDRplay support to see them.';
-  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through SDRplay…';
-  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. SDRplay accepted the last startup settings.';
-  else message.textContent = status.radar === 'receiving' ?
+  const message = !processor ? 'No current RSPduo status. Saved settings apply at startup.' :
+    processor.state === 'error' ? `Receiver error: ${processor.error}` :
+    !receipt ? 'Startup settings unavailable. Rebuild SDRplay support to see them.' :
+    receipt.status !== 'accepted' ? 'Applying settings through SDRplay…' :
+    processor.state === 'stopped' ? 'Receiver stopped. SDRplay accepted the last startup settings.' : status.radar === 'receiving' ?
     'SDRplay accepted settings; receiving radar frames.' :
     'SDRplay accepted settings; waiting for radar frames.';
-  target.replaceChildren(heading, message);
-  if (!receipt) return;
+  receiverStartupShell(target, 'SDRplay startup', message);
+  if (!receipt) { clearReceiverStartupDetails(target); return; }
   const requested = receipt.requested;
   const device = activeConfig.capture.device;
   const matches = requested.frequency === activeConfig.capture.fc &&
     requested.sampleRate === activeConfig.capture.fs && requested.serial === (device.serial || '') &&
     ['agcSetPoint', 'bandwidthNumber', 'gainReduction', 'lnaState', 'dabNotch', 'rfNotch']
       .every(key => JSON.stringify(requested[key]) === JSON.stringify(device[key]));
-  if (!matches) {
-    const mismatch = document.createElement('p');
-    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
-    target.appendChild(mismatch);
-  }
-  const details = document.createElement('details');
-  details.open = detailsOpen;
-  const summary = document.createElement('summary');
-  summary.textContent = 'Startup details';
-  const table = document.createElement('table');
-  const caption = document.createElement('caption');
-  caption.textContent = 'Values sent to SDRplay, not measured tuner values';
-  table.appendChild(caption);
+  receiverStartupMismatch(target, !matches);
   const rows = [
     ['Selected receiver', receipt.selected?.serial || 'Not selected'],
     ['SDRplay API', receipt.sdk.version === null ? 'Not checked' : Number(receipt.sdk.version).toFixed(2)],
@@ -1722,41 +1780,26 @@ function renderReceiverStartup(status, target = document.getElementById('receive
       `${requested.sampleCounterScalePolicy || requested.sampleCounterScale} / ${requested.sampleCounterScale}`],
     ['SDK stages completed', Object.entries(receipt.sdk.stages).filter(([, ok]) => ok).map(([stage]) => stage).join(', ') || 'None']
   ];
-  for (const [name, value] of rows) {
-    const row = document.createElement('tr');
-    const label = document.createElement('th');
-    label.scope = 'row'; label.textContent = name;
-    const cell = document.createElement('td');
-    cell.textContent = String(value);
-    row.append(label, cell); table.appendChild(row);
-  }
-  const note = document.createElement('p');
-  note.textContent = 'These checks do not measure RF performance, filtering or phase coherence.';
-  details.append(summary, table, note);
-  target.appendChild(details);
+  receiverStartupDetails(target, {summaryText: 'Startup details',
+    captionText: 'Values sent to SDRplay, not measured tuner values', rows,
+    noteText: 'These checks do not measure RF performance, filtering or phase coherence.'});
 }
 
 function renderHackrfStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
-  const detailsOpen = target.querySelector('details')?.open === true;
-  const heading = document.createElement('h3');
-  heading.textContent = 'Dual HackRF startup';
-  const message = document.createElement('p');
-  message.setAttribute('role', 'status');
   const processor = status?.processorFresh && status.processor?.receiver === 'HackRF' &&
     status.processor?.input === 'live' ? status.processor : null;
   const receipt = processor?.receiverStartup;
-  if (!processor) message.textContent = 'No current HackRF status. Saved settings apply at startup.';
-  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
-  else if (!receipt) message.textContent = 'HackRF startup receipt unavailable. Rebuild HackRF support to see it.';
-  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through libhackrf…';
-  else if (!receipt.setterAcceptance) message.textContent = 'HackRF started without qualified setter acceptance.';
-  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. The last HackRF startup calls were accepted.';
-  else message.textContent = status.radar === 'receiving' ?
+  const message = !processor ? 'No current HackRF status. Saved settings apply at startup.' :
+    processor.state === 'error' ? `Receiver error: ${processor.error}` :
+    !receipt ? 'HackRF startup receipt unavailable. Rebuild HackRF support to see it.' :
+    receipt.status !== 'accepted' ? 'Applying settings through libhackrf…' :
+    !receipt.setterAcceptance ? 'HackRF started without qualified setter acceptance.' :
+    processor.state === 'stopped' ? 'Receiver stopped. The last HackRF startup calls were accepted.' : status.radar === 'receiving' ?
     'Both HackRF startup paths accepted settings; receiving provisional paired frames.' :
     'Both HackRF startup paths accepted settings; waiting for provisional paired frames.';
-  target.replaceChildren(heading, message);
-  if (!receipt) return;
+  receiverStartupShell(target, 'Dual HackRF startup', message);
+  if (!receipt) { clearReceiverStartupDetails(target); return; }
   const requested = receipt.requested;
   const device = activeConfig.capture.device;
   const matches = requested.frequency === activeConfig.capture.fc &&
@@ -1765,19 +1808,7 @@ function renderHackrfStartup(status, target = document.getElementById('receiver-
     JSON.stringify(requested.lnaGainDb) === JSON.stringify(device.gain_lna) &&
     JSON.stringify(requested.vgaGainDb) === JSON.stringify(device.gain_vga) &&
     JSON.stringify(requested.ampEnabled) === JSON.stringify(device.amp_enable);
-  if (!matches) {
-    const mismatch = document.createElement('p');
-    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
-    target.appendChild(mismatch);
-  }
-  const details = document.createElement('details');
-  details.open = detailsOpen;
-  const summary = document.createElement('summary');
-  summary.textContent = 'Startup setter details';
-  const table = document.createElement('table');
-  const caption = document.createElement('caption');
-  caption.textContent = 'libhackrf setter acceptance, not RF or synchronization readback';
-  table.appendChild(caption);
+  receiverStartupMismatch(target, !matches);
   const resolved = receipt.deviceIdentity?.resolvedSerials || [];
   const yesNo = values => Array.isArray(values) ?
     values.map(value => value ? 'On' : 'Off').join(' / ') : 'Unavailable';
@@ -1791,41 +1822,26 @@ function renderHackrfStartup(status, target = document.getElementById('receiver-
     ['Clock output / trigger input role', `${receipt.synchronization?.clockOutputRole || 'Unavailable'} / ${receipt.synchronization?.hardwareTriggerRole || 'Unavailable'}`],
     ['Baseband filter', 'libhackrf automatic (at most 0.75 × sample rate)']
   ];
-  for (const [name, value] of rows) {
-    const row = document.createElement('tr');
-    const label = document.createElement('th');
-    label.scope = 'row'; label.textContent = name;
-    const cell = document.createElement('td');
-    cell.textContent = String(value);
-    row.append(label, cell); table.appendChild(row);
-  }
-  const note = document.createElement('p');
-  note.textContent = 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.';
-  details.append(summary, table, note);
-  target.appendChild(details);
+  receiverStartupDetails(target, {summaryText: 'Startup setter details',
+    captionText: 'libhackrf setter acceptance, not RF or synchronization readback', rows,
+    noteText: 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.'});
 }
 
 function renderUsrpStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
-  const detailsOpen = target.querySelector('details')?.open === true;
-  const heading = document.createElement('h3');
-  heading.textContent = 'USRP startup';
-  const message = document.createElement('p');
-  message.setAttribute('role', 'status');
   const processor = status?.processorFresh && status.processor?.receiver === 'Usrp' &&
     status.processor?.input === 'live' ? status.processor : null;
   const receipt = processor?.receiverStartup;
-  if (!processor) message.textContent = 'No current USRP status. Saved settings apply at startup.';
-  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
-  else if (!receipt) message.textContent = 'USRP startup readback unavailable. Rebuild UHD support to see it.';
-  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through UHD…';
-  else if (!receipt.readbackAvailable) message.textContent = 'USRP started without qualified UHD setting readback.';
-  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. UHD read back the last startup settings.';
-  else message.textContent = status.radar === 'receiving' ?
+  const message = !processor ? 'No current USRP status. Saved settings apply at startup.' :
+    processor.state === 'error' ? `Receiver error: ${processor.error} Reconnect the USRP if it was unplugged, then run vectorwarp restart.` :
+    !receipt ? 'USRP startup readback unavailable. Rebuild UHD support to see it.' :
+    receipt.status !== 'accepted' ? 'Applying settings through UHD…' :
+    !receipt.readbackAvailable ? 'USRP started without qualified UHD setting readback.' :
+    processor.state === 'stopped' ? 'Receiver stopped. UHD read back the last startup settings.' : status.radar === 'receiving' ?
     'UHD read back both channels; receiving radar frames.' :
     'UHD read back both channels; waiting for radar frames.';
-  target.replaceChildren(heading, message);
-  if (!receipt) return;
+  receiverStartupShell(target, 'USRP startup', message);
+  if (!receipt) { clearReceiverStartupDetails(target); return; }
   const requested = receipt.requested;
   const device = activeConfig.capture.device;
   const matches = requested.frequency === activeConfig.capture.fc &&
@@ -1833,19 +1849,7 @@ function renderUsrpStartup(status, target = document.getElementById('receiver-st
     requested.subdevices === device.subdev &&
     JSON.stringify(requested.antennas) === JSON.stringify(device.antenna) &&
     JSON.stringify(requested.gains) === JSON.stringify(device.gain);
-  if (!matches) {
-    const mismatch = document.createElement('p');
-    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
-    target.appendChild(mismatch);
-  }
-  const details = document.createElement('details');
-  details.open = detailsOpen;
-  const summary = document.createElement('summary');
-  summary.textContent = 'Startup readback details';
-  const table = document.createElement('table');
-  const caption = document.createElement('caption');
-  caption.textContent = 'UHD device-API getter values, not a physical RF measurement';
-  table.appendChild(caption);
+  receiverStartupMismatch(target, !matches);
   const applied = receipt.appliedReadback;
   const coherence = receipt.coherence;
   const identity = coherence?.deviceIdentity;
@@ -1863,18 +1867,9 @@ function renderUsrpStartup(status, target = document.getElementById('receiver-st
     ['Gain A / B', joined(applied?.perChannelGainDb, ' dB')],
     ['Antenna A / B', joined(applied?.perChannelAntenna)]
   ];
-  for (const [name, value] of rows) {
-    const row = document.createElement('tr');
-    const label = document.createElement('th');
-    label.scope = 'row'; label.textContent = name;
-    const cell = document.createElement('td');
-    cell.textContent = String(value);
-    row.append(label, cell); table.appendChild(row);
-  }
-  const note = document.createElement('p');
-  note.textContent = 'These getters do not measure RF performance or map UHD device time to UTC. Exact event-time scoring remains unavailable.';
-  details.append(summary, table, note);
-  target.appendChild(details);
+  receiverStartupDetails(target, {summaryText: 'Startup readback details',
+    captionText: 'UHD device-API getter values, not a physical RF measurement', rows,
+    noteText: 'These getters do not measure RF performance or map UHD device time to UTC. Exact event-time scoring remains unavailable.'});
 }
 
 function renderReceiverSetup() {
@@ -2184,22 +2179,14 @@ async function syncConfigurationFromServer() {
     const serialized = serializeConfig(liveConfig);
     const revision = response.headers.get('ETag')?.replace(/^"|"$/g, '');
     if (serialized === originalConfig) { configRevision = revision; return; }
-    const dirty = serializeConfig(activeConfig) !== originalConfig;
-    if (dirty) {
-      pendingLiveConfig = liveConfig;
-      pendingRevision = revision;
-      updateDirtyState();
-      showMessage('Settings changed elsewhere. Reload saved settings before saving your edits.', 'warning');
-      return;
-    }
-    activeConfig = liveConfig;
-    configRevision = revision;
-    originalConfig = serialized;
-    pendingLiveConfig = null;
-    renderEditor();
-    showMessage('Loaded saved settings. Running settings may differ.', 'success');
-    scheduleValidation();
-    refreshUpstreamStatus();
+    // Never replace the editor from a background poll. Even a clean form can
+    // have a focused field, a native picker, or an expanded receiver section.
+    // Keep the confirmed remote revision pending and let the explicit Reload
+    // action apply it through the existing reset handler.
+    pendingLiveConfig = liveConfig;
+    pendingRevision = revision;
+    updateDirtyState();
+    showMessage('Settings changed elsewhere. Reload saved settings when ready.', 'warning');
   } catch (_) {
     /* The header reports connectivity; keep the last verified values visible. */
   } finally {

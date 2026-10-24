@@ -7,6 +7,7 @@ libusb installation, or Heimdall binary is used.
 import argparse
 import pathlib
 import subprocess
+import shutil
 import tempfile
 
 
@@ -72,7 +73,8 @@ int main(void) {{
         program = directory / 'gpio.c'
         binary = directory / 'gpio'
         program.write_text(harness)
-        subprocess.run(['xcrun', 'clang', '-std=c11', '-Wall', '-Werror', str(program), '-o', str(binary)], check=True)
+        compiler = ['xcrun', 'clang'] if shutil.which('xcrun') else ['cc']
+        subprocess.run([*compiler, '-std=c11', '-Wall', '-Werror', str(program), '-o', str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     print('Kraken RTL-SDR GPIO/bias-tee USB error propagation PASS (mock transfers).')
 

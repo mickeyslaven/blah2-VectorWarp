@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import runpy
 import subprocess
 import tempfile
 import unittest
@@ -331,6 +332,25 @@ endif()
             "bash", str(INSTALL_SCRIPT), "--artifact", str(artifact),
             "--destdir", str(stage), "--target-distro", target_distro, *extra,
         ], cwd=ROOT, text=True, capture_output=True, check=False)
+
+    def test_fresh_install_stages_complete_kraken_sourcekit_lifecycle(self):
+        artifact = self.make_artifact('kraken', 'Kraken')
+        stage_kit = runpy.run_path(str(ROOT / 'script/stage-kraken-kit.py'))['stage']
+        stage_kit(ROOT, artifact / 'receiver-source/kraken')
+        for name in ('vectorwarp-build-kraken.py', 'vectorwarp-build-sdrplay.py'):
+            shutil.copy2(ROOT / 'script' / name, artifact / 'libexec' / name)
+        for name in ('vectorwarp-heimdall.service.in', 'vectorwarp-kraken-build.service.in', '72-vectorwarp-kraken.rules'):
+            shutil.copy2(ROOT / 'contrib/systemd' / name, artifact / 'systemd' / name)
+        stage = self.temp / 'kraken-stage'
+        result = self.install(artifact, stage)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        stable = stage / 'opt/vectorwarp/libexec'
+        for name in ('vectorwarp', 'vectorwarp-build-kraken', 'vectorwarp-build-sdrplay'):
+            self.assertTrue((stable / name).is_file(), name)
+            self.assertNotIn('@PREFIX@', (stable / name).read_text())
+        self.assertEqual((stable / 'vectorwarp').read_bytes(), (stage / 'usr/bin/vectorwarp').read_bytes())
+        self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-kraken-build.service').is_file())
+        self.assertTrue((stage / 'opt/vectorwarp/current/receiver-source/kraken/kit.json').is_file())
 
     def test_installer_renders_the_validated_compiled_receiver_manifest(self):
         for backend, (receivers, _) in RECEIVERS.items():

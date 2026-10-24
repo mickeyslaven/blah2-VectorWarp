@@ -37,6 +37,20 @@ std::vector<uint8_t> frame(unsigned channels = 5, unsigned counter = 0,
     }
   return out;
 }
+std::vector<uint8_t> timed_frame(uint64_t sequence, uint64_t epoch = 1,
+    uint32_t flags = 1, uint64_t hostJitter = 0) {
+  auto out = frame(); out[3] = 'T';
+  std::vector<uint8_t> extension;
+  for (uint32_t word : {1u, 96u, flags, 0u}) be(extension, word);
+  for (uint64_t value : {epoch, sequence * 8, sequence,
+      uint64_t(1000000000 + sequence * 3333), uint64_t(0),
+      uint64_t(1800000000000000000ULL + sequence * 3333 + hostJitter),
+      uint64_t(100), uint64_t(0), sequence, (sequence + 1) * 8}) {
+    be(extension, uint32_t(value >> 32)); be(extension, uint32_t(value));
+  }
+  out.insert(out.begin() + 72, extension.begin(), extension.end());
+  return out;
+}
 struct Capture {
   int listener = -1, client = -1;
   bool record = false;
@@ -103,6 +117,17 @@ struct Capture {
 };
 }
 int main() {
+  // No TAI/discipline/PPS is required for operational coherent samples.
+  { Capture c; c.send_bytes(timed_frame(0), true); c.send_bytes(timed_frame(1, 1, 1, 200));
+    c.finish(); c.length(16); }
+  // USB loss, retune acquisition epochs, protocol downgrade, and reordered
+  // transfers must not join samples across the boundary, regardless of TCP jitter.
+  { Capture c; c.send_bytes(timed_frame(0)); c.send_bytes(timed_frame(2)); c.finish(); c.length(8); }
+  { Capture c; c.send_bytes(timed_frame(0)); c.send_bytes(timed_frame(1, 2)); c.finish(); c.length(8); }
+  { Capture c; c.send_bytes(timed_frame(1)); c.send_bytes(timed_frame(0)); c.finish(); c.length(8); }
+  { Capture c; c.send_bytes(timed_frame(0)); c.send_bytes(frame()); c.finish(); c.length(8); }
+  { Capture c; auto packet = timed_frame(0); packet[75] = 2; c.send_bytes(packet);
+    assert(c.finish(false).find("Unsupported Heimdall ingestion") != std::string::npos); c.length(0); }
   { Capture c; c.send_bytes({'x', 'M', 'x'}); c.send_bytes(frame(), true); c.finish(); c.length(8); }
   { Capture c; c.send_bytes(frame()); c.send_bytes(frame(5, 1)); c.send_bytes(frame(5, 1)); c.finish(); c.length(16); }
   // A per-channel setting change is an epoch boundary even when the Suite's

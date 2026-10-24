@@ -108,6 +108,7 @@ starting radar. `vectorwarp --help` lists its fixed actions:
 | `vectorwarp restart` | Stop and start the full stack with saved settings. |
 | `vectorwarp status` | Show service status. |
 | `vectorwarp logs` | Show recent logs. |
+| `vectorwarp build-kraken` | Build the pinned local Kraken companion from source; never start RF. |
 | `vectorwarp version` | Show the installed version. |
 | `vectorwarp help` | Show all commands and examples. |
 
@@ -302,14 +303,14 @@ the build dependencies below. On Ubuntu or Debian:
 ```bash
 sudo apt update && \
 sudo apt install build-essential cmake ninja-build git curl tar zip unzip pkg-config sudo python3 python3-apt \
-  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev
+  libfftw3-dev libarmadillo-dev libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
 ```
 
 On Fedora:
 
 ```bash
 sudo dnf install gcc-c++ cmake make ninja-build git curl tar zip unzip pkgconf-pkg-config sudo python3 python3-libdnf5 python3-rpm \
-  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel
+  fftw-devel armadillo-devel uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
 ```
 
 The native installer requires Node.js 22 or newer at `/usr/bin/node`, not only
@@ -420,7 +421,13 @@ administrator must inspect that installation's units and stop them manually.
 In **Settings**, select a receiver profile; supply its endpoint or device
 details; set frequency, sample rate, site coordinates, and a writable recording
 directory; then correct any validation errors. Install and configure
-KrakenSDR Suite separately before using its endpoint.
+the pinned local Kraken companion with `vectorwarp build-kraken` when using a
+DEB/RPM package and the loopback endpoint `127.0.0.1`. This explicit administrator
+action downloads checksum-pinned sources and builds under a restricted compiler
+account; package installation and ordinary start never download or build it.
+The packages do not redistribute the upstream Heimdall binary. Native source
+builds already include the companion. A remote Kraken endpoint remains separately
+managed. Do not run an unrelated local Heimdall on the same ports.
 Follow the [receiver-specific steps](SETUP.md) for Kraken, RSPduo, USRP or HackRF.
 
 For SDRplay RSPduo, obtain and license SDRplay's vendor Hardware API yourself.

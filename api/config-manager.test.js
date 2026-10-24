@@ -275,10 +275,10 @@ for (const source of ['local:/etc/passwd', 'local:unknown', 'auto ',
 
   const unchanged = clone(value);
   assert.equal(validateConfig(unchanged, value).valid, true,
-    'An unchanged read-only ADS-B source array must survive an unrelated Apply');
+    'An unchanged ADS-B source array must survive an unrelated Apply');
   unchanged.truth.adsb.sources[1] = 'https://different.example/tar1090';
-  assert.equal(validateConfig(unchanged, value).valid, false,
-    'A changed read-only ADS-B source array must still be rejected');
+  assert.equal(validateConfig(unchanged, value).valid, true,
+    'The structured ADS-B source editor must be able to update its backing array');
 }
 for (const sources of [[], Array(9).fill('local:readsb'),
   ['local:readsb', 'local:readsb'], ['auto', 'https://adsb.example'],
@@ -303,6 +303,25 @@ for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'confi
 const profiles = getDeviceProfiles();
 assert.deepEqual(profiles.map(profile => profile.type).sort(),
   ['HackRF', 'Kraken', 'RspDuo', 'Usrp']);
+const usrpProfile = profiles.find(profile => profile.type === 'Usrp');
+assert.equal(usrpProfile.device.address, 'type=b200',
+  'The B210 profile must use a UHD USB selector, not a hostname-like bare token');
+assert.equal(load('config-usrp.yml').capture.device.address, 'type=b200',
+  'The installed USRP example must select the B200 family');
+for (const address of ['localhost', 'b200', 'type=', '=b200', 'type=b200,serial',
+  'type=b\t200', 'type=b200,type=b210']) {
+  const invalid = load('config-usrp.yml');
+  invalid.capture.device.address = address;
+  assert.equal(validateConfig(invalid).valid, false,
+    `Reject malformed UHD device arguments: ${address}`);
+}
+for (const address of ['type=b200', 'serial=31ABC42', 'addr=192.0.2.1',
+  'type=b200,serial=31ABC42']) {
+  const valid = load('config-usrp.yml');
+  valid.capture.device.address = address;
+  assert.equal(validateConfig(valid).valid, true,
+    `Accept UHD key=value device arguments: ${address}`);
+}
 
 for (const profile of profiles) {
   const switched = clone(sixChannel);

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -23,10 +24,10 @@ SONAME = 'libvectorwarp-simulated-rtlsdr.so'
 FAKE = ROOT / 'test/macos/kraken/fake_rtlsdr.cpp'
 LINUX_DRIVER_FLAGS = ['-DCMAKE_BUILD_TYPE=Release', '-DINSTALL_UDEV_RULES=OFF',
                       '-DDETACH_KERNEL_DRIVER=ON', '-DWITH_RPC=OFF']
-PINS = ROOT / 'config/kraken-macos-sources.json'
-PATCHES = [ROOT / 'script/patches/heimdall-v2-macos.patch',
-           ROOT / 'script/patches/heimdall-v2-coherent-channel-gains.patch',
-           ROOT / 'script/patches/kraken-librtlsdr-macos.patch']
+CONTRACT = runpy.run_path(str(ROOT / 'script/build-kraken-macos.py'))
+PINS = CONTRACT['PINS']
+PATCHES = [ROOT / 'script/patches' / name
+           for group in CONTRACT['PATCHES'].values() for name in group]
 
 
 def digest(path):
@@ -152,13 +153,14 @@ def build(args):
     native = suite / 'heimdall_v2'
     shutil.copytree(trees['uwebsockets'], native / 'uWebSockets', dirs_exist_ok=True)
     shutil.copytree(trees['usockets'], native / 'uWebSockets/uSockets', dirs_exist_ok=True)
-    apply_patch(suite, PATCHES[0])
-    apply_patch(suite, PATCHES[1])
+    for name in CONTRACT['PATCHES']['suite']:
+        apply_patch(suite, ROOT / 'script/patches' / name)
     driver = suite / 'librtlsdr'
     if driver.exists():
         shutil.rmtree(driver)
     shutil.copytree(trees['rtlsdr'], driver)
-    apply_patch(driver, PATCHES[2])
+    for name in CONTRACT['PATCHES']['rtlsdr']:
+        apply_patch(driver, ROOT / 'script/patches' / name)
     for test in ('convergence_oracle_test.py', 'tcp_data_send_test.py',
                  'tcp_data_backpressure_test.py', 'socket_lifecycle_test.py',
                  'watchdog_oracle_test.py'):

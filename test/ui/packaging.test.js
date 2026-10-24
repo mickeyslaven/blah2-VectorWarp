@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const packageScript = read('script/package-native.sh');
 const releaseInstaller = read('script/install-release.sh');
+const nativeInstaller = read('script/install-native.sh');
 const buildScript = read('script/build-native.sh');
 const debPostinst = read('packaging/deb/postinst');
 const debPrerm = read('packaging/deb/prerm');
@@ -118,7 +119,18 @@ assert.match(packageScript, /Debian 13 Trixie/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
+assert.match(packageScript, /Depends: %s, uhd-host, systemd/,
+  'Debian-family packages need UHD host tools and the vendor udev rule, not only libuhd.');
 assert.match(packageScript, /rpmbuild/);
+assert.match(rpmSpec, /^Requires:\s+uhd-firmware$/m,
+  'Fedora packages need the matching B210 firmware image subpackage.');
+assert.match(rpmSpec, /usermod --append --groups usrp vectorwarp/,
+  'Fedora UHD grants B210 device nodes to the usrp group; the processor account must join it.');
+assert.match(rpmSpec, /systemd-sysusers \/usr\/lib\/sysusers\.d\/uhd\.conf/,
+  'Fedora package setup must not depend on UHD sysusers transaction ordering.');
+assert.match(nativeInstaller,
+  /\$RECEIVER_TYPES == \*Usrp\* && \$TARGET_DISTRO == fedora[\s\S]*usermod --append --groups usrp vectorwarp/,
+  'A direct Fedora source install needs the same official UHD device-node group.');
 assert.match(packageScript, /dpkg-deb --build --root-owner-group/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Package/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Version/);

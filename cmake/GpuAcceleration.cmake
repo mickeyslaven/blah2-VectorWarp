@@ -11,6 +11,7 @@ target_compile_features(blah2GpuProcess PUBLIC cxx_std_17)
 # The resident protocol is adjacent to ABI4 and uses canonical FP64 input.
 add_library(blah2GpuResidentProcess STATIC
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
+  ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProof.cpp
   ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentProcess.cpp)
 target_compile_features(blah2GpuResidentProcess PUBLIC cxx_std_17)
@@ -97,7 +98,8 @@ if(NOT BLAH2_GPU STREQUAL "OFF")
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       add_library(blah2GpuResidentVulkan MODULE
         ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentModule.cpp
-        ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp)
+        ${PROJECT_ROOT}/src/process/ambiguity/GpuResidentWire.cpp
+        ${PROJECT_ROOT}/src/process/analysis/ResidentReplaySnapshot.cpp)
       target_compile_features(blah2GpuResidentVulkan PRIVATE cxx_std_17)
       target_compile_definitions(blah2GpuResidentVulkan PRIVATE VKFFT_BACKEND=0)
       target_include_directories(blah2GpuResidentVulkan PRIVATE

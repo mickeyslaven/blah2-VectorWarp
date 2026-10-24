@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sys
 import subprocess
 import tempfile
 
@@ -41,8 +42,11 @@ int oracle_gain(int request) {
         (work / "oracle.c").write_text(oracle_c)
         oracle_path = work / "oracle.dylib"
         fake_path = work / "fake.dylib"
-        subprocess.run(["xcrun", "clang", "-dynamiclib", str(work / "oracle.c"), "-o", str(oracle_path)], check=True)
-        subprocess.run(["xcrun", "clang++", "-std=c++17", "-dynamiclib", "-pthread", "-I", str(source / "include"),
+        cc = ['xcrun', 'clang'] if sys.platform == 'darwin' else ['cc']
+        cxx = ['xcrun', 'clang++'] if sys.platform == 'darwin' else ['c++']
+        shared = ['-dynamiclib'] if sys.platform == 'darwin' else ['-shared', '-fPIC']
+        subprocess.run([*cc, *shared, str(work / "oracle.c"), "-o", str(oracle_path)], check=True)
+        subprocess.run([*cxx, "-std=c++17", *shared, "-pthread", "-I", str(source / "include"),
                         str(Path(__file__).with_name("fake_rtlsdr.cpp")), "-o", str(fake_path)], check=True)
         os.environ["VECTORWARP_KRAKEN_SIM_ROOT"] = str(work)
         fake = ctypes.CDLL(str(fake_path))

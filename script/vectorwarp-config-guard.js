@@ -4,9 +4,10 @@
 const fs = require('fs');
 const path = require('path');
 const {execFileSync} = require('child_process');
-const {readConfig} = require('../api/config-store');
-const {createReceiverJournal} = require('../api/receiver-journal');
-const {evaluateConfigRevision} = require('../api/config-revision-guard');
+const apiRoot = path.join(__dirname, fs.existsSync(path.join(__dirname, '../current/api/config-store.js')) ? '../current/api' : '../api');
+const {readConfig} = require(path.join(apiRoot, 'config-store'));
+const {createReceiverJournal} = require(path.join(apiRoot, 'receiver-journal'));
+const {evaluateConfigRevision} = require(path.join(apiRoot, 'config-revision-guard'));
 
 function writeDiagnostic(filename, value) {
   fs.mkdirSync(path.dirname(filename), {recursive: true, mode: 0o750});

@@ -68,6 +68,30 @@ function change(input, value, event = 'input') {
     assert.equal(optionalSerial.checkValidity(), true);
     assert.equal(query('capture.device.serial').querySelector('label').textContent, 'RSPduo serial');
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 6);
+    const receiverStartup = window.document.getElementById('receiver-startup');
+    const device = saved.capture.device;
+    const receiverStatus = {radar: 'receiving', processorFresh: true, processor: {
+      receiver: 'RspDuo', input: 'live', state: 'running', receiverStartup: {status: 'accepted',
+        selected: {}, sdk: {version: null, stages: {}}, requested: {
+          frequency: saved.capture.fc, sampleRate: saved.capture.fs, serial: device.serial || '',
+          agcSetPoint: device.agcSetPoint, bandwidthNumber: device.bandwidthNumber,
+          gainReduction: device.gainReduction, lnaState: device.lnaState,
+          dabNotch: device.dabNotch, rfNotch: device.rfNotch,
+          ifFrequencyKhz: 0, ifBandwidthKhz: 0, decimation: 1, sampleCounterScale: 1
+        }}}};
+    window.renderReceiverStartup(receiverStatus, receiverStartup);
+    const startupDetails = receiverStartup.querySelector('details');
+    const startupSummary = startupDetails.querySelector('summary');
+    startupDetails.open = true;
+    startupSummary.focus();
+    window.renderReceiverStartup(receiverStatus, receiverStartup);
+    assert.strictEqual(receiverStartup.querySelector('details'), startupDetails,
+      'Diagnostic refresh keeps the expanded receiver details node');
+    assert.strictEqual(receiverStartup.querySelector('summary'), startupSummary,
+      'Diagnostic refresh keeps the focusable receiver summary node');
+    assert.equal(startupDetails.open, true);
+    assert.strictEqual(window.document.activeElement, startupSummary,
+      'Diagnostic refresh does not reset summary focus');
     assert.equal(window.document.querySelector('[role=tab][data-tab=truth] strong').textContent, 'ADS-B');
     assert.equal(query('truth.adsb.enabled').querySelector('label').textContent, 'Show ADS-B');
     window.showMessage('Settings saved. Radar restarted; new frames received.', 'success', '<img src=x> RF not measured.');
@@ -346,6 +370,27 @@ function change(input, value, event = 'input') {
       assert.equal(window.document.querySelectorAll('#settings-panel-location [data-site-action=add]').length, 2);
       if (profile.type !== 'Kraken') assert.equal(query('process.reference_synthesis.mode'), null);
     }
+      // A background revision check must not recreate a clean editor while an
+      // operator is focused in it. The explicit reload button remains the
+      // opt-in boundary for applying the remote version.
+      window.switchDevice('Kraken');
+      const focusedFrequency = query('capture.fc').querySelector('input');
+      focusedFrequency.focus();
+      saved = clone(saved);
+      saved.capture.fc += 1000;
+      revision = 'external-change';
+      Object.defineProperty(window.document, 'hidden', {configurable: true, value: false});
+      await window.syncConfigurationFromServer();
+      assert.strictEqual(query('capture.fc').querySelector('input'), focusedFrequency,
+        'Config polling must preserve the focused form control');
+      assert.strictEqual(window.document.activeElement, focusedFrequency,
+        'Config polling must not reset focus');
+      const reload = window.document.getElementById('config-reset');
+      assert.equal(reload.textContent, 'Reload saved config');
+      assert.equal(reload.disabled, false);
+      reload.click();
+      assert.notStrictEqual(query('capture.fc').querySelector('input'), focusedFrequency,
+        'Explicit reload is allowed to rebuild the editor');
     const previousGet = window.Storage.prototype.getItem;
     const previousSet = window.Storage.prototype.setItem;
     try {

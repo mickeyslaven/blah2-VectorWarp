@@ -24,6 +24,7 @@ struct rtlsdr_dev {
     unsigned channel;
     std::atomic<bool> cancelled{false}, reading{false}, closed{false}, noise{false};
     std::atomic<unsigned> frequency{100000000}, rate{2400000};
+    std::atomic<bool> fast_tune_pending{false};
     std::atomic<int> gain{496};
     std::atomic<int> if_vga_mode{-1};
     std::atomic<int> correction{0};
@@ -148,7 +149,28 @@ int rtlsdr_set_sample_rate(rtlsdr_dev_t* dev, uint32_t rate) {
 uint32_t rtlsdr_get_sample_rate(rtlsdr_dev_t* dev) { return dev->rate.load(); }
 int rtlsdr_set_center_freq(rtlsdr_dev_t* dev, uint32_t frequency) {
     if (!usable(dev, "frequency")) return -1;
-    dev->frequency = frequency; event("frequency", dev->channel, frequency); return 0;
+    dev->frequency = frequency;
+    dev->fast_tune_pending = false;
+    event("frequency", dev->channel, frequency);
+    return 0;
+}
+int rtlsdr_set_center_freq_fast(rtlsdr_dev_t* dev, uint32_t frequency, int flags) {
+    if (!usable(dev, "frequency")) return -1;
+    // Mirror the reviewed 578b43d contract relevant to Heimdall: a successful
+    // fast tune changes the reported frequency and KEEP_AUTOTUNE leaves work
+    // for rtlsdr_finish_tune(). Keep a distinct event so the ABI movement and
+    // the Suite's drag path cannot silently regress to the full-tune fixture.
+    dev->frequency = frequency;
+    dev->fast_tune_pending = (flags & RTLSDR_TUNE_KEEP_AUTOTUNE) != 0;
+    event("fast_frequency", dev->channel,
+          (static_cast<long long>(flags) << 32) | frequency);
+    return 0;
+}
+int rtlsdr_finish_tune(rtlsdr_dev_t* dev) {
+    if (!usable(dev, "frequency")) return -1;
+    const bool pending = dev->fast_tune_pending.exchange(false);
+    event("finish_tune", dev->channel, pending ? 1 : 0);
+    return 0;
 }
 uint32_t rtlsdr_get_center_freq(rtlsdr_dev_t* dev) { return dev->frequency.load(); }
 int rtlsdr_set_tuner_gain_mode(rtlsdr_dev_t* dev, int) { return usable(dev, "gain_mode") ? 0 : -1; }

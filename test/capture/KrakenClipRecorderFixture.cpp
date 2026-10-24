@@ -85,6 +85,23 @@ void ingest(blah2::KrakenClipRecorder& recorder, WireFrame value)
     std::move(value.payload), value.header, nullptr, receipt));
 }
 
+WireFrame timed(WireFrame value, uint64_t first, uint64_t receipt)
+{
+  be(value.fixed, 0, HeimdallFrame::TIMED_MAGIC);
+  auto word = [&](uint32_t v) {
+    for (unsigned shift : {24, 16, 8, 0}) value.metadata.push_back(v >> shift);
+  };
+  for (uint32_t v : {1U, 96U, 1U, 0U}) word(v);
+  for (uint64_t v : {uint64_t(1), first, first / value.header.samplesPerChannel,
+      receipt, uint64_t(0), receipt, uint64_t(100), uint64_t(0),
+      first / value.header.samplesPerChannel, first + value.header.samplesPerChannel}) {
+    word(v >> 32); word(v);
+  }
+  value.header = HeimdallFrame::decode_header(value.fixed);
+  HeimdallFrame::decode_metadata(value.header, value.metadata);
+  return value;
+}
+
 blah2::IqClipRequest request(uint64_t revision, int64_t start, int64_t end)
 {
   return {revision, start + (end - start) / 2, start, end,
@@ -258,13 +275,13 @@ int main()
 
     // Millisecond clip bounds normally cut through Heimdall frames. Both end
     // frames are trimmed channel-by-channel while retaining valid MCHQ blocks.
-    {
+    for (bool withTiming : {false, true}) {
       blah2::KrakenClipRecorder recorder(directory.string(), CHANNELS,
         SAMPLE_RATE, FREQUENCY, options);
-      ingest(recorder, frame(20, 3000));
-      ingest(recorder, frame(21, 3000));
+      ingest(recorder, withTiming ? timed(frame(20, 3000), 60000, 1000000000) : frame(20, 3000));
+      ingest(recorder, withTiming ? timed(frame(21, 3000), 63000, 1001250000) : frame(21, 3000));
       recorder.request(request(10, 999, 1002));
-      ingest(recorder, frame(22, 3000));
+      ingest(recorder, withTiming ? timed(frame(22, 3000), 66000, 1002500000) : frame(22, 3000));
       const auto status = wait(recorder);
       assert(status.revision == 10 && status.error.empty() &&
         status.samples == 7200);
@@ -277,6 +294,19 @@ int main()
         for (const auto& channel : block) assert(channel.size() == count);
       }
       assert(!reader.read(block));
+      if (withTiming) {
+        std::ifstream file(status.file, std::ios::binary);
+        std::array<uint8_t, 32> fixed{}; file.read(reinterpret_cast<char*>(fixed.data()), fixed.size());
+        auto header = HeimdallFrame::decode_header(fixed);
+        std::vector<uint8_t> metadata(HeimdallFrame::metadata_size(header));
+        file.read(reinterpret_cast<char*>(metadata.data()), metadata.size());
+        HeimdallFrame::decode_metadata(header, metadata);
+        assert(header.timing.firstSample == 60600 && header.timing.anchorSample == 63000);
+        assert(header.timing.realtimeNanoseconds == 1000000000);
+        const auto sidecar = json_file(status.file + ".json");
+        assert(!sidecar["upstreamTiming"]["hardwareUtc"].GetBool());
+        assert(!sidecar["eventTime"]["exact"].GetBool());
+      }
     }
 
     // A revised overlapping request replaces the active bounds and produces

@@ -14,6 +14,17 @@ Requires:       shadow-utils
 Requires:       util-linux
 Requires:       gcc-c++
 Requires:       binutils
+Requires:       cmake
+Requires:       ninja-build
+Requires:       make
+Requires:       git
+Requires:       pkgconf-pkg-config
+Requires:       eigen3-devel
+Requires:       libusb1-devel
+Requires:       openssl-devel
+Requires:       zlib-devel
+Requires:       ca-certificates
+Requires:       uhd-firmware
 %if 0%{?fedora} == 44
 Requires:       python3-libdnf5
 Requires:       python3-rpm
@@ -58,9 +69,22 @@ fi
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
   systemd-tmpfiles --create /usr/lib/tmpfiles.d/vectorwarp.conf
 fi
+# The UHD dependency owns this declaration. Materialize it here as well as
+# relying on RPM's transaction integration so our following membership update
+# is independent of sysusers trigger ordering.
+if [ -f /usr/lib/sysusers.d/uhd.conf ] &&
+    command -v systemd-sysusers >/dev/null 2>&1; then
+  systemd-sysusers /usr/lib/sysusers.d/uhd.conf
+fi
+if getent group usrp >/dev/null 2>&1 &&
+    getent passwd vectorwarp >/dev/null 2>&1; then
+  usermod --append --groups usrp vectorwarp
+else
+  printf '%s\n' 'USRP access needs local review: expected Fedora UHD usrp group and vectorwarp account.' >&2
+fi
 if command -v udevadm >/dev/null 2>&1; then
   udevadm control --reload ||
-    printf '%s\n' 'HackRF udev rule reload needs local review; reconnect after reloading rules.' >&2
+    printf '%s\n' 'Receiver udev rule reload needs local review; reconnect USB receivers after reloading rules.' >&2
 fi
 /usr/bin/python3 -I /opt/vectorwarp/libexec/vectorwarp-sudoers-migrate ||
   printf '%s\n' 'VectorWarp sudoers needs administrator review; customized content was preserved.' >&2
@@ -113,6 +137,8 @@ fi
 /usr/bin/vectorwarp
 /usr/lib/systemd/system/vectorwarp-api.service
 /usr/lib/systemd/system/vectorwarp-processor.service
+/usr/lib/systemd/system/vectorwarp-heimdall.service
+/usr/lib/systemd/system/vectorwarp-kraken-build.service
 /usr/lib/systemd/system/vectorwarp-restart.service
 /usr/lib/systemd/system/vectorwarp-health-watchdog.service
 /usr/lib/systemd/system/vectorwarp-health-watchdog.timer
@@ -126,6 +152,7 @@ fi
 /usr/lib/systemd/system/multi-user.target.wants
 /usr/lib/sysusers.d/vectorwarp.conf
 /usr/lib/udev/rules.d/72-vectorwarp-hackrf.rules
+/usr/lib/udev/rules.d/72-vectorwarp-kraken.rules
 /usr/lib/tmpfiles.d/vectorwarp.conf
 %config(noreplace) /etc/sudoers.d/vectorwarp
 %dir /etc/vectorwarp-management

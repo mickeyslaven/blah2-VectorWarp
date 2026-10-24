@@ -317,6 +317,11 @@ try {
   measuredGain.process.performance.acceleration = 'auto';
   measuredGain.capture.device.heimdall.gain_control = 'measured';
   persistGroup('measured-gain-policy', krakenBase, measuredGain, ['capture.device.heimdall.gain_control']);
+  const adsbBaseline = clone(krakenBase);
+  adsbBaseline.process.performance.acceleration = 'auto';
+  const adsbSources = clone(adsbBaseline);
+  adsbSources.truth.adsb.sources = ['local:readsb', 'https://backup.example/tar1090'];
+  persistGroup('structured-adsb-sources', adsbBaseline, adsbSources, ['truth.adsb.sources']);
   const remaining = Object.keys(FIELD_RULES).filter(key => !FIELD_RULES[key].readOnly && !edited.has(key));
   assert.deepEqual(remaining, [], `editable fields lack a persisted valid non-default case: ${remaining.join(', ')}`);
   console.log(`Configuration inventory covered ${covered.size}/${Object.keys(FIELD_RULES).length}; validated ${rejected} invalid values; persisted non-default edits for all ${edited.size} editable fields (${changed} scalar plus grouped cases).`);

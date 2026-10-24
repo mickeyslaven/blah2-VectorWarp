@@ -31,15 +31,21 @@ float read_le_float(const uint8_t *bytes)
   std::memcpy(&value, &bits, sizeof(value));
   return value;
 }
+uint64_t read_be_u64(const uint8_t *bytes)
+{
+  return (static_cast<uint64_t>(read_be_u32(bytes)) << 32) | read_be_u32(bytes + 4);
+}
 }
 
 HeimdallFrame::Header HeimdallFrame::decode_header(
   const std::array<uint8_t, FIXED_HEADER_SIZE>& bytes)
 {
-  if (read_be_u32(bytes.data()) != MAGIC)
+  const auto magic = read_be_u32(bytes.data());
+  if (magic != MAGIC && magic != TIMED_MAGIC)
     throw std::runtime_error("Invalid Heimdall V2 frame magic");
 
   Header header;
+  header.timing.available = magic == TIMED_MAGIC;
   header.numChannels = read_be_u32(bytes.data() + 4);
   header.samplesPerChannel = read_be_u32(bytes.data() + 8);
   header.phaseState = read_be_u32(bytes.data() + 12);
@@ -57,7 +63,8 @@ HeimdallFrame::Header HeimdallFrame::decode_header(
 
 std::size_t HeimdallFrame::metadata_size(const Header& header)
 {
-  return static_cast<std::size_t>(header.numChannels) * 2 * sizeof(float);
+  return static_cast<std::size_t>(header.numChannels) * 2 * sizeof(float) +
+    (header.timing.available ? TIMING_SIZE : 0);
 }
 
 void HeimdallFrame::decode_metadata(
@@ -79,6 +86,36 @@ void HeimdallFrame::decode_metadata(
     header.frequencies[channel] = frequency;
     header.gains[channel] = gain;
   }
+  if (header.timing.available) {
+    const auto* data = bytes.data() + header.numChannels * 8;
+    if (read_be_u32(data) != 1 || read_be_u32(data + 4) != TIMING_SIZE ||
+        read_be_u32(data + 12) >= header.numChannels)
+      throw std::runtime_error("Unsupported Heimdall ingestion timing extension");
+    auto& t = header.timing;
+    t.flags = read_be_u32(data + 8); t.referenceChannel = read_be_u32(data + 12);
+    t.epoch = read_be_u64(data + 16); t.firstSample = read_be_u64(data + 24);
+    t.transferSequence = read_be_u64(data + 32); t.monotonicNanoseconds = read_be_u64(data + 40);
+    t.taiNanoseconds = read_be_u64(data + 48); t.realtimeNanoseconds = read_be_u64(data + 56);
+    t.clockReadSpanNanoseconds = read_be_u64(data + 64);
+    t.systemMaxErrorNanoseconds = read_be_u64(data + 72); t.bufferSequence = read_be_u64(data + 80);
+    t.anchorSample = read_be_u64(data + 88);
+    if ((t.flags & ~7U) || t.epoch == 0 || t.realtimeNanoseconds == 0 ||
+        t.realtimeNanoseconds > uint64_t(std::numeric_limits<int64_t>::max()) ||
+        t.firstSample > std::numeric_limits<uint64_t>::max() - header.samplesPerChannel ||
+        t.anchorSample < t.firstSample + header.samplesPerChannel)
+      throw std::runtime_error("Invalid Heimdall ingestion timing extension");
+  }
+}
+
+bool HeimdallFrame::timing_contiguous(const Header& previous, const Header& current)
+{
+  const auto& a = previous.timing; const auto& b = current.timing;
+  if (a.available != b.available) return false;
+  if (!a.available) return true;
+  return a.epoch == b.epoch && a.referenceChannel == b.referenceChannel &&
+    a.firstSample + previous.samplesPerChannel == b.firstSample &&
+    a.transferSequence + 1 == b.transferSequence && a.bufferSequence + 1 == b.bufferSequence &&
+    (!(a.flags & b.flags & 1) || b.monotonicNanoseconds > a.monotonicNanoseconds);
 }
 
 std::size_t HeimdallFrame::payload_size(const Header& header)

@@ -1,4 +1,4 @@
-// Adjacent resident ABI11 module. Older cohorts are separate targets.
+// Adjacent resident ABI12 module. Older cohorts are separate targets.
 #include "GpuResidentWire.h"
 #include "GpuResidentHash.h"
 #include "GpuResidentEvidenceLayout.h"
@@ -34,6 +34,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  v.correlation=c.correlation;
  v.sampleRate=c.sampleRate;
  v.middle=c.middle;
+ v.replayMaxBytes=c.replay.maxBytes;
  v.fusion={uint32_t(c.fusion.mode),c.fusion.beams,c.fusion.frequencyHz,
   c.fusion.radiusM,c.fusion.element0Rad,c.fusion.elementStepRad,
   c.fusion.directPathAzimuthRad,c.fusion.directPathNullDb,
@@ -44,6 +45,7 @@ static ResidentFrameConfig privateConfig(const resident::Config& c){
  const auto& d=c.detector;
  auto& p=v.postprocess;
  p.enabled=true;
+ p.replaySnapshot=bool(c.replay.maxBytes);
  p.detection=d.enabled;
  p.pfa=d.pfa;
  p.minDoppler=d.minDoppler;
@@ -97,6 +99,8 @@ class ResidentModule final:public resident::Backend {
  uint64_t outputPresence_=0;
  uint32_t committedSlot_=0,preparedSlot_=1;
  uint64_t event_=0;
+ uint64_t snapshotGeneration_=0;
+ uint32_t snapshotCount_=0;
  bool committed_=false,ready_=false,prepared_=false;
  resident::Token token_{};
  static Bytes sub(Bytes b,size_t offset,size_t size){rw::require(offset<=b.size&&size<=b.size-offset,"Resident evidence slice overflow");
@@ -429,6 +433,47 @@ public:
  void settle(const Packet& p)override{rw::require(prepared_&&committed_&&rw::same(p.tracker,token_),"Resident module settlement mismatch");
  control(p,resident::Phase::settled);
  prepared_=ready_=false;}
+ void snapshot(const Packet& p)override{
+  rw::require(!ready_&&!prepared_&&committed_&&config_.replay.maxBytes&&
+   snapshotCount_<config_.replay.maxFrames&&snapshotGeneration_!=pipeline_->generation_&&
+   p.frame.logicalId==pipeline_->generation_&&rw::same(p.tracker,token_),
+   "Resident replay snapshot requires a new settled frame within its bound");
+  namespace rr=resident_replay;
+  rr::ResidentReplaySnapshot s;
+  for(uint32_t i=1;i<=20;++i)s.blocks.push_back({rr::BlockKind(i),{}});
+  auto bytes=[&](rr::BlockKind kind)->std::vector<uint8_t>&{return s.blocks.at(uint32_t(kind)-1).bytes;};
+  for(auto& b:pipeline_->exportReplayBlocks())bytes(b.kind)=std::move(b.bytes);
+  // prepareReference already retained the acknowledged committed checkpoint;
+  // no reference readback/invalidation is needed at this settled boundary.
+  referenceCheckpoint(p);
+  const auto cp=map_.read(Section::referenceCheckpoint);
+  bytes(rr::BlockKind::referenceCheckpoint).assign(cp.data,cp.data+cp.size);
+  auto& covariance=bytes(rr::BlockKind::covariance);covariance.resize(1024);
+  rw::Writer cw{{covariance.data(),covariance.size()}};
+  for(size_t i=0;i<64;++i){cw.f64(i*16,reference_.covariance[i].real());cw.f64(i*16+8,reference_.covariance[i].imag());}
+  s.covarianceValid=reference_.covarianceValid;
+  auto& detections=bytes(rr::BlockKind::detections);
+  detections.resize(size_t(config_.geometry.doppler)*config_.geometry.delays*32,0);
+  rw::require(metrics_.detectionCount<=detections.size()/32,"Replay detection count overflow");
+  std::memcpy(detections.data(),map_.read(Section::detections).data,metrics_.detectionCount*32);
+  if(config_.tracker.enabled){auto& tracker=bytes(rr::BlockKind::trackerCheckpoint);
+   const auto source=map_.read(committedSlot_?Section::tracker1:Section::tracker0);tracker.resize(source.size,0);
+   rw::require(trackerResult_.checkpointWords<=source.size/4,"Replay tracker checkpoint overflow");
+   std::memcpy(tracker.data(),source.data,trackerResult_.checkpointWords*4);}
+  const auto config=resident::encodeConfig(config_);
+  bytes(rr::BlockKind::configuration).assign(config.begin(),config.end());
+  resident::Sha256 rawHash;const auto& raw=bytes(rr::BlockKind::rawIq);rawHash.add(raw.data(),raw.size());
+  s.identity={config_.epoch,p.frame.logicalId,pipeline_->generation_,p.frame.consumedSequence,
+   p.frame.signalTimestampMs,token_.transaction,configHash_,imageHash_,rawHash.finish()};
+  const auto device=map_.read(Section::device);resident::Sha256 deviceHash;
+  deviceHash.add(device.data,device.size);s.identity.deviceHash=deviceHash.finish();
+  // Validate the complete temporary object before publishing a single byte.
+  const auto encoded=rr::encode(s,config_);const auto output=map_.bytes(Section::replaySnapshot);
+  rw::require(output.size==encoded.size(),"Replay snapshot section shape differs");
+  std::memcpy(output.data,encoded.data(),encoded.size());
+  ++snapshotCount_;snapshotGeneration_=pipeline_->generation_;
+  control(p,resident::Phase::settled);
+ }
  void restore(const Packet& p)override{rw::require(!ready_&&!prepared_,"Resident module restore while pending");
  rw::Reader r{map_.read(Section::referenceCheckpoint)};
  rw::require(r.u32(0)==1&&r.u32(4)==256&&r.u64(8)==config_.epoch&&r.u64(24)==config_.geometry.clutterSamples&&r.u64(32)==config_.geometry.channels&&r.u64(56)<=8,"Resident reference checkpoint envelope mismatch");
@@ -465,7 +510,7 @@ public:
 };
 } }
 extern "C" blah2::resident::Backend* blah2_gpu_create_resident(unsigned abi,const blah2::resident::Config* config,const blah2::resident::Mapping* map){
- if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI11 mismatch");}
+ if(abi!=blah2::resident::moduleAbi||!config||!map){throw std::runtime_error("Resident module ABI12 mismatch");}
  blah2::resident::validateConfig(*config);
  auto instance=std::make_shared<blah2::Instance>();
  for(auto candidate:blah2::enumerate(*instance))if(candidate.info.id==config->device)return new blah2::ResidentModule(instance,std::move(candidate),*config,*map);

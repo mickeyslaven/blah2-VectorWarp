@@ -1,0 +1,5 @@
+Oct 24 18:42:07 fedora3 systemd[1]: Started vectorwarp-heimdall-f47-gate.service - [systemd-run] /opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/bin/heimdall -n 5 --serials 1000,1001,1002,1003,1004.
+Oct 24 18:42:07 fedora3 (heimdall)[1619131]: vectorwarp-heimdall-f47-gate.service: Unable to locate executable '/opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/bin/heimdall': Permission denied
+Oct 24 18:42:07 fedora3 (heimdall)[1619131]: vectorwarp-heimdall-f47-gate.service: Failed at step EXEC spawning /opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/bin/heimdall: Permission denied
+Oct 24 18:42:07 fedora3 systemd[1]: vectorwarp-heimdall-f47-gate.service: Main process exited, code=exited, status=203/EXEC
+Oct 24 18:42:07 fedora3 systemd[1]: vectorwarp-heimdall-f47-gate.service: Failed with result 'exit-code'.

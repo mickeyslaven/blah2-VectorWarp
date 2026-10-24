@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "passed": true,
+  "requiredTiming": true,
+  "appliedExactConfiguredGains": true,
+  "controlStatusesBeforeSettle": 54,
+  "commandResponse": {
+    "channel_gains": [
+      2.7,
+      2.7,
+      1.4,
+      1.4,
+      3.7
+    ],
+    "status": "success"
+  },
+  "settledStatus": {
+    "calibration_state": "CONVERGED",
+    "settings": {
+      "center_freq": 527000000,
+      "gain": 2,
+      "rtl_tcp_channel": 0,
+      "sample_rate": 2400000
+    },
+    "num_channels": 5,
+    "operating_mode": "coherent",
+    "wideband_enabled": false,
+    "channel_gains": [
+      2.7,
+      2.7,
+      1.4,
+      1.4,
+      3.7
+    ],
+    "phase_state": 4,
+    "noise_source": false,
+    "coherence_events": 0,
+    "recovering": false,
+    "reconfiguring": false,
+    "adc_headroom": {
+      "schema": 1,
+      "source": "rtl2832_uint8_precalibration",
+      "sample_stride": 64,
+      "channels": [
+        {
+          "channel": 0,
+          "actual_gain_db": 2.7,
+          "generation": 1,
+          "components": 16056320,
+          "rail_components": 0,
+          "near_rail_components": 0,
+          "sampled_components": 250880,
+          "rms_fraction": 0.157816
+        },
+        {
+          "channel": 1,
+          "actual_gain_db": 2.7,
+          "generation": 1,
+          "components": 16056320,
+          "rail_components": 0,
+          "near_rail_components": 0,
+          "sampled_components": 250880,
+          "rms_fraction": 0.154703
+        },
+        {
+          "channel": 2,
+          "actual_gain_db": 1.4,
+          "generation": 1,
+          "components": 16056320,
+          "rail_components": 0,
+          "near_rail_components": 0,
+          "sampled_components": 250880,
+          "rms_fraction": 0.137053
+        },
+        {
+          "channel": 3,
+          "actual_gain_db": 1.4,
+          "generation": 1,
+          "components": 16056320,
+          "rail_components": 0,
+          "near_rail_components": 0,
+          "sampled_components": 250880,
+          "rms_fraction": 0.138256
+        },
+        {
+          "channel": 4,
+          "actual_gain_db": 3.7,
+          "generation": 1,
+          "components": 16056320,
+          "rail_components": 0,
+          "near_rail_components": 0,
+          "sampled_components": 250880,
+          "rms_fraction": 0.192415
+        }
+      ]
+    }
+  },
+  "postCaptureStatus": {
+    "calibration_state": "CONVERGED",
+    "settings": {
+      "center_freq": 527000000,
+      "gain": 2,
+      "rtl_tcp_channel": 0,
+      "sample_rate": 2400000
+    },
+    "num_channels": 5,
+    "operating_mode": "coherent",
+    "channel_gains": [
+      2.7,
+      2.7,
+      1.4,
+      1.4,
+      3.7
+    ],
+    "phase_state": 4,
+    "noise_source": false,
+    "coherence_events": 0,
+    "recovering": false,
+    "reconfiguring": false
+  },
+  "stream": {
+    "count": 2931,
+    "first": {
+      "counter": 15,
+      "frequencies": [
+        527000000.0,
+        527000000.0,
+        527000000.0,
+        527000000.0,
+        527000000.0
+      ],
+      "gains": [
+        2.700000047683716,
+        2.700000047683716,
+        1.399999976158142,
+        1.399999976158142,
+        3.700000047683716
+      ],
+      "group": 0,
+      "magic": "MCHT",
+      "phase": 4,
+      "samples": 16384,
+      "timing": [
+        1,
+        96,
+        7,
+        0,
+        16,
+        65011712,
+        3968,
+        864208466392673,
+        1792882033615208409,
+        1792881996615208365,
+        2491,
+        328025000,
+        3851,
+        65028096
+      ]
+    },
+    "last": {
+      "counter": 15,
+      "frequencies": [
+        527000000.0,
+        527000000.0,
+        527000000.0,
+        527000000.0,
+        527000000.0
+      ],
+      "gains": [
+        2.700000047683716,
+        2.700000047683716,
+        1.399999976158142,
+        1.399999976158142,
+        3.700000047683716
+      ],
+      "group": 0,
+      "magic": "MCHT",
+      "phase": 4,
+      "samples": 16384,
+      "timing": [
+        1,
+        96,
+        7,
+        0,
+        16,
+        113016832,
+        6898,
+        864228468482144,
+        1792882053617531086,
+        1792882016617531068,
+        80,
+        337525000,
+        6781,
+        113033216
+      ]
+    },
+    "totalSamplesPerChannel": 48021504
+  },
+  "completedAtUnixNs": 1792882016639030946
+}

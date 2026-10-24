@@ -22,6 +22,8 @@ const rate = -(delayed.doppler) * (C / config.capture.fc);
 assert.ok(Number.isFinite(rate) && rate > 0, 'Doppler is numeric Hz derived from metres/second');
 assert.ok(Number.isFinite(delayed.delay_rate_km_s));
 assert.ok(Number.isFinite(delayed.doppler_rate_hz_s));
+assert.equal(delayed.frequency_hz, 100000000);
+assert.equal(delayed.delay_definition, 'excess_bistatic_path_km');
 assert.deepEqual(history.update(point(104, .7)).data.abc, delayed,
   'PR #5 duplicate coordinates retain the last computed overlay');
 assert.deepEqual(history.update(point(102, .8)).data.abc, delayed, 'Out-of-order position is ignored');
@@ -36,4 +38,11 @@ for (let i = 0; i < 20; i++) bounded.update(point(100 + i, .1 + i / 100));
 assert.ok(bounded.history.get('abc').length <= 4, 'History is bounded by smoothing window');
 bounded.configure({...config, capture: {fc: 200000000}});
 assert.equal(bounded.history.size, 0, 'Configuration change resets geometry history');
+const doubledCarrier = new DelayDopplerHistory({...config, capture: {fc: 200000000}});
+doubledCarrier.update(point(100, .5));
+const doubled = doubledCarrier.update(point(101, .6)).data.abc;
+assert.ok(Math.abs(doubled.doppler / first.doppler - 2) < 1e-9,
+  'Bistatic Doppler must scale with the configured live carrier frequency');
+assert.ok(Math.abs(doubled.delay - first.delay) < 1e-9,
+  'Excess-path delay must remain independent of carrier frequency');
 console.log('ADS-B WGS84 geometry, units, PR #5 timing/duplicates, ordering, eviction and reset tests passed.');

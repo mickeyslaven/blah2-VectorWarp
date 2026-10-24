@@ -40,14 +40,27 @@ def receive(sock, size):
 def packet(sock):
     header = receive(sock, 32)
     magic, channels, samples, phase, noise, counter, group, retuning = struct.unpack(">8I", header)
-    if magic != 0x4D434851 or not 2 <= channels <= 8 or not 1 <= samples <= 262144:
+    if magic not in (0x4D434851, 0x4D434854) or not 2 <= channels <= 8 or not 1 <= samples <= 262144:
         raise RuntimeError("Invalid MCHQ header")
     metadata = receive(sock, channels * 8)
     values = struct.unpack("<" + "ff" * channels, metadata)
+    ingest_timing = None
+    if magic == 0x4D434854:
+        timing = receive(sock, 96)
+        if struct.unpack('>II', timing[:8]) != (1, 96):
+            raise RuntimeError('Unsupported Heimdall timing extension')
+        metadata += timing
+        fields = struct.unpack('>4I10Q', timing)
+        ingest_timing = dict(epoch=fields[4], first_sample=fields[5], transfer_sequence=fields[6],
+            monotonic_raw_ns=fields[7], tai_ns=fields[8], realtime_ns=fields[9],
+            clock_read_span_ns=fields[10], system_maxerror_ns=fields[11],
+            buffer_sequence=fields[12], anchor_sample=fields[13], flags=fields[2],
+            hardware_utc=False, usb_adc_latency_known=False)
     payload = receive(sock, channels * samples * 2)
     info = dict(channels=channels, samples=samples, phase=phase, noise=noise,
                 frequency_change_counter=counter, group=group, retuning=retuning,
                 frequencies=list(values[::2]), gains=list(values[1::2]))
+    if ingest_timing is not None: info['ingest_timing'] = ingest_timing
     if not all(math.isfinite(v) for v in values):
         raise RuntimeError("Non-finite receiver metadata")
     return (header, metadata, payload), info
@@ -103,6 +116,7 @@ def main():
                 if not manifest["packets"]:
                     manifest["start_utc_ns"] = time.time_ns()
                     manifest["first_header"] = info
+                    manifest['source_sequence_counter_available'] = 'ingest_timing' in info
                     manifest["start_monotonic"] = time.monotonic()
                 last_signature = signature
                 for block in blocks:

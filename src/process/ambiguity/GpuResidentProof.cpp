@@ -173,7 +173,7 @@ void validateEvidence(const Config& c,const Packet& p,ConstBytes ready,ConstByte
  require(b.nativeGeneration==p.frame.logicalId&&b.residentGeneration==p.frame.logicalId&&b.batchCapacity==a.batchCapacity&&b.batchCount==(g.channels+b.batchCapacity-1)/b.batchCapacity,"Resident prepared batch identity differs");
  const uint32_t hop=1024-g.clutterBins+1,blocks=1+(g.clutterSamples-1)/hop;
  require(b.nativeShape==std::array<uint32_t,6>{g.clutterSamples,g.clutterBins,1024,hop,blocks,b.batchCapacity}&&!b.nativeReferenceStatus[0]&&b.nativeReferenceStatus[4]==blocks&&b.nativeReferenceStatus[12]==1,"Resident native reference coverage differs");
- const bool diagnosticResidual=p.diagnosticPresence&(bit(Section::filtered)|bit(Section::tail));
+ const bool diagnosticResidual=c.replay.maxBytes||(p.diagnosticPresence&(bit(Section::filtered)|bit(Section::tail)));
  uint32_t next=0;
  for(uint32_t i=0;i<b.batchCount;++i){const auto& x=b.batches[i];
  const auto active=std::min(b.batchCapacity,g.channels-next);

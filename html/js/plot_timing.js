@@ -20,6 +20,8 @@ var layout = {
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
+  // Live points should not reset a zoomed timing investigation.
+  uirevision: 'vectorwarp-timing',
   displayModeBar: false,
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
@@ -68,7 +70,7 @@ var data = [
   }
 ];
 
-Plotly.newPlot('data', data, layout, config);
+Plotly.react('data', data, layout, config);
 
 // callback function
 var radarUpdates = startRadarPlot(urlTiming, async function (data) {
@@ -103,7 +105,7 @@ var radarUpdates = startRadarPlot(urlTiming, async function (data) {
       data_trace.push(trace);
     }
 
-    await Plotly.newPlot('data', data_trace, layout, config);
+    await Plotly.react('data', data_trace, layout, config);
     plottedKeys = signature;
   }
   // case update plot

@@ -8,7 +8,8 @@ const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/conf
 const {setupDefaults} = require('../../api/config-store');
 
 const clone = value => JSON.parse(JSON.stringify(value));
-const saved = setupDefaults();
+let saved = setupDefaults();
+let writes = 0;
 saved.location.rx.latitude = 40.4420304;
 saved.location.rx.longitude = -80.0566972;
 saved.truth.adsb.tar1090 = 'http://pi-zero.local/tar1090';
@@ -28,6 +29,15 @@ window.rememberApiPort = () => {};
 window.fetch = async (url, options = {}) => {
   let body;
   if (url === '/api/config') body = saved;
+  else if (url.startsWith('/api/config?')) {
+    assert.equal(options.method, 'PUT');
+    assert.equal(options.headers['If-Match'], '"adsb-test"');
+    const next = JSON.parse(options.body);
+    assert.equal(validateConfig(next, saved).valid, true, 'Structured sources are writable');
+    saved = next;
+    writes++;
+    body = {ok: true, restarting: false, revision: 'adsb-test', message: 'Saved locally.'};
+  }
   else if (url === '/api/config/capabilities') body = {editable: true, restartAvailable: false,
     configRevision: 'adsb-test', fieldRules: FIELD_RULES,
     deviceProfiles: getDeviceProfiles().map(profile => ({...profile, liveAvailable: false}))};
@@ -47,6 +57,10 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
   try {
     await window.renderConfiguration();
     const field = window.document.querySelector('[data-path="truth.adsb.tar1090"]');
+    assert.equal(FIELD_RULES['truth.adsb.sources'].readOnly, undefined);
+    assert.equal(FIELD_RULES['truth.adsb.sources'].structuredControl, 'truth.adsb.tar1090');
+    assert.equal(window.document.querySelector('[data-path="truth.adsb.sources"]'), null,
+      'The structured source controls must not have a duplicate generic editor');
     assert.equal(field.querySelector('label').textContent, 'ADS-B sources');
     const locals = field.querySelectorAll('[data-adsb-source="local"]');
     assert.deepEqual([...locals].map(input => input.value),
@@ -64,7 +78,8 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     const lol = field.querySelector('[data-adsb-exchange="adsb-lol"]');
     lol.checked = true;
     lol.dispatchEvent(new window.Event('change', {bubbles: true}));
-    assert.equal(await window.validateActiveConfiguration(), true);
+    const valid = await window.validateActiveConfiguration();
+    assert.equal(valid, true, JSON.stringify(validateConfig(candidate, saved)));
     assert.deepEqual(candidate.truth.adsb.sources, [
       'http://pi-zero.local/tar1090',
       'http://strix.local:8080',
@@ -73,6 +88,10 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
       'exchange:https://api.adsb.lol/v2/point/40.4420304/-80.0566972/60'
     ]);
     assert.equal(candidate.truth.adsb.tar1090, 'http://pi-zero.local/tar1090');
+    const expectedSources = clone(candidate.truth.adsb.sources);
+    await window.saveConfiguration();
+    assert.equal(writes, 1, 'Structured local inputs and exchange switches save successfully');
+    assert.deepEqual(saved.truth.adsb.sources, expectedSources);
     console.log('ADS-B source settings DOM: multiple local inputs, exchange switches and newest-source wording passed.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

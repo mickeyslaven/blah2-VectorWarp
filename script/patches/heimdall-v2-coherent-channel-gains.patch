@@ -1,23 +1,78 @@
-diff --git a/heimdall_v2/src/sdr/sdr_init.hpp b/heimdall_v2/src/sdr/sdr_init.hpp
---- a/heimdall_v2/src/sdr/sdr_init.hpp
-+++ b/heimdall_v2/src/sdr/sdr_init.hpp
-@@ -71,6 +71,11 @@ bool set_if_vga_all(int index, const std::vector<std::unique_ptr<SDRDevice>>& de
- // back on the previous settings (logged; a failed restore signals coherence
- // loss). frequency 0 / gain -999 = leave unchanged.
- bool update_sdr_settings(uint64_t frequency = 0, int gain = -999, const std::vector<std::unique_ptr<SDRDevice>>& devices = {});
-+// Coherent-mode atomic per-channel manual gain update. The vector must contain
-+// one tenth-dB value per active channel. All tuners are verified and any
-+// partial failure restores the complete previous vector before failing closed.
-+bool update_coherent_channel_gains(const std::vector<int>& gains,
-+                                   const std::vector<std::unique_ptr<SDRDevice>>& devices);
- void handle_settings_change();
+diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
+index a4895d9..1ab34e1 100644
+--- a/heimdall_v2/src/net/tcp_control_server.cpp
++++ b/heimdall_v2/src/net/tcp_control_server.cpp
+@@ -331,6 +331,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
+         }
+         status_json << "]";
+     }
++    if (operating_mode.load() == OperatingMode::COHERENT) {
++        status_json << ",\"channel_gains\":[";
++        for (int i = 0; i < num_active; ++i) {
++            if (i > 0) status_json << ",";
++            const int gain = static_cast<size_t>(i) < devices.size() && devices[i]
++                ? devices[i]->actual_gain_tenths.load(std::memory_order_acquire) : -999;
++            status_json << (gain < 0 ? -1.0f : gain / 10.0f);
++        }
++        status_json << "]";
++    }
  
- // Operating mode (COHERENT / WIDEBAND_SCAN / INDEPENDENT, see types.hpp).
+     // Raw ADC headroom is measured in each RTL callback before calibration,
+     // floating-point conversion, DC removal and MCHQ uint8 requantization.
+@@ -1010,6 +1020,47 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
+         return "{\"status\":\"error\",\"message\":\"Invalid delay format\"}";
+     }
+ 
++    if (json_str.find("\"set_channel_gains\"") != std::string::npos) {
++        if (operating_mode.load(std::memory_order_acquire) != OperatingMode::COHERENT)
++            return "{\"status\":\"error\",\"message\":\"per-channel gains require coherent mode\"}";
++        const size_t key = json_str.find("\"gains\":");
++        const size_t begin = key == std::string::npos ? std::string::npos : json_str.find('[', key + 8);
++        const size_t end = begin == std::string::npos ? std::string::npos : json_str.find(']', begin + 1);
++        if (begin == std::string::npos || end == std::string::npos)
++            return "{\"status\":\"error\",\"message\":\"gains array required\"}";
++        std::vector<int> gains;
++        std::stringstream values(json_str.substr(begin + 1, end - begin - 1));
++        std::string value;
++        while (std::getline(values, value, ',')) {
++            try {
++                size_t consumed = 0;
++                const double gain_db = std::stod(value, &consumed);
++                if (consumed != value.find_last_not_of(" \t\r\n") + 1 || !std::isfinite(gain_db) ||
++                    gain_db < 0 || gain_db > 50)
++                    return "{\"status\":\"error\",\"message\":\"gains must be 0-50 dB numbers\"}";
++                gains.push_back(static_cast<int>(std::lround(gain_db * 10.0)));
++            } catch (...) {
++                return "{\"status\":\"error\",\"message\":\"invalid gains array\"}";
++            }
++        }
++        if (gains.size() != static_cast<size_t>(active_num_elements.load(std::memory_order_acquire)))
++            return "{\"status\":\"error\",\"message\":\"gain count must equal active channel count\"}";
++        try {
++            const bool changed = update_coherent_channel_gains(gains, devices);
++            if (changed) begin_retune_cooldown("Per-channel gains changed");
++        } catch (const std::exception& error) {
++            return "{\"status\":\"error\",\"message\":\"" + std::string(error.what()) + "\"}";
++        }
++        std::ostringstream response;
++        response << "{\"status\":\"success\",\"channel_gains\":[";
++        for (size_t i = 0; i < gains.size(); ++i) {
++            if (i > 0) response << ",";
++            response << gains[i] / 10.0;
++        }
++        response << "]}";
++        return response.str();
++    }
++
+     if (json_str.find("\"set_gain\"") != std::string::npos) {
+         size_t gain_pos = json_str.find("\"gain\":");
+         if (gain_pos != std::string::npos) {
 diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
+index f79624a..c63e1ef 100644
 --- a/heimdall_v2/src/sdr/sdr_init.cpp
 +++ b/heimdall_v2/src/sdr/sdr_init.cpp
-@@ -793,6 +793,95 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
-     return true;
+@@ -1042,6 +1042,95 @@ bool update_sdr_settings(uint64_t frequency, int gain, const std::vector<std::un
+     return done(true);
  }
  
 +bool update_coherent_channel_gains(const std::vector<int>& gains,
@@ -112,96 +167,3 @@ diff --git a/heimdall_v2/src/sdr/sdr_init.cpp b/heimdall_v2/src/sdr/sdr_init.cpp
  void handle_settings_change() {
      std::lock_guard<std::recursive_mutex> calibration_lock(calibration_mutex);
      // Wideband scan / independent: no phase calibration exists to redo (the
-diff --git a/heimdall_v2/src/net/tcp_control_server.cpp b/heimdall_v2/src/net/tcp_control_server.cpp
---- a/heimdall_v2/src/net/tcp_control_server.cpp
-+++ b/heimdall_v2/src/net/tcp_control_server.cpp
-@@ -207,6 +207,16 @@ std::string TcpControlServer::build_status_json(bool as_reply) {
-         }
-         status_json << "]";
-     }
-+    if (operating_mode.load() == OperatingMode::COHERENT) {
-+        status_json << ",\"channel_gains\":[";
-+        for (int i = 0; i < num_active; ++i) {
-+            if (i > 0) status_json << ",";
-+            const int gain = static_cast<size_t>(i) < devices.size() && devices[i]
-+                ? devices[i]->actual_gain_tenths.load(std::memory_order_acquire) : -999;
-+            status_json << (gain < 0 ? -1.0f : gain / 10.0f);
-+        }
-+        status_json << "]";
-+    }
- 
-     // Raw ADC headroom is measured in each RTL callback before calibration,
-     // floating-point conversion, DC removal and MCHQ uint8 requantization.
-@@ -857,6 +867,47 @@ std::string TcpControlServer::process_command(const std::string& json_str) {
-         return "{\"status\":\"error\",\"message\":\"Invalid delay format\"}";
-     }
- 
-+    if (json_str.find("\"set_channel_gains\"") != std::string::npos) {
-+        if (operating_mode.load(std::memory_order_acquire) != OperatingMode::COHERENT)
-+            return "{\"status\":\"error\",\"message\":\"per-channel gains require coherent mode\"}";
-+        const size_t key = json_str.find("\"gains\":");
-+        const size_t begin = key == std::string::npos ? std::string::npos : json_str.find('[', key + 8);
-+        const size_t end = begin == std::string::npos ? std::string::npos : json_str.find(']', begin + 1);
-+        if (begin == std::string::npos || end == std::string::npos)
-+            return "{\"status\":\"error\",\"message\":\"gains array required\"}";
-+        std::vector<int> gains;
-+        std::stringstream values(json_str.substr(begin + 1, end - begin - 1));
-+        std::string value;
-+        while (std::getline(values, value, ',')) {
-+            try {
-+                size_t consumed = 0;
-+                const double gain_db = std::stod(value, &consumed);
-+                if (consumed != value.find_last_not_of(" \t\r\n") + 1 || !std::isfinite(gain_db) ||
-+                    gain_db < 0 || gain_db > 50)
-+                    return "{\"status\":\"error\",\"message\":\"gains must be 0-50 dB numbers\"}";
-+                gains.push_back(static_cast<int>(std::lround(gain_db * 10.0)));
-+            } catch (...) {
-+                return "{\"status\":\"error\",\"message\":\"invalid gains array\"}";
-+            }
-+        }
-+        if (gains.size() != static_cast<size_t>(active_num_elements.load(std::memory_order_acquire)))
-+            return "{\"status\":\"error\",\"message\":\"gain count must equal active channel count\"}";
-+        try {
-+            const bool changed = update_coherent_channel_gains(gains, devices);
-+            if (changed) begin_retune_cooldown("Per-channel gains changed");
-+        } catch (const std::exception& error) {
-+            return "{\"status\":\"error\",\"message\":\"" + std::string(error.what()) + "\"}";
-+        }
-+        std::ostringstream response;
-+        response << "{\"status\":\"success\",\"channel_gains\":[";
-+        for (size_t i = 0; i < gains.size(); ++i) {
-+            if (i > 0) response << ",";
-+            response << gains[i] / 10.0;
-+        }
-+        response << "]}";
-+        return response.str();
-+    }
-+
-     if (json_str.find("\"set_gain\"") != std::string::npos) {
-         size_t gain_pos = json_str.find("\"gain\":");
-         if (gain_pos != std::string::npos) {
-diff --git a/heimdall_v2/src/net/tcp_data_server.cpp b/heimdall_v2/src/net/tcp_data_server.cpp
---- a/heimdall_v2/src/net/tcp_data_server.cpp
-+++ b/heimdall_v2/src/net/tcp_data_server.cpp
-@@ -3,6 +3,7 @@
- #include "../core/utils.hpp"
- #include "../dsp/compensation.hpp"
- #include "../sdr/pipeline_control.hpp"
-+#include "../sdr/sdr_device.hpp"
- #include <iostream>
- #include <algorithm>
- #include <chrono>
-@@ -173,5 +173,13 @@ void TcpDataServer::broadcast_data(const std::vector<ComplexBuffer>& channel_data
-         float ch_gain_db = gain_db;
-+        if (mode == OperatingMode::COHERENT && ch < devices.size() && devices[ch]) {
-+            // The MCHQ metadata describes the physical tuner that produced
-+            // this channel. A coherent array may now use unequal fixed gains;
-+            // retaining the common requested value here would make captures
-+            // and downstream evidence claim a setting that was not applied.
-+            const int actual = devices[ch]->actual_gain_tenths.load(std::memory_order_acquire);
-+            if (actual >= 0) ch_gain_db = actual / 10.0f;
-+        }
-         if (independent) {
-             const int g = wideband_config.get_tuner_gain(ch);
-             ch_gain_db = (g == -1) ? -1.0f : g / 10.0f;
-         }

@@ -28,6 +28,7 @@
 #include "process/fusion/CoherentBeamBank.h"
 #include "process/analysis/ComplexCutoutRecorder.h"
 #include "process/analysis/ReplayEchoInjector.h"
+#include "process/analysis/ProductionRawIq.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -116,29 +117,6 @@ public:
   ReplayFrameGuard(bool isReplay, uint64_t& value) : replay(isReplay), frames(value) {}
   ~ReplayFrameGuard() { if (replay) ++frames; }
 };
-
-template <typename Work>
-bool process_paths(std::size_t pathCount, std::size_t workerCount, Work work)
-{
-  bool success = true;
-  workerCount = std::max<std::size_t>(1,
-    std::min(workerCount, pathCount));
-  if (workerCount == 1)
-  {
-    for (std::size_t path = 0; path < pathCount; path++)
-      success = work(path) && success;
-    return success;
-  }
-  for (std::size_t first = 0; first < pathCount; first += workerCount)
-  {
-    std::vector<std::future<bool>> tasks;
-    const std::size_t last = std::min(first + workerCount, pathCount);
-    for (std::size_t path = first; path < last; path++)
-      tasks.push_back(std::async(std::launch::async, work, path));
-    for (auto& task : tasks) success = task.get() && success;
-  }
-  return success;
-}
 
 std::optional<std::complex<double>> direct_path_pilot(
   const IqData& reference, const std::vector<std::unique_ptr<IqData>>& surveillance,
@@ -675,7 +653,7 @@ try
   if (surveillanceFusionMode == "noise_whitened_beam_bank" && !residentMode)
     throw std::invalid_argument("Noise-whitened surveillance fusion requires gpu-resident acceleration");
 #ifndef VECTORWARP_RESIDENT_GPU
-  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI11 GPU route");
+  if(residentMode)throw std::invalid_argument("This cohort does not provide the resident ABI12 GPU route");
 #endif
 
 #ifdef VECTORWARP_MIXED_AUTO
@@ -726,18 +704,6 @@ try
     ambiguityPointers.push_back(ambiguity[i].get());
     surveillancePointers.push_back(surveillanceData[i].get());
   }
-
-  // Allocate on the first CPU execution, including GPU qualification's CPU
-  // oracle, and prepare the common reference once per CPU-processed CPI.
-  std::vector<std::unique_ptr<WienerHopf>> filter(surveillanceChannels.size());
-  std::unique_ptr<WienerHopf::PreparedReference> cpuClutterReference;
-#ifdef VECTORWARP_MIXED_AUTO
-  // The qualified Pi path plans before capture starts. Delaying its measured
-  // FFT plans until the first CPU oracle would consume live queue headroom.
-  if (cpuBorrowed)
-    for (auto& pathFilter : filter)
-      pathFilter = std::make_unique<WienerHopf>(delayMinClutter, delayMaxClutter, nSamples);
-#endif
 
   ArrayReferenceSynthesizer::Config referenceConfig;
   if (tree["process"].has_child("reference_synthesis"))
@@ -790,7 +756,15 @@ try
         targetAzimuth * 180.0 / std::acos(-1.0) << "\n";
     }
   }
-  ArrayReferenceSynthesizer referenceSynthesizer(referenceConfig);
+  blah2::production_replay::RawIqStages cpuStages({delayMinClutter,
+    delayMaxClutter, nSamples, surveillanceChannels.size(), surveillanceWorkers,
+#ifdef VECTORWARP_MIXED_AUTO
+    cpuBorrowed,
+#else
+    false,
+#endif
+    referenceConfig});
+  auto& referenceSynthesizer = cpuStages.reference();
   uint64_t reportedReferenceUpdate = 0;
   uint64_t replayProcessedFrames = 0;
   Noncoherent mapFusion;
@@ -1353,7 +1327,7 @@ try
           if (captureSamplePositionAvailable &&
               capture->requires_usrp_time_provenance())
             eventTime = blah2::usrp_cpi_midpoint_time(
-              captureDeviceTimeEpochTick, captureFirstEpochSample,
+              captureEpoch, captureDeviceTimeEpochTick, captureFirstEpochSample,
               captureEndEpochSample, fs, captureClockSource,
               captureTimeSource, captureMotherboard, captureSubdevices);
           else if (captureSamplePositionAvailable &&
@@ -1380,7 +1354,7 @@ try
           if (nextReplayGeneration != replayGeneration)
           {
             replayGeneration = nextReplayGeneration;
-            referenceSynthesizer = ArrayReferenceSynthesizer(referenceConfig);
+            cpuStages.resetReference();
             reportedReferenceUpdate = 0;
             replayProcessedFrames = 0;
             if(resident){
@@ -1506,35 +1480,7 @@ try
           {
             const bool success = acceleration.processClutter(*referenceData,
               surveillancePointers, [&] {
-#ifdef VECTORWARP_MIXED_AUTO
-                if (cpuBorrowed)
-                  return process_paths(surveillanceData.size(), surveillanceWorkers,
-                    [&](std::size_t pathIndex) {
-                      return filter[pathIndex]->process(referenceData.get(),
-                        surveillanceData[pathIndex].get(), true);
-                    });
-#endif
-                if (!cpuClutterReference) {
-                  auto pendingReference = std::make_unique<WienerHopf::PreparedReference>(
-                    delayMinClutter, delayMaxClutter, nSamples);
-                  std::vector<std::unique_ptr<WienerHopf>> pendingFilters;
-                  pendingFilters.reserve(filter.size());
-                  for (std::size_t pathIndex = 0; pathIndex < filter.size(); ++pathIndex)
-                    pendingFilters.push_back(std::make_unique<WienerHopf>(
-                      delayMinClutter, delayMaxClutter, nSamples,
-                      WienerHopf::Workspace::SharedReference));
-                  // A plan constructor may throw during GPU qualification.
-                  // Publish only a complete set so a later CPU fallback can
-                  // safely retry initialization.
-                  filter = std::move(pendingFilters);
-                  cpuClutterReference = std::move(pendingReference);
-                }
-                if (!cpuClutterReference->prepare(*referenceData)) return false;
-                return process_paths(surveillanceData.size(),
-                  surveillanceWorkers, [&](std::size_t pathIndex) {
-                    return filter[pathIndex]->process(*cpuClutterReference,
-                      surveillanceData[pathIndex].get());
-                  });
+                return cpuStages.clutter(*referenceData, surveillancePointers);
               });
             if (!success)
             {
@@ -1570,30 +1516,17 @@ try
               mixedWorker.reset();
               mixedPublished = false;
               mixedChoice = blah2::mixed::Choice::cpu;
-              if (!filter[0]->process(referenceData.get(),
-                    surveillanceData[0].get(), cpuBorrowed))
+              if (!cpuStages.fallbackClutter(*referenceData, *surveillanceData[0]))
                 throw std::runtime_error("CPU clutter fallback rejected CPI");
             }
           }
           if (!mixedPublished)
 #endif
           acceleration.process(referenceData->view_data(), surveillancePointers,
-            ambiguityPointers, [&] { process_paths(surveillanceData.size(), surveillanceWorkers,
-            [&](std::size_t pathIndex) {
-#ifdef VECTORWARP_MIXED_AUTO
-              if (cpuBorrowed) {
-                const auto view = filter[pathIndex]->filtered_view();
-                channelMaps[pathIndex] = ambiguity[pathIndex]->process_borrowed(
-                  referenceData->view_data(), surveillanceData[pathIndex].get(),
-                  view.rotatedReference, view.filteredSurveillance,
-                  view.samples, view.delayMin, pairedDirectFrame);
-              } else
-#endif
-              channelMaps[pathIndex] = ambiguity[pathIndex]->process(
-                referenceData->view_data(),
-                surveillanceData[pathIndex].get(), pairedDirectFrame);
-              return true;
-            }); });
+            ambiguityPointers, [&] {
+              cpuStages.ambiguity(*referenceData, surveillancePointers,
+                ambiguityPointers, pairedDirectFrame);
+            });
 #ifdef VECTORWARP_MIXED_AUTO
           if (mixedChoice == blah2::mixed::Choice::shadow &&
               mixedCandidateReady && !mixedPolicy.disabled()) {

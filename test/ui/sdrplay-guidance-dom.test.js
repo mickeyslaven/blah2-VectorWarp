@@ -151,6 +151,11 @@ const check = async () => {
     usrpReceipt.requested.gains[1] = 21;
     window.renderReceiverStartup(usrpLive);
     assert.match(usrpTarget.textContent, /Running settings differ/);
+    usrpLive.processor.state = 'error';
+    usrpLive.processor.error = 'Automatic requalification exceeded the bounded discontinuity budget.';
+    window.renderReceiverStartup(usrpLive);
+    assert.match(usrpTarget.textContent, /Reconnect the USRP.*run vectorwarp restart/,
+      'A terminal USRP error must tell the operator how to recover after reconnecting it.');
 
     Object.assign(saved, setupDefaults());
     saved.capture.device = {type: 'HackRF',

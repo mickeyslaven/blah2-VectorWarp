@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -72,6 +73,42 @@ def prepare(args, work):
              "-Wl,-install_name," + str(fake), "-o", str(fake)])
     # A test-driver dependency on libusb or librtlsdr would invalidate isolation.
     assert not any("libusb" in p or "librtlsdr" in p for p in load_commands(fake))
+    # Exercise the exact API added by the required 578b43d driver, not merely
+    # symbol presence. This catches future header/ABI movement before dyld or a
+    # real receiver can be involved.
+    abi = work / "fast-tune-abi"
+    abi.mkdir(mode=0o700)
+    previous_root = os.environ.get("VECTORWARP_KRAKEN_SIM_ROOT")
+    os.environ["VECTORWARP_KRAKEN_SIM_ROOT"] = str(abi)
+    try:
+        library = ctypes.CDLL(str(fake))
+        handle = ctypes.c_void_p()
+        library.rtlsdr_open.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32]
+        library.rtlsdr_set_center_freq_fast.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_int]
+        library.rtlsdr_get_center_freq.argtypes = [ctypes.c_void_p]
+        library.rtlsdr_get_center_freq.restype = ctypes.c_uint32
+        library.rtlsdr_finish_tune.argtypes = [ctypes.c_void_p]
+        library.rtlsdr_close.argtypes = [ctypes.c_void_p]
+        assert library.rtlsdr_open(ctypes.byref(handle), 0) == 0 and handle.value
+        assert library.rtlsdr_set_center_freq_fast(handle, 101000000, 1) == 0
+        assert library.rtlsdr_get_center_freq(handle) == 101000000
+        assert library.rtlsdr_finish_tune(handle) == 0
+        assert library.rtlsdr_close(handle) == 0
+    finally:
+        if previous_root is None:
+            os.environ.pop("VECTORWARP_KRAKEN_SIM_ROOT", None)
+        else:
+            os.environ["VECTORWARP_KRAKEN_SIM_ROOT"] = previous_root
+    abi_events = driver_events(abi, complete=True)
+    assert [e["event"] for e in abi_events] == ["open", "fast_frequency", "finish_tune", "close"], abi_events
+    assert abi_events[1]["value"] == (1 << 32) | 101000000, abi_events
+    assert abi_events[2]["value"] == 1, abi_events
+    (abi / "result.json").write_text(json.dumps({
+        "driverCommit": "578b43ddd971786e84e2a6ab3c338ee48c8739c3",
+        "fastTuneFrequencyHz": 101000000,
+        "keepAutotuneFlag": 1,
+        "finishObservedPendingTune": True,
+    }, indent=2) + "\n")
     binary = work / "heimdall-simulated"
     shutil.copy2(args.heimdall, binary)
     rtl = [p for p in load_commands(binary) if "librtlsdr" in p]
@@ -200,8 +237,13 @@ class Frames:
             while not self.stopped.is_set():
                 fields = struct.unpack(">8I", self.exact(32))
                 magic, channels, samples, phase, noise, epoch, group, retuning = fields
-                assert magic == 0x4D434851 and channels == 5 and 0 < samples <= 262144, fields
+                assert magic in (0x4D434851, 0x4D434854) and channels == 5 and 0 < samples <= 262144, fields
                 metadata = struct.unpack("<" + "ff" * channels, self.exact(channels * 8))
+                timing = None
+                if magic == 0x4D434854:
+                    timing = struct.unpack('>4I10Q', self.exact(96))
+                    assert timing[0:2] == (1, 96) and timing[3] == 0 and timing[4] > 0
+                    assert timing[7] > 0 and timing[9] > 0 and timing[-1] == timing[5] + samples
                 payload = self.exact(channels * samples * 2)
                 valid = (phase & 0xff) == 4 and not phase & 0xe00 and noise == 0 and retuning == 0
                 # Deterministic test driver has a twofold noise-on envelope.
@@ -217,7 +259,7 @@ class Frames:
                     self.count += 1
                     frame = dict(number=self.count, phase=phase, noise=noise, epoch=epoch,
                                  retuning=retuning, frequency=metadata[0], gain=metadata[1],
-                                 channelGains=list(metadata[1::2]),
+                                 channelGains=list(metadata[1::2]), ingestTiming=timing,
                                  valid=valid, samples=samples, referenceRms=envelope)
                     self.frames.append(frame)
                     if valid:
@@ -469,7 +511,7 @@ def run_case(args, binary, work, name, fail=None, count=5):
     env = {k: v for k, v in os.environ.items() if not k.startswith(
         ("DYLD_", "LD_", "VECTORWARP_KRAKEN_SIM_", "HEIMDALL_")) and k != "LIBRTLSDR_OPT"}
     env.update(VECTORWARP_KRAKEN_SIM_ROOT=str(case), VECTORWARP_KRAKEN_SIM_COUNT=str(count),
-               HEIMDALL_VERBOSE_LOG="1", HOME=str(case), HEIMDALL_BIND_HOST="127.0.0.1",
+               HEIMDALL_VERBOSE_LOG="1", HEIMDALL_TIMING_V1="1", HOME=str(case), HEIMDALL_BIND_HOST="127.0.0.1",
                HEIMDALL_DATA_PORT=str(args.data_port), HEIMDALL_CONTROL_PORT=str(args.control_port),
                HEIMDALL_WEB_PORT=str(args.web_port), HEIMDALL_RTL_PORT=str(args.rtl_port))
     if fail:

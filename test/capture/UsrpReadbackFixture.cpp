@@ -70,9 +70,10 @@ void rejects(Receiver value) {
 }
 int main() {
   {
-    const auto event = blah2::usrp_cpi_midpoint_time(40000000, 7, 14,
+    const auto event = blah2::usrp_cpi_midpoint_time(3, 40000000, 7, 14,
       2000000, "internal", "internal", "B210", "A:A A:B");
     assert(event.deviceTimeAvailable && !event.estimateAvailable);
+    assert(event.epoch == 3);
     assert(blah2::event_time_milliseconds(event, 1234) == 1234);
     rapidjson::Document document(rapidjson::kObjectType);
     document.AddMember("eventTime",
@@ -81,6 +82,7 @@ int main() {
     const auto& encoded = document["eventTime"];
     assert(!encoded["exact"].GetBool() && !encoded["uncertaintyBounded"].GetBool());
     assert(encoded["estimateNs"].IsNull() && encoded["deviceTimeAvailable"].GetBool());
+    assert(std::string(encoded["epoch"].GetString()) == "3");
     assert(std::string(encoded["deviceTimeMidpointTickNumerator"].GetString()) == "80000021");
     assert(encoded["deviceTimeMidpointTickDenominator"].GetInt() == 2);
   }

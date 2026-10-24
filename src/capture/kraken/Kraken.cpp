@@ -106,6 +106,27 @@ std::string Kraken::recording_provenance_json() const
     observed.AddMember("perChannelFrequencyHz",frequencies,allocator);
     observed.AddMember("perChannelGainDb",gains,allocator);
     observed.AddMember("synchronized",HeimdallFrame::is_synchronized_data(lastHeader),allocator);
+    rapidjson::Value timing(rapidjson::kObjectType);
+    timing.AddMember("available", lastHeader.timing.available, allocator);
+    timing.AddMember("hardwareUtc", false, allocator);
+    timing.AddMember("decisionGrade", false, allocator);
+    timing.AddMember("usbAdcLatencyKnown", false, allocator);
+    if (lastHeader.timing.available) {
+      const auto& t = lastHeader.timing;
+      timing.AddMember("basis", "usb-callback-host-receipt", allocator);
+      timing.AddMember("epoch", t.epoch, allocator);
+      timing.AddMember("firstSample", t.firstSample, allocator);
+      timing.AddMember("anchorSample", t.anchorSample, allocator);
+      timing.AddMember("transferSequence", t.transferSequence, allocator);
+      timing.AddMember("bufferSequence", t.bufferSequence, allocator);
+      timing.AddMember("monotonicRawNanoseconds", t.monotonicNanoseconds, allocator);
+      timing.AddMember("taiNanoseconds", t.taiNanoseconds, allocator);
+      timing.AddMember("realtimeNanoseconds", t.realtimeNanoseconds, allocator);
+      timing.AddMember("clockReadSpanNanoseconds", t.clockReadSpanNanoseconds, allocator);
+      timing.AddMember("systemMaxErrorNanoseconds", t.systemMaxErrorNanoseconds, allocator);
+      timing.AddMember("hostClockDisciplined", bool(t.flags & 4), allocator);
+    }
+    observed.AddMember("ingestTiming", timing, allocator);
   }
   document.AddMember("observedFrame",observed,allocator);
   rapidjson::Value conditioning(rapidjson::kObjectType);
@@ -185,6 +206,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
   connect_heimdall();
   std::optional<uint32_t> frequencyChangeCounter;
   std::vector<float> frequencies, gains;
+  std::optional<HeimdallFrame::Header> previousHeader;
   bool resetPending = false;
   while (running)
   {
@@ -196,6 +218,13 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     std::vector<uint8_t> payload(HeimdallFrame::payload_size(header));
     receive_exact(payload.data(), payload.size());
     const int64_t receiptNanoseconds = wall_clock_nanoseconds();
+    if (previousHeader && !HeimdallFrame::timing_contiguous(*previousHeader, header)) {
+      recording_epoch_discontinuity("Kraken upstream USB sample continuity changed");
+      clipRecorder->discontinuity("Kraken upstream USB sample continuity changed");
+      samplePositionAvailable.store(false, std::memory_order_release);
+      resetPending = true;
+    }
+    previousHeader = header;
 
     if (header.numChannels != buffers.size())
       throw std::runtime_error(
@@ -342,7 +371,7 @@ std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE> Kraken::receive_header()
   {
     uint8_t byte;
     receive_exact(&byte, 1);
-    if (byte == magic[matched])
+    if (byte == magic[matched] || (matched == 3 && byte == 'T'))
       header[matched++] = byte;
     else
       matched = byte == magic[0] ? 1 : 0;

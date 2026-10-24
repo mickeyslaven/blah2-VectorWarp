@@ -13,6 +13,8 @@ class HeimdallFrame
 public:
   static constexpr std::size_t FIXED_HEADER_SIZE = 32;
   static constexpr uint32_t MAGIC = 0x4d434851; // "MCHQ"
+  static constexpr uint32_t TIMED_MAGIC = 0x4d434854; // "MCHT"
+  static constexpr std::size_t TIMING_SIZE = 96;
   static constexpr uint32_t CALIBRATED = 4;
   // The Suite stores the calibration state in the low byte and uses the
   // higher bits to describe stream modes.  Passive radar needs the coherent,
@@ -24,6 +26,13 @@ public:
 
   struct Header
   {
+    struct IngestTiming {
+      bool available{};
+      uint32_t flags{}, referenceChannel{};
+      uint64_t epoch{}, firstSample{}, transferSequence{}, monotonicNanoseconds{};
+      uint64_t taiNanoseconds{}, realtimeNanoseconds{}, clockReadSpanNanoseconds{};
+      uint64_t systemMaxErrorNanoseconds{}, bufferSequence{}, anchorSample{};
+    } timing;
     uint32_t numChannels{};
     uint32_t samplesPerChannel{};
     uint32_t phaseState{};
@@ -43,6 +52,7 @@ public:
   static std::vector<std::vector<std::complex<float>>> decode_payload(
     const Header& header, const std::vector<uint8_t>& bytes);
   static bool is_synchronized_data(const Header& header);
+  static bool timing_contiguous(const Header& previous, const Header& current);
 };
 
 #endif

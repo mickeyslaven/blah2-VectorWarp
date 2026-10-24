@@ -1,0 +1,89 @@
+{
+  "schema": "vectorwarp-live-scorecard-denominator-audit-v1",
+  "created_at": "2026-10-24T20:18:45-04:00",
+  "live_release": "/opt/vectorwarp/releases/20261024T145000Z-v0128-manifold-config-hotfix",
+  "live_configuration": {
+    "frequency_hz": 527000000,
+    "sample_rate_hz": 2400000,
+    "channels": 5,
+    "applied_gain_db": [2.7, 2.7, 1.4, 1.4, 3.7]
+  },
+  "live_snapshot": {
+    "finalized_passes": 276,
+    "map_eligible_passes": 75,
+    "detected_passes": 5,
+    "tracked_passes": 4,
+    "reported_missed_passes": 71,
+    "eligible_aircraft": 72,
+    "decision_grade": false
+  },
+  "verified_geometry": {
+    "coordinate_model": "WGS84 ECEF with geometric altitude",
+    "delay_definition": "receiver-aircraft slant path plus transmitter-aircraft slant path minus transmitter-receiver baseline",
+    "delay_units": "km excess bistatic path",
+    "delay_is_carrier_dependent": false,
+    "doppler_definition": "negative bistatic excess-path rate divided by carrier wavelength",
+    "doppler_carrier_hz": 527000000,
+    "map_delay_km": [-1.2491352416666666, 62.45676208333333],
+    "detector_delay_floor_km": 0.6245676208333333,
+    "doppler_hz": [-600, 600]
+  },
+  "findings": [
+    {
+      "severity": "high",
+      "finding": "The headline denominator treats all detector-searchable cells across the full ambiguity map as equivalent proven radar reach.",
+      "impact": "Map coverage is not a validated sensitivity envelope. Distant or poor bistatic geometry can dominate the miss count.",
+      "correction": "Report fixed excess-delay and receiver-slant-range strata while retaining the honest map-wide result. Establish a reach envelope only from a predeclared, pass-disjoint validation cohort."
+    },
+    {
+      "severity": "medium",
+      "finding": "Frames below process.detection.minDelay were counted as physically eligible misses.",
+      "impact": "A deliberately unsearched cell could be charged to radar recall.",
+      "observed_current_hour_frames": 231,
+      "observed_current_hour_pass_effect": "No current eligible pass appears to be explained solely by this defect; it is real but not the main low-yield cause.",
+      "correction": "Eligibility now requires delay >= the detector floor and the evaluation-contract hash includes this rule."
+    },
+    {
+      "severity": "high",
+      "finding": "Near-tied ADS-B candidates cause a radar detection or track point to be discarded silently.",
+      "impact": "Dense traffic can invalidate a genuine cell without a visible rejected-association count.",
+      "correction": "Expose cumulative detection/tracker point, candidate, unmatched, ambiguous and selected counts. Preserve rejection rather than inventing an aircraft identity."
+    },
+    {
+      "severity": "high",
+      "finding": "Kraken event time remains a host-arrival estimate with unbounded transport uncertainty.",
+      "impact": "Live association is operational/provisional and may undercount even though the four-CPI wait and projection order are correct.",
+      "correction": "Keep decision_grade false and report timing provenance. This audit does not claim exact UTC."
+    }
+  ],
+  "evidence": {
+    "below_floor_frames_in_hour": 231,
+    "above_delay_ceiling_frames_in_hour": 454077,
+    "outside_doppler_frames_in_hour": 92838,
+    "stale_truth_frames_in_hour": 28157,
+    "misses_are_not_mainly_brief_edge_crossings": true,
+    "miss_eligible_cpis": {"minimum": 8, "median": 424, "maximum": 3912},
+    "detected_association_delay_support_km_observed": [5.09, 33.32],
+    "stable_track_delay_support_km_observed": [5.09, 23.97],
+    "support_note": "Observed support is descriptive, not an authorized reach cutoff."
+  },
+  "local_fix": {
+    "base_commit": "fc4166e5a53b8d072d8d170c049449a4fbe8da6f",
+    "files": [
+      "api/adsb-geometry.js",
+      "api/adsb-geometry.test.js",
+      "api/evidence-statistics.js",
+      "api/evidence-statistics.test.js"
+    ],
+    "tests": [
+      "node api/adsb-geometry.test.js",
+      "node api/evidence-statistics.test.js",
+      "node --check api/adsb-geometry.js",
+      "node --check api/evidence-statistics.js",
+      "git diff --check"
+    ],
+    "test_result": "pass",
+    "mix_control": "The live scorecard now computes a pooled direct-standardized current-hour versus previous-hour comparison on common primary excess-delay x receiver-slant strata. It is decision-grade only with at least 80% common-support coverage and exact timing; raw percentages remain descriptive.",
+    "deployment": "not deployed; must land as a focused follow-up after the current timing/capture PR boundary"
+  }
+}
