@@ -61,7 +61,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('set -euo pipefail', wrapper)
         self.assertIn('python3 /tmp/installed_service_test.py --verify-replay', wrapper)
         self.assertIn('node "$source_root/test/browser/installed-settings.cjs"', wrapper)
-        self.assertIn('runuser -u vectorwarp -- python3 /tmp/processor_replay_test.py', wrapper)
+        self.assertIn('service_account_exec.py vectorwarp /usr/bin/python3 /tmp/processor_replay_test.py', wrapper)
+        self.assertNotIn('runuser -u vectorwarp', wrapper)
+        identity_helper = (ROOT / 'test/packaging/service_account_exec.py').read_text()
+        self.assertIn("os.getresuid() == (identity.pw_uid,) * 3", identity_helper)
+        self.assertIn("os.getresgid() == (identity.pw_gid,) * 3", identity_helper)
+        for field in ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb'):
+            self.assertIn(field, identity_helper)
+        self.assertIn("set(os.getgroups()) == expected_groups", identity_helper)
+        for option in ('--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+                       '--init-groups'):
+            self.assertIn(option, wrapper)
         self.assertIn('-u vectorwarp-processor', wrapper)
         # Local source-overlay diagnostics must never become a CI bypass.
         self.assertNotIn('--overlay', wrapper)

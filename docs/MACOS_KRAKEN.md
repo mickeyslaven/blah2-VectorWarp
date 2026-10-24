@@ -107,6 +107,10 @@ Intel receiver behavior; local runs only qualify the architecture actually used.
 `08fb08165ecfcdd954c7a20cb1bbfbc159294f0e`, uWebSockets and uSockets.
 See the [current compatibility record](KRAKEN_SUITE_UPDATE_2026_10_17.md)
 for the upstream pffft change and the software checks for this revision.
+The [24 October observation review](KRAKEN_SUITE_UPDATE_2026_10_24.md)
+acknowledges newer upstream `f47ed2fb48ab` without changing these validated
+pins because the companion patches and required RTL-SDR revision need a full
+rebase and regression run.
 The build installs dependency license files supplied upstream. The pinned
 Suite repository has no repository-wide license file; its code is not
 relicensed under VectorWarp's MIT license. These development formulas build

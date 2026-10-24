@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import pwd
 import stat
 import subprocess
 import sys
@@ -17,6 +18,17 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+
+
+def run_as_vectorwarp(*args):
+    """Match systemd's service identity transition without opening a PAM session."""
+    identity = pwd.getpwnam('vectorwarp')
+    return run(
+        'setpriv', '--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+        '--reuid', str(identity.pw_uid), '--regid', str(identity.pw_gid),
+        '--init-groups', '--reset-env', '/usr/bin/python3', '-I',
+        '/tmp/service_account_exec.py', 'vectorwarp', *args)
+
 
 BASE = 'http://127.0.0.1:3000'
 CONFIG = Path('/etc/vectorwarp/config.yml')
@@ -339,7 +351,7 @@ def main():
     from processor_replay_test import write_blah2iq
     write_blah2iq(REPLAY, 2, config['capture']['fs'], config['capture']['fc'], frames=4)
     REPLAY.chmod(0o644)
-    run('runuser', '-u', 'vectorwarp', '--', 'test', '-r', str(REPLAY))
+    run_as_vectorwarp('/usr/bin/test', '-r', str(REPLAY))
     checks.append('completed, deterministic two-channel synthetic IQ is readable by the installed processor')
     print(json.dumps({'passed': checks, 'hardwareTested': False, 'sdkInstalled': False}, indent=2))
 
