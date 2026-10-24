@@ -22,6 +22,7 @@ var layout = {
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
+  uirevision: 'vectorwarp-detections',
   displayModeBar: false,
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
@@ -64,7 +65,7 @@ var data = [
   }
 ];
 
-Plotly.newPlot('data', data, layout, config);
+Plotly.react('data', data, layout, config);
 
 // callback function
 var radarUpdates = startRadarPlot(urlDetection, async function (data) {
@@ -89,7 +90,7 @@ var radarUpdates = startRadarPlot(urlDetection, async function (data) {
     };
 
     var data_trace = [trace1];
-    await Plotly.newPlot('data', data_trace, layout, config);
+    await Plotly.react('data', data_trace, layout, config);
     plotted = true;
   }
   // case update plot

@@ -16,7 +16,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       fetchRadarJson: async url => url === '/api/detection' ? detected : new Promise(() => {}),
-      Plotly: Object.fromEntries(['newPlot', 'update', 'relayout', 'restyle'].map(method =>
+      Plotly: Object.fromEntries(['react', 'update', 'relayout', 'restyle'].map(method =>
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
       startRadarPlot: (_url, render) => { update = render; return {stop() {}}; }
     });
@@ -31,11 +31,19 @@ const clone = value => JSON.parse(JSON.stringify(value));
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
-    assert.equal(calls.filter(call => call.method === 'newPlot').length, 2, `${kind}: initial real frame must create correct traces`);
+    assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
     if (kind === 'spectrum') assert.deepEqual(calls.at(-1).args[1][0].x, [100, 100.001]);
     if (kind === 'timing') assert.equal(calls.at(-1).args[1].length, 1, 'Frame metadata is not a processing stage');
     await update(clone(frame));
     assert.equal(calls.at(-1).method, 'update');
+    if (kind === 'spectrum') {
+      await update({timestamp: [1001], frequency: [[100000, 100001, 100002]], spectrum: [[1, 2, 3]]});
+      assert.equal(calls.at(-1).method, 'react', 'Spectrum topology changes reconcile the existing Plotly root');
+    }
+    if (kind === 'timing') {
+      await update({timestamp: [1001], cpi: [20], capture: [5], frameTimestamp: 1001});
+      assert.equal(calls.at(-1).method, 'react', 'Timing stage changes reconcile the existing Plotly root');
+    }
     if (kind === 'map') {
       detected = {...detected, timestamp: 999};
       assert.equal(await update(clone(frame)), false, 'A late detection stream must remain retryable');
@@ -48,6 +56,11 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(calls.at(-1).method, 'restyle', 'Late detections update only marker trace');
       assert.deepEqual(calls.at(-1).args[2], [1]);
       assert.deepEqual(calls.at(-1).args[1].x, [[1]]);
+      const changedGrid = {...clone(frame), timestamp: 1001, delay: [1, 2], data: [[1, 2], [3, 4]]};
+      await update(changedGrid);
+      assert.ok(calls.slice(-2).some(call => call.method === 'react'),
+        'Map grid changes reconcile the existing Plotly root');
+      assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
     }
   }
   console.log('Original plot first-frame/update, frequency axis and late-stream tests passed.');

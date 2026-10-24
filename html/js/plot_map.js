@@ -87,7 +87,7 @@ function currentAdsbOverlay(enabled) {
   return adsbCache;
 }
 
-Plotly.newPlot('data', data, layout, config);
+Plotly.react('data', data, layout, config);
 
 // callback function
 var radarUpdates = startRadarPlot(urlMap, async function (data) {
@@ -172,7 +172,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   };
 
     var data_trace = [trace1, trace2, trace3];
-    await Plotly.newPlot('data', data_trace, layout, config);
+    await Plotly.react('data', data_trace, layout, config);
     gridSignature = gridKey;
   }
   // case update plot
