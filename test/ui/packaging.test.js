@@ -118,7 +118,11 @@ assert.match(packageScript, /Debian 13 Trixie/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
+assert.match(packageScript, /Depends: %s, uhd-host, systemd/,
+  'Debian-family packages need UHD host tools and the vendor udev rule, not only libuhd.');
 assert.match(packageScript, /rpmbuild/);
+assert.match(rpmSpec, /^Requires:\s+uhd-firmware$/m,
+  'Fedora packages need the matching B210 firmware image subpackage.');
 assert.match(packageScript, /dpkg-deb --build --root-owner-group/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Package/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Version/);

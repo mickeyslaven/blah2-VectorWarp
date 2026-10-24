@@ -24,6 +24,7 @@ Requires:       libusb1-devel
 Requires:       openssl-devel
 Requires:       zlib-devel
 Requires:       ca-certificates
+Requires:       uhd-firmware
 %if 0%{?fedora} == 44
 Requires:       python3-libdnf5
 Requires:       python3-rpm
