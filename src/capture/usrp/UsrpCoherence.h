@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <sstream>
 #include <stdexcept>
@@ -11,6 +12,12 @@ struct UsrpCoherenceAttestation {
   std::string timeSource;
   std::string subdevices;
   std::string policy;
+  std::string motherboardId;
+  std::string motherboardSerial;
+  std::array<std::string, 2> rxIds;
+  std::array<std::string, 2> rxSerials;
+  std::array<std::string, 2> rxSubdeviceNames;
+  bool identityComplete = false;
   std::size_t motherboards = 0;
   std::size_t channels = 0;
 };
@@ -43,6 +50,36 @@ UsrpCoherenceAttestation attest_usrp_coherence(Device& device,
   std::string first, second, extra;
   if (!(mapping >> first >> second) || (mapping >> extra) || first == second)
     throw std::runtime_error("[USRP] Scored coherent capture requires two distinct B210 subdevices.");
+  for (std::size_t channel = 0; channel < 2; ++channel) {
+    std::string boardId, boardSerial;
+    try {
+      const auto info = device.get_usrp_rx_info(channel);
+      const auto read = [&](const std::string& key) {
+        return info.has_key(key) ? info.get(key) : std::string{};
+      };
+      boardId = read("mboard_id");
+      boardSerial = read("mboard_serial");
+      value.rxIds[channel] = read("rx_id");
+      value.rxSerials[channel] = read("rx_serial");
+      value.rxSubdeviceNames[channel] = read("rx_subdev_name");
+    } catch (const std::exception&) {
+      // Identity is provenance, not a reason to disable otherwise qualified
+      // same-motherboard capture. Missing SDK identity stays explicit below.
+    }
+    if (channel == 0) {
+      value.motherboardId = boardId;
+      value.motherboardSerial = boardSerial;
+    } else if ((!boardId.empty() && !value.motherboardId.empty() &&
+                boardId != value.motherboardId) ||
+               (!boardSerial.empty() && !value.motherboardSerial.empty() &&
+                boardSerial != value.motherboardSerial)) {
+      throw std::runtime_error("[USRP] UHD channel identity reports different motherboards.");
+    }
+  }
+  value.identityComplete = !value.motherboardId.empty() &&
+    !value.motherboardSerial.empty() && !value.rxIds[0].empty() &&
+    !value.rxIds[1].empty() && !value.rxSubdeviceNames[0].empty() &&
+    !value.rxSubdeviceNames[1].empty();
   value.policy = "single-motherboard-b210-v1";
   return value;
 }

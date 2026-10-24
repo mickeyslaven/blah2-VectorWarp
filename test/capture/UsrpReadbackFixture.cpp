@@ -12,6 +12,17 @@
 #undef OVERFLOW
 #endif
 struct Spec { std::string value = "A:A A:B"; std::string to_string() const { return value; } };
+struct RxInfo {
+  std::array<std::pair<std::string, std::string>, 5> values;
+  bool has_key(const std::string& key) const {
+    for (const auto& item : values) if (item.first == key) return true;
+    return false;
+  }
+  std::string get(const std::string& key) const {
+    for (const auto& item : values) if (item.first == key) return item.second;
+    throw std::out_of_range(key);
+  }
+};
 struct Receiver {
   size_t count = 2;
   size_t boards = 1;
@@ -21,6 +32,8 @@ struct Receiver {
   std::array<std::string, 2> antenna{"RX2", "RX2"};
   std::vector<std::string> calls;
   int coerceChannel = -1;
+  bool mismatchedIdentity = false;
+  bool unavailableIdentity = false;
   void set_rx_subdev_spec(Spec value, size_t board) { assert(board == 0); spec = value; calls.push_back("subdev"); }
   void set_rx_rate(double value, size_t channel) {
     rate[channel] = value + (coerceChannel == static_cast<int>(channel) ? 1 : 0);
@@ -39,6 +52,15 @@ struct Receiver {
   std::string get_mboard_name(size_t) { return motherboard; }
   std::string get_clock_source(size_t) { return clockSource; }
   std::string get_time_source(size_t) { return timeSource; }
+  RxInfo get_usrp_rx_info(size_t channel) {
+    if (unavailableIdentity) throw std::runtime_error("identity unavailable");
+    RxInfo info;
+    info.values = {{{"mboard_id", "B210"}, {"mboard_serial",
+      channel && mismatchedIdentity ? "other-board" : "31ABC42"},
+      {"rx_id", "B210 RX"}, {"rx_serial", "31ABC42"},
+      {"rx_subdev_name", channel ? "B" : "A"}}};
+    return info;
+  }
 };
 void verify(Receiver& value) { verify_usrp_readback(value, 100000000, 2000000, {10, 20}, {"RX2", "RX2"}, "A:A A:B"); }
 void rejects(Receiver value) {
@@ -148,7 +170,14 @@ int main() {
     assert(attestation.motherboard == "B210" && attestation.clockSource == "internal");
     assert(attestation.timeSource == "internal" && attestation.subdevices == "A:A A:B");
     assert(attestation.policy == "single-motherboard-b210-v1");
-    for (int fault = 0; fault < 8; ++fault) {
+    assert(attestation.identityComplete && attestation.motherboardId == "B210" &&
+      attestation.motherboardSerial == "31ABC42" &&
+      attestation.rxSubdeviceNames[0] == "A" && attestation.rxSubdeviceNames[1] == "B");
+    Receiver unavailable;
+    unavailable.unavailableIdentity = true;
+    const auto provisional = attest_usrp_coherence(unavailable, "A:A A:B");
+    assert(!provisional.identityComplete && provisional.motherboardSerial.empty());
+    for (int fault = 0; fault < 9; ++fault) {
       Receiver invalid;
       if (fault == 0) invalid.boards = 2;
       if (fault == 1) invalid.count = 1;
@@ -158,6 +187,7 @@ int main() {
       if (fault == 5) invalid.spec.value = "A:B A:A";
       if (fault == 6) invalid.motherboard = "X310";
       if (fault == 7) invalid.spec.value = "A:A A:A";
+      if (fault == 8) invalid.mismatchedIdentity = true;
       bool rejected = false;
       try { attest_usrp_coherence(invalid, "A:A A:B"); }
       catch (const std::exception&) { rejected = true; }

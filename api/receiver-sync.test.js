@@ -496,10 +496,10 @@ async function rejected(promise, code, pattern) {
     receiverType: 'Usrp', mode: 'live',
     configurationAuthority: 'VectorWarp startup configuration',
     writePath: 'processor startup through UHD multi_usrp',
-    acknowledgement: 'UHD exceptions can report failure; no positive applied-settings acknowledgement is emitted',
-    positiveAppliedAcknowledgement: false,
-    readbackBoundary: 'UHD startup getters check frequency, rate, gain, antenna, and subdevice mapping before streaming; radar status does not confirm applied values.',
-    hardwareReadback: false, physicalReceiverVerified: false
+    acknowledgement: 'processor startup receipt includes validated per-channel UHD getter readback',
+    positiveAppliedAcknowledgement: true,
+    readbackBoundary: 'UHD startup getters and radar status confirm frequency, rate, gain, antenna, and subdevice mapping before streaming; this is device-API configuration readback, not physical RF verification.',
+    hardwareReadback: true, physicalReceiverVerified: false
   });
   const synchronizer = createReceiverSynchronizer({kraken: {
     synchronize: async () => assert.fail('Direct receivers have no external synchronization call.')

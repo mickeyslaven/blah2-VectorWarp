@@ -61,7 +61,7 @@ provenance while the radar continued processing at the unchanged RF settings.
 | 7 | macOS lifecycle parity | Pending after Linux | Homebrew/standalone replay and provenance conformance suite |
 
 The code-enumerated receiver-setting ledger is maintained in
-`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken and RSPduo are complete; USRP,
+`docs/SDR_SETTING_TRACE_MATRIX.md`. Kraken, RSPduo and USRP are complete;
 HackRF, then the four OS/package lifecycle passes remain serially queued.
 
 ## Completed validation
@@ -104,6 +104,11 @@ HackRF, then the four OS/package lifecycle passes remain serially queued.
   requalifying telemetry, two-block automatic requalification, post-fault CPI
   publication, incomplete old recording epoch, and provisional replay of the
   clean successor epoch. Persistent failure remains bounded to eight retries.
+  The setting-trace follow-up closes a status/UI gap: validated per-channel UHD
+  frequency, rate, gain, antenna and subdevice getter values plus motherboard/
+  RX identity now survive API validation, appear in Settings, and remain in
+  recording provenance. Conflicting channel motherboard identity rejects
+  startup; software readback is never presented as physical RF or UTC proof.
 - Dual-HackRF pairing changes passed deterministic one-sided FIFO overflow,
   short callback, callback-progression divergence, paired recording/status API,
   real libhackrf module, and full processor build checks. No radio hardware was

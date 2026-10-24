@@ -56,12 +56,24 @@ parameter records; they do not independently prove physical RF gain,
 frequency, phase coherence or UTC timing. A gain event rolls only the affected
 epoch incomplete and capture resumes automatically on the next matched pair.
 
-## Backend 3 — USRP (pending serial trace)
+## Backend 3 — USRP (complete)
 
-Settings enumerated from code: device address/identity, centre frequency, sample
-rate, per-channel gain, per-channel antenna, subdevice mapping, motherboard
-count/type, clock source, time source, two-channel stream mapping, timed start,
-and UHD device-time continuity.
+| Setting / contract | End-to-end trace | State | Residual / operational meaning |
+| --- | --- | --- | --- |
+| Device address and identity | USRP profile/default/UI -> YAML parser/factory -> `multi_usrp::make(address)` -> per-channel `get_usrp_rx_info` motherboard/RX identity -> status/UI/recording -> replay backend validation | A R P X T | Requested UHD device arguments and the enumerated motherboard serial/ID plus RX-chain descriptors are both preserved. Missing optional UHD identity fields remain explicitly incomplete; conflicting channel motherboard identities reject startup. |
+| Subdevice/channel topology | validated two-value configuration -> motherboard-0 subdevice setter -> exact getter readback -> two-channel stream map `{0,1}` -> single-B210/distinct-subdevice attestation -> status/UI/sidecar | A R P T | This bounded policy supports one B210 motherboard only. Other coherent UHD topologies remain unsupported until separately qualified rather than being silently called coherent. |
+| Centre frequency and sample rate | `capture.fc/fs` -> factory -> per-channel UHD setters -> per-channel getter tolerance gates (1 Hz and 0.5 Hz) -> startup API/UI/sidecar -> binary header/replay validation | A R P X T | UHD getter values are device-API configuration readback, not an RF measurement or frequency-standard calibration. 2, 6 and 20 MS/s setter/readback fixtures pass; sustained hardware throughput is not inferred. |
+| Per-channel gain and antenna | exactly two finite gains and two nonempty ports -> separate channel setters -> getter gates (0.05 dB/exact string) -> startup API/UI/sidecar -> replay fingerprint | A R P X T | Unequal gains and antenna roles remain channel-specific. Replay consumes the recorded IQ and provenance; it does not rerun UHD setters. |
+| Clock/time sources and motherboard | UHD getters -> one-motherboard B210 attestation -> startup status/UI/sidecar and per-CPI event-time provenance | R P X T | Sources are attested, not configured by VectorWarp. A nonempty source on a single motherboard supports provisional two-channel coherence, but device time is deliberately `utcMapped:false`; it cannot support exact ADS-B event-time scoring. |
+| Timed stream start and two-channel receive | fixed device-time `now + 50 ms` start, explicit channel map, bounded SDK receive capacity -> paired queues | A T | Start policy is internal, not a user setting. The first accepted metadata timestamp establishes the recorded device-time epoch. |
+| Device-time continuity and recovery | every block requires UHD `time_spec` -> integer sample-tick continuity -> fault rolls recording incomplete, clears unpublished IQ and stages two continuous blocks -> qualified relative epoch in health/recording/replay | A P X T | Missing/regressing/jumping time and receive discontinuities discard only corrupt/ambiguous spans. Eight consecutive faults are recoverable; the ninth terminates a persistently unhealthy stream. Epochs remain provisional and inexact. |
+| Native conditioning | UHD `sc16` wire format converted by UHD to `fc32` -> paired complex-float queues/portable recording | A P X T | No backend gain equalization or DC-removal is applied. Frequency/gain/antenna readback and topology travel with the already captured samples. |
+
+The API formerly discarded `hardwareVerified`, `readbackAvailable` and
+`appliedReadback` even though native capture emitted them, while the receiver
+acceptance UI claimed that radar status could not confirm the settings. The
+validated status contract now preserves all per-channel getter values and the
+Settings UI renders them with the physical-RF and exact-UTC limitations.
 
 ## Backend 4 — dual HackRF (pending serial trace)
 

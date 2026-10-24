@@ -191,12 +191,20 @@ assert.equal(fresh({receivedAt: 1000}, 6000), true);
 assert.equal(fresh({receivedAt: 1000}, 6001), false);
 
 const usrpStartup = {schema: 1, receiver: 'Usrp', status: 'accepted',
+  hardwareVerified: true, readbackAvailable: true, physicalRfVerified: false,
   requested: {address: 'type=b200', subdevices: 'A:A A:B',
     frequency: 527000000, sampleRate: 2000000,
     antennas: ['RX2', 'RX2'], gains: [10, 20]},
+  appliedReadback: {subdevices: 'A:A A:B',
+    perChannelFrequencyHz: [527000000, 527000000],
+    perChannelSampleRateHz: [2000000, 2000000],
+    perChannelGainDb: [10, 20], perChannelAntenna: ['RX2', 'RX2']},
   coherence: {motherboards: 1, channels: 2, motherboard: 'B210',
     clockSource: 'internal', timeSource: 'internal', subdevices: 'A:A A:B',
-    policy: 'single-motherboard-b210-v1', singleMotherboard: true}};
+    policy: 'single-motherboard-b210-v1', singleMotherboard: true,
+    deviceIdentity: {complete: true, motherboardId: 'B210',
+      motherboardSerial: '31ABC42', rxIds: ['B210 RX', 'B210 RX'],
+      rxSerials: ['31ABC42', '31ABC42'], rxSubdeviceNames: ['A', 'B']}}};
 const usrpHealth = {schema: 1, receiver: 'Usrp', monitoring: true,
   deviceTime: {source: 'uhd-device-time', utcMapped: false, continuous: true,
     sampleRateHz: 2000000, epochTick: '40000000', nextTick: '40000014',
@@ -206,6 +214,11 @@ const usrpLive = {...replay, input: 'live', receiver: 'Usrp', state: 'live',
   receiverStartup: usrpStartup, receiverHealth: usrpHealth};
 assert.deepEqual(status(usrpLive).value.receiverStartup, usrpStartup);
 assert.deepEqual(status(usrpLive).value.receiverHealth, usrpHealth);
+const incompleteUsrpIdentity = {...usrpStartup, coherence: {...usrpStartup.coherence,
+  deviceIdentity: {complete: false, motherboardId: '', motherboardSerial: '',
+    rxIds: ['', ''], rxSerials: ['', ''], rxSubdeviceNames: ['', '']}}};
+assert.equal(status({...usrpLive, receiverStartup: incompleteUsrpIdentity}).valid, true,
+  'Missing optional UHD identity stays explicit without disabling capture');
 const usrpRecovery = {state: 'qualified', qualificationRequiredBlocks: 2,
   qualificationObservedBlocks: 2, discontinuities: '1', requalifications: '1',
   consecutiveDiscontinuities: '0', discardedBlocks: '2',
@@ -237,6 +250,7 @@ for (const recovery of [
   receiverHealth: {...recoveredUsrpHealth, recovery}}).valid, false,
   JSON.stringify(recovery));
 assert.equal(status({...usrpLive, receiverStartup: {...usrpStartup, status: 'pending',
+  hardwareVerified: false, readbackAvailable: false, appliedReadback: null,
   coherence: null}, receiverHealth: {...usrpHealth, monitoring: false,
     deviceTime: {...usrpHealth.deviceTime, continuous: false, epochTick: null,
       nextTick: null, samples: '0', blocks: '0'}}}).valid, true);
@@ -247,8 +261,28 @@ for (const receiverStartup of [
   {...usrpStartup, coherence: {...usrpStartup.coherence, motherboard: 'X310'}},
   {...usrpStartup, coherence: {...usrpStartup.coherence, policy: 'all-usrps'}},
   {...usrpStartup, coherence: {...usrpStartup.coherence, subdevices: 'A:B A:A'}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence,
+    deviceIdentity: {...usrpStartup.coherence.deviceIdentity, complete: false}}},
+  {...usrpStartup, coherence: {...usrpStartup.coherence,
+    deviceIdentity: {...usrpStartup.coherence.deviceIdentity, rxIds: ['B210 RX']}}},
+  {...usrpStartup, hardwareVerified: false},
+  {...usrpStartup, readbackAvailable: false},
+  {...usrpStartup, physicalRfVerified: true},
+  {...usrpStartup, appliedReadback: null},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelFrequencyHz: [527000002, 527000000]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelSampleRateHz: [1999999, 2000000]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelGainDb: [10, 21]}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    perChannelAntenna: ['TX/RX', 'RX2']}},
+  {...usrpStartup, appliedReadback: {...usrpStartup.appliedReadback,
+    subdevices: 'A:B A:A'}},
   {...usrpStartup, requested: {...usrpStartup.requested, sampleRate: 6000000}},
-  {...usrpStartup, status: 'pending'}
+  {...usrpStartup, status: 'pending'},
+  {...usrpStartup, status: 'pending', hardwareVerified: false,
+    readbackAvailable: false, appliedReadback: null}
 ]) assert.equal(status({...usrpLive, receiverStartup}).valid, false,
   JSON.stringify(receiverStartup));
 for (const deviceTime of [

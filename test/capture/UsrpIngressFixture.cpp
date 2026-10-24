@@ -233,9 +233,13 @@ int main() {
         "vectorwarp-usrp-recording-provenance-v1");
       assert(std::string(details["startup"]["status"].GetString()) == "accepted");
       assert(details["startup"]["hardwareVerified"].GetBool());
+      assert(!details["startup"]["physicalRfVerified"].GetBool());
       assert(details["startup"]["appliedReadback"]["perChannelGainDb"][0].GetDouble() == 10);
       assert(details["startup"]["appliedReadback"]["perChannelGainDb"][1].GetDouble() == 20);
       assert(details["startup"]["coherence"]["singleMotherboard"].GetBool());
+      assert(details["startup"]["coherence"]["deviceIdentity"]["complete"].GetBool());
+      assert(std::string(details["startup"]["coherence"]["deviceIdentity"]
+        ["motherboardSerial"].GetString()) == "31ABC42");
       assert(std::string(details["startup"]["coherence"]["policy"].GetString()) ==
         "single-motherboard-b210-v1");
       assert(!details["timing"]["deviceTime"]["continuous"].GetBool());

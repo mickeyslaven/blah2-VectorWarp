@@ -127,6 +127,9 @@ Before streaming, the adapter checks both channels through UHD getters:
 sample rate within 0.5 Hz, tuning within 1 Hz, gain within 0.05 dB, and exact
 antenna/subdevice values. Mismatches stop startup. These are software readbacks,
 not RF or clock-source verification; clock/time source is not a web setting.
+Fresh processor status and the Settings startup panel preserve those per-channel
+getter values, the attested clock/time sources, and UHD motherboard/RX identity.
+They remain explicitly non-UTC and do not prove physical RF performance.
 
 The 6 MS/s replay path passes with clutter filtering, but this is not a sustained
 B210 hardware test. The upstream B210 timeout/crash report still needs a physical

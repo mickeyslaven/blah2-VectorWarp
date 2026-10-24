@@ -116,6 +116,39 @@ const check = async () => {
     assert.equal(startup.querySelector('table'), null, 'Stale receipts must not appear current');
     window.renderReceiverStartup({...live, processor: {...live.processor, input: 'replay'}});
     assert.match(startup.textContent, /No current RSPduo status/);
+
+    Object.assign(saved, setupDefaults());
+    saved.capture.device = {type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
+      antenna: ['RX2', 'RX2'], gain: [10, 20]};
+    saved.capture.fs = 2000000;
+    await window.renderConfiguration();
+    const usrpTarget = window.document.getElementById('receiver-startup');
+    assert.match(usrpTarget.textContent, /No current USRP status/);
+    const usrpReceipt = {schema: 1, receiver: 'Usrp', status: 'accepted',
+      hardwareVerified: true, readbackAvailable: true, physicalRfVerified: false,
+      requested: {address: 'type=b200', subdevices: 'A:A A:B',
+        frequency: saved.capture.fc, sampleRate: saved.capture.fs,
+        antennas: ['RX2', 'RX2'], gains: [10, 20]},
+      appliedReadback: {subdevices: 'A:A A:B',
+        perChannelFrequencyHz: [saved.capture.fc, saved.capture.fc],
+        perChannelSampleRateHz: [saved.capture.fs, saved.capture.fs],
+        perChannelGainDb: [10, 20], perChannelAntenna: ['RX2', 'RX2']},
+      coherence: {motherboard: 'B210', clockSource: 'internal',
+        timeSource: 'internal', deviceIdentity: {motherboardSerial: '31ABC42',
+          rxIds: ['B210 RX', '<img src=x onerror=alert(1)>']}}};
+    const usrpLive = {radar: 'receiving', processorFresh: true,
+      processor: {receiver: 'Usrp', input: 'live', state: 'live',
+        receiverStartup: usrpReceipt}};
+    window.renderReceiverStartup(usrpLive);
+    assert.match(usrpTarget.textContent, /UHD read back both channels; receiving radar frames/);
+    assert.match(usrpTarget.textContent, /device-API getter values/);
+    assert.match(usrpTarget.textContent, /serial 31ABC42/);
+    assert.match(usrpTarget.textContent, /Exact event-time scoring remains unavailable/);
+    assert.equal(usrpTarget.querySelector('img'), null, 'USRP receipt strings must be text, not HTML');
+    assert.doesNotMatch(usrpTarget.textContent, /Running settings differ/);
+    usrpReceipt.requested.gains[1] = 21;
+    window.renderReceiverStartup(usrpLive);
+    assert.match(usrpTarget.textContent, /Running settings differ/);
     console.log('SDRplay guidance DOM fixture passed.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

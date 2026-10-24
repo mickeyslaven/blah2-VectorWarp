@@ -295,6 +295,54 @@ function usrpStartup(payload, outer, errors) {
   if (!subdevices) errors.push(`${name}.requested.subdevices must not be empty`);
   if (frequency !== outer.frequency || sampleRate !== outer.sampleRate)
     errors.push(`${name}.requested frequency and sample rate must match processor status`);
+  if (typeof payload.hardwareVerified !== 'boolean' ||
+      typeof payload.readbackAvailable !== 'boolean' ||
+      payload.physicalRfVerified !== false)
+    errors.push(`${name} readback verification flags are invalid`);
+  let appliedReadback = null;
+  if (payload.status === 'pending') {
+    if (payload.hardwareVerified !== false || payload.readbackAvailable !== false ||
+        payload.appliedReadback !== null)
+      errors.push(`${name}.pending cannot claim applied UHD readback`);
+  } else if (payload.hardwareVerified !== true || payload.readbackAvailable !== true ||
+      !object(payload.appliedReadback)) {
+    errors.push(`${name}.accepted requires applied UHD readback`);
+  } else {
+    const source = payload.appliedReadback;
+    const appliedSubdevices = text(source.subdevices,
+      `${name}.appliedReadback.subdevices`, errors);
+    const numericPair = (values, field, expected, tolerance, positive = true) => {
+      if (!Array.isArray(values) || values.length !== 2) {
+        errors.push(`${name}.appliedReadback.${field} requires two values`); return [];
+      }
+      return values.map((value, index) => {
+        if (typeof value !== 'number' || !Number.isFinite(value) || (positive && value <= 0))
+          errors.push(`${name}.appliedReadback.${field}[${index}] must be ${positive ? 'positive and ' : ''}finite`);
+        else if (Math.abs(value - expected[index]) > tolerance)
+          errors.push(`${name}.appliedReadback.${field}[${index}] differs from request`);
+        return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+      });
+    };
+    const frequencyHz = numericPair(source.perChannelFrequencyHz,
+      'perChannelFrequencyHz', [frequency, frequency], 1);
+    const sampleRateHz = numericPair(source.perChannelSampleRateHz,
+      'perChannelSampleRateHz', [sampleRate, sampleRate], 0.5);
+    const gainDb = numericPair(source.perChannelGainDb,
+      'perChannelGainDb', gains, 0.05, false);
+    let appliedAntennas = [];
+    if (!Array.isArray(source.perChannelAntenna) || source.perChannelAntenna.length !== 2)
+      errors.push(`${name}.appliedReadback.perChannelAntenna requires two values`);
+    else appliedAntennas = source.perChannelAntenna.map((value, index) => text(value,
+      `${name}.appliedReadback.perChannelAntenna[${index}]`, errors));
+    if (appliedSubdevices !== subdevices)
+      errors.push(`${name}.appliedReadback.subdevices differs from request`);
+    if (appliedAntennas.length === 2 &&
+        appliedAntennas.some((value, index) => value !== antennas[index]))
+      errors.push(`${name}.appliedReadback.perChannelAntenna differs from request`);
+    appliedReadback = {subdevices: appliedSubdevices,
+      perChannelFrequencyHz: frequencyHz, perChannelSampleRateHz: sampleRateHz,
+      perChannelGainDb: gainDb, perChannelAntenna: appliedAntennas};
+  }
   let coherence = null;
   if (payload.status === 'pending') {
     if (payload.coherence !== null) errors.push(`${name}.coherence must be null while pending`);
@@ -315,11 +363,46 @@ function usrpStartup(payload, outer, errors) {
       errors.push(`${name}.coherence does not attest one complete coherent motherboard`);
     if (appliedSubdevices !== subdevices)
       errors.push(`${name}.coherence subdevices differ from request`);
+    const identitySource = source.deviceIdentity;
+    let deviceIdentity = null;
+    if (!object(identitySource) || typeof identitySource.complete !== 'boolean') {
+      errors.push(`${name}.coherence.deviceIdentity has an invalid schema`);
+    } else {
+      const identityText = field => {
+        const value = identitySource[field];
+        return text(value, `${name}.coherence.deviceIdentity.${field}`, errors, false);
+      };
+      const identityPair = field => {
+        const value = identitySource[field];
+        if (!Array.isArray(value) || value.length !== 2) {
+          errors.push(`${name}.coherence.deviceIdentity.${field} requires two values`);
+          return [];
+        }
+        return value.map((item, index) => text(item,
+          `${name}.coherence.deviceIdentity.${field}[${index}]`, errors, false));
+      };
+      const motherboardId = identityText('motherboardId');
+      const motherboardSerial = identityText('motherboardSerial');
+      const rxIds = identityPair('rxIds');
+      const rxSerials = identityPair('rxSerials');
+      const rxSubdeviceNames = identityPair('rxSubdeviceNames');
+      const complete = Boolean(motherboardId && motherboardSerial &&
+        rxIds.length === 2 && rxIds.every(Boolean) &&
+        rxSubdeviceNames.length === 2 && rxSubdeviceNames.every(Boolean));
+      if (identitySource.complete !== complete)
+        errors.push(`${name}.coherence.deviceIdentity.complete disagrees with its fields`);
+      deviceIdentity = {complete, motherboardId, motherboardSerial,
+        rxIds, rxSerials, rxSubdeviceNames};
+    }
     coherence = {motherboards, channels, motherboard, clockSource, timeSource,
-      subdevices: appliedSubdevices, policy, singleMotherboard: true};
+      subdevices: appliedSubdevices, policy, singleMotherboard: true, deviceIdentity};
   }
   return {schema: 1, receiver: 'Usrp', status: payload.status,
-    requested: {address, subdevices, frequency, sampleRate, antennas, gains}, coherence};
+    hardwareVerified: payload.hardwareVerified,
+    readbackAvailable: payload.readbackAvailable,
+    physicalRfVerified: false,
+    requested: {address, subdevices, frequency, sampleRate, antennas, gains},
+    appliedReadback, coherence};
 }
 function usrpHealth(payload, outer, errors) {
   const name = 'receiverHealth';

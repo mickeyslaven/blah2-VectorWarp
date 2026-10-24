@@ -7,11 +7,17 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <map>
 #include <cmath>
 #include <string>
 #include <vector>
 
 namespace uhd {
+struct info_dict {
+  std::map<std::string, std::string> values;
+  bool has_key(const std::string& key) const { return values.count(key) != 0; }
+  std::string get(const std::string& key) const { return values.at(key); }
+};
 struct time_spec_t {
   double seconds;
   time_spec_t(double s = 0) : seconds(s) {}
@@ -114,6 +120,11 @@ public:
   std::string get_mboard_name(size_t) const { return fake.motherboard; }
   std::string get_clock_source(size_t) const { return fake.clockSource; }
   std::string get_time_source(size_t) const { return fake.timeSource; }
+  info_dict get_usrp_rx_info(size_t channel) const {
+    return {{{"mboard_id", "B210"}, {"mboard_serial", "31ABC42"},
+      {"rx_id", "B210 RX"}, {"rx_serial", "31ABC42"},
+      {"rx_subdev_name", channel ? "B" : "A"}}};
+  }
   time_spec_t get_time_now() const { return 10; }
   rx_streamer::sptr get_rx_stream(const stream_args_t& args) const;
 };

@@ -1617,12 +1617,14 @@ function renderEditor() {
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
-      if (activeConfig.capture?.device?.type === 'RspDuo') {
+      if (['RspDuo', 'Usrp'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
         startup.className = 'upstream-status receiver-startup';
         panel.appendChild(startup);
         renderReceiverStartup(null, startup);
+      }
+      if (activeConfig.capture?.device?.type === 'RspDuo') {
         const health = document.createElement('section');
         health.id = 'receiver-health';
         health.className = 'upstream-status receiver-health';
@@ -1649,6 +1651,10 @@ function renderReceiverOverload(status, target = document.getElementById('receiv
 
 function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
   if (!target) return;
+  if (activeConfig.capture?.device?.type === 'Usrp') {
+    renderUsrpStartup(status, target);
+    return;
+  }
   const detailsOpen = target.querySelector('details')?.open === true;
   const heading = document.createElement('h3');
   heading.textContent = 'SDRplay startup';
@@ -1709,6 +1715,78 @@ function renderReceiverStartup(status, target = document.getElementById('receive
   }
   const note = document.createElement('p');
   note.textContent = 'These checks do not measure RF performance, filtering or phase coherence.';
+  details.append(summary, table, note);
+  target.appendChild(details);
+}
+
+function renderUsrpStartup(status, target = document.getElementById('receiver-startup')) {
+  if (!target) return;
+  const detailsOpen = target.querySelector('details')?.open === true;
+  const heading = document.createElement('h3');
+  heading.textContent = 'USRP startup';
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  const processor = status?.processorFresh && status.processor?.receiver === 'Usrp' &&
+    status.processor?.input === 'live' ? status.processor : null;
+  const receipt = processor?.receiverStartup;
+  if (!processor) message.textContent = 'No current USRP status. Saved settings apply at startup.';
+  else if (processor.state === 'error') message.textContent = `Receiver error: ${processor.error}`;
+  else if (!receipt) message.textContent = 'USRP startup readback unavailable. Rebuild UHD support to see it.';
+  else if (receipt.status !== 'accepted') message.textContent = 'Applying settings through UHD…';
+  else if (!receipt.readbackAvailable) message.textContent = 'USRP started without qualified UHD setting readback.';
+  else if (processor.state === 'stopped') message.textContent = 'Receiver stopped. UHD read back the last startup settings.';
+  else message.textContent = status.radar === 'receiving' ?
+    'UHD read back both channels; receiving radar frames.' :
+    'UHD read back both channels; waiting for radar frames.';
+  target.replaceChildren(heading, message);
+  if (!receipt) return;
+  const requested = receipt.requested;
+  const device = activeConfig.capture.device;
+  const matches = requested.frequency === activeConfig.capture.fc &&
+    requested.sampleRate === activeConfig.capture.fs && requested.address === device.address &&
+    requested.subdevices === device.subdev &&
+    JSON.stringify(requested.antennas) === JSON.stringify(device.antenna) &&
+    JSON.stringify(requested.gains) === JSON.stringify(device.gain);
+  if (!matches) {
+    const mismatch = document.createElement('p');
+    mismatch.textContent = 'Running settings differ. Use Save & Restart to apply these values.';
+    target.appendChild(mismatch);
+  }
+  const details = document.createElement('details');
+  details.open = detailsOpen;
+  const summary = document.createElement('summary');
+  summary.textContent = 'Startup readback details';
+  const table = document.createElement('table');
+  const caption = document.createElement('caption');
+  caption.textContent = 'UHD device-API getter values, not a physical RF measurement';
+  table.appendChild(caption);
+  const applied = receipt.appliedReadback;
+  const coherence = receipt.coherence;
+  const identity = coherence?.deviceIdentity;
+  const joined = (values, suffix = '') => Array.isArray(values) ?
+    values.map(value => `${value}${suffix}`).join(' / ') : 'Unavailable';
+  const rows = [
+    ['Device address', requested.address],
+    ['Motherboard', coherence ? `${coherence.motherboard}${identity?.motherboardSerial ?
+      `; serial ${identity.motherboardSerial}` : '; serial unavailable'}` : 'Not attested'],
+    ['RX identity A / B', joined(identity?.rxIds)],
+    ['Clock / time source', coherence ? `${coherence.clockSource} / ${coherence.timeSource}` : 'Not attested'],
+    ['Subdevices', applied?.subdevices || requested.subdevices],
+    ['Frequency A / B', joined(applied?.perChannelFrequencyHz, ' Hz')],
+    ['Sample rate A / B', joined(applied?.perChannelSampleRateHz, ' S/s')],
+    ['Gain A / B', joined(applied?.perChannelGainDb, ' dB')],
+    ['Antenna A / B', joined(applied?.perChannelAntenna)]
+  ];
+  for (const [name, value] of rows) {
+    const row = document.createElement('tr');
+    const label = document.createElement('th');
+    label.scope = 'row'; label.textContent = name;
+    const cell = document.createElement('td');
+    cell.textContent = String(value);
+    row.append(label, cell); table.appendChild(row);
+  }
+  const note = document.createElement('p');
+  note.textContent = 'These getters do not measure RF performance or map UHD device time to UTC. Exact event-time scoring remains unavailable.';
   details.append(summary, table, note);
   target.appendChild(details);
 }

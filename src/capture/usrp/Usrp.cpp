@@ -61,6 +61,7 @@ std::string Usrp::startup_receipt_json() const
     rapidjson::Value(coherenceAvailable ? "accepted" : "pending", allocator), allocator);
   document.AddMember("hardwareVerified",appliedSettingsAvailable,allocator);
   document.AddMember("readbackAvailable",appliedSettingsAvailable,allocator);
+  document.AddMember("physicalRfVerified",false,allocator);
   rapidjson::Value requested(rapidjson::kObjectType);
   requested.AddMember("address", rapidjson::Value(address.c_str(), allocator), allocator);
   requested.AddMember("subdevices", rapidjson::Value(subdev.c_str(), allocator), allocator);
@@ -100,6 +101,23 @@ std::string Usrp::startup_receipt_json() const
     applied.AddMember("subdevices", rapidjson::Value(coherence.subdevices.c_str(), allocator), allocator);
     applied.AddMember("policy", rapidjson::Value(coherence.policy.c_str(), allocator), allocator);
     applied.AddMember("singleMotherboard", true, allocator);
+    rapidjson::Value identity(rapidjson::kObjectType), rxIds(rapidjson::kArrayType),
+      rxSerials(rapidjson::kArrayType), rxSubdevices(rapidjson::kArrayType);
+    identity.AddMember("complete", coherence.identityComplete, allocator);
+    identity.AddMember("motherboardId",
+      rapidjson::Value(coherence.motherboardId.c_str(), allocator), allocator);
+    identity.AddMember("motherboardSerial",
+      rapidjson::Value(coherence.motherboardSerial.c_str(), allocator), allocator);
+    for (unsigned channel = 0; channel < 2; ++channel) {
+      rxIds.PushBack(rapidjson::Value(coherence.rxIds[channel].c_str(), allocator), allocator);
+      rxSerials.PushBack(rapidjson::Value(coherence.rxSerials[channel].c_str(), allocator), allocator);
+      rxSubdevices.PushBack(rapidjson::Value(
+        coherence.rxSubdeviceNames[channel].c_str(), allocator), allocator);
+    }
+    identity.AddMember("rxIds", rxIds, allocator);
+    identity.AddMember("rxSerials", rxSerials, allocator);
+    identity.AddMember("rxSubdeviceNames", rxSubdevices, allocator);
+    applied.AddMember("deviceIdentity", identity, allocator);
     document.AddMember("coherence", applied, allocator);
   } else document.AddMember("coherence", rapidjson::Value(rapidjson::kNullType), allocator);
   rapidjson::StringBuffer buffer;
