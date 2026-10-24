@@ -336,6 +336,7 @@ const auto&t=c.tracker;
  for(const auto value:c.fusion.directResponse){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  if(c.replay.maxBytes){
   require(at<=configBytes-152,"Resident replay identity exceeds config capacity");
+  at=configBytes-152; // Fixed reserved trailer; preceding manifold padding stays zero.
   w.f64(at,c.replay.frequencyHz);w.f64(at+8,c.replay.configuredPfa);
   w.copy(at+16,c.replay.sourceHash.data(),32);w.copy(at+48,c.replay.rfHash.data(),32);
   w.u32(at+80,uint32_t(c.replay.actualGainDb.size()));
@@ -385,6 +386,7 @@ for(uint32_t i=0;i<manifoldCount;++i){bearing.manifoldResponses.emplace_back(r.f
 c.fusion.directResponse.reserve(fusionDirectCount);
 for(uint32_t i=0;i<fusionDirectCount;++i){c.fusion.directResponse.emplace_back(r.f32(at),r.f32(at+4));at+=8;}
 if(c.replay.maxBytes){
+ r.zeros(at,configBytes-152-at);at=configBytes-152;
  c.replay.frequencyHz=r.f64(at);c.replay.configuredPfa=r.f64(at+8);
  r.range(at+16,64);std::memcpy(c.replay.sourceHash.data(),b.data+at+16,32);
  std::memcpy(c.replay.rfHash.data(),b.data+at+48,32);
