@@ -1,4 +1,5 @@
 #include "process/ambiguity/ResidentFusionWeights.h"
+#include "process/analysis/ProductionReplayContract.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -109,4 +110,22 @@ TEST_CASE("ideal and equivalent measured surveillance banks share whitening and 
     beams,channels,targetBeam,direct.data(),inverseNoise,.75,true);
   for(uint32_t channel=0;channel<channels;++channel)
     REQUIRE(std::abs(ideal[channel]-measured[channel])<1e-6);
+}
+
+TEST_CASE("production replay trial and temporal contract matches resident bounds")
+{
+  REQUIRE(blah2::production_replay::familywisePfa(.04, 4, 9) ==
+    Catch::Approx(.04 / 36).epsilon(1e-15));
+  REQUIRE_THROWS_AS(blah2::production_replay::familywisePfa(.04, 0, 1), std::invalid_argument);
+  REQUIRE_NOTHROW(blah2::production_replay::temporal(1, 0, 0, true));
+  REQUIRE_NOTHROW(blah2::production_replay::temporal(8, 2, 16, true));
+  REQUIRE_THROWS_AS(blah2::production_replay::temporal(1, 1, 0, true), std::invalid_argument);
+  REQUIRE_THROWS_AS(blah2::production_replay::temporal(4, 0, 0, false), std::invalid_argument);
+}
+
+TEST_CASE("production replay covariance input is bounded and fail closed")
+{
+  REQUIRE_NOTHROW(blah2::production_replay::covariance({1,.2,.2,2},2));
+  REQUIRE_THROWS_AS(blah2::production_replay::covariance({1,.2,.2,0},2), std::invalid_argument);
+  REQUIRE_THROWS_AS(blah2::production_replay::covariance({1,.2,.2},2), std::invalid_argument);
 }
