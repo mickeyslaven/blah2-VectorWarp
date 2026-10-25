@@ -129,7 +129,7 @@ assert.ok(model.cells.some(cell => cell.support === 'unsupported'));
 assert.equal(model.fixed_transmitter_anchor.separate_from_aircraft_response_evidence, true);
 assert.equal(model.calibration.adsb_role, 'adsb-collection-and-validation-only');
 assert.throws(() => denseRuntimeCandidate(model), /shadow-only/);
-const candidateModelSha256 = crypto.createHash('sha256').update(JSON.stringify(model)).digest('hex');
+const candidateModelSha256 = model.candidate_version;
 const productionAlpha = productionCfarAlpha(.05, 16, 1);
 const productionGain = {requested_common_gain: 12, requested_channel_gains: null,
   actual_channel_gains_db: [12, 12, 12]};

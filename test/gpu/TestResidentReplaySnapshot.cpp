@@ -56,6 +56,7 @@ int main(int argc,char** argv){try{
    s.covarianceValid=true;
    wire::Writer covariance{{s.blocks[1].bytes.data(),s.blocks[1].bytes.size()}};
    covariance.f64(0,123.5);covariance.f64(16,7);covariance.f64(24,-2);
+   covariance.f64(32,7);covariance.f64(40,2);covariance.f64(48,90);
    wire::Writer weights{{s.blocks[2].bytes.data(),s.blocks[2].bytes.size()}};
    for(uint32_t b=0;b<c.fusion.beams;++b){weights.f32(b*16,float(b+1));weights.f32(b*16+12,-.25f);}
    const auto cells=c.geometry.doppler*c.geometry.delays;

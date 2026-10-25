@@ -7,6 +7,7 @@ and multi-CPI/TBD inspection.
 """
 import hashlib
 import math
+import os
 from pathlib import Path
 import struct
 
@@ -15,22 +16,36 @@ C_KM_S = 299792.458
 
 
 def sample_clock(capture, metadata, sample_rate):
+    if isinstance(sample_rate, bool) or not isinstance(sample_rate, (int, float)) or \
+       not math.isfinite(sample_rate) or sample_rate <= 0:
+        raise ValueError("native sample clock requires a positive sample rate")
     epoch, first, end = (metadata.get(k) for k in ("epoch", "firstEpochSample", "endEpochSample"))
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in (epoch, first, end)) or \
        epoch <= 0 or first < 0 or end <= first:
         raise ValueError("native export requires admitted recording sample provenance")
-    anchors = []
+    anchors, uncertainties = [], []
     for cpi in capture["processor_cpis"]:
         left, right, timestamp = (cpi.get(k) for k in
             ("first_epoch_sample", "end_epoch_sample", "timestamp_ms"))
-        if cpi.get("epoch") != epoch or not all(isinstance(v, int) for v in (left, right)) or \
+        if cpi.get("epoch") != epoch or not all(isinstance(v, int) and not isinstance(v, bool) for v in (left, right)) or \
            not first <= left < right <= end or not isinstance(timestamp, (int, float)) or \
-           not math.isfinite(timestamp):
+           isinstance(timestamp, bool) or not math.isfinite(timestamp):
             raise ValueError("native export requires timestamped admitted CPI sample ranges")
         anchors.append(((left + right) / 2, float(timestamp)))
+        uncertainty = cpi.get("event_time_uncertainty_s", 0)
+        if not isinstance(uncertainty, (int, float)) or isinstance(uncertainty, bool) or \
+           not math.isfinite(uncertainty) or not 0 <= uncertainty <= 5:
+            raise ValueError("native sample-clock uncertainty is invalid")
+        uncertainties.append((anchors[-1], 0 if cpi.get("exact_event_time") is True else uncertainty * 1000))
     anchors.sort()
     if len(anchors) < 3 or any(b[0] <= a[0] or b[1] <= a[1] for a, b in zip(anchors, anchors[1:])):
         raise ValueError("native export requires three ordered sample-clock anchors")
+    uncertainties.sort()
+    origin, tolerance = uncertainties[0]
+    for anchor, uncertainty in uncertainties[1:]:
+        expected_ms = (anchor[0] - origin[0]) * 1000 / sample_rate
+        if abs((anchor[1] - origin[1]) - expected_ms) > 2 + tolerance + uncertainty:
+            raise ValueError("native sample-clock anchors disagree with admitted sample rate and uncertainty")
     # Admission may contain provisional host timing. Use its explicit sample
     # anchors (and retain its timing policy), never replay wall-clock time.
     def at(sample):
@@ -76,7 +91,11 @@ class Snapshot:
         if receipt.get("native_contract_verified") is not True or not path.is_file() or \
            path.is_symlink() or not 2048 <= path.stat().st_size <= LIMIT:
             raise ValueError("native snapshot missing, unverified, or outside bound")
-        self.data = path.read_bytes()
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "rb") as source:
+            self.data = source.read(LIMIT + 1)
+        if not 2048 <= len(self.data) <= LIMIT:
+            raise ValueError("native snapshot changed beyond its byte bound")
         sha = hashlib.sha256(self.data).hexdigest()
         if sha != receipt.get("sha256"):
             raise ValueError("native snapshot changed after native contract verification")
@@ -100,18 +119,20 @@ class Snapshot:
         self.rows, self.cols, self.channels, self.samples = [u32(x) for x in (76, 80, 84, 88)]
         self.beams, self.depth, self.passes = u32(288), u32(296), u32(316)
         self.frame = u64(32)
+        if not (0 < self.rows and 0 < self.cols and 0 < self.channels <= 8) or \
+           self.rows * self.cols * self.channels * 8 > len(self.data):
+            raise ValueError("native snapshot dimensions invalid")
         if u64(24) != 1 or u64(40) != self.frame or u64(48) != self.frame or \
            not request["first_frame"] <= self.frame <= request["last_frame"] or \
            self.data[192:224].hex() != request["source_sha256"] or \
            self.data[224:256].hex() != request["rf_sha256"] or \
            f64(320) != config["capture"]["fc"] or f64(328) != config["capture"]["fs"] or \
+           f64(336) != config["process"]["detection"]["pfa"] or \
            self.channels != config["capture"]["device"]["channel_count"] or \
            self.samples != int(config["capture"]["fs"] * config["process"]["data"]["cpi"]) or \
            [f64(400 + 8 * c) for c in range(self.channels)] != request["actual_channel_gains_db"] or \
            u64(464) != request["max_bytes"] or u32(472) != request["max_frames"]:
             raise ValueError("native snapshot input/frame/RF/gain identity differs")
-        if not (0 < self.rows and 0 < self.cols and 0 < self.channels <= 8):
-            raise ValueError("native snapshot dimensions invalid")
         metadata = self.blocks[5][0]
         self.doppler = [f64(metadata + 384 + 8 * r) for r in range(self.rows)]
         self.delay_samples = [self.i32(metadata + 384 + 8 * self.rows + 4 * c) for c in range(self.cols)]
@@ -163,7 +184,7 @@ class Snapshot:
                 "native_temporal_banks": temporal, "native_cfar_statistics": stats,
                 "native_decision_flags": self.u32(self.blocks[17][0] + index * 4)}
 
-    def export(self, timestamp, truth, radius=(16, 24)):
+    def export(self, timestamp, truth, radius=(2, 2)):
         if not min(self.delay) <= truth["delay_km"] <= max(self.delay) or \
            not min(self.doppler) <= truth["doppler_hz"] <= max(self.doppler):
             raise ValueError("truth-selected native CUT is outside the exported radar geometry")
@@ -178,16 +199,33 @@ class Snapshot:
         covariance = [self.vector(2, 8, 2, 2 * (left * 8 + right))
                       for left in range(8) for right in range(8)]
         weights = [self.vector(3, 4, 2, 2 * i) for i in range(self.beams * self.channels)]
+        config_start = self.blocks[20][0]
+        active_covariance = [[covariance[left * self.channels + right]
+            for right in range(self.channels)] for left in range(self.channels)]
+        reference_channels = [self.u32(config_start + 168 + 4 * index) for index in range(self.u32(92))]
+        reference = [[0.0, 0.0] for _ in range(self.channels)]
+        for index, channel in enumerate(reference_channels):
+            reference[channel] = self.vector(1, 8, 2, 8 + 2 * index)
         return {"timestamp_ms": timestamp, "native_signal_timestamp_ms": self.u64(56),
                 "logical_frame": self.frame, "truth": truth,
                 "row": row, "column": col, "target_cut": self.cell(row, col),
                 "nuisance_cells": nuisance, "native_snapshot": self.receipt,
+                "nuisance_window": {"delay_radius_bins": radius[0], "doppler_radius_bins": radius[1],
+                    "scope": "bounded local diagnostic; complete CUT/training grid remains in native snapshot"},
                 "native_config_sha256": self.data[96:128].hex(),
                 "native_module_sha256": self.data[128:160].hex(),
                 "native_device_sha256": self.data[480:512].hex(),
+                "raw_iq_sha256": self.data[160:192].hex(),
+                "source_sha256": self.data[192:224].hex(), "rf_sha256": self.data[224:256].hex(),
+                "frequency_hz": self.f64(320), "sample_rate_hz": self.f64(328),
+                "actual_channel_gains_db": [self.f64(400 + 8 * index) for index in range(self.channels)],
+                "channel_mapping": [self.u32(config_start + 200 + 4 * index) for index in range(self.channels)],
                 "covariance_whitening": {"state": "native-resident-settled-snapshot",
                     "covariance_valid": bool(self.u32(72)), "covariance_storage_complex": covariance,
                     "covariance_active_stride": self.channels,
+                    "covariance_matrix": active_covariance,
+                    "covariance_analysis_samples": self.u32(config_start + 120),
+                    "reference_weights": reference,
                     "actual_fusion_weights": weights,
                     "reference_checkpoint_f64": self.vector(1, 8, 19, 8)},
                 "native_temporal_state": {"integration_cpis": self.depth,

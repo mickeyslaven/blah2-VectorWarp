@@ -1054,6 +1054,7 @@ class EvidenceStatistics {
       const exactTiming = processorCpis.length > 0 &&
         processorCpis.every(item => item.exact_event_time === true);
       result[window.captureId] = {...admission,
+        capture_id: window.captureId, pass_id: event?.pass_id || null, icao: event?.hex || null,
         timing_policy: exactTiming ? 'exact' : 'provisional',
         decision_grade: admission.valid && exactTiming,
         event_time_uncertainty_s: exactTiming ? 0 : this.limits.provisionalTimeUncertaintyS,

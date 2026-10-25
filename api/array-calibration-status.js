@@ -23,6 +23,9 @@ function compactAutomation(status = {}, {autoPromoteEnabled = false,
     candidate_version: status.candidateVersion || null,
     versioned_candidate_path: status.versionedCandidatePath || null,
     shadow_ab_receipt_path: status.receiptPath || null,
+    native_shadow_corpus: status.nativeShadow ? {path: status.nativeShadow.path || null,
+      added: status.nativeShadow.added || 0, ignored: status.nativeShadow.ignored || 0,
+      error: status.nativeShadow.error || null} : null,
     promotion: status.promotion || null
   };
 }

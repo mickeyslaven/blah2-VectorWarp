@@ -29,11 +29,12 @@ const DEFAULT_MODES = Object.freeze([
 ]);
 const MAX_HOT_COMPLETED = 256;
 const MAX_TRUTH_EXPORT_PASSES = 8;
+const MAX_RESULT_BYTES = 16 * 1024 * 1024;
 
 const canonical = value => {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new TypeError('canonical shadow receipts require finite numbers');
-    const bytes = Buffer.allocUnsafe(8); bytes.writeDoubleBE(value);
+    const bytes = Buffer.allocUnsafe(8); bytes.writeDoubleBE(value === 0 ? 0 : value);
     return `{"$f64":"${bytes.toString('hex')}"}`;
   }
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -117,6 +118,7 @@ class IntegrationShadowQueue {
     this.counters = {accepted: 0, duplicate: 0, rejected: 0, overflow: 0};
     this.lastQueuedAt = null;
     this.lastError = null;
+    this.resultCache = new Map();
   }
 
   receiptKey() {
@@ -144,12 +146,25 @@ class IntegrationShadowQueue {
     catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   }
 
-  resultRecords() {
-    return this.files(this.options.resultsPath, '.result.json').sort().map(name => {
+  resultRecords({includeEvidence = false} = {}) {
+    const names = this.files(this.options.resultsPath, '.result.json').sort();
+    for (const name of this.resultCache.keys()) if (!names.includes(name)) this.resultCache.delete(name);
+    return names.map(name => {
       try {
-        const result = JSON.parse(this.fs.readFileSync(path.join(this.options.resultsPath, name)));
+        const filename = path.join(this.options.resultsPath, name);
         const expected = name.replace(/\.result\.json$/, '');
         const jobPath = path.join(this.options.queuePath, `${expected}.job.json`);
+        const stat = this.fs.lstatSync(filename), jobStat = this.fs.lstatSync(jobPath);
+        const key = this.receiptKey();
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RESULT_BYTES ||
+            !jobStat.isFile() || jobStat.isSymbolicLink() || jobStat.size > 1024 * 1024)
+          throw new Error('integration shadow receipt exceeds its regular-file byte bound');
+        const signature = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs,
+          jobStat.ino, jobStat.size, jobStat.mtimeMs, jobStat.ctimeMs,
+          crypto.createHash('sha256').update(key).digest('hex')].join(':');
+        const cached = this.resultCache.get(name);
+        if (!includeEvidence && cached?.signature === signature) return cached.record;
+        const result = JSON.parse(this.fs.readFileSync(filename));
         const job = JSON.parse(this.fs.readFileSync(jobPath));
         const unsignedJob = {...job}; delete unsignedJob.job_binding_sha256;
         const unsignedResult = {...result}; delete unsignedResult.result_binding_sha256;
@@ -157,7 +172,6 @@ class IntegrationShadowQueue {
         const authenticatedResult = {...result};
         const authentication = authenticatedResult.result_authentication;
         delete authenticatedResult.result_authentication;
-        const key = this.receiptKey();
         const expectedTag = crypto.createHmac('sha256', key).update(canonical(authenticatedResult)).digest('hex');
         const suppliedTag = authentication?.tag;
         if (result.schema !== 'vectorwarp-integration-shadow-result-v1' ||
@@ -185,7 +199,14 @@ class IntegrationShadowQueue {
             !result.arms || typeof result.arms !== 'object' ||
             !result.summary || result.summary.selection_performed !== false)
           throw new Error('result receipt contract failed');
-        return {name, valid: true, result};
+        const summary = {name, valid: true, result: {job_id: result.job_id, state: result.state,
+          completed_at: result.completed_at, timing: result.timing, summary: result.summary,
+          native_export_count: result.truth_selected_exports.length,
+          hardware_qualified: result.hardware_qualified, decision_grade: result.decision_grade,
+          timing_policy: result.timing_policy, qualification_gate: result.qualification_gate,
+          production_unchanged: result.production_unchanged}};
+        this.resultCache.set(name, {signature, record: summary});
+        return includeEvidence ? {name, valid: true, result} : summary;
       } catch (error) { return {name, valid: false, error: error.message}; }
     });
   }
@@ -231,6 +252,8 @@ class IntegrationShadowQueue {
   }
 
   reserveSlot(jobId) {
+    if (!Number.isInteger(this.options.maxPending) || this.options.maxPending < 1 || this.options.maxPending > 1024)
+      throw new Error('integration shadow pending-slot bound is invalid');
     for (let index = 0; index < this.options.maxPending; ++index) {
       const filename = path.join(this.options.queuePath, `pending-${index}.slot`);
       try {
@@ -268,7 +291,7 @@ class IntegrationShadowQueue {
         const result = row.result;
         return {job_id: result.job_id, state: result.state, completed_at: result.completed_at,
           timing: result.timing, winner: result.summary?.winner || null,
-          native_export_count: result.truth_selected_exports.length,
+          native_export_count: result.native_export_count,
           hardware_qualified: result.hardware_qualified,
           decision_grade: result.decision_grade, timing_policy: result.timing_policy,
           qualification_gate: result.qualification_gate,
@@ -317,7 +340,7 @@ class IntegrationShadowQueue {
       const channelCount = metadata.channels;
       if (metadata.schema !== 'vectorwarp-kraken-iq-clip-v1' ||
           !Number.isFinite(metadata.frequency) || !Number.isFinite(metadata.sampleRate) ||
-          !Number.isInteger(channelCount) || channelCount < 2 ||
+          !Number.isInteger(channelCount) || channelCount < 2 || channelCount > 8 ||
           !Array.isArray(channelGains) || channelGains.length !== channelCount ||
           channelGains.some(value => !Number.isFinite(value)))
         throw new Error('integration shadow native metadata has incompatible RF/gain identity');

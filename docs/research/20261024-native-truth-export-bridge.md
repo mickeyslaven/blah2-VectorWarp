@@ -65,3 +65,21 @@ source-sample identity, retained artifact hashes, receipt coverage and ordinary
 output parity. No physical GPU test or admitted-clip GPU replay was run by this
 change. Until those checks pass, results explicitly retain
 `hardware_qualified=false`, `decision_grade=false`, and no promotion authority.
+
+Adversarial review additions: source-clock anchors now have to agree with the
+admitted sample rate within their declared uncertainty; decimal dwell names
+retain their full precision; config, IQ and sidecars are checked again after
+replay. Every queued pass/count must match the admitted manifest. Native files
+share one 2 GiB job budget, and JSON receipts are bounded to 16 MiB. Only a small
+local window is copied into JSON; complete spatial/temporal banks remain in the
+native artifacts. The live status path caches compact verified summaries.
+
+Fresh admissions retain the original aircraft and pass identity. A frame may
+also contain signed `vectorwarp-native-truth-export-v1` evidence: the physical
+complex CAF CUT, all native fusion weights, raw-IQ and snapshot hashes, explicit
+sample-clock mapping, circularly interpolated ADS-B direction, exact RF/gain
+identity and native reference covariance. Missing pass/direction/covariance or
+warmup-only detector state does not manufacture a training record. The native
+reference covariance is not claimed to be local CFAR noise. The CPU bridge
+regression now traverses the real encoder, Python signer and JavaScript native
+evidence adapter, and checks that the physical complex vector is unchanged.

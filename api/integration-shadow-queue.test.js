@@ -6,6 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {IntegrationShadowQueue, digestCanonical, validTruthSelectedExports} = require('./integration-shadow-queue');
+assert.equal(digestCanonical({zero: -0}), digestCanonical({zero: 0}),
+  'signed receipt identity survives JSON signed-zero normalization');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-integration-shadow-'));
 const receiptKeyPath = path.join(root, 'receipt.key');
@@ -117,6 +119,14 @@ assert.equal(status.pending, 0);
 assert.equal(status.completed, 1);
 assert.equal(status.reserved_slots, 0);
 assert.equal(status.production_path_changed, false);
+const receiptFile = path.join(config.process.detection.integration_shadow.results_path,
+  `${first.job_id}.result.json`);
+const savedReceipt = fs.readFileSync(receiptFile);
+const oversized = fs.openSync(receiptFile, 'w');
+fs.ftruncateSync(oversized, 16 * 1024 * 1024 + 1); fs.closeSync(oversized);
+assert.equal(queue.resultRecords()[0].valid, false, 'oversized receipts are rejected before JSON allocation');
+fs.writeFileSync(receiptFile, savedReceipt);
+assert.equal(queue.resultRecords()[0].valid, true, 'changed receipt metadata invalidates the compact status cache');
 const provisionalConfig = JSON.parse(JSON.stringify(config));
 provisionalConfig.process.detection.integration_shadow.queue_path = path.join(root, 'provisional-queue');
 const provisionalQueue = new IntegrationShadowQueue(provisionalConfig);

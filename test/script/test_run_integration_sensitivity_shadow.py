@@ -71,6 +71,7 @@ def test_shadow_rejects_missing_provisional_provenance():
 
 
 def test_job_binding_and_production_baseline_are_required():
+    assert MODULE.canonical_digest({"zero": -0.0}) == MODULE.canonical_digest({"zero": 0})
     identity = {"recording": "/tmp/x", "recording_sha256": "a" * 64,
                 "native_sidecar_sha256": "d" * 64,
                 "admission_sha256": "b" * 64, "config_sha256": "c" * 64,
@@ -83,9 +84,26 @@ def test_job_binding_and_production_baseline_are_required():
                            "receipt_key_id": "e" * 64,
                            "execution_host_policy": "strix-only",
                            "physical_channel_reference_policy": "leave-one-out",
-                           "fusion_modes": ["production"]}, "captures": []}
+                           "fusion_modes": ["production"], "dwell_seconds": [.1],
+                           "max_wall_seconds_per_clip": 30},
+           "captures": [{"capture_id": "one", "processor_cpis": 3}]}
     job["job_binding_sha256"] = MODULE.canonical_digest(job)
     MODULE.validate_job(job)
+    assert MODULE.dwell_label(.123456789) == '0.123456789s'
+    assert MODULE.dwell_label(1.0) == '1s'
+    for field, value in (("dwell_seconds", [.1] * 9), ("dwell_seconds", [0]),
+                         ("fusion_modes", ["production", "bogus"]),
+                         ("max_wall_seconds_per_clip", 10 ** 9)):
+        invalid = json.loads(json.dumps(job))
+        invalid["experiment"][field] = value
+        del invalid["job_binding_sha256"]
+        invalid["job_binding_sha256"] = MODULE.canonical_digest(invalid)
+        try:
+            MODULE.validate_job(invalid)
+        except ValueError as error:
+            assert "bounded" in str(error)
+        else:
+            raise AssertionError("unbounded replay job accepted")
     forged = dict(job); forged["identity"] = dict(identity, receiver_epoch="other")
     try:
         MODULE.validate_job(forged)
@@ -170,7 +188,8 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                               "physical_channel_reference_policy": "leave-one-out",
                               "execution_host_policy": "strix-only",
                               "fusion_modes": ["production"], "dwell_seconds": [.1],
-                              "max_wall_seconds_per_clip": 30}, "captures": []}
+                              "max_wall_seconds_per_clip": 30},
+               "captures": [{"capture_id": "one", "processor_cpis": 3}]}
         job["job_binding_sha256"] = MODULE.canonical_digest(job)
         original_harness, original_run = MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm
         original_snapshot = MODULE.NATIVE.Snapshot
@@ -187,6 +206,7 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                 self.frame, self.samples = receipt["frame"], 240000
             def export(self, timestamp, truth):
                 return {"timestamp_ms": timestamp, "truth": truth,
+                    "native_snapshot": {"bytes": 1},
                     "target_cut": {"physical_channels": [[1, 0], [2, 0]], "beam_powers": [4]},
                     "nuisance_cells": [{"physical_channels": [[3, 0], [4, 0]]}]}
         MODULE.REPLAY.run_arm = replay
