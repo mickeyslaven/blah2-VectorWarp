@@ -309,7 +309,14 @@ for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
     assert.deepEqual(row.architectures, expected,
       `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
   }
-const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
+assert.equal(readmeRows.some(row => row.os === 'Raspberry Pi OS'), false,
+  'Raspberry Pi OS must not appear in the primary supported-systems table');
+const limitedPiMarker = '## Limited platform: Raspberry Pi 4B';
+const readme = read('README.md');
+assert.equal(readme.split(limitedPiMarker).length, 2,
+  'README must contain exactly one bottom-level limited Pi platform section');
+const piRow = supportRows(readme.split(limitedPiMarker, 2)[1])
+  .find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
 assert.match(piRow.package,
