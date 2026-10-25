@@ -7,6 +7,9 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('replay', ROOT / 'test/recording/processor_replay_test.py')
 replay = importlib.util.module_from_spec(spec); spec.loader.exec_module(replay)
 
+NO_DEVICE_TIMEOUT_SECONDS = {'Usrp': 30, 'HackRF': 15, 'RspDuo': 15}
+
+
 def no_device(binary, receiver, env=None):
     with tempfile.TemporaryDirectory(prefix='vectorwarp-macos-sdk-') as temporary:
         root = Path(temporary); sinks = replay.SinkGroup(); status = replay.StatusServer()
@@ -30,9 +33,25 @@ def no_device(binary, receiver, env=None):
                 # a timeout or SIGKILL is never counted as passing.
                 ready = replay.wait_for(lambda: process.poll() is not None or any(
                     item.get('input') == 'live' and item.get('state') == 'error' and item.get('error')
-                    for item in status.snapshot()), time.monotonic()+10)
+                    for item in status.snapshot()),
+                    time.monotonic() + NO_DEVICE_TIMEOUT_SECONDS[receiver])
                 if not ready or process.poll() is not None:
-                    raise AssertionError(f'{receiver} failed to publish its live-input error while remaining controllable')
+                    # UHD discovery normally takes several seconds even with an
+                    # exact nonexistent serial, and can exceed ten seconds on a
+                    # loaded release runner. Stop and drain the child before
+                    # reporting failure so a timeout cannot leave a partial
+                    # status POST or hide the actual SDK output.
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        output, _ = process.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        output, _ = process.communicate(timeout=5)
+                    detail = output[-4000:] if output else '<no processor output>'
+                    raise AssertionError(
+                        f'{receiver} failed to publish its live-input error while remaining '
+                        f'controllable within {NO_DEVICE_TIMEOUT_SECONDS[receiver]} seconds:\n{detail}')
                 process.terminate()
                 output, _ = process.communicate(timeout=5)
                 if process.returncode != 0:
