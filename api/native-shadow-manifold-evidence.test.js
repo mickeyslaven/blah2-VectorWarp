@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const {canonical, canonicalHash, validateNativeTruthExport, deriveNativeShadowManifoldRow,
   validateNativeShadowManifoldRow, appendNativeShadowRow} = require('./native-shadow-manifold-evidence');
+const {readNativeShadowLedger} = require('./native-shadow-manifold-evidence');
 
 const key = 'native-receipt-test-key', keyId = 'native-receipt-test-key-id';
 const hmac = value => crypto.createHmac('sha256', key).update(canonical(value)).digest('hex');
@@ -50,6 +51,10 @@ assert.deepEqual(derived.actual_fusion_weights, source.actual_fusion_weights);
 for (const mutate of [row => { row.configuration.actual_channel_gains_db[0] += 1; },
   row => { row.target_cut.raw_iq_sha256 = '0'.repeat(64); },
   row => { row.covariance.epoch_id = 'other-epoch'; },
+  row => { row.configuration.frequency_hz += 1; },
+  row => { row.configuration.sample_rate_hz += 1; },
+  row => { row.sample_clock.source_epoch = ''; },
+  row => { row.target_cut.physical_channels = [[0, 0], [0, 0]]; },
   row => { row.sample_clock.admitted = false; },
   row => { row.anchor = true; }, row => { row.beam_powers = [1, 2]; }]) {
   const bad = JSON.parse(JSON.stringify(source)); mutate(bad);
@@ -63,6 +68,21 @@ assert.equal(appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), der
 const second = deriveNativeShadowManifoldRow(source, {resolveKey: resolver, signingKey: key, keyId,
   previousRowSha256: derived.row_sha256});
 assert.equal(appendNativeShadowRow(ledger, second, {resolveKey: resolver}), second.row_sha256);
-assert.throws(() => appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), /predecessor/i);
+assert.equal(readNativeShadowLedger(ledger, {resolveKey: resolver, expectedTailSha256: second.row_sha256})
+  .rows.length, 2, 'persisted JSON ledger must authenticate on a fresh read');
+const lines = fs.readFileSync(ledger, 'utf8').trim().split('\n');
+fs.writeFileSync(ledger, `${lines[1]}\n${lines[0]}\n`);
+assert.throws(() => readNativeShadowLedger(ledger, {resolveKey: resolver}), /chain/i,
+  'reordered signed rows must fail chain continuity');
+fs.writeFileSync(ledger, `${lines[0]}\n`);
+assert.throws(() => readNativeShadowLedger(ledger, {resolveKey: resolver,
+  expectedTailSha256: second.row_sha256}), /truncated|expected tail/i,
+  'a known ledger tail must detect truncation');
+fs.writeFileSync(ledger, `${lines.join('\n')}\n`);
+const corrupted = JSON.parse(lines[1]); corrupted.physical_iq_cut[0][0] += .01;
+fs.writeFileSync(ledger, `${lines[0]}\n${JSON.stringify(corrupted)}\n`);
+assert.throws(() => readNativeShadowLedger(ledger, {resolveKey: resolver}), /hash|authentication/i,
+  'target or nuisance-like complex-vector tampering must fail authentication');
+assert.throws(() => appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), /predecessor|hash|authentication/i);
 fs.rmSync(directory, {recursive: true});
 console.log('Native shadow manifold evidence: authenticated physical-IQ-only append-only adapter passed.');

@@ -134,6 +134,16 @@ function validateNativeShadowManifoldRow(row, {resolveKey} = {}) {
       row_sha256: row.row_sha256}), 'hex')))
     throw new Error('Shadow corpus authentication failed');
   if (!['detected', 'miss', 'subthreshold'].includes(row.pass?.label) ||
+      typeof row.pass?.id !== 'string' || !row.pass.id || typeof row.pass?.icao !== 'string' || !row.pass.icao ||
+      typeof row.epoch_id !== 'string' || !row.epoch_id || !finite(row.truth?.local_azimuth_deg) ||
+      !finite(row.truth?.elevation_deg) || !finite(row.truth?.position_timestamp_ms) ||
+      row.truth?.provenance !== 'adsb' || typeof row.configuration?.config_fingerprint !== 'string' ||
+      !finite(row.configuration?.frequency_hz) || row.configuration.frequency_hz <= 0 ||
+      !finite(row.configuration?.sample_rate_hz) || row.configuration.sample_rate_hz <= 0 ||
+      !Number.isInteger(row.configuration?.channels) || row.configuration.channels < 2 ||
+      !finiteVector(row.configuration.actual_channel_gains_db, row.configuration.channels) ||
+      !Array.isArray(row.configuration.channel_mapping) || row.configuration.channel_mapping.length !== row.configuration.channels ||
+      row.sample_clock?.epoch_id !== row.epoch_id || row.sample_clock?.admitted !== true ||
       row.usage?.adsb !== 'truth-validation-only' || row.usage?.shadow !== 'training-only' ||
       !sha256(row.native_export_sha256) || !sha256(row.raw_iq_sha256) ||
       !Array.isArray(row.physical_iq_cut) || !Array.isArray(row.reference_weights) ||
@@ -142,6 +152,25 @@ function validateNativeShadowManifoldRow(row, {resolveKey} = {}) {
       row.previous_row_sha256 !== null && !sha256(row.previous_row_sha256))
     throw new Error('Shadow corpus row violates the training-only native evidence contract');
   return row;
+}
+
+function readNativeShadowLedger(filename, {expectedTailSha256 = null, ...options} = {}) {
+  if (!fs.existsSync(filename)) return {rows: [], tail_sha256: null};
+  const stat = fs.lstatSync(filename);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024 * 1024)
+    throw new Error('Native shadow ledger is not a bounded regular file');
+  const lines = fs.readFileSync(filename, 'utf8').trim().split('\n').filter(Boolean);
+  if (lines.length > 20000) throw new Error('Native shadow ledger exceeds row bound');
+  const rows = []; let previous = null;
+  for (const line of lines) {
+    let row; try { row = JSON.parse(line); } catch (_) { throw new Error('Native shadow ledger contains invalid JSON'); }
+    row = validateNativeShadowManifoldRow(row, options);
+    if (row.previous_row_sha256 !== previous) throw new Error('Native shadow ledger chain is discontinuous');
+    rows.push(row); previous = row.row_sha256;
+  }
+  if (expectedTailSha256 !== null && previous !== expectedTailSha256)
+    throw new Error('Native shadow ledger is truncated or does not match the expected tail');
+  return {rows, tail_sha256: previous};
 }
 
 function deriveNativeShadowManifoldRow(nativeExport, {resolveKey, signingKey, keyId,
@@ -175,17 +204,8 @@ function deriveNativeShadowManifoldRow(nativeExport, {resolveKey, signingKey, ke
 }
 
 function appendNativeShadowRow(filename, row, options = {}) {
-  let existing = [];
-  if (fs.existsSync(filename)) {
-    const stat = fs.lstatSync(filename);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024 * 1024)
-      throw new Error('Native shadow ledger is not a bounded regular file');
-    existing = fs.readFileSync(filename, 'utf8').trim().split('\n').filter(Boolean);
-  }
-  let previous = null;
-  for (const line of existing) { const prior = validateNativeShadowManifoldRow(JSON.parse(line), options);
-    if (prior.previous_row_sha256 !== previous) throw new Error('Native shadow ledger chain is discontinuous');
-    previous = prior.row_sha256; }
+  const existing = readNativeShadowLedger(filename, options);
+  const previous = existing.tail_sha256;
   if (row.previous_row_sha256 !== previous) throw new Error('Append-only corpus predecessor does not match ledger');
   validateNativeShadowManifoldRow(row, options);
   // Canonical form is for signatures only. Persist ordinary JSON so the next
@@ -195,4 +215,4 @@ function appendNativeShadowRow(filename, row, options = {}) {
 }
 
 module.exports = {canonical, canonicalHash, validateNativeTruthExport, deriveNativeShadowManifoldRow,
-  validateNativeShadowManifoldRow, appendNativeShadowRow};
+  validateNativeShadowManifoldRow, readNativeShadowLedger, appendNativeShadowRow};
