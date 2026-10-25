@@ -53,6 +53,19 @@ class FakeInspector:
         return {'exitCode': self.exit_code, 'timedOut': self.timeout, 'output': ''}
 
 
+class CredentialSocket:
+    """Delegate socket I/O while supplying the kernel credential record."""
+    def __init__(self, connection, uid):
+        self.connection = connection
+        self.uid = uid
+
+    def getsockopt(self, level, option, length=0):
+        return struct.pack('3i', os.getpid(), self.uid, os.getgid())
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
 class BrokerTest(unittest.TestCase):
     def test_reviewed_package_policy_uses_qualified_uhd_41_floor(self):
         policy = {'schemaVersion': 1, 'apiUser': 'vectorwarp-api', 'configPath': '/fixture/config.yml',
@@ -354,14 +367,26 @@ class LocalBoundaryTest(unittest.TestCase):
             with self.subTest(code=code, length=len(raw)):
                 server, client = socket.socketpair()
                 with server, client:
-                    client.sendall(raw)
-                    helper.serve_client(server, broker)
+                    client.settimeout(2)
+                    with mock.patch.object(helper.socket, 'SO_PEERCRED', 0x7fffffff, create=True):
+                        worker = threading.Thread(target=helper.serve_client,
+                                                  args=(CredentialSocket(server, os.getuid()), broker), daemon=True)
+                        worker.start()
+                        client.sendall(raw)
+                        worker.join(2)
+                    self.assertFalse(worker.is_alive(), 'broker did not consume the bounded request')
                     result = json.loads(client.recv(4096))
                     self.assertEqual(result['code'], code)
         server, client = socket.socketpair()
         with server, client:
-            client.sendall(b'{"verb":')
-            helper.serve_client(server, broker, timeout=0.05)
+            client.settimeout(2)
+            with mock.patch.object(helper.socket, 'SO_PEERCRED', 0x7fffffff, create=True):
+                worker = threading.Thread(target=helper.serve_client,
+                                          args=(CredentialSocket(server, os.getuid()), broker, 0.05), daemon=True)
+                worker.start()
+                client.sendall(b'{"verb":')
+                worker.join(2)
+            self.assertFalse(worker.is_alive(), 'broker did not enforce the request timeout')
             self.assertEqual(json.loads(client.recv(4096))['code'], 'REQUEST_TIMEOUT')
             self.assertEqual(broker.inspector.calls, [])
 
