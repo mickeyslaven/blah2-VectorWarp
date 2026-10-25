@@ -604,3 +604,39 @@ scorecard and syntax tests pass. Durable audit:
 `results/20261024-live-scorecard-denominator-audit.json`. The correction is not
 yet live; it must land as a separate follow-up after PR #78's timing/capture
 boundary, then begin a fresh score epoch rather than rewriting historical data.
+
+## 2026-10-24 living detection-manifold shadow acceptance
+
+PR #87 at commit `eeeb321` now provides the bounded software path needed to
+learn from geometry-selected aircraft passes without conditioning collection on
+CFAR success. It exports signed native resident snapshots, maps them to admitted
+source-sample time, authenticates and appends physical-channel complex target
+and nuisance evidence, isolates exact RF/config/full-gain/dwell epochs, fits a
+pass-balanced two-dimensional azimuth/elevation candidate, and writes immutable
+candidate and held-out projection A/B receipts. The WPXI fixed-transmitter
+stream remains a separate channel drift/frequency anchor and is never fitted as
+an aircraft response. Unsupported cells remain unsupported; sparse cells shrink
+toward their direction-specific geometric ideal. Automatic production promotion
+is hard-disabled.
+
+The adversarial review corrected phase-insensitive combining, coefficient
+conjugation, common-phase alignment, elevation clamping, fabricated all-ones
+ideal responses, holdout leakage, mixed dwell/config/gain epochs, unsigned or
+truncated ledger acceptance, archive-import omissions, native-only startup
+deadlock, artifact collisions, polling races and misleading A/B labels. Local
+manifold/statistics/native-bridge suites pass. On Strix, exact commit `eeeb321`
+passed the two native resident snapshot/bridge CTests, the complete manifold and
+statistics suites, and an unchanged CPU replay of recorded r21 (7 detection and
+7 track frames; result SHA-256
+`a33ab8cde61ecbc30fee86b9cf031eda4ea72449d12b74982fbaebe79bab9932`).
+
+This is accepted for shadow diagnostics, not yet deployed or production-
+qualified. The remaining acceptance gate is a controller-admitted Strix GPU
+resident replay on genuine admitted clips for 1/2/4/8 CPI windows with whitening
+off/on, followed by an independently frozen pass-disjoint aircraft and
+target-free cohort. The deployed live release still lacks
+`/api/detection/integration-shadow`; its current aircraft corpus remains 30
+samples from 3 independent passes, while the live WPXI anchor and frequency-
+resolved shadow continue to advance. A two-hour thread heartbeat named
+`VectorWarp radar and shadow audit` is active and must report every run until
+the user responds.
