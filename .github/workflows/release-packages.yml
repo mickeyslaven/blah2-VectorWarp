@@ -274,6 +274,7 @@ jobs:
               apt-get install --yes --no-install-recommends \
                 build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip \
                 libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
+              git config --global --add safe.directory /src
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -302,6 +303,7 @@ jobs:
             bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip \
                 fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
+              git config --global --add safe.directory /src
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}
               archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 \
@@ -348,6 +350,7 @@ jobs:
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
               apt-get install --yes --no-install-recommends build-essential ca-certificates cmake curl dpkg-dev file git ninja-build pkg-config sudo tar unzip util-linux xz-utils zip libarmadillo-dev libfftw3-dev libvulkan-dev glslang-dev glslang-tools libuhd-dev uhd-host libboost-dev libhackrf-dev libusb-1.0-0-dev libeigen3-dev libssl-dev zlib1g-dev patch
+              git config --global --add safe.directory /src
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
@@ -368,6 +371,7 @@ jobs:
             -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
+              git config --global --add safe.directory /src
               sha_var="NODE_SHA_${NODE_ARCH^^}"; node_sha=${!sha_var}; archive="node-v24.22.1-linux-${NODE_ARCH}.tar.xz"
               curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict

@@ -222,8 +222,14 @@ const packageJob = JSON.parse(workflowCheck.stdout).jobs.package;
 const prPackageSteps = packageJob.steps.filter(step => /PR verification/.test(step.name || ''));
 const trustedPackageSteps = packageJob.steps.filter(step =>
   /github\.event_name != 'pull_request'/.test(step.if || '') && /Build native/.test(step.name || ''));
+const isolatedPackageSteps = [...prPackageSteps, ...trustedPackageSteps]
+  .filter(step => /podman run/.test(step.run || ''));
 assert.equal(prPackageSteps.length, 3, 'PRs must smoke Debian, Debian-family, and Fedora package groups');
 assert.equal(trustedPackageSteps.length, 3, 'Trusted builds retain all three package groups');
+assert.equal(isolatedPackageSteps.length, 4, 'Both PR and trusted builds retain Debian-family and Fedora isolation');
+assert.equal(isolatedPackageSteps.filter(step =>
+  /git config --global --add safe\.directory \/src/.test(step.run || '')).length, 4,
+  'every root container must trust only the mounted source checkout before binding artifact provenance');
 assert.equal(prPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
   /smoke-native-package\.sh --package/.test(step.run || '') &&
   !/--test-only/.test(step.run || '')).length, 3,
