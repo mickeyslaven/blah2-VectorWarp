@@ -12,7 +12,7 @@ replay, and ADS-B display integration.
 
 1. **Linux:** use the signed APT or DNF repository from the
    [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-2. **macOS:** use [Homebrew](docs/MACOS_HOMEBREW.md), or a signed PKG when the
+2. **macOS:** use [macOS / Homebrew](docs/MACOS_HOMEBREW.md), or a signed PKG when the
    package page lists one.
 3. **Development or unsupported systems:** follow the
    [source-install instructions](docs/INSTALL.md#build-from-source).
@@ -21,7 +21,7 @@ Open Settings, configure a receiver or replay file, then choose **Save & Restart
 RSPduo users must install the SDRplay vendor API themselves, then choose
 **Build SDRplay support**; VectorWarp does not distribute vendor software.
 
-## Proven features
+## Supported capabilities
 
 - Optional GPU acceleration with CPU fallback.
 - Coherent multi-channel input for compatible Kraken receivers.
