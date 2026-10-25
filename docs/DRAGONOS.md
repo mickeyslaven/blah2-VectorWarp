@@ -3,9 +3,9 @@
 There is no separate DragonOS build. The installer selects the matching Ubuntu repository from
 `/etc/os-release`:
 
-- Jammy / Ubuntu 22.04
-- Noble / Ubuntu 24.04
-- Resolute / Ubuntu 26.04
+- FocalX R37.1 / Jammy / Ubuntu 22.04
+- Noble R9 / Noble / Ubuntu 24.04
+- Resolute R1 / Resolute / Ubuntu 26.04
 
 ## 1. Install VectorWarp
 
@@ -42,6 +42,27 @@ Keep the configured repository; do not rerun the installer:
 ```bash
 sudo apt update && sudo apt install vectorwarp
 ```
+
+The package recommends Ubuntu's `uhd-host` so a normal fresh APT installation
+also receives the B210 tools, image downloader, and udev rules. It does not
+require that exact package: DragonOS installations with a compatible custom
+UHD stack can keep it, while VectorWarp still requires the automatically
+detected `libuhd` ABI package used by its USRP adapter. If APT reports that
+Ubuntu's `uhd-host` requires an exact `libuhd` version that conflicts with the
+DragonOS package while upgrading to VectorWarp 0.1.29, do not replace the
+working DragonOS UHD stack or force that transaction. Refresh the repository
+and install a later VectorWarp package containing this compatibility fix,
+review APT's proposed transaction, and then verify that the custom stack supplies
+`uhd_config_info`, matching device images, and a udev rule for non-root B210
+access before starting the receiver.
+
+The regression fixture uses the reported older DragonOS package
+`libuhd4.1.0 20230414-1` (maintained by `root@dragon`), which retains an older
+GNU Radio stack and cannot satisfy Jammy `uhd-host`'s exact
+`libuhd4.1.0 (= 4.1.0.5-3)` dependency. The package relationship is deliberately
+not specific to that version: the same non-mandatory host-tools policy applies
+to compatible distro- or vendor-maintained UHD stacks on every supported
+DragonOS/Ubuntu base above.
 
 DragonOS has independent edition labels, including FocalX, Noble, and Resolute.
 Those labels alone are not trusted for package selection. The installer checks
