@@ -9,6 +9,13 @@ const {FrequencyResolvedShadow, modelStability} = require('./frequency-resolved-
 const {analysisDescriptor, analysisFingerprint} = require('./frequency-resolved-analysis');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-frequency-shadow-'));
+const systemdDirectory = path.join(__dirname, '..', 'contrib', 'systemd');
+assert.equal(fs.existsSync(path.join(systemdDirectory,
+  'vectorwarp-frequency-resolved-shadow.timer')), false,
+  'the API scheduler is the only periodic frequency-resolved shadow owner');
+assert.equal(fs.existsSync(path.join(systemdDirectory,
+  'vectorwarp-frequency-resolved-shadow.service')), false,
+  'no standalone service may create a second Heimdall/MCHQ client');
 const config = {capture: {fc: 100000000, fs: 2000000, device: {type: 'Kraken',
   channel_count: 3, surveillance_channels: [0, 1, 2], heimdall: {host: '127.0.0.1', port: 8091},
   array_geometry: {mapping_confirmed: true, geometry_confirmed: true,

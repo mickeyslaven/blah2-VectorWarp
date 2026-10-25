@@ -27,7 +27,6 @@ PROCESSING = ("vectorwarp-processor", "vectorwarp-tracker-primary")
 QUIET_DURING_RETUNE = (
     "ford-street-radar-comparison",
     "ford-street-bearing-calibration",
-    "vectorwarp-frequency-resolved-shadow.timer",
 )
 CANDIDATES = (
     {

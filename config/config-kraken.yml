@@ -164,6 +164,10 @@ process:
 
 network:
   ip: 0.0.0.0
+  # No external tracker is part of this generic Kraken profile. The optional
+  # API bridge remains available only through an explicit endpoint configuration.
+  tracker_forward:
+    enabled: false
   ports:
     api: 3000
     map: 3001

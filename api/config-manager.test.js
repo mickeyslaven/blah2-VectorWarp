@@ -11,12 +11,24 @@ function load(name) {
   if (value.capture.device.type === 'HackRF') value.capture.device.serial = ['0001', '0002'];
   return value;
 }
+const clone = value => JSON.parse(JSON.stringify(value));
 
 for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml',
   'config-kraken.yml']) {
   const result = validateConfig(load(name));
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
 }
+
+const liveSiteProfile = load('config-kraken.yml');
+assert.equal(liveSiteProfile.network.tracker_forward.enabled, false,
+  'the live-site profile must not start a disconnected external tracker feed');
+assert.equal(validateConfig({...liveSiteProfile, network: {
+  ...liveSiteProfile.network, tracker_forward: {enabled: false}}}).valid, true,
+  'a disabled tracker feed must not require an unused external endpoint');
+const incompleteEnabledTracker = clone(liveSiteProfile);
+incompleteEnabledTracker.network.tracker_forward.enabled = true;
+assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
+  'enabling the tracker feed requires an explicit endpoint');
 
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
@@ -28,7 +40,6 @@ sixChannel.location.rx = {name: 'Test receiver', latitude: 40, longitude: -75, a
 sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74, altitude: 120};
 assert.equal(validateConfig(sixChannel).valid, true);
 
-const clone = value => JSON.parse(JSON.stringify(value));
 const automaticClutter = clone(sixChannel);
 automaticClutter.process.ambiguity.delayMin = -8;
 automaticClutter.process.ambiguity.delayMax = 47;
