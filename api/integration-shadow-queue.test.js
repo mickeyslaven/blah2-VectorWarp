@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {IntegrationShadowQueue, digestCanonical} = require('./integration-shadow-queue');
+const {IntegrationShadowQueue, digestCanonical, validTruthSelectedExports} = require('./integration-shadow-queue');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-integration-shadow-'));
 const receiptKeyPath = path.join(root, 'receipt.key');
@@ -42,12 +42,19 @@ const job = JSON.parse(fs.readFileSync(first.path));
 assert.equal(job.experiment.shadow_only, true);
 assert.equal(job.experiment.same_iq, true);
 assert.equal(job.experiment.physical_channel_reference_policy, 'leave-one-out');
+assert.equal(job.experiment.execution_host_policy, 'strix-only');
 assert.deepEqual(job.experiment.dwell_seconds, [.05, .1, .2, .5]);
 assert.match(job.identity.admission_sha256, /^[a-f0-9]{64}$/);
 assert.match(job.identity.config_sha256, /^[a-f0-9]{64}$/);
 assert.deepEqual(job.identity.native_identity.actual_channel_gains_db, [2.7, 1.4]);
 assert.match(job.job_binding_sha256, /^[a-f0-9]{64}$/);
 assert.equal(queue.accept(recording, admitted, 4).reason, 'duplicate');
+const tooManyTruthPasses = JSON.parse(JSON.stringify(admitted));
+for (let index = 1; index <= 8; ++index) tooManyTruthPasses.captures[`extra-${index}`] = {
+  capture_id: `extra-${index}`, valid: true, admission_state: 'admitted',
+  processor_cpis: Array.from({length: 3}, () => ({exact_event_time: true}))};
+assert.equal(queue.accept(recording, tooManyTruthPasses, 4).reason, 'not-strictly-admitted',
+  'each queued pass must fit the bounded truth-selected export budget');
 fs.writeFileSync(`${recording}.json`, JSON.stringify({...nativeMetadata, channelGains: [2.7, 1.5]}));
 assert.equal(queue.accept(recording, admitted, 4).reason, 'write-failed',
   'a sidecar whose decoded gain tuple differs from its admitted digest must fail closed');
@@ -57,6 +64,17 @@ assert.equal(queue.accept(recording, {...admitted,
 assert.equal(queue.accept(recording, {...admitted, state: 'quarantined'}, 6).reason,
   'not-strictly-admitted');
 fs.mkdirSync(config.process.detection.integration_shadow.results_path, {recursive: true});
+const truthSelectedExport = {schema: 'vectorwarp-truth-selected-shadow-export-v1',
+  shadow_only: true, decision_grade: false, production_promotion_allowed: false,
+  production_unchanged: true, selection: {basis: 'geometry-eligible-truth-cut-only',
+    cfar_or_beam_selection_used: false, capture_id: 'one', arm: '0.1s-production'},
+  provenance: {job_binding_sha256: job.job_binding_sha256},
+  multi_cpi_history: [{}, {}, {}], covariance_whitening: {state: 'shadow-observed-pre-decision'}};
+truthSelectedExport.export_sha256 = digestCanonical(truthSelectedExport);
+assert.equal(validTruthSelectedExports([truthSelectedExport], job.job_binding_sha256), true);
+assert.equal(validTruthSelectedExports([{...truthSelectedExport,
+  selection: {...truthSelectedExport.selection, cfar_or_beam_selection_used: true}}],
+job.job_binding_sha256), false, 'CFAR-selected shadow evidence must fail closed');
 const validResult = {schema: 'vectorwarp-integration-shadow-result-v1',
   timing_policy: 'exact', decision_grade: true,
   production_promotion_allowed: false,
@@ -67,7 +85,8 @@ const validResult = {schema: 'vectorwarp-integration-shadow-result-v1',
     admission_sha256: job.identity.admission_sha256,
     config_sha256: job.identity.config_sha256,
     native_identity: job.identity.native_identity,
-    native_identity_sha256: job.identity.native_identity_sha256}, arms: {"0.1s": {production: {}}},
+    native_identity_sha256: job.identity.native_identity_sha256},
+  truth_selected_exports: [truthSelectedExport], arms: {"0.1s": {production: {}}},
   timing: {wall_seconds: 2}, summary: {winner: null, selection_performed: false}};
 validResult.result_binding_sha256 = digestCanonical(validResult);
 validResult.result_authentication = {algorithm: 'hmac-sha256',

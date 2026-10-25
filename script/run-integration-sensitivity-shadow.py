@@ -278,6 +278,8 @@ def validate_job(job):
         raise ValueError("integration shadow receipt-key identity mismatch")
     if experiment.get("physical_channel_reference_policy") != "leave-one-out":
         raise ValueError("unsupported physical-channel reference policy")
+    if experiment.get("execution_host_policy") != "strix-only":
+        raise ValueError("integration shadow heavy replay is restricted to Strix")
     return identity, experiment
 
 
@@ -360,7 +362,7 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
     sample_rate = float(config["capture"]["fs"])
     deadline = time.monotonic() + float(experiment["max_wall_seconds_per_clip"])
     harness = REPLAY.load_harness(harness_path)
-    arms, started = {}, time.monotonic()
+    arms, truth_selected_exports, started = {}, [], time.monotonic()
     for dwell in experiment["dwell_seconds"]:
         dwell_key = f"{float(dwell):g}s"
         arms[dwell_key] = {}
@@ -386,26 +388,36 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                 "wall_ms_per_output_cpi": elapsed * 1000 / output_cpis if output_cpis else None,
                 "live_processor_work_added_ms": 0},
                 "targets": target_scores}
-            # Target coordinates may select a diagnostic cutout only after the
-            # unchanged detector has independently emitted a matching cell.
-            # This second replay cannot affect arm scoring or selection.
-            if not diagnostic_emitted and physical is None and \
-                    target_scores[primary_capture_id]["target_detection_cpis"] > 0:
-                centre_time = sorted(row["timestamp_ms"] for row in truth)[len(truth) // 2]
-                cutout_request = {"delay_km": interpolate(truth, centre_time, "delay_km"),
-                    "doppler_hz": interpolate(truth, centre_time, "doppler_hz"),
-                    "delay_radius_bins": 16, "doppler_radius_bins": 24, "max_frames": 128}
-                remaining = deadline - time.monotonic()
-                diagnostic_replay = REPLAY.run_arm(
-                    harness, binary, source, recording_path, mode, min(remaining, 900),
-                    label=f"{dwell_key}-{label}-post-detection-diagnostic",
-                    acceleration=acceleration, surveillance_channel=physical,
-                    complex_cutout=cutout_request)
-                arms[dwell_key][label]["integration"] = integration_diagnostic(
-                    diagnostic_replay["complex_cutouts"], source, truth)
-                arms[dwell_key][label]["integration"].update({
-                    "truth_conditioned": True, "selection_basis": "post-detection-label",
-                    "excluded_from_arm_scoring": True})
+            # A geometry-eligible truth pass gets a bounded native complex
+            # record even when CA-CFAR rejects it.  The truth coordinate may
+            # select a CUT but may not select a beam, a detection, or an arm.
+            # This is a separate replay process and never feeds live output.
+            if not diagnostic_emitted and label == "production":
+                input_fingerprint = canonical_digest({"recording_sha256": recording_sha,
+                    "admission_sha256": admission_sha, "config_sha256": config_sha,
+                    "native_identity_sha256": identity["native_identity_sha256"]})
+                for capture_id, capture_truth in truth_by_capture.items():
+                    centre_time = sorted(row["timestamp_ms"] for row in capture_truth)[len(capture_truth) // 2]
+                    cutout_request = {"delay_km": interpolate(capture_truth, centre_time, "delay_km"),
+                        "doppler_hz": interpolate(capture_truth, centre_time, "doppler_hz"),
+                        "delay_radius_bins": 16, "doppler_radius_bins": 24, "max_frames": 32}
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 1:
+                        raise TimeoutError("integration shadow exhausted its per-clip wall budget")
+                    diagnostic_replay = REPLAY.run_arm(
+                        harness, binary, source, recording_path, mode, min(remaining, 900),
+                        label=f"{dwell_key}-{label}-truth-{capture_id}", acceleration=acceleration,
+                        surveillance_channel=physical, complex_cutout=cutout_request)
+                    truth_selected_exports.append(truth_selected_export(
+                        diagnostic_replay["complex_cutouts"], source, capture_truth, capture_id,
+                        f"{dwell_key}-{label}", job["job_binding_sha256"], input_fingerprint))
+                    if capture_id == primary_capture_id:
+                        arms[dwell_key][label]["integration"] = integration_diagnostic(
+                            diagnostic_replay["complex_cutouts"], source, capture_truth)
+                        arms[dwell_key][label]["integration"].update({
+                            "truth_conditioned": True,
+                            "selection_basis": "geometry-eligible-truth-cut-only",
+                            "excluded_from_arm_scoring": True})
                 diagnostic_emitted = True
     wall = time.monotonic() - started
     if hashlib.sha256(config_path.read_bytes()).hexdigest() != config_file_sha:
@@ -442,6 +454,7 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                 "empirical_familywise_acceptance": False,
                 "reason": "requires a frozen target-free multi-clip holdout, never one aircraft clip"},
             "arms": arms,
+            "truth_selected_exports": truth_selected_exports,
             "summary": {"winner": None, "selection_performed": False,
                         "selection_reason": "requires normalized pass-disjoint holdout scoring",
                         "comparison_unit": "same immutable IQ; fractions include explicit denominators",
@@ -455,6 +468,80 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
         result["result_authentication"] = {"algorithm": "hmac-sha256", "key_id": key_id,
             "tag": hmac.new(receipt_key, canonical(result).encode("utf-8"), hashlib.sha256).hexdigest()}
     return result
+
+
+def _complex_pair(value):
+    """JSON-safe complex value used only by the shadow evidence envelope."""
+    if not isinstance(value, complex) or not (math.isfinite(value.real) and
+                                              math.isfinite(value.imag)):
+        raise ValueError("truth-selected export contains a non-finite complex sample")
+    return [value.real, value.imag]
+
+
+def truth_selected_export(cutouts, config, truth_samples, capture_id, arm_label,
+                          job_binding_sha256, input_fingerprint):
+    """Export bounded, pre-decision replay evidence for an eligible truth pass.
+
+    This deliberately does *not* consume a detection, CFAR result, or winning
+    beam.  The target coordinate selects a CUT; every physical channel and all
+    calibrated beam responses at that same CUT are retained, together with the
+    surrounding complex nuisance cells.  The replay recorder itself is native
+    and replay-only; this envelope gives its bounded output a stable contract.
+    """
+    if len(cutouts) < 3:
+        raise ValueError("truth-selected export requires a three-CPI native history")
+    frames, history = [], []
+    covariance = None
+    for frame in cutouts:
+        timestamp = frame.get("timestamp")
+        channels = frame.get("channels")
+        if not isinstance(timestamp, (int, float)) or not isinstance(channels, list) or not channels:
+            raise ValueError("truth-selected export native cutout is incomplete")
+        truth = {"delay_km": interpolate(truth_samples, timestamp, "delay_km"),
+                 "doppler_hz": interpolate(truth_samples, timestamp, "doppler_hz")}
+        row = PHASE.nearest(frame.get("doppler_hz", []), truth["doppler_hz"])
+        column = PHASE.nearest(frame.get("delay_km", []), truth["delay_km"])
+        if any(not isinstance(channel, list) or row >= len(channel) or
+               not isinstance(channel[row], list) or column >= len(channel[row])
+               for channel in channels):
+            raise ValueError("truth-selected export channel CUT is incomplete")
+        physical = [complex(*channel[row][column]) for channel in channels]
+        beams = PHASE.beam_values(frame, config, row, column)
+        nuisance = []
+        for nuisance_row, doppler in enumerate(frame["doppler_hz"]):
+            for nuisance_column, delay in enumerate(frame["delay_km"]):
+                if (nuisance_row, nuisance_column) == (row, column):
+                    continue
+                nuisance.append({"delay_km": delay, "doppler_hz": doppler,
+                    "physical_channels": [_complex_pair(complex(*channel[nuisance_row][nuisance_column]))
+                                          for channel in channels]})
+        frames.append({"timestamp_ms": timestamp, "truth": truth,
+                       "target_cut": {"physical_channels": [_complex_pair(value) for value in physical],
+                                      "beam_responses": [_complex_pair(value) for value in beams]},
+                       "nuisance_cells": nuisance})
+        history.append(physical)
+    channels = len(history[0])
+    if any(len(row) != channels for row in history):
+        raise ValueError("truth-selected export physical channel count changed")
+    covariance = [[_complex_pair(sum(row[left] * row[right].conjugate() for row in history) /
+                                  len(history))
+                   for right in range(channels)] for left in range(channels)]
+    whitening = {"mode": config["process"]["surveillance_fusion"]["mode"],
+                 "covariance": covariance,
+                 "state": "shadow-observed-pre-decision",
+                 "decision_grade": False}
+    value = {"schema": "vectorwarp-truth-selected-shadow-export-v1",
+             "shadow_only": True, "decision_grade": False,
+             "production_promotion_allowed": False, "production_unchanged": True,
+             "selection": {"basis": "geometry-eligible-truth-cut-only",
+                           "cfar_or_beam_selection_used": False,
+                           "capture_id": capture_id, "arm": arm_label},
+             "provenance": {"native_recorder": "vectorwarp-complex-caf-cutout-v1",
+                            "job_binding_sha256": job_binding_sha256,
+                            "input_fingerprint": input_fingerprint},
+             "multi_cpi_history": frames, "covariance_whitening": whitening}
+    value["export_sha256"] = canonical_digest(value)
+    return value
 
 
 def main():
@@ -508,6 +595,8 @@ def main():
         if not args.allow_same_host_for_test and \
            job.get("identity", {}).get("producer_host") == socket.gethostname():
             raise RuntimeError("integration shadow worker must not run on the live producer host")
+        if not args.allow_same_host_for_test and "strix" not in socket.gethostname().lower():
+            raise RuntimeError("integration shadow heavy replay must run on Strix")
         receipt_key = load_receipt_key(args.receipt_key.resolve())
         result = run(job, args.config.resolve(), args.binary.resolve(), args.harness.resolve(),
                      args.recording.resolve() if args.recording else None,

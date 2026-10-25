@@ -21,11 +21,19 @@ pass-disjoint holdout with calibrated family-wise false-alarm accounting. Every
 result is explicitly non-authoritative and records
 `live_processor_work_added_ms: 0`.
 
-After the unchanged detector independently matches a target, one second replay
-may export a truth-conditioned pre-fusion complex cutout and reports fixed-cell
-noncoherent, trajectory-migrated noncoherent, and common-phase-corrected
-coherent accumulation. Phase-increment coherence and phasor concentration make
-the measured coherent break point visible. A reference-weight phase proxy is
+Every geometry-eligible truth pass receives one bounded, truth-selected native
+pre-fusion complex-cutout replay per dwell, even if CA-CFAR rejects it. The
+signed result binds the multi-CPI history, complex target CUT, every physical
+channel, all calibrated beam responses, empirical covariance/whitening state,
+and every surrounding nuisance cell. Truth chooses only the CUT: it cannot
+choose a beam, a CFAR outcome, an arm, or a winner. These exports are explicitly
+shadow-only and non-decision-grade; they are not a production output format.
+
+The extra replay is restricted to a Strix worker and is bounded to eight truth
+passes per job, 32 frames, and a 33-by-49-cell cutout. It reports fixed-cell noncoherent,
+trajectory-migrated noncoherent, and common-phase-corrected coherent
+accumulation. Phase-increment coherence and phasor concentration make the
+measured coherent break point visible. A reference-weight phase proxy is
 clearly labelled diagnostic until the native cutout supplies a direct/pilot
 phasor. This oracle diagnostic is marked `excluded_from_arm_scoring` and can
 never support an independent detection or promotion claim.
@@ -64,7 +72,8 @@ receipt-key identity and live producer host into an immutable job identity.
 The worker verifies every one,
 including RF/sample-rate/channel/gain metadata, atomically claims a job,
 enforces a per-clip wall deadline, refuses to run on the live producer host,
-uses exclusive atomic result publication, and aborts if the configuration
+uses exclusive atomic result publication, requires a Strix host for heavy
+replay, and aborts if the configuration
 changes during the run. Result receipts are authenticated with HMAC-SHA-256
 using a minimum 256-bit owner-only key copied to the external worker over the
 trusted deployment channel; a spool writer cannot forge completion. Job and

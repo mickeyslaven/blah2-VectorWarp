@@ -28,6 +28,7 @@ const DEFAULT_MODES = Object.freeze([
   'physical_channels'
 ]);
 const MAX_HOT_COMPLETED = 256;
+const MAX_TRUTH_EXPORT_PASSES = 8;
 
 const canonical = value => {
   if (typeof value === 'number') {
@@ -70,6 +71,22 @@ function optionsFromConfig(config) {
     maxPending: input.max_pending ?? 64,
     maxWallSecondsPerClip: input.max_wall_seconds_per_clip ?? 1800
   };
+}
+
+function validTruthSelectedExports(exports, jobBinding) {
+  if (!Array.isArray(exports) || !exports.length) return false;
+  return exports.every(value => {
+    if (!value || value.schema !== 'vectorwarp-truth-selected-shadow-export-v1' ||
+        value.shadow_only !== true || value.decision_grade !== false ||
+        value.production_promotion_allowed !== false || value.production_unchanged !== true ||
+        value.selection?.basis !== 'geometry-eligible-truth-cut-only' ||
+        value.selection?.cfar_or_beam_selection_used !== false ||
+        value.provenance?.job_binding_sha256 !== jobBinding ||
+        !Array.isArray(value.multi_cpi_history) || value.multi_cpi_history.length < 3 ||
+        !value.covariance_whitening || !/^[a-f0-9]{64}$/.test(value.export_sha256 || '')) return false;
+    const unsigned = {...value}; delete unsigned.export_sha256;
+    return digestCanonical(unsigned) === value.export_sha256;
+  });
 }
 
 class IntegrationShadowQueue {
@@ -144,6 +161,7 @@ class IntegrationShadowQueue {
             result.input?.config_sha256 !== job.identity?.config_sha256 ||
             result.input?.native_identity_sha256 !== job.identity?.native_identity_sha256 ||
             digestCanonical(result.input?.native_identity) !== job.identity?.native_identity_sha256 ||
+            !validTruthSelectedExports(result.truth_selected_exports, job.job_binding_sha256) ||
             !result.arms || typeof result.arms !== 'object' ||
             !result.summary || result.summary.selection_performed !== false)
           throw new Error('result receipt contract failed');
@@ -256,7 +274,8 @@ class IntegrationShadowQueue {
       if (artifact?.state !== 'admitted' || artifact?.integrity?.valid !== true ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.data_sha256 || '') ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.sidecar_sha256 || '') ||
-          typeof file !== 'string' || !path.isAbsolute(file) || !captures.length) {
+          typeof file !== 'string' || !path.isAbsolute(file) || !captures.length ||
+          captures.length > MAX_TRUTH_EXPORT_PASSES) {
         ++this.counters.rejected;
         return {accepted: false, reason: 'not-strictly-admitted'};
       }
@@ -328,6 +347,7 @@ class IntegrationShadowQueue {
             fusion_modes: this.options.fusionModes,
             receipt_key_id: receiptKeyId,
             max_wall_seconds_per_clip: this.options.maxWallSecondsPerClip,
+            execution_host_policy: 'strix-only',
             require_production_arm: true, physical_channel_reference_policy: 'leave-one-out'},
           captures: captures.map(([captureId, item]) => ({capture_id: captureId,
             processor_cpis: item.processor_cpis.length}))};
@@ -349,5 +369,5 @@ class IntegrationShadowQueue {
 }
 
 module.exports = {IntegrationShadowQueue, atomicWrite, atomicWriteExclusive, canonical,
-  digestCanonical, optionsFromConfig,
-  DEFAULT_DWELLS, DEFAULT_MODES};
+  digestCanonical, optionsFromConfig, validTruthSelectedExports,
+  DEFAULT_DWELLS, DEFAULT_MODES, MAX_TRUTH_EXPORT_PASSES};

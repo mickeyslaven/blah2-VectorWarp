@@ -81,6 +81,7 @@ def test_job_binding_and_production_baseline_are_required():
            "experiment": {"same_iq": True, "shadow_only": True,
                            "require_production_arm": True,
                            "receipt_key_id": "e" * 64,
+                           "execution_host_policy": "strix-only",
                            "physical_channel_reference_policy": "leave-one-out",
                            "fusion_modes": ["production"]}, "captures": []}
     job["job_binding_sha256"] = MODULE.canonical_digest(job)
@@ -102,7 +103,12 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
         recording = root / "clip.mchq"; recording.write_bytes(b"immutable-iq")
         recording_sha = hashlib.sha256(recording.read_bytes()).hexdigest()
         config = {"capture": {"fc": 527000000, "fs": 2400000,
-                              "device": {"channel_count": 2}},
+                              "device": {"channel_count": 2, "array_geometry": {
+                                  "x_axis_bearing_deg_true": 0, "elements": [
+                                      {"daq_channel": 0, "position": [0, 0]},
+                                      {"daq_channel": 1, "position": [.1, 0]}]}}},
+                  "location": {"rx": {"latitude": 0, "longitude": 0},
+                               "tx": {"latitude": 0, "longitude": 1}},
                   "process": {"data": {"cpi": .1},
                               "detection": {"pfa": 1e-6},
                               "ambiguity": {"delayMin": 0, "delayMax": 10,
@@ -158,13 +164,21 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                               "require_production_arm": True,
                               "receipt_key_id": receipt_key_id,
                               "physical_channel_reference_policy": "leave-one-out",
+                              "execution_host_policy": "strix-only",
                               "fusion_modes": ["production"], "dwell_seconds": [.1],
                               "max_wall_seconds_per_clip": 30}, "captures": []}
         job["job_binding_sha256"] = MODULE.canonical_digest(job)
         original_harness, original_run = MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm
         MODULE.REPLAY.load_harness = lambda _: object()
+        def native_cutout(timestamp):
+            return {"timestamp": timestamp, "delay_km": [9.9, 10, 10.1],
+                    "doppler_hz": [19, 20, 21], "reference_weights": [[1, 0], [1, 0]],
+                    "pilot_reference": [1, 0], "channels": [
+                        [[[1 + row + column, 0] for column in range(3)] for row in range(3)],
+                        [[[2 + row + column, 0] for column in range(3)] for row in range(3)]]}
         MODULE.REPLAY.run_arm = lambda *args, **kwargs: {"detections": [
-            {"timestamp": 1000, "delay": [], "doppler": [], "snr": []}], "tracks": []}
+            {"timestamp": 1000, "delay": [], "doppler": [], "snr": []}], "tracks": [],
+            "complex_cutouts": [native_cutout(at) for at in (1000, 1100, 1200)]}
         try:
             result = MODULE.run(job, config_path, root / "processor", root / "harness",
                                 acceleration="cpu", receipt_key=receipt_key)
@@ -176,6 +190,13 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
         assert result["production_promotion_allowed"] is False
         assert result["input"]["applied_channel_gains_db"] == [2.7, 1.4]
         assert result["input"]["native_identity_sha256"] == identity["native_identity_sha256"]
+        assert len(result["truth_selected_exports"]) == 1
+        exported = result["truth_selected_exports"][0]
+        assert exported["selection"]["cfar_or_beam_selection_used"] is False
+        assert len(exported["multi_cpi_history"]) == 3
+        assert len(exported["multi_cpi_history"][0]["target_cut"]["physical_channels"]) == 2
+        assert len(exported["multi_cpi_history"][0]["target_cut"]["beam_responses"]) == 1
+        assert exported["multi_cpi_history"][0]["nuisance_cells"]
         assert result["result_binding_sha256"] == MODULE.canonical_digest(
             {key: value for key, value in result.items()
              if key not in ("result_binding_sha256", "result_authentication")})
