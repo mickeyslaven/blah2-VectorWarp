@@ -1,7 +1,9 @@
 # Raspberry Pi 4 guide
 
-The supported Pi profile is a **Raspberry Pi 4B with 8 GB RAM** running
-**Raspberry Pi OS Lite 64-bit Bookworm**. Use a 32 GB microSD card initially.
+The only published Pi image profile is a **Raspberry Pi 4B with 8 GB RAM**
+running **Raspberry Pi OS Lite 64-bit Bookworm**. It is an advanced
+compatibility preview, not a supported primary deployment. Use a 32 GB microSD
+card initially.
 The Bookworm Lite preview is available through its
 [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
 and [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).

@@ -234,6 +234,31 @@ exit 0
                     if anchor and destination.suffix == ".md":
                         self.assertIn(anchor, heading_ids(destination.read_text()), target)
 
+    def test_documentation_map_separates_current_and_historical_material(self):
+        index = (ROOT / "docs/README.md").read_text()
+        archive = (ROOT / "docs/archive/README.md").read_text()
+        for heading in ("## Install", "## Configure and operate", "## Develop and release",
+                        "## Research and experimental paths", "## Historical evidence and audits"):
+            self.assertIn(heading, index)
+        self.assertIn("not current install, operating, configuration, or capability", archive)
+        self.assertIn("advanced compatibility preview",
+                      " ".join((ROOT / "docs/PI4_GUIDE.md").read_text().split()))
+        self.assertNotIn("no Pi image or\n> Bookworm package is published",
+                         (ROOT / "docs/PI_GPU_SETUP.md").read_text())
+
+    def test_all_repository_local_markdown_links_and_anchors_exist(self):
+        for document in project_documents():
+            for target in re.findall(r"\\]\\(([^)]+)\\)", document.read_text()):
+                target = re.sub(r'''\s+(?:"[^"]*"|'[^']*')\s*$''', "", target)
+                if "://" in target or target.startswith("mailto:"):
+                    continue
+                with self.subTest(guide=str(document.relative_to(ROOT)), target=target):
+                    filename, _, anchor = unquote(target).partition("#")
+                    destination = document.parent / filename if filename else document
+                    self.assertTrue(destination.is_file(), target)
+                    if anchor and destination.suffix == ".md":
+                        self.assertIn(anchor, heading_ids(destination.read_text()), target)
+
     def test_source_instructions_use_supported_native_dependencies(self):
         for relative in ("docs/INSTALL.md",):
             text = (ROOT / relative).read_text()

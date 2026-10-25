@@ -200,6 +200,6 @@ The complete current and before/after summaries are in
 [Exact settings, hardware, CPU limits and reproduction](benchmarks/20260911-efficiency/README.md)
 accompany the per-frame receipts. The
 [preceding fixed-range campaign](benchmarks/20260911-equal-range/README.md)
-and [earlier mixed-window results](benchmarks/20260911/) remain historical
+and the [earlier device confirmations](benchmarks/20260911/v8-all-device-confirmation.md) remain historical
 evidence, not current comparison rows. Exact wider-Doppler CAF at the full
 delay range remains future work, not a benchmark result.

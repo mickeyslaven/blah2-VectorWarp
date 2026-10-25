@@ -8,7 +8,7 @@ VectorWarp is a native passive-radar application for Linux and macOS. It offers
 CPU or optional GPU delay--Doppler processing, supported receiver setup, browser
 controls, recording, replay, and ADS-B display integration.
 
-[Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Recording and replay](docs/SETUP.md#recording-replay)
+[Install](docs/INSTALL.md) · [Set up a receiver](docs/SETUP.md) · [Documentation map](docs/README.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
 ## Install
 
