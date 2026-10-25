@@ -453,7 +453,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  const uint32_t scanBeams=config.scanBeams?config.scanBeams:config.beamCount*config.refinementFactor;
  require(scanBeams>=config.beamCount&&scanBeams<=127&&scanBeams%config.beamCount==0,"Invalid bearing scan count");
  out.Key("fine_beams");out.Uint(scanBeams);
+ out.Key("scan_step_deg");out.Double(360.0/double(scanBeams));
  out.Key("aperture_uncertainty_floor_deg");out.Double(config.minimumUncertaintyDeg);
+ out.Key("physical_resolution_limited");out.Bool(config.minimumUncertaintyDeg>180.0/double(scanBeams));
  out.Key("min_peak_separation_db");out.Uint(config.minPeakSeparationDb);
  out.Key("data");out.StartArray();
  constexpr char hex[]="0123456789ABCDEF";

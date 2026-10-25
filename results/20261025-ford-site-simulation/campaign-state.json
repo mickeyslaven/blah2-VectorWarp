@@ -1,0 +1,149 @@
+{
+  "schema": "vectorwarp.offline-simulation-campaign-state.v1",
+  "updated_at": "2026-10-25T15:05:00-04:00",
+  "live_radar_modified": true,
+  "lock_boundary": {
+    "live_data_epoch_ends": "terminated-by-operator-2026-10-25T15:02:22-04:00",
+    "allowed": [
+      "live evidence under corrected config revision cab4269623b1ebd23b433d7838d75cc52fce1953d7db07a200dc646c6a791e4d",
+      "offline Strix CPU simulation",
+      "offline IQ replay"
+    ],
+    "forbidden": [
+      "automatic manifold promotion",
+      "mixing old-radius and corrected-radius evidence"
+    ]
+  },
+  "jobs": [
+    {
+      "name": "installed-pattern-and-height",
+      "host": "strix",
+      "unit": "vectorwarp-ford-installed-pattern-v2.service",
+      "invocation_id": "7ca4edf4d6104c37b41e388618a63423",
+      "state": "complete-invalidated-radius",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/ford-installed-antenna-pattern-height.json",
+      "sha256": "169deba68c6c282dd90def7749cfadcb9ddf6449acce1ae0a6d554b5f3efe789",
+      "local_summary": "ford-installed-antenna-pattern-summary.json",
+      "local_summary_sha256": "bb6b8d8a2e221fdfbcad5ead3710fa32758f5332739374cfb0939991d0dc11c0"
+    },
+    {
+      "name": "pinned-openems-image-build",
+      "host": "strix",
+      "unit": "vectorwarp-openems-image-build-v3.service",
+      "invocation_id": "2cd0dc0d5dc94eba8f3a5084862e2232",
+      "state": "usable-image-verified-despite-wrapper-exit",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/openems-image-id.txt",
+      "image": "localhost/vectorwarp-openems:0.37.0-rc3",
+      "image_id": "ae2528018f739ba649c4f9e982cdaaa1addfca5941ebf94cfab298954c46cc4a"
+    },
+    {
+      "name": "corrected-installed-pattern-and-height",
+      "host": "strix",
+      "unit": "vectorwarp-ford-installed-pattern-r00762.service",
+      "invocation_id": "f1697089b6824762a597996191b82301",
+      "state": "running",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/ford-installed-antenna-pattern-height-r0.0762.json"
+    },
+    {
+      "name": "corrected-openems-smoke",
+      "host": "strix",
+      "unit": "vectorwarp-openems-smoke-r00762.service",
+      "invocation_id": "42393f67dbc14d87b6fd3c4663603aec",
+      "state": "queued-behind-cpu-lock",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/openems-smoke-port0-r0.0762.json"
+    },
+    {
+      "name": "corrected-openems-five-port-matrix",
+      "host": "strix",
+      "unit": "vectorwarp-openems-matrix-r00762.service",
+      "invocation_id": "c66940c794fb4143b56096258e59e08f",
+      "state": "queued-behind-cpu-lock",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/openems-r0.0762-radiators-matrix-summary.json"
+    },
+    {
+      "name": "corrected-polarization-material-height-sweep",
+      "host": "strix",
+      "unit": "vectorwarp-ford-polarization-r00762.service",
+      "invocation_id": "3ab0b83626664d54a7d2d4c4084adcf2",
+      "state": "queued-behind-cpu-lock",
+      "output": "/var/tmp/vectorwarp-ford-sim/results/ford-site-polarization-r0.0762.json"
+    }
+  ],
+  "completed": [
+    {
+      "name": "live-physical-radius-correction",
+      "artifact": "live-array-radius-correction-receipt.json",
+      "conclusion": "The live array radius is now 0.0762 m. Geometry revision cab4269623b1ebd23b433d7838d75cc52fce1953d7db07a200dc646c6a791e4d exposed a repeatable GPU tracker spatial-history rejection; active containment revision 9b730a11ff1d12f474028c036673d142d8749aacb53a524fd4ea52e301317a9b keeps the tracker/guided recovery off while radar detection and collection continue. RF, gains, channel order and 80-degree CH0 orientation were unchanged."
+    },
+    {
+      "name": "array-geometry-adversarial-review",
+      "artifact": "ARRAY_GEOMETRY_ADVERSARIAL_REVIEW.md",
+      "sha256": "4abd00cb50a72676d7ba40c4c00943f839b67034ceecca21b6c383bf7f8ca031",
+      "conclusion": "Radius-dependent beam/null/bearing/tuning claims are unqualified. Additional blockers are null attenuation renormalization, JS/native phase disagreement, unsafe angle replacement and a non-production analytic beam-grid origin."
+    },
+    {
+      "name": "bounded-roof-two-path-sensitivity",
+      "artifact": "roof-interference-sensitivity.json",
+      "sha256": "4e3ac122ca75ab23b7a11ef9b2da8097f4a7ddb834d310d0edc2041ae626775e",
+      "conclusion": "A one-metre move can strongly relocate coherent roof-reflection lobes under plausible reflection phase/magnitude; the unknown-phase median is near zero, so this demonstrates plausibility rather than causation."
+    },
+    {
+      "name": "installed-dipole-pattern-and-height",
+      "artifact": "ford-installed-antenna-pattern-summary.json",
+      "sha256": "bb6b8d8a2e221fdfbcad5ead3710fa32758f5332739374cfb0939991d0dc11c0",
+      "conclusion": "The standalone vertical-dipole elevation shape remains useful, but array coherence and height conclusions are invalidated because this run used the erroneous 0.193548 m radius. It is being rerun at 0.0762 m."
+    },
+    {
+      "name": "openems-end-to-end-solver-smoke",
+      "artifact": "/var/tmp/vectorwarp-ford-sim/results/openems-smoke-port0-v2.json",
+      "sha256": "a3640f4a384ffeb4187d1a83585a98074d663656faf4729d15046652aeb319a4",
+      "conclusion": "Pinned openEMS mesh, FDTD convergence, five-port extraction and far-field calculation pass. The 0.193548 m radius makes this solver-validation evidence only."
+    },
+    {
+      "name": "manufacturer-radius-and-live-read-only-audit",
+      "artifact": "ARRAY_GEOMETRY_CORRECTION.md",
+      "sha256": "4a77b5c83b0d1fe42300e0943ffdc98a2f740b85c82397da7ac76a81c66a019a",
+      "conclusion": "Arrow documents hole 9 as 7.62 cm. The locked live configuration misstates that as 7.62 inches and uses a radius 2.54 times too large. No live file was modified."
+    },
+    {
+      "name": "analytic-radius-phase-error",
+      "artifact": "array-radius-phase-error.json",
+      "sha256": "9a2f9f21386731609b95f3bf27ae8c17ab6dd91f840f5d16fe24ce0473fe0cef",
+      "conclusion": "The same-labelled-direction diagnostic shows -10.60 dB median loss for the old radius. Recomputed on the exact production local grid and first-winner tie handling, the strongest-of-12 bank shows -1.57 dB median loss, 288/1,296 cells worse than -3 dB, 65 worse than -6 dB, 65-degree median bearing error and 960 cells over 30 degrees. The corrected bank shows -0.14 dB median loss, no cells worse than -3 dB, 10-degree median bearing error and no cells over 30 degrees."
+    },
+    {
+      "name": "photographic-phase-center-geometry-gate",
+      "artifact": "PHOTOGRAPHIC_GEOMETRY_FIT.md",
+      "sha256": "ecc41460fc2bd5920c545d70dc552998de2c18418b89ec938028ded345001ee5",
+      "conclusion": "Manufacturer radius plus 102 registered drone views and close photographs are sufficient for the corrected radiators-only phase-center baseline. Feed, bonding, cable, support conductivity, small tilt and element dimensions remain explicit sensitivity variants."
+    },
+    {
+      "name": "frozen-measured-iq-array-geometry-ab",
+      "artifact": "frozen-array-geometry-rescore.json",
+      "sha256": "914274940733b7bb944e507436e39281fb0df3b60266ae4ae255761391df6295",
+      "conclusion": "The corrected free-space radius failed direct promotion on the historical 563 MHz cohort: exact processor replay reduced truth-matched positive frames from 25 to 18, reduced median matched SNR by 1.27 dB, and increased total detections from 141 to 592 on positives and 207 to 774 on four raw-available miss labels without adding a truth match. The physical config error is real, but ideal-radius replacement alone is not a detection fix; qualify a measured installed manifold."
+    }
+  ],
+  "staged": [
+    {
+      "name": "five-port-full-wave-model",
+      "artifact": "openems_pentagon_array.py",
+      "sha256": "b0b2eb45d7c293d991ef051442ab28fe390cbb061cbdd891a3a6c77c0d2ad638",
+      "variants": [
+        "finite-diameter radiators only",
+        "photographed conductive mast and radial supports",
+        "bounded PEC reflector size and spacing"
+      ]
+    },
+    {
+      "name": "campaign-acceptance-matrix",
+      "artifact": "FULL_WAVE_MATRIX.md"
+    }
+  ],
+  "monitoring": {
+    "automation": "vectorwarp-radar-and-shadow-audit",
+    "updated_for_installed_pattern_openems_site_and_offline_replay_chain": true,
+    "qwen_owned_or_modified_by_this_campaign": false
+  },
+  "next_acceptance_check": "Sustain live frame advancement under corrected containment revision 9b730a11, repair and independently fixture-test GPU tracker spatial encoding plus ideal/measured whitened-null behavior and JS/native steering sign, then replay-qualify tracker restoration. Complete/checksum the corrected 0.0762 m installed-pattern, openEMS smoke/five-port and polarization/material/height sweeps. Keep old-radius and corrected-radius evidence identity-segregated; never promote from simulation alone."
+}

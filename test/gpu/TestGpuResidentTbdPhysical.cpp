@@ -32,8 +32,8 @@ Config configuration(const char* device) {
   c.spectrumBins = 64;
   c.reference.channels = {0, 1, 2, 3, 4};
   c.reference.analysisSamples = 64;
-  c.fusion = {FusionMode::coherentRegularPolygon, 12, 539000000,
-    .193548, 0, -2 * std::acos(-1.0) / 5, 80 * std::acos(-1.0) / 180, 6};
+  c.fusion = {FusionMode::coherentRegularPolygon, 12, 527000000,
+    .0762, 0, -2 * std::acos(-1.0) / 5, 80 * std::acos(-1.0) / 180, 6};
   c.detector.enabled = true;
   c.detector.guard = 1;
   c.detector.train = 2;
@@ -100,7 +100,7 @@ int main(int argc, char** argv) try {
     throw std::runtime_error("Track-guided physical test did not create track state");
   std::cout << "GPU_RESIDENT_TBD_PHYSICAL_PASS frames=9 integration_cpis=8"
     " channels=5 beams=12 history_ready_frame=8 delay_bins=2 doppler_bins=4 track_guided_shadow=1"
-    " guided_max_tracks=64\n";
+    " guided_max_tracks=64 corrected_radius_m=0.0762 absent_secondary_fine_peaks_allowed=1\n";
   return 0;
 } catch (const std::exception& error) {
   std::cerr << "FAIL resident TBD physical initialization: " << error.what() << '\n';

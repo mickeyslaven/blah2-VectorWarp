@@ -128,6 +128,7 @@ try {
   fusion.process.performance.acceleration = 'gpu-resident';
   fusion.process.tracker.gpu_capacity = 128;
   fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.process.surveillance_fusion.beams = 6;
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
@@ -148,6 +149,7 @@ try {
   persistGroup('kraken-coherent-fusion', krakenBase, fusion,
     ['process.performance.acceleration', 'process.tracker.gpu_capacity',
       'process.surveillance_fusion.mode',
+      'process.surveillance_fusion.beams',
       'process.surveillance_fusion.effective_beam_trials',
       'process.detection.integration_cpis',
       'process.detection.integration_motion_bins',

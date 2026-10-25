@@ -457,6 +457,8 @@ try
   if (!std::isfinite(effectiveBeamTrials) || effectiveBeamTrials < 1 ||
       effectiveBeamTrials > coherentBeamCount)
     throw std::invalid_argument("Effective beam trials must be from 1 through the beam count");
+  if (coherentFusion && effectiveBeamTrials != coherentBeamCount)
+    throw std::invalid_argument("Unqualified reduced effective beam trials are unsafe; use the full beam count");
   if (!std::isfinite(directPathNullDb) || directPathNullDb < 0 || directPathNullDb > 40)
     throw std::invalid_argument("Direct-path null depth must be from 0 through 40 dB");
   if (!coherentFusion && (effectiveBeamTrials != coherentBeamCount || directPathNullDb != 0 ||

@@ -84,6 +84,25 @@ const {ManifoldRecorder, validateEvidence, automaticallyEligible, fingerprintDes
   changedVectorGainConfig.capture.device.heimdall.channel_gains = [14, 11];
   assert.notEqual(siteFingerprint(vectorGainConfig), siteFingerprint(changedVectorGainConfig),
     'Qualification cannot carry across per-channel gain-vector changes');
+  const processingIdentity = JSON.parse(JSON.stringify(automaticConfig));
+  processingIdentity.process.surveillance_fusion = {mode: 'noise_whitened_beam_bank', beams: 12,
+    effective_beam_trials: 12, direct_path_null_db: 6};
+  processingIdentity.process.detection = {enable: true, pfa: .0001, guard_cells: 2,
+    training_cells: 16, integration: {cpis: 4, motion_bins: 3, beam_tolerance: 1}};
+  processingIdentity.process.reference_synthesis = {mode: 'array_eigenbeam', analysis_samples: 4096,
+    analysis_interval: 8, power_iterations: 12, covariance_smoothing: .9,
+    diagonal_loading: .001};
+  for (const mutate of [
+    value => { value.process.surveillance_fusion.direct_path_null_db = 7; },
+    value => { value.process.surveillance_fusion.mode = 'coherent_beam_bank'; },
+    value => { value.process.detection.pfa = .001; },
+    value => { value.process.detection.integration.cpis = 8; },
+    value => { value.process.reference_synthesis.diagonal_loading = .01; },
+  ]) {
+    const changed = JSON.parse(JSON.stringify(processingIdentity)); mutate(changed);
+    assert.notEqual(siteFingerprint(processingIdentity), siteFingerprint(changed),
+      'scientific processing changes must start a new evidence identity');
+  }
   const subsetGainConfig = JSON.parse(JSON.stringify(vectorGainConfig));
   subsetGainConfig.capture.device.channel_count = 5;
   subsetGainConfig.capture.device.surveillance_channels = [1, 3, 4];

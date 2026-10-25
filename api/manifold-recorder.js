@@ -120,7 +120,12 @@ function fingerprintDescriptor(config) {
       requestedChannelGains = [...heimdall.channel_gains];
     }
   }
-  return {frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
+  const fusion = config.process?.surveillance_fusion || {};
+  const detection = config.process?.detection || {};
+  const synthesis = config.process?.reference_synthesis || {};
+  const integration = detection.integration || {};
+  return {schema: 'vectorwarp-scientific-site-identity-v3',
+    frequency_hz: config.capture?.fc, sample_rate_hz: config.capture?.fs,
     receiver_gain_v2: {requested_common_gain: heimdall.gain ?? 'keep',
       requested_channel_gains: requestedChannelGains,
       ...(requestedCaptureChannelGains ?
@@ -128,6 +133,19 @@ function fingerprintDescriptor(config) {
     surveillance_channels: channels,
     array_geometry: device.array_geometry,
     receiver: config.location?.rx, transmitter: config.location?.tx,
+    scientific_processing_v1: {
+      surveillance_fusion: {mode: fusion.mode, beams: fusion.beams,
+        effective_beam_trials: fusion.effective_beam_trials,
+        direct_path_null_db: fusion.direct_path_null_db},
+      detection: {enable: detection.enable, pfa: detection.pfa,
+        guard_cells: detection.guard_cells, training_cells: detection.training_cells,
+        integration: {cpis: integration.cpis, motion_bins: integration.motion_bins,
+          beam_tolerance: integration.beam_tolerance}},
+      reference_synthesis: {mode: synthesis.mode, analysis_samples: synthesis.analysis_samples,
+        analysis_interval: synthesis.analysis_interval,
+        power_iterations: synthesis.power_iterations,
+        covariance_smoothing: synthesis.covariance_smoothing,
+        diagonal_loading: synthesis.diagonal_loading}},
     bearing_replay_v1: {method: config.process?.bearing?.method,
       reference_anchor: config.process?.bearing?.reference_anchor,
       scan_beams: config.process?.bearing?.scan_beams,

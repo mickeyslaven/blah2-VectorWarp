@@ -645,28 +645,8 @@ class ResidentFramePipeline {
       target[uint64_t(beam)*channels+channel]={};
      continue;
     }
-    if(nullFraction>0){
-     std::complex<double> projection{};
-     for(uint32_t channel=0;channel<channels;++channel)
-      projection+=std::conj(referenceAnchor[channel])*steering[channel];
-     projection*=nullFraction/referenceAnchorNorm;
-     for(uint32_t channel=0;channel<channels;++channel)
-      steering[channel]-=projection*referenceAnchor[channel];
-    }
-    if(whiten){
-     double combinedNorm=0;
-     for(uint32_t channel=0;channel<channels;++channel){
-      combined[channel]=channelScale[channel]*steering[channel];
-      combinedNorm+=std::norm(combined[channel]);
-     }
-     if(!(combinedNorm>0)||!std::isfinite(combinedNorm))
-      throw std::runtime_error("Noise-whitened fusion produced invalid weights");
-     const double combinedScale=1.0/std::sqrt(combinedNorm);
-     for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
-    }else if(measuredBearing||projected){double steeringNorm=0;for(uint32_t channel=0;channel<channels;++channel)steeringNorm+=std::norm(steering[channel]);
-     if(!(steeringNorm>0)||!std::isfinite(steeringNorm))throw std::runtime_error("Measured bearing manifold produced invalid weights");
-     const double steeringScale=1.0/std::sqrt(steeringNorm);for(uint32_t channel=0;channel<channels;++channel)combined[channel]=steeringScale*steering[channel];
-    }else for(uint32_t channel=0;channel<channels;++channel)combined[channel]=scale*steering[channel];
+    combined=blah2::resident_fusion::normalizedWeights(steering,referenceAnchor.data(),
+     channelScale.data(),channels,nullFraction,whiten);
     for(uint32_t channel=0;channel<channels;++channel){
      target[uint64_t(beam)*config.geometry.channels+channel]=
       std::complex<float>(std::conj(combined[channel]));

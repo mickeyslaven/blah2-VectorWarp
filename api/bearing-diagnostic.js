@@ -100,7 +100,7 @@ function expectedReference(config, frequency, mapping, headingDegTrue, anchorCha
   const wave = 2 * Math.PI * frequency / 299792458;
   const values = positions.map((_, channel) => {
     const position = positions[mapping[channel]];
-    return polar(wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
+    return polar(-wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
   });
   const anchor = values[anchorChannel];
   return values.map(value => divide(value, anchor));
@@ -271,7 +271,7 @@ function weights(sample, config, mapping, beams) {
   const anchor = positions.map((_, channel) => {
     if (!fixedSite) return reference[channel];
     const position = positions[mapping[channel]];
-    return polar(wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
+    return polar(-wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
   });
   const norm = anchor.reduce((sum, value) => sum + magnitude2(value), 0);
   if (!(norm > 0)) throw new Error('Reference weights have zero norm');
@@ -284,7 +284,7 @@ function weights(sample, config, mapping, beams) {
       const position = positions[mapping[channel]];
       const relative = wave * (position[0] * (Math.cos(angle) - Math.cos(direct)) +
         position[1] * (Math.sin(angle) - Math.sin(direct)));
-      steering.push(multiply(anchor[channel], polar(relative)));
+      steering.push(multiply(anchor[channel], polar(-relative)));
     }
     if (nullFraction > 0) {
       const projection = scale(steering.reduce((sum, value, channel) =>

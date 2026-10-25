@@ -63,7 +63,7 @@ function expectedReference(mapping, heading, bearing = transmitterBearing, frequ
   const positions = config.capture.device.array_geometry.elements.map(item => item.position);
   const raw = positions.map((_, channel) => {
     const position = positions[mapping[channel]];
-    const phase = wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct));
+    const phase = -wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct));
     return [Math.cos(phase), Math.sin(phase)];
   });
   const anchorPhase = Math.atan2(raw[0][1], raw[0][0]);
@@ -89,6 +89,22 @@ assert.deepEqual(referenceResult.best_mapping_at_configured_heading.channel_medi
   [null, 0, 0, 0, 0]);
 assert.ok(referenceResult.configured.median_phase_error_deg > 20);
 assert.ok(referenceResult.heading_with_configured_mapping.median_phase_error_deg < 1);
+
+// Independent quarter-wave fixture: native IQ convention is exp(-j k.r).
+const lambda = 299792458 / 539000000;
+const quarterConfig = {capture: {device: {surveillance_channels: [0, 1, 2],
+  array_geometry: {shape: 'regular_polygon', x_axis_bearing_deg_true: 0,
+    elements: [{daq_channel: 0, position: [-lambda / 4, 0, 0]},
+      {daq_channel: 1, position: [0, 0, 0]},
+      {daq_channel: 2, position: [lambda / 4, 0, 0]}]}}},
+  process: {surveillance_fusion: {direct_path_null_db: 0}, bearing: {scan_beams: 4}}};
+const quarterSample = {frequency_hz: 539000000, channels: 3,
+  reference_weights: [[1, 0], [1, 0], [1, 0]], direct_path_local_azimuth_deg: 0,
+  bearing_replay: {reference_anchor: 'fixed_site'}};
+const quarterBank = steeringWeights(quarterSample, quarterConfig, [0, 1, 2], 4);
+assert.ok(Math.abs(quarterBank[0][2][0]) < 1e-12);
+assert.ok(quarterBank[0][2][1] > 0,
+  'stored conjugated native weight for +x quarter-wave phase must be +j');
 assert.equal(referenceResult.auto_apply, false);
 assert.match(referenceResult.interpretation, /independent known-angle source/i);
 

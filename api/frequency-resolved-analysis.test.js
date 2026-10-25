@@ -19,6 +19,11 @@ const descriptor = analysisDescriptor(config);
 assert.equal(descriptor.channels, channels);
 assert.equal(analysisFingerprint(descriptor).length, 64);
 assert.ok(transmitterBearing(config.location.rx, config.location.tx) > 0);
+const quarter = idealVector({positions_m: [[0, 0, 0],
+  [299792458 / descriptor.frequency_hz / 4, 0, 0]],
+  direct_path_local_azimuth_deg: 0}, descriptor.frequency_hz);
+assert.ok(Math.abs(quarter[1][0]) < 1e-12 && quarter[1][1] < 0,
+  'native direct response uses exp(-j k.r), independently of the production helper');
 
 const covariance = vector => vector.map((left, row) => vector.map((right, column) => {
   const value = [left[0] * right[0] + left[1] * right[1],

@@ -737,6 +737,9 @@ function validateConfig(config, baseline = null, options = {}) {
       if (Number.isFinite(fusion.beams) &&
           fusion.effective_beam_trials > fusion.beams)
         errors.push('effective_beam_trials cannot exceed surveillance_fusion.beams');
+      if (Number.isFinite(fusion.beams) &&
+          fusion.effective_beam_trials !== fusion.beams)
+        errors.push('effective_beam_trials must equal surveillance_fusion.beams until independently qualified');
     }
     if (fusion.direct_path_null_db !== undefined)
       number(fusion.direct_path_null_db,

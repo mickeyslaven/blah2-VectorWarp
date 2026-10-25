@@ -218,7 +218,7 @@ function idealVector(descriptor, frequency) {
   const angle = descriptor.direct_path_local_azimuth_deg * Math.PI / 180;
   const wave = 2 * Math.PI * frequency / SPEED_OF_LIGHT;
   const vector = descriptor.positions_m.map(position => {
-    const phase = wave * (position[0] * Math.cos(angle) + position[1] * Math.sin(angle));
+    const phase = -wave * (position[0] * Math.cos(angle) + position[1] * Math.sin(angle));
     return [Math.cos(phase), Math.sin(phase)];
   });
   const norm = Math.sqrt(vector.length);

@@ -74,7 +74,7 @@ const CONFIG_META = {
   'process.surveillance_fusion': ['Surveillance fusion', 'Combine the ambiguity maps from coherent receiver channels.'],
   'process.surveillance_fusion.mode': ['Fusion mode', 'Keep RMS power fusion or scan a calibrated coherent 360-degree beam bank.'],
   'process.surveillance_fusion.beams': ['Coherent beams', 'Number of evenly spaced azimuth beams used around the full horizon.'],
-  'process.surveillance_fusion.effective_beam_trials': ['Effective beam trials', 'Independent beam trials used to correct the detector false-alarm threshold.'],
+  'process.surveillance_fusion.effective_beam_trials': ['Effective beam trials', 'Must equal the beam count unless a future configuration-specific qualification explicitly supports a reduction.'],
   'process.surveillance_fusion.direct_path_null_db': ['Direct-path null', 'Attenuation applied toward the measured illuminator direction, in dB.'],
   'process.bearing': ['Bearing output', 'Publish radar-only azimuth candidates and bistatic locations on a separate opt-in interface.'],
   'process.bearing.enable': ['Enable bearing output', 'Needs GPU coherent tracking plus confirmed mapping, geometry, and true-north orientation.'],
