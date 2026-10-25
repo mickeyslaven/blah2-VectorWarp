@@ -343,8 +343,7 @@ class LocalBoundaryTest(unittest.TestCase):
             self.skipTest('Linux SO_PEERCRED required')
         first, second = socket.socketpair()
         with first, second:
-            _, uid, _ = struct.unpack('3i', first.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
-            self.assertEqual(uid, os.getuid())
+            self.assertEqual(helper.peer_uid(first), os.getuid())
 
     def test_restart_wire_rejects_malformed_oversized_and_stalled_requests(self):
         broker = helper.Broker({'actions': []}, os.getuid(), FakeInspector())
@@ -354,14 +353,26 @@ class LocalBoundaryTest(unittest.TestCase):
             with self.subTest(code=code, length=len(raw)):
                 server, client = socket.socketpair()
                 with server, client:
-                    client.sendall(raw)
-                    helper.serve_client(server, broker)
+                    client.settimeout(2)
+                    with mock.patch.object(helper, 'peer_uid', return_value=os.getuid()):
+                        worker = threading.Thread(target=helper.serve_client,
+                                                  args=(server, broker), daemon=True)
+                        worker.start()
+                        client.sendall(raw)
+                        worker.join(2)
+                    self.assertFalse(worker.is_alive(), 'broker did not consume the bounded request')
                     result = json.loads(client.recv(4096))
                     self.assertEqual(result['code'], code)
         server, client = socket.socketpair()
         with server, client:
-            client.sendall(b'{"verb":')
-            helper.serve_client(server, broker, timeout=0.05)
+            client.settimeout(2)
+            with mock.patch.object(helper, 'peer_uid', return_value=os.getuid()):
+                worker = threading.Thread(target=helper.serve_client,
+                                          args=(server, broker, 0.05), daemon=True)
+                worker.start()
+                client.sendall(b'{"verb":')
+                worker.join(2)
+            self.assertFalse(worker.is_alive(), 'broker did not enforce the request timeout')
             self.assertEqual(json.loads(client.recv(4096))['code'], 'REQUEST_TIMEOUT')
             self.assertEqual(broker.inspector.calls, [])
 
