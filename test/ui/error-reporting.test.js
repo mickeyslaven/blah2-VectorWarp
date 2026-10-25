@@ -86,6 +86,35 @@ const procedural = [
   assert.deepEqual(normalized.runtime.details, {attemptCount: 2, lastFrameAgeMs: null,
     timestampConnections: 2, processorFresh: true});
 
+  const legacyId = '123e4567-e89b-42d3-a456-426614174000';
+  const legacy = {...dirty, submissionId: legacyId,
+    incident: {...dirty.incident, message: hostile}, comment: hostile,
+    system: {...dirty.system, browser: hostile}, receiver: {...dirty.receiver, model: hostile}};
+  localStorage.clear(); document.getElementById('settings').textContent = '';
+  let directBody = '';
+  await reports.submit(legacy, async (_url, options) => { directBody = options.body; return {
+    ok: true, json: async () => ({ok: true, reportId: 'direct-migration-id'})}; }, localStorage);
+  assert.doesNotMatch(directBody, forbidden); assert.match(directBody, new RegExp(legacyId));
+  localStorage.setItem(reports.STORAGE_KEY, JSON.stringify(legacy));
+  let migratedBody = '';
+  global.fetch = async (_url, options) => { migratedBody = options.body; return {
+    ok: true, json: async () => ({ok: true, reportId: 'migrated-id'})}; };
+  reports.addSettingsEntry(document.getElementById('settings'), () => {
+    throw new Error('legacy retry must not rebuild from live context');
+  });
+  assert.equal(document.querySelector('.report-support button').textContent, 'Retry report');
+  const migratedCache = localStorage.getItem(reports.STORAGE_KEY);
+  assert.doesNotMatch(migratedCache, forbidden); assert.match(migratedCache, new RegExp(legacyId));
+  document.querySelector('.report-support button').click();
+  document.querySelector('.site-dialog-actions button').click();
+  const migratedPreview = document.querySelector('.report-preview').textContent;
+  assert.doesNotMatch(migratedPreview, forbidden); assert.match(migratedPreview, new RegExp(legacyId));
+  [...document.querySelectorAll('.site-dialog-actions button')].at(-1).click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.doesNotMatch(migratedBody, forbidden); assert.match(migratedBody, new RegExp(legacyId));
+  assert.equal(localStorage.getItem(reports.STORAGE_KEY), null);
+  document.getElementById('report-dialog').remove();
+
   const tracker = {active: null, generations: new Map()};
   const failure = status({radar: 'stale', processor: {state: 'live'}});
   const target = document.getElementById('error'); target.textContent = '';

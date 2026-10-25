@@ -165,6 +165,56 @@
   function stable(value, expression, maximum, fallback = null) {
     return typeof value === 'string' && value.length <= maximum && expression.test(value) ? value : fallback;
   }
+  const release = (value, maximum = 64) => stable(value,
+    /^[A-Za-z0-9][A-Za-z0-9_.+-]*$/, maximum);
+  const identifierValue = (value, maximum = 64) => stable(value,
+    /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, maximum);
+  const osValues = new Set(['Linux', 'Darwin', 'Windows', 'linux', 'darwin', 'win32', 'macOS',
+    'unknown']);
+  const severityValues = new Set(['fatal', 'error', 'degraded']);
+  const transportValues = new Set(['usb', 'network', 'replay', 'unknown']);
+  function iso(value, fallback) {
+    const milliseconds = typeof value === 'string' || typeof value === 'number' ? Date.parse(value) : NaN;
+    return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : new Date(fallback).toISOString();
+  }
+  function normalizedIncident(value = {}, now = Date.now()) {
+    const code = incidentTypes.has(value.code) ? value.code : 'MANUAL_REPORT';
+    const [component, stage] = incidentTypes.get(code);
+    return {code, component, stage,
+      severity: severityValues.has(value.severity) ? value.severity : 'error',
+      message: `VectorWarp detected ${code} during ${component} ${stage}.`,
+      firstSeenAt: iso(value.firstSeenAt, now), lastSeenAt: iso(value.lastSeenAt, now),
+      occurrences: integer(value.occurrences, 1), recovered: value.recovered === true};
+  }
+  function normalizeReport(value, now = Date.now()) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || value.schema !== 1 ||
+        value.consent !== true || typeof value.submissionId !== 'string' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.submissionId))
+      throw new Error('Stored diagnostic report is incompatible');
+    const build = value.build || {}; const system = value.system || {};
+    const receiver = value.receiver || {}; const runtime = value.runtime || {};
+    return {schema: 1, consent: true, submissionId: value.submissionId.toLowerCase(),
+      incident: normalizedIncident(value.incident, now),
+      build: {version: release(build.version) || 'development',
+        commit: /^[a-f0-9]{7,40}$/i.test(build.commit || '') ? build.commit.toLowerCase() : '0000000',
+        package: release(build.package) || 'unknown'},
+      system: {os: osValues.has(system.os) ? system.os : 'unknown',
+        architecture: identifierValue(system.architecture, 32) || 'unknown',
+        kernel: release(system.kernel, 128), browser: null},
+      receiver: {type: allowedReceivers.has(receiver.type) ? receiver.type : 'Unknown', model: null,
+        driverVersion: release(receiver.driverVersion), apiVersion: release(receiver.apiVersion),
+        firmwareVersion: release(receiver.firmwareVersion), sampleRateHz: integer(receiver.sampleRateHz),
+        centerFrequencyHz: integer(receiver.centerFrequencyHz), channelCount: integer(receiver.channelCount),
+        transport: transportValues.has(receiver.transport) ? receiver.transport : null,
+        startupStages: scalars(receiver.startupStages), health: scalars(receiver.health)},
+      runtime: {processorState: identifierValue(runtime.processorState, 48),
+        restartState: identifierValue(runtime.restartState, 48), backend: identifierValue(runtime.backend),
+        configRevision: /^(?:sha256:)?[a-f0-9]{3,64}$/i.test(runtime.configRevision || '') ?
+          runtime.configRevision : null,
+        uptimeSeconds: integer(runtime.uptimeSeconds), details: scalars(runtime.details)},
+      recentEvents: Array.isArray(value.recentEvents) ? value.recentEvents.slice(0, 20)
+        .map(event => normalizedIncident(event, now)) : [], comment: null};
+  }
   function buildReport({incident, status = {}, config = {}, comment = '', now = Date.now()}) {
     const type = receiverType(status, config);
     const processor = status.processor || {};
@@ -173,15 +223,10 @@
     const channels = config?.capture?.device?.channel_count;
     const code = incidentTypes.has(incident.code) ? incident.code : 'MANUAL_REPORT';
     const [component, stage] = incidentTypes.get(code);
-    const release = (value, maximum = 64) => stable(value,
-      /^[A-Za-z0-9][A-Za-z0-9_.+-]*$/, maximum);
-    const identifierValue = (value, maximum = 64) => stable(value,
-      /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, maximum);
-    const osValue = new Set(['Linux', 'Darwin', 'Windows', 'linux', 'darwin', 'win32', 'macOS',
-      'unknown']).has(status.system?.os) ? status.system.os : 'unknown';
+    const osValue = osValues.has(status.system?.os) ? status.system.os : 'unknown';
     return {schema: 1, consent: true, submissionId: uuid(), incident: {
       code, component, stage,
-      severity: new Set(['fatal', 'error', 'degraded']).has(incident.severity) ? incident.severity : 'error',
+      severity: severityValues.has(incident.severity) ? incident.severity : 'error',
       message: `VectorWarp detected ${code} during ${component} ${stage}.`,
       firstSeenAt: new Date(incident.firstSeenAt || now).toISOString(),
       lastSeenAt: new Date(now).toISOString(), occurrences: integer(incident.occurrences, 1),
@@ -195,7 +240,7 @@
       driverVersion: release(processor.driverVersion), apiVersion: release(processor.apiVersion),
       firmwareVersion: release(processor.firmwareVersion), sampleRateHz: integer(processor.sampleRate || sampleRate),
       centerFrequencyHz: integer(processor.frequency || frequency), channelCount: integer(processor.channels || channels),
-      transport: new Set(['usb', 'network', 'replay', 'unknown']).has(processor.transport) ? processor.transport : null,
+      transport: transportValues.has(processor.transport) ? processor.transport : null,
       startupStages: scalars(processor.receiverStartup?.sdk?.stages),
       health: scalars({streamEstablished: status.radar === 'receiving', callbackFault: Boolean(processor.error)})},
     runtime: {processorState: identifierValue(processor.state || status.radar, 48),
@@ -209,10 +254,15 @@
   }
   function retain(report, storage = reportStorage()) { storage.setItem(STORAGE_KEY, JSON.stringify(report)); }
   function clear(storage = reportStorage()) { storage.removeItem(STORAGE_KEY); }
-  function pending(storage = reportStorage()) { try { return JSON.parse(storage.getItem(STORAGE_KEY)); } catch (_) { return null; } }
+  function pending(storage = reportStorage()) {
+    try {
+      const value = storage.getItem(STORAGE_KEY); if (!value) return null;
+      const report = normalizeReport(JSON.parse(value)); retain(report, storage); return report;
+    } catch (_) { clear(storage); return null; }
+  }
   async function submit(report, fetchImpl = fetch, storage = reportStorage()) {
-    retain(report, storage);
-    const response = await fetchImpl(ENDPOINT, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-VectorWarp-Report': '1'}, body: JSON.stringify(report)});
+    const outgoing = normalizeReport(report); retain(outgoing, storage);
+    const response = await fetchImpl(ENDPOINT, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-VectorWarp-Report': '1'}, body: JSON.stringify(outgoing)});
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result.ok !== true || typeof result.reportId !== 'string') throw new Error(result.error || 'Report could not be sent');
     clear(storage); return result.reportId;
@@ -220,7 +270,7 @@
   function button(label, className = 'button-secondary') { const value = document.createElement('button'); value.type = 'button'; value.className = className; value.textContent = label; return value; }
   async function open({incident, status, config, comment = '', report: retainedReport = null}) {
     document.getElementById('report-dialog')?.remove();
-    const report = retainedReport || buildReport({incident, status, config, comment});
+    const report = normalizeReport(retainedReport || buildReport({incident, status, config, comment}));
     const dialog = document.createElement('dialog'); dialog.id = 'report-dialog'; dialog.className = 'site-dialog report-dialog';
     dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver type and operating measurements, and service state.</p><p>It will not include free-form error text or comments, your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
     const preview = document.createElement('pre'); preview.className = 'report-preview'; preview.hidden = true; preview.textContent = JSON.stringify(report, null, 2);
@@ -250,5 +300,6 @@
     existing?.remove(); const action = button('Send report'); action.classList.add('report-context-action');
     action.dataset.incidentKey = key; action.onclick = () => open(context()); container.append(action); return action;
   }
-  return {ENDPOINT, STORAGE_KEY, clean, scalars, classify, classifyFailure, buildReport, submit, pending, addSettingsEntry, addContextAction, open};
+  return {ENDPOINT, STORAGE_KEY, clean, scalars, classify, classifyFailure, buildReport,
+    normalizeReport, submit, pending, addSettingsEntry, addContextAction, open};
 });
