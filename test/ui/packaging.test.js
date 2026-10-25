@@ -20,6 +20,11 @@ const nodePin = read('packaging/node-runtime.env');
 const nodeRuntime = Object.fromEntries(nodePin.split('\n').filter(line => /^NODE_[A-Z0-9_]+=/.test(line))
   .map(line => line.split(/=(.*)/s).slice(0, 2)));
 
+const debianUhdRelationshipCheck = spawnSync('node', [path.join(root,
+  'test/packaging/debian_uhd_relationship.test.js')], {encoding: 'utf8'});
+assert.equal(debianUhdRelationshipCheck.status, 0,
+  `Debian/DragonOS UHD relationship: ${debianUhdRelationshipCheck.stdout}${debianUhdRelationshipCheck.stderr}`);
+
 assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
 assert.match(buildScript, /VCPKG_FORCE_SYSTEM_BINARIES=1/);
@@ -126,8 +131,12 @@ assert.match(packageScript, /Debian 13 Trixie/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
-assert.match(packageScript, /Depends: %s, uhd-host, systemd/,
-  'Debian-family packages need UHD host tools and the vendor udev rule, not only libuhd.');
+assert.match(packageScript, /Depends: %s, systemd/,
+  'Debian runtime libraries must remain automatically derived from the packaged ELF set.');
+assert.doesNotMatch(packageScript, /Depends:(?:(?!\\n).)*uhd-host/,
+  'A stock uhd-host must not block compatible custom UHD runtime packages.');
+assert.match(packageScript, /Recommends: uhd-host/,
+  'Stock APT installs UHD host tools, images and the vendor udev rule by default.');
 assert.match(packageScript, /rpmbuild/);
 assert.match(rpmSpec, /^Requires:\s+uhd-firmware$/m,
   'Fedora packages need the matching B210 firmware image subpackage.');

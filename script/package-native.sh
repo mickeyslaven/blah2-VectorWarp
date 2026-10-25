@@ -313,7 +313,11 @@ if [[ $FORMAT == deb ]]; then
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
   if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP and dual HackRF adapters plus a local RSPduo source kit. RSPduo requires the separately installed SDRplay API and an explicit local build.'; fi
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, uhd-host, systemd, sudo, python3, python3-apt, passwd, util-linux, g++, binutils, cmake, ninja-build, make, git, pkg-config, libeigen3-dev, libusb-1.0-0-dev, libssl-dev, zlib1g-dev, ca-certificates\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Fresh installation never starts radar.\n' \
+  # APT installs Recommends by default, keeping stock B210 tools/images/udev
+  # ready without making Ubuntu's exact uhd-host/libuhd pairing mandatory for
+  # compatible DragonOS or other custom UHD stacks. dpkg-shlibdeps above still
+  # places the actual libuhd ABI requirement in Depends.
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, passwd, util-linux, g++, binutils, cmake, ninja-build, make, git, pkg-config, libeigen3-dev, libusb-1.0-0-dev, libssl-dev, zlib1g-dev, ca-certificates\nRecommends: uhd-host\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Fresh installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then
