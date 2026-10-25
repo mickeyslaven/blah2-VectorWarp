@@ -5,6 +5,7 @@
 // and native fusion weights are admitted.
 const crypto = require('crypto');
 const fs = require('fs');
+const {readBounded} = require('./detection-manifold-artifacts');
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const sha256 = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -39,6 +40,15 @@ function hermitianPositiveDiagonal(matrix) {
     for (let column = row + 1; column < matrix.length; ++column)
       if (Math.abs(matrix[row][column][0] - matrix[column][row][0]) > 1e-9 ||
           Math.abs(matrix[row][column][1] + matrix[column][row][1]) > 1e-9) return false;
+  }
+  // Complex Cholesky: positive diagonal alone is not positive definite.
+  const n = matrix.length, lower = Array.from({length: n}, () => Array(n));
+  for (let i = 0; i < n; ++i) for (let j = 0; j <= i; ++j) {
+    let re = matrix[i][j][0], im = matrix[i][j][1];
+    for (let k = 0; k < j; ++k) { const a = lower[i][k], b = lower[j][k];
+      re -= a[0] * b[0] + a[1] * b[1]; im -= -a[0] * b[1] + a[1] * b[0]; }
+    if (i === j) { if (!(re > 1e-12) || Math.abs(im) > 1e-9) return false; lower[i][j] = [Math.sqrt(re), 0]; }
+    else { const d = lower[j][j][0]; if (!(d > 0)) return false; lower[i][j] = [re / d, im / d]; }
   }
   return true;
 }
@@ -84,20 +94,22 @@ function validateNativeTruthExport(value, {resolveKey} = {}) {
       !Number.isSafeInteger(clock.sample_start ?? clock.first_epoch_sample) ||
       !Number.isSafeInteger(clock.sample_end ?? clock.end_epoch_sample) ||
       (clock.sample_end ?? clock.end_epoch_sample) <= (clock.sample_start ?? clock.first_epoch_sample) ||
-      !finite(clock.source_sample_midpoint) || !finite(clock.timestamp_ms) ||
+      !finite(clock.source_sample_midpoint) || !finite(clock.timestamp_ms) || clock.timestamp_ms < 0 ||
+      Math.abs(clock.source_sample_midpoint - ((clock.sample_start ?? clock.first_epoch_sample) +
+        (clock.sample_end ?? clock.end_epoch_sample)) / 2) > 1e-9 ||
       clock.time_mapping !== 'admitted-source-sample-midpoints' || !clock.source_epoch ||
       !Array.isArray(value.source_snapshots) || !value.source_snapshots.length ||
       value.source_snapshots.some(row => !sha256(row?.sha256) || row.epoch_id !== value.epoch_id ||
         !sha256(row.source_sha256) || !sha256(row.rf_sha256) || !sha256(row.native_config_sha256) ||
-        !sha256(row.native_module_sha256) || !sha256(row.native_device_sha256)) ||
+        !sha256(row.native_module_sha256) || !sha256(row.native_device_sha256) || !sha256(row.raw_iq_sha256)) ||
       covariance.epoch_id !== value.epoch_id || !sha256(covariance.sha256) ||
       covariance.state !== 'native-resident-reference-covariance' ||
       !Number.isInteger(covariance.samples) || covariance.samples < 1 ||
       !complexMatrix(covariance.matrix, channels) || !hermitianPositiveDiagonal(covariance.matrix) ||
       cut.role !== 'target' || !cut.id || cut.epoch_id !== value.epoch_id ||
       !sha256(cut.raw_iq_sha256) || !complexVector(cut.physical_channels, channels) ||
-      !(Math.hypot(...cut.physical_channels.flat()) > 1e-12) ||
-      !complexVector(value.reference_weights, channels) ||
+      !(Number.isFinite(Math.hypot(...cut.physical_channels.flat())) && Math.hypot(...cut.physical_channels.flat()) > 1e-12) ||
+      !complexVector(value.reference_weights, channels) || !(Math.hypot(...value.reference_weights.flat()) > 1e-12) ||
       !complexBank(value.actual_fusion_weights, channels) ||
       value.weight_provenance !== 'native-coherent-fusion-weights' ||
       value.detector?.scope !== 'native-cfar-before-centroid' ||
@@ -107,6 +119,8 @@ function validateNativeTruthExport(value, {resolveKey} = {}) {
     throw new Error('Native export lacks required same-epoch physical-IQ, RF, gain, covariance, or pass evidence');
   if (covariance.sha256 !== canonicalHash(covariance.matrix))
     throw new Error('Native export covariance hash is invalid');
+  if (!value.source_snapshots.some(snapshot => snapshot.raw_iq_sha256 === cut.raw_iq_sha256))
+    throw new Error('Native export raw physical-IQ hash is not bound to a native snapshot');
   return value;
 }
 
@@ -156,10 +170,7 @@ function validateNativeShadowManifoldRow(row, {resolveKey} = {}) {
 
 function readNativeShadowLedger(filename, {expectedTailSha256 = null, ...options} = {}) {
   if (!fs.existsSync(filename)) return {rows: [], tail_sha256: null};
-  const stat = fs.lstatSync(filename);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024 * 1024)
-    throw new Error('Native shadow ledger is not a bounded regular file');
-  const lines = fs.readFileSync(filename, 'utf8').trim().split('\n').filter(Boolean);
+  const lines = readBounded(filename).toString('utf8').trim().split('\n').filter(Boolean);
   if (lines.length > 20000) throw new Error('Native shadow ledger exceeds row bound');
   const rows = []; let previous = null;
   for (const line of lines) {
@@ -191,6 +202,7 @@ function deriveNativeShadowManifoldRow(nativeExport, {resolveKey, signingKey, ke
     pass: {id: source.pass?.id ?? source.selection.id, icao: source.pass?.icao ?? source.selection.icao,
       label: source.pass?.label ?? source.selection.label},
     usage: {adsb: 'truth-validation-only', shadow: 'training-only'}, epoch_id: source.epoch_id,
+    ...(source.collection_epoch ? {collection_epoch: source.collection_epoch} : {}),
     truth: {local_azimuth_deg: truth.local_azimuth_deg, elevation_deg: truth.elevation_deg,
       position_timestamp_ms: truth.position_timestamp_ms ?? truth.position_timestamp_s * 1000,
       provenance: 'adsb'}, configuration: source.configuration,
@@ -210,7 +222,12 @@ function appendNativeShadowRow(filename, row, options = {}) {
   validateNativeShadowManifoldRow(row, options);
   // Canonical form is for signatures only. Persist ordinary JSON so the next
   // process sees numbers rather than canonical f64 wrapper objects.
-  fs.appendFileSync(filename, `${JSON.stringify(row)}\n`, {encoding: 'utf8', mode: 0o600, flag: 'a'});
+  const fd = fs.openSync(filename, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT |
+    fs.constants.O_NOFOLLOW, 0o600);
+  try {
+    fs.writeSync(fd, `${JSON.stringify(row)}\n`, null, 'utf8');
+    if (fs.fstatSync(fd).size > 64 * 1024 * 1024) throw new Error('Native shadow ledger exceeds byte bound');
+  } finally { fs.closeSync(fd); }
   return row.row_sha256;
 }
 

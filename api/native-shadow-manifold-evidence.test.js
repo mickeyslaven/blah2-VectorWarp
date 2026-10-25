@@ -26,7 +26,7 @@ function nativeExport() {
       time_mapping: 'admitted-source-sample-midpoints'},
     source_snapshots: [{sha256: 'a'.repeat(64), epoch_id: 'rf-epoch-7',
       source_sha256: 'b'.repeat(64), rf_sha256: 'c'.repeat(64), native_config_sha256: 'd'.repeat(64),
-      native_module_sha256: 'e'.repeat(64), native_device_sha256: 'f'.repeat(64)}],
+      native_module_sha256: 'e'.repeat(64), native_device_sha256: 'f'.repeat(64), raw_iq_sha256: 'b'.repeat(64)}],
     covariance: {epoch_id: 'rf-epoch-7', samples: 64, matrix, sha256: canonicalHash(matrix),
       state: 'native-resident-reference-covariance'}, target_cut: {id: 'cut-19', role: 'target',
       epoch_id: 'rf-epoch-7', raw_iq_sha256: 'b'.repeat(64),
