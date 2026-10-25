@@ -8,7 +8,31 @@
   const STORAGE_KEY = 'vectorwarp-pending-diagnostic-report-v1';
   const IPV6_PATTERN = /(?<![A-Fa-f0-9:])(?:(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,7}:|(?:[A-Fa-f0-9]{1,4}:){1,6}:[A-Fa-f0-9]{1,4}|(?:[A-Fa-f0-9]{1,4}:){1,5}(?::[A-Fa-f0-9]{1,4}){1,2}|(?:[A-Fa-f0-9]{1,4}:){1,4}(?::[A-Fa-f0-9]{1,4}){1,3}|(?:[A-Fa-f0-9]{1,4}:){1,3}(?::[A-Fa-f0-9]{1,4}){1,4}|(?:[A-Fa-f0-9]{1,4}:){1,2}(?::[A-Fa-f0-9]{1,4}){1,5}|[A-Fa-f0-9]{1,4}:(?:(?::[A-Fa-f0-9]{1,4}){1,6})|:(?:(?::[A-Fa-f0-9]{1,4}){1,7}|:))(?![A-Fa-f0-9:])/g;
   const allowedReceivers = new Set(['RspDuo', 'Kraken', 'Usrp', 'HackRF', 'Replay', 'Unknown']);
-  const sensitiveKey = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight|aircraft|icao|callsign|hex)/;
+  const incidentTypes = new Map(Object.entries({
+    SDR_ENUMERATION_FAILED: ['receiver', 'enumerate'], SDR_OPEN_FAILED: ['receiver', 'open'],
+    SDR_STREAM_LOST: ['receiver', 'stream'], RECEIVER_SYNC_FAILED: ['receiver', 'sync'],
+    GAIN_MONITOR_FAILED: ['receiver', 'gain-monitor'], PROCESSOR_START_FAILED: ['processor', 'start'],
+    PROCESSOR_RUNTIME_FAILED: ['processor', 'runtime'], GPU_BACKEND_FAILED: ['processor', 'acceleration'],
+    RESTART_FAILED: ['lifecycle', 'restart'], CONFIG_PERSISTENCE_FAILED: ['configuration', 'persist'],
+    API_UNAVAILABLE: ['api', 'connect'], ADSB_SOURCE_FAILED: ['adsb', 'connect'],
+    MANUAL_REPORT: ['support', 'manual'], SERVICE_DEGRADED: ['status', 'observe']
+  }));
+  const booleanDetails = new Set(['enumerate', 'apiVersion', 'open', 'init', 'permissionDenied',
+    'driverLoaded', 'probeTimedOut', 'rollbackAttempted', 'rollbackSucceeded',
+    'reconciliationRequired', 'helperAvailable', 'timedOut', 'receiverReady', 'streamEstablished',
+    'callbackFault', 'fallbackAttempted', 'fallbackSucceeded', 'writeAttempted', 'revisionConflict',
+    'syntheticLiveTest', 'overloadKnown', 'processorFresh']);
+  const integerDetails = new Set(['deviceCount', 'candidateCount', 'attemptCount', 'exitStatus',
+    'framesReceived', 'lastFrameAgeMs', 'droppedFrames', 'framesProcessed', 'queueDepth', 'sourceCount',
+    'healthySourceCount', 'consecutiveFailures', 'statusCode', 'timeoutMs', 'timestampConnections']);
+  const stringDetails = new Map(Object.entries({discoveryStage: ['enumerate'],
+    driverErrorClass: ['permission', 'timeout', 'disconnected', 'invalid-response', 'device-busy', 'unavailable'],
+    driverErrorCode: ['DEVICE_BUSY'], failurePhase: ['probe', 'monitor', 'adjust'],
+    syncState: ['failed', 'partial', 'indeterminate'], receiptState: ['failed'],
+    terminationSignal: ['none', 'SIGINT', 'SIGTERM', 'SIGKILL'], driverState: ['failed'],
+    errorClass: ['permission', 'timeout', 'disconnected', 'invalid-response', 'device-busy', 'unavailable'],
+    writeStage: ['write', 'fsync', 'rename'], routeName: ['status', 'config', 'restart']
+  }).map(([key, values]) => [key, new Set(values)]));
   const incidentTracker = {active: null, generations: new Map()};
   const memory = new Map();
   const memoryStorage = {setItem: (key, value) => memory.set(key, value),
@@ -43,12 +67,11 @@
   function scalars(value = {}) {
     const result = {};
     for (const [key, item] of Object.entries(value).slice(0, 40)) {
-      const canonical = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-      if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) || sensitiveKey.test(canonical) ||
-          /^(?:lat(?:deg|itude)?|lon(?:deg|gitude)?|ip)$/.test(canonical)) continue;
-      if (typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item)) || item === null)
-        result[key] = item;
-      else if (typeof item === 'string') result[key] = clean(item);
+      if (booleanDetails.has(key) && typeof item === 'boolean') result[key] = item;
+      else if (integerDetails.has(key) && Number.isSafeInteger(item) && item >= 0) result[key] = item;
+      else if (stringDetails.get(key)?.has(item)) result[key] = item;
+      else if ((booleanDetails.has(key) || integerDetails.has(key) || stringDetails.has(key)) && item === null)
+        result[key] = null;
     }
     return result;
   }
@@ -139,38 +162,50 @@
     bytes[6] = bytes[6] & 15 | 64; bytes[8] = bytes[8] & 63 | 128;
     return [...bytes].map((value, index) => ([4, 6, 8, 10].includes(index) ? '-' : '') + value.toString(16).padStart(2, '0')).join('');
   }
+  function stable(value, expression, maximum, fallback = null) {
+    return typeof value === 'string' && value.length <= maximum && expression.test(value) ? value : fallback;
+  }
   function buildReport({incident, status = {}, config = {}, comment = '', now = Date.now()}) {
-    const browser = typeof navigator === 'undefined' ? {} : navigator;
     const type = receiverType(status, config);
     const processor = status.processor || {};
     const frequency = config?.capture?.fc;
     const sampleRate = config?.capture?.fs;
     const channels = config?.capture?.device?.channel_count;
-    const message = clean(incident.message || 'User requested diagnostic report', 1024);
+    const code = incidentTypes.has(incident.code) ? incident.code : 'MANUAL_REPORT';
+    const [component, stage] = incidentTypes.get(code);
+    const release = (value, maximum = 64) => stable(value,
+      /^[A-Za-z0-9][A-Za-z0-9_.+-]*$/, maximum);
+    const identifierValue = (value, maximum = 64) => stable(value,
+      /^[A-Za-z0-9][A-Za-z0-9_.-]*$/, maximum);
+    const osValue = new Set(['Linux', 'Darwin', 'Windows', 'linux', 'darwin', 'win32', 'macOS',
+      'unknown']).has(status.system?.os) ? status.system.os : 'unknown';
     return {schema: 1, consent: true, submissionId: uuid(), incident: {
-      code: incident.code, component: incident.component, stage: incident.stage,
-      severity: incident.severity || 'error', message,
+      code, component, stage,
+      severity: new Set(['fatal', 'error', 'degraded']).has(incident.severity) ? incident.severity : 'error',
+      message: `VectorWarp detected ${code} during ${component} ${stage}.`,
       firstSeenAt: new Date(incident.firstSeenAt || now).toISOString(),
       lastSeenAt: new Date(now).toISOString(), occurrences: integer(incident.occurrences, 1),
       recovered: incident.recovered === true
-    }, build: {version: clean(status.build?.version || 'development', 64),
+    }, build: {version: release(status.build?.version) || 'development',
       commit: /^[a-f0-9]{7,40}$/i.test(status.build?.commit || '') ? status.build.commit : '0000000',
-      package: clean(status.build?.package || 'unknown', 64)},
-    system: {os: clean(status.system?.os || browser.platform || 'unknown', 64),
-      architecture: clean(status.system?.architecture || 'unknown', 32),
-      kernel: clean(status.system?.kernel, 128), browser: clean(browser.userAgent, 128)},
-    receiver: {type, model: clean(status.processor?.receiverModel, 96),
-      driverVersion: clean(processor.driverVersion, 64), apiVersion: clean(processor.apiVersion, 64),
-      firmwareVersion: clean(processor.firmwareVersion, 64), sampleRateHz: integer(processor.sampleRate || sampleRate),
+      package: release(status.build?.package) || 'unknown'},
+    system: {os: osValue, architecture: identifierValue(status.system?.architecture, 32) || 'unknown',
+      kernel: release(status.system?.kernel, 128), browser: null},
+    receiver: {type, model: null,
+      driverVersion: release(processor.driverVersion), apiVersion: release(processor.apiVersion),
+      firmwareVersion: release(processor.firmwareVersion), sampleRateHz: integer(processor.sampleRate || sampleRate),
       centerFrequencyHz: integer(processor.frequency || frequency), channelCount: integer(processor.channels || channels),
-      transport: clean(processor.transport, 64), startupStages: scalars(processor.receiverStartup?.sdk?.stages),
+      transport: new Set(['usb', 'network', 'replay', 'unknown']).has(processor.transport) ? processor.transport : null,
+      startupStages: scalars(processor.receiverStartup?.sdk?.stages),
       health: scalars({streamEstablished: status.radar === 'receiving', callbackFault: Boolean(processor.error)})},
-    runtime: {processorState: clean(processor.state || status.radar, 48),
-      restartState: clean(status.restart?.state, 48), backend: clean(status.acceleration?.active || 'cpu', 64),
-      configRevision: clean(status.configRevision, 128), uptimeSeconds: integer(status.uptimeSeconds),
+    runtime: {processorState: identifierValue(processor.state || status.radar, 48),
+      restartState: identifierValue(status.restart?.state, 48),
+      backend: identifierValue(status.acceleration?.active || 'cpu'),
+      configRevision: /^(?:sha256:)?[a-f0-9]{3,64}$/i.test(status.configRevision || '') ? status.configRevision : null,
+      uptimeSeconds: integer(status.uptimeSeconds),
       details: scalars({...incident.details, lastFrameAgeMs: integer(status.lastFrameAt ? Math.max(0, now - status.lastFrameAt) : null),
         timestampConnections: integer(status.timestampConnections), processorFresh: status.processorFresh === true})},
-    recentEvents: [], comment: clean(comment, 2000)};
+    recentEvents: [], comment: null};
   }
   function retain(report, storage = reportStorage()) { storage.setItem(STORAGE_KEY, JSON.stringify(report)); }
   function clear(storage = reportStorage()) { storage.removeItem(STORAGE_KEY); }
@@ -187,7 +222,7 @@
     document.getElementById('report-dialog')?.remove();
     const report = retainedReport || buildReport({incident, status, config, comment});
     const dialog = document.createElement('dialog'); dialog.id = 'report-dialog'; dialog.className = 'site-dialog report-dialog';
-    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes the error, VectorWarp and system versions, receiver type and operating details, service state, and a small sanitized diagnostic history.</p><p>It will not include your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
+    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver type and operating measurements, and service state.</p><p>It will not include free-form error text or comments, your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
     const preview = document.createElement('pre'); preview.className = 'report-preview'; preview.hidden = true; preview.textContent = JSON.stringify(report, null, 2);
     const state = document.createElement('p'); state.className = 'report-state'; state.setAttribute('role', 'status');
     const actions = document.createElement('div'); actions.className = 'site-dialog-actions';

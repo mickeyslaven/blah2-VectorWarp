@@ -50,7 +50,7 @@ function baseReport(pathway) {
       processorState: pathway.processorState || 'running',
       restartState: pathway.restartState || 'idle',
       backend: pathway.backend || 'cpu',
-      configRevision: 'sha256:synthetic-revision',
+      configRevision: 'sha256:c0ffee',
       uptimeSeconds: 120,
       details: pathway.details
     },
@@ -148,7 +148,7 @@ test('every classified pathway preserves its bug-fixing evidence in the issue', 
     assert.equal(embedded.receiver.type, pathway.receiverType);
     assert.equal(embedded.receiver.sampleRateHz, 2000000);
     assert.equal(embedded.receiver.centerFrequencyHz, 100000000);
-    assert.equal(embedded.runtime.configRevision, 'sha256:synthetic-revision');
+    assert.equal(embedded.runtime.configRevision, 'sha256:c0ffee');
     assert.equal(embedded.recentEvents.length, 1);
     assert.deepEqual(embedded.runtime.details, pathway.details);
     assert.deepEqual(issue.labels, ['bug', 'vectorwarp-report']);
@@ -163,17 +163,17 @@ test('every supported receiver family can be represented without a hardware iden
   }
 });
 
-test('all sensitive text classes are removed while diagnostic scalars survive', async () => {
+test('arbitrary text is discarded while allowlisted diagnostic scalars survive', async () => {
   const value = baseReport(pathways[2]);
-  value.incident.message = 'serial=ABC123 token=ghp_bad password=hunter2 host=radar.local endpoint=https://private.example/report';
-  value.comment = '192.168.1.50 2001:db8::1 alice@example.com lat=40.7128 lon=-74.0060 /Users/alice/radar.yml C:\\Users\\alice\\radar.yml';
-  value.runtime.details.diagnosticClass = 'stream_callback';
+  value.incident.message = 'Authorization: Basic dXNlcjpwYXNz password=“correct horse battery staple”';
+  value.comment = '["safe","SECOND_SECRET"] {\\"icao24\\":\\"abc123\\",\\"call_sign\\":\\"SECRET7\\"}';
   const report = normalizeReport(value);
   const issue = githubIssue(report, await reportFingerprint(report), 'test-report-id');
 
-  assert.doesNotMatch(issue.body, /ABC123|ghp_bad|hunter2|radar\.local|private\.example|192\.168\.1\.50|2001:db8|alice@example\.com|40\.7128|-74\.0060|Users[\\/]alice/);
-  assert.match(issue.body, /\[IP redacted\]/);
-  assert.match(issue.body, /\[email redacted\]/);
-  assert.match(issue.body, /\[path redacted\]/);
-  assert.match(issue.body, /"diagnosticClass": "stream_callback"/);
+  assert.equal(report.comment, null);
+  assert.equal(report.incident.message,
+    'VectorWarp detected SDR_STREAM_LOST during receiver stream.');
+  assert.doesNotMatch(issue.body,
+    /dXNlcjpwYXNz|correct horse|battery staple|SECOND_SECRET|abc123|SECRET7/);
+  assert.match(issue.body, /"framesReceived": 2048/);
 });

@@ -1,9 +1,9 @@
 'use strict';
 const assert = require('node:assert/strict');
-const {JSDOM} = require('jsdom');
+const {JSDOM} = require('./jsdom');
 const reports = require('../../html/js/error_reporting');
 
-const base = {serverId: 'server-1', configRevision: 'sha256:test', loadedRevision: 'sha256:test',
+const base = {serverId: 'server-1', configRevision: 'sha256:c0ffee', loadedRevision: 'sha256:c0ffee',
   radar: 'receiving', processorFresh: true, timestampConnections: 2,
   processor: {receiver: 'Kraken', state: 'live', error: '', sampleRate: 2400000,
     frequency: 527000000, channels: 5, totalSamples: 100, loops: 10},
@@ -34,6 +34,7 @@ const procedural = [
 ];
 
 (async () => {
+  const relay = await import('../../services/report-relay/src/index.js');
   const dom = new JSDOM('<!doctype html><body><main id="settings"></main><div id="error"></div></body>', {url: 'https://radar.local/'});
   global.window = dom.window; global.document = dom.window.document;
   Object.defineProperty(global, 'navigator', {value: dom.window.navigator, configurable: true});
@@ -50,7 +51,7 @@ const procedural = [
     const payload = JSON.parse(document.querySelector('.report-preview').textContent);
     assert.equal(payload.incident.code, expected);
     assert.equal(payload.receiver.sampleRateHz, 2400000);
-    assert.equal(payload.runtime.configRevision, 'sha256:test');
+    assert.equal(payload.runtime.configRevision, 'sha256:c0ffee');
     assert.ok(Object.keys(payload.runtime.details).length > 0, `${expected} needs pathway evidence`);
     document.querySelector('.site-dialog-actions button:nth-last-child(2)').click();
   }
@@ -62,13 +63,28 @@ const procedural = [
     document.querySelector('.site-dialog-actions button:nth-last-child(2)').click();
   }
 
-  const dirty = reports.buildReport({incident: {code: 'MANUAL_REPORT', component: 'support', stage: 'manual',
-    message: 'serial number ABC12345; serial_number=XYZ987; (40.7128,-74.0060); aircraft_hex=A0B1C2; callsign VW123; password="correct horse battery staple"; {"hex":"a1b2c3","flight":"PRIVATE12","lat":40.7128,"lon":-74.0060}; Authorization: Bearer ghp_bad; api_key=key; tcp://private.local; /Volumes/Radio Data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw'}, status: base, config});
-  assert.doesNotMatch(JSON.stringify(dirty), new RegExp('DO-NOT-SEND|192\\.168\\.1\\.2|ABC12345|XYZ987|40\\.7128|74\\.0060|A0B1C2|VW123|correct horse|battery staple|a1b2c3|PRIVATE12|ghp_bad|private\\.local|Volumes|Jane Doe|server'));
+  const hostile = ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: "Bearer ghp_quoted"',
+    'password=\\"correct horse battery staple\\"',
+    '{\\"hex\\":\\"a1b2c3\\",\\"flight\\":\\"PRIVATE12\\",\\"icao24\\":\\"abc123\\",\\"flightNumber\\":\\"VW123\\",\\"call_sign\\":\\"SECRET7\\"}',
+    '["safe","SECOND_SECRET"]', 'password=“correct horse battery staple”'].join(' ');
+  const dirtyStatus = {...base, system: {...base.system, browser: hostile},
+    processor: {...base.processor, model: hostile}};
+  const dirty = reports.buildReport({incident: {code: 'MANUAL_REPORT', component: 'support',
+    stage: 'manual', message: hostile, details: {routeName: ['status', 'SECOND_SECRET'],
+      attemptCount: 2, icao24: 'abc123'}}, status: dirtyStatus, config, comment: hostile});
+  const forbidden = /DO-NOT-SEND|192\.168\.1\.2|dXNlcjpwYXNz|ghp_quoted|correct horse|battery staple|a1b2c3|PRIVATE12|abc123|VW123|SECRET7|SECOND_SECRET/;
+  assert.doesNotMatch(JSON.stringify(dirty), forbidden);
   assert.match(dirty.submissionId, /^[0-9a-f-]{36}$/);
-  assert.deepEqual(reports.scalars({safeCount: 2, lat: 1, lon: 2, latDeg: 1, lonDeg: 2,
+  assert.deepEqual(reports.scalars({attemptCount: 2, lat: 1, lon: 2, latDeg: 1, lonDeg: 2,
     receiverSerialNumber: 'x', accessTokenValue: 'x', adsbHex: 'abc123', flight: 'VW1',
-    icao: 'abc123', callsign: 'VW1', aircraftHex: 'abc123'}), {safeCount: 2});
+    icao: 'abc123', icao24: 'abc123', flightNumber: 'VW1', callsign: 'VW1', call_sign: 'VW1',
+    aircraftHex: 'abc123', routeName: ['status', 'SECOND_SECRET']}), {attemptCount: 2});
+  const normalized = relay.normalizeReport(dirty);
+  const issue = relay.githubIssue(normalized, await relay.reportFingerprint(normalized),
+    await relay.submissionReceiptId(normalized));
+  assert.doesNotMatch(issue.body, forbidden);
+  assert.deepEqual(normalized.runtime.details, {attemptCount: 2, lastFrameAgeMs: null,
+    timestampConnections: 2, processorFresh: true});
 
   const tracker = {active: null, generations: new Map()};
   const failure = status({radar: 'stale', processor: {state: 'live'}});

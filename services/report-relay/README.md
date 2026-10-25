@@ -7,11 +7,14 @@ VectorWarp repository is intentionally not the automatic-report destination.
 
 ## Privacy and security properties
 
-- The JSON schema is an allowlist. Unknown fields and sensitive-looking detail
-  keys are rejected.
-- Free text is bounded and redacts common addresses, endpoints, serials,
-  coordinates, credentials, email addresses and local paths.
-- The report is sanitized locally by VectorWarp and again by this service.
+- The JSON schema is an allowlist. Unknown diagnostic fields and unsupported
+  values are rejected.
+- Incident messages are generated from a fixed incident catalog. Free-form
+  error text, comments, browser strings, and receiver model strings are never
+  forwarded.
+- Diagnostic details are limited to named booleans, non-negative integers, and
+  small enumerations. VectorWarp applies this boundary locally and the relay
+  independently validates it again.
 - Cloudflare's source address is hashed before it is used by the approximate
   rate-limit binding. It is not included in the issue or application logs.
 - Worker observability is disabled. Cloudflare still processes ordinary HTTP

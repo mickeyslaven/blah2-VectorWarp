@@ -6,7 +6,32 @@ const REPORT_KEYS = new Set([
   'schema', 'consent', 'submissionId', 'incident', 'build', 'system', 'receiver', 'runtime',
   'recentEvents', 'comment'
 ]);
-const SENSITIVE_KEY = /(serial|token|secret|password|credential|location|latitude|longitude|hostname|address|endpoint|path|file|url|apikey|authorization|adsb|flight|aircraft|icao|callsign|hex)/;
+const INCIDENT_TYPES = new Map(Object.entries({
+  SDR_ENUMERATION_FAILED: ['receiver', 'enumerate'], SDR_OPEN_FAILED: ['receiver', 'open'],
+  SDR_STREAM_LOST: ['receiver', 'stream'], RECEIVER_SYNC_FAILED: ['receiver', 'sync'],
+  GAIN_MONITOR_FAILED: ['receiver', 'gain-monitor'], PROCESSOR_START_FAILED: ['processor', 'start'],
+  PROCESSOR_RUNTIME_FAILED: ['processor', 'runtime'], GPU_BACKEND_FAILED: ['processor', 'acceleration'],
+  RESTART_FAILED: ['lifecycle', 'restart'], CONFIG_PERSISTENCE_FAILED: ['configuration', 'persist'],
+  API_UNAVAILABLE: ['api', 'connect'], ADSB_SOURCE_FAILED: ['adsb', 'connect'],
+  MANUAL_REPORT: ['support', 'manual'], SERVICE_DEGRADED: ['status', 'observe']
+}));
+const BOOLEAN_DETAILS = new Set(['enumerate', 'apiVersion', 'open', 'init', 'permissionDenied',
+  'driverLoaded', 'probeTimedOut', 'rollbackAttempted', 'rollbackSucceeded',
+  'reconciliationRequired', 'helperAvailable', 'timedOut', 'receiverReady', 'streamEstablished',
+  'callbackFault', 'fallbackAttempted', 'fallbackSucceeded', 'writeAttempted', 'revisionConflict',
+  'syntheticLiveTest', 'overloadKnown', 'processorFresh']);
+const INTEGER_DETAILS = new Set(['deviceCount', 'candidateCount', 'attemptCount', 'exitStatus',
+  'framesReceived', 'lastFrameAgeMs', 'droppedFrames', 'framesProcessed', 'queueDepth', 'sourceCount',
+  'healthySourceCount', 'consecutiveFailures', 'statusCode', 'timeoutMs', 'timestampConnections']);
+const STRING_DETAILS = new Map(Object.entries({
+  discoveryStage: ['enumerate'], driverErrorClass: ['permission', 'timeout', 'disconnected',
+    'invalid-response', 'device-busy', 'unavailable'], driverErrorCode: ['DEVICE_BUSY'],
+  failurePhase: ['probe', 'monitor', 'adjust'], syncState: ['failed', 'partial', 'indeterminate'],
+  receiptState: ['failed'], terminationSignal: ['none', 'SIGINT', 'SIGTERM', 'SIGKILL'],
+  driverState: ['failed'], errorClass: ['permission', 'timeout', 'disconnected', 'invalid-response',
+    'device-busy', 'unavailable'], writeStage: ['write', 'fsync', 'rename'],
+  routeName: ['status', 'config', 'restart']
+}).map(([key, values]) => [key, new Set(values)]));
 
 const responseHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -115,15 +140,12 @@ function safeDetails(value, name) {
   if (entries.length > 40) throw new ReportError(`${name} has too many fields`);
   const result = {};
   for (const [key, item] of entries) {
-    const canonical = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-    if (!/^[a-z][a-zA-Z0-9_]{0,47}$/.test(key) || SENSITIVE_KEY.test(canonical) ||
-        /^(?:lat(?:deg|itude)?|lon(?:deg|gitude)?|ip)$/.test(canonical))
-      throw new ReportError(`${name} contains a sensitive or unsupported field`);
-    if (typeof item === 'boolean') result[key] = item;
-    else if (typeof item === 'number' && Number.isFinite(item)) result[key] = item;
-    else if (typeof item === 'string') result[key] = redactText(item, 256, `${name}.${key}`);
-    else if (item === null) result[key] = null;
-    else throw new ReportError(`${name}.${key} must be a scalar value`);
+    if (BOOLEAN_DETAILS.has(key) && typeof item === 'boolean') result[key] = item;
+    else if (INTEGER_DETAILS.has(key) && Number.isSafeInteger(item) && item >= 0) result[key] = item;
+    else if (STRING_DETAILS.get(key)?.has(item)) result[key] = item;
+    else if ((BOOLEAN_DETAILS.has(key) || INTEGER_DETAILS.has(key) || STRING_DETAILS.has(key)) && item === null)
+      result[key] = null;
+    else throw new ReportError(`${name} contains an unsupported diagnostic field or value`);
   }
   return result;
 }
@@ -140,16 +162,19 @@ function normalizeIncident(value, prefix = 'incident') {
     'lastSeenAt', 'occurrences', 'recovered'
   ]);
   onlyKeys(value, allowed, prefix);
-  const code = redactText(value.code, 64, `${prefix}.code`, true);
-  if (!/^[A-Z][A-Z0-9_]{2,63}$/.test(code))
-    throw new ReportError(`${prefix}.code must be a stable uppercase code`);
+  const code = identifier(value.code, 64, `${prefix}.code`, true);
+  const kind = INCIDENT_TYPES.get(code);
+  if (!kind || value.component !== kind[0] || value.stage !== kind[1])
+    throw new ReportError(`${prefix} is not a supported diagnostic incident`);
+  if (typeof value.message !== 'string' || value.message.length > 4096)
+    throw new ReportError(`${prefix}.message must be bounded text`);
   return {
     code,
-    component: identifier(value.component, 64, `${prefix}.component`, true),
-    stage: identifier(value.stage, 64, `${prefix}.stage`),
+    component: kind[0],
+    stage: kind[1],
     severity: enumValue(value.severity, new Set(['fatal', 'error', 'degraded']),
       `${prefix}.severity`, 'error'),
-    message: redactText(value.message, 1024, `${prefix}.message`, true),
+    message: `VectorWarp detected ${code} during ${kind[0]} ${kind[1]}.`,
     firstSeenAt: timestamp(value.firstSeenAt, `${prefix}.firstSeenAt`),
     lastSeenAt: timestamp(value.lastSeenAt, `${prefix}.lastSeenAt`),
     occurrences: boundedInteger(value.occurrences, 1, 1000000,
@@ -197,38 +222,40 @@ export function normalizeReport(value) {
       package: releaseIdentifier(value.build.package, 64, 'build.package')
     },
     system: {
-      os: redactText(value.system.os, 64, 'system.os', true),
-      architecture: redactText(value.system.architecture, 32, 'system.architecture', true),
-      kernel: redactText(value.system.kernel, 128, 'system.kernel'),
-      browser: redactText(value.system.browser, 128, 'system.browser')
+      os: enumValue(value.system.os, new Set(['Linux', 'Darwin', 'Windows', 'linux', 'darwin',
+        'win32', 'macOS', 'unknown']), 'system.os', 'unknown'),
+      architecture: identifier(value.system.architecture, 32, 'system.architecture', true),
+      kernel: releaseIdentifier(value.system.kernel, 128, 'system.kernel'), browser: null
     },
     receiver: {
       type: enumValue(receiver.type,
         new Set(['RspDuo', 'Kraken', 'Usrp', 'HackRF', 'Replay', 'Unknown']),
         'receiver.type', 'Unknown'),
-      model: redactText(receiver.model, 96, 'receiver.model'),
-      driverVersion: redactText(receiver.driverVersion, 64, 'receiver.driverVersion'),
-      apiVersion: redactText(receiver.apiVersion, 64, 'receiver.apiVersion'),
-      firmwareVersion: redactText(receiver.firmwareVersion, 64, 'receiver.firmwareVersion'),
+      model: null,
+      driverVersion: releaseIdentifier(receiver.driverVersion, 64, 'receiver.driverVersion'),
+      apiVersion: releaseIdentifier(receiver.apiVersion, 64, 'receiver.apiVersion'),
+      firmwareVersion: releaseIdentifier(receiver.firmwareVersion, 64, 'receiver.firmwareVersion'),
       sampleRateHz: boundedInteger(receiver.sampleRateHz, 1, 1000000000, 'receiver.sampleRateHz'),
       centerFrequencyHz: boundedInteger(receiver.centerFrequencyHz, 1, 100000000000, 'receiver.centerFrequencyHz'),
       channelCount: boundedInteger(receiver.channelCount, 1, 64, 'receiver.channelCount'),
-      transport: redactText(receiver.transport, 64, 'receiver.transport'),
+      transport: enumValue(receiver.transport, new Set(['usb', 'network', 'replay', 'unknown']),
+        'receiver.transport'),
       startupStages: safeDetails(receiver.startupStages, 'receiver.startupStages'),
       health: safeDetails(receiver.health, 'receiver.health')
     },
     runtime: {
-      processorState: redactText(runtime.processorState, 48, 'runtime.processorState'),
-      restartState: redactText(runtime.restartState, 48, 'runtime.restartState'),
-      backend: redactText(runtime.backend, 64, 'runtime.backend'),
-      configRevision: redactText(runtime.configRevision, 128, 'runtime.configRevision'),
+      processorState: identifier(runtime.processorState, 48, 'runtime.processorState'),
+      restartState: identifier(runtime.restartState, 48, 'runtime.restartState'),
+      backend: identifier(runtime.backend, 64, 'runtime.backend'),
+      configRevision: typeof runtime.configRevision === 'string' &&
+        /^(?:sha256:)?[a-f0-9]{3,64}$/i.test(runtime.configRevision) ? runtime.configRevision : null,
       uptimeSeconds: boundedInteger(runtime.uptimeSeconds, 0, Number.MAX_SAFE_INTEGER,
         'runtime.uptimeSeconds'),
       details: safeDetails(runtime.details, 'runtime.details')
     },
     recentEvents: recentEvents.map((event, index) => normalizeIncident(event,
       `recentEvents[${index}]`)),
-    comment: redactText(value.comment, 2000, 'comment')
+    comment: null
   };
 }
 
