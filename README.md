@@ -43,8 +43,8 @@ research paths, separate from the supported install and operation guides. See
 
 ## Advanced preview: Raspberry Pi 4B
 
-Raspberry Pi 4B is an advanced compatibility preview, not a supported primary
-platform. Its constrained workloads can miss real-time deadlines; prefer a
+Raspberry Pi 4B is an advanced compatibility preview, not a supported primary platform.
+Its constrained workloads can miss real-time deadlines; prefer a
 supported x86-64 PC or Apple Silicon Mac. See the [Pi 4 preview guide](docs/PI4_GUIDE.md)
 and its [validation limits](docs/PI4_IMAGE_VALIDATION_20260919.md).
 
