@@ -21,6 +21,7 @@ ALLOWED_ROOT_DIRS = {
     ".github", "Formula", "api", "bench", "cmake", "config", "contrib", "core", "docs",
     "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test",
 }
+ALLOWED_SERVICE_DIRS = {"report-relay"}
 ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md"}
 DENIED_ROOTS = {".git", "bin", "build", "data", "node_modules", "private", "sdk", "secrets"}
 DENIED_FILE_SUFFIXES = {".dmg", ".dylib", ".mchq", ".pkg", ".so"}
@@ -66,7 +67,13 @@ def relative_member(name: str, commit: str) -> PurePosixPath | None:
     relative = PurePosixPath(*path.parts[1:])
     if relative.parts[0].lower() in DENIED_ROOTS:
         fail(f"excluded archive member was selected: {name}")
-    if relative.parts[0] not in ALLOWED_ROOT_DIRS:
+    if relative.parts[0] == "services":
+        if len(relative.parts) > 1 and relative.parts[1] not in ALLOWED_SERVICE_DIRS:
+            fail(f"unexpected service outside the public allowlist: {name}")
+        service_parts = {part.lower() for part in relative.parts[2:]}
+        if service_parts & {".wrangler", "node_modules", "private", "secrets"} or relative.name.lower() in {".dev.vars", ".env"}:
+            fail(f"private service state must not enter the source archive: {name}")
+    elif relative.parts[0] not in ALLOWED_ROOT_DIRS:
         if len(relative.parts) != 1 or relative.parts[0] not in ALLOWED_ROOT_FILES:
             fail(f"unexpected archive member outside the public allowlist: {name}")
     filename = relative.name.lower()
