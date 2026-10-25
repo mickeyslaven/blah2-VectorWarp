@@ -15,16 +15,15 @@ instructions below apply to Linux.
    distribute the API. Then select and configure the receiver.
 3. Choose **Save & Restart** to save settings and start radar, including the
    first time. **Save for later** does not start it.
-4. Later, `vectorwarp start` brings up the full stack using saved settings;
-   `vectorwarp stop` stops it, including the web interface; and
-   `vectorwarp restart` restarts it in order. These commands do not stop shared Kraken
-   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`, and
-   `vectorwarp help` inspect it. Linux also has `vectorwarp version`; on macOS,
-   use `brew list --versions vectorwarp`.
+4. Later, use `vectorwarp start`, `vectorwarp stop`, or `vectorwarp restart`
+   for the full stack. `stop` includes the web interface; these commands do not
+   stop shared Kraken Suite or SDRplay services. Use `vectorwarp status`,
+   `vectorwarp logs`, or `vectorwarp help` to inspect it. Linux also has
+   `vectorwarp version`; on macOS, use `brew list --versions vectorwarp`.
 
-If you enabled a Mac Homebrew service, use `brew services stop vectorwarp` and
-`brew services restart vectorwarp` for service control. A plain `vectorwarp stop`
-leaves that supervisor running, so it restarts the child processes.
+If you enabled the Mac Homebrew service, use `brew services stop vectorwarp` or
+`brew services restart vectorwarp` to control the supervisor. Plain
+`vectorwarp stop` leaves that supervisor running, so it restarts child processes.
 
 Use the
 [source-build guide](INSTALL.md#build-from-source) for development or unsupported
@@ -37,9 +36,8 @@ Node.js requirements, receiver build choices, GPU build packages and startup
 commands. Choose the required `--backend` before building. Installing an SDR
 driver later does not add an adapter that was omitted from the VectorWarp build.
 
-The [Raspberry Pi 4B preview guide](PI4_GUIDE.md) is an advanced compatibility
-path, not a supported primary deployment. It documents its constrained RSPduo
-configuration and validation limits.
+The [Raspberry Pi 4B preview guide](PI4_GUIDE.md) covers an advanced compatibility
+path and its constrained RSPduo configuration.
 
 ## Check receiver software
 

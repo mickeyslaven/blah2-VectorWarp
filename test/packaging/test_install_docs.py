@@ -311,11 +311,11 @@ exit 0
 
         primary = readme.split("## Advanced and research material", 1)[0]
         self.assertNotRegex(primary, r"(?i)scorecard|bearing|manifold|shadow")
-        self.assertRegex(readme, r"not\s+production capability promises")
+        self.assertRegex(readme, r"research paths, separate from the supported install and operation guides")
         self.assertIn("## Advanced preview: Raspberry Pi 4B", install)
         self.assertIn("advanced compatibility preview", install.lower())
         self.assertIn("advanced compatibility", setup.lower())
-        self.assertIn("supported production capability statement", research)
+        self.assertIn("separate\nfrom the supported installation and receiver-operation guides", research)
 
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()

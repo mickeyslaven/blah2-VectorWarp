@@ -1,22 +1,20 @@
 # VectorWarp documentation
 
-Use this page to choose current instructions. Pages outside the first four
-sections are design, test, research, or historical evidence; they are not an
-installation contract or an operational capability claim.
+Start here for current installation, configuration, and maintenance guidance.
+Advanced, research, and historical pages are separately indexed below.
 
 ## Install
 
-- [Install VectorWarp](INSTALL.md): supported Linux packages, Homebrew, manual artifacts, and source builds.
-- [macOS Homebrew](MACOS_HOMEBREW.md), [macOS runtime and development](MACOS.md), and [standalone macOS installer](MACOS_STANDALONE.md).
-- [DragonOS package selection](DRAGONOS.md).
-- [Raspberry Pi 4 preview](PI4_GUIDE.md): an advanced compatibility preview, not a supported primary deployment.
+- [Install VectorWarp](INSTALL.md): Linux packages, Homebrew, manual artifacts, and source builds.
+- [macOS Homebrew](MACOS_HOMEBREW.md), [macOS runtime and development](MACOS.md), and the [standalone macOS installer](MACOS_STANDALONE.md).
+- [DragonOS package selection](DRAGONOS.md) and the [Raspberry Pi 4 preview](PI4_GUIDE.md).
 
 ## Configure and operate
 
 - [Receiver setup](SETUP.md): Kraken, RSPduo, USRP, HackRF, ADS-B, recording, replay, browser access, and service controls.
-- [SDRplay setup](SDRPLAY_SETUP.md) and [receiver compatibility watcher](RECEIVER_COMPATIBILITY.md).
-- [GPU acceleration](GPU_ACCELERATION.md) and [GPU diagnostics](GPU_DIAGNOSTICS.md).
-- [macOS local Kraken](MACOS_KRAKEN.md) and [macOS GPU processing](MACOS_GPU.md).
+- [SDRplay setup](SDRPLAY_SETUP.md) and [receiver compatibility](RECEIVER_COMPATIBILITY.md).
+- [GPU acceleration](GPU_ACCELERATION.md) and [diagnostics](GPU_DIAGNOSTICS.md).
+- [Local Kraken on macOS](MACOS_KRAKEN.md) and [macOS GPU processing](MACOS_GPU.md).
 
 ## Develop and release
 
@@ -27,14 +25,12 @@ installation contract or an operational capability claim.
 ## Research and experimental paths
 
 [Advanced research](ADVANCED_RESEARCH.md) is the entry point for experimental
-bearing, shadow, scorecard, and evaluation work. The source material and
-evidence ledgers live in [research/](research/); none of these paths is enabled
-or promised by the supported install and operation guides.
+bearing, shadow, scorecard, and evaluation work. Source material and evidence
+ledgers live in [research/](research/).
 
 ## Historical evidence and audits
 
-Date-stamped benchmark, validation, acceptance, review, and remediation files
-preserve the evidence available at the time they were written. They do not
-override current instructions or configuration defaults. Start with
-[the historical-record index](archive/README.md); benchmark receipts also live
-under [benchmarks/](benchmarks/) and validation receipts under [validation/](validation/).
+Date-stamped benchmarks, validation, acceptance, review, and remediation files
+preserve the evidence available when they were written. Start with the
+[historical-record index](archive/README.md); benchmark receipts also live under
+[benchmarks/](benchmarks/) and validation receipts under [validation/](validation/).
