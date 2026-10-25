@@ -31,17 +31,25 @@ function readJsonl(filename) {
   }
   const {manifold, runtimeCandidate, evaluation} = evaluateDetectionManifoldCandidate(samples, workerData.config,
     {corpusSha256});
+  // Each model and A/B comparison is retained.  Only this small manifest is a
+  // mutable pointer, and it is never read by the production processor.
+  const version = manifold.candidate_version || manifold.calibration.candidate_model_sha256;
+  const versionedCandidatePath = `${workerData.candidatePath}.${version}.json`;
+  try { await fs.promises.access(versionedCandidatePath); }
+  catch (_) { await fs.promises.writeFile(versionedCandidatePath, JSON.stringify(manifold, null, 2) + '\n', {mode: 0o600}); }
+  const manifest = {schema: 'vectorwarp-detection-manifold-shadow-manifest-v1', candidate_version: version,
+    candidate_path: versionedCandidatePath, evidence_key: manifold.evidence_key,
+    updated_at: new Date().toISOString(), production_promotion: 'hard-disabled'};
   const temporary = `${workerData.candidatePath}.${process.pid}.tmp`;
-  await fs.promises.writeFile(temporary, JSON.stringify(manifold, null, 2) + '\n', {mode: 0o600});
+  await fs.promises.writeFile(temporary, JSON.stringify(manifest, null, 2) + '\n', {mode: 0o600});
   await fs.promises.rename(temporary, workerData.candidatePath);
-  let runtimeCandidatePath = null;
-  if (runtimeCandidate) {
-    runtimeCandidatePath = `${workerData.candidatePath}.runtime.json`;
-    const runtimeTemporary = `${runtimeCandidatePath}.${process.pid}.tmp`;
-    await fs.promises.writeFile(runtimeTemporary, JSON.stringify(runtimeCandidate), {mode: 0o600});
-    await fs.promises.rename(runtimeTemporary, runtimeCandidatePath);
-  }
+  const receiptPath = workerData.receiptPath || `${workerData.candidatePath}.shadow-ab-receipts.jsonl`;
+  await fs.promises.appendFile(receiptPath, JSON.stringify({schema: 'vectorwarp-detection-manifold-shadow-ab-receipt-v1',
+    at: manifest.updated_at, candidate_version: version, candidate_path: versionedCandidatePath,
+    evidence_key: manifold.evidence_key, baseline: 'ideal-manifold', candidate: 'measured-2d-shrunk',
+    evaluation, production_promotion: 'hard-disabled'}) + '\n', {mode: 0o600});
   parentPort.postMessage({ok: true, result: {qualified: evaluation.qualified,
     promotion_allowed: false, failures: evaluation.failures, evidence: evaluation,
-    runtimeCandidatePath, progress, samples: progress.accepted_samples}});
+    candidateVersion: version, versionedCandidatePath, receiptPath,
+    runtimeCandidatePath: null, progress, samples: progress.accepted_samples}});
 })().catch(error => parentPort.postMessage({ok: false, error: error.message}));

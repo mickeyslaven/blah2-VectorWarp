@@ -310,11 +310,13 @@ class DetectionManifoldAutomation {
     this.samplePath = settings.corpus_path || config.process?.bearing?.manifold_recorder?.path || null;
     this.validationPath = settings.validation_path || null;
     this.candidatePath = settings.candidate_path || (this.samplePath ? `${this.samplePath}.detection-candidate.json` : null);
+    this.receiptPath = settings.shadow_receipt_path || (this.candidatePath ?
+      `${this.candidatePath}.shadow-ab-receipts.jsonl` : null);
     this.enabled = settings.enabled === true && Boolean(this.samplePath);
     this.running = false; this.timer = null; this.lastSignature = null;
     this.state = {enabled: this.enabled, state: this.enabled ? 'collecting' : 'disabled',
       qualified: false, promotion_allowed: false, candidatePath: this.candidatePath,
-      validationPath: this.validationPath,
+      validationPath: this.validationPath, receiptPath: this.receiptPath,
       error: null, progress: summarizeDetectionManifoldProgress([], config)};
   }
   status() { return {...this.state, running: this.running}; }
@@ -343,7 +345,7 @@ class DetectionManifoldAutomation {
       const result = await new Promise((resolve, reject) => {
         const worker = new this.Worker(path.join(__dirname, 'detection-manifold-automation-worker.js'),
           {workerData: {samplePath: this.samplePath, candidatePath: this.candidatePath,
-            validationPath: this.validationPath, config: this.config}});
+            validationPath: this.validationPath, receiptPath: this.receiptPath, config: this.config}});
         worker.once('message', message => message.ok ? resolve(message.result) : reject(new Error(message.error)));
         worker.once('error', reject);
         worker.once('exit', code => { if (code) reject(new Error(`Detection manifold worker exited ${code}`)); });

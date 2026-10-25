@@ -20,6 +20,9 @@ function compactAutomation(status = {}, {autoPromoteEnabled = false,
     qualified_path: status.qualifiedPath || null,
     validation_path: status.validationPath || null,
     runtime_candidate_path: status.runtimeCandidatePath || null,
+    candidate_version: status.candidateVersion || null,
+    versioned_candidate_path: status.versionedCandidatePath || null,
+    shadow_ab_receipt_path: status.receiptPath || null,
     promotion: status.promotion || null
   };
 }
@@ -75,6 +78,7 @@ function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
     detection: {
       purpose: 'surveillance beam-bank weighting before detection and CFAR',
       active_model: config.process?.surveillance_fusion?.manifold_file || null,
+      active_model_policy: 'unchanged; shadow candidates cannot be promoted automatically',
       automation: compactAutomation(detectionStatus, {forcePromotionDisabled: true}),
       progress: detectionStatus?.progress || null
     },

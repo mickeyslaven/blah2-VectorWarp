@@ -9,6 +9,39 @@ The frequency-resolved pre-CAF arm is explicitly experimental. Neither this
 tool nor the API truth-selected covariance replay is a production qualification
 lane.
 
+## Living shadow manifold
+
+The API fitter is a continuously refreshed, **shadow-only** 2-D azimuth and
+elevation candidate model.  It consumes append-only aircraft-response evidence
+partitioned by the exact configuration fingerprint, RF frequency/sample rate,
+channel count, and full requested/capture/actual gain vector.  A changed gain
+or configuration starts a distinct evidence epoch; rows are never pooled across
+epochs.
+
+Each candidate has a deterministic version derived from its selected evidence,
+grid, support and fitted vectors.  The worker retains the versioned JSON model,
+writes only a small latest-manifest pointer, and appends an A/B receipt to its
+receipt ledger.  The receipt names the ideal baseline and measured/shrunk
+candidate, evidence key, candidate version, diagnostic evaluation and the
+hard-disabled promotion policy.  Neither manifest nor receipt is a live
+configuration input.
+
+Every azimuth/elevation cell reports sample count, independent pass count,
+confidence and coherence/angular uncertainty.  Cells without the configured
+independent pass support are explicitly `sparse` or `unsupported`; they carry
+no measured response and `responseFor` returns no steering vector.  There is
+no sector, frequency, elevation or gain extrapolation.  Supported vectors are
+conservatively shrunk toward a declared neutral/ideal manifold only for the
+diagnostic comparison; shrinkage does not turn absent evidence into a measured
+cell.
+
+The fixed WPXI transmitter phase/frequency-drift anchor is a different stream
+from aircraft response evidence.  Candidate metadata records this separation
+and the detection fitter never consumes that anchor as an aircraft vector.
+The calibration UI/API shows the currently active live model separately from
+the candidate version, support gaps, uncertainty policy, receipt ledger and
+last shadow update.  Automatic production promotion is hard-disabled.
+
 ## Frozen causal comparison
 
 Every post-CAF arm consumes the identical complex channel vector and searches

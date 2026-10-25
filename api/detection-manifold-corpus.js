@@ -291,12 +291,18 @@ function buildDetectionCorpus(rawSamples, {corpusSha256 = null} = {}) {
   const latest = accepted.at(-1) || replay.at(-1);
   const fingerprint = latest?.config_fingerprint || null;
   const gain = canonical(latest?.configuration?.receiver_gain_v2);
+  const evidenceKey = fingerprint ? canonical({config_fingerprint: fingerprint,
+    frequency_hz: latest.frequency_hz, sample_rate_hz: latest.sample_rate_hz,
+    channels: latest.channels, receiver_gain_v2: latest.configuration?.receiver_gain_v2,
+    manifold_identity: latest.manifold_identity}) : null;
   const current = fingerprint ? accepted.filter(row => row.config_fingerprint === fingerprint &&
     row.channels === latest.channels && row.frequency_hz === latest.frequency_hz &&
+    row.sample_rate_hz === latest.sample_rate_hz &&
     canonical(row.configuration.receiver_gain_v2) === gain &&
     canonical(row.manifold_identity) === canonical(latest.manifold_identity)) : [];
   const validation = fingerprint ? replay.filter(row => row.config_fingerprint === fingerprint &&
     row.channels === latest.channels && row.frequency_hz === latest.frequency_hz &&
+    row.sample_rate_hz === latest.sample_rate_hz &&
     canonical(row.configuration.receiver_gain_v2) === gain &&
     canonical(row.manifold_identity) === canonical(latest.manifold_identity)) : [];
   const productionValidation = fingerprint ? productionReplay.filter(row =>
@@ -354,7 +360,7 @@ function buildDetectionCorpus(rawSamples, {corpusSha256 = null} = {}) {
       iqCaptures.add(row.provenance.iq_sha256); grids.add(row.provenance.input_grid_sha256);
     }
   }
-  return {schema: 'vectorwarp-detection-manifold-corpus-v1', fingerprint,
+  return {schema: 'vectorwarp-detection-manifold-corpus-v2', fingerprint, evidence_key: evidenceKey,
     accepted: labelled, training: labelled, holdout: validation, validation,
     production_validation: productionValidation,
     miss_passes: new Set(validation.filter(row => row._baseline_outcome !== 'detected')

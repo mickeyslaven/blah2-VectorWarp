@@ -791,9 +791,13 @@
         <div><dt>Truth-selected replay diagnostic</dt><dd>${detectionProgress.validation?.ready ? 'Coverage ready' : 'Coverage incomplete'} · ${integer(detectionProgress.validation_passes)} passes / ${integer(detectionProgress.miss_passes)} misses</dd></div>
         <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · receipt harness ready / native export required</dd></div>
         <div><dt>Supported sectors / bins</dt><dd>${integer(detectionProgress.covered_sectors)} / ${integer(detectionProgress.fit_bins)}</dd></div>
-        <div><dt>Candidate</dt><dd>Diagnostic only — production qualification disabled</dd></div>
-        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtime_candidate_path ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
-        <div><dt>Promotion</dt><dd>Never automatic</dd></div>
+        <div><dt>2-D candidate</dt><dd>${detectionAutomation.candidate_version ? `v${escapeHtml(String(detectionAutomation.candidate_version).slice(0, 12))} · azimuth + elevation` : 'Waiting for supported 2-D cells'}</dd></div>
+        <div><dt>Support / uncertainty</dt><dd>Unsupported or sparse cells are not extrapolated; supported cells report independent-pass confidence</dd></div>
+        <div><dt>Validation state</dt><dd>${detectionProgress.validation?.ready ? 'Independent replay coverage ready — still shadow only' : 'Independent replay coverage incomplete'}</dd></div>
+        <div><dt>Last shadow update</dt><dd>${detectionAutomation.last_evaluation_at ? escapeHtml(timeLabel(detectionAutomation.last_evaluation_at)) : 'Not evaluated yet'}</dd></div>
+        <div><dt>Active detection model</dt><dd>${detectionCampaign.active_model ? escapeHtml(detectionCampaign.active_model) : 'Ideal/live configuration unchanged'}</dd></div>
+        <div><dt>Shadow A/B receipt</dt><dd>${detectionAutomation.shadow_ab_receipt_path ? 'Append-only receipt ledger' : 'Waiting for a candidate evaluation'}</dd></div>
+        <div><dt>Promotion</dt><dd>Hard-disabled — never automatic</dd></div>
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
       </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>

@@ -184,10 +184,10 @@ setTimeout(() => {
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
-      !rendered.includes('Never automatic') ||
-      !(mode === 'rich' ? rendered.includes('Replay-only dense artifact available') :
-        rendered.includes('sparse offline model')) ||
-      !rendered.includes('production qualification disabled') ||
+      !rendered.includes('Hard-disabled — never automatic') ||
+      !rendered.includes('Support / uncertainty') ||
+      !rendered.includes('Active detection model') ||
+      !rendered.includes('2-D candidate') ||
       !rendered.includes('receipt harness ready / native export required')))
     errors.push('detection manifold progress and promotion policy were not rendered');
   if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
