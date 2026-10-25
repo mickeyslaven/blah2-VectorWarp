@@ -57,11 +57,9 @@ def release_installation(manifest):
 
     rows = []
 
-    def row(label, distro, distro_version, pi=False):
+    def row(label, distro, distro_version):
         architectures = ("x86_64", "aarch64") if distro == "fedora" else ("amd64", "arm64")
         links = [packages.get((distro, distro_version, arch)) for arch in architectures]
-        if pi:
-            links[0] = None
         if any(links):
             cells = "".join(f'<td>{link or "—"}</td>' for link in links)
             rows.append(f'<tr><th scope="row">{escape(label)}</th>{cells}</tr>')
@@ -72,7 +70,6 @@ def release_installation(manifest):
         row(f"{distro.title()} {distro_version}", distro, distro_version)
     for distro_version in ("22.04", "24.04", "26.04"):
         row(f"DragonOS · Ubuntu {distro_version} base", "ubuntu", distro_version)
-    row("Raspberry Pi OS · 64-bit Bookworm", "debian", "12", pi=True)
     macos = manifest.get("macos_package")
     if macos:
         filename = macos["filename"]
@@ -137,16 +134,6 @@ After receiver-management actions finish and pending authorizations expire, an
 administrator may run <code>sudo systemctl restart vectorwarp-receiver.service &amp;&amp; sudo systemctl restart vectorwarp-api.service</code>
 to activate updated code. Do not run it mid-transaction; it does not restart
 <code>vectorwarp-processor.service</code> or radar processing.'''
-    pi_image = manifest.get("pi_image")
-    pi_download = ""
-    if pi_image:
-        image_status = "Preview image" if pi_image["status"] == "preview" else "Pi image"
-        pi_download = f'''<p><a class="button" href="{escape(pi_image["imager_url"], quote=True)}">Download Imager manifest</a></p>
-<p>{image_status} {escape(pi_image["version"])} ·
-<a href="{escape(pi_image["image_url"], quote=True)}">Download .img.xz directly</a>.
-Open the companion manifest to keep Wi-Fi and SSH customization available.</p>'''
-        if pi_image["status"] == "preview":
-            pi_download += '<p class="scope">Preview: software checks passed; fresh-card boot and Wi-Fi qualification are still pending.</p>'
     return f'''<section class="panel" aria-labelledby="install">
 <h2 id="install">Install VectorWarp</h2>
 <h3>1. Install for your OS</h3>
@@ -197,7 +184,7 @@ uses <code>/Applications/VectorWarp.app/Contents/MacOS/VectorWarp</code>.
 Append <code>start</code>, <code>stop</code>, <code>restart</code>, or
 <code>status</code> to either launcher path as needed.</p>
 <h3>4. Update</h3>
-<p>For Linux package installations, your repository is already configured; do not repeat the installation steps. Pi image users should follow the update instructions for their image release.</p>
+<p>For Linux package installations, your repository is already configured; do not repeat the installation steps.</p>
 <p>Ubuntu, Debian and compatible DragonOS:</p>
 <pre><code>sudo apt update &amp;&amp; sudo apt install vectorwarp</code></pre>
 <p>Fedora:</p>
@@ -220,8 +207,7 @@ Do not use <code>dpkg</code> alone or manually mix release libraries.
 <p class="scope">{macos_scope}x86-64 covers Intel and AMD PCs.
 DragonOS uses its Ubuntu base;
 check <code>/etc/os-release</code>. FocalX R37.1 is Ubuntu 22.04 (Jammy) amd64,
-not Ubuntu 26.04. Raspberry Pi OS Bookworm uses Debian 12 ARM64. No 32-bit package
-is provided. For other systems, use the
+not Ubuntu 26.04. No 32-bit package is provided. For other systems, use the
 <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md">source installation guide</a>.</p>
 <details><summary>Verify a direct download</summary>
 {macos_verify}
@@ -240,31 +226,65 @@ checksum pass. A checksum alone does not authenticate a download.</p></details>
 <p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v{version}">Release notes and all assets</a>
 · <a href="repository-manifest.json">Package manifest</a></p>
 </details>
-<details id="install-pi"><summary>Raspberry Pi 4 preview image — optional card-flashing route</summary>
-{pi_download}
-<p>The Pi route includes Raspberry Pi OS Lite 64-bit Bookworm and VectorWarp.
-Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_GUIDE.md">Pi image download and flashing guide</a>
-for the current image and its validation status. The first target is Pi 4B with 8 GB RAM;
-use a 32 GB or larger microSD card. Pi 5 is future work.</p>
-<ol>
-<li>Open the image's <code>.rpi-imager-manifest</code> in Raspberry Pi Imager,
-then select the microSD card.</li>
-<li>Before writing, choose your hostname, username, password or SSH key, locale,
-Wi-Fi network and country, and enable SSH. Ethernet users can omit Wi-Fi.
-Use the manifest so Imager offers customization; a bare custom image can hide it.</li>
-<li>Write and verify, boot the Pi, then open <code>http://&lt;hostname&gt;.local:3000/</code>
-from another device. Use the router's assigned IP if the name does not resolve.</li>
-<li>Review your receiver, transmitter frequency and site in Settings. For RSPduo,
-install your licensed SDRplay API over SSH, then choose <strong>Build SDRplay support</strong>.
-Choose <strong>Save &amp; Restart</strong> when setup is complete.</li>
-</ol>
-<p>The image has no factory login or Wi-Fi credentials. Radar remains stopped
-until setup. Do not run the Linux installer on a freshly flashed image.</p>
-</details>
 <details><summary>Build from source — development and other systems</summary>
 <p>Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">source installation guide</a>
 for development or systems outside the package targets. Most supported installations
 should use APT, DNF or Homebrew above.</p></details>
+</section>'''
+
+
+def limited_pi_platform(manifest):
+    """Render the Pi 4B compatibility target only at the bottom of the site."""
+    package_download = ""
+    pi_image = None
+    if manifest:
+        version = manifest["version"]
+        base = f"https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v{version}"
+        package = next((entry for entry in manifest["packages"]
+                        if (entry["format"], entry["distro"], entry["distro_version"], entry["arch"])
+                        == ("deb", "debian", "12", "arm64")), None)
+        package_download = (f'<p><a href="{base}/{escape(package["filename"])}">'
+                            'Download Debian 12 ARM64 DEB</a></p>' if package else "")
+        pi_image = manifest.get("pi_image")
+    image_download = ""
+    if pi_image:
+        image_status = "Preview image" if pi_image["status"] == "preview" else "Pi image"
+        image_download = f'''<p><a class="button" href="{escape(pi_image["imager_url"], quote=True)}">Download Imager manifest</a></p>
+<p>{image_status} {escape(pi_image["version"])} ·
+<a href="{escape(pi_image["image_url"], quote=True)}">Download .img.xz directly</a>.
+Open the companion manifest to keep Wi-Fi and SSH customization available.</p>'''
+        if pi_image["status"] == "preview":
+            image_download += '<p class="scope">Preview: software checks passed; fresh-card boot and Wi-Fi qualification are still pending.</p>'
+    return f'''<section id="install-pi" class="panel" aria-labelledby="limited-pi-heading">
+<h2 id="limited-pi-heading">Limited platform: Raspberry Pi 4B</h2>
+<p>Raspberry Pi 4B is retained as a compatibility and preview target, not a
+recommended primary VectorWarp platform. Prefer an x86-64 PC or Apple Silicon Mac
+for real-time radar workloads. The tested baseline is an 8 GB Pi 4B running
+64-bit Bookworm Lite; heavier configurations may miss their CPI deadlines.</p>
+{package_download}
+{image_download}
+<details><summary>Pi 4B preview image and advanced setup</summary>
+<p>Use the <a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_GUIDE.md">Pi image download and flashing guide</a>
+for current validation status. Use a 32 GB or larger microSD card. The image has
+no factory login or Wi-Fi credentials, and radar remains stopped until setup.</p>
+<p>Open the image's <code>.rpi-imager-manifest</code> in Raspberry Pi Imager so
+hostname, authentication, locale, network and SSH customization remain available.
+After boot, open <code>http://&lt;hostname&gt;.local:3000/</code>. RSPduo users must install
+the licensed SDRplay API before building SDRplay support in Settings.</p>
+</details>
+<details><summary>Measured Pi 4B workload evidence</summary>
+<p>Four short live RSPduo runs with tracking measured <strong>378 ms CPU-only versus
+341 ms AUTO mixed</strong> after qualification, about 9.8% less processing time.
+The two-channel, 2 MS/s, 500 ms CPI workload met its bounded test, but larger
+workloads have missed real-time deadlines.</p>
+<p>At 200 ms CPI and ±800 Hz, VectorWarp CPU took 798.2 ms, regular blah2 took
+905.1 ms, and the Off World Labs ARM fork took 905.9 ms. All three missed the
+200 ms deadline, so these are comparative workload results—not a recommended
+real-time configuration.</p>
+<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PUBLICATION_VALIDATION_20260919.md">Pi 4B validation details</a> ·
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PERFORMANCE_20260911.md">workload limits</a> ·
+<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">GPU diagnostics</a></p>
+</details>
 </section>'''
 
 
@@ -361,23 +381,6 @@ Doppler buffer cannot safely represent the configuration.</p>
 from 69.7 to 44.7 ms versus the preceding VectorWarp version in this campaign.
 Heavier workloads still miss some deadlines; the full report includes all
 configurations, a separate before/after comparison and remaining processing costs.</p>
-<h2>Pi 4B with concurrent CPU and GPU processing</h2>
-<p>On the 8 GB Pi 4B running Bookworm Lite, four short live RSPduo runs with tracking
-measured <strong>378 ms CPU-only versus 341 ms AUTO mixed</strong> after qualification,
-about 9.8% less processing time. Both AUTO runs retained mixed processing, with
-zero capture drops or faults. This used two 2 MS/s channels, 500 ms CPIs, 410 clutter
-taps and a 301×411 map spanning ±300 Hz. It is a native runtime comparison;
-image boot qualification is recorded separately.</p>
-<p><a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PUBLICATION_VALIDATION_20260919.md">Pi 4B settings, regression checks and timing details →</a></p>
-<details><summary>Earlier Pi workloads and comparisons</summary>
-<p>On Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took 798.2 ms
-in VectorWarp, versus 905.1 ms in original blah2 and 905.9 ms in Off World Labs'
-ARM fork, with NEON FFTW enabled for all three.
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI4_PERFORMANCE_20260911.md">Pi comparison and workload limits →</a></p>
-<p>A separate Pi 4 replay loaded a newer Mesa driver for the test and reduced
-processing from 797.2 ms CPU-only to 578.1 ms with GPU Automatic (27.5% less
-time). It still missed the 200 ms deadline; the driver was not installed system-wide.
-<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic">Pi GPU results and supported driver updates →</a></p></details>
 </section>
 <section aria-labelledby="features">
 <h2 id="features">Everything in one interface</h2>
@@ -392,12 +395,14 @@ time). It still missed the 200 ms deadline; the driver was not installed system-
 <div><h3>Record and replay</h3><p>Capture IQ and return to the same recording for another look.</p></div>
 </div>
 </section>
+<!-- LIMITED_PI_PLATFORM -->
 </main>
 <footer>Built on <a href="https://github.com/30hours/blah2">blah2 by 30hours</a>. MIT licensed.</footer>
 </body></html>
 '''.replace('<!-- VERIFIED_RELEASE_INSTALLATION -->', release_installation(manifest) if manifest else
             '<section id="install"><h2>Install VectorWarp</h2><p>Release downloads are not available in this preview. '
-            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Build from source</a>.</p></section>')
+            '<a href="https://github.com/mickeyslaven/blah2-VectorWarp/blob/main/docs/INSTALL.md#build-from-source">Build from source</a>.</p></section>') \
+    .replace('<!-- LIMITED_PI_PLATFORM -->', limited_pi_platform(manifest))
 
 
 def run(command, **kwargs):

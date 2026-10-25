@@ -14,20 +14,15 @@ it does not produce a weighted overall percentage.
 
 VectorWarp builds on [blah2](https://github.com/30hours/blah2) with faster CPU and GPU processing, coherent multi-channel array processing, a redesigned browser interface, editable settings, built-in ADS-B integration, and native installation on Linux and macOS. Set up your radar, watch it run, and record or replay signals from the same interface.
 
-[Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md) · [Pi 4 guide](docs/PI4_GUIDE.md)
+[Install](docs/INSTALL.md) · [macOS / Homebrew](docs/MACOS_HOMEBREW.md) · [Set up a receiver](docs/SETUP.md) · [Comparison details](docs/UPSTREAM_COMPARISON.md) · [GPU acceleration](docs/GPU_ACCELERATION.md)
 
 ## Choose an installation path
 
-1. **Raspberry Pi 4B:** use the Bookworm Lite **preview** through its
-   [Raspberry Pi Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest)
-   or [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview).
-   Fresh-card boot and Wi-Fi qualification are still pending; see the
-   [Pi 4 guide](docs/PI4_GUIDE.md). Pi 5 is future work.
-2. **Linux PC or non-image ARM64 system:** install a matching signed DEB or RPM
+1. **Linux PC or ARM64 system:** install a matching signed DEB or RPM
    from the [package page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-3. **macOS:** install with [Homebrew](docs/MACOS_HOMEBREW.md), or use a signed
+2. **macOS:** install with [Homebrew](docs/MACOS_HOMEBREW.md), or use a signed
    PKG when the package page lists one.
-4. **Development or an unsupported system:** use the
+3. **Development or an unsupported system:** use the
    [source-install instructions](docs/INSTALL.md#build-from-source).
 
 Every route opens Settings before radar starts. Configure a receiver or replay
@@ -65,7 +60,7 @@ See [Bearing and bistatic geolocation](docs/BEARING_GEOLOCATION.md) for the data
 - **Clear recording controls:** start recording from the browser or keyboard, with a visible recording indicator and error reporting.
 - **Portable recording and replay:** capture multi-channel IQ, replay it at the original sample rate, and use recordings without connecting live hardware.
 - **Processing fixes:** corrected detection SNR, track association, spectrum scaling, incomplete multi-CPI startup output, and invalid-data handling, with regression tests.
-- **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, DragonOS, and 64-bit Raspberry Pi systems, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel source-level CI support remains experimental.
+- **Native Linux and macOS operation:** run without Docker, with Linux packages for Ubuntu, Debian, Fedora, and DragonOS, plus [Homebrew source installation on macOS](docs/MACOS_HOMEBREW.md). Apple Silicon is tested on M2; Intel source-level CI support remains experimental.
 
 [Detailed changes from upstream](docs/UPSTREAM_COMPARISON.md) · [Recording and replay](docs/SETUP.md#recording-replay)
 
@@ -108,16 +103,6 @@ CPU accuracy checks; the refreshed measurements above are recorded-IQ replays,
 not new live or endurance tests.
 
 ## Equal-range Doppler tests
-
-On a Raspberry Pi 4, the CPU workload at 200 ms CPI and ±800 Hz took **798.2 ms** in VectorWarp,
-versus **905.1 ms** in original blah2 and **905.9 ms** in Off World Labs' ARM
-fork. [Pi comparison and workload limits](docs/PI4_PERFORMANCE_20260911.md)
-
-A separate Pi 4 replay with a newer Mesa driver reduced processing from
-**797.2 ms CPU-only to 578.1 ms with GPU Automatic**—another **27.5% less time**
-on that workload. The driver was loaded only for the test; this still did not
-meet the 200 ms deadline. [Pi GPU results and driver update instructions](docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic)
-
 
 At this same full range and **±4800 Hz**, Strix GPU processing averaged **67.0 ms
 per 200 ms CPI**, or **325.5 ms per one-second CPI**. VectorWarp CPU took 173.8 ms
@@ -245,7 +230,6 @@ available for development or unsupported systems.
 | Debian | 13 (Trixie) | x86-64, ARM64 | [DEB downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | Fedora | 44 | x86-64, ARM64 | [RPM downloads](https://mickeyslaven.github.io/blah2-VectorWarp/#install) |
 | DragonOS | Matching Ubuntu base | x86-64, ARM64 | [Use `/etc/os-release` metadata](docs/DRAGONOS.md) |
-| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
 | macOS | 26.6.1 tested on M2 | Apple Silicon / ARM64 | [Public Homebrew tap](docs/MACOS_HOMEBREW.md) |
 | macOS | Experimental source-level CI; hardware, GPU and Homebrew unverified | Intel / x86-64 | [Build target and limits](docs/MACOS_TEST_MATRIX.md) |
 
@@ -263,16 +247,6 @@ The public Homebrew tap is managed by the
 the [installation matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [macOS validation limits](docs/MACOS_TEST_MATRIX.md).
 
-For a Raspberry Pi 4B, start with the [Pi 4 preview guide](docs/PI4_GUIDE.md)
-and its [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
-The 8 GB Bookworm Lite profile is the tested baseline; use a 32 GB microSD card
-initially. The preview has not completed fresh-card boot or Wi-Fi qualification;
-see [validation limits](docs/PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is future
-work. RSPduo users install SDRplay's vendor API themselves, then choose
-**Build SDRplay support** in Settings. Stable packages, including Bookworm ARM64,
-are listed on the [installation page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
-This Pi image remains the separate 0.1.10 preview and does not preconfigure that repository.
-
 Here, x86-64 means `amd64` or `x86_64`; ARM64 means `arm64` or `aarch64`.
 
 ## Credits and license
@@ -284,3 +258,29 @@ tracking input. The explicitly enabled external shadow feed is the exception:
 it can annotate a separate experimental tracker while leaving VectorWarp's
 built-in detector, tracker, bearing path, and Retina output unchanged.
 [MIT license](LICENSE)
+
+## Limited platform: Raspberry Pi 4B
+
+Raspberry Pi 4B is a compatibility/preview target, not a recommended primary
+VectorWarp platform. Its tested workloads are substantially slower than the
+desktop and laptop systems above, and production-size processing may not keep
+up in real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
+
+| Operating system | Versions | Architectures | Package |
+| --- | --- | --- | --- |
+| Raspberry Pi OS | Bookworm, 64-bit | ARM64 | [Pi 4 preview image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview) |
+
+If this constrained platform is still appropriate, use the
+[Pi 4 preview guide](docs/PI4_GUIDE.md) and its
+[Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
+The tested baseline is an 8 GB Pi 4B with Bookworm Lite and a 32 GB microSD
+card. Fresh-card boot and Wi-Fi qualification remain incomplete; see the
+[validation limits](docs/PI4_IMAGE_VALIDATION_20260919.md). The separate preview
+does not preconfigure the stable package repository.
+
+At 200 ms CPI and ±800 Hz, the Pi 4 CPU workload took **798.2 ms** in
+VectorWarp versus **905.1 ms** in original blah2 and **905.9 ms** in the ARM
+fork. A separate replay with a newer Mesa driver improved VectorWarp from
+**797.2 ms CPU-only to 578.1 ms with GPU Automatic**, but still missed the
+200 ms deadline. See the [Pi comparison](docs/PI4_PERFORMANCE_20260911.md) and
+[GPU limits](docs/PI_GPU_SETUP.md#pi-4-driver-diagnostic).

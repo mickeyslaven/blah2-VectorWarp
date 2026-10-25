@@ -70,14 +70,17 @@ class HomepageTests(unittest.TestCase):
         self.assertNotIn('Download signed PKG', primary)
         self.assertIn('brew trust mickeyslaven/vectorwarp', primary)
         self.assertIn("repository's pinned signing", primary)
-        manual = page[page.index('<details id="package-downloads">'):page.index('<details id="install-pi">')]
+        manual = page[page.index('<details id="package-downloads">'):page.index('<section class="panel" aria-labelledby="results">')]
         self.assertIn('SHA256SUMS.asc', manual)
         self.assertIn('checksum alone does not authenticate', manual)
+        self.assertNotRegex(manual, r'(?i)raspberry pi|pi 4')
         self.assertEqual(len({link for link in re.findall(r'href="([^"]+)"', manual)
                               if link.endswith(('.deb', '.rpm'))}), 11)
         self.assertNotRegex(page, r'<details[^>]*\bopen(?:[ =>])')
         self.assertLess(page.index('id="install-macos"'), page.index('id="package-downloads"'))
-        self.assertLess(page.index('id="package-downloads"'), page.index('id="install-pi"'))
+        self.assertLess(page.index('id="features"'), page.index('id="install-pi"'))
+        self.assertEqual(page.count('id="install-pi"'), 1)
+        self.assertNotRegex(page[:page.index('id="install-pi"')], r'(?i)raspberry pi|pi 4')
 
     def test_install_guide_puts_linux_and_homebrew_before_manual_options(self):
         guide = (ROOT / 'docs/INSTALL.md').read_text()
@@ -86,7 +89,7 @@ class HomepageTests(unittest.TestCase):
                         'brew trust mickeyslaven/vectorwarp', 'brew install vectorwarp'):
             self.assertIn(command, primary)
         for section in ('### Manual package installation', '### macOS standalone installer',
-                        '## Pi 4B Bookworm Lite', '## Build from source'):
+                        '## Build from source', '## Limited platform: Raspberry Pi 4B'):
             self.assertIn(section, manual)
             self.assertNotIn(section, primary)
         self.assertEqual(manual.count('<details>'), 4)
@@ -104,13 +107,14 @@ class HomepageTests(unittest.TestCase):
         self.assertEqual(len(package_links), 11)
         for label in ('Ubuntu 22.04', 'Ubuntu 24.04', 'Ubuntu 26.04', 'Debian 12', 'Debian 13', 'Fedora 44',
                       'DragonOS · Ubuntu 22.04 base', 'DragonOS · Ubuntu 24.04 base',
-                      'DragonOS · Ubuntu 26.04 base', 'Raspberry Pi OS · 64-bit Bookworm',
+                      'DragonOS · Ubuntu 26.04 base', 'Limited platform: Raspberry Pi 4B',
                       'amd64 / x86_64', 'arm64 / aarch64'):
             self.assertIn(label, page)
-        pi_row = next(row for row in re.findall(r'<tr>.*?</tr>', page) if 'Raspberry Pi OS' in row)
-        self.assertIn('<td>—</td>', pi_row)
-        self.assertIn('debian12_arm64.deb', pi_row)
-        self.assertNotIn('amd64.deb', pi_row)
+        primary_table = page[page.index('<details id="package-downloads">'):page.index('<section class="panel" aria-labelledby="results">')]
+        self.assertNotIn('Raspberry Pi', primary_table)
+        pi_section = page[page.index('<section id="install-pi"'):page.index('</main>')]
+        self.assertIn('debian12_arm64.deb', pi_section)
+        self.assertNotIn('debian12_amd64.deb', pi_section)
         self.assertLess(page.index('id="install"'), page.index('id="results"'))
 
     def test_download_preview_and_partial_manifests_never_invent_assets(self):
