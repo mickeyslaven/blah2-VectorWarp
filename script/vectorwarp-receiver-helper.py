@@ -434,19 +434,10 @@ def exchange(request):
         return json.loads(raw)
 
 
-def peer_uid(connection):
-    """Return the kernel-authenticated UID for a Linux Unix-domain peer."""
-    _, uid, _ = struct.unpack(
-        '3i',
-        connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')),
-    )
-    return uid
-
-
 def serve_client(connection, broker, timeout=5):
     try:
         connection.settimeout(timeout)
-        uid = peer_uid(connection)
+        _, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
         try:
             raw = connection.makefile('rb').readline(MAX_BYTES + 1)
             require(len(raw) <= MAX_BYTES and raw.endswith(b'\n'), 'INVALID_REQUEST', 'Request is oversized or incomplete.')

@@ -53,6 +53,19 @@ class FakeInspector:
         return {'exitCode': self.exit_code, 'timedOut': self.timeout, 'output': ''}
 
 
+class CredentialSocket:
+    """Delegate socket I/O while supplying the kernel credential record."""
+    def __init__(self, connection, uid):
+        self.connection = connection
+        self.uid = uid
+
+    def getsockopt(self, level, option, length=0):
+        return struct.pack('3i', os.getpid(), self.uid, os.getgid())
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
 class BrokerTest(unittest.TestCase):
     def test_reviewed_package_policy_uses_qualified_uhd_41_floor(self):
         policy = {'schemaVersion': 1, 'apiUser': 'vectorwarp-api', 'configPath': '/fixture/config.yml',
@@ -343,7 +356,8 @@ class LocalBoundaryTest(unittest.TestCase):
             self.skipTest('Linux SO_PEERCRED required')
         first, second = socket.socketpair()
         with first, second:
-            self.assertEqual(helper.peer_uid(first), os.getuid())
+            _, uid, _ = struct.unpack('3i', first.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+            self.assertEqual(uid, os.getuid())
 
     def test_restart_wire_rejects_malformed_oversized_and_stalled_requests(self):
         broker = helper.Broker({'actions': []}, os.getuid(), FakeInspector())
@@ -354,9 +368,9 @@ class LocalBoundaryTest(unittest.TestCase):
                 server, client = socket.socketpair()
                 with server, client:
                     client.settimeout(2)
-                    with mock.patch.object(helper, 'peer_uid', return_value=os.getuid()):
+                    with mock.patch.object(helper.socket, 'SO_PEERCRED', 0x7fffffff, create=True):
                         worker = threading.Thread(target=helper.serve_client,
-                                                  args=(server, broker), daemon=True)
+                                                  args=(CredentialSocket(server, os.getuid()), broker), daemon=True)
                         worker.start()
                         client.sendall(raw)
                         worker.join(2)
@@ -366,9 +380,9 @@ class LocalBoundaryTest(unittest.TestCase):
         server, client = socket.socketpair()
         with server, client:
             client.settimeout(2)
-            with mock.patch.object(helper, 'peer_uid', return_value=os.getuid()):
+            with mock.patch.object(helper.socket, 'SO_PEERCRED', 0x7fffffff, create=True):
                 worker = threading.Thread(target=helper.serve_client,
-                                          args=(server, broker, 0.05), daemon=True)
+                                          args=(CredentialSocket(server, os.getuid()), broker, 0.05), daemon=True)
                 worker.start()
                 client.sendall(b'{"verb":')
                 worker.join(2)
