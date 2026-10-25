@@ -35,6 +35,8 @@ jobs:
         run: brew install cmake ninja pkgconf asio rapidyaml cpp-httplib armadillo fftw rapidjson catch2 uhd hackrf eigen libusb
       - name: Verify vendor header isolation from project warnings
         run: python3 test/macos/rapidjson_system_include_test.py
+      - name: Verify npm 11 installs the API in an absolute artifact directory
+        run: python3 test/macos/build_macos_npm_install_test.py
       - name: Build CPU processing and open receiver adapters
         run: script/build-macos.sh --backend all --test --jobs 3
       - name: Run synthetic processor replay
