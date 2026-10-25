@@ -61,7 +61,8 @@ assert.match(read('script/artifact-source-commit.sh'), /artifact source commit d
 assert.match(packageScript, /current\/BUILD-RECEIPT\.json/);
 assert.match(buildScript, /source_commit=%s/);
 assert.match(packageScript, /sourceCommit/);
-assert.match(packageScript, /git -C "\$SOURCE_DIR" rev-parse HEAD/);
+assert.match(packageScript, /artifact-source-commit\.sh" "\$ARTIFACT" "\$SOURCE_DIR"/);
+assert.match(read('script/artifact-source-commit.sh'), /git -C "\$source_dir" rev-parse HEAD/);
 assert.match(packageScript, /TEST-ONLY package includes Kraken, USRP and dual HackRF/);
 assert.match(packageScript, /local RSPduo source kit/);
 assert.match(buildScript, /open-test\)/);

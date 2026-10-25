@@ -143,6 +143,14 @@ standalone_receipt = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(standalone_r
     'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
 assert standalone_receipt.release_metadata() == {'VECTORWARP_VERSION': '1.2.3',
     'VECTORWARP_SOURCE_COMMIT': 'a' * 40, 'VECTORWARP_PACKAGE': 'macos-standalone'}
+development_root = temp/'standalone-development'
+(development_root/'api').mkdir(parents=True); (development_root/'api/server.js').write_text('')
+(development_root/'standalone.json').write_text(json.dumps({'source_revision': 'b' * 40,
+    'distribution': 'local-development-only'}))
+development_receipt = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(development_root),
+    'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
+assert development_receipt.release_metadata() == {'VECTORWARP_VERSION': 'development',
+    'VECTORWARP_SOURCE_COMMIT': 'b' * 40, 'VECTORWARP_PACKAGE': 'macos-standalone-dev'}
 old_processor = old/'bin/blah2'; old_processor.parent.mkdir(); old_processor.write_text('')
 new_processor = new/'bin/blah2'; new_processor.parent.mkdir(); new_processor.write_text('')
 processor_argv = [str(old_processor.resolve()), '--config', str(config.resolve())]

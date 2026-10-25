@@ -196,17 +196,24 @@ class Lifecycle:
             VECTORWARP_MACOS_HEIMDALL_HTML=self.env.get('VECTORWARP_MACOS_HEIMDALL_HTML', str(self.root / 'share/heimdall/index.html')))
 
     def release_metadata(self):
-        """Read the signed standalone runtime receipt and enclosing app version."""
+        """Read the standalone receipt and, when assembled, its enclosing app version."""
         if self.env.get('VECTORWARP_MACOS_DISTRIBUTION') != 'standalone':
             return {}
         try:
             receipt = json.loads((self.root / 'standalone.json').read_text())
+            commit = receipt.get('source_revision')
+            if not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit):
+                raise ValueError('invalid standalone source identity')
             info_path = self.root.parents[2] / 'Info.plist'
+            if not info_path.is_file():
+                if receipt.get('distribution') != 'local-development-only':
+                    raise ValueError('unassembled standalone receipt is not a local development runtime')
+                return {'VECTORWARP_VERSION': 'development', 'VECTORWARP_SOURCE_COMMIT': commit,
+                        'VECTORWARP_PACKAGE': 'macos-standalone-dev'}
             with info_path.open('rb') as stream:
                 info = plistlib.load(stream)
-            version, commit = info.get('CFBundleShortVersionString'), receipt.get('source_revision')
-            if (not isinstance(version, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', version) or
-                    not isinstance(commit, str) or not re.fullmatch(r'[0-9a-f]{40}', commit)):
+            version = info.get('CFBundleShortVersionString')
+            if not isinstance(version, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', version):
                 raise ValueError('invalid standalone release identity')
             return {'VECTORWARP_VERSION': version, 'VECTORWARP_SOURCE_COMMIT': commit,
                     'VECTORWARP_PACKAGE': 'macos-standalone'}

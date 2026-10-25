@@ -50,7 +50,7 @@ function redactText(value, maximum, name, required = false) {
     .replace(IPV6_PATTERN, '[IP redacted]')
     .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi,
       'Bearer [redacted]')
-    .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign)["']?\s*(?::|=|\s)\s*["']?(?:\\.|[^\s,;"'])+["']?/gi,
+    .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign|flight)["']?\s*(?::|=|\s)\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
       '[sensitive value redacted]')
     .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
       match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)

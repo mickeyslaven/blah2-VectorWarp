@@ -63,8 +63,8 @@ const procedural = [
   }
 
   const dirty = reports.buildReport({incident: {code: 'MANUAL_REPORT', component: 'support', stage: 'manual',
-    message: 'serial number ABC12345; serial_number=XYZ987; (40.7128,-74.0060); aircraft_hex=A0B1C2; callsign VW123; Authorization: Bearer ghp_bad; api_key=key; tcp://private.local; /Volumes/Radio Data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw'}, status: base, config});
-  assert.doesNotMatch(JSON.stringify(dirty), new RegExp('DO-NOT-SEND|192\\.168\\.1\\.2|ABC12345|XYZ987|40\\.7128|74\\.0060|A0B1C2|VW123|ghp_bad|private\\.local|Volumes|Jane Doe|server'));
+    message: 'serial number ABC12345; serial_number=XYZ987; (40.7128,-74.0060); aircraft_hex=A0B1C2; callsign VW123; password="correct horse battery staple"; {"hex":"a1b2c3","flight":"PRIVATE12","lat":40.7128,"lon":-74.0060}; Authorization: Bearer ghp_bad; api_key=key; tcp://private.local; /Volumes/Radio Data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw'}, status: base, config});
+  assert.doesNotMatch(JSON.stringify(dirty), new RegExp('DO-NOT-SEND|192\\.168\\.1\\.2|ABC12345|XYZ987|40\\.7128|74\\.0060|A0B1C2|VW123|correct horse|battery staple|a1b2c3|PRIVATE12|ghp_bad|private\\.local|Volumes|Jane Doe|server'));
   assert.match(dirty.submissionId, /^[0-9a-f-]{36}$/);
   assert.deepEqual(reports.scalars({safeCount: 2, lat: 1, lon: 2, latDeg: 1, lonDeg: 2,
     receiverSerialNumber: 'x', accessTokenValue: 'x', adsbHex: 'abc123', flight: 'VW1',

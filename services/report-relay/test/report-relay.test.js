@@ -52,11 +52,11 @@ test('valid report becomes a bounded GitHub issue with separate grouping and rec
 
 test('adversarial free text is sanitized before it reaches GitHub', async () => {
   const dirty = sample();
-  dirty.incident.message = '"serial":"ABC123" serial number ABC12345 serial_number=XYZ987 "lat":"40.7" "lon":-74.0 (40.7128,-74.0060) Authorization: Bearer ghp_bad api_key="key123" aircraft_hex=A0B1C2 callsign VW123';
+  dirty.incident.message = '"serial":"ABC123" serial number ABC12345 serial_number=XYZ987 "lat":"40.7" "lon":-74.0 (40.7128,-74.0060) Authorization: Bearer ghp_bad api_key="key123" aircraft_hex=A0B1C2 callsign VW123 password="correct horse battery staple" {"hex":"a1b2c3","flight":"PRIVATE12","lat":40.7128,"lon":-74.0060}';
   dirty.comment = 'tcp://radar.local:5000 wss://private.example/ws; /Volumes/Radio Data/private file.raw; /mnt/data/private file.raw; C:\\Users\\Jane Doe\\capture file.raw; \\\\server\\share\\private file.raw';
   const report = normalizeReport(dirty);
   const issue = githubIssue(report, await reportFingerprint(report), await submissionReceiptId(report));
-  assert.doesNotMatch(issue.body, /ABC123|XYZ987|40\.7|-74\.0|ghp_bad|key123|A0B1C2|VW123|radar\.local|private\.example|Volumes|mnt\/data|Jane Doe|capture file|server\\\\share|private file/);
+  assert.doesNotMatch(issue.body, /ABC123|XYZ987|40\.7|-74\.0|ghp_bad|key123|A0B1C2|VW123|correct horse|battery staple|a1b2c3|PRIVATE12|radar\.local|private\.example|Volumes|mnt\/data|Jane Doe|capture file|server\\\\share|private file/);
   assert.match(issue.body, /\[URL redacted\]/); assert.match(issue.body, /\[path redacted\]/);
 });
 
