@@ -181,5 +181,11 @@ if [[ $LOCAL_RSPDUO == ON ]]; then
   install -m 0644 "$SOURCE_DIR/script/vectorwarp-build-sdrplay-macos.js" "$OUTPUT_DIR/script/vectorwarp-build-sdrplay-macos.js"
 fi
 install -m 0644 "$SOURCE_DIR/LICENSE" "$OUTPUT_DIR/LICENSE"
-npm ci --omit=dev --ignore-scripts --prefix "$OUTPUT_DIR/api" >/dev/null
+# npm 11 resolves a prefixed project through a different code path.  Running
+# from the staged directory keeps package and lockfile discovery local to the
+# artifact, including when its root is an absolute path.
+(
+  cd "$OUTPUT_DIR/api"
+  npm ci --omit=dev --ignore-scripts >/dev/null
+)
 printf 'build-macos: artifact root: %s\n' "$OUTPUT_DIR"
