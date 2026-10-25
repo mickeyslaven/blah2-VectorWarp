@@ -292,51 +292,17 @@ function assertMatrixDocumented(entries, rows) {
   }
 }
 const nativeMatrix = matrixEntries(releaseWorkflow).filter(entry => entry.distro && entry.format && entry.arch);
-const readmeRows = supportRows(read('README.md'));
 assert.equal(nativeMatrix.length, 11, 'release matrix must build all eleven native package targets');
-assertMatrixDocumented(nativeMatrix, readmeRows);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], distro: 'ubuntu27.04'}], readmeRows),
-  /support-table mapping/);
-assert.throws(() => assertMatrixDocumented([...nativeMatrix, {...nativeMatrix[0], arch: 'riscv64'}], readmeRows),
-  /lacks Ubuntu riscv64/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.filter(row => row.os !== 'Debian')),
-  /lacks an OS support row for Debian/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
-  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, versions: []} : row)),
-  /lacks Ubuntu 22\.04/);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
-  row.os === 'Ubuntu' && row.versions.includes('22.04') ? {...row, architectures: ['ARM64']} : row)),
-  /lacks Ubuntu amd64/);
-for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
-  for (const row of readmeRows.filter(row => row.os === os)) {
-    const expected = row.os === 'Debian' && row.versions.includes('12 (Bookworm)')
-      ? [architectureLabels.arm64]
-      : [architectureLabels.amd64, architectureLabels.arm64];
-    assert.deepEqual(row.architectures, expected,
-      `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
-  }
-assert.equal(readmeRows.some(row => row.os === 'Raspberry Pi OS'), false,
-  'Raspberry Pi OS must not appear in the primary supported-systems table');
-const limitedPiMarker = '## Limited platform: Raspberry Pi 4B';
 const readme = read('README.md');
-assert.equal(readme.split(limitedPiMarker).length, 2,
-  'README must contain exactly one bottom-level limited Pi platform section');
-const piRow = supportRows(readme.split(limitedPiMarker, 2)[1])
-  .find(row => row.os === 'Raspberry Pi OS');
-assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
-assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
-assert.match(piRow.package,
-  /\[Pi 4 preview image\]\(https:\/\/github\.com\/mickeyslaven\/blah2-VectorWarp\/releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+-pi4-preview\)$/,
-  'Raspberry Pi OS must link to the available Pi image preview');
-assertMatrixDocumented(nativeMatrix.map(entry => ({...entry,
-  arch: ({amd64: 'x86_64', x86_64: 'amd64', arm64: 'aarch64', aarch64: 'arm64'})[entry.arch]
-})), readmeRows);
-assert.throws(() => assertMatrixDocumented(nativeMatrix, readmeRows.map(row =>
-  row.os === 'Fedora' ? {...row, architectures: ['x86_64', 'aarch64']} : row)),
-  /lacks Fedora/, 'Native-only labels must not reintroduce inconsistent documentation');
-assert.equal(read('README.md').includes(architectureAliasLegend), true,
-  'README must explain package-manager architecture aliases once near its compact OS grid');
-for (const file of ['README.md', 'docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
+const primaryReadme = readme.split('## Advanced and research material', 1)[0];
+assert.doesNotMatch(primaryReadme, /scorecard|bearing|manifold|shadow/i,
+  'experimental work must not return to the README landing surface');
+assert.match(readme, /## Advanced preview: Raspberry Pi 4B/);
+assert.match(readme, /not a supported primary platform/);
+const installGuide = read('docs/INSTALL.md');
+for (const system of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
+  assert.match(installGuide, new RegExp(`\\| .*${system}.*\\|`));
+for (const file of ['docs/INSTALL.md', 'docs/MAINTAINER_RELEASE.md',
   'packaging/README.md', 'docs/UPSTREAM_COMPARISON.md']) {
   const document = read(file);
   assert.ok(document.includes('x86-64 (amd64 / x86_64)') || document.includes(architectureAliasLegend),

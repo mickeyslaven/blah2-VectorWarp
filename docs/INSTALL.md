@@ -426,11 +426,11 @@ The repository installer and direct-package links above cover Ubuntu 22.04,
 
 </details>
 
-## Limited platform: Raspberry Pi 4B
+## Advanced preview: Raspberry Pi 4B
 
-Raspberry Pi 4B is retained as a compatibility/preview target, not a recommended
-primary VectorWarp platform. Its production-size radar workloads may not keep
-up in real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
+Raspberry Pi 4B is an advanced compatibility preview, not a supported primary
+VectorWarp platform. Its production-size radar workloads may not keep up in
+real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
 
 | System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |

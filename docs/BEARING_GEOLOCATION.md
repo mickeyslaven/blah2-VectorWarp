@@ -1,4 +1,8 @@
-# Bearing and bistatic geolocation
+# Research: bearing and bistatic geolocation
+
+> **Experimental, opt-in research path.** This document is not a production
+> capability claim or an installation guide. It remains disabled by default and
+> requires site-specific evidence before any operational use.
 
 VectorWarp can publish an opt-in bearing product when the GPU-resident coherent
 beam bank and tracker are active. The ordinary map, detection, tracker, and

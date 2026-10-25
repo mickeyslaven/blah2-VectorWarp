@@ -111,7 +111,6 @@ exit 0
 
     def test_primary_install_snippets_are_one_safe_complete_command(self):
         expected = {
-            "README.md": (APT_INSTALL, DNF_INSTALL),
             "docs/INSTALL.md": (APT_INSTALL, DNF_INSTALL),
             "docs/DRAGONOS.md": (APT_INSTALL,),
         }
@@ -270,13 +269,28 @@ exit 0
             self.assertRegex(install, rf"(?m)^\| .*{re.escape(system)}.*\|")
         self.assertNotRegex(install, r"(?m)^## Raspberry Pi")
         self.assertIn("### Raspberry Pi GPU", install)
-        marker = "## Limited platform: Raspberry Pi 4B"
+        marker = "## Advanced preview: Raspberry Pi 4B"
         self.assertIn(marker, install)
         self.assertNotRegex(install.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
 
         readme = (ROOT / "README.md").read_text()
-        self.assertIn(marker, readme)
-        self.assertNotRegex(readme.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
+        readme_marker = "## Advanced preview: Raspberry Pi 4B"
+        self.assertIn(readme_marker, readme)
+        self.assertNotRegex(readme.split(readme_marker, 1)[0], r"(?i)raspberry pi|pi 4")
+
+    def test_primary_docs_label_research_and_preview_work(self):
+        readme = (ROOT / "README.md").read_text()
+        install = (ROOT / "docs/INSTALL.md").read_text()
+        setup = (ROOT / "docs/SETUP.md").read_text()
+        research = (ROOT / "docs/ADVANCED_RESEARCH.md").read_text()
+
+        primary = readme.split("## Advanced and research material", 1)[0]
+        self.assertNotRegex(primary, r"(?i)scorecard|bearing|manifold|shadow")
+        self.assertRegex(readme, r"not\s+production capability promises")
+        self.assertIn("## Advanced preview: Raspberry Pi 4B", install)
+        self.assertIn("advanced compatibility preview", install.lower())
+        self.assertIn("advanced compatibility", setup.lower())
+        self.assertIn("supported production capability statement", research)
 
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()

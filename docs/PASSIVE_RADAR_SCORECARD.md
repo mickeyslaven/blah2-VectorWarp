@@ -1,7 +1,8 @@
-# Open Passive Radar Scorecard (OPRS) v0.2
+# Research: Open Passive Radar Scorecard (OPRS) v0.2
 
 Status: stable evidence contract for the v1 JSON schemas; reference scorer
-version 0.2.0. OPRS is an independent benchmark specification. VectorWarp is
+version 0.2.0. OPRS is an independent benchmark specification, not a
+production VectorWarp capability or installation requirement. VectorWarp is
 only the first file adapter and is not the definition of the benchmark.
 
 ## Purpose
