@@ -285,8 +285,7 @@ endif()
         executable(artifact / "bin/blah2")
         (artifact / "api/server.js").write_text("fixture\n", encoding="utf-8")
         (artifact / "html/index.html").write_text("fixture\n", encoding="utf-8")
-        for name in ("config.yml", "config-kraken.yml", "config-usrp.yml", "config-hackrf.yml"):
-            shutil.copy2(ROOT / "config" / name, artifact / "config-examples" / name)
+        shutil.copy2(ROOT / "config/config.yml", artifact / "config-examples/config.yml")
         for name in ("vectorwarp-api.service.in", "vectorwarp-processor.service.in",
                      "vectorwarp-restart.service.in", "vectorwarp-health-watchdog.service.in",
                      "vectorwarp-health-watchdog.timer", "vectorwarp-config-guard.service.in",
@@ -351,6 +350,12 @@ endif()
         self.assertEqual((stable / 'vectorwarp').read_bytes(), (stage / 'usr/bin/vectorwarp').read_bytes())
         self.assertTrue((stage / 'usr/lib/systemd/system/vectorwarp-kraken-build.service').is_file())
         self.assertTrue((stage / 'opt/vectorwarp/current/receiver-source/kraken/kit.json').is_file())
+        installed_config = stage / 'etc/vectorwarp/config.yml'
+        self.assertIn('Unconfigured', installed_config.read_text(encoding='utf-8'))
+        self.assertEqual(
+            sorted(path.name for path in
+                   (stage / 'opt/vectorwarp/current/config-examples').glob('*.yml')),
+            ['config.yml'])
 
     def test_installer_renders_the_validated_compiled_receiver_manifest(self):
         for backend, (receivers, _) in RECEIVERS.items():

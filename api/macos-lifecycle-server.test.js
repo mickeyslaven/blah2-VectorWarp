@@ -12,7 +12,7 @@ const path = require('path');
 const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
-const {setupDefaults} = require('./config-store');
+const {configurationForReceiver} = require('./config-store');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-macos-api-'));
 const filename = path.join(directory, 'config.yml');
 const launcher = path.join(directory, 'vectorwarp-macos');
@@ -30,7 +30,7 @@ async function ports(count) {
 }
 (async () => {
   try {
-    const config = setupDefaults(); config.capture.replay.state = true; config.network.ip = '127.0.0.1';
+    const config = configurationForReceiver('Usrp'); config.capture.replay.state = true; config.network.ip = '127.0.0.1';
     const values = await ports(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = values[index]; });
     const origin = `http://127.0.0.1:${config.network.ports.api}`;

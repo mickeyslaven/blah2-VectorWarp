@@ -255,7 +255,10 @@ run rm -rf "$ARTIFACT_TMP/api/node_modules"
 run npm ci --prefix "$ARTIFACT_TMP/api" --omit=dev --ignore-scripts --no-audit --no-fund
 run find "$ARTIFACT_TMP/api" -type f -name '*.test.js' -delete
 run cp -a "$SOURCE_DIR/html" "$ARTIFACT_TMP/html"
-run cp -a "$SOURCE_DIR/config" "$ARTIFACT_TMP/config-examples"
+run mkdir -p "$ARTIFACT_TMP/config-examples"
+# Runtime packages contain one canonical first-run configuration. Receiver
+# profiles are supplied by the API and selected explicitly in Settings.
+run install -m 0644 "$SOURCE_DIR/config/config.yml" "$ARTIFACT_TMP/config-examples/config.yml"
 run cp -a "$SOURCE_DIR/docs" "$ARTIFACT_TMP/docs"
 run rm -f "$ARTIFACT_TMP/docs/GPU_ACCELERATION_WORK.md" \
   "$ARTIFACT_TMP/docs/UI_CONFIG_REVIEW.md" \

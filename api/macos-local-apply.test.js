@@ -9,7 +9,7 @@ const net = require('net');
 const crypto = require('crypto');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
-const {setupDefaults} = require('./config-store');
+const {configurationForReceiver} = require('./config-store');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-mac-apply-'));
 const root = path.join(directory, 'app'), state = path.join(directory, 'state');
 const current = path.join(state, 'adapters/rspduo/current');
@@ -45,7 +45,7 @@ async function eventually(check) {
       sdk:{include:hash(fs.readFileSync(path.join(include,'sdrplay_api.h'))), library:hash(fs.readFileSync(library))}};
     fs.writeFileSync(builder, `#!${process.execPath}\nconst fs=require('fs');const marker=${JSON.stringify(marker)};const pending=marker+'.next';fs.writeFileSync(pending,JSON.stringify({env:process.env}));fs.renameSync(pending,marker);setTimeout(()=>{fs.writeFileSync(${JSON.stringify(receiptFile)},${JSON.stringify(JSON.stringify(receipt))});console.log('built');},1500);\n`);
     fs.chmodSync(builder, 0o755);
-    const config = setupDefaults(); config.network.ip = '127.0.0.1';
+    const config = configurationForReceiver('RspDuo'); config.network.ip = '127.0.0.1';
     const listeners = await Promise.all(Object.keys(config.network.ports).map(() => new Promise(resolve => {
       const server = net.createServer(); server.listen(0,'127.0.0.1',()=>resolve(server));
     })));

@@ -112,13 +112,13 @@ if ((test_only_count == 1)); then
 fi
 case "$backend" in
   open-test)
-    expected_receivers=Usrp,HackRF,Kraken; initial_config=config-usrp.yml
+    expected_receivers=Usrp,HackRF,Kraken
     [[ $test_only == true ]] || die 'open-test artifacts must be explicitly marked test-only' ;;
-  kraken) expected_receivers=Kraken; initial_config=config-kraken.yml ;;
-  rspduo) expected_receivers=RspDuo,Kraken; initial_config=config.yml ;;
-  usrp) expected_receivers=Usrp,Kraken; initial_config=config-usrp.yml ;;
-  hackrf) expected_receivers=HackRF,Kraken; initial_config=config-hackrf.yml ;;
-  all) expected_receivers=Usrp,HackRF,Kraken; initial_config=config.yml ;;
+  kraken) expected_receivers=Kraken ;;
+  rspduo) expected_receivers=RspDuo,Kraken ;;
+  usrp) expected_receivers=Usrp,Kraken ;;
+  hackrf) expected_receivers=HackRF,Kraken ;;
+  all) expected_receivers=Usrp,HackRF,Kraken ;;
   *) die 'artifact has an invalid backend' ;;
 esac
 [[ $backend == open-test || $test_only == false ]] || die 'only open-test artifacts may be marked test-only'
@@ -185,7 +185,7 @@ if [[ $backend == all && $compiled_count -gt 0 ]]; then
 fi
 
 if $WITH_SYSTEMD; then
-  [[ -f $ARTIFACT/config-examples/$initial_config ]] || die "artifact lacks $initial_config"
+  [[ -f $ARTIFACT/config-examples/config.yml ]] || die 'artifact lacks the canonical first-run config'
   if [[ $TARGET_DISTRO == fedora && $RECEIVER_TYPES == *HackRF* ]]; then
     [[ -f $ARTIFACT/systemd/72-vectorwarp-hackrf.rules ]] ||
       die 'Fedora HackRF rule is missing from artifact'
@@ -445,11 +445,11 @@ if [[ ! -d $target_sysconf ]]; then
   if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then run chown root:vectorwarp-config "$target_sysconf"; fi
 fi
 if [[ ! -e $target_sysconf/config.yml ]]; then
-  run install -m 0660 "$ARTIFACT/config-examples/$initial_config" "$target_sysconf/config.yml"
+  run install -m 0660 "$ARTIFACT/config-examples/config.yml" "$target_sysconf/config.yml"
   if $WITH_SYSTEMD && [[ -z $DESTDIR ]]; then
     run chown vectorwarp-api:vectorwarp-config "$target_sysconf/config.yml"
   fi
-  say 'installed the first-run example; review every receiver, frequency, site and path value'
+  say 'installed the neutral first-run configuration; choose a receiver and review frequency and sites in Settings'
 else
   say 'kept the existing configuration byte-for-byte'
 fi

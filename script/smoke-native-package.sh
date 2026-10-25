@@ -154,9 +154,9 @@ curl --fail --silent --show-error http://127.0.0.1:39080/api/config/capabilities
   let body=""; process.stdin.on("data", data => { body += data; });
   process.stdin.on("end", () => {
     const value = JSON.parse(body);
-    if (value.setupRequired || !value.editable || value.configPath !== "/etc/vectorwarp/config.yml") process.exit(1);
+    if (!value.setupRequired || !value.editable || value.configPath !== "/etc/vectorwarp/config.yml") process.exit(1);
   });
-' || die 'packaged API did not read a writable installed config without setup recovery'
+' || die 'packaged API did not expose the writable neutral first-run config'
 curl --fail --silent --show-error http://127.0.0.1:39080/display/configuration/ | grep -q renderConfiguration ||
   die 'package-local configuration page is missing its static UI'
 curl --fail --silent --show-error http://127.0.0.1:39080/js/common.js >/dev/null ||

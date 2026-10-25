@@ -4,14 +4,14 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
 const window = dom.window;
-const saved = setupDefaults();
+const saved = configurationForReceiver('RspDuo');
 saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0,
   surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
 saved.capture.fs = 2400000;
@@ -81,7 +81,7 @@ const check = async () => {
     assert.match(output.textContent, /SDRplay API is running; no service restart needed/);
     assert.equal([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'), false,
       'An observed installed SDK must not be prompted for download.');
-    Object.assign(saved, setupDefaults());
+    Object.assign(saved, configurationForReceiver('RspDuo'));
     await window.renderConfiguration();
     const startup = window.document.getElementById('receiver-startup');
     assert.match(startup.textContent, /No current RSPduo status/);
@@ -119,7 +119,7 @@ const check = async () => {
     window.renderReceiverStartup({...live, processor: {...live.processor, input: 'replay'}});
     assert.match(startup.textContent, /No current RSPduo status/);
 
-    Object.assign(saved, setupDefaults());
+    Object.assign(saved, configurationForReceiver('RspDuo'));
     saved.capture.device = {type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
       antenna: ['RX2', 'RX2'], gain: [10, 20]};
     saved.capture.fs = 2000000;
@@ -157,7 +157,7 @@ const check = async () => {
     assert.match(usrpTarget.textContent, /Reconnect the USRP.*run vectorwarp restart/,
       'A terminal USRP error must tell the operator how to recover after reconnecting it.');
 
-    Object.assign(saved, setupDefaults());
+    Object.assign(saved, configurationForReceiver('RspDuo'));
     saved.capture.device = {type: 'HackRF',
       serial: ['a1', 'b2'], gain_lna: [16, 32], gain_vga: [20, 40],
       amp_enable: [false, true]};

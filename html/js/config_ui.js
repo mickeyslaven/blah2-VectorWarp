@@ -219,6 +219,7 @@ let restartRetry = false;
 let receiverApplyPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
+let lastDetectedReceiverTypes = new Set();
 
 function siteValue(site) {
   if (!site || typeof site.name !== 'string' || !site.name.trim() ||
@@ -978,7 +979,7 @@ function typedInput(value, path) {
     const select = document.createElement('select');
     const optionValues = [...options];
     if (!optionValues.some(optionValue => String(optionValue) === String(value)))
-      optionValues.push(value);
+      optionValues.unshift(value);
     optionValues.forEach(optionValue => {
       const option = document.createElement('option');
       option.value = optionValue;
@@ -991,7 +992,8 @@ function typedInput(value, path) {
         ['process.performance.surveillance_workers', 'process.performance.fft_threads'].includes(key) && optionValue === 0 ?
           'Auto' :
         (profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` :
-          words(String(optionValue)));
+          key === 'capture.device.type' && optionValue === 'Unconfigured' ?
+            'Choose a receiver…' : words(String(optionValue)));
       option.selected = String(optionValue) === String(value);
       select.appendChild(option);
     });
@@ -1590,7 +1592,7 @@ function renderEditor() {
   let savedTab = null;
   try { savedTab = sessionStorage.getItem('blah2-settings-tab'); }
   catch (_) { /* Remembering a tab is optional. */ }
-  const initialTab = entries.some(([key]) => key === savedTab) ?
+  const initialTab = capabilities.setupRequired ? 'capture' : entries.some(([key]) => key === savedTab) ?
     savedTab : entries[0]?.[0];
   const activate = selectedKey => {
     tabs.querySelectorAll('[role="tab"]').forEach(button => {
@@ -1882,6 +1884,8 @@ function renderUsrpStartup(status, target = document.getElementById('receiver-st
 }
 
 function renderReceiverSetup() {
+  if (window.blah2ReceiverDiscoveryTimer)
+    window.clearTimeout(window.blah2ReceiverDiscoveryTimer);
   const section = document.createElement('section');
   section.className = 'upstream-status';
   section.id = 'receiver-setup';
@@ -1896,6 +1900,15 @@ function renderReceiverSetup() {
   output.setAttribute('role', 'status'); output.setAttribute('aria-live', 'polite');
   let buildPolls = 0;
   let buildPollTimer = null;
+  const scheduleDiscovery = () => {
+    if (window.blah2ReceiverDiscoveryTimer)
+      window.clearTimeout(window.blah2ReceiverDiscoveryTimer);
+    if (!section.isConnected) return;
+    window.blah2ReceiverDiscoveryTimer = window.setTimeout(() => {
+      window.blah2ReceiverDiscoveryTimer = null;
+      if (!saveInProgress && !restartInProgress && section.isConnected) discover();
+    }, 30000);
+  };
   const paragraph = text => { const p = document.createElement('p'); p.textContent = text; output.appendChild(p); return p; };
   const post = async (route, body, timeout = 30000, intent = 'receiver-management-v1') => {
     const response = await configFetch(liveApiUrl(route), {method: 'POST', headers: {
@@ -1984,6 +1997,31 @@ function renderReceiverSetup() {
     try {
       const result = await post('/api/receivers/discover', {});
       output.replaceChildren();
+      const detected = (result.receivers || []).filter(receiver =>
+        receiver.capabilities?.detected === true);
+      const detectedTypes = new Set(detected.map(receiver => receiver.type));
+      const newlyDetected = detected.filter(receiver => !lastDetectedReceiverTypes.has(receiver.type));
+      if (capabilities.setupRequired && activeConfig.capture?.device?.type === 'Unconfigured') {
+        if (detected.length === 1) {
+          const receiver = detected[0];
+          paragraph(`${receiver.label} detected. Confirm it before VectorWarp saves or starts processing.`);
+          if (receiver.capabilities.liveCompiled ||
+              (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable))
+            button(`Use detected ${receiver.label}`, () => switchDevice(receiver.type));
+        } else if (detected.length > 1) {
+          paragraph(`${detected.length} receivers detected. Choose the one to configure below.`);
+        } else {
+          paragraph('No supported local receiver was detected. Connect one and wait for another check, or choose a receiver manually for remote/offline setup.');
+        }
+      } else {
+        for (const receiver of newlyDetected.filter(item => item.type !== activeConfig.capture?.device?.type)) {
+          paragraph(`New ${receiver.label} detected. VectorWarp will not interrupt the active receiver.`);
+          if (receiver.capabilities.liveCompiled ||
+              (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable))
+            button(`Configure ${receiver.label}`, () => switchDevice(receiver.type));
+        }
+      }
+      lastDetectedReceiverTypes = detectedTypes;
       if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before continuing.');
       if (!result.buildCapabilitiesKnown) paragraph('This build does not list its supported receivers. Live capture support is unknown.');
       for (const receiver of result.receivers || []) {
@@ -2068,10 +2106,11 @@ function renderReceiverSetup() {
       else paragraph('Use Save & Restart to test reception. Software checks do not test antenna wiring or calibration.');
       for (const error of result.errors || []) paragraph(error.message);
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
-    finally { check.disabled = false; }
+    finally { check.disabled = false; scheduleDiscovery(); }
   }
   check.addEventListener('click', discover);
   section.append(heading, description, check, output);
+  window.setTimeout(discover, 0);
   return section;
 }
 
@@ -2241,8 +2280,13 @@ async function renderConfiguration() {
     }
     const setup = document.createElement('div');
     setup.className = 'config-setup-note';
-    setup.textContent = capabilities.setupRequired ?
-      'Setup needed. Review the default values before saving.' : '';
+    if (capabilities.setupRequired) {
+      const title = document.createElement('strong');
+      const copy = document.createElement('span');
+      title.textContent = ' First-run setup required.';
+      copy.textContent = ' Choose your receiver, verify the tuning frequency and sample rate, then review the receiver and transmitter sites before Save & Restart.';
+      setup.append(title, copy);
+    }
     target.querySelector('.config-toolbar').after(setup);
     const diagnostics = document.createElement('div');
     diagnostics.id = 'config-diagnostics';

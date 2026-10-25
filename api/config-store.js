@@ -16,7 +16,10 @@ function setupDefaults() {
     '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
   return {
     capture: {fs: 2000000, fc: 204640000,
-      device: getDeviceProfiles().find(item => item.type === 'RspDuo').device,
+      // Never infer hardware on a fresh install. An invalid marker keeps the
+      // processor fail-closed while still allowing the API and Settings UI to
+      // load the canonical configuration and receiver profiles.
+      device: {type: 'Unconfigured'},
       replay: {state: false, loop: false,
         file: '/var/lib/vectorwarp/recordings/recording.blah2iq', format: 'auto',
         provenance: 'legacy-unqualified'}},
@@ -56,6 +59,21 @@ function setupDefaults() {
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
     save: {iq: false, map: false, detection: false, timing: false, path: '/var/lib/vectorwarp/recordings/'}
   };
+}
+
+function configurationForReceiver(type, base = setupDefaults()) {
+  const profile = getDeviceProfiles().find(item => item.type === type);
+  if (!profile) throw new Error(`Unknown receiver profile: ${type}`);
+  const config = JSON.parse(JSON.stringify(base));
+  config.capture.device = JSON.parse(JSON.stringify(profile.device));
+  config.capture.fs = profile.sampleRate;
+  config.process.performance = {...config.process.performance,
+    ...(profile.process?.performance || {})};
+  if (profile.process?.reference_synthesis)
+    config.process.reference_synthesis = JSON.parse(JSON.stringify(profile.process.reference_synthesis));
+  else
+    delete config.process.reference_synthesis;
+  return config;
 }
 
 function readConfig(filename) {
@@ -227,5 +245,5 @@ function saveConfig(filename, candidate, expectedRevision) {
   return readConfig(filename);
 }
 
-module.exports = {readConfig, writable, saveConfig, setupDefaults,
+module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
   migrateKnownDefaults};

@@ -7,9 +7,11 @@ function page(origin, apiOrigin = origin) {
   const calls = [];
   const storage = new Map();
   const labels = {'live-status': {innerHTML: ''}, 'adsb-status': {innerHTML: '', hidden: true},
-    'processor-alert': {textContent: '', hidden: true}};
+    'processor-alert': {textContent: '', hidden: true},
+    'receiver-device-alert': {textContent: '', hidden: true}};
   const state = {radar: 'receiving', adsbEnabled: false, errors: [], restart: {state: 'idle'},
-    adsb: {online: true}, failWrite: false, stallBody: false};
+    adsb: {online: true}, receivers: {setupRequired: false, receivers: []},
+    failWrite: false, stallBody: false};
   const context = vm.createContext({
     URL, URLSearchParams, AbortController,
     document: {getElementById: id => labels[id] || null, querySelectorAll: () => []},
@@ -22,7 +24,8 @@ function page(origin, apiOrigin = origin) {
       if (options.method === 'PUT' && state.failWrite) throw new Error('Response lost');
       const status = {serverId: 'test-api', ...state};
       const data = target.pathname === '/api/system/status' ? status :
-        target.pathname === '/api/adsb/status' ? state.adsb : {};
+        target.pathname === '/api/adsb/status' ? state.adsb :
+        target.pathname === '/api/receivers' ? state.receivers : {};
       return {ok: true, status: 200, text: async () =>
         state.stallBody && target.pathname !== '/api/system/status' ? new Promise(() => {}) : JSON.stringify(data)};
     }
@@ -114,6 +117,20 @@ function page(origin, apiOrigin = origin) {
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B ONLINE'));
   assert.ok(!test.calls.some(call => call.url.endsWith('/api/timestamp')), 'Status must not treat an old timestamp as online');
+
+  test.state.receivers = {setupRequired: true, receivers: [{type: 'Usrp', label: 'Ettus USRP',
+    capabilities: {configured: false, detected: true}}]};
+  await test.context.refreshReceiverDevices();
+  assert.equal(test.labels['receiver-device-alert'].hidden, false);
+  assert.match(test.labels['receiver-device-alert'].textContent, /Ettus USRP detected.*finish receiver setup/);
+  test.state.receivers = {setupRequired: false, receivers: [
+    {type: 'RspDuo', label: 'SDRplay RSPduo', capabilities: {configured: true, detected: true}},
+    {type: 'Usrp', label: 'Ettus USRP', capabilities: {configured: false, detected: true}}]};
+  await test.context.refreshReceiverDevices();
+  assert.match(test.labels['receiver-device-alert'].textContent, /active receiver was not changed/);
+  test.state.receivers.receivers.pop();
+  await test.context.refreshReceiverDevices();
+  assert.equal(test.labels['receiver-device-alert'].hidden, true);
 
   test.state.failWrite = true;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {method: 'PUT'}), /Response lost/);

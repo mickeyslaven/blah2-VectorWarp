@@ -4,14 +4,14 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 
 const dom = new JSDOM('<header class="app-header"></header><div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only', pretendToBeVisual: true
 });
 const {window} = dom;
-const saved = setupDefaults();
+const saved = configurationForReceiver('RspDuo');
 const channel = () => ({active: false, detectedCount: 0, correctedCount: 0,
   lastDetectedAt: 0, lastCorrectedAt: 0});
 const live = () => ({radar: 'receiving', errors: [], processorFresh: true,

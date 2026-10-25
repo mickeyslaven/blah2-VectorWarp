@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const yaml = require('js-yaml');
 const {FIELD_RULES, validateConfig, getDeviceProfiles} = require('./config-manager');
-const {readConfig, saveConfig} = require('./config-store');
+const {readConfig, saveConfig, configurationForReceiver} = require('./config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 const root = path.join(__dirname, '..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-settings-matrix-'));
@@ -39,7 +39,7 @@ function validDifferent(key, current, rule) {
 }
 try {
   const covered = new Set();
-  for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
+  for (const name of ['config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
     const source = shipped(name); const validation = validateConfig(source);
     assert.equal(validation.valid, true, `${name}: ${validation.errors.join('; ')}`);
     const filename = path.join(directory, name); fs.writeFileSync(filename, yaml.dump(source));
@@ -47,6 +47,14 @@ try {
     assert.deepEqual(readConfig(filename).config, saved.config, `${name} failed save/load round trip`);
     for (const leaf of leaves(saved.config)) if (FIELD_RULES[leaf.path]) covered.add(leaf.path);
   }
+  const rspSource = configurationForReceiver('RspDuo', shipped('config.yml'));
+  { const filename = path.join(directory, 'generated-rspduo.yml');
+    const validation = validateConfig(rspSource);
+    assert.equal(validation.valid, true, `generated RSPduo: ${validation.errors.join('; ')}`);
+    fs.writeFileSync(filename, yaml.dump(rspSource));
+    const saved = saveConfig(filename, rspSource, readConfig(filename).revision);
+    assert.deepEqual(readConfig(filename).config, saved.config, 'generated RSPduo failed save/load round trip');
+    for (const leaf of leaves(saved.config)) if (FIELD_RULES[leaf.path]) covered.add(leaf.path); }
   const base = shipped('config-kraken.yml');
   for (const profile of getDeviceProfiles()) {
     const candidate = clone(base); candidate.capture.fs = profile.sampleRate; candidate.capture.device = clone(profile.device);
@@ -63,7 +71,7 @@ try {
   let rejected = 0;
   let changed = 0;
   const edited = new Set();
-  const sources = ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml'].map(shipped);
+  const sources = [rspSource, ...['config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml'].map(shipped)];
   for (const [key, rule] of Object.entries(FIELD_RULES)) {
     if (rule.readOnly) continue;
     const source = sources.find(value => get(value, key) !== undefined);

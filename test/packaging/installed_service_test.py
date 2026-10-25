@@ -233,7 +233,7 @@ def main():
     checks.append('installed API starts with its real service identity and sandbox')
 
     _, capabilities, _ = request('/api/config/capabilities')
-    assert capabilities['editable'] and capabilities['restartAvailable'] and not capabilities['setupRequired']
+    assert capabilities['editable'] and capabilities['restartAvailable'] and capabilities['setupRequired']
     assert capabilities['configPath'] == str(CONFIG)
     assert request('/display/configuration/')[0] == 200
     assert request('/js/config_ui.js')[0] == 200
@@ -247,9 +247,18 @@ def main():
     checks.append('packaged open receiver adapters load without the SDRplay SDK')
 
     before = hashlib.sha256(CONFIG.read_bytes()).hexdigest()
-    _, config, headers = request('/api/config')
+    _, neutral_config, headers = request('/api/config')
     revision = headers['ETag']
-    assert config['capture']['device']['type'] == 'RspDuo', 'Test expects neutral packaged defaults'
+    assert neutral_config['capture']['device']['type'] == 'Unconfigured', \
+        'Fresh packages must not silently select receiver hardware'
+    profiles = {item['type']: item for item in capabilities['deviceProfiles']}
+    assert set(profiles) == {'Kraken', 'RspDuo', 'Usrp', 'HackRF'}
+    config = copy.deepcopy(neutral_config)
+    rspduo = profiles['RspDuo']
+    config['capture']['fs'] = rspduo['sampleRate']
+    config['capture']['device'] = copy.deepcopy(rspduo['device'])
+    for key, value in rspduo.get('process', {}).items():
+        config['process'][key] = copy.deepcopy(value)
     path_candidate = copy.deepcopy(config)
     path_candidate['save']['path'] = '/srv/vectorwarp-recordings/'
     code, result, _ = request('/api/config/validate', 'POST', path_candidate)
@@ -312,8 +321,6 @@ def main():
     # The package must retain every receiver as a valid pending/replay choice,
     # even though no SDK or hardware is installed. Pending is disk-only: it must
     # not start the processor or claim any receiver was configured.
-    profiles = {item['type']: item for item in capabilities['deviceProfiles']}
-    assert set(profiles) == {'Kraken', 'RspDuo', 'Usrp', 'HackRF'}
     for receiver in ('Kraken', 'RspDuo', 'Usrp', 'HackRF'):
         code, current, headers = request('/api/config')
         assert code == 200

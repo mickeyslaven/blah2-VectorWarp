@@ -5,6 +5,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const {getDeviceProfiles, validateConfig,
   writeConfigAtomically} = require('./config-manager.js');
+const {configurationForReceiver} = require('./config-store.js');
 
 function load(name) {
   const value = yaml.load(fs.readFileSync(path.join(__dirname, '..', 'config', name), 'utf8'));
@@ -12,7 +13,11 @@ function load(name) {
   return value;
 }
 
-for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml',
+const firstRun = validateConfig(load('config.yml'));
+assert.equal(firstRun.valid, false);
+assert.ok(firstRun.errors.includes('capture.device.type is not supported'));
+
+for (const name of ['config-hackrf.yml', 'config-usrp.yml',
   'config-kraken.yml']) {
   const result = validateConfig(load(name));
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
@@ -244,7 +249,8 @@ for (const beams of [3, 361, 12.5]) {
 // USRP and dual HackRF can request 6 MS/s; Kraken and coherent RSPduo cannot.
 for (const [name, accepted] of [['config-usrp.yml', true],
   ['config-hackrf.yml', true], ['config-kraken.yml', false], ['config.yml', false]]) {
-  const value = load(name);
+  const value = name === 'config.yml' ?
+    configurationForReceiver('RspDuo', load(name)) : load(name);
   value.capture.fs = 6000000;
   value.process.data.cpi = .2;
   value.process.ambiguity = {delayMin: -10, delayMax: 245,
@@ -294,7 +300,8 @@ for (const timeout of [0, 10.1, '1']) {
 }
 for (const name of ['config.yml', 'config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml']) {
   for (const mode of ['auto', 'cpu', 'gpu', 'cuda', '', 1, true, null]) {
-    const value = load(name);
+    const value = name === 'config.yml' ?
+      configurationForReceiver('RspDuo', load(name)) : load(name);
     value.process.performance = {...value.process.performance, acceleration: mode};
     assert.equal(validateConfig(value).valid, ['auto', 'cpu', 'gpu'].includes(mode),
       `${name}: acceleration ${JSON.stringify(mode)}`);

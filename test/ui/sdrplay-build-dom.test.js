@@ -4,11 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const {createRequire} = require('module');
 const {JSDOM} = createRequire(path.join(__dirname, '..', '..', 'api', 'package.json'))('jsdom');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 const {getDeviceProfiles, FIELD_RULES, validateConfig} = require('../../api/config-manager');
 
 const dom = new JSDOM('<div id="configuration"></div>', {url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'});
-const window = dom.window; const saved = setupDefaults(); let requested = 0;
+const window = dom.window; const saved = configurationForReceiver('RspDuo'); let requested = 0;
 let buildProgress = {state: 'running', kit_id: 'b'.repeat(64)};
 saved.capture.device = {type: 'Kraken', channel_count: 5, reference_channel: 0, surveillance_channels: [0, 1, 2, 3, 4], heimdall: {host: '127.0.0.1', port: 8091, control_port: 8092}};
 saved.capture.fs = 2400000;

@@ -8,7 +8,8 @@ const http = require('http');
 const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
-const {readConfig, saveConfig, writable, migrateKnownDefaults} = require('./config-store');
+const {readConfig, saveConfig, writable, migrateKnownDefaults,
+  configurationForReceiver} = require('./config-store');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
 
@@ -49,8 +50,10 @@ function availablePort(usedPorts) {
       const shipped = readConfig(path.join(__dirname, '..', 'config', name));
       assert.deepEqual(shipped.suppliedDefaults, [],
         `${name} omits required defaults: ${shipped.suppliedDefaults.join(', ')}`);
-      if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
-        `${name} should be a complete first-run example`);
+      if (name === 'config.yml') assert.equal(shipped.setupRequired, true,
+        'the canonical first-run config must require an explicit receiver choice');
+      else if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
+        `${name} should remain a complete compatibility fixture`);
     }
     const legacyUsrp = yaml.load(fs.readFileSync(
       path.join(__dirname, '..', 'config', 'config-usrp.yml'), 'utf8'));
@@ -86,7 +89,8 @@ function availablePort(usedPorts) {
     fs.writeFileSync(file, 'capture: [broken', {mode: 0o640});
     fs.chmodSync(file, 0o640);
     const broken = readConfig(file);
-    const repaired = saveConfig(file, broken.config, broken.revision);
+    const repaired = saveConfig(file,
+      configurationForReceiver('RspDuo', broken.config), broken.revision);
     assert.equal(fs.readFileSync(`${file}.bak`, 'utf8'), 'capture: [broken');
     assert.equal(fs.statSync(file).mode & 0o777, 0o640);
     assert.equal(repaired.validation.valid, true);

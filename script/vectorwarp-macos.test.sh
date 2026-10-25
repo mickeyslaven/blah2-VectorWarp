@@ -70,11 +70,16 @@ EOF
 chmod 755 "$TEMP/root/script/vectorwarp-kraken-macos.py"
 PORT=$(node -e 'require("net").createServer().listen(0,"127.0.0.1",function(){console.log(this.address().port);this.close()})')
 run() { PATH="$TEMP/tools:$PATH" VECTORWARP_MACOS_ROOT="$TEMP/root" VECTORWARP_MACOS_STATE="$TEMP/state" VECTORWARP_MACOS_API_PORT="$PORT" VECTORWARP_MACOS_NODE=node "$ROOT/script/vectorwarp-macos" "$@"; }
+select_usrp() {
+  node -e 'const fs=require("fs"),yaml=require(process.argv[1]+"/api/node_modules/js-yaml"),store=require(process.argv[1]+"/api/config-store"); const file=process.argv[2],base=yaml.load(fs.readFileSync(file,"utf8")); fs.writeFileSync(file,yaml.dump(store.configurationForReceiver("Usrp",base)));' "$TEMP/root" "$TEMP/state/config.yml"
+}
 json_ok() { python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); assert set(("pid","birth","command","argv")) <= set(x); assert isinstance(x["argv"],list)' "$1"; }
 
 # open is web-only and records the launched API atomically as JSON.
 run open >/dev/null
 json_ok "$TEMP/state/api.json"; test ! -e "$TEMP/state/processor.json"
+run start >/dev/null; test ! -e "$TEMP/state/processor.json"
+select_usrp
 run start >/dev/null; json_ok "$TEMP/state/processor.json"
 
 # Kernel flock is held by a separate owner, never removed by a contender, and
@@ -202,6 +207,7 @@ if KRAKEN_FIXTURE_ERROR=1 PATH="$TEMP/tools:$PATH" VECTORWARP_MACOS_ROOT="$TEMP/
 fi
 test ! -e "$TEMP/state/kraken.json" && test ! -e "$TEMP/state/processor.json"
 cp "$ROOT/config/config.yml" "$TEMP/state/config.yml"
+select_usrp
 
 # The service target stays in the foreground, restarts the complete owned pair
 # after a child crash, and uses SIGTERM to clean both child records up.
