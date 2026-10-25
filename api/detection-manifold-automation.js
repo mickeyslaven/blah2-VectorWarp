@@ -53,7 +53,7 @@ function summarizeDetectionManifoldProgress(rawSamples, config, options = {}) {
   const validationCovered = validationCoverage.filter(row => row.passes).map(row => row.sector);
   const fitSupport = new Map();
   for (const row of corpus.training) {
-    const key = `${Math.floor(normalize(row.truth.local_azimuth_deg) / 45)}:${Math.floor(row.truth.elevation_deg / 5)}`;
+    const key = `${Math.floor(normalize(row.truth.local_azimuth_deg) / 45)}:${Math.min(3, Math.floor((row.truth.elevation_deg + 90) / 45))}`;
     if (!fitSupport.has(key)) fitSupport.set(key, new Set());
     fitSupport.get(key).add(row._pass_id);
   }
@@ -239,8 +239,7 @@ function evaluateDetectionManifoldCandidate(rawSamples, config, options = {}) {
   let runtimeCandidate = null, runtimeConversionError = null;
   try { runtimeCandidate = denseRuntimeCandidate(manifold); }
   catch (error) { runtimeConversionError = error.message; }
-  const candidateModelSha256 = crypto.createHash('sha256').update(JSON.stringify(
-    runtimeCandidate || manifold)).digest('hex');
+  const candidateModelSha256 = manifold.candidate_version;
   manifold.calibration.candidate_model_sha256 = candidateModelSha256;
   manifold.calibration.runtime_candidate_available = Boolean(runtimeCandidate);
   manifold.calibration.runtime_conversion_error = runtimeConversionError;
@@ -308,11 +307,12 @@ class DetectionManifoldAutomation {
     this.config = config; this.Worker = worker; this.intervalMs = intervalMs; this.initialDelayMs = initialDelayMs;
     const settings = config.process?.surveillance_fusion?.detection_manifold_automation || {};
     this.samplePath = settings.corpus_path || config.process?.bearing?.manifold_recorder?.path || null;
+    this.nativeShadowPath = settings.native_shadow_corpus_path || (this.samplePath ? `${this.samplePath}.native-shadow.jsonl` : null);
     this.validationPath = settings.validation_path || null;
     this.candidatePath = settings.candidate_path || (this.samplePath ? `${this.samplePath}.detection-candidate.json` : null);
     this.receiptPath = settings.shadow_receipt_path || (this.candidatePath ?
       `${this.candidatePath}.shadow-ab-receipts.jsonl` : null);
-    this.enabled = settings.enabled === true && Boolean(this.samplePath);
+    this.enabled = settings.enabled === true && Boolean(this.samplePath || this.nativeShadowPath);
     this.running = false; this.timer = null; this.lastSignature = null;
     this.state = {enabled: this.enabled, state: this.enabled ? 'collecting' : 'disabled',
       qualified: false, promotion_allowed: false, candidatePath: this.candidatePath,
@@ -330,7 +330,10 @@ class DetectionManifoldAutomation {
   async evaluate({force = false} = {}) {
     if (!this.enabled || this.running) return this.status();
     let stat;
-    try { stat = await fs.promises.stat(this.samplePath); }
+    try { stat = this.samplePath ? await fs.promises.stat(this.samplePath) : null; }
+    catch (error) { if (error.code !== 'ENOENT') { this.state = {...this.state, state: 'error', error: error.message}; return this.status(); } }
+    if (!stat && !this.nativeShadowPath) return this.status();
+    if (!stat && this.nativeShadowPath) try { stat = await fs.promises.stat(this.nativeShadowPath); }
     catch (error) { if (error.code === 'ENOENT') return this.status();
       this.state = {...this.state, state: 'error', error: error.message}; return this.status(); }
     let validationStat = null;
@@ -345,7 +348,7 @@ class DetectionManifoldAutomation {
       const result = await new Promise((resolve, reject) => {
         const worker = new this.Worker(path.join(__dirname, 'detection-manifold-automation-worker.js'),
           {workerData: {samplePath: this.samplePath, candidatePath: this.candidatePath,
-            validationPath: this.validationPath, receiptPath: this.receiptPath, config: this.config}});
+            nativeShadowPath: this.nativeShadowPath, validationPath: this.validationPath, receiptPath: this.receiptPath, config: this.config}});
         worker.once('message', message => message.ok ? resolve(message.result) : reject(new Error(message.error)));
         worker.once('error', reject);
         worker.once('exit', code => { if (code) reject(new Error(`Detection manifold worker exited ${code}`)); });
