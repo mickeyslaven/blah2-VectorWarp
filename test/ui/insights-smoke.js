@@ -188,7 +188,9 @@ setTimeout(() => {
       !rendered.includes('Support / uncertainty') ||
       !rendered.includes('Active detection model') ||
       !rendered.includes('2-D candidate') ||
-      !rendered.includes('receipt harness ready / native export required')))
+      !rendered.includes('Native 2-D shadow fit') ||
+      !rendered.includes('Pass-disjoint complex projection only') ||
+      !rendered.includes('physical paired A/B qualification still required')))
     errors.push('detection manifold progress and promotion policy were not rendered');
   if (view === 'locations' && lastPlot?.layout?.mapbox?.style === 'open-street-map' &&
       lastPlot.traces.some(trace => trace.mode?.includes('text')))

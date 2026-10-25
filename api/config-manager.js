@@ -810,13 +810,13 @@ function validateConfig(config, baseline = null, options = {}) {
       if (automation.enabled !== undefined)
         boolean(automation.enabled,
           'process.surveillance_fusion.detection_manifold_automation.enabled');
-      for (const name of ['corpus_path', 'validation_path', 'candidate_path']) {
+      for (const name of ['corpus_path', 'native_shadow_corpus_path', 'validation_path', 'candidate_path', 'shadow_receipt_path']) {
         const value = automation[name];
         if (value !== undefined && (typeof value !== 'string' || !path.isAbsolute(value)))
           errors.push(`process.surveillance_fusion.detection_manifold_automation.${name} must be an absolute path`);
       }
       if (automation.enabled === true) {
-        const corpusPath = automation.corpus_path ||
+        const corpusPath = automation.corpus_path || automation.native_shadow_corpus_path ||
           processConfig.bearing?.manifold_recorder?.path;
         if (typeof corpusPath !== 'string' || !path.isAbsolute(corpusPath))
           errors.push('enabled detection manifold automation requires an absolute corpus path');

@@ -547,7 +547,9 @@ def native_manifold_evidence(frame, config, capture, request, job_binding, finge
     """Sign only native complex response evidence; never synthesize it from powers."""
     truth, covariance, cut = frame["truth"], frame.get("covariance_whitening", {}), frame["target_cut"]
     evaluated = [row for row in cut.get("native_cfar_statistics", []) if row[4] in (1, 3)]
-    if not key or not fingerprint or not isinstance(capture.get("pass_id"), str) or \
+    if config["process"]["surveillance_fusion"]["mode"] not in ("coherent_beam_bank", "noise_whitened_beam_bank") or \
+       not covariance.get("actual_fusion_weights") or \
+       not key or not fingerprint or not isinstance(capture.get("pass_id"), str) or \
        not capture["pass_id"].strip() or not isinstance(capture.get("icao"), str) or \
        not capture["icao"].strip() or covariance.get("covariance_valid") is not True or not evaluated or \
        not all(isinstance(truth.get(field), (int, float)) and math.isfinite(truth[field])
@@ -564,6 +566,8 @@ def native_manifold_evidence(frame, config, capture, request, job_binding, finge
                  "label": "detected" if any(row[4] == 3 for row in evaluated) else "subthreshold"},
         "truth": truth,
         "configuration": {"config_fingerprint": fingerprint,
+            "cpi_seconds": config["process"]["data"]["cpi"],
+            "fusion_mode": config["process"]["surveillance_fusion"]["mode"],
             "frequency_hz": frame["frequency_hz"], "sample_rate_hz": frame["sample_rate_hz"],
             "channels": len(cut["physical_channels"]), "channel_mapping": frame["channel_mapping"],
             "actual_channel_gains_db": frame["actual_channel_gains_db"]},
@@ -572,6 +576,7 @@ def native_manifold_evidence(frame, config, capture, request, job_binding, finge
             "source_sample_midpoint": frame["source_sample_midpoint"], "timestamp_ms": frame["timestamp_ms"],
             "time_mapping": "admitted-source-sample-midpoints"},
         "source_snapshots": [{**frame["native_snapshot"], "epoch_id": epoch,
+            "raw_iq_sha256": frame["raw_iq_sha256"],
             "source_sha256": frame["source_sha256"], "rf_sha256": frame["rf_sha256"],
             "native_config_sha256": frame["native_config_sha256"],
             "native_module_sha256": frame["native_module_sha256"],
@@ -640,7 +645,7 @@ def truth_selected_export(receipts, config, capture, metadata, request, capture_
         frame["manifold_evidence"] = native_manifold_evidence(frame, config, capture, request,
             job_binding_sha256, config_fingerprint, receipt_key, collection_epoch)
         if frame["manifold_evidence"] is None:
-            frame["manifold_evidence_unavailable"] = "requires authenticated aircraft/pass, ADS-B direction, valid native reference covariance and settled CFAR state"
+            frame["manifold_evidence_unavailable"] = "requires authenticated aircraft/pass, ADS-B direction, valid native reference covariance, exact complex coherent fusion weights and settled CFAR state"
         frames.append(frame)
     value = {"schema": "vectorwarp-truth-selected-shadow-export-v2",
              "shadow_only": True, "decision_grade": False,

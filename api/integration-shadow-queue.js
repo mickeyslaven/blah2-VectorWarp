@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {validateProcessorSampleRanges} = require('./capture-admission');
+const {readBounded} = require('./detection-manifold-artifacts');
 
 function captureTimingQualified(item) {
   if (!Array.isArray(item?.processor_cpis) || item.processor_cpis.length < 3) return false;
@@ -128,7 +129,7 @@ class IntegrationShadowQueue {
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
         (typeof process.geteuid === 'function' && stat.uid !== process.geteuid()))
       throw new Error('integration shadow receipt key must be an owner-only regular file');
-    const key = this.fs.readFileSync(filename);
+    const key = readBounded(filename, 4096, this.fs);
     if (key.length < 32) throw new Error('integration shadow receipt key must contain at least 32 bytes');
     return key;
   }
@@ -142,18 +143,34 @@ class IntegrationShadowQueue {
   }
 
   files(directory, suffix) {
-    try { return this.fs.readdirSync(directory).filter(name => name.endsWith(suffix)); }
+    let handle;
+    try { handle = this.fs.opendirSync(directory); }
     catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const names = []; let count = 0, entry;
+    try { while ((entry = handle.readSync())) {
+      if (++count > 4096) throw new Error('integration shadow spool exceeds its directory entry bound');
+      if (entry.name.endsWith(suffix)) names.push(entry.name);
+    } } finally { handle.closeSync(); }
+    return names;
   }
 
   resultRecords({includeEvidence = false} = {}) {
-    const names = this.files(this.options.resultsPath, '.result.json').sort();
-    for (const name of this.resultCache.keys()) if (!names.includes(name)) this.resultCache.delete(name);
-    return names.map(name => {
+    return [...this.resultRecordIterator({includeEvidence})];
+  }
+
+  *resultRecordIterator({includeEvidence = false, includeArchived = false} = {}) {
+    const locations = [[this.options.resultsPath, this.options.queuePath]];
+    if (includeArchived) locations.push([path.join(this.options.resultsPath, 'archive', 'results'),
+      path.join(this.options.resultsPath, 'archive', 'jobs')]);
+    const entries = locations.flatMap(([directory, jobs]) => this.files(directory, '.result.json')
+      .sort().map(name => ({name, filename: path.join(directory, name), jobs})));
+    if (entries.length > 1024) throw new Error('integration shadow receipts exceed the bounded spool import count');
+    const knownPaths = new Set(entries.map(entry => entry.filename));
+    for (const filename of this.resultCache.keys()) if (!knownPaths.has(filename)) this.resultCache.delete(filename);
+    for (const {name, filename, jobs} of entries) {
       try {
-        const filename = path.join(this.options.resultsPath, name);
         const expected = name.replace(/\.result\.json$/, '');
-        const jobPath = path.join(this.options.queuePath, `${expected}.job.json`);
+        const jobPath = path.join(jobs, `${expected}.job.json`);
         const stat = this.fs.lstatSync(filename), jobStat = this.fs.lstatSync(jobPath);
         const key = this.receiptKey();
         if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RESULT_BYTES ||
@@ -162,10 +179,10 @@ class IntegrationShadowQueue {
         const signature = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs,
           jobStat.ino, jobStat.size, jobStat.mtimeMs, jobStat.ctimeMs,
           crypto.createHash('sha256').update(key).digest('hex')].join(':');
-        const cached = this.resultCache.get(name);
-        if (!includeEvidence && cached?.signature === signature) return cached.record;
-        const result = JSON.parse(this.fs.readFileSync(filename));
-        const job = JSON.parse(this.fs.readFileSync(jobPath));
+        const cached = this.resultCache.get(filename);
+        if (!includeEvidence && cached?.signature === signature) { yield cached.record; continue; }
+        const result = JSON.parse(readBounded(filename, MAX_RESULT_BYTES, this.fs));
+        const job = JSON.parse(readBounded(jobPath, 1024 * 1024, this.fs));
         const unsignedJob = {...job}; delete unsignedJob.job_binding_sha256;
         const unsignedResult = {...result}; delete unsignedResult.result_binding_sha256;
         delete unsignedResult.result_authentication;
@@ -205,10 +222,10 @@ class IntegrationShadowQueue {
           hardware_qualified: result.hardware_qualified, decision_grade: result.decision_grade,
           timing_policy: result.timing_policy, qualification_gate: result.qualification_gate,
           production_unchanged: result.production_unchanged}};
-        this.resultCache.set(name, {signature, record: summary});
-        return includeEvidence ? {name, valid: true, result} : summary;
-      } catch (error) { return {name, valid: false, error: error.message}; }
-    });
+        this.resultCache.set(filename, {signature, record: summary});
+        yield includeEvidence ? {name, valid: true, result} : summary;
+      } catch (error) { yield {name, valid: false, error: error.message}; }
+    }
   }
 
   compactCompleted() {
@@ -237,7 +254,7 @@ class IntegrationShadowQueue {
     for (const name of this.files(this.options.queuePath, '.slot')) {
       const filename = path.join(this.options.queuePath, name);
       try {
-        const slot = JSON.parse(this.fs.readFileSync(filename));
+        const slot = JSON.parse(readBounded(filename, 4096, this.fs));
         const jobExists = this.fs.existsSync(path.join(this.options.queuePath, `${slot.job_id}.job.json`));
         let ownerAlive = true;
         if (slot.owner_host === os.hostname() && Number.isInteger(slot.owner_pid) && slot.owner_pid > 1) {
@@ -331,11 +348,12 @@ class IntegrationShadowQueue {
       // tuple readily auditable by either queue consumer.  Do this before a
       // slot is reserved so an incompatible receipt fails closed.
       const metadataPath = `${file}.json`;
+      const metadataBytes = readBounded(metadataPath, 1024 * 1024, this.fs);
       if (!this.fs.existsSync(metadataPath) ||
-          crypto.createHash('sha256').update(this.fs.readFileSync(metadataPath)).digest('hex') !==
+          crypto.createHash('sha256').update(metadataBytes).digest('hex') !==
             artifact.integrity.sidecar_sha256)
         throw new Error('integration shadow native metadata does not match admitted digest');
-      const metadata = JSON.parse(this.fs.readFileSync(metadataPath));
+      const metadata = JSON.parse(metadataBytes);
       const channelGains = metadata.channelGains;
       const channelCount = metadata.channels;
       if (metadata.schema !== 'vectorwarp-kraken-iq-clip-v1' ||
@@ -381,7 +399,7 @@ class IntegrationShadowQueue {
       this.safeDirectory(this.options.resultsPath);
       this.reconcileSlots();
       this.compactCompleted();
-      if (this.fs.existsSync(output)) {
+      if (this.fs.existsSync(output) || this.fs.existsSync(path.join(this.options.resultsPath, 'archive', 'jobs', `${jobId}.job.json`))) {
         ++this.counters.duplicate;
         return {accepted: false, reason: 'duplicate', job_id: jobId};
       }

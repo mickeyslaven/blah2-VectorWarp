@@ -17,6 +17,7 @@ const value = buildArrayCalibrationStatus({
   detectionStatus: {enabled: true, state: 'collecting', candidatePath: '/detection.candidate.json',
     runtimeCandidatePath: '/detection.runtime.json', validationPath: '/validation.jsonl',
     nativeShadow: {path: '/native.jsonl', added: 3, ignored: 1, error: 'rejected native signature'},
+    nativeFit: {accepted_samples: 9, supported_cells: 2, training_passes: 4, holdout_passes: 1},
     promotion_allowed: true, progress: {independent_passes: 3}},
   frequencyResolvedStatus: {enabled: true}, generatedAt: 123
 });
@@ -36,6 +37,7 @@ assert.equal(value.detection.automation.runtime_candidate_path, '/detection.runt
 assert.equal(value.detection.automation.promotion_allowed, false,
   'detection-manifold production promotion must remain hard-disabled');
 assert.equal(value.detection.automation.native_shadow_corpus.error, 'rejected native signature');
+assert.equal(value.detection.automation.native_shadow_fit.supported_cells, 2);
 assert.deepEqual(value.bearing.progress, {independent_passes: 3});
 assert.deepEqual(value.detection.progress, {independent_passes: 3});
 

@@ -28,12 +28,14 @@ function nativeExport() {
       source_sha256: 'b'.repeat(64), rf_sha256: 'c'.repeat(64), native_config_sha256: 'd'.repeat(64),
       native_module_sha256: 'e'.repeat(64), native_device_sha256: 'f'.repeat(64), raw_iq_sha256: 'b'.repeat(64)}],
     covariance: {epoch_id: 'rf-epoch-7', samples: 64, matrix, sha256: canonicalHash(matrix),
-      state: 'native-resident-reference-covariance'}, target_cut: {id: 'cut-19', role: 'target',
+      state: 'native-resident-reference-covariance', estimated_from_cut: false}, target_cut: {id: 'cut-19', role: 'target',
       epoch_id: 'rf-epoch-7', raw_iq_sha256: 'b'.repeat(64),
       physical_channels: [[.5, .1], [.2, -.3]]},
     reference_weights: [[1, 0], [.4, -.2]], actual_fusion_weights: [[1, 0], [.4, -.2]],
     weight_provenance: 'native-coherent-fusion-weights',
-    detector: {scope: 'native-cfar-before-centroid', statistics: [[1, 2, 3, 4, 1]]}};
+    local_control_cells: [], local_control_scope: 'nearby physical CUTs; not certified target-free CFAR training',
+    detector: {scope: 'native-cfar-before-centroid', production_cfar_recomputed: false,
+      statistics: [[1, 2, 3, 4, 1]]}};
   row.export_sha256 = canonicalHash(unsigned(row));
   row.authentication = {algorithm: 'hmac-sha256', key_id: keyId, mac: hmac(unsigned(row))};
   return row;
@@ -62,6 +64,34 @@ for (const mutate of [row => { row.configuration.actual_channel_gains_db[0] += 1
 }
 const tampered = JSON.parse(JSON.stringify(derived)); tampered.truth.local_azimuth_deg += 1;
 assert.throws(() => validateNativeShadowManifoldRow(tampered, {resolveKey: resolver}), /hash/i);
+// Valid signatures are necessary but not sufficient: malformed semantics must
+// also fail when a trusted exporter signs an incomplete or mislabeled payload.
+for (const mutate of [row => { delete row.covariance.samples; },
+  row => { row.covariance.state = 'estimated-from-target'; },
+  row => { row.covariance.matrix = [[[1, 0], [2, 0]], [[2, 0], [1, 0]]]; row.covariance.sha256 = canonicalHash(row.covariance.matrix); },
+  row => { row.pass.id = ' '; }, row => { delete row.configuration.actual_channel_gains_db; },
+  row => { row.sample_clock.source_sample_midpoint += 1; },
+  row => { row.sample_clock.time_mapping = 'wall-clock'; },
+  row => { row.sample_clock.timestamp_ms += 600000; },
+  row => { row.truth.elevation_deg = 100; }, row => { row.target_cut.raw_iq_sha256 = '0'.repeat(64); },
+  row => { row.reference_weights = [[1e308, 1e308], [1e308, 1e308]]; },
+  row => { delete row.local_control_cells; }, row => { row.detector.statistics[0][4] = 3; }]) {
+  const bad = JSON.parse(JSON.stringify(source)); mutate(bad);
+  bad.export_sha256 = canonicalHash(unsigned(bad));
+  bad.authentication.mac = hmac(unsigned(bad));
+  assert.throws(() => validateNativeTruthExport(bad, {resolveKey: resolver}), /required|invalid|bound/i);
+}
+for (const mutate of [row => { delete row.covariance.samples; },
+  row => { row.sample_clock.source_sample_midpoint += 1; },
+  row => { row.sample_clock.time_mapping = 'wall-clock'; }, row => { row.truth.elevation_deg = 100; },
+  row => { delete row.local_control_cells; }, row => { delete row.detector; },
+  row => { row.physical_iq_cut[0][0] = 1e308; row.physical_iq_cut[0][1] = 1e308; row.physical_iq_cut[1] = [1e308, 1e308]; }]) {
+  const bad = JSON.parse(JSON.stringify(derived)); mutate(bad);
+  delete bad.row_sha256; delete bad.authentication;
+  bad.row_sha256 = canonicalHash(bad);
+  bad.authentication = {algorithm: 'hmac-sha256', key_id: keyId, mac: hmac(bad)};
+  assert.throws(() => validateNativeShadowManifoldRow(bad, {resolveKey: resolver}), /required|invalid|contract/i);
+}
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'native-shadow-ledger-'));
 const ledger = path.join(directory, 'shadow.jsonl');
 assert.equal(appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), derived.row_sha256);
@@ -84,5 +114,10 @@ fs.writeFileSync(ledger, `${lines[0]}\n${JSON.stringify(corrupted)}\n`);
 assert.throws(() => readNativeShadowLedger(ledger, {resolveKey: resolver}), /hash|authentication/i,
   'target or nuisance-like complex-vector tampering must fail authentication');
 assert.throws(() => appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), /predecessor|hash|authentication/i);
+fs.writeFileSync(ledger, `${lines.join('\n')}\n`);
+fs.writeFileSync(`${ledger}.lock`, 'another writer owns this lock');
+assert.throws(() => appendNativeShadowRow(ledger, derived, {resolveKey: resolver}), /EEXIST/);
+assert.equal(fs.readFileSync(`${ledger}.lock`, 'utf8'), 'another writer owns this lock',
+  'failed lock acquisition must not remove another writer lock');
 fs.rmSync(directory, {recursive: true});
 console.log('Native shadow manifold evidence: authenticated physical-IQ-only append-only adapter passed.');

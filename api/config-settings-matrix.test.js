@@ -177,12 +177,16 @@ try {
   collection.process.surveillance_fusion.detection_manifold_automation = {
     enabled: true,
     corpus_path: '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl',
+    native_shadow_corpus_path: '/var/lib/vectorwarp-api/calibration/native-shadow.jsonl',
+    shadow_receipt_path: '/var/lib/vectorwarp-api/calibration/shadow-ab.jsonl',
     validation_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-validation.jsonl',
     candidate_path: '/var/lib/vectorwarp-api/calibration/detection-manifold-candidate.json'
   };
   persistGroup('kraken-detection-manifold-collection', measuredBaseline, collection,
     ['process.surveillance_fusion.detection_manifold_automation.enabled',
       'process.surveillance_fusion.detection_manifold_automation.corpus_path',
+      'process.surveillance_fusion.detection_manifold_automation.native_shadow_corpus_path',
+      'process.surveillance_fusion.detection_manifold_automation.shadow_receipt_path',
       'process.surveillance_fusion.detection_manifold_automation.validation_path',
       'process.surveillance_fusion.detection_manifold_automation.candidate_path']);
   const integrationShadow = clone(measuredBaseline);
