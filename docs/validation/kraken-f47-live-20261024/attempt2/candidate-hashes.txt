@@ -1,0 +1,3 @@
+14b7006ca1d668cb5b37fbd66f19962d1d007836d6ce5bac7cdfcb1bb3cfe763  /opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/bin/heimdall
+7273ff28fe740ab792c2af872be84f528017c01301b81f29bf5f3c38097f75ac  /opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/share/heimdall/build.json
+0ea572196a6e28d0b07ff8ade707d48b7b6a20193142c840f4ee77488f813228  /opt/vectorwarp-heimdall-candidates/f47ed2fb-14b7006ca1d668cb/share/heimdall/sbom.cdx.json

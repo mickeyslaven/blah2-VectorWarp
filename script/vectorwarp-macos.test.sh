@@ -111,7 +111,7 @@ rm -f "$TEMP/state/processor.json"
 # Cellar release while an owned API is alive. Its old exact config remains
 # stoppable; a config-name prefix never qualifies.
 python3 - "$ROOT/script/vectorwarp-macos.py" "$TEMP" <<'PY'
-import importlib.util, json, os, pathlib, sys
+import importlib.util, json, os, pathlib, plistlib, sys
 script, temp = map(pathlib.Path, sys.argv[1:])
 spec = importlib.util.spec_from_file_location('launcher', script)
 module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -134,6 +134,23 @@ module.subprocess.check_output = lambda *args, **kwargs: (calls.append(kwargs) o
 standalone = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(new), 'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
 assert standalone.receiver_types() == 'Usrp' and calls[-1]['timeout'] == 20
 assert default_state.receiver_types() == 'Usrp' and calls[-1]['timeout'] == 5
+standalone_root = temp/'VectorWarp.app/Contents/Resources/runtime/arm64'
+(standalone_root/'api').mkdir(parents=True); (standalone_root/'api/server.js').write_text('')
+(standalone_root/'standalone.json').write_text(json.dumps({'source_revision': 'a' * 40}))
+with (temp/'VectorWarp.app/Contents/Info.plist').open('wb') as stream:
+    plistlib.dump({'CFBundleShortVersionString': '1.2.3'}, stream)
+standalone_receipt = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(standalone_root),
+    'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
+assert standalone_receipt.release_metadata() == {'VECTORWARP_VERSION': '1.2.3',
+    'VECTORWARP_SOURCE_COMMIT': 'a' * 40, 'VECTORWARP_PACKAGE': 'macos-standalone'}
+development_root = temp/'standalone-development'
+(development_root/'api').mkdir(parents=True); (development_root/'api/server.js').write_text('')
+(development_root/'standalone.json').write_text(json.dumps({'source_revision': 'b' * 40,
+    'distribution': 'local-development-only'}))
+development_receipt = module.Lifecycle({'VECTORWARP_MACOS_ROOT': str(development_root),
+    'VECTORWARP_MACOS_NODE': '/usr/local/bin/node', 'VECTORWARP_MACOS_DISTRIBUTION': 'standalone'})
+assert development_receipt.release_metadata() == {'VECTORWARP_VERSION': 'development',
+    'VECTORWARP_SOURCE_COMMIT': 'b' * 40, 'VECTORWARP_PACKAGE': 'macos-standalone-dev'}
 old_processor = old/'bin/blah2'; old_processor.parent.mkdir(); old_processor.write_text('')
 new_processor = new/'bin/blah2'; new_processor.parent.mkdir(); new_processor.write_text('')
 processor_argv = [str(old_processor.resolve()), '--config', str(config.resolve())]

@@ -1,0 +1,289 @@
+[
+  {
+    "case": "no_devices",
+    "simulatedOnly": true,
+    "startupRejected": true,
+    "driverEvents": 1
+  },
+  {
+    "case": "setup_failure",
+    "simulatedOnly": true,
+    "startupRejected": true,
+    "driverEvents": 51
+  },
+  {
+    "case": "noise_failure",
+    "simulatedOnly": true,
+    "failureRemainedInvalid": true,
+    "orderedShutdown": true,
+    "driverEvents": 502
+  },
+  {
+    "case": "settings_failure",
+    "simulatedOnly": true,
+    "controlFailureState": "FAILED",
+    "dataStoppedAfterFailure": true,
+    "failureRemainedInvalid": true,
+    "orderedShutdown": true,
+    "driverEvents": 489
+  },
+  {
+    "case": "short_callback",
+    "simulatedOnly": true,
+    "failureRemainedInvalid": true,
+    "orderedShutdown": true,
+    "driverEvents": 499
+  },
+  {
+    "case": "reconfigure_shutdown",
+    "simulatedOnly": true,
+    "inFlightReconfigureShutdown": true,
+    "orderedShutdown": true,
+    "driverEvents": 530
+  },
+  {
+    "case": "coherence",
+    "simulatedOnly": true,
+    "websocketOriginsChecked": true,
+    "initialCalibratedFrame": 266,
+    "numerical": [
+      {
+        "channel": 1,
+        "phaseDegrees": 0.08757393655940554,
+        "amplitudeDb": -0.9158013962189706,
+        "expectedAmplitudeDb": -0.9151498112135024,
+        "integerLag": 0
+      },
+      {
+        "channel": 2,
+        "phaseDegrees": -0.09298282385567506,
+        "amplitudeDb": 0.8314553883505561,
+        "expectedAmplitudeDb": 0.8278537031645016,
+        "integerLag": 0
+      },
+      {
+        "channel": 3,
+        "phaseDegrees": 0.15353248163171743,
+        "amplitudeDb": -1.4045453445174816,
+        "expectedAmplitudeDb": -1.4116214857141456,
+        "integerLag": 0
+      },
+      {
+        "channel": 4,
+        "phaseDegrees": -0.16599845494352997,
+        "amplitudeDb": 0.4261885129079336,
+        "expectedAmplitudeDb": 0.42378598139876184,
+        "integerLag": 0
+      }
+    ],
+    "ifVgaStartupManual": 8,
+    "ifVgaDiagnosticRefusedWithoutWrites": true,
+    "retuneCalibratedFrame": 625,
+    "retuneNumerical": [
+      {
+        "channel": 1,
+        "phaseDegrees": 0.11139899810145117,
+        "amplitudeDb": -0.910689037998758,
+        "expectedAmplitudeDb": -0.9151498112135024,
+        "integerLag": 0
+      },
+      {
+        "channel": 2,
+        "phaseDegrees": -0.06572950683945743,
+        "amplitudeDb": 0.8311614224463947,
+        "expectedAmplitudeDb": 0.8278537031645016,
+        "integerLag": 0
+      },
+      {
+        "channel": 3,
+        "phaseDegrees": 0.18464421693922559,
+        "amplitudeDb": -1.407441173925302,
+        "expectedAmplitudeDb": -1.4116214857141456,
+        "integerLag": 0
+      },
+      {
+        "channel": 4,
+        "phaseDegrees": -0.1657881140337531,
+        "amplitudeDb": 0.42821644013584714,
+        "expectedAmplitudeDb": 0.42378598139876184,
+        "integerLag": 0
+      }
+    ],
+    "gainCalibratedFrames": {
+      "20": {
+        "frame": 905,
+        "numerical": [
+          {
+            "channel": 1,
+            "phaseDegrees": 0.06466407974631885,
+            "amplitudeDb": -0.917363003623759,
+            "expectedAmplitudeDb": -0.9151498112135024,
+            "integerLag": 0
+          },
+          {
+            "channel": 2,
+            "phaseDegrees": -0.10229546618054204,
+            "amplitudeDb": 0.8268351752048414,
+            "expectedAmplitudeDb": 0.8278537031645016,
+            "integerLag": 0
+          },
+          {
+            "channel": 3,
+            "phaseDegrees": 0.14961876661813553,
+            "amplitudeDb": -1.4076707041084837,
+            "expectedAmplitudeDb": -1.4116214857141456,
+            "integerLag": 0
+          },
+          {
+            "channel": 4,
+            "phaseDegrees": -0.21414948330826922,
+            "amplitudeDb": 0.42282807744970896,
+            "expectedAmplitudeDb": 0.42378598139876184,
+            "integerLag": 0
+          }
+        ]
+      },
+      "40": {
+        "frame": 1182,
+        "numerical": [
+          {
+            "channel": 1,
+            "phaseDegrees": 0.09545039332230766,
+            "amplitudeDb": -0.9098485310296245,
+            "expectedAmplitudeDb": -0.9151498112135024,
+            "integerLag": 0
+          },
+          {
+            "channel": 2,
+            "phaseDegrees": -0.07206924292134823,
+            "amplitudeDb": 0.8365214815529116,
+            "expectedAmplitudeDb": 0.8278537031645016,
+            "integerLag": 0
+          },
+          {
+            "channel": 3,
+            "phaseDegrees": 0.19136371443972044,
+            "amplitudeDb": -1.401709029914354,
+            "expectedAmplitudeDb": -1.4116214857141456,
+            "integerLag": 0
+          },
+          {
+            "channel": 4,
+            "phaseDegrees": -0.16747604371933342,
+            "amplitudeDb": 0.4241097461287918,
+            "expectedAmplitudeDb": 0.42378598139876184,
+            "integerLag": 0
+          }
+        ]
+      },
+      "50": {
+        "frame": 1469,
+        "numerical": [
+          {
+            "channel": 1,
+            "phaseDegrees": 0.09683559966459679,
+            "amplitudeDb": -0.9109889693278944,
+            "expectedAmplitudeDb": -0.9151498112135024,
+            "integerLag": 0
+          },
+          {
+            "channel": 2,
+            "phaseDegrees": -0.0805074322102363,
+            "amplitudeDb": 0.8300697016968426,
+            "expectedAmplitudeDb": 0.8278537031645016,
+            "integerLag": 0
+          },
+          {
+            "channel": 3,
+            "phaseDegrees": 0.19329585779305952,
+            "amplitudeDb": -1.4086624571333006,
+            "expectedAmplitudeDb": -1.4116214857141456,
+            "integerLag": 0
+          },
+          {
+            "channel": 4,
+            "phaseDegrees": -0.18423707654009494,
+            "amplitudeDb": 0.42137834188650386,
+            "expectedAmplitudeDb": 0.42378598139876184,
+            "integerLag": 0
+          }
+        ]
+      }
+    },
+    "rawAdcHeadroomGenerations": [
+      [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    ],
+    "coherentChannelGainsDb": [
+      19.7,
+      25.4,
+      22.9,
+      25.4,
+      22.9
+    ],
+    "coherentChannelGainMetadataFrame": 1746,
+    "ifVgaAuto": 11,
+    "ifVgaManualRestored": 8,
+    "lossReportedFailed": true,
+    "restartRetry": {
+      "case": "restart_retry",
+      "simulatedOnly": true,
+      "numerical": [
+        {
+          "channel": 1,
+          "phaseDegrees": 0.07026963895466108,
+          "amplitudeDb": -0.9054184905744266,
+          "expectedAmplitudeDb": -0.9151498112135024,
+          "integerLag": 0
+        },
+        {
+          "channel": 2,
+          "phaseDegrees": -0.09334969606226479,
+          "amplitudeDb": 0.8332325912881302,
+          "expectedAmplitudeDb": 0.8278537031645016,
+          "integerLag": 0
+        },
+        {
+          "channel": 3,
+          "phaseDegrees": 0.1891839974088795,
+          "amplitudeDb": -1.40861626915552,
+          "expectedAmplitudeDb": -1.4116214857141456,
+          "integerLag": 0
+        },
+        {
+          "channel": 4,
+          "phaseDegrees": -0.1754083022510598,
+          "amplitudeDb": 0.4267389287389788,
+          "expectedAmplitudeDb": 0.42378598139876184,
+          "integerLag": 0
+        }
+      ],
+      "explicitRestartRecovered": true,
+      "orderedShutdown": true,
+      "driverEvents": 496
+    },
+    "frames": 13414,
+    "delayedOldNoiseCallbacksRejected": true,
+    "orderedShutdown": true,
+    "driverEvents": 1867
+  }
+]

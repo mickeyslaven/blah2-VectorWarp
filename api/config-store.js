@@ -171,6 +171,30 @@ function writable(filename) {
   } catch (_) { return false; }
 }
 
+// v0.1.28 exposed "localhost" as the USRP profile's USB selector. UHD device
+// addresses are key=value maps, so an upgraded installation would otherwise
+// retain a value that the stricter validator correctly rejects. Migrate only
+// that exact released default, preserve all other operator settings, and keep
+// the normal atomic backup/ownership behavior.
+function migrateKnownDefaults(filename) {
+  let file;
+  try { file = fs.lstatSync(filename); }
+  catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+  if (!file.isFile() || file.isSymbolicLink() || file.size > 262144) return false;
+  let parsed;
+  try { parsed = yaml.load(fs.readFileSync(filename, 'utf8'), {schema: yaml.JSON_SCHEMA}); }
+  catch (_) { return false; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+      parsed.capture?.device?.type !== 'Usrp' ||
+      parsed.capture.device.address !== 'localhost') return false;
+  parsed.capture.device.address = 'type=b200';
+  writeConfigAtomically(filename, parsed);
+  return true;
+}
+
 function saveConfig(filename, candidate, expectedRevision) {
   const before = readConfig(filename);
   if (expectedRevision !== before.revision) {
@@ -203,4 +227,5 @@ function saveConfig(filename, candidate, expectedRevision) {
   return readConfig(filename);
 }
 
-module.exports = {readConfig, writable, saveConfig, setupDefaults};
+module.exports = {readConfig, writable, saveConfig, setupDefaults,
+  migrateKnownDefaults};

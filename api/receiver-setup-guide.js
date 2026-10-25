@@ -40,6 +40,10 @@ function receiverSetupGuide(receiver, helperExecutable, {platform = process.plat
     steps.push({text: 'Install UHD 4.1 or newer from the signed distribution repository when available. Review the proposed transaction. For older distributions, use the UHD source-build guide; do not replace system packages from an unreviewed repository.',
       link: 'https://github.com/EttusResearch/uhd/blob/master/host/docs/install.dox', label: 'Official UHD installation guide'});
   }
+  if (receiver.type === 'Usrp') {
+    steps.push({text: 'Before live B210 startup, install the firmware and FPGA images matching this UHD version with the distribution’s uhd_images_downloader, then reconnect the USB device so the UHD udev rule applies. A loadable library alone does not prove images or non-root device access.',
+      link: 'https://files.ettus.com/manual/page_images.html', label: 'Official UHD device-images guide'});
+  }
   steps.push({text: 'Save for later keeps a draft. Apply confirms supported settings and requests a processor restart. Then check processor status; software discovery does not verify RF, wiring, or calibration.'});
   return steps;
 }

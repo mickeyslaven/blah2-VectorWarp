@@ -270,6 +270,13 @@ exit 0
             self.assertRegex(install, rf"(?m)^\| .*{re.escape(system)}.*\|")
         self.assertNotRegex(install, r"(?m)^## Raspberry Pi")
         self.assertIn("### Raspberry Pi GPU", install)
+        marker = "## Limited platform: Raspberry Pi 4B"
+        self.assertIn(marker, install)
+        self.assertNotRegex(install.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
+
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn(marker, readme)
+        self.assertNotRegex(readme.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
 
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()

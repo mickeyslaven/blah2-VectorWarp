@@ -1,0 +1,150 @@
+diff --git a/heimdall_v2/src/core/ingest_timing.hpp b/heimdall_v2/src/core/ingest_timing.hpp
+new file mode 100644
+index 0000000..6a6b6bc
+--- /dev/null
++++ b/heimdall_v2/src/core/ingest_timing.hpp
+@@ -0,0 +1,51 @@
++#pragma once
++#include <cstdint>
++#include <ctime>
++#ifdef __linux__
++#include <sys/timex.h>
++#endif
++
++// Host receipt of USB data, never an ADC hardware UTC timestamp. Counters
++// describe reference-channel sample positions; calibration delay is not UTC.
++struct IngestTiming {
++    uint64_t first_sample = 0, transfer_sequence = 0, anchor_sample = 0;
++    uint64_t monotonic_ns = 0, tai_ns = 0, realtime_ns = 0;
++    uint64_t clock_read_span_ns = 0, system_maxerror_ns = 0;
++    uint32_t flags = 0;
++};
++
++inline uint64_t ingest_clock(clockid_t clock) {
++    timespec value{};
++    if (clock_gettime(clock, &value) != 0) return 0;
++    return uint64_t(value.tv_sec) * 1000000000ULL + uint64_t(value.tv_nsec);
++}
++
++inline IngestTiming observe_ingest(uint64_t sample, uint64_t transfer) {
++    IngestTiming result;
++    result.first_sample = sample;
++    result.transfer_sequence = transfer;
++    result.monotonic_ns = ingest_clock(CLOCK_MONOTONIC_RAW);
++    if (result.monotonic_ns) result.flags |= 1;
++    result.realtime_ns = ingest_clock(CLOCK_REALTIME);
++#ifdef __linux__
++    result.tai_ns = ingest_clock(CLOCK_TAI);
++    // Per-reader cache: querying kernel discipline every packet is unnecessary.
++    static thread_local timex discipline{};
++    static thread_local int discipline_state = TIME_ERROR;
++    if ((transfer & 127) == 0) {
++        discipline = {};
++        discipline_state = adjtimex(&discipline);
++    }
++    // CLOCK_TAI exists even when no kernel TAI offset has been installed.
++    if (result.tai_ns && discipline.tai > 0) result.flags |= 2;
++    else result.tai_ns = 0;
++    if (discipline_state >= 0 && discipline_state != TIME_ERROR &&
++            !(discipline.status & STA_UNSYNC)) {
++        result.flags |= 4;
++        result.system_maxerror_ns = uint64_t(discipline.maxerror) * 1000;
++    }
++#endif
++    const auto end = ingest_clock(CLOCK_MONOTONIC_RAW);
++    if (end >= result.monotonic_ns) result.clock_read_span_ns = end - result.monotonic_ns;
++    return result;
++}
+diff --git a/heimdall_v2/src/core/types.hpp b/heimdall_v2/src/core/types.hpp
+index 67768e7..6cb43cb 100644
+--- a/heimdall_v2/src/core/types.hpp
++++ b/heimdall_v2/src/core/types.hpp
+@@ -2,6 +2,7 @@
+ 
+ #include "config.hpp"  // Need this for NUM_DEVICES, BUFFER_SIZE, etc.
+ #include "atomic_complex.hpp"
++#include "ingest_timing.hpp"
+ #include <vector>
+ #include <complex>
+ #include <map>
+@@ -17,6 +18,7 @@
+ struct SampleBuffer : std::vector<uint8_t> {
+     using std::vector<uint8_t>::vector;
+     uint64_t acquisition_epoch = 0;
++    IngestTiming ingest_timing;
+ };
+ using Complex = std::complex<float>;
+ using ComplexBuffer = std::vector<Complex>;
+@@ -489,4 +491,4 @@ extern std::optional<PhaseCompensationData> phase_compensation;
+ extern std::mutex settings_mutex;
+ extern FFTProcessingControl fft_control;
+ extern PerBinCalibration per_bin_cal;
+-extern ForwardCompensation forward_comp;
+\ No newline at end of file
++extern ForwardCompensation forward_comp;
+diff --git a/heimdall_v2/src/net/tcp_data_server.hpp b/heimdall_v2/src/net/tcp_data_server.hpp
+index 7330451..af26048 100644
+--- a/heimdall_v2/src/net/tcp_data_server.hpp
++++ b/heimdall_v2/src/net/tcp_data_server.hpp
+@@ -24,8 +24,9 @@ public:
+     
+     bool start();
+     void stop();
+-    void broadcast_data(const std::vector<ComplexBuffer>& channel_data, uint32_t phase_state_value, uint32_t noise_source_active);
++    void broadcast_data(const std::vector<ComplexBuffer>& channel_data, uint32_t phase_state_value, uint32_t noise_source_active,
++                        const IngestTiming* timing = nullptr, uint64_t acquisition_epoch = 0);
+ 
+     // Live connected-client count for the status dashboard.
+     size_t client_count() { std::lock_guard<std::mutex> lk(clients_mutex); return clients.size(); }
+-};
+\ No newline at end of file
++};
+diff --git a/heimdall_v2/src/sdr/sdr_device.cpp b/heimdall_v2/src/sdr/sdr_device.cpp
+index cdf72fe..ef8077f 100644
+--- a/heimdall_v2/src/sdr/sdr_device.cpp
++++ b/heimdall_v2/src/sdr/sdr_device.cpp
+@@ -53,6 +53,9 @@ void AdcHeadroomCounters::observe(const unsigned char* samples, uint32_t count)
+ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
+     auto* sdr = static_cast<SDRDevice*>(ctx);
+     if (!sdr->running || !global_running) return;
++    auto ingest = observe_ingest(sdr->ingested_samples, sdr->transfer_sequence++);
++    sdr->ingested_samples += len / 2;
++    ingest.anchor_sample = sdr->ingested_samples;
+     // librtlsdr reports actual_length: a short completion loses channel alignment.
+     // Never pad it into an apparently valid frame or let it consume a queue slot.
+     if (!buf || len != NUM_SAMPLES * 2) {
+@@ -101,6 +104,7 @@ void rtlsdr_callback(unsigned char* buf, uint32_t len, void* ctx) {
+     const bool transition_before = capture_transition_active.load(std::memory_order_acquire);
+     const uint64_t epoch_before = acquisition_epoch.load(std::memory_order_acquire);
+     buffer.assign(buf, buf + len);
++    buffer.ingest_timing = ingest;
+     // Preserve callback order but tag transition/racing buffers invalid. Drain drops
+     // entire mixed sets, never one channel's block.
+     unsigned remaining = sdr->pending_transition_callbacks.load(std::memory_order_acquire);
+diff --git a/heimdall_v2/src/sdr/sdr_device.hpp b/heimdall_v2/src/sdr/sdr_device.hpp
+index ce83fee..504f658 100644
+--- a/heimdall_v2/src/sdr/sdr_device.hpp
++++ b/heimdall_v2/src/sdr/sdr_device.hpp
+@@ -40,6 +40,8 @@ struct SDRDevice {
+     // entered it). stop_pipeline_threads() re-sends the cancel until it is set.
+     std::atomic<bool> async_exited{true};
+     std::atomic<uint64_t> stream_epoch{0};
++    // Single USB-reader thread owns these counters, including discarded buffers.
++    uint64_t ingested_samples = 0, transfer_sequence = 0;
+     // Completed USB callbacks to quarantine after a hardware transition.
+     std::atomic<unsigned> pending_transition_callbacks{0};
+     std::atomic<size_t> l1_buffer_size{0}; // Track size atomically
+diff --git a/heimdall_v2/src/sdr/sdr_pipeline.cpp b/heimdall_v2/src/sdr/sdr_pipeline.cpp
+index 903d25c..127262c 100644
+--- a/heimdall_v2/src/sdr/sdr_pipeline.cpp
++++ b/heimdall_v2/src/sdr/sdr_pipeline.cpp
+@@ -564,7 +564,8 @@ void conversion_worker(const std::vector<std::unique_ptr<SDRDevice>>& devices,
+                 !acquisition_transition_barrier_ready()) {
+                 l2_buffer_pool.release(std::move(complex_samples));
+             } else {
+-                if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples, phase_state_value, noise_source_active);
++                if (tcp_data_server) tcp_data_server->broadcast_data(complex_samples, phase_state_value, noise_source_active,
++                    &raw_set.front().ingest_timing, raw_epoch);
+                 if (rtl_tcp_server)  rtl_tcp_server->broadcast_data(complex_samples);
+ 
+                 // Drop oldest if full - coherence-safe

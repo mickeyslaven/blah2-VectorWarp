@@ -24,6 +24,8 @@ var layout = {
   plot_bgcolor: "rgba(0,0,0,0)",
   paper_bgcolor: "rgba(0,0,0,0)",
   annotations: [],
+  // Preserve zoom/pan while live frames update through Plotly.update.
+  uirevision: 'vectorwarp-delay-doppler',
   displayModeBar: false,
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
@@ -85,7 +87,7 @@ function currentAdsbOverlay(enabled) {
   return adsbCache;
 }
 
-Plotly.newPlot('data', data, layout, config);
+Plotly.react('data', data, layout, config);
 
 // callback function
 var radarUpdates = startRadarPlot(urlMap, async function (data) {
@@ -170,7 +172,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   };
 
     var data_trace = [trace1, trace2, trace3];
-    await Plotly.newPlot('data', data_trace, layout, config);
+    await Plotly.react('data', data_trace, layout, config);
     gridSignature = gridKey;
   }
   // case update plot

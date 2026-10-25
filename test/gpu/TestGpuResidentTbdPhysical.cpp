@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <cstring>
 
 using namespace blah2::resident;
 
@@ -67,15 +68,55 @@ Config configuration(const char* device) {
   c.presence = wire::mandatoryPresence(c);
   return c;
 }
+struct ExactFrame {
+ std::vector<uint8_t> reference,maps,fused,detections,tracker;
+ double noise=0,maximum=0;
+};
+template<class T>std::vector<uint8_t> copyBytes(const T* p,size_t n){
+ const auto* bytes=reinterpret_cast<const uint8_t*>(p);return n?std::vector<uint8_t>(bytes,bytes+n*sizeof(T)):std::vector<uint8_t>{};}
+void snapshotParity(const char* device,const blah2::GpuProcessOptions& options){
+ namespace rr=blah2::resident_replay;unsigned frames=0;
+ for(auto mode:{FusionMode::coherentRegularPolygon,FusionMode::noiseWhitenedRegularPolygon})
+ for(uint32_t cpis:{1u,2u,4u,8u}){
+  std::vector<ExactFrame> baseline;
+  for(bool exporting:{false,true}){
+   auto c=configuration(device);c.detector.integrationCpis=cpis;c.fusion.mode=mode;
+   c.detector.pfa=.6/double(c.fusion.beams);c.reference.analysisInterval=2;
+   if(cpis<=2){c.detector.integrationMotionBins=0;c.detector.integrationBeamTolerance=UINT32_MAX;
+    c.tracker.trackGuidedShadow=c.tracker.trackGuidedPromote=false;c.tracker.trackGuidedShadowMaxTracks=0;c.bearing={};}
+   if(exporting){c.replay.maxBytes=rr::byteLimit;c.replay.maxFrames=9;c.replay.frequencyHz=c.fusion.frequencyHz;
+    c.replay.configuredPfa=.6;c.replay.sourceHash.fill(0x33);c.replay.rfHash.fill(0x44);
+    c.replay.actualGainDb.assign(c.geometry.channels,29.7);}
+   c.presence=wire::mandatoryPresence(c);auto session=createProcess(c,options);
+   for(uint64_t frame=1;frame<=9;++frame){auto input=session->input();
+    for(size_t i=0;i<input.size;++i){const double phase=.017*double(i)+.031*double(frame)+.11*double(i%5);input.data[i]={std::cos(phase),std::sin(phase)};}
+    session->begin({frame,frame,1000+frame});session->receiveReferenceReady();const auto o=session->receivePrepared();
+    ExactFrame current{copyBytes(o.referenceCheckpoint.data,o.referenceCheckpoint.size),
+     copyBytes(o.maps.data,o.maps.size),copyBytes(o.fused.data,o.fused.size),
+     copyBytes(o.detections.data,o.detections.size),copyBytes(o.trackerCheckpoint.data,o.trackerCheckpoint.size),o.noise,o.maxPower};
+    if(exporting){const auto& prior=baseline.at(size_t(frame-1));
+     if(current.reference!=prior.reference||current.maps!=prior.maps||current.fused!=prior.fused||
+      current.detections!=prior.detections||current.tracker!=prior.tracker||current.noise!=prior.noise||current.maximum!=prior.maximum)
+      throw std::runtime_error("Replay opt-in changed exact native output");}
+    else baseline.push_back(std::move(current));
+    session->commit(o.trackerToken);session->published();
+    if(exporting){const auto snapshot=session->snapshot();if(snapshot.size()!=rr::requiredBytes(c))throw std::runtime_error("Native snapshot size differs");}
+    ++frames;
+   }
+  }
+ }
+ std::cout<<"GPU_RESIDENT_REPLAY_PHYSICAL_PASS frames="<<frames<<" cpis=1,2,4,8 whitening=off,on exact=1\n";
+}
 }
 
 int main(int argc, char** argv) try {
-  if (argc != 3) throw std::invalid_argument(
-    "usage: testGpuResidentTbdPhysical WORKER DEVICE_ID");
+  if (argc != 3 && !(argc==4&&std::string(argv[3])=="--snapshot-parity")) throw std::invalid_argument(
+    "usage: testGpuResidentTbdPhysical WORKER DEVICE_ID [--snapshot-parity]");
   blah2::GpuProcessOptions options;
   options.executable = argv[1];
   options.startupMs = 60000;
   options.frameMs = 10000;
+  if(argc==4){snapshotParity(argv[2],options);return 0;}
   auto session = createProcess(configuration(argv[2]), options);
   bool sawActiveTracker = false;
   for (uint64_t frame = 1; frame <= 9; ++frame) {

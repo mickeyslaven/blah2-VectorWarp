@@ -6,8 +6,9 @@ const {Worker, isMainThread, parentPort, workerData} = require('worker_threads')
 
 const LIMITS = Object.freeze({maxChannels: 16, maxPacketSamples: 262144,
   minCaptureSeconds: .25, maxCaptureSeconds: .5, maxTimeoutMs: 15000,
-  maxFrameBytes: 32 + 16 * 8 + 16 * 262144 * 2});
+  maxFrameBytes: 32 + 96 + 16 * 8 + 16 * 262144 * 2});
 const MAGIC = 0x4d434851;
+const {timingBytes, validateTiming} = require('./heimdall-timing');
 const CENTER = 127.5;
 const SETTLE_MAX_ATTEMPTS = 16;
 const SETTLE_RETRY_DELAY_MS = 1000;
@@ -112,7 +113,7 @@ function packetMetrics(payload, channelCount, samples) {
 
 function decodeHeader(buffer, descriptor, firstHeader) {
   const channels = buffer.readUInt32BE(4), samples = buffer.readUInt32BE(8);
-  if (buffer.readUInt32BE(0) !== MAGIC || channels < 1 || channels > LIMITS.maxChannels ||
+  if (![MAGIC, 0x4d434854].includes(buffer.readUInt32BE(0)) || channels < 1 || channels > LIMITS.maxChannels ||
       samples < 1 || samples > LIMITS.maxPacketSamples)
     throw probeError('PROTOCOL', 'Malformed or oversized MCHQ frame.');
   if (channels !== descriptor.channelCount)
@@ -129,7 +130,7 @@ function decodeHeader(buffer, descriptor, firstHeader) {
   if (firstHeader && (frequencyChangeCounter !== firstHeader.frequencyChangeCounter ||
       groupIndex !== firstHeader.groupIndex))
     throw probeError('MISMATCH', 'MCHQ frequency counter or channel group changed during the probe.');
-  return {channels, samples, frequencyChangeCounter, groupIndex,
+  return {channels, samples, frequencyChangeCounter, groupIndex, timingBytes: timingBytes(buffer.readUInt32BE(0)),
     phaseState, noiseSource: noise === 1, uncalibrated: phaseState !== 4 || noise !== 0};
 }
 
@@ -153,7 +154,7 @@ function capture(descriptor, options, connect, signal) {
     const targetSamples = Math.ceil(descriptor.sampleRateHz * options.captureSeconds);
     const histograms = newHistograms(descriptor.channelCount);
     // A single bounded assembly buffer; never concatenate queued TCP chunks.
-    const maxBufferedBytes = 32 + descriptor.channelCount * 8 +
+    const maxBufferedBytes = 32 + 96 + descriptor.channelCount * 8 +
       descriptor.channelCount * LIMITS.maxPacketSamples * 2;
     const buffer = Buffer.allocUnsafe(maxBufferedBytes);
     let socket, timer, settled = false, filled = 0, needed = 32, stage = 'header';
@@ -202,9 +203,10 @@ function capture(descriptor, options, connect, signal) {
           if (filled < needed) continue;
           if (stage === 'header') {
             header = decodeHeader(buffer, descriptor, firstHeader);
-            needed = 32 + header.channels * 8; stage = 'metadata';
+            needed = 32 + header.channels * 8 + header.timingBytes; stage = 'metadata';
           } else if (stage === 'metadata') {
             validateMetadata(buffer, descriptor);
+            validateTiming(buffer.subarray(0, needed), header.channels);
             // Check the whole requested tuple before classifying an ordinary
             // calibration transition as retryable by waitForGainSettled.
             if (header.uncalibrated) {
@@ -219,7 +221,7 @@ function capture(descriptor, options, connect, signal) {
             needed += header.channels * header.samples * 2; stage = 'payload';
           } else {
             const take = Math.min(header.samples, targetSamples - samples);
-            addPayload(histograms, buffer.subarray(32 + header.channels * 8, needed), header.samples, take);
+            addPayload(histograms, buffer.subarray(32 + header.channels * 8 + header.timingBytes, needed), header.samples, take);
             firstHeader ??= header;
             samples += take; ++packets;
             if (samples >= targetSamples) finish();

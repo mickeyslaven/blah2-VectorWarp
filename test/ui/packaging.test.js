@@ -11,6 +11,7 @@ const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const packageScript = read('script/package-native.sh');
 const releaseInstaller = read('script/install-release.sh');
+const nativeInstaller = read('script/install-native.sh');
 const buildScript = read('script/build-native.sh');
 const debPostinst = read('packaging/deb/postinst');
 const debPrerm = read('packaging/deb/prerm');
@@ -55,6 +56,13 @@ assert.match(packageScript, /published packages require all receiver support in 
 assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
 assert.match(packageScript, /published package receiver manifest is incomplete/);
 assert.match(packageScript, /"test_only": %s/);
+assert.match(packageScript, /BUILD-RECEIPT\.json/);
+assert.match(read('script/artifact-source-commit.sh'), /artifact source commit does not match packaging source checkout/);
+assert.match(packageScript, /current\/BUILD-RECEIPT\.json/);
+assert.match(buildScript, /source_commit=%s/);
+assert.match(packageScript, /sourceCommit/);
+assert.match(packageScript, /artifact-source-commit\.sh" "\$ARTIFACT" "\$SOURCE_DIR"/);
+assert.match(read('script/artifact-source-commit.sh'), /git -C "\$source_dir" rev-parse HEAD/);
 assert.match(packageScript, /TEST-ONLY package includes Kraken, USRP and dual HackRF/);
 assert.match(packageScript, /local RSPduo source kit/);
 assert.match(buildScript, /open-test\)/);
@@ -118,7 +126,18 @@ assert.match(packageScript, /Debian 13 Trixie/);
 assert.match(packageScript, /Fedora 44/);
 assert.match(packageScript, /artifact was not built natively on this exact distribution and architecture/);
 assert.match(packageScript, /dpkg-shlibdeps/);
+assert.match(packageScript, /Depends: %s, uhd-host, systemd/,
+  'Debian-family packages need UHD host tools and the vendor udev rule, not only libuhd.');
 assert.match(packageScript, /rpmbuild/);
+assert.match(rpmSpec, /^Requires:\s+uhd-firmware$/m,
+  'Fedora packages need the matching B210 firmware image subpackage.');
+assert.match(rpmSpec, /usermod --append --groups usrp vectorwarp/,
+  'Fedora UHD grants B210 device nodes to the usrp group; the processor account must join it.');
+assert.match(rpmSpec, /systemd-sysusers \/usr\/lib\/sysusers\.d\/uhd\.conf/,
+  'Fedora package setup must not depend on UHD sysusers transaction ordering.');
+assert.match(nativeInstaller,
+  /\$RECEIVER_TYPES == \*Usrp\* && \$TARGET_DISTRO == fedora[\s\S]*usermod --append --groups usrp vectorwarp/,
+  'A direct Fedora source install needs the same official UHD device-node group.');
 assert.match(packageScript, /dpkg-deb --build --root-owner-group/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Package/);
 assert.match(packageScript, /dpkg-deb -f "\$WORK_DIR\/\$ASSET" Version/);
@@ -203,8 +222,14 @@ const packageJob = JSON.parse(workflowCheck.stdout).jobs.package;
 const prPackageSteps = packageJob.steps.filter(step => /PR verification/.test(step.name || ''));
 const trustedPackageSteps = packageJob.steps.filter(step =>
   /github\.event_name != 'pull_request'/.test(step.if || '') && /Build native/.test(step.name || ''));
+const isolatedPackageSteps = [...prPackageSteps, ...trustedPackageSteps]
+  .filter(step => /podman run/.test(step.run || ''));
 assert.equal(prPackageSteps.length, 3, 'PRs must smoke Debian, Debian-family, and Fedora package groups');
 assert.equal(trustedPackageSteps.length, 3, 'Trusted builds retain all three package groups');
+assert.equal(isolatedPackageSteps.length, 4, 'Both PR and trusted builds retain Debian-family and Fedora isolation');
+assert.equal(isolatedPackageSteps.filter(step =>
+  /git config --global --add safe\.directory \/src/.test(step.run || '')).length, 4,
+  'every root container must trust only the mounted source checkout before binding artifact provenance');
 assert.equal(prPackageSteps.filter(step => /--backend all/.test(step.run || '') &&
   /smoke-native-package\.sh --package/.test(step.run || '') &&
   !/--test-only/.test(step.run || '')).length, 3,
@@ -290,7 +315,14 @@ for (const os of ['Ubuntu', 'Debian', 'Fedora', 'DragonOS'])
     assert.deepEqual(row.architectures, expected,
       `${os} ${row.versions.join(', ')} must use its documented public architecture labels`);
   }
-const piRow = readmeRows.find(row => row.os === 'Raspberry Pi OS');
+assert.equal(readmeRows.some(row => row.os === 'Raspberry Pi OS'), false,
+  'Raspberry Pi OS must not appear in the primary supported-systems table');
+const limitedPiMarker = '## Limited platform: Raspberry Pi 4B';
+const readme = read('README.md');
+assert.equal(readme.split(limitedPiMarker).length, 2,
+  'README must contain exactly one bottom-level limited Pi platform section');
+const piRow = supportRows(readme.split(limitedPiMarker, 2)[1])
+  .find(row => row.os === 'Raspberry Pi OS');
 assert.deepEqual(piRow?.architectures, [architectureLabels.arm64]);
 assert.deepEqual(piRow.versions, ['Bookworm', '64-bit']);
 assert.match(piRow.package,

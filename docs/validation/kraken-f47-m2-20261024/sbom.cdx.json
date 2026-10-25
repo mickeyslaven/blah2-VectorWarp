@@ -1,0 +1,75 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "components": [
+    {
+      "type": "library",
+      "name": "suite",
+      "version": "f47ed2fb48ab5dba888b7d45fd08c9745ae22199",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "f8a875dfff025ad83b62fa4edb362bf46aa5d580566a9976c258db56a1b6a3d6"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://codeload.github.com/krakenrf/krakensdr_suite/tar.gz/f47ed2fb48ab5dba888b7d45fd08c9745ae22199"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rtlsdr",
+      "version": "578b43ddd971786e84e2a6ab3c338ee48c8739c3",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3683e33424b668224988acc367cf9b4c458d0765a5dfb7532db640de73e20614"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://codeload.github.com/krakenrf/librtlsdr/tar.gz/578b43ddd971786e84e2a6ab3c338ee48c8739c3"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uwebsockets",
+      "version": "3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "8b51c1457bfd873e44f72f6660d9aef6672eeb1c62739522a242e6904fff8356"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://codeload.github.com/uNetworking/uWebSockets/tar.gz/3ffd6f44c9c3c92c96345d9f96bd01ba9c025ab5"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "usockets",
+      "version": "86097c490263ab662d62e8e7b541390bdec7d149",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0d341b94157720d9081d47348a8cba87ae350b6607c2f7d2ccf102353cbda553"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://codeload.github.com/uNetworking/uSockets/tar.gz/86097c490263ab662d62e8e7b541390bdec7d149"
+        }
+      ]
+    }
+  ]
+}

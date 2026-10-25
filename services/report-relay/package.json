@@ -1,0 +1,14 @@
+{
+  "name": "vectorwarp-report-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "test:live-pathways": "node script/live-pathway-smoke.mjs",
+    "deploy": "npx wrangler@latest deploy"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

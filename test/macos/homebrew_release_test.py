@@ -97,6 +97,25 @@ class HomebrewReleaseTest(unittest.TestCase):
                 result = self.command("--output-tap-dir", str(self.root / "forbidden"), check=False)
                 self.assertNotEqual(result.returncode, 0)
 
+    def test_only_the_public_report_relay_service_is_allowed(self):
+        output = self.root / "report-relay"
+        self.write_archive("services/report-relay/src/index.js", b"export default {};\n")
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+        for forbidden in (
+            "services/other-service/index.js",
+            "services/report-relay/.dev.vars",
+            "services/report-relay/.env",
+            "services/report-relay/.wrangler/state.json",
+            "services/report-relay/node_modules/package/index.js",
+            "services/report-relay/private/key.txt",
+            "services/report-relay/secrets/token.txt",
+        ):
+            with self.subTest(path=forbidden):
+                self.write_archive(forbidden)
+                result = self.command("--output-tap-dir", str(self.root / "forbidden-service"), check=False)
+                self.assertNotEqual(result.returncode, 0)
+
     def test_rejects_unpinned_urls_private_members_and_bad_revision(self):
         for bad_url in ("file:///tmp/source.tar.gz", URL.replace("https://", "http://"),
                         URL.replace(COMMIT, "main"), URL + "?x=1"):

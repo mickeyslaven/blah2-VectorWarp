@@ -30,6 +30,16 @@ def run(*args):
     return result.stdout.strip()
 
 
+def run_as_vectorwarp(*args):
+    """Match systemd's service identity transition without opening a PAM session."""
+    identity = pwd.getpwnam('vectorwarp')
+    return run(
+        'setpriv', '--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+        '--reuid', str(identity.pw_uid), '--regid', str(identity.pw_gid),
+        '--init-groups', '--reset-env', '/usr/bin/python3', '-I',
+        '/tmp/service_account_exec.py', 'vectorwarp', *args)
+
+
 def property_of(unit, name):
     return run('systemctl', 'show', '-p', name, '--value', unit)
 
@@ -293,8 +303,8 @@ assert 'version=' in run('vectorwarp', 'version')
 # Help and version are deliberately usable by a non-administrator. Exercise
 # the package-installed executable under its real service account, rather than
 # proving only the source launcher permits those commands.
-assert 'Usage: vectorwarp' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '-h')
-assert 'version=' in run('runuser', '-u', 'vectorwarp', '--', 'vectorwarp', '--version')
+assert 'Usage: vectorwarp' in run_as_vectorwarp('/usr/bin/vectorwarp', '-h')
+assert 'version=' in run_as_vectorwarp('/usr/bin/vectorwarp', '--version')
 
 if sys.argv[2:] == ['--running-replay']:
     ready_replay(0)

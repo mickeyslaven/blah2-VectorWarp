@@ -47,7 +47,10 @@ case "$package" in
     as_root apt-get --yes install "$package" ;;
   *.rpm)
     command -v dnf >/dev/null || die 'dnf is required for an RPM smoke test'
-    as_root dnf --assumeyes install "$package" ;;
+    as_root dnf --assumeyes install "$package"
+    id -nG vectorwarp | tr ' ' '\n' | grep -Fxq usrp ||
+      die 'Fedora processor account cannot access official UHD device nodes'
+    ;;
   *) die 'package must end in .deb or .rpm' ;;
 esac
 
@@ -77,6 +80,7 @@ receiver_types=$(sed -n 's/^Environment="BLAH2_RECEIVER_TYPES=\(.*\)"$/\1/p' \
 [[ -n $receiver_types ]] || die 'installed API service lacks receiver-type build metadata'
 metadata=/opt/vectorwarp/PACKAGE-METADATA
 [[ -f $metadata ]] || die 'installed package lacks backend metadata'
+[[ -f /opt/vectorwarp/current/BUILD-RECEIPT.json ]] || die 'installed package lacks its build receipt'
 metadata_field() {
   local field=$1 value count
   count=$(grep -c "^${field}=" "$metadata" || true)
@@ -136,6 +140,16 @@ for _ in $(seq 1 300); do
 done
 curl --fail --silent --show-error http://127.0.0.1:39080/api/system/status >/dev/null || {
   die 'package-local API did not become ready'; }
+curl --fail --silent --show-error http://127.0.0.1:39080/api/system/status |
+  EXPECTED_VERSION="$(metadata_field version)" EXPECTED_COMMIT="$(metadata_field source_commit)" \
+  EXPECTED_PACKAGE="${package##*.}" "$node" -e '
+  let body=""; process.stdin.on("data", data => { body += data; });
+  process.stdin.on("end", () => {
+    const value = JSON.parse(body), build = value.build;
+    if (build?.version !== process.env.EXPECTED_VERSION || build?.commit !== process.env.EXPECTED_COMMIT ||
+        build?.package !== process.env.EXPECTED_PACKAGE) process.exit(1);
+  });
+' || die 'packaged API did not expose its exact installed build receipt'
 curl --fail --silent --show-error http://127.0.0.1:39080/api/config/capabilities | "$node" -e '
   let body=""; process.stdin.on("data", data => { body += data; });
   process.stdin.on("end", () => {

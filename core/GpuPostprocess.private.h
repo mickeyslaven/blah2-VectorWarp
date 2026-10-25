@@ -19,6 +19,7 @@ struct PostprocessConfig {
  std::vector<int32_t> delayAxis;
  std::vector<double> dopplerAxis;
  uint64_t epoch=0;
+ bool replaySnapshot=false;
 };
 struct PostprocessDetection { double delay=0,doppler=0,snr=0,delayKm=0; };
 static_assert(sizeof(PostprocessDetection)==32,"Postprocess record layout changed");
@@ -433,14 +434,26 @@ void main(){uint i=indexOf();if(i>=(p.a==0u?m[11]:m[14])||m[0]!=0u)return;uint c
  atomicAdd(m[p.a==0u?13u:(p.a==1u?16u:17u)],1u);
 }
 )glsl";
-inline std::vector<std::pair<std::string,std::string>> shaderSources(){
+inline std::vector<std::pair<std::string,std::string>> shaderSources(bool replaySnapshot=false){
  const std::pair<const char*,const char*> bodies[]={{"levels",levelsBody},{"metrics",metricsBody},{"display",displayBody},{"cfar",cfarBody},{"centroid",centroidBody},{"interpolation",interpolationBody},{"compact",compactBody},{"records",recordsBody},{"compact_prefix",compactPrefixBody},{"compact_scatter",compactScatterBody},{"tbd",tbdBody},{"advance",advanceBody},{"refine",refineBody},{"metrics_finish",metricsFinishBody}};
  std::vector<std::pair<std::string,std::string>> result;
  for(const auto& b:bodies){std::string prefix=common;
   if(std::string(b.first)=="tbd"){const auto at=prefix.find("layout(local_size_x=128)");
    if(at==std::string::npos)throw std::logic_error("TBD local size declaration missing");
    prefix.replace(at,std::string("layout(local_size_x=128)").size(),"layout(local_size_x=64)");}
-  result.emplace_back(b.first,prefix+b.second);}
+  std::string body=b.second;
+  if(replaySnapshot&&std::string(b.first)=="cfar"){
+   prefix+="layout(binding=9) buffer ReplayStatistics { double replayStatistics[]; };\n";
+   const auto replace=[&](const std::string& before,const std::string& after){const auto at=body.find(before);
+    if(at==std::string::npos)throw std::logic_error("Replay CFAR observer seam changed");
+    body.replace(at,before.size(),after);};
+   replace("if(p.b!=0u)","uint replayAt=5u*((p.a==0u?0u:p.a-1u)*m[34]+i);double missing=packDouble2x32(uvec2(0u,0x7ff80000u));replayStatistics[replayAt]=missing;replayStatistics[replayAt+1u]=missing;replayStatistics[replayAt+2u]=missing;replayStatistics[replayAt+3u]=missing;replayStatistics[replayAt+4u]=0.0LF;if(p.b!=0u)");
+   replace("train=train/double(n);","double replaySum=train;train=train/double(n);");
+   replace("if(p.a==0u&&m[74]==2u&&m[28]==0u)return;",
+    "replayStatistics[replayAt]=cut;replayStatistics[replayAt+1u]=train;replayStatistics[replayAt+2u]=replaySum;replayStatistics[replayAt+3u]=threshold;replayStatistics[replayAt+4u]=1.0LF;if(p.a==0u&&m[74]==2u&&m[28]==0u){replayStatistics[replayAt+4u]=5.0LF;return;}");
+   replace("if(cut>threshold){","if(cut>threshold){replayStatistics[replayAt+4u]=3.0LF;");
+  }
+  result.emplace_back(b.first,prefix+body);}
  return result;
 }
 // Shared by the production seam and test-local binding of these same kernels.
@@ -465,6 +478,7 @@ class Stage {
  std::unique_ptr<Buffer> integration_;
  std::unique_ptr<Buffer> currentPower_,angleHistory_;
  std::unique_ptr<Buffer> tbdBanks_;
+ std::unique_ptr<Buffer> replayStatistics_;
  std::unique_ptr<gpu_native::Timestamps> timestamps_;
  std::vector<std::unique_ptr<Kernel>> kernels_;
  uint32_t expectedTrainingAdds_=0;
@@ -620,16 +634,23 @@ public:
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   if(tbd)tbdBanks_=std::make_unique<Buffer>(context,uint64_t(layout_.cells)*(banks+1u)*8,
    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  if(config.replaySnapshot)replayStatistics_=std::make_unique<Buffer>(context,
+   uint64_t(layout_.cells)*detectorPasses*40,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
   timestamps_=std::make_unique<gpu_native::Timestamps>(context);
   Buffer* bankBinding=tbd?tbdBanks_.get():currentPower_.get();
   Buffer* mapBinding=tbd?channelMaps:&fused_;
   Buffer* weightBinding=tbd?refinementWeights:currentPower_.get();
-  for(const auto& source:shaderSources())kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),std::vector<Buffer*>{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding,angleHistory_.get()}));
+  std::vector<Buffer*> bindings{metadata_.get(),&fused_,&scratch_,integration_.get(),currentPower_.get(),bankBinding,mapBinding,weightBinding,angleHistory_.get()};
+  if(replayStatistics_)bindings.push_back(replayStatistics_.get());
+  for(const auto& source:shaderSources(config.replaySnapshot))kernels_.push_back(std::make_unique<Kernel>(context,source.second.c_str(),bindings));
  }
  const Layout& scratchLayout()const{return layout_;}
  Buffer& metadataBuffer(){return *metadata_;} // Tracker reads final count before diagnostic reconstruction.
  Buffer& integrationBuffer(){return *integration_;} // Rolling power history; remains device resident.
  Buffer& currentPowerBuffer(){return *currentPower_;} // Current CPI power map; remains device resident.
+ Buffer& angleHistoryBuffer(){return *angleHistory_;}
+ Buffer* temporalBanksBuffer(){return tbdBanks_.get();}
+ Buffer* replayStatisticsBuffer(){return replayStatistics_.get();}
  void append(VkCommandBuffer command){
   const bool tbd=config_.integrationCpis>2;
   const uint32_t banks=tbd?track_before_detect::bankCount(config_.integrationCpis):0;

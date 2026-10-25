@@ -109,6 +109,7 @@ esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
 for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
+  bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
   api/server.js html/index.html config-examples/config-kraken.yml; do
@@ -129,6 +130,7 @@ build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
 compiled_receivers=$(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 local_build_receivers=$(sed -n 's/^local_build_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 artifact_test_only=$(sed -n 's/^test_only=//p' "$ARTIFACT/.vectorwarp-build")
+SOURCE_COMMIT=$(bash "$SOURCE_DIR/script/artifact-source-commit.sh" "$ARTIFACT" "$SOURCE_DIR")
 if $TEST_ONLY; then
   [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
     die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
@@ -139,6 +141,8 @@ else
   [[ -f $ARTIFACT/receiver-source/rspduo/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-sdrplay.py ]] ||
     die 'published package artifact is missing the local RSPduo source kit or helper'
 fi
+[[ -f $ARTIFACT/receiver-source/kraken/kit.json && -x $ARTIFACT/libexec/vectorwarp-build-kraken.py ]] ||
+  die 'release artifact lacks the pinned local Kraken source kit'
 [[ $gpu == AUTO ]] || die 'published packages require the CPU plus Vulkan AUTO build'
 [[ $build_os_id == "${ID:-}" && $build_os_version == "${VERSION_ID:-}" && $build_arch == "$(uname -m)" ]] ||
   die 'artifact was not built natively on this exact distribution and architecture'
@@ -196,6 +200,16 @@ STAGE="$WORK_DIR/root"
 run mkdir -p "$STAGE"
 run "$SOURCE_DIR/script/install-native.sh" --artifact "$ARTIFACT" --destdir "$STAGE" --target-distro "$DISTRO_NAME"
 
+# Upstream Suite supplies no repository-wide binary redistribution grant. The
+# package ships only our pinned download/build instructions and patches. Apply
+# this to test packages too so lifecycle tests exercise the published layout.
+run rm -f "$STAGE/opt/vectorwarp/current/bin/heimdall"
+run rm -rf "$STAGE/opt/vectorwarp/current/lib/kraken" "$STAGE/opt/vectorwarp/current/share/heimdall"
+run install -d -m 0755 "$STAGE/opt/vectorwarp/current/share/heimdall"
+for helper in service.py controller.py; do
+  run install -m 0644 "$ARTIFACT/share/heimdall/$helper" "$STAGE/opt/vectorwarp/current/share/heimdall/$helper"
+done
+
 NODE_TARGET="$STAGE/opt/vectorwarp/runtime/node"
 run install -d -m 0755 "$NODE_TARGET/bin"
 run install -m 0755 "$NODE_RUNTIME/bin/node" "$NODE_TARGET/bin/node"
@@ -203,6 +217,8 @@ run install -m 0644 "$NODE_RUNTIME/LICENSE" "$NODE_TARGET/LICENSE"
 
 # The source/native installer intentionally uses the administrator's system
 # Node. Binary release packages instead use the verified private runtime.
+sed -i 's|--node /usr/bin/node|--node /opt/vectorwarp/runtime/node/bin/node|' \
+  "$STAGE/usr/lib/systemd/system/vectorwarp-heimdall.service"
 sed -i 's|ExecStart=/usr/bin/node |ExecStart=/opt/vectorwarp/runtime/node/bin/node |' \
   "$STAGE/usr/lib/systemd/system/vectorwarp-api.service" \
   "$STAGE/usr/lib/systemd/system/vectorwarp-health-watchdog.service" \
@@ -257,10 +273,12 @@ for helper in vectorwarp-health-watchdog.js vectorwarp-config-guard.js; do
     die "packaged $unit points into the removed release libexec directory"
 done
 
-printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
-  "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
+printf 'package=vectorwarp\nversion=%s\nsource_commit=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
+  "$VERSION" "$SOURCE_COMMIT" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
   "$backend" "$compiled_receivers" "$local_build_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
+printf '{"schema":1,"version":"%s","sourceCommit":"%s","package":"%s"}\n' \
+  "$VERSION" "$SOURCE_COMMIT" "$FORMAT" >"$STAGE/opt/vectorwarp/current/BUILD-RECEIPT.json"
 
 install -m 0755 "$SOURCE_DIR/packaging/activate-upgrade" "$STAGE/opt/vectorwarp/libexec/vectorwarp-activate-upgrade"
 
@@ -295,7 +313,7 @@ if [[ $FORMAT == deb ]]; then
   [[ -n $shlibs && $shlibs != "$shlibs_output" ]] || die 'could not derive Debian runtime dependencies'
   installed_size=$(du -sk "$STAGE" | awk '{print $1}')
   if $TEST_ONLY; then package_summary='Test-only package: Kraken, USRP and dual HackRF adapters; no RSPduo adapter.'; else package_summary='One package includes Kraken, USRP and dual HackRF adapters plus a local RSPduo source kit. RSPduo requires the separately installed SDRplay API and an explicit local build.'; fi
-  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, systemd, sudo, python3, python3-apt, passwd, util-linux, g++, binutils\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Fresh installation never starts radar.\n' \
+  printf 'Package: vectorwarp\nVersion: %s-%s\nArchitecture: %s\nMaintainer: Mickey Slaven <mickeyslaven@gmail.com>\nInstalled-Size: %s\nDepends: %s, uhd-host, systemd, sudo, python3, python3-apt, passwd, util-linux, g++, binutils, cmake, ninja-build, make, git, pkg-config, libeigen3-dev, libusb-1.0-0-dev, libssl-dev, zlib1g-dev, ca-certificates\nSection: hamradio\nPriority: optional\nHomepage: https://github.com/mickeyslaven/blah2-VectorWarp\nDescription: Native passive-radar processor and web interface\n %s Fresh installation never starts radar.\n' \
     "$VERSION" "$PACKAGE_RELEASE" "$DEB_ARCH" "$installed_size" "$shlibs" "$package_summary" >"$CONTROL/control"
   printf '/etc/vectorwarp/config.yml\n/etc/sudoers.d/vectorwarp\n' >"$CONTROL/conffiles"
   if [[ -f $STAGE/etc/vectorwarp-management/receivers.json ]]; then

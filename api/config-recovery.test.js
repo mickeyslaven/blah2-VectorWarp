@@ -8,7 +8,7 @@ const http = require('http');
 const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
-const {readConfig, saveConfig, writable} = require('./config-store');
+const {readConfig, saveConfig, writable, migrateKnownDefaults} = require('./config-store');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-recovery-'));
 const file = path.join(dir, 'config.yml');
 
@@ -52,6 +52,26 @@ function availablePort(usedPorts) {
       if (name !== 'config-hackrf.yml') assert.equal(shipped.setupRequired, false,
         `${name} should be a complete first-run example`);
     }
+    const legacyUsrp = yaml.load(fs.readFileSync(
+      path.join(__dirname, '..', 'config', 'config-usrp.yml'), 'utf8'));
+    legacyUsrp.capture.device.address = 'localhost';
+    fs.writeFileSync(file, yaml.dump(legacyUsrp), {mode: 0o640});
+    assert.equal(readConfig(file).validation.valid, false,
+      'the public validator must continue rejecting a bare UHD hostname');
+    assert.equal(migrateKnownDefaults(file), true);
+    assert.equal(yaml.load(fs.readFileSync(file, 'utf8')).capture.device.address,
+      'type=b200');
+    assert.equal(yaml.load(fs.readFileSync(`${file}.bak`, 'utf8')).capture.device.address,
+      'localhost');
+    assert.equal(fs.statSync(file).mode & 0o777, 0o640);
+    assert.equal(readConfig(file).validation.valid, true);
+    assert.equal(migrateKnownDefaults(file), false,
+      'the migration must be one-shot and leave current selectors untouched');
+    legacyUsrp.capture.device.address = 'addr=192.168.10.2';
+    fs.writeFileSync(file, yaml.dump(legacyUsrp));
+    assert.equal(migrateKnownDefaults(file), false,
+      'an operator-selected network USRP address must never be rewritten');
+    fs.unlinkSync(file);
     const missing = readConfig(file);
     assert.equal(missing.setupRequired, true);
     assert.equal(writable(file), true);

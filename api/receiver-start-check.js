@@ -3,6 +3,22 @@
 const {readConfig} = require('./config-store');
 const {createReceiverJournal} = require('./receiver-journal');
 const {createKrakenControlClient} = require('./receiver-sync');
+const fs = require('fs');
+const {execFileSync} = require('child_process');
+
+function verifyBundledLocalOwner(config, {read = fs.readFileSync, execute = execFileSync} = {}) {
+  const endpoint = config.capture?.device?.heimdall;
+  if (endpoint?.host !== '127.0.0.1') return;
+  const unit = 'vectorwarp-heimdall.service';
+  execute('/usr/bin/systemctl', ['is-active', '--quiet', unit], {timeout: 3000});
+  const pid = Number(execute('/usr/bin/systemctl', ['show', '--property=MainPID', '--value', unit],
+    {encoding: 'utf8', timeout: 3000}));
+  const ready = JSON.parse(read('/run/vectorwarp-heimdall/ready.json', 'utf8'));
+  if (!Number.isSafeInteger(pid) || pid <= 0 || ready.pid !== pid || ready.status !== 'ready' ||
+      ready.bindHost !== '127.0.0.1' || ready.dataPort !== endpoint.port ||
+      ready.controlPort !== (endpoint.control_port ?? 8092))
+    throw new Error('Local Kraken is not owned by this VectorWarp bundled receiver service.');
+}
 
 // EX_CONFIG: startup is intentionally blocked until receiver state/configuration
 // changes.  The systemd unit treats this differently from a processor crash.
@@ -21,6 +37,8 @@ async function checkReceiverStart(filename, options = {}) {
     throw new Error('Receiver settings are pending or unresolved. Open Settings and Apply them before starting live processing.');
   let receipt = null;
   if (document.config.capture?.device?.type === 'Kraken') {
+    if (process.env.VECTORWARP_LINUX_SERVICE === '1')
+      (options.verifyBundledOwner || verifyBundledLocalOwner)(document.config);
     const client = options.client || createKrakenControlClient();
     receipt = await client.verify(document.config);
   }
@@ -39,4 +57,4 @@ if (require.main === module) {
     process.exitCode = RECEIVER_START_BLOCKED_EXIT_STATUS;
   });
 }
-module.exports = {checkReceiverStart, RECEIVER_START_BLOCKED_EXIT_STATUS};
+module.exports = {checkReceiverStart, verifyBundledLocalOwner, RECEIVER_START_BLOCKED_EXIT_STATUS};

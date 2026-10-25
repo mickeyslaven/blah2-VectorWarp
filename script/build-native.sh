@@ -243,6 +243,11 @@ fi
 if [[ $GPU != OFF ]]; then cmake_args+=("-DVKFFT_ROOT=$DEPS_DIR/VkFFT"); fi
 run "${cmake_args[@]}"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
+run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
+run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
+run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
+run python3 "$SOURCE_DIR/script/stage-kraken-kit.py" --source "$SOURCE_DIR" \
+  --output "$ARTIFACT_TMP/receiver-source/kraken"
 run rm -f "$ARTIFACT_TMP/bin/testAcceleration" "$ARTIFACT_TMP/bin/testAccelerationFallback"
 
 run cp -a "$SOURCE_DIR/api" "$ARTIFACT_TMP/api"
@@ -307,10 +312,11 @@ if [[ $LOCAL_BUILD_RSPDUO == ON && $DRY_RUN == false ]]; then
     --generated "$CMAKE_DIR/receiver-generated" --core "$ARTIFACT_TMP/bin/libblah2-capture-core.so.1" \
     --output "$ARTIFACT_TMP/receiver-source/rspduo"
 fi
-if [[ $LOCAL_BUILD_RSPDUO == ON && -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
+if [[ -f $SOURCE_DIR/script/vectorwarp-build-sdrplay.py ]]; then
   run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-sdrplay.py" \
     "$ARTIFACT_TMP/libexec/vectorwarp-build-sdrplay.py"
 fi
+run install -m 0755 "$SOURCE_DIR/script/vectorwarp-build-kraken.py" "$ARTIFACT_TMP/libexec/vectorwarp-build-kraken.py"
 run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
@@ -329,7 +335,9 @@ if ! $DRY_RUN; then
   done
   [[ -f $ARTIFACT_TMP/api/server.js && -f $ARTIFACT_TMP/html/index.html ]] ||
     die 'API/UI artifact is incomplete'
-  revision=$(git -C "$SOURCE_DIR" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)
+  source_commit=$(git -C "$SOURCE_DIR" rev-parse HEAD 2>/dev/null || printf unknown)
+  [[ $source_commit =~ ^[0-9a-f]{40}$ ]] || die 'could not bind artifact to an exact source commit'
+  revision=${source_commit:0:12}
   build_id="$(date -u +%Y%m%dT%H%M%SZ)-$revision"
   build_os_id=unknown
   build_os_version=unknown
@@ -337,8 +345,8 @@ if ! $DRY_RUN; then
     build_os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"' | head -n 1)
     build_os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"' | head -n 1)
   fi
-  printf 'build_id=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
-    "$build_id" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
+  printf 'build_id=%s\nsource_commit=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\ngpu=%s\nbuild_os_id=%s\nbuild_os_version=%s\nbuild_arch=%s\nvcpkg_commit=%s\nvkfft_commit=%s\n' \
+    "$build_id" "$source_commit" "$BACKEND" "$COMPILED_RECEIVERS" "$LOCAL_BUILD_RECEIVERS" "$TEST_ONLY" "$GPU" "$build_os_id" "$build_os_version" "$BUILD_ARCH" \
     "$VCPKG_COMMIT" "$VKFFT_COMMIT" >"$ARTIFACT_TMP/.vectorwarp-build"
   rm -rf "$ARTIFACT"
   mv "$ARTIFACT_TMP" "$ARTIFACT"

@@ -57,6 +57,10 @@ void set_bias_tee_all_devices(bool enabled, int) {
     noise_on = enabled;
     if (!enabled) ++noise_off_calls;
 }
+// f47ed2f finishes an upstream fast-retune drag from the watchdog before
+// evaluating coherence. The oracle isolates timeout/latch behavior, so model
+// that new dependency as a side-effect-free driver completion.
+void finish_fast_retunes(int, const char*, bool) {}
 void recover_coherence(bool forced) {
     ++recovery_calls;
     forced_seen = forced_seen || forced;

@@ -85,10 +85,13 @@ jobs:
           NODE_PATH: ${{ github.workspace }}/api/node_modules
         run: |
           npm ci --prefix api --ignore-scripts --no-audit --no-fund
+          node --test api/heimdall-timing.test.js
+          python3 test/packaging/test_bundled_kraken.py -v
           VECTORWARP_LAUNCHER_TEST_API="$PWD/api" VECTORWARP_LAUNCHER_TEST_NODE="$(command -v node)" python3 test/packaging/test_launcher.py -v
           npm test --prefix api
           npm run test:receiver-management --prefix api
           npm run test:dom --prefix api
+          npm test --prefix services/report-relay
           node test/ui/deployment.test.js
       - name: Exercise real unprivileged broker requests with NoNewPrivileges
         run: |
@@ -168,6 +171,11 @@ jobs:
         run: python3 test/kraken/test_linux_simulator.py -v
       - name: Compile exact pinned native driver and prepare isolated simulation
         run: python3 test/kraken/build_linux_simulator.py --output-dir build/kraken-linux-prepared --jobs 2
+      - name: Build the production companion without opening hardware
+        run: |
+          sudo apt-get install --yes --no-install-recommends ninja-build
+          python3 script/build-kraken.py --output-dir build/kraken-bundled --jobs 2 --test
+          python3 test/packaging/test_bundled_kraken.py -v
       - name: Exercise native loopback protocol and calibration with simulated samples
         run: |
           python3 test/macos/kraken/native_simulation_test.py \

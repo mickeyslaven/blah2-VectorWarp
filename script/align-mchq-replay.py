@@ -80,11 +80,15 @@ def main():
             if len(fixed) != 32:
                 raise ValueError("truncated MCHQ header")
             magic, frame_channels, samples, *_ = struct.unpack(">8I", fixed)
-            if magic != 0x4D434851 or frame_channels != channels:
+            if magic not in (0x4D434851, 0x4D434854) or frame_channels != channels:
                 raise ValueError("invalid or changing MCHQ stream")
             channel_metadata = source.read(channels * 8)
             if len(channel_metadata) != channels * 8:
                 raise ValueError("truncated MCHQ metadata")
+            if magic == 0x4D434854:
+                timing = source.read(96)
+                if len(timing) != 96 or struct.unpack('>II', timing[:8]) != (1, 96):
+                    raise ValueError('Unsupported Heimdall timing extension')
             metadata_values = struct.unpack(f"<{channels * 2}f", channel_metadata)
             frequencies = np.asarray(metadata_values[0::2], dtype=np.float64)
             gains = np.asarray(metadata_values[1::2], dtype=np.float64)

@@ -60,12 +60,16 @@ def iter_mchq(path):
                 raise ValueError("truncated MCHQ header")
             magic, channels, samples, phase, noise, counter, group, retune = struct.unpack(
                 ">8I", header)
-            if magic != MAGIC or not 1 <= channels <= 16 or not samples:
+            if magic not in (MAGIC, 0x4D434854) or not 1 <= channels <= 16 or not samples:
                 raise ValueError("malformed MCHQ header")
             metadata = struct.unpack("<" + "f" * (channels * 2),
                                      read_exact(stream, channels * 8))
             frequencies = metadata[::2]
             gains = metadata[1::2]
+            if magic == 0x4D434854:
+                timing = read_exact(stream, 96)
+                if struct.unpack('>II', timing[:8]) != (1, 96):
+                    raise ValueError('Unsupported Heimdall timing extension')
             raw = np.frombuffer(read_exact(stream, channels * samples * 2), dtype=np.uint8)
             raw = raw.reshape(channels, samples, 2)
             yield ({"channels": channels, "samples": samples, "phase": phase,

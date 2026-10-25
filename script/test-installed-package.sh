@@ -102,6 +102,7 @@ if [[ $format == deb ]]; then
 else
   podman exec "$container" dnf --assumeyes --setopt=install_weak_deps=False install /tmp/package.rpm >"$evidence/install.log" 2>&1
 fi
+podman cp "$source_root/test/packaging/service_account_exec.py" "$container:/tmp/service_account_exec.py"
 podman cp "$source_root/test/packaging/installed_reinstall_test.py" "$container:/tmp/installed_reinstall_test.py"
 podman exec "$container" python3 /tmp/installed_reinstall_test.py "/tmp/package.$format" >"$evidence/reinstall.log" 2>&1
 podman cp "$source_root/test/packaging/sdrplay_child_setup_test.py" "$container:/tmp/sdrplay_child_setup_test.py"
@@ -128,6 +129,12 @@ podman exec "$container" python3 /tmp/installed_reinstall_test.py "/tmp/package.
 podman exec "$container" systemctl stop vectorwarp-processor.service
 # This tests the actual installed processor and shared libraries with synthetic
 # IQ and loopback sinks. It is not a live receiver or detection-accuracy claim.
-podman exec "$container" runuser -u vectorwarp -- python3 /tmp/processor_replay_test.py \
+# Do not open a PAM session here: Fedora UHD deliberately gives @usrp rtprio 99,
+# which pam_limits cannot grant inside this capability-bounded test container.
+# systemd service identities do not use PAM; the helper verifies the exact
+# UID/GID/supplementary groups and zero capability sets before exec.
+podman exec "$container" setpriv --bounding-set=-all --inh-caps=-all --ambient-caps=-all \
+  --reuid=vectorwarp --regid=vectorwarp --init-groups --reset-env \
+  /usr/bin/python3 -I /tmp/service_account_exec.py vectorwarp /usr/bin/python3 /tmp/processor_replay_test.py \
   --binary /opt/vectorwarp/current/bin/blah2 >"$evidence/processor-replay.log" 2>&1
 printf 'Installed service, browser, and synthetic processor tests passed: %s\n' "$package"

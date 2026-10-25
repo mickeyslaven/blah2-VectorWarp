@@ -1,0 +1,24 @@
+[Unit]
+Description=VectorWarp bundled coherent Kraken receiver
+Before=vectorwarp-processor.service
+PartOf=vectorwarp-processor.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=vectorwarp
+Group=vectorwarp
+SupplementaryGroups=vectorwarp-config
+RuntimeDirectory=vectorwarp-heimdall
+RuntimeDirectoryMode=0700
+WorkingDirectory=/run/vectorwarp-heimdall
+ExecCondition=/usr/bin/python3 -I @PREFIX@/current/share/heimdall/service.py check --root @PREFIX@/current --config @SYSCONFDIR@/config.yml --node /usr/bin/node
+ExecStart=/usr/bin/python3 -I @PREFIX@/current/share/heimdall/service.py run --root @PREFIX@/current --config @SYSCONFDIR@/config.yml --node /usr/bin/node
+TimeoutStartSec=75
+TimeoutStopSec=15
+KillMode=control-group
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/vectorwarp-heimdall

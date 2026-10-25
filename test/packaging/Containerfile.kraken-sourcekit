@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+RUN dnf -y --setopt=install_weak_deps=False install systemd dbus-daemon python3 git gcc-c++ cmake ninja-build make pkgconf-pkg-config eigen3-devel libusb1-devel openssl-devel zlib-devel binutils ca-certificates util-linux && dnf clean all
+RUN systemctl enable dbus-daemon.service
+ENV container=podman
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

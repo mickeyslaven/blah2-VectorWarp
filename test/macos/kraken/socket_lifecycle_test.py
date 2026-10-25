@@ -151,6 +151,16 @@ constexpr size_t MAX_DATA_CLIENTS=8, MAX_CONTROL_CLIENTS=8;
 #define select(...) fake_select(__VA_ARGS__)
 #define accept(...) fake_accept(__VA_ARGS__)
 #define send(...) fake_send(__VA_ARGS__)
+#define sock_socket(...) fake_socket(__VA_ARGS__)
+#define sock_close(...) fake_close(__VA_ARGS__)
+#define sock_bind(...) fake_bind(__VA_ARGS__)
+#define sock_listen(...) fake_listen(__VA_ARGS__)
+#define sock_select(...) fake_select(__VA_ARGS__)
+#define sock_accept(...) fake_accept(__VA_ARGS__)
+#define sock_send(...) fake_send(__VA_ARGS__)
+#define sock_setsockopt(...) fake_setsockopt(__VA_ARGS__)
+#define sock_fits_fd_set(fd,count) ((fd) >= 0 && (fd) < FD_SETSIZE)
+#define sock_set_keepalive(fd,idle,interval,count) ((void)0)
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
