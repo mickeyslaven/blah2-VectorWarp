@@ -73,17 +73,36 @@ function optionsFromConfig(config) {
   };
 }
 
-function validTruthSelectedExports(exports, jobBinding) {
+function validTruthSelectedExports(exports, jobBinding, job = null) {
   if (!Array.isArray(exports) || !exports.length) return false;
+  if (job) {
+    const expected = new Set(job.captures.flatMap(capture => job.experiment.dwell_seconds.map(
+      dwell => `${capture.capture_id}\0${dwell}s-production`)));
+    if (exports.length !== expected.size || exports.some(value =>
+      !expected.delete(`${value?.selection?.capture_id}\0${value?.selection?.arm}`)) || expected.size) return false;
+  }
   return exports.every(value => {
-    if (!value || value.schema !== 'vectorwarp-truth-selected-shadow-export-v1' ||
+    if (!value || value.schema !== 'vectorwarp-truth-selected-shadow-export-v2' ||
         value.shadow_only !== true || value.decision_grade !== false ||
         value.production_promotion_allowed !== false || value.production_unchanged !== true ||
         value.selection?.basis !== 'geometry-eligible-truth-cut-only' ||
         value.selection?.cfar_or_beam_selection_used !== false ||
         value.provenance?.job_binding_sha256 !== jobBinding ||
+        value.provenance?.native_recorder !== 'ResidentReplaySnapshot-v1' ||
+        value.provenance?.native_contract_verified !== true ||
+        value.provenance?.hardware_qualified !== false ||
+        value.provenance?.time_mapping !== 'admitted-source-sample-midpoints' ||
         !Array.isArray(value.multi_cpi_history) || value.multi_cpi_history.length < 3 ||
-        !value.covariance_whitening || !/^[a-f0-9]{64}$/.test(value.export_sha256 || '')) return false;
+        value.multi_cpi_history.length > 8 ||
+        value.covariance_whitening?.state !== 'native-resident-settled-snapshot' ||
+        value.covariance_whitening?.estimated_from_cut !== false ||
+        !value.multi_cpi_history.every(frame => frame?.native_snapshot?.native_contract_verified === true &&
+          /^[a-f0-9]{64}$/.test(frame.native_snapshot.sha256 || '') &&
+          typeof frame.native_snapshot.path === 'string' &&
+          frame.covariance_whitening?.state === 'native-resident-settled-snapshot' &&
+          Array.isArray(frame.target_cut?.physical_channels) && frame.target_cut.physical_channels.length > 0 &&
+          Array.isArray(frame.target_cut?.beam_powers) && frame.target_cut.beam_powers.length > 0) ||
+        !/^[a-f0-9]{64}$/.test(value.export_sha256 || '')) return false;
     const unsigned = {...value}; delete unsigned.export_sha256;
     return digestCanonical(unsigned) === value.export_sha256;
   });
@@ -153,7 +172,8 @@ class IntegrationShadowQueue {
             !crypto.timingSafeEqual(Buffer.from(expectedTag, 'hex'), Buffer.from(suppliedTag, 'hex')) ||
             result.job_binding_sha256 !== job.job_binding_sha256 ||
             result.timing_policy !== job.timing_policy ||
-            result.decision_grade !== job.decision_grade ||
+            result.decision_grade !== false || result.hardware_qualified !== false ||
+            result.timing_decision_grade !== job.decision_grade ||
             result.production_promotion_allowed !== false ||
             result.input?.recording_sha256 !== job.identity?.recording_sha256 ||
             result.input?.native_sidecar_sha256 !== job.identity?.native_sidecar_sha256 ||
@@ -161,7 +181,7 @@ class IntegrationShadowQueue {
             result.input?.config_sha256 !== job.identity?.config_sha256 ||
             result.input?.native_identity_sha256 !== job.identity?.native_identity_sha256 ||
             digestCanonical(result.input?.native_identity) !== job.identity?.native_identity_sha256 ||
-            !validTruthSelectedExports(result.truth_selected_exports, job.job_binding_sha256) ||
+            !validTruthSelectedExports(result.truth_selected_exports, job.job_binding_sha256, job) ||
             !result.arms || typeof result.arms !== 'object' ||
             !result.summary || result.summary.selection_performed !== false)
           throw new Error('result receipt contract failed');
@@ -248,6 +268,10 @@ class IntegrationShadowQueue {
         const result = row.result;
         return {job_id: result.job_id, state: result.state, completed_at: result.completed_at,
           timing: result.timing, winner: result.summary?.winner || null,
+          native_export_count: result.truth_selected_exports.length,
+          hardware_qualified: result.hardware_qualified,
+          decision_grade: result.decision_grade, timing_policy: result.timing_policy,
+          qualification_gate: result.qualification_gate,
           production_unchanged: result.production_unchanged === true};
       }
       return {file: row.name, state: 'invalid', error: row.error};
@@ -299,6 +323,13 @@ class IntegrationShadowQueue {
         throw new Error('integration shadow native metadata has incompatible RF/gain identity');
       const exactTiming = captures.every(([, item]) =>
         item.processor_cpis.every(cpi => cpi.exact_event_time === true));
+      if (![metadata.epoch, metadata.firstEpochSample, metadata.endEpochSample].every(Number.isSafeInteger) ||
+          metadata.epoch <= 0 || metadata.firstEpochSample < 0 || metadata.endEpochSample <= metadata.firstEpochSample ||
+          captures.some(([, item]) => item.processor_cpis.some(cpi => !Number.isFinite(cpi.timestamp_ms) ||
+            cpi.epoch !== metadata.epoch || !Number.isSafeInteger(cpi.first_epoch_sample) ||
+            !Number.isSafeInteger(cpi.end_epoch_sample) || cpi.first_epoch_sample < metadata.firstEpochSample ||
+            cpi.end_epoch_sample > metadata.endEpochSample || cpi.end_epoch_sample <= cpi.first_epoch_sample)))
+        throw new Error('native shadow export requires timestamped admitted source sample ranges');
       for (const [, item] of captures) if (item.processor_cpis.some(cpi => !cpi.exact_event_time)) {
         const checked = validateProcessorSampleRanges(item, metadata);
         if (!checked.valid || checked.processor_cpis.length !== item.processor_cpis.length)

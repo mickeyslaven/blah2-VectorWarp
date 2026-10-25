@@ -138,6 +138,10 @@ target_include_directories(testResidentReplaySnapshot PRIVATE ${PROJECT_ROOT}/sr
 target_link_libraries(testResidentReplaySnapshot PRIVATE blah2GpuResidentProcess)
 add_test(NAME residentReplaySnapshotCpuContract COMMAND testResidentReplaySnapshot)
 set_tests_properties(residentReplaySnapshotCpuContract PROPERTIES TIMEOUT 10)
+add_test(NAME residentReplayEvidenceBridge COMMAND ${Python3_EXECUTABLE}
+  ${PROJECT_ROOT}/test/script/test_resident_replay_evidence.py
+  $<TARGET_FILE:testResidentReplaySnapshot> $<TARGET_FILE:blah2ReplayVerify>)
+set_tests_properties(residentReplayEvidenceBridge PROPERTIES TIMEOUT 30)
 if(TARGET blah2GpuResidentVulkan)
   add_executable(testResidentReplayShaders ${PROJECT_ROOT}/test/gpu/TestResidentReplayShaders.cpp)
   target_compile_features(testResidentReplayShaders PRIVATE cxx_std_17)

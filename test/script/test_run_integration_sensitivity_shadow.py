@@ -117,15 +117,18 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                                                        "beams": 1}}}
         config_path = root / "config.json"; config_path.write_text(json.dumps(config))
         native = {"schema": "vectorwarp-kraken-iq-clip-v1", "frequency": 527000000,
-                  "sampleRate": 2400000, "channels": 2, "channelGains": [2.7, 1.4]}
+                  "sampleRate": 2400000, "channels": 2, "channelGains": [2.7, 1.4],
+                  "epoch": 1, "firstEpochSample": 0, "endEpochSample": 720000}
         native_path = Path(f"{recording}.json"); native_path.write_text(json.dumps(native))
         native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
         truth = [{"timestamp_ms": 1000, "delay_km": 10, "doppler_hz": 20},
                  {"timestamp_ms": 1100, "delay_km": 10.1, "doppler_hz": 20},
                  {"timestamp_ms": 1200, "delay_km": 10.2, "doppler_hz": 20}]
-        cpis = [{"exact_event_time": True}] * 3
+        cpis = [{"exact_event_time": True, "epoch": 1, "timestamp_ms": 1000 + 100 * index,
+                 "first_epoch_sample": index * 240000, "end_epoch_sample": (index + 1) * 240000}
+                for index in range(3)]
         if provisional:
-            native.update(epoch=1, firstEpochSample=0, endEpochSample=30)
+            native.update(epoch=1, firstEpochSample=0, endEpochSample=720000)
             native_path.write_text(json.dumps(native))
             native_sha = hashlib.sha256(native_path.read_bytes()).hexdigest()
             for row in truth:
@@ -134,7 +137,8 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                 "event_time_source": "kraken_heimdall_host_arrival_estimate",
                 "event_time_uncertainty_s": 1,
                 "event_time_uncertainty_model": "bounded-configured-nuisance-radius",
-                "epoch": 1, "first_epoch_sample": index * 10, "end_epoch_sample": (index + 1) * 10,
+                "timestamp_ms": 1000 + 100 * index,
+                "epoch": 1, "first_epoch_sample": index * 240000, "end_epoch_sample": (index + 1) * 240000,
                 "max_raw_observation_offset_s": 0, "truth_bracket_span_ms": 0}
                 for index in range(3)]
         admission = {"schema": "vectorwarp-capture-admission-v1", "state": "admitted",
@@ -169,24 +173,36 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
                               "max_wall_seconds_per_clip": 30}, "captures": []}
         job["job_binding_sha256"] = MODULE.canonical_digest(job)
         original_harness, original_run = MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm
+        original_snapshot = MODULE.NATIVE.Snapshot
         MODULE.REPLAY.load_harness = lambda _: object()
-        def native_cutout(timestamp):
-            return {"timestamp": timestamp, "delay_km": [9.9, 10, 10.1],
-                    "doppler_hz": [19, 20, 21], "reference_weights": [[1, 0], [1, 0]],
-                    "pilot_reference": [1, 0], "channels": [
-                        [[[1 + row + column, 0] for column in range(3)] for row in range(3)],
-                        [[[2 + row + column, 0] for column in range(3)] for row in range(3)]]}
-        MODULE.REPLAY.run_arm = lambda *args, **kwargs: {"detections": [
-            {"timestamp": 1000, "delay": [], "doppler": [], "snr": []}], "tracks": [],
-            "complex_cutouts": [native_cutout(at) for at in (1000, 1100, 1200)]}
+        def replay(*args, **kwargs):
+            assert kwargs["preserve_production"] is True
+            return {"detections": [{"timestamp": 999999, "delay": [], "doppler": [], "snr": [],
+                "eventTime": {"epoch": "1", "firstSample": "0", "endSample": "240000"}}],
+                "tracks": [], "resident_snapshots": [{"frame": index} for index in (1, 2, 3)]}
+        class Snapshot:
+            def __init__(self, receipt, request, config):
+                assert request["source_sha256"] == recording_sha
+                assert request["rf_sha256"] == identity["native_identity_sha256"]
+                self.frame, self.samples = receipt["frame"], 240000
+            def export(self, timestamp, truth):
+                return {"timestamp_ms": timestamp, "truth": truth,
+                    "target_cut": {"physical_channels": [[1, 0], [2, 0]], "beam_powers": [4]},
+                    "nuisance_cells": [{"physical_channels": [[3, 0], [4, 0]]}]}
+        MODULE.REPLAY.run_arm = replay
+        MODULE.NATIVE.Snapshot = Snapshot
         try:
             result = MODULE.run(job, config_path, root / "processor", root / "harness",
-                                acceleration="cpu", receipt_key=receipt_key)
+                                acceleration="gpu-resident", receipt_key=receipt_key,
+                                evidence_dir=root / "native-evidence")
         finally:
             MODULE.REPLAY.load_harness, MODULE.REPLAY.run_arm = original_harness, original_run
+            MODULE.NATIVE.Snapshot = original_snapshot
         assert result["summary"]["selection_performed"] is False
         assert result["timing_policy"] == ("provisional" if provisional else "exact")
-        assert result["decision_grade"] is not provisional
+        assert result["decision_grade"] is False
+        assert result["timing_decision_grade"] is not provisional
+        assert result["hardware_qualified"] is False
         assert result["production_promotion_allowed"] is False
         assert result["input"]["applied_channel_gains_db"] == [2.7, 1.4]
         assert result["input"]["native_identity_sha256"] == identity["native_identity_sha256"]
@@ -195,7 +211,9 @@ def test_run_binds_config_admission_and_native_metadata(provisional=False):
         assert exported["selection"]["cfar_or_beam_selection_used"] is False
         assert len(exported["multi_cpi_history"]) == 3
         assert len(exported["multi_cpi_history"][0]["target_cut"]["physical_channels"]) == 2
-        assert len(exported["multi_cpi_history"][0]["target_cut"]["beam_responses"]) == 1
+        assert len(exported["multi_cpi_history"][0]["target_cut"]["beam_powers"]) == 1
+        assert exported["multi_cpi_history"][0]["timestamp_ms"] == 1000
+        assert result["arms"]["0.1s"]["production"]["targets"]["one"]["frames"] == 1
         assert exported["multi_cpi_history"][0]["nuisance_cells"]
         assert result["result_binding_sha256"] == MODULE.canonical_digest(
             {key: value for key, value in result.items()
