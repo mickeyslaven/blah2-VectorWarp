@@ -147,6 +147,8 @@ function validateNativeShadowManifoldRow(row, {resolveKey} = {}) {
     Buffer.from(auth.mac, 'hex'), Buffer.from(hmac(key, {...without(row, 'authentication'),
       row_sha256: row.row_sha256}), 'hex')))
     throw new Error('Shadow corpus authentication failed');
+  const channels = row.configuration?.channels, clock = row.sample_clock || {}, covariance = row.covariance || {};
+  const controls = row.local_control_cells;
   if (!['detected', 'miss', 'subthreshold'].includes(row.pass?.label) ||
       typeof row.pass?.id !== 'string' || !row.pass.id || typeof row.pass?.icao !== 'string' || !row.pass.icao ||
       typeof row.epoch_id !== 'string' || !row.epoch_id || !finite(row.truth?.local_azimuth_deg) ||
@@ -154,15 +156,27 @@ function validateNativeShadowManifoldRow(row, {resolveKey} = {}) {
       row.truth?.provenance !== 'adsb' || typeof row.configuration?.config_fingerprint !== 'string' ||
       !finite(row.configuration?.frequency_hz) || row.configuration.frequency_hz <= 0 ||
       !finite(row.configuration?.sample_rate_hz) || row.configuration.sample_rate_hz <= 0 ||
-      !Number.isInteger(row.configuration?.channels) || row.configuration.channels < 2 ||
-      !finiteVector(row.configuration.actual_channel_gains_db, row.configuration.channels) ||
-      !Array.isArray(row.configuration.channel_mapping) || row.configuration.channel_mapping.length !== row.configuration.channels ||
-      row.sample_clock?.epoch_id !== row.epoch_id || row.sample_clock?.admitted !== true ||
+      !Number.isInteger(channels) || channels < 2 || channels > 8 ||
+      !finiteVector(row.configuration.actual_channel_gains_db, channels) ||
+      !Array.isArray(row.configuration.channel_mapping) || row.configuration.channel_mapping.length !== channels ||
+      row.configuration.channel_mapping.some(v => !Number.isInteger(v) || v < 0) || new Set(row.configuration.channel_mapping).size !== channels ||
+      clock.epoch_id !== row.epoch_id || clock.admitted !== true || !clock.source_epoch ||
+      !Number.isSafeInteger(clock.sample_start ?? clock.first_epoch_sample) || !Number.isSafeInteger(clock.sample_end ?? clock.end_epoch_sample) ||
+      !finite(clock.source_sample_midpoint) || !finite(clock.timestamp_ms) || clock.timestamp_ms < 0 ||
+      !Array.isArray(row.source_snapshots) || !row.source_snapshots.length || row.source_snapshots.some(s =>
+        s?.epoch_id !== row.epoch_id || !sha256(s.sha256) || !sha256(s.raw_iq_sha256) || !sha256(s.source_sha256) || !sha256(s.rf_sha256) || !sha256(s.native_config_sha256) || !sha256(s.native_module_sha256) || !sha256(s.native_device_sha256)) ||
+      covariance.epoch_id !== row.epoch_id || !sha256(covariance.sha256) || !complexMatrix(covariance.matrix, channels) ||
+      !hermitianPositiveDiagonal(covariance.matrix) || covariance.sha256 !== canonicalHash(covariance.matrix) ||
       row.usage?.adsb !== 'truth-validation-only' || row.usage?.shadow !== 'training-only' ||
       !sha256(row.native_export_sha256) || !sha256(row.raw_iq_sha256) ||
-      !Array.isArray(row.physical_iq_cut) || !Array.isArray(row.reference_weights) ||
-      !Array.isArray(row.actual_fusion_weights) ||
+      !row.source_snapshots.some(s => s.raw_iq_sha256 === row.raw_iq_sha256) ||
+      !complexVector(row.physical_iq_cut, channels) || !(Math.hypot(...row.physical_iq_cut.flat()) > 1e-12) ||
+      !complexVector(row.reference_weights, channels) || !(Math.hypot(...row.reference_weights.flat()) > 1e-12) ||
+      !complexBank(row.actual_fusion_weights, channels) ||
       row.weight_provenance !== 'native-coherent-fusion-weights' ||
+      row.detector?.scope !== 'native-cfar-before-centroid' || !Array.isArray(row.detector.statistics) || !row.detector.statistics.length ||
+      !Array.isArray(controls) || controls.length > 24 || row.local_control_scope !== 'nearby physical CUTs; not certified target-free CFAR training' ||
+      new Set(controls.map(c => c?.id)).size !== controls.length || controls.some(c => !c?.id || c.id === row.target_cut_id || !complexVector(c.physical_channels, channels)) ||
       row.previous_row_sha256 !== null && !sha256(row.previous_row_sha256))
     throw new Error('Shadow corpus row violates the training-only native evidence contract');
   return row;
@@ -209,27 +223,33 @@ function deriveNativeShadowManifoldRow(nativeExport, {resolveKey, signingKey, ke
     sample_clock: source.sample_clock, source_snapshots: source.source_snapshots,
     covariance: source.covariance, raw_iq_sha256: source.target_cut.raw_iq_sha256,
     physical_iq_cut: source.target_cut.physical_channels, reference_weights: source.reference_weights,
-    actual_fusion_weights: source.actual_fusion_weights, weight_provenance: source.weight_provenance,
+    actual_fusion_weights: source.actual_fusion_weights, weight_provenance: source.weight_provenance, detector: source.detector,
     target_cut_id: source.target_cut.id,
-    ...(controls ? {local_control_cells: controls, local_control_scope: source.local_control_scope} : {})};
+    local_control_cells: controls || [], local_control_scope: source.local_control_scope || 'nearby physical CUTs; not certified target-free CFAR training'};
   return signDerived(row, signingKey, keyId);
 }
 
 function appendNativeShadowRow(filename, row, options = {}) {
-  const existing = readNativeShadowLedger(filename, options);
-  const previous = existing.tail_sha256;
-  if (row.previous_row_sha256 !== previous) throw new Error('Append-only corpus predecessor does not match ledger');
-  validateNativeShadowManifoldRow(row, options);
+  return appendNativeShadowRows(filename, [row], options).at(-1);
+}
+function appendNativeShadowRows(filename, rows, options = {}) {
+  if (!Array.isArray(rows) || !rows.length) return [];
+  const lock = `${filename}.lock`; let lockFd;
+  try {
+    lockFd = fs.openSync(lock, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW, 0o600);
+    const existing = readNativeShadowLedger(filename, options); let previous = existing.tail_sha256;
+    if (existing.rows.length + rows.length > 20000) throw new Error('Native shadow ledger exceeds row bound');
+    const payload = rows.map(row => { if (row.previous_row_sha256 !== previous) throw new Error('Append-only corpus predecessor does not match ledger'); validateNativeShadowManifoldRow(row, options); previous = row.row_sha256; return `${JSON.stringify(row)}\n`; }).join('');
+    const oldBytes = fs.existsSync(filename) ? fs.statSync(filename).size : 0;
+    if (oldBytes + Buffer.byteLength(payload) > 64 * 1024 * 1024) throw new Error('Native shadow ledger exceeds byte bound');
   // Canonical form is for signatures only. Persist ordinary JSON so the next
   // process sees numbers rather than canonical f64 wrapper objects.
-  const fd = fs.openSync(filename, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT |
+    const fd = fs.openSync(filename, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT |
     fs.constants.O_NOFOLLOW, 0o600);
-  try {
-    fs.writeSync(fd, `${JSON.stringify(row)}\n`, null, 'utf8');
-    if (fs.fstatSync(fd).size > 64 * 1024 * 1024) throw new Error('Native shadow ledger exceeds byte bound');
-  } finally { fs.closeSync(fd); }
-  return row.row_sha256;
+    try { fs.writeSync(fd, payload, null, 'utf8'); } finally { fs.closeSync(fd); }
+    return rows.map(row => row.row_sha256);
+  } finally { if (lockFd !== undefined) fs.closeSync(lockFd); try { fs.unlinkSync(lock); } catch (_) {} }
 }
 
 module.exports = {canonical, canonicalHash, validateNativeTruthExport, deriveNativeShadowManifoldRow,
-  validateNativeShadowManifoldRow, readNativeShadowLedger, appendNativeShadowRow};
+  validateNativeShadowManifoldRow, readNativeShadowLedger, appendNativeShadowRow, appendNativeShadowRows};
