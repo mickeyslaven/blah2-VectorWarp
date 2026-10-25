@@ -91,6 +91,7 @@ jobs:
           npm test --prefix api
           npm run test:receiver-management --prefix api
           npm run test:dom --prefix api
+          npm test --prefix services/report-relay
           node test/ui/deployment.test.js
       - name: Exercise real unprivileged broker requests with NoNewPrivileges
         run: |

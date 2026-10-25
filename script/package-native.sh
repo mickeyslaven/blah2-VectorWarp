@@ -130,6 +130,7 @@ build_arch=$(sed -n 's/^build_arch=//p' "$ARTIFACT/.vectorwarp-build")
 compiled_receivers=$(sed -n 's/^compiled_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 local_build_receivers=$(sed -n 's/^local_build_receivers=//p' "$ARTIFACT/.vectorwarp-build")
 artifact_test_only=$(sed -n 's/^test_only=//p' "$ARTIFACT/.vectorwarp-build")
+SOURCE_COMMIT=$(bash "$SOURCE_DIR/script/artifact-source-commit.sh" "$ARTIFACT" "$SOURCE_DIR")
 if $TEST_ONLY; then
   [[ $backend == open-test && $compiled_receivers == Usrp,HackRF,Kraken && $artifact_test_only == true ]] ||
     die '--test-only requires the exact open-test Kraken, UHD, and HackRF artifact'
@@ -272,10 +273,12 @@ for helper in vectorwarp-health-watchdog.js vectorwarp-config-guard.js; do
     die "packaged $unit points into the removed release libexec directory"
 done
 
-printf 'package=vectorwarp\nversion=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
-  "$VERSION" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
+printf 'package=vectorwarp\nversion=%s\nsource_commit=%s\nrelease=%s\ndistro=%s\narchitecture=%s\nnode=%s\nbackend=%s\ncompiled_receivers=%s\nlocal_build_receivers=%s\ntest_only=%s\n' \
+  "$VERSION" "$SOURCE_COMMIT" "$PACKAGE_RELEASE" "$DISTRO" "$PACKAGE_ARCH" "${node_version#v}" \
   "$backend" "$compiled_receivers" "$local_build_receivers" "$TEST_ONLY" \
   >"$STAGE/opt/vectorwarp/PACKAGE-METADATA"
+printf '{"schema":1,"version":"%s","sourceCommit":"%s","package":"%s"}\n' \
+  "$VERSION" "$SOURCE_COMMIT" "$FORMAT" >"$STAGE/opt/vectorwarp/current/BUILD-RECEIPT.json"
 
 install -m 0755 "$SOURCE_DIR/packaging/activate-upgrade" "$STAGE/opt/vectorwarp/libexec/vectorwarp-activate-upgrade"
 

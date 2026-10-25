@@ -6,6 +6,8 @@ const yaml = require('js-yaml');
 const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
+const os = require('os');
+const {buildMetadata} = require('./build-metadata');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('./config-manager.js');
@@ -149,6 +151,7 @@ const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSo
 if (startupDocument.setupRequired)
   console.error('Setup required:', startupDocument.readError || startupDocument.validation.errors);
 const serverId = `${process.pid}-${Date.now()}`;
+const releaseBuild = buildMetadata();
 const serviceErrors = new Map();
 const ownedPorts = new Set();
 let restartState = {state: 'idle'};
@@ -598,11 +601,16 @@ app.get('/api/system/status', async (req, res) => {
   const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
   const backend = currentTimingBackend();
+  const adsb = await adsbSource.status();
   res.json({serverId, configRevision: document.revision,
+    build: releaseBuild,
+    system: {os: os.platform(), architecture: os.arch(), kernel: os.release()},
+    uptimeSeconds: Math.floor(process.uptime()),
     acceleration: backend.acceleration || null,
     clutterAcceleration: backend.clutterAcceleration || null, gpuSetup,
     loadedRevision: startupDocument.revision, setupRequired: document.setupRequired,
     restart: persistedRestart, sdrplayStartup, receiverSynchronization: receiverSyncState,
+    gainMonitor: gainMonitorStatus, adsb,
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
     gainCheckPending: gainPublicationBlocked,

@@ -56,6 +56,13 @@ assert.match(packageScript, /published packages require all receiver support in 
 assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
 assert.match(packageScript, /published package receiver manifest is incomplete/);
 assert.match(packageScript, /"test_only": %s/);
+assert.match(packageScript, /BUILD-RECEIPT\.json/);
+assert.match(read('script/artifact-source-commit.sh'), /artifact source commit does not match packaging source checkout/);
+assert.match(packageScript, /current\/BUILD-RECEIPT\.json/);
+assert.match(buildScript, /source_commit=%s/);
+assert.match(packageScript, /sourceCommit/);
+assert.match(packageScript, /artifact-source-commit\.sh" "\$ARTIFACT" "\$SOURCE_DIR"/);
+assert.match(read('script/artifact-source-commit.sh'), /git -C "\$source_dir" rev-parse HEAD/);
 assert.match(packageScript, /TEST-ONLY package includes Kraken, USRP and dual HackRF/);
 assert.match(packageScript, /local RSPduo source kit/);
 assert.match(buildScript, /open-test\)/);
