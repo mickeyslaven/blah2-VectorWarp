@@ -1,0 +1,17 @@
+# target	host	guest	os	version	arch	package_target	memory_mib	execution
+ubuntu2204-amd64	strix	vw-ubuntu2204-amd64	ubuntu	22.04	x86_64	ubuntu22.04/amd64	4096	qwen-guarded-serial
+ubuntu2404-amd64	strix	vw-ubuntu2404-amd64	ubuntu	24.04	x86_64	ubuntu24.04/amd64	4096	qwen-guarded-serial
+ubuntu2604-amd64	strix	vw-ubuntu2604-amd64	ubuntu	26.04	x86_64	ubuntu26.04/amd64	4096	qwen-guarded-serial
+debian13-amd64	strix	vw-debian13-amd64	debian	13	x86_64	debian13/amd64	4096	qwen-guarded-serial
+fedora44-x86_64	strix	vw-fedora44-amd64	fedora	44	x86_64	fedora44/x86_64	4096	qwen-guarded-serial
+dragonos-focalx-r37.1	strix	vw-dragonos-focalx	dragonos	22.04	x86_64	ubuntu22.04/amd64	4096	qwen-guarded-serial
+dragonos-noble-r9	strix	vw-dragonos-noble	dragonos	24.04	x86_64	ubuntu24.04/amd64	4096	qwen-guarded-serial
+dragonos-resolute-r1	strix	vw-dragonos-resolute	dragonos	26.04	x86_64	ubuntu26.04/amd64	4096	qwen-guarded-serial
+ubuntu2204-arm64	m2	vw-ubuntu2204-arm64	ubuntu	22.04	aarch64	ubuntu22.04/arm64	2048	lima-serial
+ubuntu2404-arm64	m2	vw-ubuntu2404-arm64	ubuntu	24.04	aarch64	ubuntu24.04/arm64	2048	lima-serial
+ubuntu2604-arm64	m2	vw-ubuntu2604-arm64	ubuntu	26.04	aarch64	ubuntu26.04/arm64	2048	lima-serial
+debian12-arm64	m2	vw-debian12-arm64	debian	12	aarch64	debian12/arm64	2048	lima-serial
+debian13-arm64	m2	vw-debian13-arm64	debian	13	aarch64	debian13/arm64	2048	lima-serial
+fedora44-aarch64	m2	vw-fedora44-arm64	fedora	44	aarch64	fedora44/aarch64	2048	lima-serial
+macos-arm64	m2	host	macos	15	arm64	homebrew/arm64	0	host-serial
+macos-x86_64	github	macos-15-intel	macos	15	x86_64	homebrew/x86_64	0	github-serial

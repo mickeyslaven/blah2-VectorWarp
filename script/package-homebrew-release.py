@@ -19,7 +19,7 @@ TAP = "mickeyslaven/vectorwarp"
 SOURCE_REPOSITORY = "mickeyslaven/blah2-VectorWarp"
 ALLOWED_ROOT_DIRS = {
     ".github", "Formula", "api", "bench", "cmake", "config", "contrib", "core", "docs",
-    "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test",
+    "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test", "vm-lab",
 }
 ALLOWED_SERVICE_DIRS = {"report-relay"}
 ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md"}
@@ -160,8 +160,9 @@ Homebrew revision `{revision}`. Source SHA-256:
 
 The main-branch publishing workflow builds and tests both formulas on Apple
 Silicon before updating this tap. The formulas build from source; no bottles
-are produced. Intel macOS remains experimental and is not qualified by the
-Apple Silicon job. See the [validation limits](https://github.com/{SOURCE_REPOSITORY}/blob/{commit}/docs/MACOS_TEST_MATRIX.md).
+are produced. Matching source and clean-install CI also runs on Intel macOS;
+the published-tap upgrade gate remains Apple Silicon. See the [validation
+limits](https://github.com/{SOURCE_REPOSITORY}/blob/{commit}/docs/MACOS_TEST_MATRIX.md).
 
 ## Install
 

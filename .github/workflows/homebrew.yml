@@ -32,10 +32,9 @@ jobs:
     needs: policy
     if: >-
       github.repository == 'mickeyslaven/blah2-VectorWarp' &&
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_AUTOREMOVE: 1
@@ -60,17 +59,22 @@ jobs:
           python3 script/package-homebrew-release.py --source-archive "$RUNNER_TEMP/source.tar.gz" \
             --source-url "$url" --version "$HOMEBREW_VERSION" --revision "$revision" \
             --output-tap-dir "$RUNNER_TEMP/reviewed-tap"
-      - name: Install generated public formulas in an isolated runner tap
+      - name: Install the previous published tap, then upgrade to the generated formulas
         shell: bash
         run: |
           set -euo pipefail
           tap="$(brew --repository)/Library/Taps/mickeyslaven/homebrew-vectorwarp"
           test ! -e "$tap"
-          mkdir -p "$tap"
-          cp -R "$RUNNER_TEMP/reviewed-tap/." "$tap/"
-          git -C "$tap" init -q
-          brew trust mickeyslaven/vectorwarp
+          brew tap mickeyslaven/vectorwarp
           brew install --build-from-source mickeyslaven/vectorwarp/vectorwarp
+          previous_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].installed[0].version')
+          rm -rf "$tap/Formula"
+          cp -R "$RUNNER_TEMP/reviewed-tap/." "$tap/"
+          brew trust mickeyslaven/vectorwarp
+          brew upgrade --build-from-source mickeyslaven/vectorwarp/vectorwarp
+          candidate_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].installed[0].version')
+          test "$candidate_receipt" != "$previous_receipt"
+          printf 'previous=%s\ncandidate=%s\n' "$previous_receipt" "$candidate_receipt" | tee "$RUNNER_TEMP/homebrew-upgrade.txt"
           brew test mickeyslaven/vectorwarp/vectorwarp-heimdall
           brew test mickeyslaven/vectorwarp/vectorwarp
       - name: Verify installed replay and lifecycle without radio hardware
@@ -92,6 +96,13 @@ jobs:
           path: ${{ runner.temp }}/reviewed-tap/
           if-no-files-found: error
           retention-days: 7
+      - name: Preserve Homebrew upgrade receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: homebrew-upgrade-${{ github.sha }}
+          path: ${{ runner.temp }}/homebrew-upgrade.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Remove runner-owned formulas
         if: always()
         shell: bash

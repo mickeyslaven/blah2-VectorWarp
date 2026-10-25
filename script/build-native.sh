@@ -10,6 +10,7 @@ JOBS=4
 OFFLINE=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
+RUN_TESTS=false
 SDRPLAY_INCLUDE_DIR=${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}
 SDRPLAY_LIBRARY=${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}
 
@@ -29,6 +30,7 @@ Build a relocatable VectorWarp artifact without installing it.
   --jobs N                Parallel build jobs (default: 4)
   --offline               Never fetch; require both pinned checkouts locally
   --preflight             Check tools and host SDKs, then stop
+  --test                  Build and run the native CTest suite
   --dry-run               Print planned commands without changing files
   -h, --help              Show this help
 
@@ -53,6 +55,7 @@ while (($#)); do
     --jobs) (($# >= 2)) || die '--jobs needs a value'; JOBS=$2; shift 2 ;;
     --offline) OFFLINE=true; shift ;;
     --preflight) PREFLIGHT_ONLY=true; shift ;;
+    --test) RUN_TESTS=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -226,7 +229,7 @@ if [[ $vcpkg_tool_path != "$PATH" ]]; then
 fi
 
 cmake_args=("${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR"
-  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING="$($RUN_TESTS && printf ON || printf OFF)"
   -DBLAH2_KRAKEN_ONLY="$KRAKEN_ONLY" -DBLAH2_GPU="$GPU"
   -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO"
   -DBLAH2_LOCAL_BUILD_RSPDUO="$LOCAL_BUILD_RSPDUO"
@@ -243,6 +246,9 @@ fi
 if [[ $GPU != OFF ]]; then cmake_args+=("-DVKFFT_ROOT=$DEPS_DIR/VkFFT"); fi
 run "${cmake_args[@]}"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
+if $RUN_TESTS; then
+  run ctest --test-dir "$CMAKE_DIR" --output-on-failure --no-tests=error
+fi
 run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
