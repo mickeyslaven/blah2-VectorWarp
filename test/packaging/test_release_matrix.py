@@ -25,6 +25,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('script/test-package-upgrade.sh --previous', workflow)
         self.assertIn('script/test-installed-package.sh --package', workflow)
         self.assertIn('--dragonos-uhd-fixture', workflow)
+        self.assertIn('mkdir -p previous-package', workflow)
         upgrade = (ROOT / 'script/test-package-upgrade.sh').read_text()
         self.assertIn('config-preservation.txt', upgrade)
         self.assertIn('receiver-journal-missing', upgrade)
@@ -59,6 +60,16 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('brew upgrade --build-from-source mickeyslaven/vectorwarp/vectorwarp', homebrew)
         self.assertEqual(homebrew.count("jq -er '.formulae[0].linked_keg'"), 2)
         self.assertIn("github.event_name == 'pull_request'", homebrew)
+        self.assertIn('script/repair-macos-homebrew-python-links.sh', macos)
+
+    def test_release_build_isolated_from_test_outputs(self):
+        build = (ROOT / 'script/build-native.sh').read_text()
+        package = (ROOT / 'script/package-native.sh').read_text()
+        self.assertIn('TEST_CMAKE_DIR="$BUILD_DIR/cmake-tests"', build)
+        self.assertIn('-DBUILD_TESTING=ON -DBLAH2_OUTPUT_DIR="$TEST_OUTPUT_DIR"', build)
+        self.assertIn('-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"', build)
+        self.assertIn("-name 'test*'", build)
+        self.assertIn('release artifact must not contain test executables', package)
 
 
 if __name__ == '__main__':

@@ -422,6 +422,7 @@ jobs:
           set -euo pipefail
           candidate_tag=
           if [[ $GITHUB_REF_TYPE == tag ]]; then candidate_tag=$GITHUB_REF_NAME; fi
+          mkdir -p previous-package
           script/download-previous-package.sh --distro '${{ matrix.distro }}' \
             --arch '${{ matrix.arch }}' --candidate-tag "$candidate_tag" \
             --output previous-package | tee previous-package/resolution.txt

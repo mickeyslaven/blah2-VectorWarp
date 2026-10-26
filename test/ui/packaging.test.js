@@ -60,6 +60,8 @@ assert.equal(gpuSetupCheck.status, 0,
 assert.match(packageScript, /published packages require all receiver support in one build/);
 assert.match(packageScript, /--test-only requires the exact open-test Kraken, UHD, and HackRF artifact/);
 assert.match(packageScript, /published package receiver manifest is incomplete/);
+assert.match(packageScript, /release artifact must not contain test executables/);
+assert.match(buildScript, /-DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="\$ARTIFACT_TMP\/bin"/);
 assert.match(packageScript, /"test_only": %s/);
 assert.match(packageScript, /BUILD-RECEIPT\.json/);
 assert.match(read('script/artifact-source-commit.sh'), /artifact source commit does not match packaging source checkout/);
