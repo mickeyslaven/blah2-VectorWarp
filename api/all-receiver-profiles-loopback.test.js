@@ -9,6 +9,7 @@ const os = require('os');
 const path = require('path');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
+const {configurationForReceiver} = require('./config-store');
 
 const root = path.join(__dirname, '..');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-all-receivers-'));
@@ -92,7 +93,7 @@ async function waitForApi() {
   throw new Error(`loopback API did not start: ${stderr}`);
 }
 function profile(name, type) {
-  const config = load(name);
+  const config = type === 'RspDuo' ? configurationForReceiver(type, load('config.yml')) : load(name);
   config.network = clone(initial.network);
   if (type === 'Kraken') {
     config.capture.device.heimdall.host = '127.0.0.1';

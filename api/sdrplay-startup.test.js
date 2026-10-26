@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const yaml = require('js-yaml');
 const {prepare, readRegular, trustedTree, finishReport} = require('../script/vectorwarp-prepare-sdrplay');
-const {setupDefaults} = require('./config-store');
+const {setupDefaults, configurationForReceiver} = require('./config-store');
 const {validateConfig} = require('./config-manager');
 const {createReceiverJournal} = require('./receiver-journal');
 const {readSdrplayStartup} = require('./sdrplay-startup');
@@ -19,7 +19,7 @@ const options = {yaml, validateConfig, journal,
   start: () => { starts++; beforeStart(); return 'SDRplay API service started.'; },
   report: value => reports.push(value)};
 const sha = raw => crypto.createHash('sha256').update(raw).digest('hex');
-function reset(config = setupDefaults()) {
+function reset(config = configurationForReceiver('RspDuo')) {
   starts = 0; reports = []; beforeStart = () => {};
   const raw = yaml.dump(config);
   fs.writeFileSync(filename, raw);
@@ -43,9 +43,9 @@ try {
   }
   const replay = setupDefaults(); replay.capture.replay.state = true; reset(replay);
   assert.equal(prepare(filename, options).state, 'not-required'); assert.equal(starts, 0);
-  const absentReplay = setupDefaults(); delete absentReplay.capture.replay;
+  const absentReplay = configurationForReceiver('RspDuo'); delete absentReplay.capture.replay;
   blocked(absentReplay, /explicit RSPduo/);
-  const bad = setupDefaults(); bad.capture.fc = -1;
+  const bad = configurationForReceiver('RspDuo'); bad.capture.fc = -1;
   blocked(bad, /valid, explicit/);
   for (const state of ['saved-pending', 'unknown', 'in-progress', 'journal-unreadable']) {
     reset(); journal.write({state, reconciliationRequired: false, configRevision: sha(fs.readFileSync(filename))});

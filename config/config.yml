@@ -2,17 +2,9 @@ capture:
   fs: 2000000
   fc: 204640000
   device:
-    type: "RspDuo"
-    # Leave blank only when exactly one RSPduo is connected.
-    serial: ""
-    agcSetPoint: -20
-    # 0 to disable AGC
-    #bandwidthNumber: 0
-    bandwidthNumber: 5
-    gainReduction: [50, 45]
-    lnaState: 1
-    dabNotch: false
-    rfNotch: false
+    # Fresh installations deliberately have no receiver selected. The Settings
+    # page replaces this marker with the chosen receiver profile before saving.
+    type: "Unconfigured"
   replay:
     state: false
     loop: false

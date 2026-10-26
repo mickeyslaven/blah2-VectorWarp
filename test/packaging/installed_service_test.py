@@ -233,7 +233,7 @@ def main():
     checks.append('installed API starts with its real service identity and sandbox')
 
     _, capabilities, _ = request('/api/config/capabilities')
-    assert capabilities['editable'] and capabilities['restartAvailable'] and not capabilities['setupRequired']
+    assert capabilities['editable'] and capabilities['restartAvailable'] and capabilities['setupRequired']
     assert capabilities['configPath'] == str(CONFIG)
     assert request('/display/configuration/')[0] == 200
     assert request('/js/config_ui.js')[0] == 200
@@ -247,9 +247,18 @@ def main():
     checks.append('packaged open receiver adapters load without the SDRplay SDK')
 
     before = hashlib.sha256(CONFIG.read_bytes()).hexdigest()
-    _, config, headers = request('/api/config')
+    _, neutral_config, headers = request('/api/config')
     revision = headers['ETag']
-    assert config['capture']['device']['type'] == 'RspDuo', 'Test expects neutral packaged defaults'
+    assert neutral_config['capture']['device']['type'] == 'Unconfigured', \
+        'Fresh packages must not silently select receiver hardware'
+    profiles = {item['type']: item for item in capabilities['deviceProfiles']}
+    assert set(profiles) == {'Kraken', 'RspDuo', 'Usrp', 'HackRF'}
+    config = copy.deepcopy(neutral_config)
+    rspduo = profiles['RspDuo']
+    config['capture']['fs'] = rspduo['sampleRate']
+    config['capture']['device'] = copy.deepcopy(rspduo['device'])
+    for key, value in rspduo.get('process', {}).items():
+        config['process'][key] = copy.deepcopy(value)
     path_candidate = copy.deepcopy(config)
     path_candidate['save']['path'] = '/srv/vectorwarp-recordings/'
     code, result, _ = request('/api/config/validate', 'POST', path_candidate)
@@ -288,9 +297,9 @@ def main():
     assert hashlib.sha256(CONFIG.read_bytes()).hexdigest() == before
     checks.append('foreign origins and legacy GET cannot change settings or recording')
 
-    # Genuine API-identity -> Unix broker -> installed restart service. There is
-    # no radio/SDK and the neutral config is not applied for live processing:
-    # the expected result is a bounded, visible startup failure.
+    # Genuine API-identity -> Unix broker -> installed restart service. The
+    # neutral first-run config is a bounded web-only no-op: restart completes,
+    # setup remains required, and the processor never starts.
     run('systemd-run', '--quiet', '--wait', '--collect', '--pipe',
         '--unit=vectorwarp-package-test-request', '-p', 'User=vectorwarp-api',
         '-p', 'Group=vectorwarp-api', '-p', 'NoNewPrivileges=yes',
@@ -298,22 +307,19 @@ def main():
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         state = run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-restart.service')
-        if state == 'failed':
+        if state == 'inactive':
             break
         time.sleep(.25)
-    assert state == 'failed', 'Missing SDK restart must finish with a failure, not hang'
+    assert state == 'inactive', 'Neutral first-run restart must finish without hanging'
     wait_ready()
     _, status, _ = request('/api/system/status')
-    assert status['restart']['state'] == 'failed', status
-    assert any(word in status['restart']['message'].lower() for word in ('pending', 'sdrplay', 'sdk')), status
+    assert status['setupRequired'] is True, status
     assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
-    checks.append('NNP broker reaches real restart unit; actionable startup failure returns to live API')
+    checks.append('NNP broker reaches real restart unit; neutral setup stays web-only and bounded')
 
     # The package must retain every receiver as a valid pending/replay choice,
     # even though no SDK or hardware is installed. Pending is disk-only: it must
     # not start the processor or claim any receiver was configured.
-    profiles = {item['type']: item for item in capabilities['deviceProfiles']}
-    assert set(profiles) == {'Kraken', 'RspDuo', 'Usrp', 'HackRF'}
     for receiver in ('Kraken', 'RspDuo', 'Usrp', 'HackRF'):
         code, current, headers = request('/api/config')
         assert code == 200

@@ -13,14 +13,49 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
   window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, 2000);
+  refreshReceiverDevices();
+  if (window.blah2ReceiverDeviceTimer)
+    window.clearInterval(window.blah2ReceiverDeviceTimer);
+  window.blah2ReceiverDeviceTimer = window.setInterval(refreshReceiverDevices, 30000);
   routeApiLinks();
   addRecordingControl();
   addFullscreenControl();
+}
+
+// Discovery is read-only. A newly connected receiver is offered to the user,
+// but the running receiver and saved configuration are never changed here.
+async function refreshReceiverDevices() {
+  const target = document.getElementById('receiver-device-alert');
+  if (!target || window.blah2ReceiverDevicePending) return;
+  window.blah2ReceiverDevicePending = true;
+  try {
+    const response = await fetchStatusResource(liveApiUrl('/api/receivers'), {cache: 'no-store'});
+    if (!response.ok) throw new Error('Receiver discovery unavailable');
+    const result = await response.json();
+    const receivers = Array.isArray(result.receivers) ? result.receivers : [];
+    const configured = receivers.find(receiver => receiver.capabilities?.configured)?.type;
+    const alternatives = receivers.filter(receiver => receiver.capabilities?.detected === true &&
+      (result.setupRequired || receiver.type !== configured));
+    if (!alternatives.length) {
+      target.hidden = true;
+      target.textContent = '';
+      return;
+    }
+    const labels = alternatives.map(receiver => receiver.label || receiver.type).join(', ');
+    target.textContent = result.setupRequired ?
+      `${labels} detected. Open Settings to finish receiver setup.` :
+      `${labels} detected. Open Settings if you want to switch receivers; the active receiver was not changed.`;
+    target.hidden = false;
+  } catch (_) {
+    target.hidden = true;
+  } finally {
+    window.blah2ReceiverDevicePending = false;
+  }
 }
 
 function routeApiLinks() {
@@ -636,4 +671,5 @@ async function renderRuntimeSummary() {
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
-    startRadarPlot, getRadarRuntimeConfig, discoverApiEndpoint, fetchStatusResource, refreshLiveStatus};
+    startRadarPlot, getRadarRuntimeConfig, discoverApiEndpoint, fetchStatusResource,
+    refreshLiveStatus, refreshReceiverDevices};

@@ -390,6 +390,13 @@ process.stdout.write(yaml.dump(c));'''
             raise RuntimeError('API port must be an integer from 1 through 65535')
         return f'http://[{host}]:{port}' if ':' in host else f'http://{host}:{port}'
 
+    def setup_required(self):
+        source = ('const store=require(process.argv[1]);'
+                  'process.stdout.write(store.readConfig(process.argv[2]).setupRequired?"1":"0")')
+        value = subprocess.check_output([self.node, '-e', source,
+            str(self.root / 'api/config-store.js'), str(self.config)], timeout=5, text=True)
+        return value == '1'
+
     def receiver_types(self):
         timeout = 20 if self.env.get('VECTORWARP_MACOS_DISTRIBUTION') == 'standalone' else 5
         started = time.monotonic()
@@ -562,12 +569,17 @@ process.stdout.write(yaml.dump(c));'''
                 self.prepare()
                 if action != 'restart-processing':
                     self.start_web()
+                requires_setup = self.setup_required()
+                if requires_setup and action in ('start-kraken', 'restart-processing'):
+                    raise RuntimeError('receiver setup is incomplete; open VectorWarp Settings first')
                 if action == 'start-kraken' and not self.kraken_settings():
                     raise RuntimeError('saved configuration is not a live local Kraken profile')
-                if action in ('start', 'restart', 'start-kraken'):
+                if not requires_setup and action in ('start', 'restart', 'start-kraken'):
                     self.start_kraken()
-                if action in ('start', 'restart', 'restart-processing'):
+                if not requires_setup and action in ('start', 'restart', 'restart-processing'):
                     self.start_processor()
+                if requires_setup:
+                    print('Receiver setup is required; the web service is ready and processing remains stopped.')
         if action == 'open':
             url = self.endpoint() + '/'
             print(f'VectorWarp: {url}')
@@ -583,10 +595,19 @@ process.stdout.write(yaml.dump(c));'''
                         self.refuse_foreign_instances()
                         self.prepare()
                         self.start_web()
-                        self.start_kraken()
-                        self.start_processor()
+                        requires_setup = self.setup_required()
+                        if not requires_setup:
+                            self.start_kraken()
+                            self.start_processor()
                     delay = 1
                     while not stopping.wait(.25):
+                        if requires_setup:
+                            if self.live('api') and self.setup_required():
+                                continue
+                            with self.lock():
+                                self.refuse_foreign_instances()
+                                self.stop('api')
+                            break
                         kraken_ok = not self.kraken_settings() or self.live('kraken')
                         if self.live('api') and self.live('processor') and kraken_ok:
                             continue

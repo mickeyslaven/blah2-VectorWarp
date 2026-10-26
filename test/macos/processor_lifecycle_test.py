@@ -76,9 +76,17 @@ def main():
         # The native replay fixture is deliberately minimal; browser validation
         # also requires the regular application's display/site configuration.
         base = json.loads(subprocess.check_output([str(node), '-e',
-            'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
+            'const yaml=require("js-yaml"),store=require("./config-store");'
+            'const base=yaml.load(require("fs").readFileSync(process.argv[1],"utf8"));'
+            'process.stdout.write(JSON.stringify(store.configurationForReceiver("Usrp",base)))',
             str(app_root / 'config/config.yml')], cwd=app_root / 'api', text=True))
-        base.update(config)
+        def merge(target, updates):
+            for key, value in updates.items():
+                if isinstance(value, dict) and isinstance(target.get(key), dict):
+                    merge(target[key], value)
+                else:
+                    target[key] = copy.deepcopy(value)
+        merge(base, config)
         base['network']['ports']['config'] = ports['config']
         base['truth']['adsb']['enabled'] = False
         base['save']['path'] = str(work) + '/'

@@ -446,6 +446,9 @@ async function promoteQualifiedManifold(candidate) {
     reason: 'Qualified model saved; a controlled restart was requested.'};
 }
 app.get('/', (req, res, next) => {
+  if (readConfig(configFile).setupRequired &&
+      fs.existsSync(path.join(__dirname, '..', 'html', 'display', 'configuration', 'index.html')))
+    return res.redirect(302, '/display/configuration?setup=1');
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });

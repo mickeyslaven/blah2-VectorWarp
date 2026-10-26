@@ -5,10 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 
 const clone = value => JSON.parse(JSON.stringify(value));
-let saved = setupDefaults();
+let saved = configurationForReceiver('RspDuo');
 let writes = 0;
 saved.location.rx.latitude = 40.4420304;
 saved.location.rx.longitude = -80.0566972;

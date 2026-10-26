@@ -112,7 +112,7 @@ for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulka
   bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
-  api/server.js html/index.html config-examples/config-kraken.yml; do
+  api/server.js html/index.html config-examples/config.yml; do
   [[ -e $ARTIFACT/$file ]] || die "release artifact is incomplete: $file"
 done
 for notice in asio cpp-httplib rapidjson ryml VkFFT; do

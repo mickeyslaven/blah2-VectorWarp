@@ -8,14 +8,14 @@ const path = require('path');
 const net = require('net');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
-const {setupDefaults} = require('./config-store');
+const {configurationForReceiver} = require('./config-store');
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-local-rsp-'));
 const filename = path.join(directory, 'config.yml');
 const stateFile = path.join(directory, 'helper-state');
 const helper = path.join(directory, 'local-helper.py');
 const marker = path.join(directory, 'restart-marker');
-const config = setupDefaults();
+const config = configurationForReceiver('RspDuo');
 config.network.ip = '127.0.0.1';
 let child, origin, revision, errors = '';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

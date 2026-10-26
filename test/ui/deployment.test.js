@@ -11,7 +11,7 @@ const path = require('path');
 const vm = require('vm');
 const {spawn} = require('child_process');
 const yaml = require('./api-require')('js-yaml');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 
 function fetchHttp(url, options = {}) {
   return new Promise((resolve, reject) => {
@@ -44,7 +44,9 @@ function fetchHttp(url, options = {}) {
         gs: 0, track: 0, seen_pos: 0}]}));
   });
   await new Promise(resolve => fixture.listen(0, '127.0.0.1', resolve));
-  const config = setupDefaults();
+  // Native deployment exercises a writable, valid saved configuration. Fresh
+  // installs intentionally remain Unconfigured until the user picks hardware.
+  const config = configurationForReceiver('Usrp');
   config.network.ip = '127.0.0.1';
   // Reserve all fixture ports together, then release immediately before spawn.
   // Never connect to or alter a real preview/API at the default service ports.

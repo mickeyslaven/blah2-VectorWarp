@@ -201,18 +201,17 @@ chroot "$root_mount" /usr/sbin/usermod --append --groups "$(IFS=,; printf '%s' "
 chroot "$root_mount" getent group plugdev >/dev/null || die 'Pi OS image lacks the HackRF plugdev group'
 chroot "$root_mount" /usr/sbin/usermod --append --groups plugdev vectorwarp
 
-# Ship the reviewed Pi 4 RSPduo baseline at 2 MS/s / 500 ms, replacing only
-# the example RF centre frequency with a neutral placeholder.  The processor
-# is disabled above, so no capture begins until a person completes setup.
-neutral_config=$root_mount/opt/vectorwarp/current/config-examples/config-pi4-rspduo.yml
-[[ -f $neutral_config ]] || die 'package lacks the Pi 4 RSPduo configuration example'
+# Ship the same neutral first-run configuration as every other installation.
+# The processor is disabled above, so no capture begins until a person chooses
+# a receiver and confirms the site and tuning settings in the browser.
+neutral_config=$root_mount/opt/vectorwarp/current/config-examples/config.yml
+[[ -f $neutral_config ]] || die 'package lacks the canonical first-run configuration'
 install -m 0660 "$neutral_config" "$root_mount/etc/vectorwarp/config.yml"
 chroot "$root_mount" /bin/chown vectorwarp-api:vectorwarp-config /etc/vectorwarp/config.yml
-sed -i 's/^  fc: 551000000$/  fc: 100000000/' "$root_mount/etc/vectorwarp/config.yml"
 chroot "$root_mount" /opt/vectorwarp/runtime/node/bin/node -e '
-const fs = require("fs"), yaml = require("/opt/vectorwarp/current/api/node_modules/js-yaml");
-const result = require("/opt/vectorwarp/current/api/config-manager").validateConfig(yaml.load(fs.readFileSync("/etc/vectorwarp/config.yml", "utf8")));
-if (!result.valid) throw new Error(result.errors.join("; "));
+const document = require("/opt/vectorwarp/current/api/config-store").readConfig("/etc/vectorwarp/config.yml");
+if (!document.setupRequired || document.config.capture.device.type !== "Unconfigured")
+  throw new Error("Pi image must require an explicit receiver choice");
 '
 
 # Bake the seven reviewed RSPduo runtime flags as an image profile. Generic
