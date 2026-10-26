@@ -115,6 +115,9 @@ for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulka
   api/server.js html/index.html config-examples/config.yml; do
   [[ -e $ARTIFACT/$file ]] || die "release artifact is incomplete: $file"
 done
+if find "$ARTIFACT/bin" -maxdepth 1 \( -type f -o -type l \) -name 'test*' -print -quit | grep -q .; then
+  die 'release artifact must not contain test executables'
+fi
 for notice in asio cpp-httplib rapidjson ryml VkFFT; do
   [[ -s $ARTIFACT/licenses/$notice.txt ]] || die "artifact lacks third-party notice: $notice"
 done

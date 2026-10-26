@@ -107,6 +107,7 @@ jobs:
           python3 test/packaging/test_gpu_setup.py -v
           python3 test/packaging/test_receiver_build.py -v
           sudo python3 test/packaging/test_package_upgrade.py -v
+          node test/packaging/upgrade_state.test.js
       - name: Syntax-check every workflow shell block and release script
         run: |
           bash -n script/build-native.sh script/install-native.sh script/package-native.sh script/install-release.sh script/smoke-native-package.sh script/test-installed-package.sh

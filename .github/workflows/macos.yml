@@ -19,7 +19,7 @@ jobs:
       matrix:
         runner: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     env:
       NODE_PATH: ${{ github.workspace }}/api/node_modules
       HOMEBREW_NO_AUTO_UPDATE: 1
@@ -70,13 +70,15 @@ jobs:
           script/vectorwarp-macos.test.sh
           python3 test/macos/processor_lifecycle_test.py --binary build/macos/artifact/bin/blah2 --endurance-seconds 360
       - name: Verify the installed Homebrew package
-        if: matrix.runner == 'macos-15'
         env:
           HOMEBREW_MAKE_JOBS: 3
           HOMEBREW_NO_AUTOREMOVE: 1
         run: |
           script/package-homebrew-local.sh build/homebrew-ci --install-tap
           brew trust vectorwarp/local
+          if [[ $(uname -m) == x86_64 ]]; then
+            script/repair-macos-homebrew-python-links.sh
+          fi
           brew install --build-from-source vectorwarp/local/vectorwarp
           brew test vectorwarp/local/vectorwarp
           brew test vectorwarp/local/vectorwarp-heimdall

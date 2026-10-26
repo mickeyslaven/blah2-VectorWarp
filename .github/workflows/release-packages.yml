@@ -159,6 +159,7 @@ jobs:
           python3 test/packaging/test_gpu_setup.py -v
           python3 test/packaging/test_receiver_build.py -v
           sudo python3 test/packaging/test_package_upgrade.py -v
+          node test/packaging/upgrade_state.test.js
           python3 test/packaging/test_smoke_receiver_status.py -v
           python3 test/packaging/test_sdrplay_build_sdk.py -v
           python3 test/packaging/test_sdrplay_distribution.py -v
@@ -251,7 +252,7 @@ jobs:
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"
           node_root="$RUNNER_TEMP/${archive%.tar.xz}"
           export PATH="$node_root/bin:$PATH"
-          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
+          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
             --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
@@ -282,7 +283,7 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
               script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
@@ -311,7 +312,7 @@ jobs:
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"
               node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
               script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" \
                 --version "$VERSION" --distro fedora44 --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
@@ -319,7 +320,7 @@ jobs:
       - name: Build local-kit all-receiver Ubuntu 24.04 package for PR verification
         if: github.event_name == 'pull_request' && matrix.distro == 'ubuntu24.04'
         env:
-          VERSION: 0.0.0
+          VERSION: 9999.0.0
           NODE_ARCH: ${{ matrix.node_arch }}
           NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
           NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
@@ -333,19 +334,20 @@ jobs:
           curl --fail --location --proto '=https' --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "$RUNNER_TEMP/${archive}"
           printf '%s  %s\n' "$node_sha" "$RUNNER_TEMP/${archive}" | sha256sum --check --strict
           tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/${archive}"; node_root="$RUNNER_TEMP/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
+          script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
           script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro }}" --output-dir dist
           bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name '*.deb' -print -quit)"
       - name: Build local-kit all-receiver Debian-family package for PR verification
         if: github.event_name == 'pull_request' && (matrix.distro == 'ubuntu22.04' || matrix.distro == 'ubuntu26.04' || matrix.distro == 'debian12' || matrix.distro == 'debian13')
         env:
+          VERSION: 9999.0.0
           NODE_ARCH: ${{ matrix.node_arch }}
           NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
           NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             ${{ matrix.image }} bash -euo pipefail -c '
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
@@ -355,20 +357,21 @@ jobs:
               curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
-              script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version 0.0.0 --distro "${{ matrix.distro_env }}" --output-dir dist
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
+              script/package-native.sh --format deb --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro "${{ matrix.distro_env }}" --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.deb" -print -quit)"
             '
       - name: Build local-kit all-receiver Fedora package for PR verification
         if: github.event_name == 'pull_request' && matrix.format == 'rpm'
         env:
+          VERSION: 9999.0.0
           NODE_ARCH: ${{ matrix.node_arch }}
           NODE_SHA_X64: 6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
           NODE_SHA_ARM64: dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e
         run: |
           set -euo pipefail
           podman run --rm --userns=keep-id --user root --security-opt label=disable \
-            -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
+            -e VERSION -e NODE_ARCH -e NODE_SHA_X64 -e NODE_SHA_ARM64 -v "$GITHUB_WORKSPACE:/src:Z" -w /src \
             registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 bash -euo pipefail -c '
               dnf --assumeyes install ca-certificates cpio file gcc-c++ cmake curl git ninja-build pkgconf-pkg-config sudo tar unzip util-linux xz zip fftw-devel armadillo-devel vulkan-loader-devel glslang-devel rpm-build uhd-devel boost-devel hackrf-devel libusb1-devel eigen3-devel openssl-devel zlib-devel patch
               git config --global --add safe.directory /src
@@ -376,8 +379,8 @@ jobs:
               curl --fail --location --proto "=https" --tlsv1.2 "https://nodejs.org/dist/v24.22.1/${archive}" --output "/tmp/${archive}"
               printf "%s  %s\\n" "$node_sha" "/tmp/${archive}" | sha256sum --check --strict
               tar -C /tmp -xf "/tmp/${archive}"; node_root="/tmp/${archive%.tar.xz}"; export PATH="$node_root/bin:$PATH"
-              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2
-              script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" --version 0.0.0 --distro fedora44 --output-dir dist
+              script/build-native.sh --backend all --gpu auto --build-dir build/package --jobs 2 --test
+              script/package-native.sh --format rpm --artifact build/package/artifact --node-runtime "$node_root" --version "$VERSION" --distro fedora44 --output-dir dist
               bash script/smoke-native-package.sh --package "$(find dist -maxdepth 1 -type f -name "*.rpm" -print -quit)"
             '
       - name: Set up browser-test Node (test runner only)
@@ -412,12 +415,56 @@ jobs:
           fi
           sudo env "PATH=$PATH" "PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH" \
             "${test_command[@]}"
+      - name: Download the previous published package for this exact target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          candidate_tag=
+          if [[ $GITHUB_REF_TYPE == tag ]]; then candidate_tag=$GITHUB_REF_NAME; fi
+          mkdir -p previous-package
+          script/download-previous-package.sh --distro '${{ matrix.distro }}' \
+            --arch '${{ matrix.arch }}' --candidate-tag "$candidate_tag" \
+            --output previous-package | tee previous-package/resolution.txt
+      - name: Upgrade the published package to the candidate without replacing the SDR ecosystem
+        env:
+          DISTRO: ${{ matrix.distro }}
+          ARCH: ${{ matrix.arch }}
+          PINNED_IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            ubuntu24.04) image=docker.io/library/ubuntu:24.04 ;;
+            fedora44) image=registry.fedoraproject.org/fedora@sha256:c1e938afd5dfd7f172fac9168ba8e148fdf41c0517c04849072a15e4bd34eac6 ;;
+            *) image=$PINNED_IMAGE ;;
+          esac
+          previous=$(find previous-package -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
+          candidate=$(find dist -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) -print -quit)
+          command=(bash script/test-package-upgrade.sh --previous "$previous" \
+            --candidate "$candidate" --image "$image" --evidence upgrade-evidence)
+          if [[ $DISTRO == ubuntu22.04 && $ARCH == amd64 ]]; then
+            command+=(--dragonos-uhd-fixture)
+          fi
+          if [[ $DISTRO == fedora44 ]]; then
+            command=(python3 test/packaging/fedora_apparmor_ci.py -- "${command[@]}")
+          fi
+          sudo env "PATH=$PATH" "${command[@]}"
       - name: Preserve installed-service logs and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: installed-service-${{ matrix.distro }}-${{ matrix.arch }}-${{ github.sha }}
           path: service-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve published-package upgrade evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-upgrade-${{ matrix.distro }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            previous-package/resolution.txt
+            upgrade-evidence/
           if-no-files-found: warn
           retention-days: 14
       - name: Require package metadata from the packager

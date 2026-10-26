@@ -10,6 +10,7 @@ JOBS=4
 OFFLINE=false
 DRY_RUN=false
 PREFLIGHT_ONLY=false
+RUN_TESTS=false
 SDRPLAY_INCLUDE_DIR=${BLAH2_SDRPLAY_INCLUDE_DIR:-/usr/local/include}
 SDRPLAY_LIBRARY=${BLAH2_SDRPLAY_LIBRARY:-/usr/local/lib/libsdrplay_api.so.3.15}
 
@@ -29,6 +30,7 @@ Build a relocatable VectorWarp artifact without installing it.
   --jobs N                Parallel build jobs (default: 4)
   --offline               Never fetch; require both pinned checkouts locally
   --preflight             Check tools and host SDKs, then stop
+  --test                  Build and run the native CTest suite
   --dry-run               Print planned commands without changing files
   -h, --help              Show this help
 
@@ -53,6 +55,7 @@ while (($#)); do
     --jobs) (($# >= 2)) || die '--jobs needs a value'; JOBS=$2; shift 2 ;;
     --offline) OFFLINE=true; shift ;;
     --preflight) PREFLIGHT_ONLY=true; shift ;;
+    --test) RUN_TESTS=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1" ;;
@@ -164,11 +167,13 @@ if [[ $GPU != OFF ]]; then
 fi
 
 CMAKE_DIR="$BUILD_DIR/cmake"
+TEST_CMAKE_DIR="$BUILD_DIR/cmake-tests"
+TEST_OUTPUT_DIR="$BUILD_DIR/test-bin"
 MANIFEST_DIR="$BUILD_DIR/vcpkg-manifest"
 ARTIFACT_TMP="$BUILD_DIR/artifact.next.$$"
 ARTIFACT="$BUILD_DIR/artifact"
 run mkdir -p "$BUILD_DIR"
-run rm -rf "$CMAKE_DIR" "$MANIFEST_DIR" "$ARTIFACT_TMP"
+run rm -rf "$CMAKE_DIR" "$TEST_CMAKE_DIR" "$TEST_OUTPUT_DIR" "$MANIFEST_DIR" "$ARTIFACT_TMP"
 run mkdir -p "$MANIFEST_DIR" "$ARTIFACT_TMP/bin"
 if [[ $BACKEND == kraken ]]; then
   run cp "$SOURCE_DIR/lib/vcpkg-kraken.json" "$MANIFEST_DIR/vcpkg.json"
@@ -202,7 +207,8 @@ if [[ -n $vcpkg_compiler_prefix ]]; then
   # Pinned vcpkg's Linux ARM toolchain unconditionally requests Debian-style
   # compiler names, which native Fedora does not provide. Supply verified
   # aliases only inside the freshly recreated build tree and only to vcpkg.
-  compiler_alias_dir="$CMAKE_DIR/native-compiler-aliases"
+  compiler_alias_dir="$BUILD_DIR/native-compiler-aliases"
+  run rm -rf "$compiler_alias_dir"
   run mkdir -p "$compiler_alias_dir"
   run ln -s "$native_cc" "$compiler_alias_dir/$vcpkg_compiler_prefix-gcc"
   run ln -s "$native_cxx" "$compiler_alias_dir/$vcpkg_compiler_prefix-g++"
@@ -225,14 +231,13 @@ if [[ $vcpkg_tool_path != "$PATH" ]]; then
   vcpkg_cmake_prefix+=("PATH=$vcpkg_tool_path")
 fi
 
-cmake_args=("${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR"
-  -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake_args=(
+  -DCMAKE_BUILD_TYPE=Release
   -DBLAH2_KRAKEN_ONLY="$KRAKEN_ONLY" -DBLAH2_GPU="$GPU"
   -DBLAH2_ENABLE_RSPDUO="$ENABLE_RSPDUO"
   -DBLAH2_LOCAL_BUILD_RSPDUO="$LOCAL_BUILD_RSPDUO"
   -DBLAH2_ENABLE_USRP="$ENABLE_USRP"
   -DBLAH2_ENABLE_HACKRF="$ENABLE_HACKRF"
-  -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"
   -DCMAKE_TOOLCHAIN_FILE="$DEPS_DIR/vcpkg/scripts/buildsystems/vcpkg.cmake"
   -DVCPKG_MANIFEST_DIR="$MANIFEST_DIR"
   -DVCPKG_INSTALLED_DIR="$BUILD_DIR/vcpkg_installed")
@@ -241,14 +246,22 @@ if [[ $ENABLE_RSPDUO == ON ]]; then
     "-DBLAH2_SDRPLAY_LIBRARY=$SDRPLAY_LIBRARY")
 fi
 if [[ $GPU != OFF ]]; then cmake_args+=("-DVKFFT_ROOT=$DEPS_DIR/VkFFT"); fi
-run "${cmake_args[@]}"
+if $RUN_TESTS; then
+  # Test executables retain build-tree RUNPATHs, so keep them outside the
+  # immutable release artifact. The production configure is always test-free.
+  run "${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$TEST_CMAKE_DIR" \
+    "${cmake_args[@]}" -DBUILD_TESTING=ON -DBLAH2_OUTPUT_DIR="$TEST_OUTPUT_DIR"
+  run cmake --build "$TEST_CMAKE_DIR" --parallel "$JOBS"
+  run ctest --test-dir "$TEST_CMAKE_DIR" --output-on-failure --no-tests=error
+fi
+run "${vcpkg_cmake_prefix[@]}" cmake -G Ninja -S "$SOURCE_DIR" -B "$CMAKE_DIR" \
+  "${cmake_args[@]}" -DBUILD_TESTING=OFF -DBLAH2_OUTPUT_DIR="$ARTIFACT_TMP/bin"
 run cmake --build "$CMAKE_DIR" --parallel "$JOBS"
 run python3 "$SOURCE_DIR/script/build-kraken.py" --jobs "$((JOBS > 32 ? 32 : JOBS))" --output-dir "$ARTIFACT_TMP"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-kraken-macos.py" "$ARTIFACT_TMP/share/heimdall/controller.py"
 run install -m 0644 "$SOURCE_DIR/script/vectorwarp-heimdall.py" "$ARTIFACT_TMP/share/heimdall/service.py"
 run python3 "$SOURCE_DIR/script/stage-kraken-kit.py" --source "$SOURCE_DIR" \
   --output "$ARTIFACT_TMP/receiver-source/kraken"
-run rm -f "$ARTIFACT_TMP/bin/testAcceleration" "$ARTIFACT_TMP/bin/testAccelerationFallback"
 
 run cp -a "$SOURCE_DIR/api" "$ARTIFACT_TMP/api"
 run rm -rf "$ARTIFACT_TMP/api/node_modules"
@@ -324,6 +337,9 @@ run install -m 0644 "$SOURCE_DIR/LICENSE" "$ARTIFACT_TMP/LICENSE"
 run install -m 0644 "$SOURCE_DIR/README.md" "$ARTIFACT_TMP/README.md"
 
 if ! $DRY_RUN; then
+  if find "$ARTIFACT_TMP/bin" -maxdepth 1 \( -type f -o -type l \) -name 'test*' -print -quit | grep -q .; then
+    die 'release artifact contains a test executable'
+  fi
   [[ -x $ARTIFACT_TMP/bin/blah2 ]] || die 'processor binary was not produced'
   [[ -f $ARTIFACT_TMP/bin/libblah2-capture-core.so.1 ]] || die 'capture core library was not produced'
   for adapter in rspduo usrp hackrf; do
