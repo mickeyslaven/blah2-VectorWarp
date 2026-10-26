@@ -7,13 +7,13 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
 const {window} = dom;
-let saved = setupDefaults();
+let saved = configurationForReceiver('RspDuo');
 // Optional legacy block size has a real control whenever it is present in a
 // saved profile. Keep it present so both a valid value and its replay contract
 // are exercised, instead of treating an optional UI path as untestable.

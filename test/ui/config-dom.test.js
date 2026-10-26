@@ -6,13 +6,13 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
-const {setupDefaults} = require('../../api/config-store');
+const {configurationForReceiver} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
 const window = dom.window;
-let saved = setupDefaults();
+let saved = configurationForReceiver('RspDuo');
 let revision = 'initial';
 let writes = 0;
 let holdValidation = false;
