@@ -14,11 +14,16 @@ const {evaluateConfigRevision} = require('../../api/config-revision-guard');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-upgrade-state-'));
 try {
   const filename = path.join(directory, 'config.yml');
-  fs.copyFileSync(path.join(__dirname, '../../config/config.yml'), filename);
+  // Model an existing configured SDRplay installation. config.yml is now the
+  // deliberately invalid, unconfigured first-run form, which must remain a
+  // higher-priority config-invalid failure rather than reach journal checks.
+  fs.copyFileSync(path.join(__dirname, '../../config/config-pi4-rspduo.yml'), filename);
   fs.appendFileSync(filename, '\n# operator-owned pre-journal configuration\n');
   const hash = () => crypto.createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
   const before = hash();
   const document = readConfig(filename);
+  assert.equal(document.config.capture.device.type, 'RspDuo');
+  assert.equal(document.validation.valid, true);
   const journal = createReceiverJournal(filename);
   assert.deepEqual(evaluateConfigRevision(document, journal.load()),
     {quiesce: true, reason: 'receiver-journal-missing'});
