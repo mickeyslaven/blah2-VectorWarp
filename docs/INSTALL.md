@@ -1,21 +1,21 @@
 # Install VectorWarp
 
-**Use your package manager for most installations:**
+For most installations, use your package manager:
 
 - **Linux:** [APT for Ubuntu, Debian and compatible DragonOS; DNF for Fedora](#linux-packages).
 - **macOS:** [Homebrew](#macos-with-homebrew).
 
-Copy the command for your OS below, then configure your receiver in Settings.
-These routes handle dependencies and updates without choosing among individual
-release files. [Manual DEB/RPM and PKG downloads and source builds](#manual-install-options)
-remain available for other needs.
+Copy the command for your OS, then configure your receiver in Settings. These
+routes handle dependencies and updates without choosing individual release files.
+[Manual DEB/RPM and PKG downloads and source builds](#manual-install-options)
+remain available when needed.
 
 ## Linux packages
 
 **APT/DNF is the recommended Linux installation.** The installer selects the
-signed repository for your supported OS version and architecture. You do not
-need to choose a DEB or RPM file. See the [supported systems](#supported-systems)
-if you are unsure of your OS; DragonOS follows its Ubuntu base.
+signed repository for your supported OS version and architecture, so you do not
+need to choose a DEB or RPM file. See [supported systems](#supported-systems)
+if you are unsure; DragonOS follows its Ubuntu base.
 
 ### 1. Install VectorWarp
 
@@ -78,9 +78,9 @@ brew upgrade vectorwarp vectorwarp-heimdall
 ### 2. Configure and start radar
 
 Open **Settings**, select and configure the receiver, then choose **Save &
-Restart**. This saves the configuration and starts radar, including on the first run.
-**Save for later** saves without starting it; use `vectorwarp start` later to start the
-full stack with saved settings.
+Restart**. This saves the configuration and starts radar, including on the first
+run. **Save for later** saves without starting it; use `vectorwarp start` later
+to start the full stack with saved settings.
 
 Packaged Linux recording output stays below
 `/var/lib/vectorwarp/recordings/`, the directory shared by the non-root
@@ -108,22 +108,24 @@ starting radar. `vectorwarp --help` lists its fixed actions:
 | `vectorwarp version` | Show the installed version. |
 | `vectorwarp help` | Show all commands and examples. |
 
-`open` (the default) starts only the web API. `start` brings up the full
-VectorWarp stack: receiver helper, web API, and checked radar processor using
+`open` (the default) starts only the web API. `start` starts the full
+VectorWarp stack—receiver helper, web API, and checked radar processor—using
 saved settings. If radar is active but the web page is down, `start` repairs
 the web and helper without interrupting radar; use `restart` to apply changed
 settings. `stop` safely drains privileged receiver work before stopping the
-VectorWarp processor, web API, helper and socket; `restart` stops and starts
-the full stack in order. `version` reports the installed package version. A
-pending package upgrade, receiver build or restart can make a command refuse
-until it is safe to retry. Neither these commands nor package upgrades stop
-shared Kraken Suite, SDRplay API or other vendor services. Checked receiver
-startup can still start an approved installed receiver service when the
-selected profile requires it.
-Check `status` or `logs` after a request. A service-changing command may ask
-for your administrator password. If your user cannot read the system journal,
-use `sudo vectorwarp logs`. Packages older than 0.1.7 do not contain the
-launcher; update them with the package-manager commands below before using it.
+processor, web API, helper, and socket; `restart` stops and starts the full
+stack in order.
+
+Use `status` or `logs` after a request. `version` reports the installed package
+version. A service-changing command may ask for an administrator password; if
+your user cannot read the system journal, use `sudo vectorwarp logs`.
+
+A pending package upgrade, receiver build, or restart can make a command refuse
+until it is safe to retry. These commands and package upgrades do not stop
+shared Kraken Suite, SDRplay API, or other vendor services. Checked receiver
+startup can still start an approved installed receiver service when the selected
+profile requires it. Packages older than 0.1.7 do not contain the launcher;
+update them before using it.
 
 ### 4. Update
 
@@ -426,11 +428,11 @@ The repository installer and direct-package links above cover Ubuntu 22.04,
 
 </details>
 
-## Limited platform: Raspberry Pi 4B
+## Advanced preview: Raspberry Pi 4B
 
-Raspberry Pi 4B is retained as a compatibility/preview target, not a recommended
-primary VectorWarp platform. Its production-size radar workloads may not keep
-up in real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
+Raspberry Pi 4B is an advanced compatibility preview, not a supported primary
+VectorWarp platform. Its production-size radar workloads may not keep up in
+real time. Prefer a supported x86-64 PC or Apple Silicon Mac when possible.
 
 | System | Version or base | Architecture | Current package selection |
 | --- | --- | --- | --- |

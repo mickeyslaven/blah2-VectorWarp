@@ -2,10 +2,11 @@
 
 > This page describes the generic Vulkan driver and stage-qualification path.
 > The current Raspberry Pi target is Pi 4B (8 GB) on Raspberry Pi OS Lite
-> 64-bit Bookworm, installed from source. Its geometry-gated whole-CPI mixed
-> AUTO path is documented in the [Pi 4 guide](PI4_GUIDE.md); no Pi image or
-> Bookworm package is published, and the mixed worker has no new 40-minute
-> soak result.
+> 64-bit Bookworm. The versioned Pi 4 Bookworm Lite image is published as an
+> advanced compatibility preview; it is not a supported primary deployment.
+> Its geometry-gated whole-CPI mixed AUTO path is documented in the
+> [Pi 4 guide](PI4_GUIDE.md), and the mixed worker has no new 40-minute soak
+> result.
 
 ## 1. Install VectorWarp
 

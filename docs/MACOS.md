@@ -1,9 +1,10 @@
 # macOS installation and local development
 
-This port is under local validation. Public Homebrew formulas follow successful
-[main-merge publishing runs](HOMEBREW_PUBLISHING.md); the local source
-installation is available now. Linux release installation and systemd
-services remain separate. Apple Silicon
+For a packaged installation, use [Homebrew](MACOS_HOMEBREW.md) or the signed
+standalone installer when available. This page covers local development and
+runtime scope; Linux package installation and systemd services are separate.
+
+Apple Silicon
 (`arm64`) was exercised locally on an Apple M2 running macOS 26.6.1. That work
 covered CPU and replay processing, browser configuration and service lifecycle,
 the local Homebrew app and Kraken companion through revision 17, a calibrated
@@ -16,7 +17,7 @@ open receiver-adapter, synthetic Kraken, replay, API, browser and lifecycle
 checks. Physical Intel receivers, GPU processing and installed Homebrew remain
 unverified.
 
-The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized
+The separate universal standalone `.pkg` is Developer ID signed, Apple-notarized,
 and installs at `/Applications/VectorWarp.app`. Published versions appear in the
 [release download matrix](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 See [MACOS_STANDALONE.md](MACOS_STANDALONE.md) for its target

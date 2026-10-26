@@ -6,10 +6,8 @@ For macOS, begin with [Homebrew installation](MACOS_HOMEBREW.md) and the
 Mac actions. The systemd services, APT/DNF packages, and privileged enrollment
 instructions below apply to Linux.
 
-1. On a Pi 4B, follow the [Pi 4 preview guide](PI4_GUIDE.md) and open its
-   [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest).
-   Fresh-card boot and Wi-Fi qualification are pending. On other Linux systems,
-   install VectorWarp from the [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
+1. On supported Linux systems, install VectorWarp from the
+   [package and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
    On macOS, use the [Homebrew guide](MACOS_HOMEBREW.md). Then run `vectorwarp`
    to open **Settings** without starting radar.
 2. If the receiver is an RSPduo, first install SDRplay's vendor API yourself
@@ -17,16 +15,15 @@ instructions below apply to Linux.
    distribute the API. Then select and configure the receiver.
 3. Choose **Save & Restart** to save settings and start radar, including the
    first time. **Save for later** does not start it.
-4. Later, `vectorwarp start` brings up the full stack using saved settings;
-   `vectorwarp stop` stops it, including the web interface; and
-   `vectorwarp restart` restarts it in order. These commands do not stop shared Kraken
-   Suite or SDRplay services. `vectorwarp status`, `vectorwarp logs`, and
-   `vectorwarp help` inspect it. Linux also has `vectorwarp version`; on macOS,
-   use `brew list --versions vectorwarp`.
+4. Later, use `vectorwarp start`, `vectorwarp stop`, or `vectorwarp restart`
+   for the full stack. `stop` includes the web interface; these commands do not
+   stop shared Kraken Suite or SDRplay services. Use `vectorwarp status`,
+   `vectorwarp logs`, or `vectorwarp help` to inspect it. Linux also has
+   `vectorwarp version`; on macOS, use `brew list --versions vectorwarp`.
 
-If you enabled a Mac Homebrew service, use `brew services stop vectorwarp` and
-`brew services restart vectorwarp` for service control. A plain `vectorwarp stop`
-leaves that supervisor running, so it restarts the child processes.
+If you enabled the Mac Homebrew service, use `brew services stop vectorwarp` or
+`brew services restart vectorwarp` to control the supervisor. Plain
+`vectorwarp stop` leaves that supervisor running, so it restarts child processes.
 
 Use the
 [source-build guide](INSTALL.md#build-from-source) for development or unsupported
@@ -39,11 +36,8 @@ Node.js requirements, receiver build choices, GPU build packages and startup
 commands. Choose the required `--backend` before building. Installing an SDR
 driver later does not add an adapter that was omitted from the VectorWarp build.
 
-For the Raspberry Pi 4B Bookworm preview, use the [Pi 4 guide](PI4_GUIDE.md)
-after installation. It documents the tested RSPduo configuration and the
-geometry-limited mixed AUTO path. Fresh-card boot and Wi-Fi qualification remain
-pending; see [validation limits](PI4_IMAGE_VALIDATION_20260919.md). Pi 5 is
-future work.
+The [Raspberry Pi 4B preview guide](PI4_GUIDE.md) covers an advanced compatibility
+path and its constrained RSPduo configuration.
 
 ## Check receiver software
 

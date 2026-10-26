@@ -111,7 +111,6 @@ exit 0
 
     def test_primary_install_snippets_are_one_safe_complete_command(self):
         expected = {
-            "README.md": (APT_INSTALL, DNF_INSTALL),
             "docs/INSTALL.md": (APT_INSTALL, DNF_INSTALL),
             "docs/DRAGONOS.md": (APT_INSTALL,),
         }
@@ -235,6 +234,31 @@ exit 0
                     if anchor and destination.suffix == ".md":
                         self.assertIn(anchor, heading_ids(destination.read_text()), target)
 
+    def test_documentation_map_separates_current_and_historical_material(self):
+        index = (ROOT / "docs/README.md").read_text()
+        archive = (ROOT / "docs/archive/README.md").read_text()
+        for heading in ("## Install", "## Configure and operate", "## Develop and release",
+                        "## Research and experimental paths", "## Historical evidence and audits"):
+            self.assertIn(heading, index)
+        self.assertIn("not current install, operating, configuration, or capability", archive)
+        self.assertIn("advanced compatibility preview",
+                      " ".join((ROOT / "docs/PI4_GUIDE.md").read_text().split()))
+        self.assertNotIn("no Pi image or\n> Bookworm package is published",
+                         (ROOT / "docs/PI_GPU_SETUP.md").read_text())
+
+    def test_all_repository_local_markdown_links_and_anchors_exist(self):
+        for document in project_documents():
+            for target in re.findall(r"\\]\\(([^)]+)\\)", document.read_text()):
+                target = re.sub(r'''\s+(?:"[^"]*"|'[^']*')\s*$''', "", target)
+                if "://" in target or target.startswith("mailto:"):
+                    continue
+                with self.subTest(guide=str(document.relative_to(ROOT)), target=target):
+                    filename, _, anchor = unquote(target).partition("#")
+                    destination = document.parent / filename if filename else document
+                    self.assertTrue(destination.is_file(), target)
+                    if anchor and destination.suffix == ".md":
+                        self.assertIn(anchor, heading_ids(destination.read_text()), target)
+
     def test_source_instructions_use_supported_native_dependencies(self):
         for relative in ("docs/INSTALL.md",):
             text = (ROOT / relative).read_text()
@@ -270,13 +294,28 @@ exit 0
             self.assertRegex(install, rf"(?m)^\| .*{re.escape(system)}.*\|")
         self.assertNotRegex(install, r"(?m)^## Raspberry Pi")
         self.assertIn("### Raspberry Pi GPU", install)
-        marker = "## Limited platform: Raspberry Pi 4B"
+        marker = "## Advanced preview: Raspberry Pi 4B"
         self.assertIn(marker, install)
         self.assertNotRegex(install.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
 
         readme = (ROOT / "README.md").read_text()
-        self.assertIn(marker, readme)
-        self.assertNotRegex(readme.split(marker, 1)[0], r"(?i)raspberry pi|pi 4")
+        readme_marker = "## Advanced preview: Raspberry Pi 4B"
+        self.assertIn(readme_marker, readme)
+        self.assertNotRegex(readme.split(readme_marker, 1)[0], r"(?i)raspberry pi|pi 4")
+
+    def test_primary_docs_label_research_and_preview_work(self):
+        readme = (ROOT / "README.md").read_text()
+        install = (ROOT / "docs/INSTALL.md").read_text()
+        setup = (ROOT / "docs/SETUP.md").read_text()
+        research = (ROOT / "docs/ADVANCED_RESEARCH.md").read_text()
+
+        primary = readme.split("## Advanced and research material", 1)[0]
+        self.assertNotRegex(primary, r"(?i)scorecard|bearing|manifold|shadow")
+        self.assertRegex(readme, r"research paths, separate from the supported install and operation guides")
+        self.assertIn("## Advanced preview: Raspberry Pi 4B", install)
+        self.assertIn("advanced compatibility preview", install.lower())
+        self.assertIn("advanced compatibility", setup.lower())
+        self.assertIn("separate\nfrom the supported installation and receiver-operation guides", research)
 
     def test_current_receiver_guidance_agrees_with_policy(self):
         helper = (ROOT / "script/vectorwarp-receiver-helper.py").read_text()

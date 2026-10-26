@@ -9,8 +9,10 @@ The DEB/RPM instructions below apply to Linux.
 To install VectorWarp, use the [downloads and APT/DNF page](https://mickeyslaven.github.io/blah2-VectorWarp/#install).
 This document covers building and maintaining the packages.
 
-The previous Raspberry Pi OS Trixie installation route is deprecated for new
-Pi deployments. Its replacement is the **Pi 4 Bookworm 64-bit Lite preview**:
+The following Raspberry Pi material is an **advanced compatibility preview**, not
+a supported primary deployment. The previous Raspberry Pi OS Trixie installation
+route is deprecated for new Pi deployments. Its replacement is the **Pi 4
+Bookworm 64-bit Lite preview**:
 [release page](https://github.com/mickeyslaven/blah2-VectorWarp/releases/tag/v0.1.10-pi4-preview),
 [Imager manifest](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10.rpi-imager-manifest), and
 [image](https://github.com/mickeyslaven/blah2-VectorWarp/releases/download/v0.1.10-pi4-preview/vectorwarp-pi4-0.1.10-arm64.img.xz).
