@@ -68,11 +68,11 @@ jobs:
           brew tap mickeyslaven/vectorwarp
           brew trust mickeyslaven/vectorwarp
           brew install --build-from-source mickeyslaven/vectorwarp/vectorwarp
-          previous_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].installed[0].version')
+          previous_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].linked_keg')
           rm -rf "$tap/Formula"
           cp -R "$RUNNER_TEMP/reviewed-tap/." "$tap/"
           brew upgrade --build-from-source mickeyslaven/vectorwarp/vectorwarp
-          candidate_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].installed[0].version')
+          candidate_receipt=$(brew info --json=v2 mickeyslaven/vectorwarp/vectorwarp | jq -er '.formulae[0].linked_keg')
           test "$candidate_receipt" != "$previous_receipt"
           printf 'previous=%s\ncandidate=%s\n' "$previous_receipt" "$candidate_receipt" | tee "$RUNNER_TEMP/homebrew-upgrade.txt"
           brew test mickeyslaven/vectorwarp/vectorwarp-heimdall

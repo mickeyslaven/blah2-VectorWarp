@@ -57,6 +57,7 @@ class ReleaseMatrixTest(unittest.TestCase):
         installed_step = macos.split('- name: Verify the installed Homebrew package', 1)[1]
         self.assertNotIn("if: matrix.runner == 'macos-15'", installed_step.split('- name:', 1)[0])
         self.assertIn('brew upgrade --build-from-source mickeyslaven/vectorwarp/vectorwarp', homebrew)
+        self.assertEqual(homebrew.count("jq -er '.formulae[0].linked_keg'"), 2)
         self.assertIn("github.event_name == 'pull_request'", homebrew)
 
 
