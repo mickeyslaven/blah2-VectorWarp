@@ -297,9 +297,9 @@ def main():
     assert hashlib.sha256(CONFIG.read_bytes()).hexdigest() == before
     checks.append('foreign origins and legacy GET cannot change settings or recording')
 
-    # Genuine API-identity -> Unix broker -> installed restart service. There is
-    # no radio/SDK and the neutral config is not applied for live processing:
-    # the expected result is a bounded, visible startup failure.
+    # Genuine API-identity -> Unix broker -> installed restart service. The
+    # neutral first-run config is a bounded web-only no-op: restart completes,
+    # setup remains required, and the processor never starts.
     run('systemd-run', '--quiet', '--wait', '--collect', '--pipe',
         '--unit=vectorwarp-package-test-request', '-p', 'User=vectorwarp-api',
         '-p', 'Group=vectorwarp-api', '-p', 'NoNewPrivileges=yes',
@@ -307,16 +307,15 @@ def main():
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         state = run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-restart.service')
-        if state == 'failed':
+        if state == 'inactive':
             break
         time.sleep(.25)
-    assert state == 'failed', 'Missing SDK restart must finish with a failure, not hang'
+    assert state == 'inactive', 'Neutral first-run restart must finish without hanging'
     wait_ready()
     _, status, _ = request('/api/system/status')
-    assert status['restart']['state'] == 'failed', status
-    assert any(word in status['restart']['message'].lower() for word in ('pending', 'sdrplay', 'sdk')), status
+    assert status['setupRequired'] is True, status
     assert run('systemctl', 'show', '-p', 'ActiveState', '--value', 'vectorwarp-processor.service') == 'inactive'
-    checks.append('NNP broker reaches real restart unit; actionable startup failure returns to live API')
+    checks.append('NNP broker reaches real restart unit; neutral setup stays web-only and bounded')
 
     # The package must retain every receiver as a valid pending/replay choice,
     # even though no SDK or hardware is installed. Pending is disk-only: it must

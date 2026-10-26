@@ -100,6 +100,8 @@ json_ok "$TEMP/state/processor.json"
 # that live process alone when this state is stopped.
 run stop >/dev/null
 run_other() { PATH="$TEMP/tools:$PATH" VECTORWARP_MACOS_ROOT="$TEMP/root" VECTORWARP_MACOS_STATE="$TEMP/other-state" VECTORWARP_MACOS_API_PORT="$PORT" VECTORWARP_MACOS_NODE=node "$ROOT/script/vectorwarp-macos" "$@"; }
+mkdir -p "$TEMP/other-state"
+cp "$TEMP/state/config.yml" "$TEMP/other-state/config.yml"
 run_other restart-processing >/dev/null
 cp "$TEMP/other-state/processor.json" "$TEMP/state/processor.json"
 copied=$(cat "$TEMP/state/processor.json")
