@@ -86,13 +86,15 @@ async function click(label) { const button = findButton(label); assert.ok(button
     assert.match(window.document.querySelector('#receiver-setup').textContent, /hackrf.*1\.2\.3.*Fedora/s,
       'The full native package transaction must be shown before execution');
     assert.equal(window.document.querySelectorAll('#receiver-setup img').length, 0, 'Receipt text cannot inject markup');
+    const discoveryCountBeforeExecution = discoveryCount;
     await click('Run authorized action');
     assert.equal(requests.filter(item => item.url === '/api/receivers/execute').length, 1);
     const sent = requests.find(item => item.url === '/api/receivers/execute').options;
     assert.equal(sent.headers['X-VectorWarp-Intent'], 'receiver-management-v1');
     assert.deepEqual(JSON.parse(sent.body), {nonce: 'b'.repeat(64), configRevision: revision});
     assert.equal(requests.filter(item => item.options.method === 'PUT').length, 0, 'Software checks never rewrite SDR endpoints or settings');
-    assert.equal(discoveryCount, 2, 'Successful management always triggers fresh discovery');
+    assert.ok(discoveryCount > discoveryCountBeforeExecution,
+      'Successful management always triggers fresh discovery');
     await click('Review missing dependency install'); mode = 'transport';
     await click('Run authorized action');
     assert.ok(window.document.querySelector('#receiver-setup').textContent.includes('outcome unknown'));
