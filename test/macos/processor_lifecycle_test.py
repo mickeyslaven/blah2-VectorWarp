@@ -65,13 +65,10 @@ def main():
         config_file = work / 'config.json'
         recording = work / 'synthetic.blah2iq'
         fixture.write_blah2iq(recording, 2, 2000000, 204640000, frames=5)
-        sinks = fixture.SinkGroup()
-        sinks.start()
-        reservations = [socket.socket() for _ in range(2)]
+        reservations = [socket.socket() for _ in range(8)]
         for listener in reservations:
             listener.bind(('127.0.0.1', 0))
-        ports = {'api': reservations[0].getsockname()[1], **sinks.ports(),
-                 'config': reservations[1].getsockname()[1]}
+        ports = dict(zip(['api', *fixture.PORT_NAMES, 'config'], [s.getsockname()[1] for s in reservations]))
         for listener in reservations:
             listener.close()
         config = fixture.config('Usrp', 2, recording, ports['api'],
@@ -79,9 +76,17 @@ def main():
         # The native replay fixture is deliberately minimal; browser validation
         # also requires the regular application's display/site configuration.
         base = json.loads(subprocess.check_output([str(node), '-e',
-            'process.stdout.write(JSON.stringify(require("js-yaml").load(require("fs").readFileSync(process.argv[1],"utf8"))))',
+            'const yaml=require("js-yaml"),store=require("./config-store");'
+            'const base=yaml.load(require("fs").readFileSync(process.argv[1],"utf8"));'
+            'process.stdout.write(JSON.stringify(store.configurationForReceiver("Usrp",base)))',
             str(app_root / 'config/config.yml')], cwd=app_root / 'api', text=True))
-        base.update(config)
+        def merge(target, updates):
+            for key, value in updates.items():
+                if isinstance(value, dict) and isinstance(target.get(key), dict):
+                    merge(target[key], value)
+                else:
+                    target[key] = copy.deepcopy(value)
+        merge(base, config)
         base['network']['ports']['config'] = ports['config']
         base['truth']['adsb']['enabled'] = False
         base['save']['path'] = str(work) + '/'
@@ -241,7 +246,6 @@ def main():
                     print(f'{name} log tail:\n{log.read_text()[-5000:]}')
             raise
         finally:
-            sinks.close()
             run('stop', success=False)
 
 
