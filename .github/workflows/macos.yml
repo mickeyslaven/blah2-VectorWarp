@@ -76,11 +76,10 @@ jobs:
         run: |
           script/package-homebrew-local.sh build/homebrew-ci --install-tap
           brew trust vectorwarp/local
-          if ! brew install --build-from-source vectorwarp/local/vectorwarp; then
-            [[ $(uname -m) == x86_64 ]] || exit 1
+          if [[ $(uname -m) == x86_64 ]]; then
             script/repair-macos-homebrew-python-links.sh
-            brew install --build-from-source vectorwarp/local/vectorwarp
           fi
+          brew install --build-from-source vectorwarp/local/vectorwarp
           brew test vectorwarp/local/vectorwarp
           brew test vectorwarp/local/vectorwarp-heimdall
           app_root="$(brew --prefix vectorwarp/local/vectorwarp)/libexec"

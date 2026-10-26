@@ -85,9 +85,14 @@ done
 podman cp "$previous" "$container:/tmp/previous.$format"
 podman cp "$candidate" "$container:/tmp/candidate.$format"
 if [[ $format == deb ]]; then
-  install_cmd=(env DEBIAN_FRONTEND=noninteractive apt-get --yes install)
+  # Automated upgrades must preserve the operator-owned dpkg conffile without
+  # reading stdin. The byte-for-byte hash assertion below remains authoritative.
+  install_cmd=(env DEBIAN_FRONTEND=noninteractive apt-get --yes \
+    -o Dpkg::Options::=--force-confold install)
   query_cmd=(dpkg-query -W -f '${Version}')
-  ecosystem_cmd='dpkg-query -W -f="${binary:Package}\t${Version}\n" 2>/dev/null | grep -Ei "^(gnuradio|uhd-host|libuhd|sdrplay)" | sort || true'
+  # Keep dpkg's ${field} placeholders single-quoted for the container's POSIX
+  # shell; otherwise dash treats ${binary:Package} as shell substitution.
+  ecosystem_cmd="dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n' 2>/dev/null | grep -Ei '^(gnuradio|uhd-host|libuhd|sdrplay)' | sort || true"
 else
   install_cmd=(dnf --assumeyes --setopt=install_weak_deps=False install)
   query_cmd=(rpm -q --qf '%{VERSION}-%{RELEASE}')

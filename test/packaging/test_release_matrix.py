@@ -35,6 +35,8 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertNotIn('podman build --jobs=1 --memory=2g --memory-swap=2g --cpus=', upgrade)
         self.assertIn('command failed with status', upgrade)
         self.assertIn("run_with_log 'base test image build'", upgrade)
+        self.assertIn('Dpkg::Options::=--force-confold', upgrade)
+        self.assertIn("-f='\\${binary:Package}\\\\t\\${Version}\\\\n'", upgrade)
 
     def test_local_matrix_matches_ci_and_dragonos_generations(self):
         rows = []
@@ -65,6 +67,8 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertEqual(homebrew.count("jq -er '.formulae[0].linked_keg'"), 2)
         self.assertIn("github.event_name == 'pull_request'", homebrew)
         self.assertIn('script/repair-macos-homebrew-python-links.sh', macos)
+        self.assertLess(installed_step.index('script/repair-macos-homebrew-python-links.sh'),
+                        installed_step.index('brew install --build-from-source'))
 
     def test_release_build_isolated_from_test_outputs(self):
         build = (ROOT / 'script/build-native.sh').read_text()
