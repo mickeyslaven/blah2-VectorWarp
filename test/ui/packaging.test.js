@@ -24,6 +24,10 @@ const debianUhdRelationshipCheck = spawnSync('node', [path.join(root,
   'test/packaging/debian_uhd_relationship.test.js')], {encoding: 'utf8'});
 assert.equal(debianUhdRelationshipCheck.status, 0,
   `Debian/DragonOS UHD relationship: ${debianUhdRelationshipCheck.stdout}${debianUhdRelationshipCheck.stderr}`);
+const macosPythonLinkCheck = spawnSync('python3', [path.join(root,
+  'test/packaging/test_macos_homebrew_python_links.py')], {encoding: 'utf8'});
+assert.equal(macosPythonLinkCheck.status, 0,
+  `Intel macOS Python link normalization: ${macosPythonLinkCheck.stdout}${macosPythonLinkCheck.stderr}`);
 
 assert.match(buildScript, /cmake -G Ninja/);
 assert.match(buildScript, /arm\*\|aarch64\|s390x\|ppc64le\|riscv\*/);
