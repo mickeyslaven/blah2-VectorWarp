@@ -1,6 +1,29 @@
 var nRows = null;
 var range_x = [];
 var range_y = [];
+var SPECTRUM_MAX_DYNAMIC_RANGE_DB = 80;
+var SPECTRUM_MIN_COLOR_SPAN_DB = 10;
+
+function spectrumColorRange(spectrum) {
+  var lowest = Infinity;
+  var highest = -Infinity;
+  for (var row of spectrum) {
+    if (!Array.isArray(row)) continue;
+    for (var value of row) {
+      if (!Number.isFinite(value)) continue;
+      lowest = Math.min(lowest, value);
+      highest = Math.max(highest, value);
+    }
+  }
+  if (!Number.isFinite(highest)) return {zmin: -120, zmax: 0};
+  lowest = Math.max(lowest, highest - SPECTRUM_MAX_DYNAMIC_RANGE_DB);
+  if (highest - lowest < SPECTRUM_MIN_COLOR_SPAN_DB) {
+    var middle = (highest + lowest) / 2;
+    return {zmin: middle - SPECTRUM_MIN_COLOR_SPAN_DB / 2,
+      zmax: middle + SPECTRUM_MIN_COLOR_SPAN_DB / 2};
+  }
+  return {zmin: lowest, zmax: highest};
+}
 
 // setup API
 var urlMap = liveApiUrl('/stash/iqdata');
@@ -59,6 +82,10 @@ var data = [
   {
     z: [[0, 0, 0], [0, 0, 0], [0, 0, 0]],
     colorscale: 'Jet',
+    colorbar: {title: {text: 'dB'}},
+    zauto: false,
+    zmin: -120,
+    zmax: 0,
     type: 'heatmap'
   }
 ];
@@ -76,12 +103,16 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     {
       data.timestamp[i] = new Date(data.timestamp[i]);
     }
+    var colorRange = spectrumColorRange(data.spectrum);
     var trace1 = {
         x: data.frequency[0].map(khz => khz / 1000),
         y: data.timestamp,
         z: data.spectrum,
         colorscale: 'Jet',
+        colorbar: {title: {text: 'dB'}},
         zauto: false,
+        zmin: colorRange.zmin,
+        zmax: colorRange.zmax,
         type: 'heatmap'
     };
 
@@ -96,10 +127,14 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     {
       data.timestamp[i] = new Date(data.timestamp[i]);
     }
+    var colorRange = spectrumColorRange(data.spectrum);
     var trace_update = {
       x: [data.frequency[0].map(khz => khz / 1000)],
       y: [data.timestamp],
-      z: [data.spectrum]
+      z: [data.spectrum],
+      zauto: [false],
+      zmin: [colorRange.zmin],
+      zmax: [colorRange.zmax]
     };
     await Plotly.update('data', trace_update);
   }
