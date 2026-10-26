@@ -24,21 +24,49 @@ const clone = value => JSON.parse(JSON.stringify(value));
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
     assert.equal(typeof update, 'function');
+    if (kind === 'spectrum') {
+      const fallback = context.spectrumColorRange([[NaN, Infinity]]);
+      assert.equal(fallback.zmin, -120);
+      assert.equal(fallback.zmax, 0);
+    }
     const frame = {
       map: {timestamp: 1000, nRows: 3, delay: [1], doppler: [1, 2, 3], data: [[1], [2], [3]], maxPower: 15},
-      spectrum: {timestamp: [1000], frequency: [[100000, 100001]], spectrum: [[1, 2]]},
+      spectrum: {timestamp: [1000], frequency: [[100000, 100001]], spectrum: [[-92, -37]]},
       timing: {timestamp: [1000], cpi: [20], frameTimestamp: 1000},
       detection: {timestamp: [1000], delay: [1], doppler: [2], snr: [3]}
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
     assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
-    if (kind === 'spectrum') assert.deepEqual(calls.at(-1).args[1][0].x, [100, 100.001]);
+    if (kind === 'spectrum') {
+      const trace = calls.at(-1).args[1][0];
+      assert.deepEqual(trace.x, [100, 100.001]);
+      assert.equal(trace.zauto, false);
+      assert.equal(trace.zmin, -92);
+      assert.equal(trace.zmax, -37);
+      assert.match(trace.colorbar.title.text, /dB/);
+    }
     if (kind === 'timing') assert.equal(calls.at(-1).args[1].length, 1, 'Frame metadata is not a processing stage');
     await update(clone(frame));
     assert.equal(calls.at(-1).method, 'update');
     if (kind === 'spectrum') {
-      await update({timestamp: [1001], frequency: [[100000, 100001, 100002]], spectrum: [[1, 2, 3]]});
+      assert.equal(calls.at(-1).args[1].zauto[0], false);
+      assert.equal(calls.at(-1).args[1].zmin[0], -92);
+      assert.equal(calls.at(-1).args[1].zmax[0], -37);
+      await update({timestamp: [1001], frequency: [[100000, 100001]], spectrum: [[-73, -73]]});
+      assert.equal(calls.at(-1).method, 'update');
+      assert.equal(calls.at(-1).args[1].zmin[0], -78,
+        'Flat disconnected-input history retains a non-degenerate negative-dB scale');
+      assert.equal(calls.at(-1).args[1].zmax[0], -68);
+      await update({timestamp: [1000, 1001], frequency: [[100000, 100001], [100000, 100001]],
+        spectrum: [[-300, -90], [-80, -30]]});
+      assert.equal(calls.at(-1).method, 'update');
+      assert.equal(calls.at(-1).args[1].zmin[0], -110,
+        'The numerical floor cannot flatten the useful 80 dB history window');
+      assert.equal(calls.at(-1).args[1].zmax[0], -30);
+      await update({timestamp: [1002], frequency: [[100000, 100001, 100002]], spectrum: [[-100, -60, -30]]});
       assert.equal(calls.at(-1).method, 'react', 'Spectrum topology changes reconcile the existing Plotly root');
+      assert.ok(calls.at(-1).args[1][0].zmax < 0,
+        'Negative dB spectrum data cannot render against Plotly default 0..1 bounds');
     }
     if (kind === 'timing') {
       await update({timestamp: [1001], cpi: [20], capture: [5], frameTimestamp: 1001});
@@ -63,5 +91,5 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.ok(!calls.some(call => call.method === 'newPlot'), 'Map never tears down the plot root');
     }
   }
-  console.log('Original plot first-frame/update, frequency axis and late-stream tests passed.');
+  console.log('Plot first-frame/update, spectrum dB scale, frequency axis and late-stream tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
