@@ -68,94 +68,68 @@ function samples(elevations = () => 5) {
 }
 
 const corpusSha256 = hash(samples());
-const sparse = fitDetectionManifold(samples(), {corpusSha256});
-const dense = denseRuntimeCandidate(sparse);
-assert.equal(dense.direct_path_beam, 1, 'off-grid transmitter uses the rounded native beam');
-assert.equal(sparse.responses.find(row => row.azimuth_bin === 1).training_passes, 2);
-assert.ok(correlation(dense.direct_anchor.response, response(directAzimuth)) > 1 - 1e-12,
-  'the fixed-transmitter anchor is retained separately from aircraft beams');
-assert.ok(correlation(dense.responses[1], response(62)) > 1 - 1e-12,
-  'the aircraft beam nearest the transmitter remains available for detection');
-assert.ok(correlation(sparse.responses.find(row => row.azimuth_bin === 1).response,
-  response(62)) > 1 - 1e-12, 'diagnostic aircraft templates are not overwritten by the direct anchor');
-const targetBeam = 2, targetAzimuth = targetBeam * 45 + 17;
-// This is CoherentBeamBank's unwhitened ratio calibration. It must recover the
-// measured target vector up to common phase even when neither angle is on-grid.
-const nativeSteering = normalize(dense.responses[targetBeam].map((value, channel) =>
-  multiply(response(directAzimuth)[channel], divide(value, dense.direct_anchor.response[channel]))));
-assert.ok(correlation(nativeSteering, response(targetAzimuth)) > 1 - 1e-12);
-assert.deepEqual(dense.elevation_range_deg, [5, 5]);
-assert.equal(dense.sample_rate_hz, identity.sample_rate_hz);
-assert.deepEqual(dense.channel_mapping, identity.channel_mapping);
-assert.deepEqual(dense.manifold_identity, identity);
-assert.equal(dense.manifold_identity_sha256, hash(identity));
-assert.equal(dense.config_fingerprint, 'fixed-installed-state');
-assert.equal(dense.positive_corpus_sha256, corpusSha256);
-assert.equal(dense.bank_hash_contract, BANK_HASH_CONTRACT);
-assert.equal(dense.bank_sha256, detectionBankHash(dense.responses,
-  dense.direct_anchor.response));
+const model = fitDetectionManifold(samples(), {corpusSha256});
+assert.equal(model.schema, 'vectorwarp-detection-manifold-candidate-v2');
+assert.equal(model.cells.length, 32);
+assert.equal(model.responses.length, beams);
+assert.equal(model.runtime_compatible, false);
+assert.throws(() => denseRuntimeCandidate(model), /shadow-only/);
+assert.deepEqual(model.elevation_range_deg, [-90, 90], 'fixed physical axes do not collapse with constant elevation data');
+assert.deepEqual(model.responses[0].elevation_range_deg, [5, 5]);
+assert.equal(responseFor(model, {truth: {local_azimuth_deg: 17, elevation_deg: 6}}), null);
+assert.equal(responseFor(model, {truth: {local_azimuth_deg: 17, elevation_deg: 1000}}), null);
+assert.ok(responseFor(model, {truth: {local_azimuth_deg: 17, elevation_deg: 5}}));
+assert.ok(correlation(model.responses[0].ideal_response, model.responses[2].ideal_response) < .99,
+  'ideal shrinkage is direction dependent');
+for (const options of [{azimuthBins: 1000000}, {elevationBins: 1000000},
+  {minTrainingPassesPerBin: 1}, {elevationRangeDeg: [5, 5]}])
+  assert.throws(() => fitDetectionManifold(samples(), options), /two-dimensional/);
+
+const changedPhase = samples().map((row, index) => ({...row,
+  response: row.response.map(value => multiply(value, [Math.cos(index * 1.7), Math.sin(index * 1.7)]))}));
+const phased = fitDetectionManifold(changedPhase);
+for (let index = 0; index < beams; ++index)
+  assert.ok(correlation(model.responses[index].response, phased.responses[index].response) > 1 - 1e-12,
+    'complex alignment and shrinkage must be invariant to arbitrary common phase');
+const orthogonal = samples(), ideal = model.responses[0].ideal_response;
+const perpendicular = normalize([[-ideal[1][0], ideal[1][1]], [ideal[0][0], -ideal[0][1]], [0, 0]]);
+orthogonal[0].response = perpendicular; orthogonal[1].response = perpendicular;
+const ambiguous = fitDetectionManifold(orthogonal);
+assert.equal(ambiguous.cells.find(cell => cell.key === model.responses[0].key).support, 'incoherent');
+assert.equal(responseFor(ambiguous, orthogonal[0]), null, 'unidentifiable shrinkage phase is unsupported');
+
+const {buildDetectionCorpus, validateDetectionSample} = require('./detection-manifold-corpus');
+const ordered = samples().slice(0, 3).map((row, index) => ({...clone(row), icao: 'same-aircraft',
+  radar_timestamp_ms: 1000 + index * 1000}));
+assert.equal(new Set(buildDetectionCorpus([ordered[2], ordered[0], ordered[1]]).training.map(r => r._pass_id)).size, 1,
+  'shuffling one pass cannot manufacture independent passes');
+const epochs = clone(ordered);
+epochs[1].manifold_identity.actual_gain_db[0] += 1;
+epochs[1].manifold_identity.compatibility_fingerprint = compatibilityFingerprint(epochs[1].manifold_identity);
+epochs[1].configuration.receiver_gain_v2.actual_channel_gains_db[0] += 1;
+const current = buildDetectionCorpus(epochs);
+assert.equal(current.training.length, 1, 'returning to an earlier identity begins a fresh collection epoch');
+assert.notEqual(current.evidence_key, buildDetectionCorpus(epochs.slice(0, 1)).evidence_key);
+assert.throws(() => validateDetectionSample({...samples()[0], icao: ''}), /aircraft/);
+assert.throws(() => validateDetectionSample({...samples()[0], radar_timestamp_ms: undefined}), /timestamp/);
+assert.throws(() => validateDetectionSample({...samples()[0], response: [[0, 0], [0, 0], [0, 0]]}), /nonzero/);
+
 assert.equal(detectionBankHash([[[1, -0], [0, 1], [1, 0]]], [[1, 0], [1, 0], [1, 0]]),
-  detectionBankHash([[[1, 0], [0, 1], [1, 0]]], [[1, 0], [1, 0], [1, 0]]),
-  'bank identity must survive JSON signed-zero normalization');
-
-const repeated = samples();
-repeated[0].reference_weights = response(directAzimuth + 5);
-const originalAnchor = fitDetectionManifold(repeated).direct_anchor;
-const duplicated = repeated.flatMap((row, index) => index === 0 ? Array.from({length: 40}, () => clone(row)) : [row]);
-const repeatedAnchor = fitDetectionManifold(duplicated).direct_anchor;
-assert.equal(repeatedAnchor.training_passes, originalAnchor.training_passes);
-assert.ok(correlation(originalAnchor.response, repeatedAnchor.response) > 1 - 1e-12,
-  'repeated frames from one pass do not change the direct anchor vote');
-
-const disjoint = fitDetectionManifold(samples(beam => beam === 0 ? 0 : 80));
-assert.throws(() => denseRuntimeCandidate(disjoint), /common observed elevation support/);
-const shared = denseRuntimeCandidate(fitDetectionManifold(samples((beam, pass) =>
-  pass === 0 ? beam : 20 - beam)));
-assert.deepEqual(shared.elevation_range_deg, [7, 13],
-  'support is the intersection of every retained aircraft beam');
-assert.equal(shared.aircraft_support.length, beams);
-assert.equal(responseFor(sparse, {truth: {local_azimuth_deg: targetAzimuth, elevation_deg: 40}}), null,
-  'diagnostic lookup also refuses unobserved elevation extrapolation');
-const brokenAnchor = clone(sparse); brokenAnchor.direct_anchor.beam = 0;
-assert.throws(() => denseRuntimeCandidate(brokenAnchor), /fixed-transmitter direct anchor/);
-const brokenIdentity = clone(sparse); brokenIdentity.manifold_identity.actual_gain_db[0] += 1;
-assert.throws(() => denseRuntimeCandidate(brokenIdentity), /not exactly convertible/);
-
-// Optional native acceptance uses the same generated fitter artifact. The
-// normal JS suite needs no compiled tool; CI/review can additionally supply it.
-const nativeIndex = process.argv.indexOf('--native');
-if (nativeIndex !== -1) {
-  const binary = path.resolve(process.argv[nativeIndex + 1]);
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'detection-fitter-native-'));
-  try {
-    const baseline = {frequency_hz: frequency, beams, positions_m: positions,
-      direct_path_azimuth_rad: directAzimuth * Math.PI / 180, direct_path_null_db: 0};
-    const grid = {schema: 'vectorwarp-detection-manifold-post-caf-grid-input-v1', same_iq: false,
-      production_equivalent: false, truth_selected_beam: false,
-      configuration: {...baseline, channels: positions.length, fusion_mode: 'coherent_beam_bank'},
-      banks: {baseline: {sha256: hash(baseline), beams},
-        candidate: {...dense, sha256: dense.bank_sha256,
-          direct_response: dense.direct_anchor.response}},
-      reference_weights: response(directAzimuth),
-      detector: {contract: 'vectorwarp-production-ca-cfar-full-bank-v1', guard_cells: 0,
-        training_cells_per_side: 1, integration_cpis: 1, motion_trials: 1, detector_pfa: .01},
-      truth_label: {selection: 'target-cut-only-no-beam-selection', target_cut_id: 'target',
-        local_azimuth_deg: targetAzimuth, elevation_deg: 5},
-      cuts: ['target', 'nuisance'].map(role => ({id: role, role,
-        cut: response(targetAzimuth), training: [-1, 1].map(offset => ({offset,
-          channels: [[.1, 0], [0, .1], [.1, .1]]}))})), provenance: {}};
-    const input = path.join(temporary, 'input.json'), output = path.join(temporary, 'output.json');
-    fs.writeFileSync(input, JSON.stringify(grid));
-    const run = spawnSync(binary, [input, output], {encoding: 'utf8'});
-    assert.equal(run.status, 0, run.stderr);
-    const emitted = JSON.parse(fs.readFileSync(output, 'utf8'));
-    const target = emitted.cuts.find(row => row.id === 'target');
-    assert.ok(Math.abs(target.candidate.cut_power_by_beam[targetBeam] - 1) < 1e-10,
-      'native calibration preserves the perfect off-grid measured response');
-    assert.ok(Math.max(...target.candidate.cut_power_by_beam) >
-      Math.max(...target.baseline.cut_power_by_beam) + .01);
-  } finally {
-    fs.rmSync(temporary, {recursive: true, force: true});
-  }
-}
-console.log('Detection fitter: fixed direct anchor, pass balancing, joint elevation support, and exact identity passed.');
+  detectionBankHash([[[1, 0], [0, 1], [1, 0]]], [[1, 0], [1, 0], [1, 0]]));
+const {persistCandidate, readBounded} = require('./detection-manifold-artifacts');
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'detection-artifact-test-'));
+try {
+  const filename = path.join(temporary, 'candidate.json');
+  const digest = persistCandidate(filename, model);
+  const evaluated = clone(model);
+  evaluated.calibration.evaluation = {evaluated_at: new Date().toISOString()};
+  evaluated.calibration.independent_validation_samples += 1;
+  assert.equal(persistCandidate(filename, evaluated), digest, 'evaluation changes do not mutate a model artifact');
+  fs.writeFileSync(filename, '{}');
+  assert.throws(() => persistCandidate(filename, model), /Immutable/);
+  assert.throws(() => readBounded(filename, 1), /read limit/);
+  const link = path.join(temporary, 'link.json');
+  fs.symlinkSync(filename, link);
+  assert.throws(() => persistCandidate(link, model), /ELOOP/);
+} finally { fs.rmSync(temporary, {recursive: true, force: true}); }
+console.log('Detection fitter: bounded 2-D geometry, support, phase invariance, epoch isolation and immutable artifacts passed.');

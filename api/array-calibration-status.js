@@ -20,6 +20,15 @@ function compactAutomation(status = {}, {autoPromoteEnabled = false,
     qualified_path: status.qualifiedPath || null,
     validation_path: status.validationPath || null,
     runtime_candidate_path: status.runtimeCandidatePath || null,
+    candidate_version: status.candidateVersion || null,
+    versioned_candidate_path: status.versionedCandidatePath || null,
+    shadow_ab_receipt_path: status.receiptPath || null,
+    native_shadow_corpus: status.nativeShadow ? {path: status.nativeShadow.path || null,
+      added: status.nativeShadow.added || 0, ignored: status.nativeShadow.ignored || 0,
+      rejected_receipts: status.nativeShadow.rejected || 0,
+      unavailable_frames: status.nativeShadow.unavailable_frames || 0,
+      error: status.nativeShadow.error || null} : null,
+    native_shadow_fit: status.nativeFit || null,
     promotion: status.promotion || null
   };
 }
@@ -44,7 +53,8 @@ function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
     relationship: {
       shared_evidence_corpus: true,
       shared_fitted_model: false,
-      explanation: 'Bearing and detection use the same accepted complex array-response rows, but fit, validate, activate, and version separate models.'
+      native_shadow_evidence_is_separate: true,
+      explanation: 'Bearing and live diagnostic detection share recorder rows; native detection shadow fitting uses a separate authenticated corpus. Fitted models and qualification remain separate.'
     },
     corpus: {
       role: 'installed-array-aircraft-response-corpus',
@@ -75,6 +85,7 @@ function buildArrayCalibrationStatus({config, recorderStatus, bearingStatus,
     detection: {
       purpose: 'surveillance beam-bank weighting before detection and CFAR',
       active_model: config.process?.surveillance_fusion?.manifold_file || null,
+      active_model_policy: 'unchanged; shadow candidates cannot be promoted automatically',
       automation: compactAutomation(detectionStatus, {forcePromotionDisabled: true}),
       progress: detectionStatus?.progress || null
     },

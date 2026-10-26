@@ -19,6 +19,7 @@ import struct
 from pathlib import Path
 import tempfile
 import time
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,10 @@ PHASE_SPEC = importlib.util.spec_from_file_location(
     "phase_locked", ROOT / "script" / "analyze-phase-locked-migration.py")
 PHASE = importlib.util.module_from_spec(PHASE_SPEC)
 PHASE_SPEC.loader.exec_module(PHASE)
+NATIVE_SPEC = importlib.util.spec_from_file_location(
+    "resident_evidence", ROOT / "script" / "resident-replay-evidence.py")
+NATIVE = importlib.util.module_from_spec(NATIVE_SPEC)
+NATIVE_SPEC.loader.exec_module(NATIVE)
 C_KM_S = 299792.458
 
 
@@ -40,7 +45,7 @@ def canonical(value):
         number = float(value)
         if not math.isfinite(number):
             raise ValueError("canonical shadow receipts require finite numbers")
-        return '{"$f64":"' + struct.pack(">d", number).hex() + '"}'
+        return '{"$f64":"' + struct.pack(">d", 0.0 if number == 0 else number).hex() + '"}'
     if isinstance(value, list):
         return "[" + ",".join(canonical(item) for item in value) + "]"
     if isinstance(value, dict):
@@ -98,6 +103,29 @@ def longest_run(values):
         current = current + 1 if value else 0
         best = max(best, current)
     return best
+
+
+def source_timed_arm(arm, capture, metadata, sample_rate):
+    anchors, clock = NATIVE.sample_clock(capture, metadata, sample_rate)
+    result = dict(arm)
+    for kind in ("detections", "tracks"):
+        frames = []
+        for frame in arm[kind]:
+            event = frame.get("eventTime", {})
+            try:
+                if any(isinstance(event.get(key), bool) or not str(event.get(key)).isdecimal()
+                       for key in ("epoch", "firstSample", "endSample")):
+                    raise ValueError("sample provenance is not an unsigned integer")
+                epoch, first, end = (int(event[key]) for key in ("epoch", "firstSample", "endSample"))
+            except (KeyError, TypeError, ValueError):
+                raise ValueError("replay scoring requires source sample provenance, never replay wall time")
+            if epoch != metadata["epoch"] or not metadata["firstEpochSample"] <= first < end <= metadata["endEpochSample"]:
+                raise ValueError("replay output sample range differs from admitted recording")
+            sample = (first + end) / 2
+            if anchors[0][0] <= sample <= anchors[-1][0]:
+                frames.append({**frame, "timestamp": clock(sample)})
+        result[kind] = frames
+    return result
 
 
 def score_arm(arm, truth_samples, sample_rate, cpi, uncertainty_s=0):
@@ -258,6 +286,12 @@ def arm_plan(config, requested):
     return unique
 
 
+def dwell_label(dwell):
+    # Match JSON/JavaScript's decimal representation for the admitted .02..2s
+    # interval; the default :g formatting rounded distinct arms to six digits.
+    return f"{int(dwell) if float(dwell).is_integer() else str(float(dwell))}s"
+
+
 def validate_job(job):
     if job.get("schema") != "vectorwarp-integration-shadow-job-v1":
         raise ValueError("unsupported integration shadow job schema")
@@ -270,6 +304,14 @@ def validate_job(job):
         raise ValueError("integration shadow job identity mismatch")
     experiment = job.get("experiment", {})
     modes = experiment.get("fusion_modes", [])
+    dwells = experiment.get("dwell_seconds", [])
+    wall = experiment.get("max_wall_seconds_per_clip")
+    if not isinstance(modes, list) or not 1 <= len(modes) <= 5 or len(set(modes)) != len(modes) or \
+       any(mode not in ("production", "coherent_beam_bank", "noise_whitened_beam_bank", "noncoherent", "physical_channels") for mode in modes) or \
+       not isinstance(dwells, list) or not 1 <= len(dwells) <= 8 or \
+       any(isinstance(dwell, bool) or not isinstance(dwell, (int, float)) or not .02 <= dwell <= 2 for dwell in dwells) or \
+       len(set(dwells)) != len(dwells) or isinstance(wall, bool) or not isinstance(wall, int) or not 30 <= wall <= 86400:
+        raise ValueError("integration shadow experiment exceeds bounded dwell/mode/wall limits")
     if experiment.get("same_iq") is not True or experiment.get("shadow_only") is not True or \
        experiment.get("require_production_arm") is not True or modes.count("production") != 1:
         raise ValueError("integration shadow requires exactly one production baseline")
@@ -278,11 +320,19 @@ def validate_job(job):
         raise ValueError("integration shadow receipt-key identity mismatch")
     if experiment.get("physical_channel_reference_policy") != "leave-one-out":
         raise ValueError("unsupported physical-channel reference policy")
+    if experiment.get("execution_host_policy") != "strix-only":
+        raise ValueError("integration shadow heavy replay is restricted to Strix")
+    captures = job.get("captures")
+    if not isinstance(captures, list) or not 1 <= len(captures) <= 8 or \
+       any(not isinstance(c.get("capture_id"), str) or not c["capture_id"] or
+           not isinstance(c.get("processor_cpis"), int) or not 3 <= c["processor_cpis"] <= 20000 for c in captures) or \
+       len({c["capture_id"] for c in captures}) != len(captures):
+        raise ValueError("integration shadow requires a bounded unique capture manifest")
     return identity, experiment
 
 
 def run(job, config_path, binary, harness_path, recording=None, admission=None,
-        acceleration="gpu-resident", receipt_key=None):
+        acceleration="gpu-resident", receipt_key=None, evidence_dir=None):
     identity, experiment = validate_job(job)
     config_bytes = config_path.read_bytes()
     config_file_sha = hashlib.sha256(config_bytes).hexdigest()
@@ -302,6 +352,11 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
        admission.get("receiver_epoch") != identity.get("receiver_epoch"):
         raise ValueError("admission identity does not match the queued capture epochs")
     captures = valid_captures(admission)
+    if not 1 <= len(captures) <= 8:
+        raise ValueError("native shadow export exceeds its per-job pass bound")
+    if sorted((c["capture_id"], c["processor_cpis"]) for c in job["captures"]) != \
+       sorted((capture_id, len(capture["processor_cpis"])) for capture_id, capture in captures):
+        raise ValueError("queued capture manifest differs from admitted truth passes")
     exact_timing = all(cpi.get("exact_event_time") is True
                        for _, capture in captures for cpi in capture["processor_cpis"])
     timing_policy = "exact" if exact_timing else "provisional"
@@ -358,11 +413,17 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                         for capture_id, value in captures}
     truth = primary_capture["truth_samples"]
     sample_rate = float(config["capture"]["fs"])
+    if acceleration != "gpu-resident":
+        raise ValueError("truth-selected production evidence requires native gpu-resident replay")
+    if evidence_dir is None:
+        raise ValueError("native snapshot exports require a durable evidence directory")
+    evidence_dir = Path(evidence_dir)
+    evidence_dir.mkdir(parents=True, exist_ok=False)
     deadline = time.monotonic() + float(experiment["max_wall_seconds_per_clip"])
     harness = REPLAY.load_harness(harness_path)
-    arms, started = {}, time.monotonic()
+    arms, truth_selected_exports, started, native_bytes = {}, [], time.monotonic(), 0
     for dwell in experiment["dwell_seconds"]:
-        dwell_key = f"{float(dwell):g}s"
+        dwell_key = dwell_label(dwell)
         arms[dwell_key] = {}
         diagnostic_emitted = False
         for label, mode, physical in arm_plan(config, experiment["fusion_modes"]):
@@ -374,10 +435,12 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
             arm_started = time.monotonic()
             replay = REPLAY.run_arm(harness, binary, source, recording_path, mode,
                                     min(remaining, 900), label=f"{dwell_key}-{label}",
-                                    acceleration=acceleration, surveillance_channel=physical,
-                                    complex_cutout=None)
+                                    acceleration="cpu" if physical is not None else acceleration,
+                                    surveillance_channel=physical, complex_cutout=None,
+                                    preserve_production=label == "production")
             elapsed = time.monotonic() - arm_started
-            target_scores = {capture_id: score_arm(replay, target_truth, sample_rate, float(dwell),
+            target_scores = {capture_id: score_arm(source_timed_arm(replay, dict(captures)[capture_id],
+                                                  native_metadata, sample_rate), target_truth, sample_rate, float(dwell),
                                                   uncertainty_by_capture[capture_id])
                              for capture_id, target_truth in truth_by_capture.items()}
             output_cpis = len(replay["detections"])
@@ -386,34 +449,56 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                 "wall_ms_per_output_cpi": elapsed * 1000 / output_cpis if output_cpis else None,
                 "live_processor_work_added_ms": 0},
                 "targets": target_scores}
-            # Target coordinates may select a diagnostic cutout only after the
-            # unchanged detector has independently emitted a matching cell.
-            # This second replay cannot affect arm scoring or selection.
-            if not diagnostic_emitted and physical is None and \
-                    target_scores[primary_capture_id]["target_detection_cpis"] > 0:
-                centre_time = sorted(row["timestamp_ms"] for row in truth)[len(truth) // 2]
-                cutout_request = {"delay_km": interpolate(truth, centre_time, "delay_km"),
-                    "doppler_hz": interpolate(truth, centre_time, "doppler_hz"),
-                    "delay_radius_bins": 16, "doppler_radius_bins": 24, "max_frames": 128}
-                remaining = deadline - time.monotonic()
-                diagnostic_replay = REPLAY.run_arm(
-                    harness, binary, source, recording_path, mode, min(remaining, 900),
-                    label=f"{dwell_key}-{label}-post-detection-diagnostic",
-                    acceleration=acceleration, surveillance_channel=physical,
-                    complex_cutout=cutout_request)
-                arms[dwell_key][label]["integration"] = integration_diagnostic(
-                    diagnostic_replay["complex_cutouts"], source, truth)
-                arms[dwell_key][label]["integration"].update({
-                    "truth_conditioned": True, "selection_basis": "post-detection-label",
-                    "excluded_from_arm_scoring": True})
+            # Native settled snapshots retain every cell/beam and exact temporal
+            # state, including CFAR rejects. Only sample geometry selects frames.
+            if not diagnostic_emitted and label == "production":
+                input_fingerprint = canonical_digest({"recording_sha256": recording_sha,
+                    "admission_sha256": admission_sha, "config_sha256": config_sha,
+                    "native_identity_sha256": identity["native_identity_sha256"]})
+                for capture_id, capture_truth in truth_by_capture.items():
+                    capture = dict(captures)[capture_id]
+                    artifact_id = hashlib.sha256(f"{dwell_key}:{capture_id}".encode()).hexdigest()
+                    snapshot_request = NATIVE.snapshot_request(capture, native_metadata, source,
+                        recording_sha, identity["native_identity_sha256"], evidence_dir / artifact_id)
+                    remaining_bytes = (2 << 30) - native_bytes
+                    snapshot_request["max_total_bytes"] = remaining_bytes
+                    snapshot_request["max_bytes"] = min(NATIVE.LIMIT, remaining_bytes // snapshot_request["max_frames"])
+                    if snapshot_request["max_bytes"] < 2048:
+                        raise ValueError("native snapshot export exhausted its per-job byte budget")
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 1:
+                        raise TimeoutError("integration shadow exhausted its per-clip wall budget")
+                    diagnostic_replay = REPLAY.run_arm(
+                        harness, binary, source, recording_path, mode, min(remaining, 900),
+                        label=f"{dwell_key}-{label}-truth-{capture_id}", acceleration=acceleration,
+                        surveillance_channel=physical, preserve_production=True,
+                        native_snapshot=snapshot_request)
+                    truth_selected_exports.append(truth_selected_export(
+                        diagnostic_replay.get("resident_snapshots", []), source, capture,
+                        native_metadata, snapshot_request, capture_id, f"{dwell_key}-{label}",
+                        job["job_binding_sha256"], input_fingerprint, receipt_key,
+                        canonical_digest({"active_config_sha256": config_sha, "cpi_seconds": dwell}),
+                        {"config_epoch": identity.get("config_epoch"),
+                         "receiver_epoch": identity.get("receiver_epoch")}))
+                    native_bytes += sum(frame["native_snapshot"]["bytes"]
+                        for frame in truth_selected_exports[-1]["multi_cpi_history"])
                 diagnostic_emitted = True
     wall = time.monotonic() - started
+    if time.monotonic() > deadline:
+        raise TimeoutError("native evidence export exceeded the per-clip wall budget")
     if hashlib.sha256(config_path.read_bytes()).hexdigest() != config_file_sha:
         raise RuntimeError("configuration changed while the shadow was running")
+    if digest(recording_path) != recording_sha or digest(native_sidecar) != expected_native_sha or \
+       canonical_digest(json.loads(admission_path.read_text())) != admission_sha:
+        raise RuntimeError("admitted IQ or metadata changed while the shadow was running")
     result = {"schema": "vectorwarp-integration-shadow-result-v1", "job_id": job["job_id"],
             "job_binding_sha256": job["job_binding_sha256"],
             "state": "complete", "completed_at": time.time(), "shadow_only": True,
-            "timing_policy": timing_policy, "decision_grade": exact_timing,
+            "timing_policy": timing_policy, "decision_grade": False,
+            "timing_decision_grade": exact_timing,
+            "hardware_qualified": False,
+            "replay_state_origin": "fresh-native-replay-from-admitted-clip",
+            "qualification_gate": "Strix physical native snapshot parity has not run",
             "production_promotion_allowed": False,
             "authoritative_output": False, "production_unchanged": True,
             "input": {"recording": str(recording_path), "recording_sha256": recording_sha,
@@ -442,6 +527,7 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
                 "empirical_familywise_acceptance": False,
                 "reason": "requires a frozen target-free multi-clip holdout, never one aircraft clip"},
             "arms": arms,
+            "truth_selected_exports": truth_selected_exports,
             "summary": {"winner": None, "selection_performed": False,
                         "selection_reason": "requires normalized pass-disjoint holdout scoring",
                         "comparison_unit": "same immutable IQ; fractions include explicit denominators",
@@ -455,6 +541,132 @@ def run(job, config_path, binary, harness_path, recording=None, admission=None,
         result["result_authentication"] = {"algorithm": "hmac-sha256", "key_id": key_id,
             "tag": hmac.new(receipt_key, canonical(result).encode("utf-8"), hashlib.sha256).hexdigest()}
     return result
+
+
+def native_manifold_evidence(frame, config, capture, request, job_binding, fingerprint, key, collection_epoch=None):
+    """Sign only native complex response evidence; never synthesize it from powers."""
+    truth, covariance, cut = frame["truth"], frame.get("covariance_whitening", {}), frame["target_cut"]
+    evaluated = [row for row in cut.get("native_cfar_statistics", []) if row[4] in (1, 3)]
+    if config["process"]["surveillance_fusion"]["mode"] not in ("coherent_beam_bank", "noise_whitened_beam_bank") or \
+       not covariance.get("actual_fusion_weights") or \
+       not key or not fingerprint or not isinstance(capture.get("pass_id"), str) or \
+       not capture["pass_id"].strip() or not isinstance(capture.get("icao"), str) or \
+       not capture["icao"].strip() or covariance.get("covariance_valid") is not True or not evaluated or \
+       not all(isinstance(truth.get(field), (int, float)) and math.isfinite(truth[field])
+               for field in ("local_azimuth_deg", "elevation_deg", "position_timestamp_s")):
+        return None
+    epoch = canonical_digest({"source_epoch": frame["source_epoch"],
+        "rf_sha256": frame["rf_sha256"], "config_fingerprint": fingerprint,
+        "collection_epoch": collection_epoch})
+    matrix = covariance["covariance_matrix"]
+    evidence = {"schema": "vectorwarp-native-truth-export-v1", "shadow_only": True,
+        "production_promotion_allowed": False, "hardware_qualified": False,
+        "job_binding_sha256": job_binding, "epoch_id": epoch, "collection_epoch": collection_epoch,
+        "pass": {"id": capture["pass_id"], "icao": capture["icao"],
+                 "label": "detected" if any(row[4] == 3 for row in evaluated) else "subthreshold"},
+        "truth": truth,
+        "configuration": {"config_fingerprint": fingerprint,
+            "cpi_seconds": config["process"]["data"]["cpi"],
+            "fusion_mode": config["process"]["surveillance_fusion"]["mode"],
+            "frequency_hz": frame["frequency_hz"], "sample_rate_hz": frame["sample_rate_hz"],
+            "channels": len(cut["physical_channels"]), "channel_mapping": frame["channel_mapping"],
+            "actual_channel_gains_db": frame["actual_channel_gains_db"]},
+        "sample_clock": {"admitted": True, "epoch_id": epoch, "source_epoch": frame["source_epoch"],
+            "first_epoch_sample": frame["first_epoch_sample"], "end_epoch_sample": frame["end_epoch_sample"],
+            "source_sample_midpoint": frame["source_sample_midpoint"], "timestamp_ms": frame["timestamp_ms"],
+            "time_mapping": "admitted-source-sample-midpoints"},
+        "source_snapshots": [{**frame["native_snapshot"], "epoch_id": epoch,
+            "raw_iq_sha256": frame["raw_iq_sha256"],
+            "source_sha256": frame["source_sha256"], "rf_sha256": frame["rf_sha256"],
+            "native_config_sha256": frame["native_config_sha256"],
+            "native_module_sha256": frame["native_module_sha256"],
+            "native_device_sha256": frame["native_device_sha256"]}],
+        "covariance": {"matrix": matrix, "samples": covariance["covariance_analysis_samples"],
+            "sha256": canonical_digest(matrix), "epoch_id": epoch,
+            "state": "native-resident-reference-covariance", "estimated_from_cut": False},
+        "target_cut": {**cut, "id": f"{frame['logical_frame']}:{frame['row']}:{frame['column']}",
+            "role": "target", "raw_iq_sha256": frame["raw_iq_sha256"], "epoch_id": epoch,
+            "representation": "native-physical-channel-complex-caf"},
+        "local_control_cells": [{"id": f"{frame['logical_frame']}:{cell['row']}:{cell['column']}",
+            "physical_channels": cell["physical_channels"]} for cell in frame["nuisance_cells"]],
+        "local_control_scope": "nearby physical CUTs; not certified target-free CFAR training",
+        "reference_weights": covariance["reference_weights"],
+        "weight_provenance": "native-coherent-fusion-weights",
+        "actual_fusion_weights": covariance["actual_fusion_weights"],
+        "detector": {"scope": "native-cfar-before-centroid", "statistics": evaluated,
+            "production_cfar_recomputed": False}}
+    evidence["export_sha256"] = canonical_digest(evidence)
+    unsigned = {k: v for k, v in evidence.items() if k != "export_sha256"}
+    evidence["authentication"] = {"algorithm": "hmac-sha256",
+        "key_id": hashlib.sha256(key).hexdigest(),
+        "mac": hmac.new(key, canonical(unsigned).encode(), hashlib.sha256).hexdigest()}
+    return evidence
+
+
+def truth_selected_export(receipts, config, capture, metadata, request, capture_id,
+                          arm_label, job_binding_sha256, input_fingerprint,
+                          receipt_key=None, config_fingerprint=None, collection_epoch=None):
+    if len(receipts) != request["max_frames"] or not 3 <= len(receipts) <= 8:
+        raise ValueError("truth-selected export lacks the complete requested native snapshot window")
+    _, clock = NATIVE.sample_clock(capture, metadata, config["capture"]["fs"])
+    frames = []
+    for expected, receipt in zip(range(request["first_frame"], request["last_frame"] + 1), receipts):
+        snapshot = NATIVE.Snapshot(receipt, request, config)
+        if snapshot.frame != expected:
+            raise ValueError("native snapshot window is duplicated or out of order")
+        sample = metadata["firstEpochSample"] + (snapshot.frame - .5) * snapshot.samples
+        timestamp = clock(sample)
+        truth_samples = capture["truth_samples"]
+        if not min(s["timestamp_ms"] for s in truth_samples) <= timestamp <= max(s["timestamp_ms"] for s in truth_samples):
+            raise ValueError("native CUT would extrapolate admitted truth")
+        truth = {key: interpolate(truth_samples, timestamp, key) for key in ("delay_km", "doppler_hz")}
+        geometry_keys = ("bearing_deg_true", "elevation_deg", "position_timestamp_s")
+        if all(isinstance(s.get(key), (int, float)) and math.isfinite(s[key])
+               for s in truth_samples for key in geometry_keys):
+            for key in ("elevation_deg", "position_timestamp_s"):
+                truth[key] = interpolate(truth_samples, timestamp, key)
+            # Unwrap bearing before interpolating across north.
+            bearing_samples, last = [], None
+            for sample_truth in sorted(truth_samples, key=lambda s: s["timestamp_ms"]):
+                bearing = sample_truth["bearing_deg_true"]
+                if last is not None: bearing = last + (bearing - last + 180) % 360 - 180
+                bearing_samples.append({"timestamp_ms": sample_truth["timestamp_ms"], "bearing": bearing})
+                last = bearing
+            truth["bearing_deg_true"] = interpolate(bearing_samples, timestamp, "bearing") % 360
+            orientation = config["capture"]["device"].get("array_geometry", {}).get("x_axis_bearing_deg_true")
+            if isinstance(orientation, (int, float)) and math.isfinite(orientation):
+                truth["local_azimuth_deg"] = (orientation - truth["bearing_deg_true"]) % 360
+            truth["provenance"] = "adsb"
+        frame = snapshot.export(timestamp, truth)
+        frame["source_sample_midpoint"] = sample
+        frame["source_epoch"] = metadata["epoch"]
+        frame["first_epoch_sample"] = metadata["firstEpochSample"] + (snapshot.frame - 1) * snapshot.samples
+        frame["end_epoch_sample"] = frame["first_epoch_sample"] + snapshot.samples
+        frame["manifold_evidence"] = native_manifold_evidence(frame, config, capture, request,
+            job_binding_sha256, config_fingerprint, receipt_key, collection_epoch)
+        if frame["manifold_evidence"] is None:
+            frame["manifold_evidence_unavailable"] = "requires authenticated aircraft/pass, ADS-B direction, valid native reference covariance, exact complex coherent fusion weights and settled CFAR state"
+        frames.append(frame)
+    value = {"schema": "vectorwarp-truth-selected-shadow-export-v2",
+             "shadow_only": True, "decision_grade": False,
+             "production_promotion_allowed": False, "production_unchanged": True,
+             "selection": {"basis": "geometry-eligible-truth-cut-only",
+                           "cfar_or_beam_selection_used": False,
+                           "capture_id": capture_id, "arm": arm_label},
+             "provenance": {"native_recorder": "ResidentReplaySnapshot-v1",
+                            "native_contract_verified": True, "hardware_qualified": False,
+                            "state_origin": "fresh-native-replay-from-admitted-clip",
+                            "time_mapping": "admitted-source-sample-midpoints",
+                            "source_epoch": metadata["epoch"],
+                            "job_binding_sha256": job_binding_sha256,
+                            "input_fingerprint": input_fingerprint},
+             "multi_cpi_history": frames,
+             "covariance_whitening": {"state": "native-resident-settled-snapshot",
+                "per_frame": True, "estimated_from_cut": False},
+             "beam_response_representation": "native-all-beam-powers-and-actual-complex-fusion-weights",
+             "scope": "bounded representative pass window; full native spatial and temporal banks retained"}
+    value["export_sha256"] = canonical_digest(value)
+    return value
 
 
 def main():
@@ -508,14 +720,19 @@ def main():
         if not args.allow_same_host_for_test and \
            job.get("identity", {}).get("producer_host") == socket.gethostname():
             raise RuntimeError("integration shadow worker must not run on the live producer host")
+        if not args.allow_same_host_for_test and "strix" not in socket.gethostname().lower():
+            raise RuntimeError("integration shadow heavy replay must run on Strix")
         receipt_key = load_receipt_key(args.receipt_key.resolve())
         result = run(job, args.config.resolve(), args.binary.resolve(), args.harness.resolve(),
                      args.recording.resolve() if args.recording else None,
                      args.admission.resolve() if args.admission else None, args.acceleration,
-                     receipt_key)
+                     receipt_key, Path(f"{args.output.resolve()}.native-{uuid.uuid4().hex}"))
+        encoded_result = json.dumps(result, separators=(",", ":")) + "\n"
+        if len(encoded_result.encode()) > 16 * 1024 * 1024:
+            raise ValueError("integration shadow result exceeds its 16 MiB receipt bound")
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", dir=args.output.parent, delete=False) as output:
-            json.dump(result, output, indent=2); output.write("\n")
+            output.write(encoded_result)
             temporary = output.name
         os.link(temporary, args.output)
         os.unlink(temporary)

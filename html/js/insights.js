@@ -789,11 +789,19 @@
         <div><dt>Positive-control samples</dt><dd>${integer(detectionProgress.accepted_samples)}</dd></div>
         <div><dt>Positive-control fit</dt><dd>${detectionProgress.positive_control?.fit_ready ? 'Ready' : 'Collecting detected cells'}</dd></div>
         <div><dt>Truth-selected replay diagnostic</dt><dd>${detectionProgress.validation?.ready ? 'Coverage ready' : 'Coverage incomplete'} · ${integer(detectionProgress.validation_passes)} passes / ${integer(detectionProgress.miss_passes)} misses</dd></div>
-        <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · receipt harness ready / native export required</dd></div>
+        <div><dt>Native shadow evidence</dt><dd>${detectionAutomation.native_shadow_corpus?.error ? escapeHtml(detectionAutomation.native_shadow_corpus.error) : detectionAutomation.native_shadow_corpus ? `${integer(detectionAutomation.native_shadow_corpus.added)} new authenticated rows · shadow only` : 'Awaiting signed native exports'}</dd></div>
+        <div><dt>Native 2-D shadow fit</dt><dd>${detectionAutomation.native_shadow_fit ? `${integer(detectionAutomation.native_shadow_fit.accepted_samples)} current-epoch rows · ${integer(detectionAutomation.native_shadow_fit.training_passes)} training / ${integer(detectionAutomation.native_shadow_fit.holdout_passes)} held-out passes · ${integer(detectionAutomation.native_shadow_fit.supported_cells)} supported cells` : 'Awaiting authenticated native training evidence'}</dd></div>
+        <div><dt>Native A/B scope</dt><dd>Pass-disjoint complex projection only; nearby controls are not certified target-free, and no CFAR or detection improvement is claimed</dd></div>
+        <div><dt>Rejected native receipts</dt><dd>${integer(detectionAutomation.native_shadow_corpus?.rejected_receipts)}</dd></div>
+        <div><dt>Production full-bank receipts</dt><dd>${integer(detectionProgress.production_replay?.imported_passes)} imported · physical paired A/B qualification still required</dd></div>
         <div><dt>Supported sectors / bins</dt><dd>${integer(detectionProgress.covered_sectors)} / ${integer(detectionProgress.fit_bins)}</dd></div>
-        <div><dt>Candidate</dt><dd>Diagnostic only — production qualification disabled</dd></div>
-        <div><dt>Runtime compatibility</dt><dd>${detectionAutomation.runtime_candidate_path ? 'Replay-only dense artifact available' : 'None — sparse offline model'}</dd></div>
-        <div><dt>Promotion</dt><dd>Never automatic</dd></div>
+        <div><dt>2-D candidate</dt><dd>${detectionAutomation.candidate_version ? `v${escapeHtml(String(detectionAutomation.candidate_version).slice(0, 12))} · azimuth + elevation` : 'Waiting for supported 2-D cells'}</dd></div>
+        <div><dt>Support / uncertainty</dt><dd>Unsupported or sparse cells are not extrapolated; supported cells report independent-pass confidence</dd></div>
+        <div><dt>Validation state</dt><dd>${detectionProgress.validation?.ready ? 'Independent replay coverage ready — still shadow only' : 'Independent replay coverage incomplete'}</dd></div>
+        <div><dt>Last shadow update</dt><dd>${detectionAutomation.last_evaluation_at ? escapeHtml(timeLabel(detectionAutomation.last_evaluation_at)) : 'Not evaluated yet'}</dd></div>
+        <div><dt>Active detection model</dt><dd>${detectionCampaign.active_model ? escapeHtml(detectionCampaign.active_model) : 'Ideal/live configuration unchanged'}</dd></div>
+        <div><dt>Shadow A/B receipt</dt><dd>${detectionAutomation.candidate_version && detectionAutomation.shadow_ab_receipt_path ? 'Append-only receipt ledger' : 'Waiting for a candidate evaluation'}</dd></div>
+        <div><dt>Promotion</dt><dd>Hard-disabled — never automatic</dd></div>
         <div><dt>Errors</dt><dd>${detectionAutomation.error ? escapeHtml(detectionAutomation.error) : 'None'}</dd></div>
       </dl><p class="view-note">${escapeHtml(detectionProgress.limitation || 'Detection-manifold fitting is an isolated, diagnostic-only shadow path.')}</p>${detectionFailureText.length ? `<p class="view-note evaluation-note">Qualification blocked: ${escapeHtml(detectionFailureText.join(' '))}</p>` : ''}</section>
     </div><section class="info-card"><h2>Qualification gates</h2>${table(['Requirement', 'Target', 'Current', 'State'], requirementRows)}</section>

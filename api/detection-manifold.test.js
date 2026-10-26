@@ -118,25 +118,18 @@ const duplicatedIq = {...replay[1], provenance: {...replay[1].provenance,
   iq_sha256: replay[0].provenance.iq_sha256}};
 assert.throws(() => buildDetectionCorpus([...samples, replay[0], duplicatedIq], {corpusSha256}),
   /One IQ capture/);
-const model = fitDetectionManifold(evidence, {azimuthBins: 8, elevationBins: 1, corpusSha256});
-assert.equal(model.schema, 'vectorwarp-detection-manifold-candidate-v1');
+const model = fitDetectionManifold(evidence, {azimuthBins: 8, elevationBins: 4, corpusSha256});
+assert.equal(model.schema, 'vectorwarp-detection-manifold-candidate-v2');
 assert.equal(model.runtime_compatible, false);
 assert.equal(model.intended_use, 'offline-shadow-validation-only');
 assert.equal(model.calibration.positive_corpus_sha256, corpusSha256);
-assert.equal(model.responses.length, 8);
+assert.equal(model.elevation_bins, 4);
+assert.equal(model.cells.length, 32);
+assert.ok(model.cells.some(cell => cell.support === 'unsupported'));
+assert.equal(model.fixed_transmitter_anchor.separate_from_aircraft_response_evidence, true);
 assert.equal(model.calibration.adsb_role, 'adsb-collection-and-validation-only');
-const runtimeCandidate = denseRuntimeCandidate(model);
-assert.equal(runtimeCandidate.runtime_compatible, true);
-assert.equal(runtimeCandidate.responses.length, 8);
-assert.equal(runtimeCandidate.bank_hash_contract, BANK_HASH_CONTRACT);
-assert.equal(runtimeCandidate.bank_sha256, detectionBankHash(runtimeCandidate.responses,
-  runtimeCandidate.direct_anchor.response));
-assert.throws(() => denseRuntimeCandidate({...model, elevation_bins: 2}),
-  /not exactly convertible/);
-assert.throws(() => denseRuntimeCandidate({...model, responses: model.responses.slice(1)}),
-  /every azimuth bin/);
-const candidateModelSha256 = crypto.createHash('sha256').update(
-  JSON.stringify(runtimeCandidate)).digest('hex');
+assert.throws(() => denseRuntimeCandidate(model), /shadow-only/);
+const candidateModelSha256 = model.candidate_version;
 const productionAlpha = productionCfarAlpha(.05, 16, 1);
 const productionGain = {requested_common_gain: 12, requested_channel_gains: null,
   actual_channel_gains_db: [12, 12, 12]};
@@ -202,7 +195,7 @@ assert.ok(cfarThreshold({pfa: .1, training_cells: 16, effective_trials: 4}) >
 
 const config = {capture: {fc: 539000000}, process: {bearing: {manifold_recorder: {}},
   surveillance_fusion: {detection_manifold_automation: {enabled: true}}}};
-const relaxed = {azimuthBins: 8, elevationBins: 1, gates: {minIndependentPasses: 20,
+const relaxed = {azimuthBins: 8, elevationBins: 4, gates: {minIndependentPasses: 20,
   minValidationPasses: 8, minMissPasses: 6, minCoveredSectors: 6,
   minValidationSectors: 4, minFitBins: 6,
   maxUnsupportedGapDeg: 90, minTargetMarginImprovementDb: .5,
@@ -227,7 +220,7 @@ const evaluated = evaluateDetectionManifoldCandidate(evidence, config, relaxed);
 assert.equal(evaluated.evaluation.qualified, false);
 assert.equal(evaluated.evaluation.qualification_basis,
   'none-awaiting-native-full-bank-grid-export');
-assert.ok(evaluated.evaluation.failures.some(value => /dense bank is replay-only/.test(value)));
+assert.ok(evaluated.evaluation.failures.some(value => /Production qualification is disabled/.test(value)));
 assert.equal(evaluated.evaluation.promotion_allowed, false);
 assert.ok(evaluated.evaluation.comparison.candidate_recall >=
   evaluated.evaluation.comparison.baseline_recall);

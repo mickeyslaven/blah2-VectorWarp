@@ -96,13 +96,27 @@ def parse_tracker_diagnostics(output):
     return {"frames": frames, "totals": totals}
 
 
+def apply_temporal_bearing_policy(config, enable_tbd=False, preserve_production=False):
+    """The production baseline must retain its native temporal/bearing state."""
+    if preserve_production:
+        return
+    config["process"]["detection"]["track_before_detect"]["enable"] = enable_tbd
+    if not enable_tbd:
+        guided = config["process"]["tracker"].get("track_guided_shadow")
+        if isinstance(guided, dict):
+            guided["enable"] = False
+            guided["promote"] = False
+    config["process"]["bearing"]["enable"] = False
+
+
 def run_arm(harness, binary, source, recording, mode, timeout, reference_channel=None,
             pfa=None, label=None, direct_path_null_db=None, capture_maps=False,
             enable_tbd=False, tracker_m=None, tracker_n=None, tracker_max_acc=None,
             acceleration="cpu", complex_cutout=None, tbd_delay_motion_bins=None,
             tbd_doppler_motion_bins=None, tracker_beam_tolerance=None,
             disable_tracker=False, stationary_clutter=None,
-            surveillance_channel=None):
+            surveillance_channel=None, preserve_production=False, native_snapshot=None):
+    arm_started = time.monotonic()
     label = label or (mode if reference_channel is None else f"dedicated_ch{reference_channel}")
     class CapturingSinks(harness.SinkGroup):
         def __init__(self):
@@ -175,18 +189,13 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                 config["process"]["reference_synthesis"] = {
                     "mode": "array_eigenbeam" if len(reference_channels) > 1 else "dedicated",
                     "channels": reference_channels}
-            config["process"]["detection"]["track_before_detect"]["enable"] = enable_tbd
+            apply_temporal_bearing_policy(config, enable_tbd, preserve_production)
             if tbd_delay_motion_bins is not None:
                 config["process"]["detection"]["track_before_detect"][
                     "delay_motion_bins"] = tbd_delay_motion_bins
             if tbd_doppler_motion_bins is not None:
                 config["process"]["detection"]["track_before_detect"][
                     "doppler_motion_bins"] = tbd_doppler_motion_bins
-            if not enable_tbd:
-                guided = config["process"]["tracker"].get("track_guided_shadow")
-                if isinstance(guided, dict):
-                    guided["enable"] = False
-                    guided["promote"] = False
             initiate = config["process"]["tracker"]["initiate"]
             if tracker_m is not None:
                 initiate["M"] = tracker_m
@@ -201,11 +210,10 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                 config["process"]["tracker"]["enable"] = False
             if pfa is not None:
                 config["process"]["detection"]["pfa"] = pfa
-            config["process"]["bearing"]["enable"] = False
             recorder = config["process"]["bearing"].get("manifold_recorder")
             if isinstance(recorder, dict):
                 recorder["enabled"] = False
-            if mode == "noncoherent":
+            if mode == "noncoherent" and not preserve_production:
                 fusion = config["process"]["surveillance_fusion"]
                 fusion["effective_beam_trials"] = fusion.get("beams", 12)
                 fusion["direct_path_null_db"] = 0
@@ -226,6 +234,10 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
                     "path": str(cutout_path),
                     **complex_cutout,
                 }
+            if native_snapshot is not None:
+                if acceleration != "gpu-resident" or not preserve_production:
+                    raise ValueError("native snapshots require preserved resident production configuration")
+                config["save"]["resident_snapshot"] = {"state": True, **native_snapshot}
             config_path = root / "config.json"
             config_path.write_text(json.dumps(config))
             log_path = root / "processor.log"
@@ -264,6 +276,20 @@ def run_arm(harness, binary, source, recording, mode, timeout, reference_channel
             if complex_cutout is not None:
                 result["complex_cutouts"] = [json.loads(line) for line in
                     cutout_path.read_text().splitlines() if line.strip()]
+            if native_snapshot is not None:
+                paths = [Path(f"{native_snapshot['prefix']}.{frame}.rps") for frame in
+                         range(native_snapshot["first_frame"], native_snapshot["last_frame"] + 1)]
+                verifier = Path(binary).with_name("blah2-replay-verify")
+                verify_budget = timeout - (time.monotonic() - arm_started)
+                if verify_budget <= 0:
+                    raise TimeoutError("native snapshot verification exhausted replay wall budget")
+                checked = subprocess.run([str(verifier), *map(str, paths)], check=True,
+                    capture_output=True, text=True, timeout=min(verify_budget, 120))
+                hashes = checked.stdout.splitlines()
+                if len(hashes) != len(paths) or any(not re.fullmatch(r"[0-9a-f]{64}", h) for h in hashes):
+                    raise ValueError("native snapshot verifier returned incomplete evidence")
+                result["resident_snapshots"] = [{"path": str(p), "sha256": h,
+                    "native_contract_verified": True} for p, h in zip(paths, hashes)]
             return result
         finally:
             if process is not None:

@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {validateProcessorSampleRanges} = require('./capture-admission');
+const {readBounded} = require('./detection-manifold-artifacts');
 
 function captureTimingQualified(item) {
   if (!Array.isArray(item?.processor_cpis) || item.processor_cpis.length < 3) return false;
@@ -28,11 +29,13 @@ const DEFAULT_MODES = Object.freeze([
   'physical_channels'
 ]);
 const MAX_HOT_COMPLETED = 256;
+const MAX_TRUTH_EXPORT_PASSES = 8;
+const MAX_RESULT_BYTES = 16 * 1024 * 1024;
 
 const canonical = value => {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) throw new TypeError('canonical shadow receipts require finite numbers');
-    const bytes = Buffer.allocUnsafe(8); bytes.writeDoubleBE(value);
+    const bytes = Buffer.allocUnsafe(8); bytes.writeDoubleBE(value === 0 ? 0 : value);
     return `{"$f64":"${bytes.toString('hex')}"}`;
   }
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -72,6 +75,41 @@ function optionsFromConfig(config) {
   };
 }
 
+function validTruthSelectedExports(exports, jobBinding, job = null) {
+  if (!Array.isArray(exports) || !exports.length) return false;
+  if (job) {
+    const expected = new Set(job.captures.flatMap(capture => job.experiment.dwell_seconds.map(
+      dwell => `${capture.capture_id}\0${dwell}s-production`)));
+    if (exports.length !== expected.size || exports.some(value =>
+      !expected.delete(`${value?.selection?.capture_id}\0${value?.selection?.arm}`)) || expected.size) return false;
+  }
+  return exports.every(value => {
+    if (!value || value.schema !== 'vectorwarp-truth-selected-shadow-export-v2' ||
+        value.shadow_only !== true || value.decision_grade !== false ||
+        value.production_promotion_allowed !== false || value.production_unchanged !== true ||
+        value.selection?.basis !== 'geometry-eligible-truth-cut-only' ||
+        value.selection?.cfar_or_beam_selection_used !== false ||
+        value.provenance?.job_binding_sha256 !== jobBinding ||
+        value.provenance?.native_recorder !== 'ResidentReplaySnapshot-v1' ||
+        value.provenance?.native_contract_verified !== true ||
+        value.provenance?.hardware_qualified !== false ||
+        value.provenance?.time_mapping !== 'admitted-source-sample-midpoints' ||
+        !Array.isArray(value.multi_cpi_history) || value.multi_cpi_history.length < 3 ||
+        value.multi_cpi_history.length > 8 ||
+        value.covariance_whitening?.state !== 'native-resident-settled-snapshot' ||
+        value.covariance_whitening?.estimated_from_cut !== false ||
+        !value.multi_cpi_history.every(frame => frame?.native_snapshot?.native_contract_verified === true &&
+          /^[a-f0-9]{64}$/.test(frame.native_snapshot.sha256 || '') &&
+          typeof frame.native_snapshot.path === 'string' &&
+          frame.covariance_whitening?.state === 'native-resident-settled-snapshot' &&
+          Array.isArray(frame.target_cut?.physical_channels) && frame.target_cut.physical_channels.length > 0 &&
+          Array.isArray(frame.target_cut?.beam_powers) && frame.target_cut.beam_powers.length > 0) ||
+        !/^[a-f0-9]{64}$/.test(value.export_sha256 || '')) return false;
+    const unsigned = {...value}; delete unsigned.export_sha256;
+    return digestCanonical(unsigned) === value.export_sha256;
+  });
+}
+
 class IntegrationShadowQueue {
   constructor(config, {fileSystem = fs, now = Date.now} = {}) {
     this.config = config;
@@ -81,6 +119,7 @@ class IntegrationShadowQueue {
     this.counters = {accepted: 0, duplicate: 0, rejected: 0, overflow: 0};
     this.lastQueuedAt = null;
     this.lastError = null;
+    this.resultCache = new Map();
   }
 
   receiptKey() {
@@ -90,7 +129,7 @@ class IntegrationShadowQueue {
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
         (typeof process.geteuid === 'function' && stat.uid !== process.geteuid()))
       throw new Error('integration shadow receipt key must be an owner-only regular file');
-    const key = this.fs.readFileSync(filename);
+    const key = readBounded(filename, 4096, this.fs);
     if (key.length < 32) throw new Error('integration shadow receipt key must contain at least 32 bytes');
     return key;
   }
@@ -104,24 +143,52 @@ class IntegrationShadowQueue {
   }
 
   files(directory, suffix) {
-    try { return this.fs.readdirSync(directory).filter(name => name.endsWith(suffix)); }
+    let handle;
+    try { handle = this.fs.opendirSync(directory); }
     catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+    const names = []; let count = 0, entry;
+    try { while ((entry = handle.readSync())) {
+      if (++count > 4096) throw new Error('integration shadow spool exceeds its directory entry bound');
+      if (entry.name.endsWith(suffix)) names.push(entry.name);
+    } } finally { handle.closeSync(); }
+    return names;
   }
 
-  resultRecords() {
-    return this.files(this.options.resultsPath, '.result.json').sort().map(name => {
+  resultRecords({includeEvidence = false} = {}) {
+    return [...this.resultRecordIterator({includeEvidence})];
+  }
+
+  *resultRecordIterator({includeEvidence = false, includeArchived = false} = {}) {
+    const locations = [[this.options.resultsPath, this.options.queuePath]];
+    if (includeArchived) locations.push([path.join(this.options.resultsPath, 'archive', 'results'),
+      path.join(this.options.resultsPath, 'archive', 'jobs')]);
+    const entries = locations.flatMap(([directory, jobs]) => this.files(directory, '.result.json')
+      .sort().map(name => ({name, filename: path.join(directory, name), jobs})));
+    if (entries.length > 1024) throw new Error('integration shadow receipts exceed the bounded spool import count');
+    const knownPaths = new Set(entries.map(entry => entry.filename));
+    for (const filename of this.resultCache.keys()) if (!knownPaths.has(filename)) this.resultCache.delete(filename);
+    for (const {name, filename, jobs} of entries) {
       try {
-        const result = JSON.parse(this.fs.readFileSync(path.join(this.options.resultsPath, name)));
         const expected = name.replace(/\.result\.json$/, '');
-        const jobPath = path.join(this.options.queuePath, `${expected}.job.json`);
-        const job = JSON.parse(this.fs.readFileSync(jobPath));
+        const jobPath = path.join(jobs, `${expected}.job.json`);
+        const stat = this.fs.lstatSync(filename), jobStat = this.fs.lstatSync(jobPath);
+        const key = this.receiptKey();
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RESULT_BYTES ||
+            !jobStat.isFile() || jobStat.isSymbolicLink() || jobStat.size > 1024 * 1024)
+          throw new Error('integration shadow receipt exceeds its regular-file byte bound');
+        const signature = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs,
+          jobStat.ino, jobStat.size, jobStat.mtimeMs, jobStat.ctimeMs,
+          crypto.createHash('sha256').update(key).digest('hex')].join(':');
+        const cached = this.resultCache.get(filename);
+        if (!includeEvidence && cached?.signature === signature) { yield cached.record; continue; }
+        const result = JSON.parse(readBounded(filename, MAX_RESULT_BYTES, this.fs));
+        const job = JSON.parse(readBounded(jobPath, 1024 * 1024, this.fs));
         const unsignedJob = {...job}; delete unsignedJob.job_binding_sha256;
         const unsignedResult = {...result}; delete unsignedResult.result_binding_sha256;
         delete unsignedResult.result_authentication;
         const authenticatedResult = {...result};
         const authentication = authenticatedResult.result_authentication;
         delete authenticatedResult.result_authentication;
-        const key = this.receiptKey();
         const expectedTag = crypto.createHmac('sha256', key).update(canonical(authenticatedResult)).digest('hex');
         const suppliedTag = authentication?.tag;
         if (result.schema !== 'vectorwarp-integration-shadow-result-v1' ||
@@ -136,7 +203,8 @@ class IntegrationShadowQueue {
             !crypto.timingSafeEqual(Buffer.from(expectedTag, 'hex'), Buffer.from(suppliedTag, 'hex')) ||
             result.job_binding_sha256 !== job.job_binding_sha256 ||
             result.timing_policy !== job.timing_policy ||
-            result.decision_grade !== job.decision_grade ||
+            result.decision_grade !== false || result.hardware_qualified !== false ||
+            result.timing_decision_grade !== job.decision_grade ||
             result.production_promotion_allowed !== false ||
             result.input?.recording_sha256 !== job.identity?.recording_sha256 ||
             result.input?.native_sidecar_sha256 !== job.identity?.native_sidecar_sha256 ||
@@ -144,12 +212,20 @@ class IntegrationShadowQueue {
             result.input?.config_sha256 !== job.identity?.config_sha256 ||
             result.input?.native_identity_sha256 !== job.identity?.native_identity_sha256 ||
             digestCanonical(result.input?.native_identity) !== job.identity?.native_identity_sha256 ||
+            !validTruthSelectedExports(result.truth_selected_exports, job.job_binding_sha256, job) ||
             !result.arms || typeof result.arms !== 'object' ||
             !result.summary || result.summary.selection_performed !== false)
           throw new Error('result receipt contract failed');
-        return {name, valid: true, result};
-      } catch (error) { return {name, valid: false, error: error.message}; }
-    });
+        const summary = {name, valid: true, result: {job_id: result.job_id, state: result.state,
+          completed_at: result.completed_at, timing: result.timing, summary: result.summary,
+          native_export_count: result.truth_selected_exports.length,
+          hardware_qualified: result.hardware_qualified, decision_grade: result.decision_grade,
+          timing_policy: result.timing_policy, qualification_gate: result.qualification_gate,
+          production_unchanged: result.production_unchanged}};
+        this.resultCache.set(filename, {signature, record: summary});
+        yield includeEvidence ? {name, valid: true, result} : summary;
+      } catch (error) { yield {name, valid: false, error: error.message}; }
+    }
   }
 
   compactCompleted() {
@@ -178,7 +254,7 @@ class IntegrationShadowQueue {
     for (const name of this.files(this.options.queuePath, '.slot')) {
       const filename = path.join(this.options.queuePath, name);
       try {
-        const slot = JSON.parse(this.fs.readFileSync(filename));
+        const slot = JSON.parse(readBounded(filename, 4096, this.fs));
         const jobExists = this.fs.existsSync(path.join(this.options.queuePath, `${slot.job_id}.job.json`));
         let ownerAlive = true;
         if (slot.owner_host === os.hostname() && Number.isInteger(slot.owner_pid) && slot.owner_pid > 1) {
@@ -193,6 +269,8 @@ class IntegrationShadowQueue {
   }
 
   reserveSlot(jobId) {
+    if (!Number.isInteger(this.options.maxPending) || this.options.maxPending < 1 || this.options.maxPending > 1024)
+      throw new Error('integration shadow pending-slot bound is invalid');
     for (let index = 0; index < this.options.maxPending; ++index) {
       const filename = path.join(this.options.queuePath, `pending-${index}.slot`);
       try {
@@ -230,6 +308,10 @@ class IntegrationShadowQueue {
         const result = row.result;
         return {job_id: result.job_id, state: result.state, completed_at: result.completed_at,
           timing: result.timing, winner: result.summary?.winner || null,
+          native_export_count: result.native_export_count,
+          hardware_qualified: result.hardware_qualified,
+          decision_grade: result.decision_grade, timing_policy: result.timing_policy,
+          qualification_gate: result.qualification_gate,
           production_unchanged: result.production_unchanged === true};
       }
       return {file: row.name, state: 'invalid', error: row.error};
@@ -256,7 +338,8 @@ class IntegrationShadowQueue {
       if (artifact?.state !== 'admitted' || artifact?.integrity?.valid !== true ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.data_sha256 || '') ||
           !/^[a-f0-9]{64}$/i.test(artifact?.integrity?.sidecar_sha256 || '') ||
-          typeof file !== 'string' || !path.isAbsolute(file) || !captures.length) {
+          typeof file !== 'string' || !path.isAbsolute(file) || !captures.length ||
+          captures.length > MAX_TRUTH_EXPORT_PASSES) {
         ++this.counters.rejected;
         return {accepted: false, reason: 'not-strictly-admitted'};
       }
@@ -265,21 +348,29 @@ class IntegrationShadowQueue {
       // tuple readily auditable by either queue consumer.  Do this before a
       // slot is reserved so an incompatible receipt fails closed.
       const metadataPath = `${file}.json`;
+      const metadataBytes = readBounded(metadataPath, 1024 * 1024, this.fs);
       if (!this.fs.existsSync(metadataPath) ||
-          crypto.createHash('sha256').update(this.fs.readFileSync(metadataPath)).digest('hex') !==
+          crypto.createHash('sha256').update(metadataBytes).digest('hex') !==
             artifact.integrity.sidecar_sha256)
         throw new Error('integration shadow native metadata does not match admitted digest');
-      const metadata = JSON.parse(this.fs.readFileSync(metadataPath));
+      const metadata = JSON.parse(metadataBytes);
       const channelGains = metadata.channelGains;
       const channelCount = metadata.channels;
       if (metadata.schema !== 'vectorwarp-kraken-iq-clip-v1' ||
           !Number.isFinite(metadata.frequency) || !Number.isFinite(metadata.sampleRate) ||
-          !Number.isInteger(channelCount) || channelCount < 2 ||
+          !Number.isInteger(channelCount) || channelCount < 2 || channelCount > 8 ||
           !Array.isArray(channelGains) || channelGains.length !== channelCount ||
           channelGains.some(value => !Number.isFinite(value)))
         throw new Error('integration shadow native metadata has incompatible RF/gain identity');
       const exactTiming = captures.every(([, item]) =>
         item.processor_cpis.every(cpi => cpi.exact_event_time === true));
+      if (![metadata.epoch, metadata.firstEpochSample, metadata.endEpochSample].every(Number.isSafeInteger) ||
+          metadata.epoch <= 0 || metadata.firstEpochSample < 0 || metadata.endEpochSample <= metadata.firstEpochSample ||
+          captures.some(([, item]) => item.processor_cpis.some(cpi => !Number.isFinite(cpi.timestamp_ms) ||
+            cpi.epoch !== metadata.epoch || !Number.isSafeInteger(cpi.first_epoch_sample) ||
+            !Number.isSafeInteger(cpi.end_epoch_sample) || cpi.first_epoch_sample < metadata.firstEpochSample ||
+            cpi.end_epoch_sample > metadata.endEpochSample || cpi.end_epoch_sample <= cpi.first_epoch_sample)))
+        throw new Error('native shadow export requires timestamped admitted source sample ranges');
       for (const [, item] of captures) if (item.processor_cpis.some(cpi => !cpi.exact_event_time)) {
         const checked = validateProcessorSampleRanges(item, metadata);
         if (!checked.valid || checked.processor_cpis.length !== item.processor_cpis.length)
@@ -308,7 +399,7 @@ class IntegrationShadowQueue {
       this.safeDirectory(this.options.resultsPath);
       this.reconcileSlots();
       this.compactCompleted();
-      if (this.fs.existsSync(output)) {
+      if (this.fs.existsSync(output) || this.fs.existsSync(path.join(this.options.resultsPath, 'archive', 'jobs', `${jobId}.job.json`))) {
         ++this.counters.duplicate;
         return {accepted: false, reason: 'duplicate', job_id: jobId};
       }
@@ -328,6 +419,7 @@ class IntegrationShadowQueue {
             fusion_modes: this.options.fusionModes,
             receipt_key_id: receiptKeyId,
             max_wall_seconds_per_clip: this.options.maxWallSecondsPerClip,
+            execution_host_policy: 'strix-only',
             require_production_arm: true, physical_channel_reference_policy: 'leave-one-out'},
           captures: captures.map(([captureId, item]) => ({capture_id: captureId,
             processor_cpis: item.processor_cpis.length}))};
@@ -349,5 +441,5 @@ class IntegrationShadowQueue {
 }
 
 module.exports = {IntegrationShadowQueue, atomicWrite, atomicWriteExclusive, canonical,
-  digestCanonical, optionsFromConfig,
-  DEFAULT_DWELLS, DEFAULT_MODES};
+  digestCanonical, optionsFromConfig, validTruthSelectedExports,
+  DEFAULT_DWELLS, DEFAULT_MODES, MAX_TRUTH_EXPORT_PASSES};

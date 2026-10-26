@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {IntegrationShadowQueue, digestCanonical} = require('./integration-shadow-queue');
+const {IntegrationShadowQueue, digestCanonical, validTruthSelectedExports} = require('./integration-shadow-queue');
+assert.equal(digestCanonical({zero: -0}), digestCanonical({zero: 0}),
+  'signed receipt identity survives JSON signed-zero normalization');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-integration-shadow-'));
 const receiptKeyPath = path.join(root, 'receipt.key');
@@ -27,7 +29,8 @@ const admitted = {state: 'admitted', integrity: {valid: true, data_sha256: 'a'.r
   sidecar_sha256: crypto.createHash('sha256').update(fs.readFileSync(`${recording}.json`)).digest('hex')},
   config_epoch: 'config', receiver_epoch: 'receiver', captures: {one: {capture_id: 'one',
     valid: true, admission_state: 'admitted', processor_cpis:
-      Array.from({length: 3}, () => ({exact_event_time: true}))}}};
+      Array.from({length: 3}, (_, i) => ({exact_event_time: true, timestamp_ms: 1000 + i * 500,
+        epoch: 1, first_epoch_sample: i * 10, end_epoch_sample: (i + 1) * 10}))}}};
 
 for (const exact of [false, undefined]) {
   const provisional = JSON.parse(JSON.stringify(admitted));
@@ -42,12 +45,19 @@ const job = JSON.parse(fs.readFileSync(first.path));
 assert.equal(job.experiment.shadow_only, true);
 assert.equal(job.experiment.same_iq, true);
 assert.equal(job.experiment.physical_channel_reference_policy, 'leave-one-out');
+assert.equal(job.experiment.execution_host_policy, 'strix-only');
 assert.deepEqual(job.experiment.dwell_seconds, [.05, .1, .2, .5]);
 assert.match(job.identity.admission_sha256, /^[a-f0-9]{64}$/);
 assert.match(job.identity.config_sha256, /^[a-f0-9]{64}$/);
 assert.deepEqual(job.identity.native_identity.actual_channel_gains_db, [2.7, 1.4]);
 assert.match(job.job_binding_sha256, /^[a-f0-9]{64}$/);
 assert.equal(queue.accept(recording, admitted, 4).reason, 'duplicate');
+const tooManyTruthPasses = JSON.parse(JSON.stringify(admitted));
+for (let index = 1; index <= 8; ++index) tooManyTruthPasses.captures[`extra-${index}`] = {
+  capture_id: `extra-${index}`, valid: true, admission_state: 'admitted',
+  processor_cpis: Array.from({length: 3}, () => ({exact_event_time: true}))};
+assert.equal(queue.accept(recording, tooManyTruthPasses, 4).reason, 'not-strictly-admitted',
+  'each queued pass must fit the bounded truth-selected export budget');
 fs.writeFileSync(`${recording}.json`, JSON.stringify({...nativeMetadata, channelGains: [2.7, 1.5]}));
 assert.equal(queue.accept(recording, admitted, 4).reason, 'write-failed',
   'a sidecar whose decoded gain tuple differs from its admitted digest must fail closed');
@@ -57,8 +67,28 @@ assert.equal(queue.accept(recording, {...admitted,
 assert.equal(queue.accept(recording, {...admitted, state: 'quarantined'}, 6).reason,
   'not-strictly-admitted');
 fs.mkdirSync(config.process.detection.integration_shadow.results_path, {recursive: true});
+const truthSelectedExport = {schema: 'vectorwarp-truth-selected-shadow-export-v2',
+  shadow_only: true, decision_grade: false, production_promotion_allowed: false,
+  production_unchanged: true, selection: {basis: 'geometry-eligible-truth-cut-only',
+    cfar_or_beam_selection_used: false, capture_id: 'one', arm: '0.1s-production'},
+  provenance: {job_binding_sha256: job.job_binding_sha256,
+    native_recorder: 'ResidentReplaySnapshot-v1', native_contract_verified: true,
+    hardware_qualified: false, time_mapping: 'admitted-source-sample-midpoints'},
+  multi_cpi_history: [1, 2, 3].map(frame => ({native_snapshot: {native_contract_verified: true,
+    path: `/native/frame.${frame}.rps`, sha256: 'a'.repeat(64)},
+    covariance_whitening: {state: 'native-resident-settled-snapshot'},
+    target_cut: {physical_channels: [[1, 0]], beam_powers: [1]}})),
+  covariance_whitening: {state: 'native-resident-settled-snapshot', estimated_from_cut: false}};
+truthSelectedExport.export_sha256 = digestCanonical(truthSelectedExport);
+assert.equal(validTruthSelectedExports([truthSelectedExport], job.job_binding_sha256), true);
+assert.equal(validTruthSelectedExports([{...truthSelectedExport,
+  schema: 'vectorwarp-truth-selected-shadow-export-v1'}], job.job_binding_sha256), false,
+  'legacy CUT-estimated covariance cannot be accepted as native evidence');
+assert.equal(validTruthSelectedExports([{...truthSelectedExport,
+  selection: {...truthSelectedExport.selection, cfar_or_beam_selection_used: true}}],
+job.job_binding_sha256), false, 'CFAR-selected shadow evidence must fail closed');
 const validResult = {schema: 'vectorwarp-integration-shadow-result-v1',
-  timing_policy: 'exact', decision_grade: true,
+  timing_policy: 'exact', decision_grade: false, timing_decision_grade: true, hardware_qualified: false,
   production_promotion_allowed: false,
   job_id: first.job_id, state: 'complete', shadow_only: true,
   job_binding_sha256: job.job_binding_sha256, production_unchanged: true,
@@ -67,8 +97,15 @@ const validResult = {schema: 'vectorwarp-integration-shadow-result-v1',
     admission_sha256: job.identity.admission_sha256,
     config_sha256: job.identity.config_sha256,
     native_identity: job.identity.native_identity,
-    native_identity_sha256: job.identity.native_identity_sha256}, arms: {"0.1s": {production: {}}},
+    native_identity_sha256: job.identity.native_identity_sha256},
+  truth_selected_exports: job.experiment.dwell_seconds.map(dwell => {
+    const item = {...truthSelectedExport, selection: {...truthSelectedExport.selection, arm: `${dwell}s-production`}};
+    delete item.export_sha256; item.export_sha256 = digestCanonical(item); return item;
+  }), arms: {"0.1s": {production: {}}},
   timing: {wall_seconds: 2}, summary: {winner: null, selection_performed: false}};
+assert.equal(validTruthSelectedExports(validResult.truth_selected_exports, job.job_binding_sha256, job), true);
+assert.equal(validTruthSelectedExports(validResult.truth_selected_exports.slice(1), job.job_binding_sha256, job), false,
+  'a signed result must cover every queued pass and dwell');
 validResult.result_binding_sha256 = digestCanonical(validResult);
 validResult.result_authentication = {algorithm: 'hmac-sha256',
   key_id: crypto.createHash('sha256').update(fs.readFileSync(receiptKeyPath)).digest('hex')};
@@ -82,6 +119,14 @@ assert.equal(status.pending, 0);
 assert.equal(status.completed, 1);
 assert.equal(status.reserved_slots, 0);
 assert.equal(status.production_path_changed, false);
+const receiptFile = path.join(config.process.detection.integration_shadow.results_path,
+  `${first.job_id}.result.json`);
+const savedReceipt = fs.readFileSync(receiptFile);
+const oversized = fs.openSync(receiptFile, 'w');
+fs.ftruncateSync(oversized, 16 * 1024 * 1024 + 1); fs.closeSync(oversized);
+assert.equal(queue.resultRecords()[0].valid, false, 'oversized receipts are rejected before JSON allocation');
+fs.writeFileSync(receiptFile, savedReceipt);
+assert.equal(queue.resultRecords()[0].valid, true, 'changed receipt metadata invalidates the compact status cache');
 const provisionalConfig = JSON.parse(JSON.stringify(config));
 provisionalConfig.process.detection.integration_shadow.queue_path = path.join(root, 'provisional-queue');
 const provisionalQueue = new IntegrationShadowQueue(provisionalConfig);

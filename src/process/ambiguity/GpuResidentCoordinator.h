@@ -115,6 +115,7 @@ public:
  if(!qualifying()){status_.state="ready";
  status_.reason="GPU-resident stages qualified; no steady CPU DSP oracle";}}}
  const OutputViews& prepared()const{return prepared_;}
+ std::vector<uint8_t> snapshot(){return sessionCall([&]{return session_->snapshot();});}
  // The acknowledged reference state survives any later radar/control failure.
  // Tracker views are borrowed only: after failure none is exposed or retried.
  ConstBytes acknowledgedReferenceCheckpoint()const noexcept{return haveReferenceCheckpoint_?ConstBytes{referenceCheckpoint_.data(),referenceCheckpoint_.size()}:ConstBytes{};}

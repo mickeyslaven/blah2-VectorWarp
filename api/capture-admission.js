@@ -89,6 +89,7 @@ function validateProcessorSampleRanges(admission, metadata) {
     const truthByTimestamp = new Map(truth.cpis.map(cpi => [cpi.timestamp_ms, cpi]));
     const exactTiming = contained.every(range => range.exact_event_time === true);
     return {...truth,
+      capture_id: admission.capture_id, pass_id: admission.pass_id, icao: admission.icao,
       timing_policy: exactTiming ? 'exact' : 'provisional',
       decision_grade: truth.valid && exactTiming,
       event_time_uncertainty_s: exactTiming ? 0 : admission.event_time_uncertainty_s,

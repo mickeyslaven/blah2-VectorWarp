@@ -84,8 +84,15 @@ detectionCollection.process.surveillance_fusion.detection_manifold_automation = 
 };
 assert.equal(validateConfig(detectionCollection).valid, true,
   'live detection manifold collection settings survive validation');
+const nativeOnlyCollection = clone(detectionCollection);
+nativeOnlyCollection.process.surveillance_fusion.detection_manifold_automation.native_shadow_corpus_path =
+  nativeOnlyCollection.process.surveillance_fusion.detection_manifold_automation.corpus_path;
+delete nativeOnlyCollection.process.surveillance_fusion.detection_manifold_automation.corpus_path;
+assert.equal(validateConfig(nativeOnlyCollection).valid, true,
+  'authenticated native collection does not depend on a detected-live-cell corpus');
 for (const [name, value] of [['enabled', 'true'], ['corpus_path', 'relative.jsonl'],
-  ['validation_path', 7], ['candidate_path', 'candidate.json']]) {
+  ['validation_path', 7], ['candidate_path', 'candidate.json'], ['native_shadow_corpus_path', 'relative.jsonl'],
+  ['shadow_receipt_path', 7]]) {
   const invalid = clone(detectionCollection);
   invalid.process.surveillance_fusion.detection_manifold_automation[name] = value;
   assert.equal(validateConfig(invalid).valid, false,

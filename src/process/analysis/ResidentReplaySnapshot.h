@@ -47,4 +47,8 @@ std::vector<uint8_t> encode(const ResidentReplaySnapshot&,const resident::Config
 // There is deliberately no device-state restore API in this export-only ABI.
 ResidentReplaySnapshot decode(const uint8_t*,size_t,const resident::Config&,
   const Identity& expected);
+// Offline inspection only: recover the embedded config/axes, then run the same
+// canonical contract decoder. External source/RF identity must still be bound
+// by the caller; an internally valid envelope is not provenance by itself.
+ResidentReplaySnapshot decodeSelfContained(const uint8_t*,size_t);
 }

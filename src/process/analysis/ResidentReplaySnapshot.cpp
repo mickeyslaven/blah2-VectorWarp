@@ -182,4 +182,29 @@ ResidentReplaySnapshot decode(const uint8_t* data,size_t bytes,const resident::C
   r.range(at,size_t(shape[i]));s.blocks.push_back({BlockKind(i+1),{data+at,data+at+shape[i]}});at+=size_t(shape[i]);}
  const auto canonical=encode(s,c);require(std::equal(canonical.begin(),canonical.end(),data),"Replay snapshot hash/reserved/header bytes differ");return s;
 }
+
+ResidentReplaySnapshot decodeSelfContained(const uint8_t* data,size_t bytes){
+ require(data&&bytes>=headerBytes&&bytes<=byteLimit,"Replay inspection byte bound differs");
+ resident::wire::Reader r{{data,bytes}};
+ require(r.u32(0)==0x52505331&&r.u32(4)==version&&r.u32(8)==headerBytes&&
+  r.u32(12)==blocks&&r.u64(16)==bytes,"Replay inspection envelope invalid");
+ std::array<resident::ConstBytes,blocks> views{};uint64_t at=headerBytes;
+ for(size_t i=0;i<blocks;++i){const size_t d=512+24*i;const auto n=r.u64(d+16);
+  require(r.u32(d)==i+1&&!r.u32(d+4)&&r.u64(d+8)==at&&n<=bytes-at,
+   "Replay inspection descriptor invalid");
+  views[i]={data+at,size_t(n)};at+=n;}
+ require(at==bytes,"Replay inspection trailing bytes");
+ const auto rows=r.u32(76),cols=r.u32(80);
+ require(rows&&cols&&uint64_t(rows)*8+uint64_t(cols)*4+384<=views[4].size,
+  "Replay inspection axis shape invalid");
+ const resident::ConstBytes doppler{views[4].data+384,size_t(rows)*8};
+ const resident::ConstBytes delays{views[4].data+384+size_t(rows)*8,size_t(cols)*4};
+ const auto c=resident::decodeConfig(views[19],delays,doppler);
+ Identity expected{r.u64(24),r.u64(32),r.u64(40),r.u64(48),r.u64(56),r.u64(64)};
+ std::memcpy(expected.configHash.data(),data+96,32);
+ std::memcpy(expected.moduleHash.data(),data+128,32);
+ std::memcpy(expected.rawIqHash.data(),data+160,32);
+ std::memcpy(expected.deviceHash.data(),data+480,32);
+ return decode(data,bytes,c,expected);
+}
 }

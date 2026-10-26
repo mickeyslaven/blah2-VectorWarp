@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const {Worker} = require('worker_threads');
+const {optionsFromConfig} = require('./integration-shadow-queue');
 const {buildDetectionCorpus} = require('./detection-manifold-corpus');
 const {fitDetectionManifold, denseRuntimeCandidate, responseFor, statistic, cfarThreshold} =
   require('./detection-manifold-fitter');
@@ -53,7 +54,7 @@ function summarizeDetectionManifoldProgress(rawSamples, config, options = {}) {
   const validationCovered = validationCoverage.filter(row => row.passes).map(row => row.sector);
   const fitSupport = new Map();
   for (const row of corpus.training) {
-    const key = `${Math.floor(normalize(row.truth.local_azimuth_deg) / 45)}:${Math.floor(row.truth.elevation_deg / 5)}`;
+    const key = `${Math.floor(normalize(row.truth.local_azimuth_deg) / 45)}:${Math.min(3, Math.floor((row.truth.elevation_deg + 90) / 45))}`;
     if (!fitSupport.has(key)) fitSupport.set(key, new Set());
     fitSupport.get(key).add(row._pass_id);
   }
@@ -107,18 +108,18 @@ function summarizeDetectionManifoldProgress(rawSamples, config, options = {}) {
       imported_replay_rows: corpus.validation.length, independent_passes: validationPasses,
       miss_passes: corpus.miss_passes},
     production_replay: {ready: false, diagnostic_only: true,
-      receipt_generator_available: false, native_emitter_available: false,
+      receipt_generator_available: false, native_emitter_available: true,
       trusted_physical_cohort_required: true,
       imported_passes: productionPasses, miss_passes: productionMissPasses,
       sectors: productionSectors,
-      blocker: 'The current native tool consumes caller-supplied post-CAF vectors; an authenticated raw-IQ exporter is required.'},
+      blocker: 'Authenticated native snapshots support shadow fitting; physically qualified paired production full-bank A/B replay is still required.'},
     qualification_ready: false,
     requirements, collection_ready: fitReady && validationReady,
     evidence_completion_fraction: requirements.length ? Math.min(...requirements.map(row => row.fraction)) : 0,
     next_actions: requirements.filter(row => !row.complete).map(row => row.comparison === 'at_most' ?
       `Reduce ${row.label.toLowerCase()} to ${row.required} degrees or less.` :
       `Collect ${row.required - row.current} more ${row.label.toLowerCase()}.`),
-    limitation: 'Detected live cells, covariance-normalized replay, and the current post-CAF native grid tool are diagnostic controls only. Production acceptance requires a future authenticated exporter that derives the complete grid directly from immutable raw IQ; no path changes live configuration.'};
+    limitation: 'Detected live cells and authenticated native truth-selected CUTs are shadow diagnostics only. Native fitting uses pass-disjoint projection comparisons, not production CFAR. Production acceptance still requires an independent physical cohort and qualified paired full-bank A/B replay; no path changes live configuration.'};
 }
 
 function compareTruthSelectedDiagnostic(corpus, model) {
@@ -188,9 +189,9 @@ function compareProductionReplay(rows, candidateModelSha256, config) {
     ?.trusted_native_generator_sha256;
   const trustedPolicy = Array.isArray(allowlist) && allowlist.length &&
     allowlist.every(value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value));
-  // No current VectorWarp binary derives this grid directly from raw IQ.  A
-  // hash allowlist cannot authenticate caller-supplied post-CAF vectors, so
-  // this remains false until that exporter exists and is independently bound.
+  // These legacy production receipts accept caller-supplied post-CAF vectors.
+  // Authenticated native snapshots now exist, but a generator hash alone does
+  // not turn this separate legacy format into paired, physically qualified A/B.
   const generatorTrusted = false;
   const passes = matching.map(row => {
     const target = row.replay.cuts.find(cut => cut.role === 'target');
@@ -227,8 +228,8 @@ function compareProductionReplay(rows, candidateModelSha256, config) {
       (candidateNuisance ? Infinity : 0),
     receipt_generator_available: false, generator_trusted: generatorTrusted,
     qualification_blocker: trustedPolicy ?
-      'Configured generator hashes cannot authenticate caller-supplied post-CAF vectors; a raw-IQ exporter is required.' :
-      'A trusted raw-IQ full-bank exporter is not present.'};
+      'Configured generator hashes cannot authenticate legacy caller-supplied post-CAF vectors; qualified native paired full-bank A/B remains required.' :
+      'Physically qualified native paired full-bank A/B replay is not present.'};
 }
 
 function evaluateDetectionManifoldCandidate(rawSamples, config, options = {}) {
@@ -239,8 +240,7 @@ function evaluateDetectionManifoldCandidate(rawSamples, config, options = {}) {
   let runtimeCandidate = null, runtimeConversionError = null;
   try { runtimeCandidate = denseRuntimeCandidate(manifold); }
   catch (error) { runtimeConversionError = error.message; }
-  const candidateModelSha256 = crypto.createHash('sha256').update(JSON.stringify(
-    runtimeCandidate || manifold)).digest('hex');
+  const candidateModelSha256 = manifold.candidate_version;
   manifold.calibration.candidate_model_sha256 = candidateModelSha256;
   manifold.calibration.runtime_candidate_available = Boolean(runtimeCandidate);
   manifold.calibration.runtime_conversion_error = runtimeConversionError;
@@ -266,7 +266,7 @@ function evaluateDetectionManifoldCandidate(rawSamples, config, options = {}) {
   if (!productionReplay.matching_candidate_passes)
     productionFailures.push('No strict production replay receipt matches this exact candidate model.');
   if (!productionReplay.generator_trusted)
-    productionFailures.push('Production replay generator is not pinned by the active config allowlist.');
+    productionFailures.push('Imported production replay is not authenticated, physically qualified native paired full-bank A/B evidence.');
   if (productionReplay.matching_candidate_passes < gates.minProductionPasses)
     productionFailures.push(`Production replay requires ${gates.minProductionPasses} matching passes.`);
   if (productionReplay.miss_passes < gates.minProductionMissPasses)
@@ -308,14 +308,45 @@ class DetectionManifoldAutomation {
     this.config = config; this.Worker = worker; this.intervalMs = intervalMs; this.initialDelayMs = initialDelayMs;
     const settings = config.process?.surveillance_fusion?.detection_manifold_automation || {};
     this.samplePath = settings.corpus_path || config.process?.bearing?.manifold_recorder?.path || null;
+    this.nativeShadowPath = settings.native_shadow_corpus_path || (this.samplePath ? `${this.samplePath}.native-shadow.jsonl` : null);
     this.validationPath = settings.validation_path || null;
-    this.candidatePath = settings.candidate_path || (this.samplePath ? `${this.samplePath}.detection-candidate.json` : null);
-    this.enabled = settings.enabled === true && Boolean(this.samplePath);
+    this.candidatePath = settings.candidate_path || ((this.samplePath || this.nativeShadowPath) ?
+      `${this.samplePath || this.nativeShadowPath}.detection-candidate.json` : null);
+    this.receiptPath = settings.shadow_receipt_path || (this.candidatePath ?
+      `${this.candidatePath}.shadow-ab-receipts.jsonl` : null);
+    this.enabled = settings.enabled === true && Boolean(this.samplePath || this.nativeShadowPath);
     this.running = false; this.timer = null; this.lastSignature = null;
     this.state = {enabled: this.enabled, state: this.enabled ? 'collecting' : 'disabled',
       qualified: false, promotion_allowed: false, candidatePath: this.candidatePath,
-      validationPath: this.validationPath,
+      validationPath: this.validationPath, receiptPath: this.receiptPath,
       error: null, progress: summarizeDetectionManifoldProgress([], config)};
+  }
+  async inputSignature() {
+    const entries = [];
+    const record = async filename => {
+      if (!filename) return;
+      try { const stat = await fs.promises.lstat(filename);
+        entries.push([filename, stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs]);
+      } catch (error) { if (error.code !== 'ENOENT') throw error; entries.push([filename, null]); }
+    };
+    await Promise.all([this.samplePath, this.validationPath, this.nativeShadowPath].map(record));
+    const options = optionsFromConfig(this.config);
+    if (options.enabled) {
+      await record(options.receiptKeyPath);
+      for (const [directory, suffix] of [[options.resultsPath, '.result.json'], [options.queuePath, '.job.json'],
+        [path.join(options.resultsPath, 'archive', 'results'), '.result.json'],
+        [path.join(options.resultsPath, 'archive', 'jobs'), '.job.json']]) {
+        let handle;
+        try { handle = await fs.promises.opendir(directory); }
+        catch (error) { if (error.code === 'ENOENT') { entries.push([directory, null]); continue; } throw error; }
+        let count = 0;
+        for await (const entry of handle) {
+          if (++count > 4096) throw new Error('Native shadow spool exceeds its polling entry bound');
+          if (entry.name.endsWith(suffix)) await record(path.join(directory, entry.name));
+        }
+      }
+    }
+    return canonicalHash(entries.sort((a, b) => a[0].localeCompare(b[0])));
   }
   status() { return {...this.state, running: this.running}; }
   start() {
@@ -327,33 +358,30 @@ class DetectionManifoldAutomation {
   }
   async evaluate({force = false} = {}) {
     if (!this.enabled || this.running) return this.status();
-    let stat;
-    try { stat = await fs.promises.stat(this.samplePath); }
-    catch (error) { if (error.code === 'ENOENT') return this.status();
-      this.state = {...this.state, state: 'error', error: error.message}; return this.status(); }
-    let validationStat = null;
-    if (this.validationPath) try { validationStat = await fs.promises.stat(this.validationPath); }
-    catch (error) { if (error.code !== 'ENOENT') {
-      this.state = {...this.state, state: 'error', error: error.message}; return this.status();
-    } }
-    const signature = `${stat.size}:${stat.mtimeMs}:${validationStat?.size || 0}:${validationStat?.mtimeMs || 0}`;
+    let signature;
+    try { signature = await this.inputSignature(); }
+    catch (error) { this.state = {...this.state, state: 'error', error: error.message}; return this.status(); }
     if (!force && signature === this.lastSignature) return this.status();
     this.running = true; this.state = {...this.state, state: 'evaluating', error: null};
     try {
       const result = await new Promise((resolve, reject) => {
         const worker = new this.Worker(path.join(__dirname, 'detection-manifold-automation-worker.js'),
           {workerData: {samplePath: this.samplePath, candidatePath: this.candidatePath,
-            validationPath: this.validationPath, config: this.config}});
-        worker.once('message', message => message.ok ? resolve(message.result) : reject(new Error(message.error)));
-        worker.once('error', reject);
-        worker.once('exit', code => { if (code) reject(new Error(`Detection manifold worker exited ${code}`)); });
+            nativeShadowPath: this.nativeShadowPath, validationPath: this.validationPath, receiptPath: this.receiptPath, config: this.config},
+            resourceLimits: {maxOldGenerationSizeMb: 512}});
+        const timer = setTimeout(() => { worker.terminate(); reject(new Error('Detection manifold worker exceeded its 120 second wall bound')); }, 120000);
+        worker.once('message', message => { clearTimeout(timer); message.ok ? resolve(message.result) : reject(new Error(message.error)); });
+        worker.once('error', error => { clearTimeout(timer); reject(error); });
+        worker.once('exit', code => { clearTimeout(timer); reject(new Error(`Detection manifold worker exited without a result (${code})`)); });
       });
+      // Cache the inputs observed BEFORE dispatch. An external receipt/corpus
+      // arriving during a fit must trigger another run; do not mark it consumed.
       this.lastSignature = signature;
-      this.state = {...this.state, ...result, state: result.qualified ? 'validated-non-runtime' :
-        result.progress?.positive_control?.fit_ready ? 'diagnostic-only-native-export-blocked' : 'collecting',
+      this.state = {...this.state, ...result, state: result.state || (result.qualified ? 'validated-non-runtime' :
+        result.progress?.positive_control?.fit_ready ? 'diagnostic-only-native-export-blocked' : 'collecting'),
         promotion_allowed: false, error: null, lastEvaluationAt: Date.now()};
     } catch (error) {
-      this.lastSignature = signature; this.state = {...this.state, state: 'collecting',
+      this.lastSignature = null; this.state = {...this.state, state: 'error',
         qualified: false, promotion_allowed: false, error: error.message, lastEvaluationAt: Date.now()};
     } finally { this.running = false; }
     return this.status();

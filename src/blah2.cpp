@@ -29,6 +29,7 @@
 #include "process/analysis/ComplexCutoutRecorder.h"
 #include "process/analysis/ReplayEchoInjector.h"
 #include "process/analysis/ProductionRawIq.h"
+#include "process/analysis/ResidentReplayRecorder.h"
 #include "process/detection/CfarDetector1D.h"
 #include "process/detection/Centroid.h"
 #include "process/detection/Interpolate.h"
@@ -1036,6 +1037,30 @@ try
   // Resident mode is explicit and first admits the reviewed all-capture identity
   // route. Existing CPU/AUTO/FIR and other-platform routes keep their behavior.
   blah2::resident::Config residentConfig;
+  blah2::resident_replay::RecorderConfig replayRecorder;
+  if(tree["save"].has_child("resident_snapshot")){
+    auto options=tree["save"]["resident_snapshot"];
+    if(options.has_child("state"))options["state"]>>replayRecorder.enabled;
+    if(replayRecorder.enabled){
+      if(!state||!residentMode)throw std::invalid_argument("Native snapshots require resident file replay");
+      options["prefix"]>>replayRecorder.prefix;
+      options["first_frame"]>>replayRecorder.firstFrame;
+      options["last_frame"]>>replayRecorder.lastFrame;
+      options["max_total_bytes"]>>replayRecorder.maxTotalBytes;
+      options["source_epoch"]>>replayRecorder.sourceEpoch;
+      options["first_epoch_sample"]>>replayRecorder.firstEpochSample;
+      options["end_epoch_sample"]>>replayRecorder.endEpochSample;
+      options["max_bytes"]>>residentConfig.replay.maxBytes;
+      options["max_frames"]>>residentConfig.replay.maxFrames;
+      residentConfig.replay.frequencyHz=fc;
+      tree["process"]["detection"]["pfa"]>>residentConfig.replay.configuredPfa;
+      std::string sourceHash,rfHash;options["source_sha256"]>>sourceHash;options["rf_sha256"]>>rfHash;
+      residentConfig.replay.sourceHash=blah2::resident_replay::parseHash(sourceHash);
+      residentConfig.replay.rfHash=blah2::resident_replay::parseHash(rfHash);
+      for(auto gain:options["actual_channel_gains_db"].children()){
+        double value;gain>>value;residentConfig.replay.actualGainDb.push_back(value);}
+    }
+  }
   std::unique_ptr<blah2::resident::Coordinator> resident;
   uint64_t residentLogical=0,residentConsumed=0;
   if(residentMode){
@@ -1107,6 +1132,7 @@ try
     }
     residentConfig.presence=blah2::resident::wire::mandatoryPresence(residentConfig)|blah2::resident::bit(blah2::resident::Section::filtered)|blah2::resident::bit(blah2::resident::Section::fullReference)|
       (manifoldRecorderEnabled?blah2::resident::bit(blah2::resident::Section::detectionCells):0);
+    blah2::resident_replay::validateRecorder(replayRecorder,residentConfig,state,residentMode);
     resident=std::make_unique<blah2::resident::Coordinator>(residentConfig);
   }
 
@@ -1378,6 +1404,8 @@ try
           if(resident){
             if(residentLogical==UINT64_MAX||residentConsumed==UINT64_MAX)throw std::overflow_error("Resident frame sequence exhausted");
             const uint64_t signalTime=state?tStart+(trackerFrame*uint64_t(nSamples)*1000)/fs:frameTimestampMs;
+            blah2::resident_replay::checkSource(replayRecorder,residentConfig,residentLogical+1,
+              captureSamplePositionAvailable,captureEpoch,captureFirstEpochSample,captureEndEpochSample,captureGainDb);
             resident->begin(captureData,{++residentLogical,++residentConsumed,signalTime});
           }
           // This block is the unchanged CPU route, or its bounded startup oracle.
@@ -1726,6 +1754,10 @@ try
             // sendData is a completed local TCP write, not a browser/application
             // acknowledgement. Any exception stops; there is no blind replay.
             resident->published();
+            if(replayRecorder.enabled&&residentLogical>=replayRecorder.firstFrame&&
+               residentLogical<=replayRecorder.lastFrame)
+              blah2::resident_replay::writeExclusive(replayRecorder.prefix+"."+
+                std::to_string(residentLogical)+".rps",resident->snapshot());
             const auto residentWholeEnd=std::chrono::steady_clock::now();
             const double wholeMs=std::chrono::duration<double,std::milli>(residentWholeEnd-residentWholeStart).count();
             std::cout<<"GPU_RESIDENT_MAIN frame="<<residentLogical<<" consumed="<<residentConsumed<<" timestamp_ms="<<frameTimestampMs
