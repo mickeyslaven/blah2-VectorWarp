@@ -31,6 +31,10 @@ class ReleaseMatrixTest(unittest.TestCase):
         self.assertIn('receiver-journal-missing', upgrade)
         self.assertIn('vectorwarp-receiver.socket', upgrade)
         self.assertIn('stopped processor was incorrectly activated', upgrade)
+        self.assertIn('--cpu-period=100000 --cpu-quota=200000', upgrade)
+        self.assertNotIn('podman build --jobs=1 --memory=2g --memory-swap=2g --cpus=', upgrade)
+        self.assertIn('command failed with status', upgrade)
+        self.assertIn("run_with_log 'base test image build'", upgrade)
 
     def test_local_matrix_matches_ci_and_dragonos_generations(self):
         rows = []

@@ -2,9 +2,25 @@
 # Upgrade a real published package to the candidate inside a disposable,
 # systemd-booted OS. This is intentionally separate from the clean-install
 # acceptance test so neither path can mask the other.
-set -euo pipefail
+set -Eeuo pipefail
 
 die() { printf 'test-package-upgrade: %s\n' "$*" >&2; exit 1; }
+on_error() {
+  local status=$1 line=$2 command=$3
+  trap - ERR
+  printf 'test-package-upgrade: command failed with status %s at line %s: %s\n' \
+    "$status" "$line" "$command" >&2
+  exit "$status"
+}
+trap 'on_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
+run_with_log() {
+  local description=$1 log=$2 status
+  shift 2
+  if "$@" >"$log" 2>&1; then return; else status=$?; fi
+  tail -n 80 "$log" >&2 || true
+  die "$description failed with status $status; full log: $log"
+}
 previous= candidate= image= evidence= dragonos_fixture=false
 while (($#)); do
   case "$1" in
@@ -38,7 +54,7 @@ name="vectorwarp-upgrade-test-$(date +%s)-$$"
 test_image="localhost/$name"
 container=
 cleanup() {
-  status=$?; trap - EXIT
+  local status=$?; trap - EXIT
   if [[ -n $container ]]; then
     podman logs "$container" >"$evidence/container-boot.log" 2>&1 || true
     podman exec "$container" journalctl --no-pager -u vectorwarp-api -u vectorwarp-receiver -u vectorwarp-processor >"$evidence/journal.log" 2>&1 || true
@@ -50,9 +66,11 @@ cleanup() {
 }
 trap cleanup EXIT
 sha256sum "$previous" "$candidate" >"$evidence/packages.sha256"
-podman build --jobs=1 --memory=2g --memory-swap=2g --cpus=2 --build-arg "BASE_IMAGE=$image" \
+run_with_log 'base test image build' "$evidence/base-image.log" \
+  podman build --jobs=1 --memory=2g --memory-swap=2g \
+  --cpu-period=100000 --cpu-quota=200000 --build-arg "BASE_IMAGE=$image" \
   -t "$test_image" -f "$source_root/test/packaging/Containerfile.service-$format" \
-  "$source_root/test/packaging" >"$evidence/base-image.log" 2>&1
+  "$source_root/test/packaging"
 container=$(podman run -d --name "$name" --systemd=always --cgroupns=private \
   --cap-add=SYS_ADMIN --security-opt=label=disable --security-opt="apparmor=$apparmor_profile" \
   "${apparmor_labels[@]}" \
@@ -75,7 +93,8 @@ else
   query_cmd=(rpm -q --qf '%{VERSION}-%{RELEASE}')
   ecosystem_cmd='rpm -qa --qf "%{NAME}\t%{EVR}\n" | grep -Ei "^(gnuradio|uhd|sdrplay)" | sort || true'
 fi
-podman exec "$container" "${install_cmd[@]}" "/tmp/previous.$format" >"$evidence/previous-install.log" 2>&1
+run_with_log 'previous package install' "$evidence/previous-install.log" \
+  podman exec "$container" "${install_cmd[@]}" "/tmp/previous.$format"
 before=$(podman exec "$container" "${query_cmd[@]}" vectorwarp)
 podman exec "$container" sh -c "$ecosystem_cmd" >"$evidence/ecosystem-before.tsv"
 # Make the conffile byte-distinct without exposing its contents in evidence.
@@ -85,7 +104,8 @@ config_before=$(podman exec "$container" sha256sum /etc/vectorwarp/config.yml | 
 podman exec "$container" test ! -e /etc/vectorwarp/config.yml.receiver-state.json || die 'published-package fixture unexpectedly has a receiver journal'
 podman exec "$container" systemctl enable --now vectorwarp-api.service vectorwarp-receiver.socket
 podman exec "$container" systemctl stop vectorwarp-processor.service vectorwarp-restart.service
-podman exec "$container" "${install_cmd[@]}" "/tmp/candidate.$format" >"$evidence/candidate-upgrade.log" 2>&1
+run_with_log 'candidate package upgrade' "$evidence/candidate-upgrade.log" \
+  podman exec "$container" "${install_cmd[@]}" "/tmp/candidate.$format"
 after=$(podman exec "$container" "${query_cmd[@]}" vectorwarp)
 [[ $after != "$before" ]] || die 'candidate did not replace the published package'
 if [[ $format == deb ]]; then
@@ -131,10 +151,10 @@ if $dragonos_fixture; then
   # Use a second clean userspace: the real upgrade container intentionally has
   # stock UHD installed by the published package and must not be mutated into a
   # synthetic DragonOS system.
-  podman run --rm --security-opt=label=disable \
+  run_with_log 'DragonOS custom UHD dependency fixture' "$evidence/dragonos-custom-uhd.log" \
+    podman run --rm --security-opt=label=disable \
     -v "$candidate:/tmp/candidate.deb:ro" \
     -v "$source_root/test/packaging/dragonos-custom-uhd-fixture.sh:/tmp/fixture.sh:ro" \
-    "$test_image" bash /tmp/fixture.sh /tmp/candidate.deb \
-    >"$evidence/dragonos-custom-uhd.log" 2>&1
+    "$test_image" bash /tmp/fixture.sh /tmp/candidate.deb
 fi
 printf 'Published-package upgrade passed: %s -> %s\n' "$before" "$after"
