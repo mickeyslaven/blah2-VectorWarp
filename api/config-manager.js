@@ -1078,20 +1078,26 @@ function validateConfig(config, baseline = null, options = {}) {
     });
   if (trackerForward) {
     boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
-    string(trackerForward.host, 'network.tracker_forward.host');
-    number(trackerForward.port, 'network.tracker_forward.port',
-      {integer: true, min: 1, max: 65535});
+    // A disabled live-site feed has no endpoint to validate or reconnect to.
+    // Keep endpoint validation for every configuration that could open a socket.
+    if (trackerForward.enabled === true) {
+      string(trackerForward.host, 'network.tracker_forward.host');
+      number(trackerForward.port, 'network.tracker_forward.port',
+        {integer: true, min: 1, max: 65535});
+    }
     if (trackerForward.annotate_adsb !== undefined)
       boolean(trackerForward.annotate_adsb, 'network.tracker_forward.annotate_adsb');
   }
   if (unassistedTrackerForward) {
     boolean(unassistedTrackerForward.enabled,
       'network.tracker_forward.unassisted.enabled');
-    string(unassistedTrackerForward.host,
-      'network.tracker_forward.unassisted.host');
-    number(unassistedTrackerForward.port,
-      'network.tracker_forward.unassisted.port',
-      {integer: true, min: 1, max: 65535});
+    if (unassistedTrackerForward.enabled === true) {
+      string(unassistedTrackerForward.host,
+        'network.tracker_forward.unassisted.host');
+      number(unassistedTrackerForward.port,
+        'network.tracker_forward.unassisted.port',
+        {integer: true, min: 1, max: 65535});
+    }
   }
 
   for (const [name, site] of [['rx', receiver], ['tx', transmitter]]) {
