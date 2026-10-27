@@ -90,7 +90,10 @@ void AsyncReferenceExporter::run()noexcept{
   while(!stopping_.load(std::memory_order_acquire)){
     size_t selected=frames_.size();{
       std::unique_lock<std::mutex> lock(mutex_);ready_.wait(lock,[&]{return stopping_.load()||!queue_.empty();});
-      if(stopping_.load())break;selected=queue_.front();queue_.pop_front();}
+      if(stopping_.load())break;
+      selected=queue_.front();
+      queue_.pop_front();
+    }
     try{connect();send_frame(frames_[selected]);sent_.fetch_add(1);}catch(...){
       failures_.fetch_add(1);asio::error_code ignored;socket_.close(ignored);}
     {std::lock_guard<std::mutex> lock(mutex_);frames_[selected].free=true;}

@@ -1,0 +1,6 @@
+services:
+  blah2:
+    image: vectorwarp/owl-blah2:external-reference-v1
+    environment:
+      - BLAH2_VERBOSE=false
+      - VECTORWARP_EXTERNAL_REFERENCE_TCP=192.168.1.210:4096
