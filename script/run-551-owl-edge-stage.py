@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Apply and measure the lightly clipped 551 MHz OWL companion stage."""
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
-import sys
 import time
 
 
@@ -15,22 +15,34 @@ SPEC.loader.exec_module(trial)
 EDGE_GAINS = [33.8, 33.8, 36.4, 29.7, 28.0]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output", type=Path)
+    parser.add_argument("--gains", default=",".join(map(str, EDGE_GAINS)),
+                        help="five comma-separated per-channel gains in dB")
+    args = parser.parse_args()
+    args.gains = [float(value) for value in args.gains.split(",")]
+    if len(args.gains) != 5:
+        parser.error("--gains requires exactly five values")
+    return args
+
+
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: run-551-owl-edge-stage.py ABSOLUTE_OUTPUT_DIR")
-    root = Path(sys.argv[1])
+    args = parse_args()
+    root = args.output
+    gains = args.gains
     trial.require(root.is_absolute(), "output path must be absolute")
     root.mkdir(parents=True, exist_ok=False)
     original, revision = trial.request("/api/config")
     trial.atomic(root / "original-config.json", original)
     state = {"schema": "vectorwarp-551-owl-edge-stage-v1", "status": "applying",
         "started_at": time.time(), "original_revision": revision,
-        "original_sha256": trial.canonical_sha(original), "gains_db": EDGE_GAINS}
+        "original_sha256": trial.canonical_sha(original), "gains_db": gains}
     trial.atomic(root / "state.json", state)
     try:
-        _selected, revision = trial.apply_stage(original, EDGE_GAINS, revision,
+        _selected, revision = trial.apply_stage(original, gains, revision,
             root, "edge")
-        trial.wait_healthy(EDGE_GAINS)
+        trial.wait_healthy(gains)
         time.sleep(30)
         system, _ = trial.request("/api/system/status", timeout=20)
         upstream, _ = trial.request("/api/upstream/status", timeout=20)
