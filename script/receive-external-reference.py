@@ -32,13 +32,14 @@ def read_exact(stream, count):
     return bytes(data)
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, durable=True):
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8") as output:
         json.dump(value, output, sort_keys=True)
         output.write("\n")
         output.flush()
-        os.fsync(output.fileno())
+        if durable:
+            os.fsync(output.fileno())
     temporary.replace(path)
 
 
@@ -107,7 +108,11 @@ class SegmentWriter:
                     return
                 handle, partial, size, frames, digest, first, last = item
                 handle.flush()
-                os.fsync(handle.fileno())
+                # Do not force an 80 MiB data writeback for every segment.
+                # On the evidence host that throttled concurrent receiver
+                # writes for tens of seconds and lost source CPIs. Close and
+                # rename promptly; normal Linux writeback provides sustained
+                # durability, and every later consumer verifies this hash.
                 handle.close()
                 complete = partial.with_suffix("")
                 partial.replace(complete)
@@ -266,7 +271,7 @@ def main():
                             "updated_unix_ns": time.time_ns(),
                             "counters": counters, "last_frame": receipt,
                             "timing_contract": "source-sample-counter-only; host arrival is not RF time",
-                        })
+                        }, durable=False)
                         if schema == 2:
                             connection.sendall(ACK.pack(b"VWACK001", sequence))
     finally:

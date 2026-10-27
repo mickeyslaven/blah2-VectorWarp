@@ -10,10 +10,10 @@ reference; the same-IQ detector A/B remains the promotion gate.
   SHA-256 remains
   `a900508d525276c4b13b9719b330eae1b70c4ec97dad168e7463fc562f983539`.
 - The deployed exporter image is
-  `vectorwarp/owl-blah2:external-reference-v5`, image
-  `sha256:f1388defee62548717a710aa48316605579caac7d7df0a67f1fd6ee3d4274679`;
+  `vectorwarp/owl-blah2:external-reference-v6`, image
+  `sha256:cedd5d778bf3a53285a398a20c2ceaac715198d6e8531441072bc5f160e6db08`;
   binary SHA-256
-  `0e8cd063a65d7b4e8df04e1b526a992e3a9768d3e03e8960701d5321ff0d0ed0`.
+  `d022736375c64977ea9f62e58b16b26cac5649eeb8a70711161b58d636d30117`.
 - HP records only OWL channel A on the Ford Street LAN at
   `192.168.1.210:4096`.  The sealed ledger and segments are under
   `/var/lib/vectorwarp/external-reference/owl-551`.  Host arrival is explicitly
@@ -73,22 +73,29 @@ from the immutable raw inputs; the local duplicate was removed for disk space.
 ## Transport repair
 
 The original three-CPI sender queue and synchronous 480 MB segment seal caused
-real export gaps.  The accepted path now has a 16-CPI sender queue, retries a
+real export gaps.  The accepted path now has a 64-CPI (32-second, 256 MiB)
+sender queue sized from the measured worst writeback burst, retries a
 frame across transient disconnects, and uses protocol schema 2 acknowledgements
 so a frame is not released until HP accepts its exact sequence.  HP recognizes
 and re-acknowledges an identical retry without writing it twice.  Segment hash,
 flush, rename, receipt and retention work runs on a background sealer, and the
 durability batch is 10 seconds (80 MB) instead of 60 seconds (480 MB).
+Replaceable `status.json` snapshots are atomically renamed without forcing a
+filesystem journal commit for every CPI.  Segment data uses normal Linux
+writeback rather than a synchronous 80 MB flush; receipts retain the SHA-256
+needed to reject any truncated segment after an unclean host failure.
 
 The OWL config remained byte-identical at
 `a900508d525276c4b13b9719b330eae1b70c4ec97dad168e7463fc562f983539`.
 Only the `blah2` container was recreated.  During a controlled HP recorder
 restart, schema-2 sequences 80 and 81 remained contiguous; OWL reported two
 retry failures but zero drops, and the restarted recorder reported zero sample,
-sequence or invalid-frame gaps.  The post-restart acceptance then reached 303
-recorded frames through more than 30 ten-second seal boundaries with all three
-gap/error counters still zero; the OWL exporter reached 360 submissions with
-zero drops (four frames remained normally in flight) and no container restart.
+sequence or invalid-frame gaps.  After resetting pre-fix counters, the final
+v6 acceptance reached 517 recorded frames through more than 50 ten-second seal
+boundaries with all three gap/error counters still zero.  The contemporaneous
+OWL checkpoint was 480 submitted, 479 acknowledged/sent, zero dropped, zero
+failures; one frame was normally in flight.  Neither OWL nor the HP processor
+restarted during that acceptance epoch.
 
 ## Promotion state
 
