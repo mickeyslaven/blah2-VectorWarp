@@ -6,6 +6,36 @@ The OWL reference transport, HP recorder and independent-clock synchronizer are
 working.  This does **not** yet authorize replacing the live synthesized
 reference; the same-IQ detector A/B remains the promotion gate.
 
+On 2026-10-27 the HP Kraken was intentionally moved to OWL's unchanged
+551 MHz WTAE illuminator and swept through bounded gain stages.  The retained
+edge setting is `[33.8,33.8,36.4,29.7,28.0]` dB under config revision
+`296f1b527ce705f614b99450f1f6648593a668bf9e4e36ef66e4787f18321ebd`.
+The strongest channel rails only `0.0352%` of sampled ADC components and has a
+99.9th-percentile magnitude of `92.9%` full scale.  This is a deliberately
+light-clipping experiment: OWL supplies an unclipped reference waveform, while
+the Kraken surveillance samples retain roughly 20--24 dB more weak-signal gain
+than the earlier conservative setting.
+
+The measured gain boundary was sharp:
+
+| Stage | Applied gains (dB) | Worst rail fraction | Worst p99.9 |
+| --- | --- | ---: | ---: |
+| conservative | `[7.7,7.7,12.5,3.7,2.7]` | `0%` | `5.88%` |
+| high | `[29.7,29.7,32.8,25.4,22.9]` | `0.0000014%` | `63.1%` |
+| retained edge | `[33.8,33.8,36.4,29.7,28.0]` | `0.0352%` | `92.9%` |
+| very high | `[38.6,38.6,42.1,33.8,32.8]` | `1.59%` | `100%` |
+| maximum | `[49.6,49.6,49.6,49.6,49.6]` | `9.54%` | `100%` |
+
+The very-high and maximum recordings are retained as nonlinear controls, not
+candidate operating points.  OWL cannot reconstruct aircraft-echo information
+destroyed after the direct path and echo have already summed and hard-clipped
+inside a surveillance ADC.  The retained edge therefore tests the useful
+middle ground rather than assuming either zero clipping or arbitrary clipping
+is optimal.  Live services, calibration, GPU/clutter processing and the OWL
+recorder were healthy after the change.  The exact-identity manifold queue
+admitted its first two 551 edge-gain jobs after 64 pre-551 pending pairs were
+preserved in a checksummed archive and removed from the hot slots.
+
 - OWL remains at 551 MHz WTAE, 2 MS/s and a 0.5 s CPI.  Its native configuration
   SHA-256 remains
   `a900508d525276c4b13b9719b330eae1b70c4ec97dad168e7463fc562f983539`.
