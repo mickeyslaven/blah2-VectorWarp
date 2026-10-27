@@ -34,7 +34,10 @@ int16_t sample(double value){
 AsyncReferenceExporter::AsyncReferenceExporter(std::string endpoint,
   uint32_t sampleRate,uint32_t frequency,uint32_t samples)
   :host_(parse_endpoint(endpoint).first),port_(parse_endpoint(endpoint).second),
-   sampleRate_(sampleRate),frequency_(frequency),samples_(samples),frames_(3){
+   // Eight seconds of bounded elasticity at a 500 ms CPI. This absorbs HP
+   // segment-seal and filesystem latency without ever blocking native Owl
+   // processing; sustained backpressure still drops only the export copy.
+   sampleRate_(sampleRate),frequency_(frequency),samples_(samples),frames_(16){
   if(!sampleRate_||!frequency_||!samples_)
     throw std::invalid_argument("Invalid external reference geometry");
   for(auto& frame:frames_)frame.iq.resize(uint64_t(samples_)*2);
