@@ -13,8 +13,9 @@
 #include <vector>
 
 // Bounded best-effort copy of completed reference CPIs. Submission performs
-// no network or disk I/O and never waits for capacity. If transport falls
-// behind, only this optional copy is dropped; Owl's native CPI is untouched.
+// no network or disk I/O and waits only for a bounded in-memory bookkeeping
+// critical section, never for capacity. If transport falls behind, only this
+// optional copy is dropped; Owl's native CPI is untouched.
 class AsyncReferenceExporter {
 public:
   struct Stats { uint64_t submitted=0,sent=0,dropped=0,failures=0; };

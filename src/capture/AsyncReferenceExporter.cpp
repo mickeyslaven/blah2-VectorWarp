@@ -58,8 +58,11 @@ bool AsyncReferenceExporter::try_submit(const IqData& reference,uint64_t epoch,
   }
   size_t selected=frames_.size();
   {
-    std::unique_lock<std::mutex> lock(mutex_,std::try_to_lock);
-    if(!lock.owns_lock()){dropped_.fetch_add(1,std::memory_order_relaxed);return false;}
+    // The worker holds this mutex only to move an integer queue index; it is
+    // never held during conversion, network I/O or retry backoff. Waiting for
+    // this bounded critical section avoids falsely dropping a CPI merely
+    // because producer and consumer touched queue bookkeeping simultaneously.
+    std::lock_guard<std::mutex> lock(mutex_);
     for(size_t i=0;i<frames_.size();++i)if(frames_[i].free){selected=i;frames_[i].free=false;break;}
   }
   if(selected==frames_.size()){dropped_.fetch_add(1,std::memory_order_relaxed);return false;}
