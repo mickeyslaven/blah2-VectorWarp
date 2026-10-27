@@ -27,6 +27,9 @@ void put32(std::array<uint8_t,64>& out,size_t at,uint32_t value){
 void put64(std::array<uint8_t,64>& out,size_t at,uint64_t value){
   for(unsigned i=0;i<8;++i)out[at+i]=uint8_t(value>>(56-8*i));
 }
+uint64_t get64(const uint8_t* value){
+  uint64_t result=0;for(unsigned i=0;i<8;++i)result=(result<<8)|value[i];return result;
+}
 int16_t sample(double value){
   return static_cast<int16_t>(std::clamp(std::llround(value),-32768LL,32767LL));
 }
@@ -86,12 +89,16 @@ void AsyncReferenceExporter::connect(){
   socket_.set_option(asio::ip::tcp::no_delay(true));
 }
 void AsyncReferenceExporter::send_frame(const Frame& frame){
-  std::array<uint8_t,64> h{};std::copy_n("VWREF001",8,h.begin());put32(h,8,1);put32(h,12,64);
+  std::array<uint8_t,64> h{};std::copy_n("VWREF001",8,h.begin());put32(h,8,2);put32(h,12,64);
   put64(h,16,frame.sequence);put64(h,24,frame.epoch);put64(h,32,frame.firstSample);
   put32(h,40,sampleRate_);put32(h,44,frequency_);put32(h,48,samples_);put32(h,52,0);
   put32(h,56,uint32_t(frame.iq.size()*sizeof(int16_t)));put32(h,60,1);
   std::array<asio::const_buffer,2> buffers{asio::buffer(h),asio::buffer(frame.iq)};
   asio::write(socket_,buffers);
+  std::array<uint8_t,16> ack{};
+  asio::read(socket_,asio::buffer(ack));
+  if(!std::equal(ack.begin(),ack.begin()+8,"VWACK001")||get64(ack.data()+8)!=frame.sequence)
+    throw std::runtime_error("External reference receiver returned an invalid acknowledgement");
 }
 void AsyncReferenceExporter::run()noexcept{
   while(!stopping_.load(std::memory_order_acquire)){
