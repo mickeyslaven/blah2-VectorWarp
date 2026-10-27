@@ -350,13 +350,20 @@ Map<std::complex<double>> *Ambiguity::process_impl(
     const auto rangeStarted = std::chrono::steady_clock::now();
     const uint32_t split = rangeWorkers == 2 ? nDopplerBins/2 : nDopplerBins;
     RangeRowWorker::Job job{x,y ? &y->view_data() : nullptr,rawReference,rawSurveillance,
-      rawReferenceSamples,rawSurveillanceSamples,&rangeRows,0,split,nCorr,nfft,
+      rawReferenceSamples,rawSurveillanceSamples,&rangeRows,0,
+      rangeWorkers == 2 ? nDopplerBins : split,nCorr,nfft,
       nDelayBins,fs,delayMin,dopplerMiddle};
     job.rotatedX=rotatedReference; job.filteredY=filteredSurveillance;
     job.fullSamples=fullSamples; job.rotation=clutterDelayMin;
+    std::atomic<uint32_t> nextRow{0};
+    constexpr uint32_t dynamicRowChunk = 4;
+    if (rangeWorkers == 2) {
+      job.nextRow = &nextRow;
+      job.rowChunk = dynamicRowChunk;
+    }
     bool started = false;
     if (rangeThread) {
-      auto second = job; second.first = split; second.last = nDopplerBins;
+      auto second = job;
       rangeThread->start(second); started = true;
     }
     const auto submitted = std::chrono::steady_clock::now();
@@ -377,6 +384,8 @@ Map<std::complex<double>> *Ambiguity::process_impl(
       auto milliseconds=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
       rangeLog << "{\"frame\":" << ++rangeFrame << ",\"workers\":" << rangeWorkers
         << ",\"rows\":" << nDopplerBins << ",\"split\":" << split
+        << ",\"dynamic_rows\":" << (rangeWorkers == 2 ? "true" : "false")
+        << ",\"row_chunk\":" << (rangeWorkers == 2 ? dynamicRowChunk : 0)
         << ",\"fft\":" << nfft << ",\"submit_ms\":" << milliseconds(rangeStarted,submitted)
         << ",\"caller_ms\":" << milliseconds(submitted,callerFinished)
         << ",\"join_wait_ms\":" << milliseconds(callerFinished,joined)

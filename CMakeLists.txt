@@ -125,6 +125,7 @@ include(cmake/ReceiverModules.cmake)
 add_executable(blah2
   src/blah2.cpp
   src/capture/Capture.cpp
+  src/capture/AsyncReferenceExporter.cpp
   src/capture/Replay.cpp
   src/capture/kraken/Kraken.cpp
   src/capture/kraken/KrakenClipRecorder.cpp
@@ -191,6 +192,12 @@ endif()
 
 if(BUILD_TESTING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_executable(testAsyncReferenceExporter
+    test/capture/AsyncReferenceExporterFixture.cpp
+    src/capture/AsyncReferenceExporter.cpp)
+  target_include_directories(testAsyncReferenceExporter PRIVATE src)
+  target_link_libraries(testAsyncReferenceExporter PRIVATE asio::asio Threads::Threads)
+  add_test(NAME asyncReferenceExporter COMMAND testAsyncReferenceExporter)
   add_test(NAME detectionManifoldNativeGrid
     COMMAND ${Python3_EXECUTABLE}
       ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py

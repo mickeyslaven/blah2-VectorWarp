@@ -2,6 +2,7 @@
 #include <fftw3.h>
 #include "process/utility/FftwThreads.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <complex>
 #include <condition_variable>
@@ -28,6 +29,10 @@ public:
     const Complex* filteredY = nullptr;
     uint32_t fullSamples = 0;
     int32_t rotation = 0;
+    // When set, workers claim independent row chunks from the same interval.
+    // This removes the fixed-half straggler without changing row math.
+    std::atomic<uint32_t>* nextRow = nullptr;
+    uint32_t rowChunk = 1;
   };
 private:
   const uint32_t fftLength_;
@@ -54,7 +59,7 @@ private:
         job.last * uint64_t(job.delays) > job.rows->size())
       throw std::invalid_argument("Invalid ambiguity range-row job");
     const Complex imaginary{0,1};
-    for (uint32_t row = job.first; row < job.last; ++row) {
+    auto processRow = [&](uint32_t row) {
       const uint64_t base = uint64_t(row) * job.corr;
       uint32_t rotatedIndex = 0;
       if (job.rotatedX) {
@@ -80,6 +85,19 @@ private:
         const uint32_t index = lag < 0 ? uint32_t(int64_t(job.fft)+lag) : uint32_t(lag);
         (*job.rows)[uint64_t(row)*job.delays+j] = product_[index];
       }
+    };
+    if (job.nextRow) {
+      if (!job.rowChunk)
+        throw std::invalid_argument("Invalid ambiguity range-row chunk");
+      for (;;) {
+        const uint32_t first = job.nextRow->fetch_add(job.rowChunk,
+          std::memory_order_relaxed);
+        if (first >= job.last) break;
+        const uint32_t last = std::min(job.last, first + job.rowChunk);
+        for (uint32_t row = first; row < last; ++row) processRow(row);
+      }
+    } else {
+      for (uint32_t row = job.first; row < job.last; ++row) processRow(row);
     }
   }
   void run() noexcept {

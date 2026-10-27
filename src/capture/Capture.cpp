@@ -43,9 +43,9 @@ Capture::SamplePosition Capture::live_sample_position() const
   if (kraken) {
     const auto value = kraken->sample_position();
     return {value.available, value.epoch, value.nextSample,
-      value.epochEstimateNanoseconds, 0, 0, value.hostReceiptResidualNanoseconds,
+      value.epochEstimateNanoseconds, value.hostReceiptResidualNanoseconds,
       value.hostReceiptMaximumResidualNanoseconds, value.hostReceiptDriftPpm,
-      value.hostReceiptAnchors};
+      value.hostReceiptAnchors, 0, 0};
   }
   if (!device) return {};
   const auto value = device->sample_time_position();

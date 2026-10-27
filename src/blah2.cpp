@@ -4,6 +4,7 @@
 
 #include "capture/Capture.h"
 #include "capture/PairedCpiQueue.h"
+#include "capture/AsyncReferenceExporter.h"
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "data/Detection.h"
@@ -585,6 +586,7 @@ try
   const bool pairedQueueRequested = !state && type == "RspDuo" &&
     captureChannelCount == 2 && pairedQueueEnv && std::string(pairedQueueEnv) == "1";
   std::unique_ptr<PairedCpiQueue> pairedCpiQueue;
+  std::unique_ptr<AsyncReferenceExporter> externalReferenceExporter;
   if (pairedQueueRequested) {
     if (!nSamples || captureBufferSamples < 2 * uint64_t(nSamples))
       throw std::invalid_argument("Invalid paired CPI queue geometry");
@@ -595,6 +597,12 @@ try
       cpis - 1);
     capture->set_paired_cpi_queue(pairedCpiQueue.get());
     std::cout << "RSPduo paired CPI queue requested: " << cpis << " CPI capacity\n";
+    if (const char* endpoint = std::getenv("VECTORWARP_EXTERNAL_REFERENCE_TCP")) {
+      externalReferenceExporter = std::make_unique<AsyncReferenceExporter>(
+        endpoint, fs, fc, nSamples, referenceChannel);
+      std::cout << "Asynchronous external reference copy enabled for channel "
+        << referenceChannel << " to " << endpoint << "\n";
+    }
   }
   auto referenceData = std::make_unique<IqData>(nSamples);
   std::vector<std::unique_ptr<IqData>> captureData;
@@ -1220,6 +1228,9 @@ try
             try {
               const auto& block = pairedCpiQueue->block(slot);
               captureStartUs = current_time_us();
+              if (externalReferenceExporter)
+                externalReferenceExporter->try_submit(block.iq.data(), nSamples,
+                  block.epoch, block.first);
               if (pairedDirectFrame) {
 #ifdef VECTORWARP_MIXED_AUTO
                 if (mixedAuto && mixedWorker && !mixedPolicy.disabled()) {

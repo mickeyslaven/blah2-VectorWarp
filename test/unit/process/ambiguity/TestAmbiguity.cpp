@@ -232,6 +232,41 @@ TEST_CASE("Power-of-two padding preserves signed delay-Doppler maps", "[process]
   }
 }
 
+TEST_CASE("Dynamic range-row scheduling preserves the ambiguity map",
+  "[process][regression][range-workers]")
+{
+  constexpr uint32_t samples = 4096;
+  std::deque<std::complex<double>> reference;
+  for (uint32_t i = 0; i < samples; ++i)
+    reference.push_back({double(int(i % 17) - 8), double(int(i % 11) - 5)});
+  auto fill = [](IqData& signal) {
+    for (uint32_t i = 0; i < samples; ++i)
+      signal.push_back({double(int((i * 3) % 19) - 9),
+        double(int((i * 5) % 13) - 6)});
+  };
+
+  std::vector<std::vector<std::complex<double>>> expected;
+  {
+    ScopedFftSetting workers("1", "VECTORWARP_BENCH_RANGE_WORKERS");
+    Ambiguity serial(-7, 12, -120, 120, 48000, samples, true);
+    IqData surveillance(samples); fill(surveillance);
+    expected = serial.process(reference, &surveillance)->data;
+  }
+  {
+    ScopedFftSetting workers("2", "VECTORWARP_BENCH_RANGE_WORKERS");
+    Ambiguity balanced(-7, 12, -120, 120, 48000, samples, true);
+    IqData surveillance(samples); fill(surveillance);
+    const auto& actual = balanced.process(reference, &surveillance)->data;
+    REQUIRE(actual.size() == expected.size());
+    for (size_t row = 0; row < expected.size(); ++row) {
+      REQUIRE(actual[row].size() == expected[row].size());
+      for (size_t col = 0; col < expected[row].size(); ++col)
+        CHECK_THAT(std::abs(actual[row][col] - expected[row][col]),
+          Catch::Matchers::WithinAbs(0, 1e-10));
+    }
+  }
+}
+
 TEST_CASE("Doppler buffer can exceed range FFT", "[process][regression]")
 {
     const int high = GENERATE(530, 2600);
