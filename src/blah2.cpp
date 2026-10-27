@@ -3,6 +3,7 @@
 /// @author 30hours
 
 #include "capture/Capture.h"
+#include "capture/AsyncReferenceExporter.h"
 #include "data/IqData.h"
 #include "data/Map.h"
 #include "data/Detection.h"
@@ -108,6 +109,12 @@ int main(int argc, char **argv)
 
   // setup process CPI
   uint32_t nSamples = fs * tCpi;
+  std::unique_ptr<AsyncReferenceExporter> referenceExporter;
+  uint64_t referenceEpoch=current_time_us(),referenceFirstSample=0,referenceFrames=0;
+  if(const char* endpoint=std::getenv("VECTORWARP_EXTERNAL_REFERENCE_TCP")){
+    referenceExporter=std::make_unique<AsyncReferenceExporter>(endpoint,fs,fc,nSamples);
+    std::cout<<"Asynchronous channel-A reference export to "<<endpoint<<std::endl;
+  }
 
   // Slots in flight between the two processing stages. Two is enough for full
   // overlap: the front stage fills one while the back stage drains the other,
@@ -251,6 +258,13 @@ int main(int argc, char **argv)
         }
         buffer1->unlock();
         buffer2->unlock();
+        if(referenceExporter){
+          referenceExporter->try_submit(*slot->x,referenceEpoch,referenceFirstSample);
+          referenceFirstSample+=nSamples;
+          if(++referenceFrames%120==0){const auto s=referenceExporter->stats();
+            std::cout<<"[ExternalReference] submitted="<<s.submitted<<" sent="<<s.sent
+              <<" dropped="<<s.dropped<<" failures="<<s.failures<<std::endl;}
+        }
         timing_helper(slot->timingName, slot->timingTime, slot->time, "extract_buffer");
 
         // Latch a live retune against the CPI it applies to rather than

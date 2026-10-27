@@ -42,6 +42,7 @@ target_link_libraries(sdrplay PUBLIC /usr/local/lib/libsdrplay_api.so.3.15)
 # TODO: Move to separate src/CMakeLists.txt
 add_executable(blah2
   src/blah2.cpp
+  src/capture/AsyncReferenceExporter.cpp
   src/capture/Capture.cpp
   src/capture/Source.cpp
   src/capture/rspduo/RspDuo.cpp
