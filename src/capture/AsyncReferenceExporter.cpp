@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -97,8 +98,19 @@ void AsyncReferenceExporter::run()noexcept{
       selected=queue_.front();
       queue_.pop_front();
     }
-    try{connect();send_frame(frames_[selected]);sent_.fetch_add(1);}catch(...){
-      failures_.fetch_add(1);asio::error_code ignored;socket_.close(ignored);}
+    bool delivered=false;
+    while(!delivered&&!stopping_.load(std::memory_order_acquire)){
+      try{connect();send_frame(frames_[selected]);sent_.fetch_add(1);delivered=true;}
+      catch(...){
+        failures_.fetch_add(1);asio::error_code ignored;socket_.close(ignored);
+        // Keep ownership of this frame across a transient receiver restart.
+        // A bounded wait avoids a reconnect spin while allowing destruction to
+        // wake immediately; only sustained backpressure can exhaust frames_.
+        std::unique_lock<std::mutex> lock(mutex_);
+        ready_.wait_for(lock,std::chrono::milliseconds(250),
+          [&]{return stopping_.load(std::memory_order_acquire);});
+      }
+    }
     {std::lock_guard<std::mutex> lock(mutex_);frames_[selected].free=true;}
   }
 }
