@@ -4,6 +4,8 @@ LABEL org.opencontainers.image.source https://github.com/30hours/blah2
 
 WORKDIR /opt/blah2
 ADD lib lib
+ARG BUILD_JOBS=1
+ENV VCPKG_MAX_CONCURRENCY=${BUILD_JOBS}
 
 # Install base dependencies (note: libfftw3-dev removed - building from source with NEON)
 RUN apt-get update && apt-get install -y \
@@ -42,13 +44,13 @@ RUN cd /tmp \
     # Build double-precision with NEON (what blah2 uses)
     && ./configure --enable-shared --enable-threads --enable-neon --prefix=/usr/local \
         CFLAGS="-O3 -march=armv8-a+simd" \
-    && make -j$(nproc) \
+    && make -j${BUILD_JOBS} \
     && make install \
     # Build single-precision with NEON (for safety/future use)
     && make clean \
     && ./configure --enable-shared --enable-threads --enable-neon --enable-single --prefix=/usr/local \
         CFLAGS="-O3 -march=armv8-a+simd" \
-    && make -j$(nproc) \
+    && make -j${BUILD_JOBS} \
     && make install \
     && ldconfig \
     && cd /tmp \
