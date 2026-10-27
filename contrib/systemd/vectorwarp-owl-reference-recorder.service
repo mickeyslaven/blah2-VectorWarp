@@ -1,0 +1,26 @@
+[Unit]
+Description=VectorWarp OWL external reference recorder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vectorwarp
+Group=vectorwarp
+ExecStart=/opt/vectorwarp/local/libexec/receive-external-reference.py --listen 192.168.1.210 --port 4096 --output /var/lib/vectorwarp/external-reference/owl-551 --expected-peer 192.168.1.209 --expected-frequency 551000000 --expected-rate 2000000 --expected-channel 0 --segment-seconds 10 --max-storage-gib 100
+Restart=always
+RestartSec=2
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/vectorwarp/external-reference/owl-551
+RestrictAddressFamilies=AF_INET AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

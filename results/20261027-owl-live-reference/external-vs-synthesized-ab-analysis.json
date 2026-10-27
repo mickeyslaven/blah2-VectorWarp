@@ -1,0 +1,238 @@
+{
+  "schema": "vectorwarp-external-reference-ab-analysis-v1",
+  "source": "results/20261027-owl-live-reference/external-vs-synthesized-ab.json",
+  "source_sha256": "d7d6630325f1853baf58fb943657f8b32f0ecb62182766bd956a442485c6f503",
+  "truth": {
+    "delay_km": 57.01544819459232,
+    "doppler_hz": 574.9496170286691
+  },
+  "comparison_contract": "same six-channel IQ, same five surveillance channels, noncoherent map fusion, fixed detector configuration",
+  "arms": {
+    "kraken_synthesized_reference": {
+      "frames": [
+        {
+          "frame": 0,
+          "timestamp": 1793124563143,
+          "fused_target_contrast_db": -3.3475483251182823,
+          "physical_channel_target_contrast_db": [
+            -2.2832572152610116,
+            -6.91387613746709,
+            3.328878855471648,
+            0.35524460791041346,
+            -9.280752925109585
+          ]
+        },
+        {
+          "frame": 1,
+          "timestamp": 1793124566445,
+          "fused_target_contrast_db": 4.009574676944936,
+          "physical_channel_target_contrast_db": [
+            5.217447183378936,
+            8.491386269834813,
+            -0.1454107341328553,
+            0.3027994848306012,
+            4.884971193811479
+          ]
+        },
+        {
+          "frame": 2,
+          "timestamp": 1793124568000,
+          "fused_target_contrast_db": 0.3228305569839652,
+          "physical_channel_target_contrast_db": [
+            -4.666305496035875,
+            3.3847540771427767,
+            0.2023995930083265,
+            5.264502301710125,
+            -8.873133335535243
+          ]
+        },
+        {
+          "frame": 3,
+          "timestamp": 1793124575624,
+          "fused_target_contrast_db": -1.355615257371992,
+          "physical_channel_target_contrast_db": [
+            1.3101774309967555,
+            3.182742035314204,
+            -18.40858482482372,
+            1.2703929060755437,
+            -9.134502249453906
+          ]
+        },
+        {
+          "frame": 4,
+          "timestamp": 1793124577261,
+          "fused_target_contrast_db": 4.975938145166657,
+          "physical_channel_target_contrast_db": [
+            4.437488328878214,
+            8.368687811005195,
+            -10.225756568865945,
+            -8.02192076917353,
+            7.28430437491707
+          ]
+        },
+        {
+          "frame": 5,
+          "timestamp": 1793124579029,
+          "fused_target_contrast_db": 2.993372945008898,
+          "physical_channel_target_contrast_db": [
+            -3.7298056147641043,
+            4.008425696510411,
+            -1.742137499585588,
+            3.7339892862949124,
+            5.631595921038867
+          ]
+        },
+        {
+          "frame": 6,
+          "timestamp": 1793124580636,
+          "fused_target_contrast_db": -0.7803193048942418,
+          "physical_channel_target_contrast_db": [
+            8.246969652953855,
+            -2.20399640762451,
+            -12.070614749779358,
+            -7.890025909431646,
+            -0.35298184425307305
+          ]
+        },
+        {
+          "frame": 7,
+          "timestamp": 1793124582147,
+          "fused_target_contrast_db": 0.12468929547515475,
+          "physical_channel_target_contrast_db": [
+            -2.868093886328505,
+            -4.390513953426317,
+            5.5076983343457115,
+            5.615319637881163,
+            -5.484607066106717
+          ]
+        }
+      ],
+      "frame_count": 8,
+      "detector_nuisance_detection_count": 24,
+      "median_fused_target_contrast_db": 0.22375992622955998,
+      "maximum_fused_target_contrast_db": 4.975938145166657,
+      "median_physical_channel_target_contrast_db": [
+        -0.486539892132128,
+        3.2837480562284904,
+        -0.9437741168592216,
+        0.8128187569929786,
+        -2.918794455179895
+      ]
+    },
+    "owl_external_reference": {
+      "frames": [
+        {
+          "frame": 0,
+          "timestamp": 1793124587413,
+          "fused_target_contrast_db": -3.656680898295366,
+          "physical_channel_target_contrast_db": [
+            2.100084760015486,
+            -7.285558774286597,
+            -8.931081076204068,
+            -0.14620113061763218,
+            -5.976334309756723
+          ]
+        },
+        {
+          "frame": 1,
+          "timestamp": 1793124589798,
+          "fused_target_contrast_db": -2.448796018428927,
+          "physical_channel_target_contrast_db": [
+            -1.402420464531959,
+            -4.078231959336144,
+            4.882760007827803,
+            1.6445960535360602,
+            -6.0060910917067165
+          ]
+        },
+        {
+          "frame": 2,
+          "timestamp": 1793124591313,
+          "fused_target_contrast_db": -1.7928240244311082,
+          "physical_channel_target_contrast_db": [
+            -0.020129432152221988,
+            -3.417764048132093,
+            1.5584788896575632,
+            3.3254751555786752,
+            -3.6042670257342775
+          ]
+        },
+        {
+          "frame": 3,
+          "timestamp": 1793124592897,
+          "fused_target_contrast_db": -0.7859665401824077,
+          "physical_channel_target_contrast_db": [
+            -0.47003525488295145,
+            1.354746047169385,
+            -12.842688415449715,
+            0.517530442460994,
+            -0.18595673727645481
+          ]
+        },
+        {
+          "frame": 4,
+          "timestamp": 1793124594520,
+          "fused_target_contrast_db": 0.5322088107402833,
+          "physical_channel_target_contrast_db": [
+            0.4531475018446974,
+            -6.326970664815974,
+            4.713473752832644,
+            -0.26015903304270277,
+            3.417929162348068
+          ]
+        },
+        {
+          "frame": 5,
+          "timestamp": 1793124597300,
+          "fused_target_contrast_db": -0.003064645911404761,
+          "physical_channel_target_contrast_db": [
+            3.9589832125665385,
+            -2.8178469041685754,
+            -1.149363276739873,
+            -3.987867970843108,
+            3.056872363555968
+          ]
+        },
+        {
+          "frame": 6,
+          "timestamp": 1793124599311,
+          "fused_target_contrast_db": -1.7877379113564436,
+          "physical_channel_target_contrast_db": [
+            -9.00027116964274,
+            -13.159991935573593,
+            -10.58211802228433,
+            0.5020101269181777,
+            2.135355640325246
+          ]
+        },
+        {
+          "frame": 7,
+          "timestamp": 1793124601486,
+          "fused_target_contrast_db": 0.07098187045929111,
+          "physical_channel_target_contrast_db": [
+            -3.325370650969815,
+            0.40686910592073305,
+            -0.760602829158469,
+            5.05744828092313,
+            -0.46056584995212624
+          ]
+        }
+      ],
+      "frame_count": 8,
+      "detector_nuisance_detection_count": 20,
+      "median_fused_target_contrast_db": -1.2868522257694257,
+      "maximum_fused_target_contrast_db": 0.5322088107402833,
+      "median_physical_channel_target_contrast_db": [
+        -0.24508234351758673,
+        -3.7479980037341183,
+        -0.954983052949171,
+        0.5097702846895859,
+        -0.3232612936142905
+      ]
+    }
+  },
+  "decision": {
+    "promote_external_reference": false,
+    "reason": "Neither arm accepted the truth-selected aircraft cell. The OWL arm reduced detector nuisance detections but had lower target-cell contrast on this weak distant pass; more independent passes with stable target energy are required."
+  }
+}

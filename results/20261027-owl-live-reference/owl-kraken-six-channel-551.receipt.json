@@ -1,0 +1,98 @@
+{
+  "alignment": {
+    "cfo_hz": 1758.9569091796875,
+    "cpi_receipts": [
+      {
+        "amplitude_scale": 1.3284796437841348e-05,
+        "coherence": 0.483471668389531,
+        "first_sample": 0,
+        "phase_correction_rad": -0.9457313966113671,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.3369827613384646e-05,
+        "coherence": 0.5258636164379817,
+        "first_sample": 1200000,
+        "phase_correction_rad": -1.0145650745243977,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.340378478276167e-05,
+        "coherence": 0.5667461469762443,
+        "first_sample": 2400000,
+        "phase_correction_rad": -1.102263402669071,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.3411604000261028e-05,
+        "coherence": 0.5955289183967413,
+        "first_sample": 3600000,
+        "phase_correction_rad": -1.146151403341179,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.3339486244612439e-05,
+        "coherence": 0.6189391820722921,
+        "first_sample": 4800000,
+        "phase_correction_rad": -1.2351885939197351,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.337839309581351e-05,
+        "coherence": 0.6335698486909476,
+        "first_sample": 6000000,
+        "phase_correction_rad": -1.253670618427434,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.3371924394582408e-05,
+        "coherence": 0.6387265363826657,
+        "first_sample": 7200000,
+        "phase_correction_rad": -1.257344988524653,
+        "pilot_channel": 2,
+        "samples": 1200000
+      },
+      {
+        "amplitude_scale": 1.335487030219639e-05,
+        "coherence": 0.6351356275203486,
+        "first_sample": 8400000,
+        "phase_correction_rad": -1.3458573306123913,
+        "pilot_channel": 2,
+        "samples": 1200000
+      }
+    ],
+    "intercept_owl_samples": 5473898.333333336,
+    "slope_owl_samples_per_hp_sample": 0.8333361111111112
+  },
+  "block_samples_max": 65536,
+  "channels": 6,
+  "cpi_s": 0.5,
+  "external_reference_channel": 0,
+  "frequency_hz": 551000000,
+  "kraken_surveillance_channels": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "output": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-six-channel-551.blah2iq",
+  "output_sha256": "52caf328d1b4d4e416ea759b672ef4948d2d309ee433e358227d2f8fbad3c638",
+  "sample_rate_hz": 2400000,
+  "samples_per_channel": 9600000,
+  "schema": "vectorwarp-external-reference-replay-v1",
+  "source": {
+    "kraken": "/var/lib/vectorwarp/recordings/kraken-clip-r1-1793088886162896882-1.mchq",
+    "kraken_sha256": "71ae62341daa7d2643eaf81e6bc1414286cd7548b401fb7c609a5ed802942773",
+    "owl_epoch": "1793088369522173",
+    "qualification": "/var/lib/vectorwarp/external-reference/qualification/qualification-551-full-cpi-20261027.json",
+    "qualification_sha256": "ea45f65f3ae4de5dd737afa27a1de4222d978cbd65dcb465f48743db0c14c836"
+  },
+  "timing_contract": "waveform-derived affine clock and CFO; host arrival is search-only"
+}

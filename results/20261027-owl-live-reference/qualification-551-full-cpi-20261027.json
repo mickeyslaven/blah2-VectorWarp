@@ -1,0 +1,494 @@
+{
+  "acceptance": {
+    "maximum_absolute_clock_offset_ppm": 200,
+    "minimum_affine_cpi_locks": 3,
+    "minimum_locks": 3,
+    "minimum_median_affine_cpi_coherence": 0.15,
+    "minimum_median_coherence": 0.15
+  },
+  "best": {
+    "accepted_locks": 7,
+    "affine_cpi_locks": [
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.5035729276886167,
+        "duration_s": 0.45,
+        "hp_sample": 600000,
+        "owl_sample": 5973900.000000003
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.5448860486267209,
+        "duration_s": 0.45,
+        "hp_sample": 1800000,
+        "owl_sample": 6973903.333333336
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.5809170970003494,
+        "duration_s": 0.45,
+        "hp_sample": 3000000,
+        "owl_sample": 7973906.66666667
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.6058791416513274,
+        "duration_s": 0.45,
+        "hp_sample": 4200000,
+        "owl_sample": 8973910.000000004
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.6272009841328137,
+        "duration_s": 0.45,
+        "hp_sample": 5400000,
+        "owl_sample": 9973913.333333336
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.6374873550793642,
+        "duration_s": 0.45,
+        "hp_sample": 6600000,
+        "owl_sample": 10973916.66666667
+      },
+      {
+        "cfo_hz": 1758.9569091796875,
+        "coherence": 0.6373302511488081,
+        "duration_s": 0.45,
+        "hp_sample": 7800000,
+        "owl_sample": 11973920.000000004
+      }
+    ],
+    "affine_intercept_owl_samples": 5473898.333333336,
+    "affine_owl_samples_per_hp_sample": 0.8333361111111112,
+    "coarse_owl_sample": 5474000,
+    "envelope_correlation": 0.28662264347076416,
+    "kraken_channel": 2,
+    "locks": [
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.581320741454995,
+        "fine_delay_hp_samples": -120,
+        "hp_sample": 600000,
+        "owl_sample": 5973900.0
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.5951063438390063,
+        "fine_delay_hp_samples": -116,
+        "hp_sample": 1800000,
+        "owl_sample": 6973903.333333333
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.6028907060761953,
+        "fine_delay_hp_samples": -112,
+        "hp_sample": 3000000,
+        "owl_sample": 7973906.666666667
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.6009306357173381,
+        "fine_delay_hp_samples": -108,
+        "hp_sample": 4200000,
+        "owl_sample": 8973910.0
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.5937251747465082,
+        "fine_delay_hp_samples": -104,
+        "hp_sample": 5400000,
+        "owl_sample": 9973913.333333334
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.5776235816981984,
+        "fine_delay_hp_samples": -100,
+        "hp_sample": 6600000,
+        "owl_sample": 10973916.666666666
+      },
+      {
+        "cfo_hz": 1757.8125,
+        "coherence": 0.555008798928638,
+        "fine_delay_hp_samples": -96,
+        "hp_sample": 7800000,
+        "owl_sample": 11973920.0
+      }
+    ],
+    "median_affine_cpi_coherence": 0.6058791416513274,
+    "median_cfo_hz": 1757.8125,
+    "median_coherence": 0.5937251747465082,
+    "sample_clock_offset_ppm": 3.3333333333551707
+  },
+  "candidates": [
+    {
+      "accepted_locks": 7,
+      "affine_cpi_locks": [
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.5035729276886167,
+          "duration_s": 0.45,
+          "hp_sample": 600000,
+          "owl_sample": 5973900.000000003
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.5448860486267209,
+          "duration_s": 0.45,
+          "hp_sample": 1800000,
+          "owl_sample": 6973903.333333336
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.5809170970003494,
+          "duration_s": 0.45,
+          "hp_sample": 3000000,
+          "owl_sample": 7973906.66666667
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.6058791416513274,
+          "duration_s": 0.45,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.000000004
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.6272009841328137,
+          "duration_s": 0.45,
+          "hp_sample": 5400000,
+          "owl_sample": 9973913.333333336
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.6374873550793642,
+          "duration_s": 0.45,
+          "hp_sample": 6600000,
+          "owl_sample": 10973916.66666667
+        },
+        {
+          "cfo_hz": 1758.9569091796875,
+          "coherence": 0.6373302511488081,
+          "duration_s": 0.45,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.000000004
+        }
+      ],
+      "affine_intercept_owl_samples": 5473898.333333336,
+      "affine_owl_samples_per_hp_sample": 0.8333361111111112,
+      "coarse_owl_sample": 5474000,
+      "envelope_correlation": 0.28662264347076416,
+      "kraken_channel": 2,
+      "locks": [
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.581320741454995,
+          "fine_delay_hp_samples": -120,
+          "hp_sample": 600000,
+          "owl_sample": 5973900.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.5951063438390063,
+          "fine_delay_hp_samples": -116,
+          "hp_sample": 1800000,
+          "owl_sample": 6973903.333333333
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.6028907060761953,
+          "fine_delay_hp_samples": -112,
+          "hp_sample": 3000000,
+          "owl_sample": 7973906.666666667
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.6009306357173381,
+          "fine_delay_hp_samples": -108,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.5937251747465082,
+          "fine_delay_hp_samples": -104,
+          "hp_sample": 5400000,
+          "owl_sample": 9973913.333333334
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.5776235816981984,
+          "fine_delay_hp_samples": -100,
+          "hp_sample": 6600000,
+          "owl_sample": 10973916.666666666
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.555008798928638,
+          "fine_delay_hp_samples": -96,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.0
+        }
+      ],
+      "median_affine_cpi_coherence": 0.6058791416513274,
+      "median_cfo_hz": 1757.8125,
+      "median_coherence": 0.5937251747465082,
+      "sample_clock_offset_ppm": 3.3333333333551707
+    },
+    {
+      "accepted_locks": 7,
+      "affine_intercept_owl_samples": 5473892.291666665,
+      "affine_owl_samples_per_hp_sample": 0.833337152777778,
+      "coarse_owl_sample": 5474000,
+      "envelope_correlation": 0.292601078748703,
+      "kraken_channel": 0,
+      "locks": [
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4744623149654187,
+          "fine_delay_hp_samples": -126,
+          "hp_sample": 600000,
+          "owl_sample": 5973895.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.47102368599049993,
+          "fine_delay_hp_samples": -122,
+          "hp_sample": 1800000,
+          "owl_sample": 6973898.333333333
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.45518374159495945,
+          "fine_delay_hp_samples": -118,
+          "hp_sample": 3000000,
+          "owl_sample": 7973901.666666667
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.45138548246308713,
+          "fine_delay_hp_samples": -107,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.833333334
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4731304194875577,
+          "fine_delay_hp_samples": -103,
+          "hp_sample": 5400000,
+          "owl_sample": 9973914.166666666
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.48483499540053787,
+          "fine_delay_hp_samples": -99,
+          "hp_sample": 6600000,
+          "owl_sample": 10973917.5
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4897678676627872,
+          "fine_delay_hp_samples": -95,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.833333334
+        }
+      ],
+      "median_cfo_hz": 1757.8125,
+      "median_coherence": 0.4731304194875577,
+      "sample_clock_offset_ppm": 4.583333333529893
+    },
+    {
+      "accepted_locks": 7,
+      "affine_intercept_owl_samples": 5473898.050595237,
+      "affine_owl_samples_per_hp_sample": 0.8333362351190475,
+      "coarse_owl_sample": 5474000,
+      "envelope_correlation": 0.31177830696105957,
+      "kraken_channel": 1,
+      "locks": [
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.5312494954975902,
+          "fine_delay_hp_samples": -120,
+          "hp_sample": 600000,
+          "owl_sample": 5973900.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.5172890375631293,
+          "fine_delay_hp_samples": -116,
+          "hp_sample": 1800000,
+          "owl_sample": 6973903.333333333
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.49396320222634854,
+          "fine_delay_hp_samples": -112,
+          "hp_sample": 3000000,
+          "owl_sample": 7973906.666666667
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.46597635939699,
+          "fine_delay_hp_samples": -108,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.43554077414752096,
+          "fine_delay_hp_samples": -104,
+          "hp_sample": 5400000,
+          "owl_sample": 9973913.333333334
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.39646524726493126,
+          "fine_delay_hp_samples": -99,
+          "hp_sample": 6600000,
+          "owl_sample": 10973917.5
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4336264644916403,
+          "fine_delay_hp_samples": -95,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.833333334
+        }
+      ],
+      "median_cfo_hz": 1757.8125,
+      "median_coherence": 0.46597635939699,
+      "sample_clock_offset_ppm": 3.48214285694759
+    },
+    {
+      "accepted_locks": 7,
+      "affine_intercept_owl_samples": 5473898.333333336,
+      "affine_owl_samples_per_hp_sample": 0.8333361111111112,
+      "coarse_owl_sample": 5474000,
+      "envelope_correlation": 0.2021922767162323,
+      "kraken_channel": 4,
+      "locks": [
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4332980661546929,
+          "fine_delay_hp_samples": -120,
+          "hp_sample": 600000,
+          "owl_sample": 5973900.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.44355109307892443,
+          "fine_delay_hp_samples": -116,
+          "hp_sample": 1800000,
+          "owl_sample": 6973903.333333333
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4497898245755328,
+          "fine_delay_hp_samples": -112,
+          "hp_sample": 3000000,
+          "owl_sample": 7973906.666666667
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4512883860503557,
+          "fine_delay_hp_samples": -108,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4494339855918812,
+          "fine_delay_hp_samples": -104,
+          "hp_sample": 5400000,
+          "owl_sample": 9973913.333333334
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4387218783250145,
+          "fine_delay_hp_samples": -100,
+          "hp_sample": 6600000,
+          "owl_sample": 10973916.666666666
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.4215737972360137,
+          "fine_delay_hp_samples": -96,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.0
+        }
+      ],
+      "median_cfo_hz": 1757.8125,
+      "median_coherence": 0.44355109307892443,
+      "sample_clock_offset_ppm": 3.3333333333551707
+    },
+    {
+      "accepted_locks": 7,
+      "affine_intercept_owl_samples": 5473898.020833337,
+      "affine_owl_samples_per_hp_sample": 0.8333361855158727,
+      "coarse_owl_sample": 5474000,
+      "envelope_correlation": 0.14911006391048431,
+      "kraken_channel": 3,
+      "locks": [
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.3997420967794572,
+          "fine_delay_hp_samples": -120,
+          "hp_sample": 600000,
+          "owl_sample": 5973900.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.386484278455064,
+          "fine_delay_hp_samples": -116,
+          "hp_sample": 1800000,
+          "owl_sample": 6973903.333333333
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.3646280518009525,
+          "fine_delay_hp_samples": -112,
+          "hp_sample": 3000000,
+          "owl_sample": 7973906.666666667
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.34064957103925003,
+          "fine_delay_hp_samples": -108,
+          "hp_sample": 4200000,
+          "owl_sample": 8973910.0
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.310386270882849,
+          "fine_delay_hp_samples": -106,
+          "hp_sample": 5400000,
+          "owl_sample": 9973911.666666666
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.3313883409130718,
+          "fine_delay_hp_samples": -99,
+          "hp_sample": 6600000,
+          "owl_sample": 10973917.5
+        },
+        {
+          "cfo_hz": 1757.8125,
+          "coherence": 0.35995174965170096,
+          "fine_delay_hp_samples": -95,
+          "hp_sample": 7800000,
+          "owl_sample": 11973920.833333334
+        }
+      ],
+      "median_cfo_hz": 1757.8125,
+      "median_coherence": 0.35995174965170096,
+      "sample_clock_offset_ppm": 3.4226190472885776
+    }
+  ],
+  "frequency_hz": 551000000,
+  "kraken_rate_hz": 2400000,
+  "owl_epoch": "1793088369522173",
+  "owl_rate_hz": 2000000,
+  "qualified": true,
+  "schema": "vectorwarp-external-reference-lock-v1",
+  "timing_contract": "waveform-derived; LAN arrival used only as a bounded search seed"
+}
