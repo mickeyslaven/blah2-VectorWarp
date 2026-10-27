@@ -1,0 +1,1168 @@
+{
+  "contract": "first-half transfer fit, second-half evaluation; self-inclusive result diagnostic only",
+  "cpi_s": 0.5,
+  "frequency_hz": 551000000,
+  "recording": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-six-channel-551.blah2iq",
+  "recording_sha256": "52caf328d1b4d4e416ea759b672ef4948d2d309ee433e358227d2f8fbad3c638",
+  "rows": [
+    {
+      "channel": 0,
+      "coherence": 0.5179657340049744,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.620030907232989,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.3463452383752368
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6648073196411133,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.916805135887438,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.5385384264872424
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8794336318969727,
+      "cpi_first_sample": 0,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.60596571220778,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.454782618912991
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5381270051002502,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.181439629215655,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.531270284016109
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6959969997406006,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.756142095730402,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.8846898113034363
+    },
+    {
+      "channel": 1,
+      "coherence": 0.903036892414093,
+      "cpi_first_sample": 0,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.840412266597205,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.348422229197937
+    },
+    {
+      "channel": 2,
+      "coherence": 0.48347195982933044,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.936589076217617,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.2224371309980424
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7613471746444702,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.422778533571734,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.773130380033447
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8075804710388184,
+      "cpi_first_sample": 0,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.190052921314722,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.596438856598297
+    },
+    {
+      "channel": 3,
+      "coherence": 0.41186168789863586,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.0149588172761,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8227382428594232
+    },
+    {
+      "channel": 3,
+      "coherence": 0.37978896498680115,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.2070331695770715,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6778653162539096
+    },
+    {
+      "channel": 3,
+      "coherence": 0.445107102394104,
+      "cpi_first_sample": 0,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.428326018411073,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9605767376506407
+    },
+    {
+      "channel": 4,
+      "coherence": 0.3382556438446045,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.7738202797715115,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.5588087143205402
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4821341037750244,
+      "cpi_first_sample": 0,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.373227211919986,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1494249963017469
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6745959520339966,
+      "cpi_first_sample": 0,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.227262387582054,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.6373633713763223
+    },
+    {
+      "channel": 0,
+      "coherence": 0.5036581754684448,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.602887159701405,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.238739202344539
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6647191643714905,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.895893463336687,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.538153755040163
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8804786205291748,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.641661742804192,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.489533934703989
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5550464987754822,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.138701684235269,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.618256891159298
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6979745626449585,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.784401362704799,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.9123452311252356
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9025387167930603,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.821043139607353,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.329611622498002
+    },
+    {
+      "channel": 2,
+      "coherence": 0.5258645415306091,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.914184223430187,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.469328534269816
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7626638412475586,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.429889954405496,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.7961387474881656
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8089378476142883,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.204279498693179,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.626342778591804
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4233922064304352,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.009199354919649,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8663232187199001
+    },
+    {
+      "channel": 3,
+      "coherence": 0.3811381757259369,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.222580600479974,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6809180540524122
+    },
+    {
+      "channel": 3,
+      "coherence": 0.44729024171829224,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.4410744402081,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9684688807550175
+    },
+    {
+      "channel": 4,
+      "coherence": 0.37321263551712036,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.744510298380277,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.6852015498492117
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4821557402610779,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.377926835919704,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.154419349253198
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6746244430541992,
+      "cpi_first_sample": 1200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.235272935845822,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.6436568851018203
+    },
+    {
+      "channel": 0,
+      "coherence": 0.47844430804252625,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.622149872605474,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.08418446033947
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6658573150634766,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.854892362900898,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.5462466009414015
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8810567855834961,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.632655886321043,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.505670955898034
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5642977356910706,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.175760792904549,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.6713176984658418
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6997443437576294,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.755655638925898,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.9267523015545223
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9021346569061279,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.780834332501916,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.305946336532828
+    },
+    {
+      "channel": 2,
+      "coherence": 0.5667455196380615,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.942928623882145,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.7439247902592538
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7644676566123962,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.411228155941908,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.8135714143797044
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8104811906814575,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.194181580319247,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.645624961739136
+    },
+    {
+      "channel": 3,
+      "coherence": 0.42820119857788086,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.017766078872553,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8840704398253678
+    },
+    {
+      "channel": 3,
+      "coherence": 0.38019970059394836,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.207058799800039,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6783259101611571
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4459123909473419,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.423934335200402,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9630373410820747
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4084056317806244,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.744913082202298,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8284211549754589
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4818304777145386,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.355976207449908,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.150845617819463
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6750118136405945,
+      "cpi_first_sample": 2400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.223604215475715,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.645572611146751
+    },
+    {
+      "channel": 0,
+      "coherence": 0.4456188380718231,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.617941479983532,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.9162185372228999
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6671526432037354,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.851418249187189,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.550947356666571
+    },
+    {
+      "channel": 0,
+      "coherence": 0.88275545835495,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.702763516878894,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.552846984292504
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5654618144035339,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.171661690254534,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.6648407273002954
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6999892592430115,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.811068034347063,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.921683227951402
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9027079343795776,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.818029416644244,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.325229096823129
+    },
+    {
+      "channel": 2,
+      "coherence": 0.5955294370651245,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.932558295509571,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.9502079877968468
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7645923495292664,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.433440405115167,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.8157361240523007
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8103893995285034,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.20905220106157,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.6440817379878405
+    },
+    {
+      "channel": 3,
+      "coherence": 0.42970120906829834,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.021756753206494,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8805989063075268
+    },
+    {
+      "channel": 3,
+      "coherence": 0.3805854916572571,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.201371359206819,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6786620243064863
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4466252624988556,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.42523300033266,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9652938465186961
+    },
+    {
+      "channel": 4,
+      "coherence": 0.43624573945999146,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.762966407940024,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.9402670627312417
+    },
+    {
+      "channel": 4,
+      "coherence": 0.48040148615837097,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.353701905839819,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1335229621048524
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6709718108177185,
+      "cpi_first_sample": 3600000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.191660148847134,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.5901288314308495
+    },
+    {
+      "channel": 0,
+      "coherence": 0.4087609052658081,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.625680217086442,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.7528795836414236
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6647440791130066,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.888731876010446,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.5358857230007485
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8812841773033142,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.679076644176895,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.514900441207847
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5602015256881714,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.167597507568109,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.6204363219957867
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6987186074256897,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.802854348619471,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.9145771524668844
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9031578302383423,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.85257626397047,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.355460251506764
+    },
+    {
+      "channel": 2,
+      "coherence": 0.6189387440681458,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.9344896795928355,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 2.145732200196783
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7654121518135071,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.4494725311534,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.83478174991065
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8109266757965088,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.21916076998485,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.660889045672593
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4217829704284668,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.003678347990849,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.8349651582478211
+    },
+    {
+      "channel": 3,
+      "coherence": 0.38053569197654724,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.199906260063239,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6802390663412167
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4462440311908722,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.424194118831594,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9650778665128303
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4555535316467285,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.762095739681357,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.0308026181095546
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4785906970500946,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.379376467323544,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1258882378138064
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6715960502624512,
+      "cpi_first_sample": 4800000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.23892015089913,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.598427188526535
+    },
+    {
+      "channel": 0,
+      "coherence": 0.3665551543235779,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.598676387629826,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.5807336365902065
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6668193936347961,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.81513444287013,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.5471023168701263
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8811437487602234,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.583907808230636,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.49627101398787
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5449666380882263,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.154268524873634,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.4925045814668056
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6988002061843872,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.74401467743035,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.9031643535393488
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9021363854408264,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.76403497372263,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.291831521150569
+    },
+    {
+      "channel": 2,
+      "coherence": 0.6335695385932922,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.910621278189014,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 2.2481163357888976
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7654131650924683,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.382206741767526,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.8219055603286067
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8110057711601257,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.16342638079976,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.649970614875331
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4037700593471527,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 3.98457840778528,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.7475702505890374
+    },
+    {
+      "channel": 3,
+      "coherence": 0.3839707672595978,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.177201152802401,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6926415009515808
+    },
+    {
+      "channel": 3,
+      "coherence": 0.4499165117740631,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.403035110875284,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9822158810228211
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4686851501464844,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.742006590632761,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.0888051341893736
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4804523289203644,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.33774201354634,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1389797382493039
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6739223599433899,
+      "cpi_first_sample": 6000000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.2167288338513345,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.6300298308943533
+    },
+    {
+      "channel": 0,
+      "coherence": 0.3203746974468231,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.5747904229150524,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.43053183765208014
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6664372682571411,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.832077130736817,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.553079559280931
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8807231187820435,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.599834841725663,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.4978423314228415
+    },
+    {
+      "channel": 1,
+      "coherence": 0.5213627815246582,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.132663341925658,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.332887367624509
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6979274153709412,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.759553145570983,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.89453697656648
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9019826650619507,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.770540320361821,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.287753318829901
+    },
+    {
+      "channel": 2,
+      "coherence": 0.6387267112731934,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.895178396865566,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 2.270193631311833
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7654258012771606,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.399528260118288,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.8274992520935474
+    },
+    {
+      "channel": 2,
+      "coherence": 0.8109276294708252,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.177195325305425,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.6533991833440975
+    },
+    {
+      "channel": 3,
+      "coherence": 0.38305744528770447,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 3.979639942180338,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.663084460934523
+    },
+    {
+      "channel": 3,
+      "coherence": 0.3855482041835785,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.186872538404198,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6964336597926736
+    },
+    {
+      "channel": 3,
+      "coherence": 0.45206543803215027,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.417251789541493,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.990045339649105
+    },
+    {
+      "channel": 4,
+      "coherence": 0.47493088245391846,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.745913304286182,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.1101598459842565
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4812907874584198,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.355194207215277,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1437883854708253
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6749047040939331,
+      "cpi_first_sample": 7200000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.232684138156173,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.6382808506506334
+    },
+    {
+      "channel": 0,
+      "coherence": 0.27204975485801697,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.617970963981619,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.301908359900151
+    },
+    {
+      "channel": 0,
+      "coherence": 0.6694493889808655,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 9.848652422167856,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.584041633447045
+    },
+    {
+      "channel": 0,
+      "coherence": 0.8826846480369568,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.665282997363985,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 6.560281357878583
+    },
+    {
+      "channel": 1,
+      "coherence": 0.49048537015914917,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 7.17268392338119,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.1485901246654178
+    },
+    {
+      "channel": 1,
+      "coherence": 0.6995819211006165,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 8.802668189178846,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 2.918303375841961
+    },
+    {
+      "channel": 1,
+      "coherence": 0.9024726748466492,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 12.818277839827946,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 7.31462139658266
+    },
+    {
+      "channel": 2,
+      "coherence": 0.6351361870765686,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.924879331164871,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 2.2292991251551237
+    },
+    {
+      "channel": 2,
+      "coherence": 0.7643569111824036,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 10.394287380734841,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 3.800423633384009
+    },
+    {
+      "channel": 2,
+      "coherence": 0.809948205947876,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 11.169151765496302,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 4.623008485988259
+    },
+    {
+      "channel": 3,
+      "coherence": 0.3546062111854553,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 3.977317271952003,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 0.5520280508584268
+    },
+    {
+      "channel": 3,
+      "coherence": 0.38374844193458557,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 5.183992603085487,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 0.6918204232491432
+    },
+    {
+      "channel": 3,
+      "coherence": 0.44950681924819946,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 5.409874860298242,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 0.9801408423197934
+    },
+    {
+      "channel": 4,
+      "coherence": 0.47354739904403687,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 4.748884523124737,
+      "reference": "owl_external",
+      "scalar_cancellation_db": 1.098536717929359
+    },
+    {
+      "channel": 4,
+      "coherence": 0.4806847870349884,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": 6.331401934165345,
+      "reference": "kraken_leave_one_out",
+      "scalar_cancellation_db": 1.1424474356730605
+    },
+    {
+      "channel": 4,
+      "coherence": 0.6714571714401245,
+      "cpi_first_sample": 8400000,
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": 7.19809214984373,
+      "reference": "kraken_production_self_inclusive",
+      "scalar_cancellation_db": 2.604429469505404
+    }
+  ],
+  "sample_rate_hz": 2400000,
+  "schema": "vectorwarp-external-reference-cancellation-v1",
+  "summaries": {
+    "kraken_leave_one_out": {
+      "coherence": {
+        "maximum": 0.7654258012771606,
+        "median": 0.6661472916603088,
+        "minimum": 0.37978896498680115
+      },
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": {
+        "maximum": 10.4494725311534,
+        "median": 8.77197725413789,
+        "minimum": 5.177201152802401
+      },
+      "per_channel_frequency_selective_median_db": [
+        9.853155306044044,
+        8.77197725413789,
+        10.417003344756822,
+        5.200638809635029,
+        6.3555852073325925
+      ],
+      "scalar_cancellation_db": {
+        "maximum": 3.83478174991065,
+        "median": 2.546674458905764,
+        "minimum": 0.6778653162539096
+      }
+    },
+    "kraken_production_self_inclusive": {
+      "coherence": {
+        "maximum": 0.9031578302383423,
+        "median": 0.8104352951049805,
+        "minimum": 0.445107102394104
+      },
+      "fair_held_out": false,
+      "frequency_selective_cancellation_db": {
+        "maximum": 12.85257626397047,
+        "median": 11.192117250816985,
+        "minimum": 5.403035110875284
+      },
+      "per_channel_frequency_selective_median_db": [
+        12.637158814562618,
+        12.818153628236095,
+        11.192117250816985,
+        5.424064227015998,
+        7.225433301528884
+      ],
+      "scalar_cancellation_db": {
+        "maximum": 7.355460251506764,
+        "median": 4.644853349863489,
+        "minimum": 0.9605767376506407
+      }
+    },
+    "owl_external": {
+      "coherence": {
+        "maximum": 0.6387267112731934,
+        "median": 0.47423914074897766,
+        "minimum": 0.27204975485801697
+      },
+      "fair_held_out": true,
+      "frequency_selective_cancellation_db": {
+        "maximum": 7.181439629215655,
+        "median": 6.617956221982576,
+        "minimum": 3.977317271952003
+      },
+      "per_channel_frequency_selective_median_db": [
+        6.617956221982576,
+        7.169629598911321,
+        6.9287188133372215,
+        4.006438851455249,
+        4.747398913705459
+      ],
+      "scalar_cancellation_db": {
+        "maximum": 2.270193631311833,
+        "median": 1.0936709260593664,
+        "minimum": 0.301908359900151
+      }
+    }
+  }
+}

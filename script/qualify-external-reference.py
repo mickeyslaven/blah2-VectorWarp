@@ -117,6 +117,37 @@ def linear_resample(value, source_start, source_per_output, count):
     return (value[left] * (1.0 - fraction) + value[left + 1] * fraction).astype(np.complex64)
 
 
+def refine_cfo(template, source, sample_rate, coarse_hz, max_residual_hz=None,
+               block=4096):
+    """Refine an FFT-bin CFO with a weighted phase-slope estimate.
+
+    The long-CPI FFT establishes the unambiguous carrier bin.  Blockwise
+    cross-products then estimate the sub-bin residual without using host or
+    network time.  This matters at a 500 ms CPI: even a half-bin residual from
+    the 2**21 FFT costs material coherence.
+    """
+    count = min(len(template), len(source))
+    if count < block * 8:
+        return float(coarse_hz), 0.0
+    time = np.arange(count, dtype=np.float64) / sample_rate
+    corrected = source[:count] * np.exp(2j * np.pi * coarse_hz * time)
+    product = template[:count] * np.conj(corrected)
+    blocks = count // block
+    product = product[:blocks * block].reshape(blocks, block).sum(axis=1)
+    weights = np.abs(product).astype(np.float64)
+    centers = (np.arange(blocks, dtype=np.float64) * block + (block - 1) / 2) / sample_rate
+    phase = np.unwrap(np.angle(product))
+    threshold = np.percentile(weights, 20)
+    keep = weights >= max(threshold, 1e-20)
+    if np.count_nonzero(keep) < 6:
+        return float(coarse_hz), 0.0
+    fit = np.polyfit(centers[keep], phase[keep], 1, w=np.sqrt(weights[keep]))
+    residual = float(fit[0] / (2 * np.pi))
+    if max_residual_hz is not None:
+        residual = float(np.clip(residual, -max_residual_hz, max_residual_hz))
+    return float(coarse_hz + residual), residual
+
+
 def coarse_offset(hp, owl, hp_rate, owl_rate, seed_samples, radius_s=1.0):
     common = 10_000
     hp_block = hp_rate // common
@@ -180,6 +211,9 @@ def affine_lock(hp, owl, hp_rate, hp_start, owl_start,
     spectrum = np.fft.fftshift(np.fft.fft(product, fft_size))
     peak = int(np.argmax(np.abs(spectrum)))
     cfo = (peak - fft_size // 2) * hp_rate / fft_size
+    fft_bin_hz = hp_rate / fft_size
+    cfo, residual = refine_cfo(template, aligned_clock, hp_rate, cfo,
+                               max_residual_hz=fft_bin_hz)
     time = np.arange(count, dtype=np.float64) / hp_rate
     aligned = aligned_clock * np.exp(2j * np.pi * cfo * time)
     cross = np.vdot(aligned, template)
@@ -187,6 +221,7 @@ def affine_lock(hp, owl, hp_rate, hp_start, owl_start,
                       max(np.linalg.norm(aligned) * np.linalg.norm(template), 1e-20))
     return {"hp_sample": hp_start, "owl_sample": float(owl_start),
             "duration_s": count / hp_rate, "cfo_hz": float(cfo),
+            "sub_bin_cfo_refinement_hz": float(residual),
             "coherence": coherence}
 
 

@@ -1,0 +1,37 @@
+{
+  "causality": "weights learned from calibration prefix and frozen",
+  "cpi_s": 0.5,
+  "diagonal_loading": 0.001,
+  "evaluation_first_sample": 2400000,
+  "frequency_hz": 551000000,
+  "input": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-six-channel-551-tracked.blah2iq",
+  "input_sha256": "76d22f049ce1f041c33ca18ac67b49d1939d49886ee5879de40253acdc72c279",
+  "inputs": [
+    "owl_external",
+    "kraken_ch0",
+    "kraken_ch1",
+    "kraken_ch2",
+    "kraken_ch3",
+    "kraken_ch4"
+  ],
+  "output": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-hybrid-reference-551.blah2iq",
+  "output_sha256": "f9f8b4990db66441928a189b99544a812f9c77f519dcc3410bbbdb8f8e2482fb",
+  "phase_anchor": "owl_external",
+  "rms_scales": [
+    0.2966013967628764,
+    0.29825081820702903,
+    0.29852813188472793,
+    0.29892071486329114,
+    0.2991080166482576,
+    0.2999235969625143,
+    0.3010313074991162,
+    0.301581152274258
+  ],
+  "sample_rate_hz": 2400000,
+  "samples_per_channel": 9600000,
+  "schema": "vectorwarp-hybrid-external-reference-v1",
+  "spectral_frame": 4096,
+  "spectral_hop": 2048,
+  "training_cpis": 2,
+  "training_frames": 1170
+}

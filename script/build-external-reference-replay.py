@@ -63,7 +63,8 @@ def write_blah2iq(path, channels, sample_rate, frequency, blocks):
     return written
 
 
-def build(hp, owl, qualification, hp_rate, owl_rate, cpi_s):
+def build(hp, owl, qualification, hp_rate, owl_rate, cpi_s,
+          residual_tracking=True):
     best = qualification["best"]
     slope = float(best["affine_owl_samples_per_hp_sample"])
     intercept = float(best["affine_intercept_owl_samples"])
@@ -85,10 +86,16 @@ def build(hp, owl, qualification, hp_rate, owl_rate, cpi_s):
         count = cpi_samples
         external = QUALIFIER.linear_resample(owl, intercept + slope * begin,
                                              slope, count)
-        time = (begin + np.arange(count, dtype=np.float64)) / hp_rate
+        local_time = np.arange(count, dtype=np.float64) / hp_rate
+        time = begin / hp_rate + local_time
         external = external * np.exp(2j * np.pi * cfo * time)
         external = external - np.mean(external, dtype=np.complex128)
         pilot = hp[pilot_channel, begin:begin + count]
+        residual_cfo = 0.0
+        if residual_tracking:
+            tracked_cfo, residual_cfo = QUALIFIER.refine_cfo(
+                pilot, external, hp_rate, 0.0, max_residual_hz=5.0)
+            external *= np.exp(2j * np.pi * tracked_cfo * local_time)
         cross = np.vdot(external, pilot)
         coherence = float(abs(cross) / max(
             np.linalg.norm(external) * np.linalg.norm(pilot), 1e-20))
@@ -104,6 +111,8 @@ def build(hp, owl, qualification, hp_rate, owl_rate, cpi_s):
         phase_receipts.append({"first_sample": begin, "samples": count,
                                "pilot_channel": pilot_channel,
                                "coherence": coherence,
+                               "nominal_cfo_hz": cfo,
+                               "residual_cfo_hz": residual_cfo,
                                "phase_correction_rad": float(np.angle(cross)),
                                "amplitude_scale": pilot_rms / external_rms})
     if not output:
@@ -121,6 +130,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--cpi", type=float, default=0.5)
+    parser.add_argument("--disable-residual-tracking", action="store_true")
     args = parser.parse_args()
 
     metadata = json.loads(args.kraken_metadata.read_text())
@@ -139,7 +149,8 @@ def main():
     if str(owl_epoch) != str(qualification["owl_epoch"]):
         raise ValueError("OWL epoch differs from qualification")
 
-    blocks, phases = build(hp, owl, qualification, hp_rate, owl_rate, args.cpi)
+    blocks, phases = build(hp, owl, qualification, hp_rate, owl_rate, args.cpi,
+                           residual_tracking=not args.disable_residual_tracking)
     written = write_blah2iq(args.output, hp.shape[0] + 1, hp_rate,
                             frequency, blocks)
     receipt = {
@@ -165,6 +176,7 @@ def main():
                           qualification["best"].get("affine_cpi_locks", [])]))
                           if qualification["best"].get("affine_cpi_locks") else
                           qualification["best"]["median_cfo_hz"]),
+                      "residual_tracking": not args.disable_residual_tracking,
                       "cpi_receipts": phases},
         "output": str(args.output),
         "output_sha256": sha256(args.output),

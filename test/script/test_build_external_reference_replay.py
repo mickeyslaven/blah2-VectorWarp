@@ -32,6 +32,7 @@ def test_build_preserves_five_surveillance_channels_and_aligns_reference(tmp_pat
     assert all(block.shape == (6, 1200) for block in blocks)
     assert np.allclose(blocks[0][1:], hp[:, :1200])
     assert min(row["coherence"] for row in receipts) > .99
+    assert all("residual_cfo_hz" in row for row in receipts)
 
     output = tmp_path / "six.blah2iq"
     samples = MODULE.write_blah2iq(output, 6, hp_rate, 551_000_000, blocks)

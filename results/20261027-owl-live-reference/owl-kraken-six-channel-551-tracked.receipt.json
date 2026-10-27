@@ -1,0 +1,63 @@
+{
+  "cpi_s": 0.5,
+  "cpis": [
+    {
+      "coherence_after": 0.4834895730018616,
+      "coherence_before": 0.48347195982933044,
+      "first_sample": 0,
+      "residual_cfo_hz": -0.010295795984389176
+    },
+    {
+      "coherence_after": 0.5259961485862732,
+      "coherence_before": 0.5258645415306091,
+      "first_sample": 1200000,
+      "residual_cfo_hz": -0.024157074507442644
+    },
+    {
+      "coherence_after": 0.5667557716369629,
+      "coherence_before": 0.5667455196380615,
+      "first_sample": 2400000,
+      "residual_cfo_hz": -0.0035605111203319616
+    },
+    {
+      "coherence_after": 0.5955366492271423,
+      "coherence_before": 0.5955294370651245,
+      "first_sample": 3600000,
+      "residual_cfo_hz": -0.005072856521728498
+    },
+    {
+      "coherence_after": 0.6189876794815063,
+      "coherence_before": 0.6189387440681458,
+      "first_sample": 4800000,
+      "residual_cfo_hz": -0.013763788674776345
+    },
+    {
+      "coherence_after": 0.6335738301277161,
+      "coherence_before": 0.6335695385932922,
+      "first_sample": 6000000,
+      "residual_cfo_hz": -0.003045871628198304
+    },
+    {
+      "coherence_after": 0.6387732625007629,
+      "coherence_before": 0.6387267112731934,
+      "first_sample": 7200000,
+      "residual_cfo_hz": -0.013682591588243352
+    },
+    {
+      "coherence_after": 0.6352156400680542,
+      "coherence_before": 0.6351361870765686,
+      "first_sample": 8400000,
+      "residual_cfo_hz": -0.017775593197427778
+    }
+  ],
+  "frequency_hz": 551000000,
+  "input": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-six-channel-551.blah2iq",
+  "input_sha256": "52caf328d1b4d4e416ea759b672ef4948d2d309ee433e358227d2f8fbad3c638",
+  "output": "/var/lib/vectorwarp/external-reference/qualification/owl-kraken-six-channel-551-tracked.blah2iq",
+  "output_sha256": "76d22f049ce1f041c33ca18ac67b49d1939d49886ee5879de40253acdc72c279",
+  "pilot_channel": 2,
+  "sample_rate_hz": 2400000,
+  "samples_per_channel": 9600000,
+  "schema": "vectorwarp-external-reference-retime-v1",
+  "timing_contract": "waveform-only residual CFO; no LAN arrival time"
+}

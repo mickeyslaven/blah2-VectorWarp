@@ -70,6 +70,44 @@ OWL reduced the observed nuisance burden, but did not recover the aircraft.
 The derived replay is retained on the evidence host and can be regenerated
 from the immutable raw inputs; the local duplicate was removed for disk space.
 
+## Residual synchronization and subtraction audit
+
+The synchronizer now refines the long-CPI FFT carrier bin with a weighted
+blockwise phase-slope estimate and can track a bounded residual CFO on every
+CPI.  This remains waveform-only: LAN arrival time is never treated as RF
+time.  On the retained simultaneous capture, the residual was only
+`-0.01199 Hz` median.  Tracking changed median OWL/pilot coherence from
+`0.607234` to `0.607262`.  Timing and residual carrier drift are therefore not
+the material reason OWL-alone underperformed; the remaining difference is
+dominated by antenna/site transfer, multipath and independent receiver noise.
+
+Held-out subtraction fits used the first half of each CPI for training and the
+second half for scoring.  A fair Kraken leave-one-channel-out reference
+cancelled `8.77 dB` median.  OWL alone cancelled `6.63 dB`.  A two-reference
+Wiener fit using both cancelled `11.53 dB`, a `+2.76 dB` median improvement over
+Kraken alone.  Every physical channel improved; the gains were approximately
+`[+1.90,+2.76,+1.39,+0.71,+0.68] dB`.  This demonstrates that OWL contributes
+independent predictive waveform information even though it is not the better
+standalone reference.
+
+`script/build-hybrid-external-reference.py` implements the corresponding
+causal frequency-resolved six-input eigenreference.  It learns weights only
+from an initial calibration prefix, freezes them, and preserves the five
+Kraken surveillance streams.  On evaluation-only CPIs from the same distant
+aircraft pass, three calibration-prefix choices all improved median target
+contrast while reducing nuisance detections:
+
+| Training prefix | Kraken median / nuisance | Hybrid median / nuisance |
+| --- | --- | --- |
+| 1 CPI | `+0.323 dB` / 20 | `+0.939 dB` / 8 |
+| 2 CPIs | `+0.224 dB` / 16 | `+0.668 dB` / 6 |
+| 3 CPIs | `+0.125 dB` / 9 | `+1.039 dB` / 5 |
+
+Neither arm crossed the aircraft detection threshold.  The hybrid is thus a
+qualified shadow candidate, not a production reference.  Its value is lower
+nuisance burden and a repeatable `+0.44` to `+0.91 dB` median truth-cell gain
+on this pass; independent same-frequency aircraft passes remain required.
+
 ## Transport repair
 
 The original three-CPI sender queue and synchronous 480 MB segment seal caused
@@ -100,12 +138,11 @@ restarted during that acceptance epoch.
 ## Promotion state
 
 The transport and independent-clock alignment are qualified for shadow
-collection.  Production still uses the Kraken synthesized reference.  A live
-external reference would also require HP to use the same 551 MHz illuminator
-and the coherent beam bank to calibrate its five surveillance-channel phases
-against the independent reference.  The first same-IQ aircraft A/B did not
-show a sensitivity gain, so silently substituting OWL in production would be
-an unqualified detector change.
+collection.  Production still uses the Kraken synthesized reference.  OWL is
+now most promising as an additional sixth input to a frequency-resolved hybrid,
+not as a standalone substitute.  A live candidate still requires HP to use the
+same 551 MHz illuminator and independent, pass-disjoint aircraft evidence at a
+fixed whole-bank false-alarm burden.  No live detector setting changed.
 
 ## Safety history
 
