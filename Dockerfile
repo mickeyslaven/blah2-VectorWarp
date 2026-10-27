@@ -5,7 +5,6 @@ LABEL org.opencontainers.image.source https://github.com/30hours/blah2
 WORKDIR /opt/blah2
 ADD lib lib
 ARG BUILD_JOBS=1
-ENV VCPKG_MAX_CONCURRENCY=${BUILD_JOBS}
 
 # Install base dependencies (note: libfftw3-dev removed - building from source with NEON)
 RUN apt-get update && apt-get install -y \
@@ -58,6 +57,7 @@ RUN cd /tmp \
 
 # install dependencies from vcpkg
 ENV VCPKG_ROOT=/opt/vcpkg
+ENV VCPKG_MAX_CONCURRENCY=${BUILD_JOBS}
 ENV CC=/usr/bin/gcc
 ENV CXX=/usr/bin/g++
 RUN export PATH="/opt/vcpkg:${PATH}" \
