@@ -54,7 +54,14 @@ def read_profile(config, root, node):
                            or gain != -1 and not 0 <= gain <= 50
                            or round(gain * 10) != gain * 10):
         raise ValueError('Kraken gain must be keep, -1 (automatic), or 0–50 dB in 0.1 dB steps')
-    return dict(frequency=frequency, channels=channels, iq=iq, control=control, gain=gain)
+    channel_gains = endpoint.get('channel_gains')
+    if channel_gains is not None and (not isinstance(channel_gains, list) or
+            len(channel_gains) != channels or any(type(value) not in (int, float) or
+            not math.isfinite(value) or not 0 <= value <= 50 or
+            round(value * 10) != value * 10 for value in channel_gains)):
+        raise ValueError('Kraken channel_gains must contain one 0–50 dB tenth-dB value per channel')
+    return dict(frequency=frequency, channels=channels, iq=iq, control=control, gain=gain,
+                channel_gains=channel_gains)
 
 
 def publish(path, document):
@@ -80,6 +87,9 @@ def matching_status(live, profile):
         raise ValueError('Heimdall telemetry does not match the saved coherent Kraken profile')
     if profile['gain'] != 'keep' and settings.get('gain') != profile['gain']:
         raise ValueError('Heimdall gain readback does not match the saved Kraken profile')
+    if (profile['channel_gains'] is not None and
+            live.get('channel_gains') != profile['channel_gains']):
+        return 'CHANNEL_GAINS_PENDING'
     if live.get('reconfiguring') is True or live.get('recovering') is True:
         return None
     calibration = live.get('calibration_state', 'PENDING')
@@ -88,6 +98,46 @@ def matching_status(live, profile):
     if calibration.upper() in ('ERROR', 'FAILED'):
         raise ValueError('Heimdall reported a calibration failure')
     return calibration
+
+
+def apply_channel_gains(port, profile, instance_token):
+    """Restore the complete saved vector before publishing controller readiness."""
+    expected = profile['channel_gains']
+    if expected is None:
+        return
+    with socket.create_connection(('127.0.0.1', port), timeout=1) as connection:
+        connection.settimeout(.5)
+        connection.sendall((json.dumps({'command': 'set_channel_gains', 'gains': expected},
+                                        separators=(',', ':')) + '\n').encode())
+        data = bytearray()
+        acknowledged = False
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            try:
+                chunk = connection.recv(4096)
+            except TimeoutError:
+                continue
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > 262144:
+                raise ValueError('Heimdall channel-gain response exceeded the bounded limit')
+            while b'\n' in data:
+                line, _, remaining = data.partition(b'\n')
+                data = bytearray(remaining)
+                document = json.loads(line)
+                if document.get('status') in ('error', 'failed'):
+                    raise ValueError('Heimdall rejected the saved per-channel gains')
+                if document.get('status') == 'success':
+                    if document.get('channel_gains') != expected:
+                        raise ValueError('Heimdall acknowledged a different per-channel gain vector')
+                    acknowledged = True
+                if 'settings' in document:
+                    if document.get('instance_token') != instance_token:
+                        raise ValueError('Heimdall telemetry belongs to a different controller instance')
+                    if acknowledged and document.get('channel_gains') == expected:
+                        return
+    raise OSError('Heimdall did not confirm the saved per-channel gains before readiness')
 
 
 def telemetry(port):
@@ -190,6 +240,9 @@ def main(argv=None):
                 if live.get('instance_token') != args.instance_token:
                     raise ValueError('Heimdall telemetry belongs to a different controller instance')
                 calibration = matching_status(live, profile)
+                if calibration == 'CHANNEL_GAINS_PENDING':
+                    apply_channel_gains(args.control_port, profile, args.instance_token)
+                    calibration = None
             except (OSError, json.JSONDecodeError):
                 calibration = None
             if calibration is not None:

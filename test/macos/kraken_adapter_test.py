@@ -31,13 +31,21 @@ signal.signal(signal.SIGTERM,stop)
 if os.getenv('FAKE_MODE')=='exit': sys.exit(17)
 s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 s.bind(('127.0.0.1',int(os.environ['HEIMDALL_CONTROL_PORT']))); s.listen()
+channel_gains=[28.0]*5
 while True:
  c,_=s.accept()
- message={'instance_token':os.environ['HEIMDALL_INSTANCE_TOKEN'],'settings':{'center_freq':int(os.environ['HEIMDALL_CENTER_FREQ_HZ']),'sample_rate':2400000,'gain':28.0},'num_channels':5,'operating_mode':'coherent','calibration_state':'PENDING'}
+ message={'instance_token':os.environ['HEIMDALL_INSTANCE_TOKEN'],'settings':{'center_freq':int(os.environ['HEIMDALL_CENTER_FREQ_HZ']),'sample_rate':2400000,'gain':28.0},'num_channels':5,'operating_mode':'coherent','calibration_state':'PENDING','channel_gains':channel_gains}
  if os.getenv('FAKE_MODE')=='foreign': message['instance_token']='foreign'
  if os.getenv('FAKE_MODE')=='mismatch': message['settings']['sample_rate']=2000000
  if os.getenv('FAKE_MODE')=='failed': message['calibration_state']='FAILED'
- try: c.sendall((json.dumps(message)+'\\n').encode())
+ try:
+  c.sendall((json.dumps(message)+'\\n').encode()); c.settimeout(.3)
+  try: request=json.loads(c.recv(4096).decode())
+  except (TimeoutError, json.JSONDecodeError): request=None
+  if request and request.get('command')=='set_channel_gains':
+   channel_gains=request['gains']; message['channel_gains']=channel_gains
+   c.sendall((json.dumps({'status':'success','channel_gains':channel_gains})+'\\n').encode())
+   c.sendall((json.dumps(message)+'\\n').encode())
  except OSError: pass
  c.close()
 '''
@@ -107,6 +115,17 @@ class AdapterTests(unittest.TestCase):
         child.send_signal(signal.SIGTERM)
         self.assertEqual(child.wait(timeout=12), 0)
         self.assertTrue((self.state / 'controller/closed').is_file())
+
+    def test_saved_per_channel_gains_are_restored_before_readiness(self):
+        expected = [7.7, 7.7, 12.5, 3.7, 2.7]
+        self.profile['capture']['device']['heimdall']['channel_gains'] = expected
+        child, ready = self.launch()
+        self.assertEqual(ready['status'], 'ready')
+        with socket.create_connection(('127.0.0.1', self.ports[1]), timeout=2) as connection:
+            observed = json.loads(connection.makefile().readline())
+        self.assertEqual(observed['channel_gains'], expected)
+        child.terminate()
+        self.assertEqual(child.wait(timeout=12), 0)
 
     def test_mismatched_configuration_closes_owned_native_child(self):
         child, ready = self.launch('mismatch')

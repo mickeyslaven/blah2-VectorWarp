@@ -90,6 +90,28 @@ function receiverSettlement(configRevision, wanted, receipt, now = Date.now()) {
     applicationVerified: true, reconciliationRequired: false};
 }
 
+async function synchronizeAfterRestart(config, options = {}) {
+  const factory = options.factory || createReceiverSynchronizer;
+  const now = options.now || Date.now;
+  const sleep = options.sleep || wait;
+  const timeoutMs = options.timeoutMs ?? 60000;
+  let receipt = null, lastConnectionError = null;
+  const receiverDeadline = now() + timeoutMs;
+  while (!receipt && now() < receiverDeadline) {
+    try {
+      receipt = await factory().synchronize(config, config, {force: true});
+    } catch (error) {
+      if (!['KRAKEN_CONNECTION_FAILED', 'KRAKEN_CONNECTION_CLOSED'].includes(error?.code))
+        throw error;
+      lastConnectionError = error;
+      await sleep(250);
+    }
+  }
+  if (!receipt)
+    throw new Error(`receiver control did not become ready after restart: ${lastConnectionError?.message || 'timeout'}`);
+  return receipt;
+}
+
 async function recover(configFile, baselineFrame) {
   const before = readConfig(configFile);
   if (!before.exists || before.readError || !before.validation.valid)
@@ -100,8 +122,10 @@ async function recover(configFile, baselineFrame) {
   const wanted = requested(before.config);
   systemctl('stop', PROCESSOR);
   systemctl('restart', HEIMDALL);
-  const receipt = await createReceiverSynchronizer().synchronize(
-    before.config, before.config, {force: true});
+  // systemctl reports the native process as started before its control socket
+  // is listening. Retry only transport readiness; receiver/protocol failures
+  // still fail closed immediately.
+  const receipt = await synchronizeAfterRestart(before.config);
   const afterSync = readConfig(configFile);
   if (afterSync.revision !== before.revision)
     throw new Error('configuration revision changed during recovery; processor remains stopped');
@@ -182,4 +206,4 @@ async function main(argv = process.argv.slice(2)) {
 if (require.main === module)
   main().catch(error => { console.error(`VECTORWARP_LIVENESS_ALERT ${error.stack}`); process.exitCode = 1; });
 
-module.exports = {main, receiverSettlement, requested, sameSettings};
+module.exports = {main, receiverSettlement, requested, sameSettings, synchronizeAfterRestart};
