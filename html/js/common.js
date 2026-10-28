@@ -837,10 +837,15 @@ const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
   'Position age %{customdata[11]:.1f} s<extra></extra>';
 
 function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
+  if (aircraftKind(aircraft) === 'rotorcraft') {
+    // Original VectorWarp planform: a compact, single-color rotor silhouette
+    // that remains recognizable at map scale. The straight boom deliberately
+    // avoids the split-tail "chicken bone" shape of generic helicopter glyphs.
+    return `<svg viewBox="0 0 100 100" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="${color}" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8 90 70M90 8 10 70" fill="none" stroke-width="5"/><path d="M50 17c10 0 15 8 14 21-1 10-5 17-11 21v35h-6V59c-7-4-10-11-11-21-1-13 4-21 14-21Z"/><path d="M39 90h22v6H39z"/><circle cx="50" cy="39" r="5"/></g></svg>`;
+  }
   // Tabler Icons v3.50.0 (MIT) gives these map markers a consistent,
   // recognizable aviation vocabulary without inheriting tar1090's GPL UI.
   const paths = {
-    rotorcraft: '<path d="M3 10l1 2h6"/><path d="M12 9a2 2 0 0 0-2 2v3c0 1.1.9 2 2 2h7a2 2 0 0 0 2-2c0-3.31-3.13-5-7-5h-2"/><path d="M13 9V6M5 6h15M15 9.1V13h5.5M15 19v-3M19 19h-8"/>',
     drone: '<path d="M10 10h4v4h-4zM10 10 6.5 6.5M9.96 6A3.5 3.5 0 1 0 6 9.96M14 10l3.5-3.5M18 9.96A3.5 3.5 0 1 0 14.04 6M14 14l3.5 3.5M14.04 18A3.5 3.5 0 1 0 18 14.04M10 14l-3.5 3.5M6 14.04A3.5 3.5 0 1 0 9.96 18"/>',
     ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
     heavy: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>',
