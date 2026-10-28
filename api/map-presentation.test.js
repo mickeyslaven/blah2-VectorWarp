@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const {presentMap, requestedLimit} = require('./map-presentation');
+const {presentMap, presentationQuery, requestedLimit} = require('./map-presentation');
 
 const frame = {timestamp: 123, nRows: 6, nCols: 6,
   doppler: [-3, -2, -1, 0, 1, 2], delay: [0, 1, 2, 3, 4, 5],
@@ -13,6 +13,8 @@ assert.strictEqual(presentMap(frame, {max_rows: 'garbage', max_cols: '2'}), fram
   'invalid presentation parameters fail safely to the full map');
 assert.equal(requestedLimit('31'), null);
 assert.equal(requestedLimit('240'), 240);
+assert.deepEqual(presentationQuery({originalUrl: '/api/map?max_rows=240&max_cols=200',
+  query: {}}), {max_rows: '240', max_cols: '200'});
 
 const compact = presentMap(frame, {max_rows: '2', max_cols: '2'});
 // Limits below 32 deliberately fail closed, so use a realistic native grid.

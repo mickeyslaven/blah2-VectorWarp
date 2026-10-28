@@ -10,6 +10,14 @@ function requestedLimit(value) {
   return Number.isSafeInteger(parsed) && parsed >= 32 && parsed <= 4096 ? parsed : null;
 }
 
+function presentationQuery(request = {}) {
+  if (typeof request.originalUrl === 'string') {
+    const search = new URL(request.originalUrl, 'http://vectorwarp.invalid').searchParams;
+    return {max_rows: search.get('max_rows'), max_cols: search.get('max_cols')};
+  }
+  return request.query || {};
+}
+
 // Produce a display-only, peak-preserving view of a delay-Doppler map.  This
 // never changes the processor map used by detection, recording, or evidence.
 function presentMap(frame, query = {}) {
@@ -56,4 +64,4 @@ function presentMap(frame, query = {}) {
   return cachedResult;
 }
 
-module.exports = {presentMap, requestedLimit};
+module.exports = {presentMap, presentationQuery, requestedLimit};
