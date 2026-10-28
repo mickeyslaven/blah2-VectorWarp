@@ -30,6 +30,14 @@ fs.writeFileSync(`${manual}.json`, JSON.stringify({schema: 'vectorwarp-recording
 
 const library = new RecordingLibrary(() => config, {now: () => now});
 async function main() {
+const backgroundLibrary = new RecordingLibrary(() => config, {now: () => now});
+const indexing = await backgroundLibrary.list({limit: 1, waitForIndex: false});
+assert.equal(indexing.indexing, true);
+assert.equal(indexing.total, 0, 'cold browser request returns without waiting for the archive scan');
+await backgroundLibrary.scanPromise;
+const indexed = await backgroundLibrary.list({limit: 1, waitForIndex: false});
+assert.equal(indexed.indexing, false);
+assert.equal(indexed.total, 2);
 const listed = await library.list({passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]});
 assert.equal(listed.total, 2);
 assert.equal(listed.recordings[0].kind, 'manual');

@@ -12,6 +12,7 @@
   const frequency = value => Number.isFinite(value) ? `${(value / 1e6).toFixed(3)} MHz` : '—';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, character =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[character]));
+  let indexTimer = null;
   const aircraft = item => item.aircraft?.length ? item.aircraft.map(value => {
     const name = value.flight || value.icao || 'Aircraft';
     const details = [value.icao && value.flight ? value.icao : null,
@@ -36,9 +37,13 @@
       const limits = [retention.maximumAgeDays > 0 ? `${retention.maximumAgeDays} days` : null,
         retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null]
         .filter(Boolean).join(' or ');
-      summary.innerHTML = `<div><strong>${result.total} recording${result.total === 1 ? '' : 's'}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : 'Set age and storage limits in Recording settings'}</span></div>`;
+      const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ?
+        'Delete oldest aircraft clips' : 'Stop recording';
+      summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
       list.innerHTML = result.recordings?.length ? result.recordings.map(card).join('') :
         '<div class="empty-state"><strong>No matching recordings</strong><p>Record manually from Live radar or enable automatic aircraft clips in Settings.</p></div>';
+      clearTimeout(indexTimer);
+      if (result.indexing) indexTimer = setTimeout(load, 1500);
     } catch (error) {
       summary.textContent = 'Recording storage is unavailable.';
       list.innerHTML = `<div class="empty-state"><strong>Could not load recordings</strong><p>${escape(error.message)}</p><button type="button" id="recording-retry">Try again</button></div>`;

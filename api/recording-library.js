@@ -80,6 +80,7 @@ function titleFor(item) {
 class RecordingLibrary {
   constructor(getConfig, {now = Date.now} = {}) {
     this.getConfig = getConfig; this.now = now; this.cache = null;
+    this.scanPromise = null; this.scanError = null;
   }
   directory() { return recordingDirectory(this.getConfig()); }
   retention() { return options(this.getConfig()); }
@@ -130,11 +131,25 @@ class RecordingLibrary {
     this.cache = {key: cacheKey, at: this.now(), items};
     return cloneItems(items);
   }
-  async list({activeFile = '', passes = [], search = '', offset = 0, limit = DEFAULT_LIMIT} = {}) {
+  startScan(options) {
+    if (!this.scanPromise) {
+      this.scanError = null;
+      this.scanPromise = this.scan(options).catch(error => {
+        this.scanError = error.message;
+        return [];
+      }).finally(() => { this.scanPromise = null; });
+    }
+    return this.scanPromise;
+  }
+  async list({activeFile = '', passes = [], search = '', offset = 0, limit = DEFAULT_LIMIT,
+      waitForIndex = true} = {}) {
     const normalized = String(search || '').trim().toLowerCase();
     const boundedOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(MAX_LIMIT, limit)) : DEFAULT_LIMIT;
-    let items = await this.scan({activeFile, passes});
+    const stale = !this.cache || this.now() - this.cache.at >= 5000;
+    if (stale) this.startScan({activeFile, passes});
+    let items = waitForIndex ? await this.startScan({activeFile, passes}) :
+      cloneItems(this.cache?.items || []);
     if (normalized) items = items.filter(item => [item.title, item.filename, item.receiver,
       ...item.aircraft.flatMap(value => [value.flight, value.icao])]
       .some(value => String(value || '').toLowerCase().includes(normalized)));
@@ -142,6 +157,7 @@ class RecordingLibrary {
     return {schema: 'vectorwarp-recording-library-v1', directory: this.directory(),
       storage: {...storage(this.directory()), recording_bytes: items.reduce((sum, item) => sum + item.size_bytes, 0)},
       retention: this.retention(), total, offset: boundedOffset, limit: boundedLimit,
+      indexing: this.scanPromise !== null, index_error: this.scanError,
       recordings: items.slice(boundedOffset, boundedOffset + boundedLimit)};
   }
   resolve(id) {

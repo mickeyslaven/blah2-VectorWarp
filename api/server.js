@@ -531,7 +531,7 @@ app.get('/api/recordings', async (req, res, next) => {
   const result = await recordingLibrary.list({activeFile: processor?.recordingFile || '',
     passes: recordingPasses(), search: req.query.search,
     offset: Number.isInteger(offset) ? offset : 0,
-    limit: Number.isInteger(limit) ? limit : undefined});
+    limit: Number.isInteger(limit) ? limit : undefined, waitForIndex: false});
   res.json({...result, recordings: result.recordings.map(publicRecording)});
   } catch (error) { next(error); }
 });
