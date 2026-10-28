@@ -1,7 +1,8 @@
 'use strict';
 
 const assert = require('assert');
-const {presentMap, presentationQuery, requestedLimit} = require('./map-presentation');
+const zlib = require('zlib');
+const {encodeMapResponse, presentMap, presentationQuery, requestedLimit} = require('./map-presentation');
 
 const frame = {timestamp: 123, nRows: 6, nCols: 6,
   doppler: [-3, -2, -1, 0, 1, 2], delay: [0, 1, 2, 3, 4, 5],
@@ -40,6 +41,11 @@ assert.equal(serializedReduced.data.length, 32,
   'live socket JSON strings must cross the presentation boundary before compaction');
 assert.strictEqual(presentMap(serialized), serialized,
   'the default full-resolution endpoint preserves its existing wire representation');
+const encoded = encodeMapResponse(serialized, {max_rows: '32', max_cols: '32'}, 'br, gzip');
+assert.equal(encoded.contentEncoding, 'gzip');
+assert.equal(JSON.parse(zlib.gunzipSync(encoded.body)).data.length, 32);
+assert.ok(encoded.body.length < Buffer.byteLength(serialized) / 5,
+  'HTTP content negotiation keeps remote live-map transfers bounded');
 assert.strictEqual(compact, frame);
 
 console.log('Peak-preserving mobile map presentation passed.');

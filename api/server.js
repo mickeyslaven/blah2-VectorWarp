@@ -240,7 +240,14 @@ var stash_map = require('./stash/maxhold.js');
 var stash_detection = require('./stash/detection.js');
 var stash_iqdata = require('./stash/iqdata.js');
 var stash_timing = require('./stash/timing.js');
-const {presentMap, presentationQuery} = require('./map-presentation');
+const {encodeMapResponse, presentationQuery} = require('./map-presentation');
+
+function sendMapResponse(req, res, frame) {
+  const encoded = encodeMapResponse(frame, presentationQuery(req), req.get('Accept-Encoding') || '');
+  res.type('application/json').vary('Accept-Encoding');
+  if (encoded.contentEncoding) res.set('Content-Encoding', encoded.contentEncoding);
+  res.send(encoded.body);
+}
 
 // constants
 const setupPort = Number(process.env.BLAH2_SETUP_PORT || 3000);
@@ -446,7 +453,7 @@ app.get('/', (req, res, next) => {
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
 app.get('/api/map', (req, res) => {
-  res.send(presentMap(map, presentationQuery(req)));
+  sendMapResponse(req, res, map);
 });
 app.get('/api/detection', (req, res) => {
   res.send(detection);
@@ -1107,7 +1114,7 @@ app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
 
 // stash API
 app.get('/stash/map', (req, res) => {
-  res.send(presentMap(stash_map.get_data_map(), presentationQuery(req)));
+  sendMapResponse(req, res, stash_map.get_data_map());
 });
 app.get('/stash/detection', (req, res) => {
   res.send(stash_detection.get_data_detection());

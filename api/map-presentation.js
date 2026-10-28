@@ -1,5 +1,7 @@
 'use strict';
 
+const zlib = require('zlib');
+
 let cachedSource = null;
 let cachedKey = '';
 let cachedResult = null;
@@ -70,4 +72,13 @@ function presentMap(frame, query = {}) {
   return cachedResult;
 }
 
-module.exports = {presentMap, presentationQuery, requestedLimit};
+function encodeMapResponse(frame, query = {}, acceptEncoding = '') {
+  const presented = presentMap(frame, query);
+  const body = typeof presented === 'string' ? presented : JSON.stringify(presented);
+  if (!/(?:^|[\s,])gzip(?:[\s,;]|$)/i.test(acceptEncoding))
+    return {body, contentEncoding: null};
+  return {body: zlib.gzipSync(body, {level: zlib.constants.Z_BEST_SPEED}),
+    contentEncoding: 'gzip'};
+}
+
+module.exports = {encodeMapResponse, presentMap, presentationQuery, requestedLimit};
