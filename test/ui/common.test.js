@@ -155,6 +155,13 @@ function page(origin, apiOrigin = origin) {
     discoveryCallsBeforeTimeout,
     'A transient body timeout must not trigger an API endpoint rediscovery storm');
   assert.equal(test.context.recordingDuration(3723000), '01:02:03');
+  const hover = test.context.aircraftHoverText({flight: 'TEST1', r: 'N123', t: 'C172',
+    hex: 'abc123', alt_baro: 5200, gs: 101, track: 87, seen_pos: .4},
+  {delay: 12.34, doppler: -56.7});
+  assert.match(hover, /TEST1/);
+  assert.match(hover, /12\.34 km/);
+  assert.doesNotMatch(hover, /%\{/,
+    'Radar aircraft hover text must contain values, never unresolved Plotly expressions');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');

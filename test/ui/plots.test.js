@@ -21,6 +21,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
       aircraftLabel: common.aircraftLabel,
       aircraftPlotSymbol: common.aircraftPlotSymbol,
       aircraftPlotData: common.aircraftPlotData,
+      aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
       fetchRadarJson: async url => url.startsWith('/api/detection') ? detected : new Promise(() => {}),
       window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
@@ -70,6 +71,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
         'ADS-B truth stays a uniform green-dot overlay on delay–Doppler');
       assert.equal(initialTraces[1].marker.symbol, undefined,
         'Radar detections keep their established circular marker styling');
+      assert.ok(calls.some(call => call.method === 'restyle' && call.args[2]?.[0] === 1),
+        'An exact-frame detection response that beats heatmap rendering is applied after the trace exists');
     }
     if (kind === 'spectrum') {
       const trace = calls.at(-1).args[1][0];

@@ -159,6 +159,12 @@ function requestDetectionOverlay(timestamp, enabled) {
     .finally(() => { detectionPending = false; });
 }
 
+async function applyDetectionOverlay(timestamp) {
+  if (detectionCache?.timestamp !== timestamp || displayedMapTimestamp !== timestamp) return false;
+  await Plotly.restyle('data', {x: [detectionCache.delay], y: [detectionCache.doppler]}, [1]);
+  return true;
+}
+
 if (typeof window !== 'undefined' && window.addEventListener) {
   let resizeTimer;
   window.addEventListener('resize', function () {
@@ -193,7 +199,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // Separate TCP streams may arrive at different times; never put old
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
-  adsb = {delay: [], doppler: [], flight: [], customdata: []};
+  adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
   const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
     runningConfig.process?.data?.cpi);
   if (data_adsb) {
@@ -203,6 +209,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         adsb.doppler.push(aircraft.doppler);
         adsb.flight.push(aircraftLabel(aircraft));
         adsb.customdata.push(aircraftPlotData(aircraft));
+        adsb.hover.push(aircraftHoverText(aircraft,
+          {delay: aircraft.delay, doppler: aircraft.doppler}));
       }
     }
   }
@@ -253,8 +261,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         line: {color: '#10251f', width: 1.2}
       },
       customdata: adsb.customdata,
-      hovertemplate: aircraftHoverTemplate.replace('<extra>',
-        '<br>Bistatic range %{x:.2f} km · Doppler %{y:.1f} Hz<extra>')
+      text: adsb.hover,
+      hovertemplate: '%{text}<extra></extra>'
   };
 
     var data_trace = [trace1, trace2, trace3];
@@ -268,11 +276,15 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       y: [data.doppler, detection.doppler, adsb.doppler],
       z: [data.data, [], []],
       zmax: [Math.max(13, data.maxPower), [], []],
-      text: [[], [], adsb.flight],
+      text: [[], [], adsb.hover],
       customdata: [[], [], adsb.customdata]
     };
     await Plotly.update('data', trace_update);
   }
   displayedMapTimestamp = data.timestamp;
+  // The marker request often wins the race against the heavier Plotly heatmap
+  // render. Apply its cached exact-frame result after the marker trace exists;
+  // otherwise every detection is discarded one frame early and never shown.
+  await applyDetectionOverlay(data.timestamp);
   return true;
 });

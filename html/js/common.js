@@ -802,6 +802,27 @@ function aircraftPlotData(aircraft = {}) {
     info.signal, info.age, info.category];
 }
 
+function aircraftHoverText(aircraft = {}, geometry = {}) {
+  const info = aircraftInfo(aircraft);
+  const safe = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const value = (input, digits = 0, suffix = '') => Number.isFinite(input) ?
+    `${Number(input).toLocaleString(undefined, {minimumFractionDigits: digits,
+      maximumFractionDigits: digits})}${suffix}` : '—';
+  const lines = [`<b>${safe(info.label)}</b>`,
+    `Registration ${safe(info.registration || '—')} · Type ${safe(info.type || '—')}`,
+    info.description ? safe(info.description) : null,
+    `ICAO ${safe(info.hex || '—')} · Category ${safe(info.category || '—')}`,
+    `Altitude ${value(info.altitude, 0, ' ft')} · Speed ${value(info.speed, 0, ' kt')}`,
+    `Heading ${value(info.heading, 0, '°')} · Vertical rate ${value(info.verticalRate, 0, ' ft/min')}`,
+    `Squawk ${safe(info.squawk || '—')} · Signal ${value(info.signal, 1, ' dBFS')}`,
+    `Position age ${value(info.age, 1, ' s')}`];
+  if (Number.isFinite(geometry.delay) || Number.isFinite(geometry.doppler))
+    lines.push(`Bistatic range ${value(geometry.delay, 2, ' km')} · Doppler ${value(geometry.doppler, 1, ' Hz')}`);
+  return lines.filter(Boolean).join('<br>');
+}
+
 const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
   'Registration %{customdata[1]} · Type %{customdata[2]}<br>' +
   '%{customdata[3]}<br>ICAO %{customdata[4]} · Category %{customdata[12]}<br>' +
@@ -830,4 +851,5 @@ if (typeof module !== 'undefined')
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices, aircraftKind, aircraftPlotSymbol,
-    aircraftLabel, aircraftInfo, aircraftPlotData, aircraftHoverTemplate, aircraftSvgMarkup};
+    aircraftLabel, aircraftInfo, aircraftPlotData, aircraftHoverText,
+    aircraftHoverTemplate, aircraftSvgMarkup};
