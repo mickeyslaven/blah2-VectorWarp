@@ -41,9 +41,19 @@ function currentDelayDopplerPresentation() {
 
 var plotPresentation = currentDelayDopplerPresentation();
 
+function mapPresentationUrl(path, width) {
+  if (!Number.isFinite(width) || width > 1024) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  // The native 601x511 JSON map is about 1.8 MB per frame.  A peak-preserving
+  // server presentation keeps tablet/phone transfer and Plotly work bounded
+  // without changing detector processing or the underlying radar grid.
+  return `${path}${separator}max_rows=240&max_cols=200`;
+}
+
 // setup API
 var urlDetection = liveApiUrl('/api/detection');
-urlMap = liveApiUrl(urlMap);
+urlMap = liveApiUrl(mapPresentationUrl(urlMap,
+  typeof window === 'undefined' ? 1280 : window.innerWidth));
 var urlAdsbData = liveApiUrl('/api/adsb/delay-doppler');
 
 // setup plotly

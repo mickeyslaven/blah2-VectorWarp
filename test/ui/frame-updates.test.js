@@ -62,6 +62,15 @@ function clockedPage(cpi = .5) {
   await page.advance(5000);
   assert.equal(times.at(-1), 2200);
 
+  const bounded = clockedPage(.05);
+  const boundedTimes = [];
+  const boundedLoop = bounded.context.startRadarUpdates(() =>
+    boundedTimes.push(bounded.now()), 1000);
+  await bounded.advance(2500);
+  assert.deepEqual(boundedTimes, [0, 1000, 2000],
+    'Heavy mobile views can impose a display cadence without changing radar CPI');
+  boundedLoop.stop();
+
   for (const cpi of [null, undefined, 0, -1, Infinity, NaN, '0.5'])
     assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi}}}), 1000);
   assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi: .001}}}), 16);

@@ -46,8 +46,8 @@ function page(origin, apiOrigin = origin) {
     const {context, calls} = page(origin, apiOrigin);
     await context.fetchStatusResource(context.liveApiUrl('/api/config'));
     assert.equal(calls.at(-1).url, apiOrigin + '/api/config');
-    await context.fetchStatusResource(context.liveApiUrl('/capture/status'));
-    assert.equal(calls.at(-1).url, apiOrigin + '/capture/status');
+    await context.fetchStatusResource(context.liveApiUrl('/capture/status?summary=1'));
+    assert.equal(calls.at(-1).url, apiOrigin + '/capture/status?summary=1');
     assert.ok(calls.every(call => !call.url.includes('/adsb2dd/')));
   }
   const explicit = page('http://radar.local:49152', 'http://radar.local:3456');

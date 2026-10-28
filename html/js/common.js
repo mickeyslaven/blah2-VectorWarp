@@ -114,7 +114,7 @@ function renderRecordingState() {
 
 async function readRecordingState() {
   try {
-    let response = await fetchStatusResource(liveApiUrl('/capture/status'),
+    let response = await fetchStatusResource(liveApiUrl('/capture/status?summary=1'),
       {cache: 'no-store'});
     if (response.ok) {
       const state = await response.json();
@@ -573,7 +573,7 @@ function radarFrameIntervalMs(config) {
     Math.min(2147483647, Math.max(16, seconds * 1000)) : 1000;
 }
 
-function startRadarUpdates(update) {
+function startRadarUpdates(update, minimumIntervalMs = 16) {
   let stopped = false;
   let timer;
   let due = 0;
@@ -584,7 +584,7 @@ function startRadarUpdates(update) {
     try {
       try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
       if (stopped) return;
-      const nextInterval = radarFrameIntervalMs(loadedConfig);
+      const nextInterval = Math.max(minimumIntervalMs, radarFrameIntervalMs(loadedConfig));
       if (interval !== nextInterval) { interval = nextInterval; due = 0; }
       if (Date.now() >= due) {
         due = Date.now() + interval;
@@ -606,6 +606,10 @@ function startRadarUpdates(update) {
 
 function startRadarPlot(url, render) {
   let renderedTimestamp;
+  // A full heatmap is materially heavier than a status card.  Tablets and
+  // phones should display fresh radar data without continuously parsing and
+  // repainting faster than their browser can keep up.
+  const minimumIntervalMs = typeof window !== 'undefined' && window.innerWidth <= 1024 ? 1000 : 100;
   return startRadarUpdates(async () => {
     const data = await fetchRadarJson(url);
     if (!data || typeof data !== 'object' || Array.isArray(data)) return;
@@ -616,7 +620,7 @@ function startRadarPlot(url, render) {
     const complete = await render(data);
     // Failed fetches/renders can be retried on the next tick.
     if (complete !== false) renderedTimestamp = key;
-  });
+  }, minimumIntervalMs);
 }
 
 async function renderRuntimeSummary() {

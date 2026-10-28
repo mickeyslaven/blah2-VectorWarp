@@ -261,6 +261,10 @@ function connect(port) {
     assert.equal(idleCapture.body.available, false);
     assert.equal(idleCapture.body.clip.clipRevision, 0);
     assert.equal(idleCapture.body.clip.queuedClips, 0);
+    const compactCapture = (await request('GET', '/capture/status?summary=1')).body;
+    assert.equal(compactCapture.recording, false);
+    assert.equal('clip' in compactCapture, false,
+      'The global header status must not transfer the automatic-clip event ledger');
     const idleRequest = (await request('GET', '/capture/request')).body;
     assert.equal(idleRequest.recording, false); assert.equal(idleRequest.revision, 0);
     assert.equal(idleRequest.clip.clipRevision, 0);

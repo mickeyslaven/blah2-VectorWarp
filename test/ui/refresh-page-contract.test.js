@@ -61,6 +61,10 @@ assert.match(insights, /root\.dataset\.ready\s*=\s*['"]true['"]/,
 assert.match(insights, /minimumRefreshIntervalMs\s*=\s*2000/,
   'multi-endpoint insight refreshes must not run at sub-second CPI cadence');
 
+const common = fs.readFileSync(path.join(root, 'html/js/common.js'), 'utf8');
+assert.match(common, /capture\/status\?summary=1/,
+  'shared recording control must not poll the multi-megabyte clip ledger');
+
 for (const script of new Set(plotPages.values())) {
   const source = fs.readFileSync(path.join(root, 'html/js', script), 'utf8');
   assert.match(source, /startRadarPlot\(/,

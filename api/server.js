@@ -240,6 +240,7 @@ var stash_map = require('./stash/maxhold.js');
 var stash_detection = require('./stash/detection.js');
 var stash_iqdata = require('./stash/iqdata.js');
 var stash_timing = require('./stash/timing.js');
+const {presentMap} = require('./map-presentation');
 
 // constants
 const setupPort = Number(process.env.BLAH2_SETUP_PORT || 3000);
@@ -445,7 +446,7 @@ app.get('/', (req, res, next) => {
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
 app.get('/api/map', (req, res) => {
-  res.send(map);
+  res.send(presentMap(map, req.query));
 });
 app.get('/api/detection', (req, res) => {
   res.send(detection);
@@ -1106,7 +1107,7 @@ app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
 
 // stash API
 app.get('/stash/map', (req, res) => {
-  res.send(stash_map.get_data_map());
+  res.send(presentMap(stash_map.get_data_map(), req.query));
 });
 app.get('/stash/detection', (req, res) => {
   res.send(stash_detection.get_data_detection());
@@ -1139,14 +1140,13 @@ app.get('/capture/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
-  res.json({
+  const status = {
     supported: !replay,
     available: !replay && (capture ? acknowledgement !== null : receiving),
     reason: replay ? 'Recording is unavailable while replay is active.' : recordingError ||
       (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null),
     requested: capture,
     revision: captureRevision,
-    clip: captureTriggerQueue.status(),
     acknowledged: acknowledged === true,
     recording,
     recordingFile: acknowledgement?.recordingFile || '',
@@ -1155,7 +1155,12 @@ app.get('/capture/status', (req, res) => {
     startedAt: recording ? captureStartedAt : null,
     elapsedSeconds: recording && captureStartedAt ?
       Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0
-  });
+  };
+  // Header controls only need manual-recording state.  The full automatic-clip
+  // ledger can be several megabytes and must not be transferred every four
+  // seconds by every open display.
+  if (req.query.summary !== '1') status.clip = captureTriggerQueue.status();
+  res.json(status);
 });
 // toggle state of capture
 app.post('/capture/toggle', (req, res) => {
