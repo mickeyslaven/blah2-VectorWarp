@@ -71,7 +71,9 @@ try {
   let rejected = 0;
   let changed = 0;
   const edited = new Set();
-  const sources = [rspSource, ...['config-hackrf.yml', 'config-usrp.yml', 'config-kraken.yml'].map(shipped)];
+  // Prefer Kraken for shared fields whose enabled form is intentionally
+  // receiver-gated (notably bounded automatic aircraft IQ clips).
+  const sources = [...['config-kraken.yml', 'config-hackrf.yml', 'config-usrp.yml'].map(shipped), rspSource];
   for (const [key, rule] of Object.entries(FIELD_RULES)) {
     if (rule.readOnly) continue;
     const source = sources.find(value => get(value, key) !== undefined);

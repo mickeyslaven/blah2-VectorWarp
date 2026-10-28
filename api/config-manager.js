@@ -17,6 +17,14 @@ const DEVICE_PROFILES = [
     type: 'Kraken',
     label: 'KrakenSDR Suite V2',
     description: '2–8 coherent channels streamed by HeIMDALL',
+    features: {
+      automaticAircraftClips: true,
+      coherentArray: true,
+      residentIntegration: true,
+      bearing: true,
+      manifold: true,
+      frequencyResolvedShadow: true
+    },
     sampleRate: 2400000,
     device: {
       type: 'Kraken',
@@ -35,6 +43,11 @@ const DEVICE_PROFILES = [
         power_iterations: 12,
         covariance_smoothing: 0.8,
         diagonal_loading: 0.001
+      },
+      surveillance_fusion: {
+        mode: 'noncoherent', beams: 12, effective_beam_trials: 12,
+        direct_path_null_db: 0,
+        detection_manifold_automation: {enabled: false}
       }
     }
   },
@@ -43,6 +56,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'SDRplay RSPduo',
     description: 'Two coherent tuners in dual-tuner mode',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'RspDuo', agcSetPoint: -20, bandwidthNumber: 5,
@@ -56,6 +70,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Ettus USRP',
     description: 'Two coherent receive channels through UHD',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B',
@@ -67,6 +82,7 @@ const DEVICE_PROFILES = [
     process: {performance: {surveillance_workers: 0, fft_threads: 0}},
     label: 'Dual HackRF',
     description: 'Two synchronized HackRF receivers',
+    features: {},
     sampleRate: 2000000,
     device: {
       type: 'HackRF',
@@ -272,6 +288,8 @@ function validateConfig(config, baseline = null, options = {}) {
     if (Number.isFinite(aircraftClips.pre_seconds) && Number.isFinite(aircraftClips.post_seconds) &&
         aircraftClips.pre_seconds + aircraftClips.post_seconds > 10)
       errors.push('capture.aircraft_clips pre_seconds plus post_seconds cannot exceed 10 seconds');
+    if (aircraftClips.enabled === true && device.type !== 'Kraken')
+      errors.push('automatic aircraft IQ clips currently require a Kraken receiver');
   }
   string(device.type, 'capture.device.type');
   const profile = DEVICE_PROFILES.find(item => item.type === device.type);

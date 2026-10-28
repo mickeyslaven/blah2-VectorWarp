@@ -9,7 +9,10 @@ const {createRequire} = require('module');
 const yaml = createRequire(path.join(__dirname, '..', '..', 'api', 'package.json'))('js-yaml');
 const {getDeviceProfiles, validateConfig} =
   require('../../api/config-manager.js');
-const {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource, upstreamRestartError, accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS} =
+const {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
+  receiverSpecificProcessPath, adsbExchangeId, adsbPublicSource, upstreamRestartError,
+  accelerationSummary, receiverSaveMessage, receiverSaveDetails, CONFIG_SAVE_TIMEOUT_MS,
+  MEASURED_GAIN_SAVE_TIMEOUT_MS} =
   require('../../html/js/config_ui.js');
 const {RECEIVER_SYNC_BUDGET} = require('../../api/receiver-sync.js');
 const {MAX_AUTOMATIC_GAIN_MS} = require('../../api/automatic-gain.js');
@@ -58,7 +61,32 @@ for (const profile of getDeviceProfiles()) {
   assert.equal(changed.capture.device.type, profile.type);
   assert.equal(changed.capture.fs, profile.sampleRate);
   assert.equal(validateConfig(changed, base).valid, true, profile.type);
+  const features = receiverFeatureCapabilities(profile.type, getDeviceProfiles());
+  assert.equal(Boolean(features.coherentArray), profile.type === 'Kraken');
+  assert.equal(Boolean(features.automaticAircraftClips), profile.type === 'Kraken');
 }
+assert.equal(receiverSpecificProcessPath('process.surveillance_fusion.mode'), true);
+assert.equal(receiverSpecificProcessPath('process.bearing.manifold_recorder.enabled'), true);
+assert.equal(receiverSpecificProcessPath('process.detection.integration_cpis'), true);
+assert.equal(receiverSpecificProcessPath('process.detection.pfa'), false);
+assert.equal(receiverSpecificProcessPath('process.ambiguity.delayMax'), false);
+const krakenOnlyEnabled = clone(base);
+krakenOnlyEnabled.capture.aircraft_clips.enabled = true;
+krakenOnlyEnabled.process.detection.integration_cpis = 4;
+krakenOnlyEnabled.process.detection.track_before_detect.enable = true;
+krakenOnlyEnabled.process.bearing.enable = true;
+krakenOnlyEnabled.process.bearing.frequency_resolved_shadow.enabled = true;
+krakenOnlyEnabled.process.bearing.manifold_recorder.enabled = true;
+krakenOnlyEnabled.process.tracker.track_guided_shadow.enable = true;
+const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
+applyDeviceProfile(krakenOnlyEnabled, rspProfile);
+assert.equal(krakenOnlyEnabled.capture.aircraft_clips.enabled, false);
+assert.equal(krakenOnlyEnabled.process.detection.integration_cpis, 1);
+assert.equal(krakenOnlyEnabled.process.detection.track_before_detect.enable, false);
+assert.equal(krakenOnlyEnabled.process.bearing.enable, false);
+assert.equal(krakenOnlyEnabled.process.bearing.frequency_resolved_shadow.enabled, false);
+assert.equal(krakenOnlyEnabled.process.bearing.manifold_recorder.enabled, false);
+assert.equal(krakenOnlyEnabled.process.tracker.track_guided_shadow.enable, false);
 
 const resized = clone(base);
 resized.capture.device.channel_count = 6;

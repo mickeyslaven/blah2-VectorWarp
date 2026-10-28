@@ -133,6 +133,9 @@ location.
 The opt-in ADS-B-triggered IQ window defaults to two seconds before and three
 seconds after the eligibility event. Configure it in **Settings → Receiver →
 Automatic aircraft clips**; the sum must fit the native ten-second clip limit.
+The bounded pre-roll recorder currently uses Kraken Suite's clip service, so the
+control appears only for Kraken. Manual recording and replay remain available
+for every supported receiver backend.
 Environment overrides remain available for managed installations. The status
 endpoint reports the applied bounds.
 

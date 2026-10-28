@@ -68,12 +68,47 @@ function configurationForReceiver(type, base = setupDefaults()) {
   const config = JSON.parse(JSON.stringify(base));
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
   config.capture.fs = profile.sampleRate;
+  if (!profile.features?.automaticAircraftClips && config.capture.aircraft_clips)
+    config.capture.aircraft_clips.enabled = false;
+  const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
+    result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
+      merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
+      JSON.parse(JSON.stringify(value));
+    return result;
+  }, target);
   config.process.performance = {...config.process.performance,
     ...(profile.process?.performance || {})};
-  if (profile.process?.reference_synthesis)
-    config.process.reference_synthesis = JSON.parse(JSON.stringify(profile.process.reference_synthesis));
-  else
-    delete config.process.reference_synthesis;
+  for (const [key, value] of Object.entries(profile.process || {})) {
+    if (key === 'performance') continue;
+    config.process[key] = merge(config.process[key] || {}, value);
+  }
+  if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
+  if (!profile.features?.coherentArray) {
+    delete config.process.surveillance_fusion;
+    if (config.process.bearing) {
+      config.process.bearing.enable = false;
+      if (config.process.bearing.frequency_resolved_shadow)
+        config.process.bearing.frequency_resolved_shadow.enabled = false;
+      if (config.process.bearing.manifold_recorder)
+        config.process.bearing.manifold_recorder.enabled = false;
+    }
+    if (config.process.detection) {
+      config.process.detection.integration_cpis = 1;
+      config.process.detection.integration_motion_bins = 0;
+      if (config.process.detection.track_before_detect)
+        config.process.detection.track_before_detect.enable = false;
+    }
+    if (config.process.tracker) {
+      delete config.process.tracker.gpu_capacity;
+      delete config.process.tracker.beam_tolerance;
+      if (config.process.tracker.track_guided_shadow) {
+        config.process.tracker.track_guided_shadow.enable = false;
+        config.process.tracker.track_guided_shadow.promote = false;
+      }
+      if (config.process.tracker.initiate?.stationary_clutter)
+        config.process.tracker.initiate.stationary_clutter.enable = false;
+    }
+  }
   return config;
 }
 

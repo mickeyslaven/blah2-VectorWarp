@@ -80,6 +80,10 @@ process:
     # Optional soft spatial null toward the configured transmitter bearing.
     # Zero preserves the calibrated coherent beam bank.
     direct_path_null_db: 0
+    # Learn and validate a site-specific detection manifold from eligible
+    # ADS-B-labelled passes. Collection is opt-in and never auto-promotes.
+    detection_manifold_automation:
+      enabled: false
   detection:
     enable: true
     pfa: 0.00001

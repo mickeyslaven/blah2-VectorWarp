@@ -541,14 +541,66 @@ function applyDeviceProfile(config, profile) {
   if (geometry !== undefined) config.capture.device.array_geometry = geometryEditor ?
     geometryEditor.invalidate(geometry) : geometry;
   config.capture.fs = profile.sampleRate;
-  for (const key of ['performance', 'reference_synthesis']) {
-    if (profile.process?.[key] !== undefined)
-      config.process[key] = JSON.parse(JSON.stringify(profile.process[key]));
-    else
-      delete config.process[key];
+  if (!profile.features?.automaticAircraftClips && config.capture.aircraft_clips)
+    config.capture.aircraft_clips.enabled = false;
+  const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
+    result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
+      merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
+      JSON.parse(JSON.stringify(value));
+    return result;
+  }, target);
+  for (const [key, value] of Object.entries(profile.process || {})) {
+    if (key === 'performance') config.process.performance = merge(config.process.performance || {}, value);
+    else config.process[key] = merge(config.process[key] || {}, value);
+  }
+  if (!profile.process?.reference_synthesis) delete config.process.reference_synthesis;
+  if (!profile.features?.coherentArray) {
+    delete config.process.surveillance_fusion;
+    if (config.process.bearing) {
+      config.process.bearing.enable = false;
+      if (config.process.bearing.frequency_resolved_shadow)
+        config.process.bearing.frequency_resolved_shadow.enabled = false;
+      if (config.process.bearing.manifold_recorder)
+        config.process.bearing.manifold_recorder.enabled = false;
+    }
+    if (config.process.detection) {
+      config.process.detection.integration_cpis = 1;
+      config.process.detection.integration_motion_bins = 0;
+      if (config.process.detection.track_before_detect)
+        config.process.detection.track_before_detect.enable = false;
+    }
+    if (config.process.tracker) {
+      delete config.process.tracker.gpu_capacity;
+      delete config.process.tracker.beam_tolerance;
+      if (config.process.tracker.track_guided_shadow) {
+        config.process.tracker.track_guided_shadow.enable = false;
+        config.process.tracker.track_guided_shadow.promote = false;
+      }
+      if (config.process.tracker.initiate?.stationary_clutter)
+        config.process.tracker.initiate.stationary_clutter.enable = false;
+    }
   }
   config.process.performance = {...config.process.performance, acceleration};
   return config;
+}
+
+function receiverFeatureCapabilities(type, profiles = []) {
+  return profiles.find(profile => profile.type === type)?.features || {};
+}
+
+function receiverSpecificProcessPath(path) {
+  return path === 'process.reference_synthesis' || path.startsWith('process.reference_synthesis.') ||
+    path === 'process.surveillance_fusion' || path.startsWith('process.surveillance_fusion.') ||
+    path === 'process.bearing' || path.startsWith('process.bearing.') ||
+    path === 'process.detection.integration_cpis' ||
+    path === 'process.detection.integration_motion_bins' ||
+    path === 'process.detection.track_before_detect' ||
+    path.startsWith('process.detection.track_before_detect.') ||
+    path === 'process.tracker.gpu_capacity' || path === 'process.tracker.beam_tolerance' ||
+    path === 'process.tracker.track_guided_shadow' ||
+    path.startsWith('process.tracker.track_guided_shadow.') ||
+    path === 'process.tracker.initiate.stationary_clutter' ||
+    path.startsWith('process.tracker.initiate.stationary_clutter.');
 }
 
 function switchDevice(type) {
@@ -1099,7 +1151,7 @@ function field(value, path) {
   return wrapper;
 }
 
-function group(key, value, path, topLevel = false) {
+function group(key, value, path, topLevel = false, options = {}) {
   const currentPath = [...path, key];
   const dotted = currentPath.join('.');
   const kraken = activeConfig.capture?.device?.type === 'Kraken';
@@ -1144,6 +1196,7 @@ function group(key, value, path, topLevel = false) {
   advancedReference.append(advancedTitle, advancedFields);
   entries.forEach(([childKey, childValue]) => {
     const childPath = [...currentPath, childKey];
+    if (options.skipPath?.(childPath.join('.'))) return;
     // Keep compatibility keys in the draft/YAML, not as nonfunctional controls.
     if (capabilities.fieldRules?.[childPath.join('.')]?.readOnly) return;
     // Structured controls own their backing values; do not render a second
@@ -1161,7 +1214,7 @@ function group(key, value, path, topLevel = false) {
     if (childValue !== null && typeof childValue === 'object' &&
         !Array.isArray(childValue))
       {
-        const childGroup = group(childKey, childValue, currentPath);
+        const childGroup = group(childKey, childValue, currentPath, false, options);
         if (childGroup.querySelector('.config-field')) content.appendChild(childGroup);
       }
     else
@@ -1186,6 +1239,37 @@ function group(key, value, path, topLevel = false) {
     content.appendChild(makeGeometryEditor());
   details.append(summary, content);
   return details;
+}
+
+function renderReceiverFeatures() {
+  const fragment = document.createDocumentFragment();
+  const type = activeConfig.capture?.device?.type;
+  const features = receiverFeatureCapabilities(type, capabilities.deviceProfiles || []);
+  if (!features.coherentArray) {
+    const note = document.createElement('p');
+    note.className = 'config-capability-note';
+    note.textContent = 'Array beamforming, bearing, manifold, and resident multi-CPI controls are hidden because this receiver backend does not provide the coherent array data they require.';
+    fragment.appendChild(note);
+    return fragment;
+  }
+  const process = activeConfig.process || {};
+  if (process.surveillance_fusion)
+    fragment.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process']));
+  const detection = process.detection || {};
+  const residentDetection = Object.fromEntries(['integration_cpis', 'integration_motion_bins',
+    'track_before_detect'].filter(key => detection[key] !== undefined).map(key => [key, detection[key]]));
+  if (Object.keys(residentDetection).length)
+    fragment.appendChild(group('detection', residentDetection, ['process']));
+  const tracker = process.tracker || {};
+  const residentTracker = {};
+  for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
+    if (tracker[key] !== undefined) residentTracker[key] = tracker[key];
+  if (tracker.initiate?.stationary_clutter !== undefined)
+    residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
+  if (Object.keys(residentTracker).length)
+    fragment.appendChild(group('tracker', residentTracker, ['process']));
+  if (process.bearing) fragment.appendChild(group('bearing', process.bearing, ['process']));
+  return fragment;
 }
 
 function makeGeometryEditor() {
@@ -1636,12 +1720,19 @@ function renderEditor() {
     panel.setAttribute('role', 'tabpanel');
     panel.setAttribute('aria-label', title);
     panel.className = 'config-tab-panel';
+    const receiverType = activeConfig.capture?.device?.type;
+    const receiverFeatures = receiverFeatureCapabilities(receiverType,
+      capabilities.deviceProfiles || []);
     if (key === 'location') panel.appendChild(renderSiteSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
-      panel.appendChild(group(key, value, [], true));
+      panel.appendChild(group(key, value, [], true, {skipPath: path =>
+        (key === 'process' && receiverSpecificProcessPath(path)) ||
+        (key === 'capture' && path.startsWith('capture.aircraft_clips') &&
+          !receiverFeatures.automaticAircraftClips)}));
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
+      panel.appendChild(renderReceiverFeatures());
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
@@ -2410,6 +2501,7 @@ function accelerationSummary(value, radar) {
 }
 
 if (typeof module !== 'undefined')
-  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, adsbExchangeId, adsbPublicSource,
+  module.exports = {applyDeviceProfile, metadata, normalizeKrakenChannels, receiverFeatureCapabilities,
+    receiverSpecificProcessPath, adsbExchangeId, adsbPublicSource,
     serializeConfig, upstreamRestartError, receiverSaveMessage, receiverFailureMessage, receiverMayHaveChanged,
     receiverSaveDetails, accelerationSummary, CONFIG_SAVE_TIMEOUT_MS, MEASURED_GAIN_SAVE_TIMEOUT_MS};

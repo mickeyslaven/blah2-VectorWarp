@@ -13,7 +13,7 @@ const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
 const {window} = dom;
-let saved = configurationForReceiver('RspDuo');
+let saved = configurationForReceiver('Kraken');
 // Optional legacy block size has a real control whenever it is present in a
 // saved profile. Keep it present so both a valid value and its replay contract
 // are exercised, instead of treating an optional UI path as untestable.
@@ -125,6 +125,14 @@ async function saveAndAssert(label, expected) {
     setScalar(autoBooleanPaths[1], 'auto');
     await saveAndAssert('Automatic recorder mode', {[autoBooleanPaths[1]]: 'auto'});
 
+    // Receiver-only array controls disappear when a non-array backend is
+    // selected; portable radar, replay, tracker, and ADS-B controls remain.
+    window.switchDevice('RspDuo');
+    assert.equal(field('process.bearing.frequency_resolved_shadow.enabled'), null);
+    assert.equal(field('process.surveillance_fusion.mode'), null);
+    assert.ok(field('process.detection.pfa'));
+    assert.ok(field('process.tracker.enable'));
+
     // Browser validation combines native constraints with API cross-field
     // checks, including replay-format requirements that native inputs cannot
     // express alone.
@@ -166,7 +174,6 @@ async function saveAndAssert(label, expected) {
     setScalar('process.detection.minDelay', 6);
     setScalar('process.detection.minDoppler', 20);
     setScalar('process.detection.nCentroid', 7);
-    setScalar('process.detection.integration_cpis', 1);
     setScalar('process.tracker.enable', false);
     setScalar('process.tracker.enable', true);
     setScalar('process.tracker.initiate.M', 2);
@@ -207,7 +214,7 @@ async function saveAndAssert(label, expected) {
       'process.clutter.delayMin': -8, 'process.clutter.delayMax': 390, 'process.detection.enable': false,
       'process.detection.pfa': .00002, 'process.detection.nGuard': 3, 'process.detection.nTrain': 8,
       'process.detection.minDelay': 6, 'process.detection.minDoppler': 20,
-      'process.detection.nCentroid': 7, 'process.detection.integration_cpis': 1,
+      'process.detection.nCentroid': 7,
       'process.tracker.enable': true,
       'process.tracker.initiate.M': 2, 'process.tracker.initiate.N': 4,
       'process.tracker.initiate.maxAcc': 12,
@@ -261,6 +268,9 @@ async function saveAndAssert(label, expected) {
       'capture.device.gain': [20, 21], 'capture.device.type': 'Usrp'});
 
     window.switchDevice('Kraken');
+    assert.ok(field('capture.aircraft_clips.enabled'), 'Kraken exposes automatic aircraft clips');
+    assert.ok(field('process.surveillance_fusion.mode'), 'Kraken exposes coherent fusion controls');
+    setScalar('process.detection.integration_cpis', 1);
     setScalar('capture.device.heimdall.host', '127.0.0.1');
     setScalar('capture.device.heimdall.port', 8091);
     setScalar('capture.device.heimdall.control_port', 8092);
@@ -276,6 +286,7 @@ async function saveAndAssert(label, expected) {
     change(synthesized[3], false);
     await saveAndAssert('Kraken array synthesis', {'capture.device.type': 'Kraken',
       'capture.device.channel_count': 4, 'capture.device.surveillance_channels': [0, 1, 2],
+      'process.detection.integration_cpis': 1,
       'process.reference_synthesis.mode': 'array_eigenbeam',
       'process.reference_synthesis.channels': [0, 1, 2]});
     change(control('process.reference_synthesis.mode'), 'dedicated');

@@ -97,7 +97,7 @@ service before capture. Startup failures appear in the interface.
 The adapter applies both tuners' settings through SDRplay API 3.15 and checks
 return codes. It does not independently read back RF tuning or prove coherence.
 
-The shared live-page header and **Settings → Capture → RSPduo overload check**
+The shared live-page header and **Settings → Receiver → RSPduo overload check**
 show SDRplay overload reports for **A (reference)** and **B (surveillance)** on
 Linux, Raspberry Pi and macOS. Active overload is a warning to review gain.
 Recovered events remain visible, with detection/recovery counts and last event
@@ -157,6 +157,19 @@ have no post-set readback. Setter acceptance is therefore useful operational
 evidence, not a physical RF or coherence test.
 
 ## Receiver settings: application and verification
+
+The **Receiver** tab changes with the selected backend. It contains only that
+radio's connection, tuning, gain, and hardware-specific controls. Kraken also
+shows its coherent reference, fusion, resident integration, bearing, manifold,
+and optional automatic-aircraft-clip controls there. Those controls are hidden
+for RSPduo, USRP, and HackRF because their current two-stream adapters do not
+provide the coherent array ABI they require.
+
+Portable processing remains in **Radar** for every backend: CPI and ambiguity
+limits, clutter removal, CFAR detection, the basic tracker, CPU/GPU selection,
+manual recording/replay, ADS-B statistics, sites, and output controls. Switching
+away from Kraken safely disables any enabled Kraken-only feature instead of
+leaving an invisible incompatible setting active.
 
 **Save for later** stores pending settings without applying them or restarting.
 **Save & Restart** applies settings and restarts processing; previously saved
