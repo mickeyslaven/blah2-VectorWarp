@@ -32,7 +32,7 @@ const plotPages = new Map([
   ['display/detection/doppler', 'plot_detection.js'],
   ['display/detection/delay-doppler', 'plot_detection.js']
 ]);
-const nonLivePages = new Set(['controller', 'display/configuration']);
+const nonLivePages = new Set(['controller', 'display/configuration', 'display/recordings']);
 
 for (const page of pages) {
   const html = fs.readFileSync(page === 'index' ? path.join(htmlRoot, 'index.html') :

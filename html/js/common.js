@@ -13,7 +13,7 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}">Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
@@ -171,7 +171,7 @@ function addRecordingControl() {
   control.className = 'recording-control';
   control.setAttribute('role', 'status');
   control.setAttribute('aria-live', 'polite');
-  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop.</div><button class="recording-toggle" type="button">Start recording</button>';
+  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop. <a href="/display/recordings">Browse recordings</a></div><button class="recording-toggle" type="button">Start recording</button>';
   control.querySelector('.recording-toggle')
     .addEventListener('click', toggleRecording);
   panel.classList.add('recording-panel');

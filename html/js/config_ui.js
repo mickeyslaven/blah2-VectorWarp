@@ -9,6 +9,11 @@ const CONFIG_META = {
   'truth': ['ADS-B', 'Aircraft overlay'],
   'location': ['Sites', 'Receiver and illuminator positions'],
   'save': ['Recording', 'Files and recording folder'],
+  'save.retention': ['Storage retention', 'Keep recordings bounded by age, total storage, and free disk space.'],
+  'save.retention.automatic_cleanup': ['Delete old recordings automatically', 'Off until you enable it. Only completed, inactive recordings are removed.'],
+  'save.retention.maximum_age_days': ['Keep recordings for (days)', 'Oldest completed recordings become eligible for cleanup. Set 0 to disable the age limit.'],
+  'save.retention.maximum_total_gb': ['Maximum recording storage (GB)', 'Cleanup removes the oldest completed recordings above this total. Set 0 for no size limit.'],
+  'save.retention.minimum_free_gb': ['Always leave disk free (GB)', 'New recordings stop or are refused below this safety floor.'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
   'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
   'capture.aircraft_clips': ['Automatic aircraft IQ clips', 'Receiver-independent bounded recordings triggered by eligible ADS-B aircraft passes.'],
@@ -2390,6 +2395,14 @@ async function renderConfiguration() {
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
     originalConfig = serializeConfig(activeConfig);
+    const replayFile = new URLSearchParams(window.location.search).get('replayFile');
+    if (replayFile) {
+      activeConfig.capture.replay = {...activeConfig.capture.replay,
+        state: true, file: replayFile, format: 'auto'};
+      try { sessionStorage.setItem('blah2-settings-tab', 'capture'); } catch (_) {}
+      if (window.history?.replaceState)
+        window.history.replaceState(null, '', window.location.pathname);
+    }
     validationErrors = [];
     validationPending = false;
     target.innerHTML = `<div class="config-toolbar"><div><strong>System settings</strong><span id="config-state">Up to date</span></div><div class="config-actions"><button id="config-reset" class="button-secondary" type="button" disabled>Discard changes</button><button id="config-save" class="button-primary" type="button" disabled>Save & Restart</button></div></div><div id="config-message" class="config-message"></div><section id="upstream-status" class="upstream-status"><div class="upstream-header"><strong>Upstream receiver check</strong><span class="upstream-badge">Checking…</span></div></section><div id="config-restart-progress" class="config-restart-progress" role="status" aria-live="polite" hidden><div class="config-restart-copy"><span id="config-restart-label">Preparing restart…</span><b id="config-restart-value">0%</b></div><div class="config-restart-track"><span id="config-restart-bar"></span></div></div><div id="config-fields" class="config-editor"></div>`;
@@ -2447,6 +2460,8 @@ async function renderConfiguration() {
     else
       showMessage('');
     renderEditor();
+    if (replayFile)
+      showMessage('Recording selected for replay. Review the receiver and replay settings, then choose Save & Restart.', 'warning');
     if (window.VectorWarpReports) window.VectorWarpReports.addSettingsEntry(target, () =>
       reportContext(window.VectorWarpReports.classify(lastReportingStatus) ||
         {code: 'MANUAL_REPORT', component: 'support', stage: 'manual', severity: 'degraded',

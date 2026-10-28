@@ -61,7 +61,10 @@ function setupDefaults() {
       ais: {enabled: false, ip: '0.0.0.0', port: 30001}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
-    save: {iq: false, map: false, detection: false, timing: false, path: '/var/lib/vectorwarp/recordings/'}
+    save: {iq: false, map: false, detection: false, timing: false,
+      path: '/var/lib/vectorwarp/recordings/',
+      retention: {automatic_cleanup: false, maximum_age_days: 30,
+        maximum_total_gb: 100, minimum_free_gb: 5}}
   };
 }
 
@@ -182,7 +185,8 @@ function readConfig(filename) {
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
       if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
-          prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.'))
+          prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.') &&
+          prefix !== 'save.retention' && !prefix.startsWith('save.retention.'))
         suppliedDefaults.push(prefix);
       return base;
     }

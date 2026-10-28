@@ -43,6 +43,7 @@ const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceive
   evaluateFastSweep: evaluateFastIlluminatorSweep,
   evaluateSurvey: evaluateIlluminatorSurvey} = require('./illuminator-survey.js');
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
+const {RecordingLibrary} = require('./recording-library.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
@@ -76,6 +77,7 @@ const trackerPublication = createTrackerPublication(config);
 // Receiver-independent policy comes from Settings. A burst of simultaneously
 // eligible aircraft still coalesces into one bounded physical recording.
 const captureTriggerQueue = createCaptureTriggerQueue(captureTriggerOptions(process.env, config));
+const recordingLibrary = new RecordingLibrary(() => config);
 const CLIP_PRE_ROLL_UNAVAILABLE = 'Kraken clip pre-roll is unavailable';
 // A failed native request can reset the bounded raw ring.  Give it materially
 // more than the configured two-second pre-roll before issuing the one retry.
@@ -88,9 +90,15 @@ const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
   createEvidenceStatisticsLanes(config, adsbSource, {operational: {
     filename: process.env.BLAH2_PROVISIONAL_STATISTICS_PATH ||
       '/var/lib/vectorwarp-api/evidence-statistics-provisional.json',
-    onEligibilityEvent: event => captureTriggerQueue.acceptEligibilityEvent(event, Date.now()),
-    onPeriodicCapture: (event, timestamp) => captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp),
-    onTrackCapture: (event, timestamp) => captureTriggerQueue.acceptTrackSnapshot(event, timestamp)}});
+    onEligibilityEvent: event => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptEligibilityEvent(event, Date.now()) :
+      ({accepted: false, reason: 'recording-storage-floor'}),
+    onPeriodicCapture: (event, timestamp) => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptPeriodicSnapshot(event, timestamp) :
+      ({accepted: false, reason: 'recording-storage-floor'}),
+    onTrackCapture: (event, timestamp) => recordingLibrary.canRecord().allowed ?
+      captureTriggerQueue.acceptTrackSnapshot(event, timestamp) :
+      ({accepted: false, reason: 'recording-storage-floor'})}});
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
@@ -269,6 +277,23 @@ var iqdata = '';
 var capture = false;
 var captureStartedAt = null;
 let captureRevision = 0;
+// Keep the safety check cheap and independent of browser activity. A manual
+// recording is asked to stop before it can consume the configured reserve;
+// automatic clips are separately rejected before admission.
+setInterval(() => {
+  if (capture && !recordingLibrary.canRecord().allowed) {
+    capture = false; captureRevision += 1; captureStartedAt = null;
+    console.error('Recording stopped to preserve the configured free-disk reserve.');
+  }
+}, 15000).unref();
+setInterval(() => {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  try {
+    const result = recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''});
+    if (result.deleted?.length)
+      console.error(`Recording retention removed ${result.deleted.length} completed recording(s).`);
+  } catch (error) { console.error(`Recording retention failed: ${error.message}`); }
+}, 15 * 60 * 1000).unref();
 
 function invalidateTimestampTelemetry() {
   timestampGeneration += 1;
@@ -482,6 +507,37 @@ app.get('/api/live-scorecard', (req, res) => {
 });
 app.get('/api/live-scorecard/provisional', (req, res) => {
   res.json(provisionalEvidenceStatistics.liveStatus());
+});
+function recordingPasses() {
+  const scorecard = provisionalEvidenceStatistics.liveStatus();
+  return [...(scorecard.active_passes || []), ...(scorecard.recent_finalized_passes || [])];
+}
+function publicRecording(item) {
+  const {path: replay_file, ...value} = item;
+  return {...value, replay_file};
+}
+app.get('/api/recordings', (req, res) => {
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const offset = Number.parseInt(req.query.offset, 10);
+  const limit = Number.parseInt(req.query.limit, 10);
+  const result = recordingLibrary.list({activeFile: processor?.recordingFile || '',
+    passes: recordingPasses(), search: req.query.search,
+    offset: Number.isInteger(offset) ? offset : 0,
+    limit: Number.isInteger(limit) ? limit : undefined});
+  res.json({...result, recordings: result.recordings.map(publicRecording)});
+});
+app.get('/api/recordings/:id/file', (req, res) => {
+  const filename = recordingLibrary.resolve(req.params.id);
+  if (!filename) return res.status(404).json({error: 'Recording not found.'});
+  res.type('application/octet-stream');
+  res.set('Content-Disposition', `attachment; filename="${path.basename(filename).replace(/["\\]/g, '_')}"`);
+  res.sendFile(filename);
+});
+app.post('/api/recordings/cleanup', (req, res) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-cleanup-v1')
+    return res.status(403).json({error: 'Recording cleanup requires a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  res.json(recordingLibrary.cleanup({activeFile: processor?.recordingFile || '', force: true}));
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -1147,11 +1203,13 @@ app.get('/capture/status', (req, res) => {
     capture = false;
     captureStartedAt = null;
   }
+  const disk = recordingLibrary.canRecord();
   const status = {
     supported: !replay,
-    available: !replay && (capture ? acknowledgement !== null : receiving),
+    available: !replay && disk.allowed && (capture ? acknowledgement !== null : receiving),
     reason: replay ? 'Recording is unavailable while replay is active.' : recordingError ||
-      (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null),
+      (!disk.allowed ? 'Recording paused to preserve the configured free-disk reserve.' :
+        (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null)),
     requested: capture,
     revision: captureRevision,
     acknowledged: acknowledged === true,
@@ -1161,7 +1219,8 @@ app.get('/capture/status', (req, res) => {
     recordedSamples: acknowledgement?.recordedSamples || 0,
     startedAt: recording ? captureStartedAt : null,
     elapsedSeconds: recording && captureStartedAt ?
-      Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0
+      Math.max(0, Math.floor((now - captureStartedAt) / 1000)) : 0,
+    storage: disk
   };
   // Header controls only need manual-recording state.  The full automatic-clip
   // ledger can be several megabytes and must not be transferred every four
@@ -1178,6 +1237,8 @@ app.post('/capture/toggle', (req, res) => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input === 'replay' || config.capture.replay?.state === true)
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
+  if (!capture && !recordingLibrary.canRecord().allowed)
+    return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
   if (!capture && (lastFrameAt === null || Date.now() - lastFrameAt >
       Math.max(10000, (config.process.data.cpi || 1) * 3000)))
     return res.status(409).json({error: 'No live radar frames. Start the radar before recording.'});
