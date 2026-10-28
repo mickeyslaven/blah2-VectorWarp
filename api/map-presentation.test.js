@@ -34,6 +34,12 @@ assert.ok(JSON.stringify(reduced).length < JSON.stringify(large).length / 5,
   'compact display transfer must be materially smaller than the processor grid');
 assert.strictEqual(presentMap(large, {max_rows: '32', max_cols: '32'}), reduced,
   'repeated clients reuse the compact representation for one source frame');
+const serialized = JSON.stringify({...large, timestamp: 125});
+const serializedReduced = presentMap(serialized, {max_rows: '32', max_cols: '32'});
+assert.equal(serializedReduced.data.length, 32,
+  'live socket JSON strings must cross the presentation boundary before compaction');
+assert.strictEqual(presentMap(serialized), serialized,
+  'the default full-resolution endpoint preserves its existing wire representation');
 assert.strictEqual(compact, frame);
 
 console.log('Peak-preserving mobile map presentation passed.');
