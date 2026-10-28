@@ -67,11 +67,18 @@ const {validateTruthWindow, verifyCaptureIntegrity, writeAdmissionSidecar,
   fs.writeFileSync(file, body);
   fs.writeFileSync(`${file}.json`, JSON.stringify({schema: 'vectorwarp-kraken-iq-clip-v1',
     clipRevision: 7, windowStart: 0, windowEnd: 10000, samplesPerChannel: 10,
+    epoch: 3, firstEpochSample: 40, endEpochSample: 50,
     dataBytes: body.length, dataSha256: crypto.createHash('sha256').update(body).digest('hex')}));
   const integrity = await verifyCaptureIntegrity(file,
     {revision: 7, windowStart: 0, windowEnd: 10000, samples: 10});
   assert.equal(integrity.valid, true); assert.equal(integrity.data_bytes, body.length);
   assert.equal(integrity.data_sha256_verified_by, 'independent-read-sha256');
+  fs.writeFileSync(`${file}.json`, JSON.stringify({schema: 'vectorwarp-portable-iq-clip-v1',
+    clipRevision: 7, windowStart: 0, windowEnd: 10000, samplesPerChannel: 10,
+    epoch: 3, firstEpochSample: 40, endEpochSample: 50,
+    dataBytes: body.length, dataSha256: crypto.createHash('sha256').update(body).digest('hex')}));
+  assert.equal((await verifyCaptureIntegrity(file,
+    {revision: 7, windowStart: 0, windowEnd: 10000, samples: 10})).valid, true);
   const admission = await writeAdmissionSidecar(file, {state: 'admitted'});
   assert.equal(JSON.parse(fs.readFileSync(admission)).state, 'admitted');
   fs.appendFileSync(file, 'corrupt');

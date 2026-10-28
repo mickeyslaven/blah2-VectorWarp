@@ -542,6 +542,15 @@ try
   Capture *capture = new Capture(type, fs, fc, path);
   if (state) capture->set_replay(loop, replayFile, replayFormat,
     legacyReplayBlockSamples, replayProvenanceMode);
+  if (!state && tree["capture"].has_child("aircraft_clips")) {
+    bool enabled = false;
+    double preSeconds = 0, postSeconds = 0;
+    auto clips = tree["capture"]["aircraft_clips"];
+    if (clips.has_child("enabled")) clips["enabled"] >> enabled;
+    if (clips.has_child("pre_seconds")) clips["pre_seconds"] >> preSeconds;
+    if (clips.has_child("post_seconds")) clips["post_seconds"] >> postSeconds;
+    capture->configure_aircraft_clips(enabled, preSeconds, postSeconds);
+  }
 
   // Keep one bounded capture queue per coherent input.
   double tCpi, tBuffer;

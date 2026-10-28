@@ -45,6 +45,8 @@ private:
   uint64_t recordingRequestId = 0;
   uint64_t unsupportedClipRevision = 0;
   std::string unsupportedClipError;
+  bool automaticClips = false;
+  double clipPreSeconds = 0, clipMaximumSeconds = 0;
 
 public:
   struct SamplePosition
@@ -88,6 +90,8 @@ public:
   /// @param path Absolute path to IQ save location.
   /// @return The object.
   Capture(std::string type, uint32_t fs, uint32_t fc, std::string path);
+  void configure_aircraft_clips(bool enabled, double preSeconds,
+    double postSeconds);
 
   /// @brief Implement the capture process.
   /// @param buffer1 Buffer for reference samples.

@@ -120,12 +120,17 @@ async function verifyCaptureIntegrity(filename, expected = {}, io = fs) {
   catch (_) { reasons.push('recording-sidecar-invalid'); }
   if (dataStat && (!dataStat.isFile() || dataStat.size !== metadata?.dataBytes)) reasons.push('recording-size-mismatch');
   if (metadata) {
-    if (metadata.schema !== 'vectorwarp-kraken-iq-clip-v1') reasons.push('recording-sidecar-schema');
+    if (!['vectorwarp-kraken-iq-clip-v1', 'vectorwarp-portable-iq-clip-v1'].includes(metadata.schema))
+      reasons.push('recording-sidecar-schema');
     if (finite(expected.revision) && metadata.clipRevision !== expected.revision) reasons.push('recording-revision-mismatch');
     if (finite(expected.samples) && metadata.samplesPerChannel !== expected.samples) reasons.push('recording-sample-count-mismatch');
     if ((finite(expected.windowStart) && metadata.windowStart !== expected.windowStart) ||
         (finite(expected.windowEnd) && metadata.windowEnd !== expected.windowEnd)) reasons.push('recording-window-mismatch');
     if (!/^[0-9a-f]{64}$/.test(metadata.dataSha256 || '')) reasons.push('recording-sidecar-sha256');
+    if (![metadata.epoch, metadata.firstEpochSample, metadata.endEpochSample]
+      .every(Number.isSafeInteger) || metadata.endEpochSample <= metadata.firstEpochSample ||
+      metadata.endEpochSample - metadata.firstEpochSample !== metadata.samplesPerChannel)
+      reasons.push('recording-sample-provenance-missing');
   }
   let dataSha256 = null, sidecarSha256 = null, dataSha256VerifiedBy = null;
   if (!reasons.length) {

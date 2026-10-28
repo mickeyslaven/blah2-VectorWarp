@@ -3,6 +3,7 @@
 
 #include "HeimdallFrame.h"
 #include "HostArrivalClock.h"
+#include "capture/IqClip.h"
 
 #include <array>
 #include <atomic>
@@ -19,25 +20,6 @@
 
 namespace blah2
 {
-struct IqClipRequest
-{
-  uint64_t revision = 0;
-  int64_t requestedEventTimeMs = 0;
-  int64_t windowStartMs = 0;
-  int64_t windowEndMs = 0;
-  std::vector<std::string> eventIds;
-  std::vector<std::string> passIds;
-};
-
-struct IqClipStatus
-{
-  uint64_t revision = 0;
-  bool terminal = false;
-  std::string file;
-  std::string error;
-  uint64_t samples = 0;
-};
-
 // Keeps compact, raw Heimdall frames on the receive side and performs all
 // filesystem work on a bounded background queue. Ingress never waits for the
 // queue mutex: contention is an explicit clip failure and starts a new epoch.

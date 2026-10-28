@@ -15,6 +15,7 @@
 #include <mutex>
 #include <deque>
 #include "Recording.h"
+#include "PortableClipRecorder.h"
 #include "data/IqData.h"
 
 class Source
@@ -65,6 +66,7 @@ private:
   std::vector<bool> channelStarted;
   SampleTimePosition recordingStartPosition;
   std::vector<std::string> recordingDiscontinuities;
+  std::unique_ptr<blah2::PortableClipRecorder> portableClipRecorder;
   std::string open_file_locked(const SampleTimePosition* startPosition = nullptr);
   void record_block_locked(const blah2::IqBlock& samples,
     const SampleTimePosition* startPosition);
@@ -119,8 +121,12 @@ public:
   };
   bool is_recording() const { return recordingActive.load(); }
   bool recording_wants_samples() const {
-    return recordingActive.load() || recordingResumePending.load();
+    return recordingActive.load() || recordingResumePending.load() ||
+      bool(portableClipRecorder);
   }
+  void configure_portable_clips(double preSeconds, double maximumClipSeconds);
+  virtual void request_clip(const blah2::IqClipRequest& request);
+  virtual blah2::IqClipStatus clip_status() const;
   RecordingStatus recording_status() const;
   uint64_t processing_epoch() const { return processingEpoch.load(std::memory_order_acquire); }
   // Preserve a partial file for diagnosis, but never mark it complete after a

@@ -1,5 +1,6 @@
 add_executable(testRecording ${PROJECT_ROOT}/test/recording/TestRecording.cpp
   ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
   ${PROJECT_ROOT}/src/capture/Replay.cpp
   ${PROJECT_ROOT}/src/capture/Source.cpp
   ${PROJECT_ROOT}/src/data/IqData.cpp
@@ -24,7 +25,8 @@ if(TARGET blah2CaptureCore)
 else()
   # The standalone recording checks intentionally have no receiver modules.
   target_sources(testKrakenStream PRIVATE ${PROJECT_ROOT}/src/capture/Source.cpp
-    ${PROJECT_ROOT}/src/capture/Recording.cpp ${PROJECT_ROOT}/src/data/IqData.cpp
+    ${PROJECT_ROOT}/src/capture/Recording.cpp ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
+    ${PROJECT_ROOT}/src/data/IqData.cpp
     ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
 endif()
 add_test(NAME krakenSocketCapture COMMAND testKrakenStream)
@@ -41,6 +43,18 @@ target_include_directories(testKrakenClipRecorder PRIVATE ${PROJECT_ROOT}/src)
 target_link_libraries(testKrakenClipRecorder PRIVATE Threads::Threads blah2RapidJson)
 add_test(NAME krakenBoundedClipRecorder COMMAND testKrakenClipRecorder)
 set_tests_properties(krakenBoundedClipRecorder PROPERTIES TIMEOUT 30)
+
+add_executable(testPortableClipRecorder
+  ${PROJECT_ROOT}/test/capture/PortableClipRecorderFixture.cpp
+  ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
+  ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
+target_compile_features(testPortableClipRecorder PRIVATE cxx_std_17)
+target_compile_options(testPortableClipRecorder PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(testPortableClipRecorder PRIVATE ${PROJECT_ROOT}/src)
+target_link_libraries(testPortableClipRecorder PRIVATE Threads::Threads blah2RapidJson)
+add_test(NAME portableBoundedClipRecorder COMMAND testPortableClipRecorder)
+set_tests_properties(portableBoundedClipRecorder PROPERTIES TIMEOUT 30)
 
 # Getter coercion checks use a fake device and require no UHD SDK or radio.
 add_executable(testUsrpReadback ${PROJECT_ROOT}/test/capture/UsrpReadbackFixture.cpp)
@@ -63,6 +77,7 @@ add_executable(testUsrpIngress ${PROJECT_ROOT}/test/capture/UsrpIngressFixture.c
   ${PROJECT_ROOT}/src/capture/usrp/Usrp.cpp
   ${PROJECT_ROOT}/src/capture/Source.cpp
   ${PROJECT_ROOT}/src/capture/Recording.cpp
+  ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
   ${PROJECT_ROOT}/src/data/IqData.cpp
   ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
 target_compile_features(testUsrpIngress PRIVATE cxx_std_17)
@@ -92,6 +107,7 @@ if(BLAH2_ENABLE_RSPDUO)
     ${PROJECT_ROOT}/src/capture/rspduo/RspDuo.cpp
     ${PROJECT_ROOT}/src/capture/Source.cpp
     ${PROJECT_ROOT}/src/capture/Recording.cpp
+    ${PROJECT_ROOT}/src/capture/PortableClipRecorder.cpp
     ${PROJECT_ROOT}/src/data/IqData.cpp
     ${PROJECT_ROOT}/src/capture/kraken/HeimdallFrame.cpp)
   target_compile_features(testRspDuoFailures PRIVATE cxx_std_17)

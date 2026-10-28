@@ -27,6 +27,20 @@ Capture::Capture(std::string _type, uint32_t _fs, uint32_t _fc, std::string _pat
   saveIq = false;
 }
 
+void Capture::configure_aircraft_clips(bool enabled, double preSeconds,
+    double postSeconds) {
+  if (replay || !enabled) return;
+  if (!std::isfinite(preSeconds) || !std::isfinite(postSeconds) ||
+      preSeconds < 0 || postSeconds < 0 || preSeconds + postSeconds <= 0 ||
+      preSeconds + postSeconds > 10)
+    throw std::invalid_argument("Invalid capture.aircraft_clips duration");
+  automaticClips = true;
+  // Queue coalescing may legally expand either side of the configured base
+  // window up to the native ten-second cap.
+  clipPreSeconds = 10;
+  clipMaximumSeconds = 10;
+}
+
 Capture::SamplePosition Capture::live_sample_position() const
 {
   if (replay) {
@@ -94,6 +108,8 @@ void Capture::process(const std::vector<IqData *>& buffers,
     try {
       device = factory_source(type, config, buffers.size());
       if (!device) throw std::runtime_error("Capture backend is unavailable in this build");
+      if (automaticClips && type != "Kraken")
+        device->configure_portable_clips(clipPreSeconds, clipMaximumSeconds);
       if (pairedCpiQueue) {
         if (auto* paired = dynamic_cast<PairedCpiSource*>(device.get())) {
           paired->set_paired_cpi_queue(pairedCpiQueue);
@@ -166,12 +182,12 @@ void Capture::process(const std::vector<IqData *>& buffers,
         unsupportedClipError = "Invalid clip request from capture API";
         return;
       }
-      if (auto* kraken = dynamic_cast<Kraken*>(device.get())) {
-        kraken->request_clip(value);
-      } else {
+      if (automaticClips)
+        device->request_clip(value);
+      else {
         std::lock_guard<std::mutex> lock(statusMutex);
         unsupportedClipRevision = value.revision;
-        unsupportedClipError = "Bounded IQ clips currently require live Kraken input";
+        unsupportedClipError = "Automatic IQ clips are disabled";
       }
     };
     while (!stopping.load()) {
@@ -326,9 +342,8 @@ std::string Capture::status_json() const {
   document.AddMember("recordedSamples",recording.samples,a);
   document.AddMember("recordingRequestId",recordingRequestId,a);
   blah2::IqClipStatus clip;
-  if (auto* kraken = dynamic_cast<Kraken*>(device.get()))
-    clip = kraken->clip_status();
-  else if (unsupportedClipRevision)
+  if (device) clip = device->clip_status();
+  if (!clip.revision && unsupportedClipRevision)
     clip = {unsupportedClipRevision, true, {}, unsupportedClipError, 0};
   if (clip.terminal && clip.revision) {
     document.AddMember("clipRevision", clip.revision, a);

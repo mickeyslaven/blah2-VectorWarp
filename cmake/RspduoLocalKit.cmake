@@ -7,7 +7,8 @@ if(BLAH2_LOCAL_BUILD_RSPDUO)
   endif()
   set(BLAH2_RSPDUO_KIT_SOURCES
     src/capture/ReceiverFactory.cpp src/capture/ReceiverModule.h
-    src/capture/Source.h src/capture/Recording.h src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
+    src/capture/Source.h src/capture/Recording.h src/capture/IqClip.h
+    src/capture/PortableClipRecorder.h src/capture/PairedCpiQueue.h src/capture/PairedCpiSource.h
     src/capture/kraken/HeimdallFrame.h src/data/IqData.h
     src/capture/rspduo/RspDuo.cpp src/capture/rspduo/RspDuo.h
     src/capture/rspduo/SampleSequence.h src/capture/rspduo/SdkSampleClock.h
@@ -23,7 +24,8 @@ if(BLAH2_LOCAL_BUILD_RSPDUO)
   set(kit_identity "local-rspduo-v2|${CMAKE_CXX_COMPILER_ID}|${BLAH2_RECEIVER_COHORT}|${BLAH2_RSPDUO_KIT_FLAGS}|${BLAH2_RSPDUO_COMPILER_TARGET}")
   # Core implementation changes also invalidate a previously built adapter.
   foreach(source ${BLAH2_RSPDUO_KIT_SOURCES}
-      src/capture/Source.cpp src/capture/Recording.cpp
+      src/capture/Source.cpp src/capture/Recording.cpp src/capture/PortableClipRecorder.cpp
+      src/capture/Sha256.h
       src/capture/kraken/HeimdallFrame.cpp src/data/IqData.cpp)
     file(SHA256 "${PROJECT_ROOT}/${source}" source_hash)
     string(APPEND kit_identity "|${source}:${source_hash}")
