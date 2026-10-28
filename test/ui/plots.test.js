@@ -33,6 +33,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(mobile.yTitle, 'Hz');
       assert.equal(mobile.colorbar.title.text, 'dB');
       assert.ok(mobile.colorbar.thickness < desktop.colorbar.thickness);
+      assert.equal(mobile.showScale, false,
+        'Phone layout must reserve the narrow viewport for radar data, not a color scale');
+      assert.equal(desktop.showScale, true);
     }
     if (kind === 'spectrum') {
       const fallback = context.spectrumColorRange([[NaN, Infinity]]);
