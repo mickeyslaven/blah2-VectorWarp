@@ -124,9 +124,10 @@ var adsbPending = false;
 var displayedMapTimestamp = null;
 var detectionFollowupTimer = null;
 
-function currentAdsbOverlay(enabled) {
+function currentAdsbOverlay(enabled, cpiSeconds) {
   if (!enabled) return null;
-  const interval = typeof window !== 'undefined' && window.innerWidth <= 1024 ? 5000 : 1000;
+  const interval = Number.isFinite(cpiSeconds) && cpiSeconds > 0 ?
+    Math.max(16, cpiSeconds * 1000) : 1000;
   if (!adsbPending && Date.now() - adsbReadAt >= interval) {
     adsbPending = true;
     adsbReadAt = Date.now();
@@ -186,7 +187,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
   adsb = {delay: [], doppler: [], flight: []};
-  const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true);
+  const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
+    runningConfig.process?.data?.cpi);
   if (data_adsb) {
     for (const aircraft of Object.values(data_adsb)) {
       if (aircraft && 'doppler' in aircraft) {

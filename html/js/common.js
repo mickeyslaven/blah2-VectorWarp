@@ -670,7 +670,9 @@ function startRadarPlot(url, render) {
   // A full heatmap is materially heavier than a status card.  Tablets and
   // phones should display fresh radar data without continuously parsing and
   // repainting faster than their browser can keep up.
-  const minimumIntervalMs = typeof window !== 'undefined' && window.innerWidth <= 1024 ? 1000 : 100;
+  // The compact map keeps mobile rendering bounded; cadence should still
+  // follow the running CPI instead of imposing a separate one-second clock.
+  const minimumIntervalMs = 100;
   return startRadarUpdates(async () => {
     const data = await fetchRadarJson(url);
     if (!data || typeof data !== 'object' || Array.isArray(data)) return;
