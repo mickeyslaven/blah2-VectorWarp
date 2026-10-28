@@ -619,7 +619,10 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
       window.blah2FrameError = error?.message || String(error);
     } finally {
       // Account for request/render time; never run overlapping updates or queue
-      // missed frames. Check for restarted config even during very long CPIs.
+      // missed frames. If a slow network/render ran past the deadline, start a
+      // fresh interval now instead of issuing catch-up requests back-to-back.
+      // Check for restarted config even during very long CPIs.
+      if (interval !== null && due <= Date.now()) due = Date.now() + interval;
       if (!stopped) timer = window.setTimeout(tick,
         Math.max(16, Math.min(2000, due - Date.now())));
     }

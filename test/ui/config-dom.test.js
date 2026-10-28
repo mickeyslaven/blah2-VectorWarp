@@ -68,6 +68,15 @@ function change(input, value, event = 'input') {
 (async () => {
   try {
     await window.renderConfiguration();
+    const aircraftClipSettings = saved.capture.aircraft_clips;
+    delete saved.capture.aircraft_clips;
+    await window.renderConfiguration();
+    assert.doesNotMatch(window.document.body.textContent, /Settings unavailable/,
+      'A newer UI must remain usable with a backend predating automatic aircraft clips');
+    assert.match(window.document.querySelector('#settings-panel-save').textContent,
+      /Automatic aircraft clips require a backend version/);
+    saved.capture.aircraft_clips = aircraftClipSettings;
+    await window.renderConfiguration();
     await window.validateActiveConfiguration();
     const optionalSerial = query('capture.device.serial').querySelector('input');
     assert.equal(optionalSerial.value, '');

@@ -88,7 +88,9 @@ function clockedPage(cpi = .5) {
   release();
   await slow.settle();
   await slow.advance(16);
-  assert.equal(calls, 2, 'Resume with newest data, without replaying missed ticks');
+  assert.equal(calls, 1, 'A slow request must not trigger an immediate catch-up burst');
+  await slow.advance(84);
+  assert.equal(calls, 2, 'Resume with newest data on the next regular interval');
   slowLoop.stop();
   release();
   await slow.advance(5000);

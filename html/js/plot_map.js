@@ -47,7 +47,7 @@ function mapPresentationUrl(path, width) {
   // The native 601x511 JSON map is about 1.8 MB per frame.  A peak-preserving
   // server presentation keeps tablet/phone transfer and Plotly work bounded
   // without changing detector processing or the underlying radar grid.
-  return `${path}${separator}max_rows=240&max_cols=200`;
+  return `${path}${separator}max_rows=128&max_cols=128`;
 }
 
 // setup API

@@ -1774,11 +1774,16 @@ function renderEditor() {
       if (upstream) panel.appendChild(upstream);
     }
     if (key === 'save') {
-      panel.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
-        ['capture']));
       const note = document.createElement('p');
       note.className = 'config-capability-note';
-      note.textContent = 'Start and stop manual raw-IQ recordings from Live radar. Automatic clips above run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
+      if (activeConfig.capture?.aircraft_clips &&
+          typeof activeConfig.capture.aircraft_clips === 'object') {
+        panel.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
+          ['capture']));
+        note.textContent = 'Start and stop manual raw-IQ recordings from Live radar. Automatic clips above run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
+      } else {
+        note.textContent = 'Manual raw-IQ recording is available from Live radar. Automatic aircraft clips require a backend version that advertises those settings.';
+      }
       panel.appendChild(note);
     }
     panels.appendChild(panel);

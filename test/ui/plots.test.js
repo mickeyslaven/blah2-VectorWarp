@@ -37,7 +37,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
         'Phone layout must reserve the narrow viewport for radar data, not a color scale');
       assert.equal(desktop.showScale, true);
       assert.equal(context.mapPresentationUrl('/api/map', 768),
-        '/api/map?max_rows=240&max_cols=200',
+        '/api/map?max_rows=128&max_cols=128',
         'Tablets request the bounded peak-preserving map representation');
       assert.equal(context.mapPresentationUrl('/api/map', 1280), '/api/map',
         'Desktop keeps the full-resolution map');
