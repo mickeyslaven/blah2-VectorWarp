@@ -239,6 +239,8 @@ function validateConfig(config, baseline = null, options = {}) {
   };
   inspectFields(root);
   const capture = requireObject(root.capture, 'capture');
+  const aircraftClips = capture.aircraft_clips === undefined ? null :
+    requireObject(capture.aircraft_clips, 'capture.aircraft_clips');
   const device = requireObject(capture.device, 'capture.device');
   const replay = requireObject(capture.replay, 'capture.replay');
   const processConfig = requireObject(root.process, 'process');
@@ -263,6 +265,14 @@ function validateConfig(config, baseline = null, options = {}) {
 
   number(capture.fs, 'capture.fs', {integer: true, min: 1, max: UINT32_MAX});
   number(capture.fc, 'capture.fc', {integer: true, min: 1, max: UINT32_MAX});
+  if (aircraftClips) {
+    boolean(aircraftClips.enabled, 'capture.aircraft_clips.enabled');
+    number(aircraftClips.pre_seconds, 'capture.aircraft_clips.pre_seconds', {min: 0, max: 10});
+    number(aircraftClips.post_seconds, 'capture.aircraft_clips.post_seconds', {min: 0, max: 10});
+    if (Number.isFinite(aircraftClips.pre_seconds) && Number.isFinite(aircraftClips.post_seconds) &&
+        aircraftClips.pre_seconds + aircraftClips.post_seconds > 10)
+      errors.push('capture.aircraft_clips pre_seconds plus post_seconds cannot exceed 10 seconds');
+  }
   string(device.type, 'capture.device.type');
   const profile = DEVICE_PROFILES.find(item => item.type === device.type);
   if (!profile) errors.push('capture.device.type is not supported');

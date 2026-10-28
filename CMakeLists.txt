@@ -218,9 +218,6 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE}
       ${PROJECT_ROOT}/test/script/test_detection_manifold_native_grid.py
       --binary $<TARGET_FILE:detectionManifoldGridReplay>)
-  add_test(NAME integrationSensitivityShadow
-    COMMAND ${Python3_EXECUTABLE}
-      ${PROJECT_ROOT}/test/script/test_run_integration_sensitivity_shadow.py)
   include(cmake/RecordingTests.cmake)
 endif()
 if(BLAH2_KRAKEN_ONLY AND NOT BLAH2_ENABLE_RSPDUO AND

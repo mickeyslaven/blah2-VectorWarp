@@ -38,6 +38,8 @@ assert.equal(adsbPublicSource('adsb-lol', {location: {rx: {latitude: 40.5, longi
   'exchange:https://api.adsb.lol/v2/point/40.5/-80.1/60');
 assert.equal(metadata(['capture', 'device', 'serial'], 'RspDuo')[0], 'RSPduo serial');
 assert.equal(metadata(['capture', 'device', 'serial'], 'HackRF')[0], 'HackRF serial numbers');
+assert.equal(metadata(['capture', 'aircraft_clips', 'enabled'])[0],
+  'Record eligible aircraft automatically');
 assert.equal(metadata(['process', 'clutter', 'followAmbiguity'])[0], 'Follow radar delay range');
 const captureSource = fs.readFileSync(path.join(
   __dirname, '..', '..', 'src', 'capture', 'Capture.cpp'), 'utf8');

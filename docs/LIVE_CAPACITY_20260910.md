@@ -131,17 +131,16 @@ sizing. Each needs numerical regression checks and its own matched ablation.
 
 ## Evidence and reproduction
 
-- [Live configurations and summaries](benchmarks/20260910/live-strix.json),
-  [300 native per-CPI timings](benchmarks/20260910/live-per-cpi.csv).
-- [Paced configurations, binary hashes and 24 summaries](benchmarks/20260910/paced-comparison.json),
-  [432 paced per-CPI timings](benchmarks/20260910/paced-per-cpi.csv).
+- [Live configurations and summaries](benchmarks/20260910/live-strix.json).
+- [Paced configurations, binary hashes and 24 summaries](benchmarks/20260910/paced-comparison.json).
 - [Benchmark build and pacing instructions](../bench/README.md).
 - Native base source: `f1345ba84a3f0da5efa505747dc884ae27b2c5b6` plus the
   signed-delay validation/extraction patch, whose SHA-256 is in the capsules.
 - Recorded window SHA-256:
   `89bfe1c338995167946b7c367b80480143b60a515d9eabde39380bcc48e03a5d`.
 
-Full machine-local commands, configurations, logs, temperatures and cleanup
-receipts are retained under `/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB`.
+Raw per-CPI timings, machine-local commands, configurations, logs, temperatures
+and cleanup receipts are retained outside the source tree under
+`/var/tmp/vectorwarp-strix-stock-20260911.2iUvmB`.
 The preliminary guarded trial is separately retained under
 `/var/tmp/vectorwarp-strix-live-20260911.7ZcGVA`.

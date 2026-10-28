@@ -16,19 +16,20 @@ const event = (number, observedAt) => ({id: `eligibility:event-${number}`,
 assert.throws(() => new CaptureTriggerQueue({preSeconds: 6, postSeconds: 5}),
   /maximum clip duration/);
 assert.deepEqual(optionsFromEnvironment({}),
-  {enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  {enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
     periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PRE_SECONDS: '2',
-  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8'}),
+  BLAH2_CAPTURE_TRIGGER_POST_SECONDS: '8', BLAH2_CAPTURE_TRIGGER_ENABLED: '1'}),
 {enabled: true, preSeconds: 2, postSeconds: 8, maxClipSeconds: 10,
   periodicIntervalSeconds: 0, periodicMaxSnapshots: 0});
 assert.deepEqual(optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '10',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '3'}),
-{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+{enabled: false, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
   periodicIntervalSeconds: 10, periodicMaxSnapshots: 3});
 assert.deepEqual(optionsFromEnvironment({}, {capture: {periodic_snapshots:
-  {interval_seconds: 15, max_snapshots: 2}}}),
-{enabled: true, preSeconds: 2, postSeconds: 3, maxClipSeconds: 10,
+  {interval_seconds: 15, max_snapshots: 2}, aircraft_clips:
+  {enabled: true, pre_seconds: 1, post_seconds: 4}}}),
+{enabled: true, preSeconds: 1, postSeconds: 4, maxClipSeconds: 10,
   periodicIntervalSeconds: 15, periodicMaxSnapshots: 2});
 assert.throws(() => optionsFromEnvironment({BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS: '9',
   BLAH2_CAPTURE_TRIGGER_PERIODIC_MAX_SNAPSHOTS: '1'}), /at least 10/);

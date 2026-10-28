@@ -36,6 +36,8 @@ const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
 const WINDOWS = Object.freeze({hour: 3600000, day: 86400000,
   week: 7 * 86400000, lifetime: Infinity});
 const SLANT_RANGE_EDGES_KM = Object.freeze([0, 10, 20, 30, 40, 50, 75, 100, 150, 250, 500]);
+const ELEVATION_EDGES_DEG = Object.freeze([0, 2, 5, 10, 15, 30, 90]);
+const AZIMUTH_EDGES_DEG = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315, 360]);
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const normalizeHex = value => typeof value === 'string' && /^[0-9a-f]{6}$/i.test(value.trim()) ?
   value.trim().toLowerCase() : null;
@@ -69,6 +71,20 @@ function fixedBand(edges, value) {
       return {id: `${edges[index]}-${edges[index + 1]}`,
         minimum: edges[index], maximum: edges[index + 1]};
   return {id: `${edges.at(-1)}+`, minimum: edges.at(-1), maximum: null};
+}
+
+function azimuthBand(value) {
+  return fixedBand(AZIMUTH_EDGES_DEG, finite(value) ? ((value % 360) + 360) % 360 : value);
+}
+
+function adsbQuality(config) {
+  const configured = Array.isArray(config.truth?.adsb?.sources) && config.truth.adsb.sources.length ?
+    config.truth.adsb.sources : [config.truth?.adsb?.tar1090].filter(Boolean);
+  const online = configured.some(source => typeof source === 'string' && source.startsWith('exchange:'));
+  return {configured_sources: configured.length, online_source_enabled: online,
+    local_only: config.truth?.adsb?.enabled === true && !online,
+    warning: config.truth?.adsb?.enabled === true && !online ?
+      'Local-only ADS-B can add feed and host-arrival timing uncertainty to pass statistics. Enable an online ADS-B source for independent coverage and observation-time cross-checking; this does not replace exact SDR event time.' : null};
 }
 
 function limits(config) {
@@ -198,7 +214,8 @@ function emptyPass(hex, flight, at, key) {
     firstTruth: null, lastTruth: null, truthHistory: [], cpiAudit: [],
     firstDetectionAt: null, firstTrackAt: null,
     detectionTimestamps: [], trackTimestamps: [], sampledBuckets: [],
-    delayBands: {}, slantRangeBands: {}, geometryBands: {}};
+    delayBands: {}, slantRangeBands: {}, elevationBands: {}, azimuthBands: {},
+    azimuthElevationBands: {}, geometryBands: {}};
 }
 
 function summarizeBands(rows, field) {
@@ -894,6 +911,34 @@ class EvidenceStatistics {
       if (detectedAssociation) band.detectedFrames += 1;
       if (trackedAssociation) band.trackedFrames += 1;
     }
+    const elevationDescriptor = fixedBand(ELEVATION_EDGES_DEG, pass.lastTruth?.elevation_deg);
+    if (elevationDescriptor) {
+      pass.elevationBands ||= {};
+      const band = pass.elevationBands[elevationDescriptor.id] ||= {...elevationDescriptor,
+        eligibleFrames: 0, detectedFrames: 0, trackedFrames: 0};
+      band.eligibleFrames += 1;
+      if (detectedAssociation) band.detectedFrames += 1;
+      if (trackedAssociation) band.trackedFrames += 1;
+    }
+    const azimuthDescriptor = azimuthBand(pass.lastTruth?.bearing_deg_true);
+    if (azimuthDescriptor) {
+      pass.azimuthBands ||= {};
+      const band = pass.azimuthBands[azimuthDescriptor.id] ||= {...azimuthDescriptor,
+        eligibleFrames: 0, detectedFrames: 0, trackedFrames: 0};
+      band.eligibleFrames += 1;
+      if (detectedAssociation) band.detectedFrames += 1;
+      if (trackedAssociation) band.trackedFrames += 1;
+    }
+    if (azimuthDescriptor && elevationDescriptor) {
+      pass.azimuthElevationBands ||= {};
+      const id = `${azimuthDescriptor.id}|${elevationDescriptor.id}`;
+      const band = pass.azimuthElevationBands[id] ||= {
+        azimuth_band: azimuthDescriptor.id, elevation_band: elevationDescriptor.id,
+        eligibleFrames: 0, detectedFrames: 0, trackedFrames: 0};
+      band.eligibleFrames += 1;
+      if (detectedAssociation) band.detectedFrames += 1;
+      if (trackedAssociation) band.trackedFrames += 1;
+    }
     if (!pass.eligibilityEventId) this.emitEligibility(pass, prediction, timestamp);
     event = this.state.eligibilityEvents.find(item => item.id === pass.eligibilityEventId);
     if (event) {
@@ -1177,6 +1222,14 @@ class EvidenceStatistics {
       receiver_slant_range_strata: {definition: 'receiver_to_aircraft_3d_slant_range_km',
         edges_km: SLANT_RANGE_EDGES_KM, finalized_passes_only: true,
         bands: summarizeBands(rows, 'slantRangeBands')},
+      elevation_strata: {definition: 'receiver_geometric_elevation_deg',
+        edges_deg: ELEVATION_EDGES_DEG, finalized_passes_only: true,
+        bands: summarizeBands(rows, 'elevationBands')},
+      azimuth_strata: {definition: 'receiver_true_azimuth_deg',
+        edges_deg: AZIMUTH_EDGES_DEG, finalized_passes_only: true,
+        bands: summarizeBands(rows, 'azimuthBands')},
+      azimuth_elevation_strata: {definition: 'receiver_true_azimuth_x_geometric_elevation',
+        finalized_passes_only: true, bands: summarizeBands(rows, 'azimuthElevationBands')},
       eligible_aircraft: new Set(eligible.map(pass => pass.hex)).size,
       opportunity_frames: observed.reduce((sum, pass) => sum + pass.frames, 0),
       eligible_frames: observed.reduce((sum, pass) => sum + pass.eligibleFrames, 0),
@@ -1273,6 +1326,7 @@ class EvidenceStatistics {
         (!decisionGrade ? 'Authoritative scoring is waiting for an exact-timed CPI.' : null));
     return {schema: 'vectorwarp-live-aircraft-scorecard-v1', updated_at: this.state.updatedAt,
       timing_policy: this.timingPolicy, decision_grade: decisionGrade, warning,
+      adsb_quality: adsbQuality(this.config),
       collecting: this.config.truth?.adsb?.enabled === true && Boolean(this.limits),
       error: this.state.error, config_epoch: this.configEpoch,
       receiver_epoch: this.receiverEpoch, site_epoch: this.key,
@@ -1334,7 +1388,8 @@ function createEvidenceStatisticsLanes(config, adsbSource, {exact = {}, operatio
 
 module.exports = {SPEED_OF_LIGHT_KM_S, MAX_ELIGIBILITY_EVENTS, MAX_EVENT_TRUTH_SAMPLES,
   TRIGGER_EVENT_TRUTH_SAMPLES, TRUTH_SAMPLE_MS, MAX_ACTIVE_CAPTURE_TIMESTAMPS, MAX_CAPTURE_ASSOCIATIONS,
-  limits, associationGates, assignments, delayBandEdges, delayBand,
+  limits, associationGates, assignments, delayBandEdges, delayBand, adsbQuality,
+  ELEVATION_EDGES_DEG, AZIMUTH_EDGES_DEG,
   primaryGeometryBand, standardizedComparison,
   siteKey, siteDescriptor, EvidenceStatistics,
   createEvidenceStatistics, createEvidenceStatisticsLanes};

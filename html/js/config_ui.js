@@ -11,6 +11,10 @@ const CONFIG_META = {
   'save': ['Recording', 'Files and recording folder'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
   'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
+  'capture.aircraft_clips': ['Automatic aircraft clips', 'Optionally save bounded raw-IQ clips when ADS-B identifies an eligible aircraft pass.'],
+  'capture.aircraft_clips.enabled': ['Record eligible aircraft automatically', 'Off by default. Requires ADS-B and a live Kraken receiver; manual recording is unaffected.'],
+  'capture.aircraft_clips.pre_seconds': ['Seconds before aircraft event', 'Raw-IQ pre-roll retained before the eligible pass event.'],
+  'capture.aircraft_clips.post_seconds': ['Seconds after aircraft event', 'Raw-IQ post-roll. Pre-roll plus post-roll cannot exceed 10 seconds.'],
   'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
   'capture.device.type': ['Receiver type', 'Choose your SDR.'],
   'capture.device.array_geometry': ['Antenna layout', 'Record your layout; this does not configure the receiver.'],
@@ -796,6 +800,11 @@ function adsbSourcesInput(legacyValue, path) {
     intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
     wrapper.appendChild(intro);
 
+    const timingWarning = document.createElement('p');
+    timingWarning.className = 'adsb-source-note warning';
+    timingWarning.textContent = 'Using only local ADS-B can add feed and host-arrival timing uncertainty to pass statistics. Add an online source for independent coverage and observation-time cross-checking; exact radar event time is still required for decision-grade scoring.';
+    wrapper.appendChild(timingWarning);
+
     const localHeading = document.createElement('strong');
     localHeading.textContent = 'Local receivers';
     wrapper.appendChild(localHeading);
@@ -1117,7 +1126,7 @@ function group(key, value, path, topLevel = false) {
   if (dotted === 'capture' && value.device?.type !== undefined)
     content.appendChild(field(value.device.type, ['capture', 'device', 'type']));
   const order = {
-    capture: ['fc', 'fs', 'device', 'replay'],
+    capture: ['fc', 'fs', 'device', 'aircraft_clips', 'replay'],
     'capture.device': ['channel_count', 'heimdall', 'surveillance_channels'],
     process: ['data', 'ambiguity', 'clutter', 'detection', 'tracker', 'performance'],
     'process.reference_synthesis': ['mode', 'channels']

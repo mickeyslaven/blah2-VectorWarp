@@ -329,6 +329,7 @@ class HomepageTests(unittest.TestCase):
             if selected:
                 self.assertIn(f"{row['mean_ms']:.1f} ms", page)
                 self.assertIn(f"{row['mean_ms']:.1f} ms", readme)
+
         for variant in ('vectorwarp-cpu', 'vectorwarp-auto'):
             reductions = []
             for row in current:
@@ -338,6 +339,17 @@ class HomepageTests(unittest.TestCase):
                                 item['case'] == row['case'] and item['variant'] == 'regular-blah2')
                 reductions.append(100 * (1 - row['mean_ms'] / upstream['mean_ms']))
             self.assertIn(f'{min(reductions):.1f}–{max(reductions):.1f}%', report)
+
+    def test_benchmark_tree_contains_summaries_not_raw_run_payloads(self):
+        benchmark_root = ROOT / 'docs/benchmarks'
+        forbidden_suffixes = ('.log', '.jsonl', '.frames.csv', '.command.json',
+                              '.geometry.json', '.profile.json', '.summary.json')
+        forbidden_names = {'array-per-cpi.csv', 'live-per-cpi.csv',
+                           'paced-per-cpi.csv', 'per-cpi.csv'}
+        raw = [path.relative_to(ROOT) for path in benchmark_root.rglob('*')
+               if path.is_file() and
+               (path.name.endswith(forbidden_suffixes) or path.name in forbidden_names)]
+        self.assertEqual(raw, [], f'raw benchmark payloads belong in CI/release artifacts: {raw[:8]}')
 
     def test_current_sink_profile_and_historical_boundaries(self):
         report = (ROOT / 'docs/GPU_BENCHMARK_20260911.md').read_text()

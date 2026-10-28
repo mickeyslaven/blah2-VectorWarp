@@ -44,6 +44,19 @@ stream for two minutes. The API reports active and provisionally eligible pass
 counts separately, so a newly appearing aircraft is never temporarily mislabeled
 as out of configuration or missed.
 
+Finalized passes are also broken down by receiver slant range, excess bistatic
+delay, true azimuth, geometric elevation, and a joint azimuth-by-elevation
+matrix. Every cell reports its eligible-pass denominator separately from
+detection and tracking yield so sparse traffic is visible instead of being
+mistaken for a directional conclusion.
+
+ADS-B must be enabled to collect these pass statistics. A local receiver alone
+can add feed and host-arrival timing uncertainty. Enabling an online ADS-B
+source provides an independent coverage and observation-time cross-check, but
+does not replace the radar receiver's exact SDR event time. VectorWarp labels
+local-only statistics with this limitation and keeps inexact timing out of the
+decision-grade scorecard.
+
 Opportunity admission is driven by a bounded, unreferenced one-second ADS-B
 sampler, not by detector output. On the first fresh prediction inside the
 physical delay/Doppler span, `/api/statistics` adds one `pending` eligibility
@@ -58,7 +71,8 @@ single valid opportunity without adding that pass to the three-frame tracking
 denominator. Events persist with the statistics file, are bounded to 10,000 on
 disk, and the API returns the most recent 250.
 
-Each new eligibility event also enters a 64-clip API-side trigger queue with a
+When **Automatic aircraft clips** is explicitly enabled, each new eligibility
+event also enters a 64-clip API-side trigger queue with a
 conservative two-second pre-roll and three-second post-roll request. Physical
 clip windows are hard-capped at ten seconds. Pending windows overlap-coalesce
 only while their union stays within that cap; an extension that would exceed it
@@ -66,7 +80,7 @@ rolls the event into a new clip that covers the event's complete five-second
 window. Each event remains linked to its clip revision. If all 64 slots are
 pending, the new event is retained with an explicit `dropped` state and
 `queue-capacity` failure instead of silently evicting another request.
-`GET /capture/request` and
+The setting is off by default. `GET /capture/request` and
 `GET /capture/status` expose the current request under `clip`, including its
 event/pass IDs, event time, pre/post-roll, window bounds, pending/acknowledged
 state and failure text. The legacy manual `recording` and `revision` fields and
@@ -116,13 +130,11 @@ The persistent file defaults to `evidence-statistics.json` beside the configured
 manifold-recorder corpus. `BLAH2_STATISTICS_PATH` can select another writable
 location.
 
-The default ADS-B-triggered IQ window remains two seconds before and three
-seconds after the eligibility event. Sites doing track-before-detect recovery
-can set `BLAH2_CAPTURE_TRIGGER_PRE_SECONDS` and
-`BLAH2_CAPTURE_TRIGGER_POST_SECONDS`; their sum must fit the native ten-second
-clip limit. A two-second pre-roll plus eight-second post-roll gives an eight-CPI
-bank thirteen fully accumulated decisions instead of three, at twice the
-storage per event. The status endpoint reports the applied bounds.
+The opt-in ADS-B-triggered IQ window defaults to two seconds before and three
+seconds after the eligibility event. Configure it in **Settings → Receiver →
+Automatic aircraft clips**; the sum must fit the native ten-second clip limit.
+Environment overrides remain available for managed installations. The status
+endpoint reports the applied bounds.
 
 ## Bearing evidence
 

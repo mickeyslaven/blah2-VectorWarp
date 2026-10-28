@@ -8,6 +8,9 @@ const {SOURCE_CHOICES} = require('./adsb-discovery');
 const rules = {
   'capture.fs': integer(1, 4294967295),
   'capture.fc': integer(1, 4294967295),
+  'capture.aircraft_clips.enabled': {type: 'boolean', optional: true},
+  'capture.aircraft_clips.pre_seconds': {...numeric(0, 10), optional: true},
+  'capture.aircraft_clips.post_seconds': {...numeric(0, 10), optional: true},
   'capture.device.channel_count': {...integer(2, 8), choices: [2,3,4,5,6,7,8]},
   'capture.device.reference_channel': integer(0, 7),
   'capture.device.heimdall.port': integer(1, 65535),

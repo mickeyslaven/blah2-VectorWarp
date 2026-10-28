@@ -224,13 +224,12 @@ installing Ubuntu packages on Fedora.
 
 ## Data and repeatability
 
-The checked-in [run summaries and profiles](benchmarks/20260910/results.json),
-[individual instrumented CPI timings](benchmarks/20260910/per-cpi.csv) and
-[native processor receipts](benchmarks/20260910/native-timing.json) retain the
-numbers behind these tables, including cold/qualification frames. Summaries
-include the original manifests and source/binary/input hashes. Native receipts
-retain all 20 timing messages, generated configurations and completion status.
-These are two different timing definitions; do not pool them.
+The checked-in [run summaries and profiles](benchmarks/20260910/results.json) and
+[native processor summary](benchmarks/20260910/native-timing.json) retain the
+numbers behind these tables. They include manifests and source/binary/input
+hashes. Raw per-CPI timings and complete native receipts remain with the
+external campaign artifact. These are two different timing definitions; do
+not pool them.
 
 The [benchmark harness](../bench/README.md) documents matched builds and the
 geometry preflight. Full local logs, commands, per-frame detection/track JSON,

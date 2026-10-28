@@ -19,12 +19,13 @@ function optionsFromEnvironment(environment = process.env, config = {}) {
       throw new Error(`${name} must be a non-negative number.`);
     return value;
   };
-  const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', DEFAULT_PRE_SECONDS);
-  const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', DEFAULT_POST_SECONDS);
+  const clips = config.capture?.aircraft_clips || {};
+  const preSeconds = read('BLAH2_CAPTURE_TRIGGER_PRE_SECONDS', clips.pre_seconds ?? DEFAULT_PRE_SECONDS);
+  const postSeconds = read('BLAH2_CAPTURE_TRIGGER_POST_SECONDS', clips.post_seconds ?? DEFAULT_POST_SECONDS);
   const enabledValue = environment.BLAH2_CAPTURE_TRIGGER_ENABLED;
   if (enabledValue !== undefined && !['0', '1'].includes(enabledValue))
     throw new Error('BLAH2_CAPTURE_TRIGGER_ENABLED must be 0 or 1.');
-  const enabled = enabledValue !== '0';
+  const enabled = enabledValue === undefined ? clips.enabled === true : enabledValue === '1';
   const periodic = config.capture?.periodic_snapshots || {};
   const periodicIntervalSeconds = read('BLAH2_CAPTURE_TRIGGER_PERIODIC_INTERVAL_SECONDS',
     periodic.interval_seconds ?? 0);

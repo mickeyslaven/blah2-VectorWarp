@@ -3,6 +3,7 @@ capture:
   # KrakenSDR Suite V2 currently streams at 2.4 MS/s.
   fs: 2400000
   fc: 204640000
+  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3}
   device:
     type: "Kraken"
     # Standard KrakenSDR Suite V2 Heimdall data interface.

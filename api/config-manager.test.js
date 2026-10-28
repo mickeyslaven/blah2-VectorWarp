@@ -608,4 +608,8 @@ const invalidProvenance = clone(sixChannel);
 invalidProvenance.capture.replay.provenance = 'best-effort';
 assert.equal(validateConfig(invalidProvenance).valid, false,
   'Replay must not silently invent an unqualified provenance mode');
+const excessiveAircraftClip = clone(sixChannel);
+excessiveAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 6, post_seconds: 5};
+assert.equal(validateConfig(excessiveAircraftClip).valid, false,
+  'Automatic aircraft IQ clips must fit the bounded ten-second recorder');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);

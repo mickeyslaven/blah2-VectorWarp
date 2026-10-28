@@ -3,6 +3,7 @@
 capture:
   fs: 2000000
   fc: 551000000
+  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3}
   device:
     type: "RspDuo"
     # Leave blank only when exactly one RSPduo is connected.

@@ -16,6 +16,7 @@ function setupDefaults() {
     '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
   return {
     capture: {fs: 2000000, fc: 204640000,
+      aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3},
       // Never infer hardware on a fresh install. An invalid marker keeps the
       // processor fail-closed while still allowing the API and Settings UI to
       // load the canonical configuration and receiver profiles.
@@ -144,7 +145,8 @@ function readConfig(filename) {
   };
   const merge = (base, current, prefix = '') => {
     if (current === undefined) {
-      if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.'))
+      if (prefix !== 'process.performance' && !prefix.startsWith('process.performance.') &&
+          prefix !== 'capture.aircraft_clips' && !prefix.startsWith('capture.aircraft_clips.'))
         suppliedDefaults.push(prefix);
       return base;
     }

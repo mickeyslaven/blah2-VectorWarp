@@ -51,8 +51,10 @@ clutter, delay–Doppler, detection, tracking and JSON. Startup, file decoding,
 independent validation and waits are outside them. This is not real-time
 acquisition or endurance evidence. No CPU fallback is counted as GPU work.
 
+The source tree retains the readable report plus compact CSV/JSON comparisons.
 Contracts, exact profiles, command/executable hashes, per-frame CSVs and output
-JSONL are included. Reconcile them with Python 3.11 or later:
+JSONL remain in the external campaign artifact. Given that artifact, reconcile
+them with Python 3.11 or later:
 
 ```sh
 python3 docs/benchmarks/20260911-pi-efficiency/summarize_cpu.py docs/benchmarks/20260911-pi-efficiency

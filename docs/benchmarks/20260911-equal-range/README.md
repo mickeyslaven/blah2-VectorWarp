@@ -66,11 +66,12 @@ were 80.875°C, 48°C and 84°C respectively; available RAM stayed above
 
 ## Receipts and reproduction
 
-Each host directory contains the fixed contract, exact profiles and command
-arguments, executable hashes, preflight geometry, every per-frame timing, and
-combined run summaries. `comparison.json` includes actual GPU-frame counts and
-stage timings. NVIDIA and Intel array AUTO returned some delay-Doppler frames
-to CPU after cost selection; those frames remain in the reported results.
+The source tree retains the readable report plus compact CSV/JSON comparisons.
+Fixed contracts, exact profiles and commands, executable hashes, preflight
+geometry and per-frame timings remain in the external campaign artifact.
+`comparison.json` retains actual GPU-frame counts and stage timings. NVIDIA and
+Intel array AUTO returned some delay–Doppler frames to CPU after cost selection;
+those frames remain in the reported results.
 
 `summarize.py DIRECTORY` reconciles the three host directories and regenerates
 the comparison (Python 3.11 or later). `run_equal_range.py` records new runs in a
@@ -82,8 +83,8 @@ The original benchmark harness and source provenance are linked from the
 All 82 timed runs and all three guarded campaigns completed successfully. The
 deliberately unsupported full-range ±40 kHz profile was rejected before timing.
 `check_limit.py` independently verified that exact rejection from both engines
-on all three hosts; its receipts are `limit-acceptance.json`. No failed or unsafe
-processing run was turned into a timing result. The earlier periodic-check
+on all three hosts; its raw receipts remain with the external campaign artifact.
+No failed or unsafe processing run was turned into a timing result. The earlier periodic-check
 campaign remains in Git history and the original local evidence directory;
 these results are new paired runs, not old averages with slow frames removed.
 

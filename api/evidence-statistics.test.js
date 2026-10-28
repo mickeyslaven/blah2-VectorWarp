@@ -374,6 +374,14 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(floorStatus.delay_strata.bands[floorBand.id].detected_passes, 1);
   assert.equal(floorStatus.receiver_slant_range_strata.bands['10-20'].eligible_passes, 1,
     'Scorecard must stratify the denominator by 3-D receiver slant range');
+  assert.equal(floorStatus.elevation_strata.bands['10-15'].eligible_passes, 1,
+    'Scorecard must stratify the denominator by geometric elevation');
+  assert.equal(floorStatus.azimuth_strata.bands['90-135'].detected_passes, 1,
+    'Scorecard must stratify detections by true azimuth');
+  assert.equal(floorStatus.azimuth_elevation_strata.bands['90-135|10-15'].tracked_passes, 0,
+    'Joint angle strata must preserve detection and tracking as separate outcomes');
+  assert.equal(floorStats.liveStatus().adsb_quality.local_only, true);
+  assert.match(floorStats.liveStatus().adsb_quality.warning, /Local-only ADS-B/);
 
   const pass = (band, detected) => ({geometryBands: {[band]: {eligibleFrames: 10}},
     detectedFrames: detected ? 3 : 0, trackedFrames: detected ? 3 : 0});

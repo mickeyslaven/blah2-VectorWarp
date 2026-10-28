@@ -191,11 +191,10 @@ drop-free acquisition. Neither native profile kept up with a 200 ms stream.
 
 ## Data, limitations and next optimization targets
 
-The [evidence capsule](benchmarks/20260910/array-capacity.json) contains all run
-summaries, exact profiles, manifests, source/binary/input hashes, unsupported
-cases and native receipts. [Per-frame timings](benchmarks/20260910/array-per-cpi.csv)
-include cold/qualification frames and the excluded extreme case. Full commands,
-thermal traces and saved detector/tracker outputs remain at
+The [summary capsule](benchmarks/20260910/array-capacity.json) retains the run
+summaries, profiles, manifests, source/binary/input hashes and unsupported
+cases behind these tables. Raw per-frame timings, commands, thermal traces and
+saved detector/tracker outputs remain outside the source tree at
 `/var/tmp/vectorwarp-array-capacity-20260910.LkeiSF`; golden maps and raw IQ
 remain on the NVIDIA host. The native helper hash is
 `5b046433746b8e963a259488aeb2a28e1c492a5f67426b6db65844d36be629cc`.

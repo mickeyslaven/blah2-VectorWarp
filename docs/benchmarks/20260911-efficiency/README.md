@@ -94,9 +94,10 @@ the previous fixed-range campaign. Each binary loads its own sibling GPU module,
 including the prior-build runs. Every command receipt records executable and
 input hashes. This campaign's source preceded its documentation-only updates.
 
-Each host folder contains contracts, profiles, preflight geometry/logs, exact
-commands, per-frame timing CSVs, output JSONL and run summaries. Regenerate and
-validate the comparison with Python 3.11 or later:
+The source tree retains the readable report plus compact CSV/JSON comparisons.
+Contracts, profiles, preflight logs, exact commands, per-frame timings, output
+JSONL and run summaries remain in the external campaign artifact. Given that
+raw artifact, regenerate and validate the comparison with Python 3.11 or later:
 
 ```sh
 python3 docs/benchmarks/20260911-efficiency/summarize.py docs/benchmarks/20260911-efficiency
@@ -105,7 +106,8 @@ python3 docs/benchmarks/20260911-efficiency/summarize.py docs/benchmarks/2026091
 `run_equal_range.py` records a new campaign using the existing instrumented
 benchmark bundle, a matching IQ file and a new output directory. It does not
 establish machine resource guards. The source bundle is retained with the raw
-evidence; this directory is a receipt set, not a standalone binary distribution.
+evidence; this directory is a compact report, not a raw receipt set or
+standalone binary distribution.
 
 Full maps, source bundle and thermal traces remain at
 `/var/tmp/vectorwarp-efficiency-20260911.Cbm8Ep` on Strix. Original laptop evidence
