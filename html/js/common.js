@@ -763,16 +763,17 @@ function aircraftKind(aircraft = {}) {
   const description = String(aircraft.desc || '').toLowerCase();
   if (category === 'A7' || /^H\d/.test(type) || /helicopter|rotorcraft/.test(description)) return 'rotorcraft';
   if (category === 'B6' || /(?:^|\W)(?:uav|drone)(?:\W|$)/.test(description)) return 'drone';
+  if (/^(?:GLID|GLIM)$/.test(type) || /glider|sailplane/.test(description)) return 'glider';
   if (/^C[12]$/.test(category) || /ground|surface|vehicle/.test(description)) return 'ground';
   if (category === 'A5' || /heavy/.test(description)) return 'heavy';
   if (/^A[34]$/.test(category) || /large|wide.?body/.test(description)) return 'airliner';
-  if (/^(?:A[12]|B[134])$/.test(category) || /light|small|glider|ultralight/.test(description)) return 'light';
+  if (/^(?:A[12]|B[134])$/.test(category) || /light|small|ultralight/.test(description)) return 'light';
   return 'aircraft';
 }
 
 function aircraftPlotSymbol(aircraft) {
-  return ({rotorcraft: 'star', drone: 'diamond', ground: 'square', heavy: 'triangle-up',
-    airliner: 'triangle-up', light: 'triangle-up-open', aircraft: 'circle-open'})[aircraftKind(aircraft)];
+  return ({rotorcraft: 'star', drone: 'diamond', glider: 'triangle-up-open', ground: 'square',
+    heavy: 'triangle-up', airliner: 'triangle-up', light: 'triangle-up-open', aircraft: 'circle-open'})[aircraftKind(aircraft)];
 }
 
 function aircraftLabel(aircraft = {}) {
@@ -837,23 +838,30 @@ const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
   'Position age %{customdata[11]:.1f} s<extra></extra>';
 
 function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
-  if (aircraftKind(aircraft) === 'rotorcraft') {
+  const kind = aircraftKind(aircraft);
+  if (kind === 'rotorcraft') {
     // Original VectorWarp planform: a compact, single-color rotor silhouette
     // that remains recognizable at map scale. The straight boom deliberately
     // avoids the split-tail "chicken bone" shape of generic helicopter glyphs.
     return `<svg viewBox="0 0 100 100" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="${color}" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8 90 70M90 8 10 70" fill="none" stroke-width="5"/><path d="M50 17c10 0 15 8 14 21-1 10-5 17-11 21v35h-6V59c-7-4-10-11-11-21-1-13 4-21 14-21Z"/><path d="M39 90h22v6H39z"/><circle cx="50" cy="39" r="5"/></g></svg>`;
   }
-  // Tabler Icons v3.50.0 (MIT) gives these map markers a consistent,
-  // recognizable aviation vocabulary without inheriting tar1090's GPL UI.
-  const paths = {
-    drone: '<path d="M10 10h4v4h-4zM10 10 6.5 6.5M9.96 6A3.5 3.5 0 1 0 6 9.96M14 10l3.5-3.5M18 9.96A3.5 3.5 0 1 0 14.04 6M14 14l3.5 3.5M14.04 18A3.5 3.5 0 1 0 18 14.04M10 14l-3.5 3.5M6 14.04A3.5 3.5 0 1 0 9.96 18"/>',
-    ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
-    heavy: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>',
-    airliner: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>',
-    light: '<path d="m14.5 6.5 3-2.9a2.05 2.05 0 0 1 2.9 2.9l-2.9 3L20 17l-2.5 2.55L14 13l-3 3v3l-2 2-1.5-4.5L3 15l2-2h3l3-3-6.5-3.5L7 4l7.5 2.5"/>',
-    aircraft: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>'
+  // Original VectorWarp top-down planforms. These stay license-neutral while
+  // preserving recognisable proportions at the map's normal 38 px scale.
+  const planforms = {
+    airliner: '<path d="M47 4Q50 0 53 4L56 33 91 54 90 61 56 49 55 77 69 89 68 94 51 88 32 94 31 89 45 77 44 49 10 61 9 54 44 33Z"/><path d="M31 48q-6 0-7 6t8 7l5-2-1-9zm38 0q6 0 7 6t-8 7l-5-2 1-9z" opacity=".55"/>',
+    aircraft: '<path d="M47 4Q50 0 53 4L56 33 91 54 90 61 56 49 55 77 69 89 68 94 51 88 32 94 31 89 45 77 44 49 10 61 9 54 44 33Z"/>',
+    heavy: '<path d="M46 3Q50-1 54 3L58 31 97 53 96 61 57 49 56 77 72 89 71 95 50 88 29 95 28 89 44 77 43 49 4 61 3 53 42 31Z"/><path d="M18 51q-5 0-6 5t7 6l4-2v-8zm18-6q-5 0-6 6t7 6l4-2-1-9zm46 6q5 0 6 5t-7 6l-4-2v-8zm-18-6q5 0 6 6t-7 6l-4-2 1-9z" opacity=".55"/>',
+    light: '<path d="M46 17Q50 10 54 17L56 37 88 44 89 53 57 51 56 75 67 86 66 91 50 86 34 91 33 86 44 75 43 51 11 53 12 44 44 37Z"/><path d="M48 5h4v10h-4zM31 8h38v4H31z"/>',
+    glider: '<path d="M47 7Q50 2 53 7L54 40c13 1 29 3 45 7v6c-16-1-31-2-45-1l1 26 13 10-2 5-16-6-16 6-2-5 13-10 1-26c-14-1-29 0-45 1v-6c16-4 32-6 45-7Z"/><path d="M47 17q3-7 6 0v18h-6Z" opacity=".55"/>',
+    drone: '<path d="M47 8Q50 3 53 8L55 37 94 48v7l-39-5 1 27 16 11-4 6-18-9-18 9-4-6 16-11 1-27-39 5v-7l39-11Z"/><path d="M46 25h8l3 17-7 8-7-8Z" opacity=".55"/><path d="M29 83h42M50 74v24m-6-23-15 13m27-13 15 13" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round"/>'
   };
-  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[aircraftKind(aircraft)]}</g></svg>`;
+  if (planforms[kind])
+    return `<svg viewBox="0 0 100 100" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${planforms[kind]}</g></svg>`;
+  // Ground vehicles retain the compact MIT-licensed Tabler glyph.
+  const paths = {
+    ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
+  };
+  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[kind] || paths.ground}</g></svg>`;
 }
 
 if (typeof module !== 'undefined')

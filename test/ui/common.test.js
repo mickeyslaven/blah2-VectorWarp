@@ -173,6 +173,11 @@ function page(origin, apiOrigin = origin) {
     'Rotorcraft markers must retain the selected Minimal X rotor silhouette');
   assert.match(rotorcraftIcon, /v35h-6V59/,
     'Rotorcraft markers must retain the selected single straight tail boom');
+  assert.equal(test.context.aircraftKind({t: 'GLID'}), 'glider');
+  assert.match(test.context.aircraftSvgMarkup({t: 'GLID'}), /viewBox="0 0 100 100"/,
+    'Gliders must use the distinct long-wing planform');
+  assert.match(test.context.aircraftSvgMarkup({category: 'B6'}), /M29 83h42/,
+    'Fixed-wing UAVs must retain the visible rear pusher propeller');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');
