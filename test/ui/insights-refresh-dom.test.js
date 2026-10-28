@@ -20,11 +20,12 @@ const context = vm.createContext({
   sessionStorage: {getItem: () => null, setItem: () => {}},
   addFullscreenControl: () => {}, addRecordingControl: () => {},
   liveApiUrl: path => path, getRadarRuntimeConfig: async () => config,
+  radarPresentationUrl: path => `${path}${path.includes('?') ? '&' : '?'}presentation=aligned`,
   startRadarUpdates: callback => { refresh = callback; return {stop() {}}; },
   fetchStatusResource: async url => {
     if (failRequests) throw new Error('Request timed out');
     return {ok: true, status: 200, text: async () =>
-      JSON.stringify(url === '/api/detection' ? detection : config)};
+      JSON.stringify(url.startsWith('/api/detection') ? detection : config)};
   }
 });
 vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), context,
@@ -69,7 +70,7 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   context.fetchStatusResource = async url => {
     requests++;
     return {ok: true, status: 200, text: async () =>
-      JSON.stringify(url === '/api/detection' ? detection : config)};
+      JSON.stringify(url.startsWith('/api/detection') ? detection : config)};
   };
   await refresh();
   assert.equal(requests, 0, 'insight refreshes are throttled between two-second polls');

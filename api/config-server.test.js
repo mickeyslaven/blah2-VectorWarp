@@ -47,6 +47,9 @@ suiteFixture.listen(suitePort, '127.0.0.1');
 config.capture.device.heimdall.host = '127.0.0.1';
 config.capture.device.heimdall.control_port = suitePort;
 config.save.path = `${path.join(directory, 'recordings')}/`;
+// The fixture validates import semantics, not the developer workstation's
+// current free-space reserve.
+config.save.retention.minimum_free_gb = 0;
 fs.mkdirSync(config.save.path, {recursive: true});
 const truthRequests = [];
 const truthFixture = http.createServer((req, res) => {

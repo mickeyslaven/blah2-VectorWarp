@@ -3,7 +3,7 @@ var range_x = [];
 var range_y = [];
 
 // setup API
-var urlDetection = liveApiUrl('/stash/detection');
+var urlDetection = liveApiUrl(radarPresentationUrl('/stash/detection'));
 
 // setup plotly
 var layout = {

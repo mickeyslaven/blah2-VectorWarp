@@ -611,6 +611,14 @@ async function fetchRadarJson(url) {
   return body.trim() ? JSON.parse(body) : null;
 }
 
+function radarPresentationUrl(path) {
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('presentation', 'aligned');
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
+}
+
 async function getRadarRuntimeConfig() {
   if (radarRuntimeCache && Date.now() - radarRuntimeReadAt < 2000) return radarRuntimeCache;
   if (!radarRuntimePending) {
@@ -746,5 +754,5 @@ async function renderRuntimeSummary() {
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
-    startRadarPlot, getRadarRuntimeConfig, discoverApiEndpoint, fetchStatusResource,
+    startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
     refreshLiveStatus, refreshReceiverDevices};

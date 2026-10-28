@@ -50,6 +50,7 @@ const {checkNetworkBindings, bindMessage} = require('./network-check.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
+const {PresentationHistory} = require('./presentation-history.js');
 const {BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation.js');
 const gpuSetupStatus = createGpuSetupStatus({preview: process.env.BLAH2_PREVIEW === 'true'});
 
@@ -276,6 +277,19 @@ const bearingHypotheses = new BistaticHypothesisTracker();
 var timestamp = '';
 var timing = '';
 var iqdata = '';
+const presentationDelayMs = Math.max(0,
+  (Number.isInteger(config.truth?.adsb?.association_lag_cpis) ?
+    config.truth.adsb.association_lag_cpis : 0) *
+  (Number.isFinite(config.process?.data?.cpi) ? config.process.data.cpi * 1000 : 0));
+const presentationHistories = Object.fromEntries(['map', 'detection', 'tracker',
+  'bearing', 'timing', 'iqdata'].map(name => [name, new PresentationHistory()]));
+function presentationCutoff(req) {
+  return req.query.presentation === 'aligned' ? Date.now() - presentationDelayMs : null;
+}
+function presentationFrame(req, name, current) {
+  const cutoff = presentationCutoff(req);
+  return cutoff === null ? current : presentationHistories[name].at(cutoff) ?? current;
+}
 var capture = false;
 var capturePaused = false;
 var captureStartedAt = null;
@@ -498,13 +512,13 @@ app.get('/', (req, res, next) => {
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
 app.get('/api/map', (req, res) => {
-  sendMapResponse(req, res, map);
+  sendMapResponse(req, res, presentationFrame(req, 'map', map));
 });
 app.get('/api/detection', (req, res) => {
-  res.send(detection);
+  res.send(presentationFrame(req, 'detection', detection));
 });
 app.get('/api/tracker', (req, res) => {
-  res.send(trackerPublication.frame());
+  res.send(presentationFrame(req, 'tracker', trackerPublication.frame()));
 });
 app.get('/api/tracker/native', (req, res) => {
   res.send(trackerPublication.nativeOnly());
@@ -626,11 +640,12 @@ app.get('/api/bearing', (req, res) => {
     return res.json({enabled: false, reason: 'Bearing processing is disabled.', data: []});
   if (!bearing) return res.status(503).json({enabled: true, available: false,
     reason: 'No bearing frame has arrived.', data: []});
-  res.type('json').send(bearing);
+  res.type('json').send(presentationFrame(req, 'bearing', bearing));
 });
 app.get('/api/locations', (req, res) => {
   let frame = null;
-  try { frame = bearing ? JSON.parse(bearing) : null; }
+  const presentedBearing = presentationFrame(req, 'bearing', bearing);
+  try { frame = presentedBearing ? JSON.parse(presentedBearing) : null; }
   catch (_) { return res.status(503).json({enabled: true, available: false,
     reason: 'The current bearing frame is invalid.', data: []}); }
   const result = locationsFromBearing(frame, config, bearingHypotheses);
@@ -640,10 +655,10 @@ app.get('/api/timestamp', (req, res) => {
   res.send(timestamp);
 });
 app.get('/api/timing', (req, res) => {
-  res.send(timing);
+  res.send(presentationFrame(req, 'timing', timing));
 });
 app.get('/api/iqdata', (req, res) => {
-  res.send(iqdata);
+  res.send(presentationFrame(req, 'iqdata', iqdata));
 });
 app.get('/api/config', (req, res) => {
   const document = readConfig(configFile);
@@ -1196,8 +1211,13 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
   app.get(route, async (req, res) => {
     if (replayTruthDisabled()) return res.json(replayTruthStatus());
     try {
-      const value = await adsbSource.get(kind);
-      if (kind === 'delayDoppler' && req.query.presentation === 'overlay') {
+      const presentation = req.query.presentation;
+      const value = presentation === 'aligned' && typeof adsbSource.getPresentationAt === 'function' ?
+        await adsbSource.getPresentationAt(kind, Date.now() - presentationDelayMs) :
+        presentation && typeof adsbSource.getPresentation === 'function' ?
+          await adsbSource.getPresentation(kind) : await adsbSource.get(kind);
+      if (kind === 'delayDoppler' &&
+          (req.query.presentation === 'overlay' || req.query.overlay === '1')) {
         const compact = {};
         for (const [id, aircraft] of Object.entries(value || {})) {
           if (!aircraft || !Number.isFinite(aircraft.delay) || !Number.isFinite(aircraft.doppler)) continue;
@@ -1482,12 +1502,14 @@ function jsonStreamServer(name, onFrame) {
 // Each JSON payload stream has per-connection framing. Timestamp stays plain.
 const server_map = jsonStreamServer('map', frame => {
   map = frame;
+  presentationHistories.map.add(frame);
   stash_map.update_data(map);
 });
 listenData(server_map, 'map');
 
 const server_detection = jsonStreamServer('detection', frame => {
   detection = frame;
+  presentationHistories.detection.add(frame);
   stash_detection.update_data(detection);
   trackerForwarder.accept(frame);
   trackGuidedShadowRecorder.accept(frame);
@@ -1502,6 +1524,7 @@ const server_tracker = jsonStreamServer('track', frame => {
   track = frame;
   trackerPublication.acceptNative(frame);
   const published = trackerPublication.frame();
+  presentationHistories.tracker.add(published);
   evidenceStatistics.acceptTracker(published);
   provisionalEvidenceStatistics.acceptTracker(published);
   oprsEventRecorder.acceptTracker(published);
@@ -1511,6 +1534,7 @@ listenData(server_tracker, 'track');
 if (config.process?.bearing?.enable === true && Number.isInteger(config.network?.ports?.bearing)) {
   const server_bearing = jsonStreamServer('bearing', frame => {
     bearing = frame;
+    presentationHistories.bearing.add(frame);
     evidenceStatistics.acceptBearing(frame);
   });
   listenData(server_bearing, 'bearing');
@@ -1567,6 +1591,7 @@ const server_timing = net.createServer(socket => {
     if (!timingConnectionEligible(connection)) return;
     activeTimingConnection = connection.id;
     timing = frame;
+    presentationHistories.timing.add(frame);
     oprsEventRecorder.acceptTiming(frame);
     evidenceStatistics.acceptTiming(frame);
     provisionalEvidenceStatistics.acceptTiming(frame);
@@ -1595,6 +1620,7 @@ listenData(server_timing, 'timing');
 
 const server_iqdata = jsonStreamServer('iqdata', frame => {
   iqdata = frame;
+  presentationHistories.iqdata.add(frame);
   stash_iqdata.update_data(iqdata);
 });
 listenData(server_iqdata, 'iqdata');

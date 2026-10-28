@@ -89,7 +89,9 @@
   }
 
   async function apiJson(path) {
-    return fetchJson(liveApiUrl(path));
+    const aligned = /^\/api\/(?:adsb(?:\/delay-doppler)?|detection|tracker|bearing|locations|timing|iqdata)(?:[/?]|$)/.test(path) ?
+      radarPresentationUrl(path) : path;
+    return fetchJson(liveApiUrl(aligned));
   }
 
   async function getConfig() {

@@ -14,9 +14,10 @@ const clone = value => JSON.parse(JSON.stringify(value));
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
     const context = vm.createContext({
       liveApiUrl: url => url,
+      radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
-      fetchRadarJson: async url => url === '/api/detection' ? detected : new Promise(() => {}),
+      fetchRadarJson: async url => url.startsWith('/api/detection') ? detected : new Promise(() => {}),
       window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
       Plotly: Object.fromEntries(['react', 'update', 'relayout', 'restyle'].map(method =>
@@ -67,8 +68,12 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.match(trace.colorbar.title.text, /dB/);
     }
     if (kind === 'timing') assert.equal(calls.at(-1).args[1].length, 1, 'Frame metadata is not a processing stage');
+    const repeatStart = calls.length;
     await update(clone(frame));
-    assert.equal(calls.at(-1).method, 'update');
+    if (kind === 'map') {
+      assert.ok(calls.slice(repeatStart).some(call => call.method === 'update'),
+        'The map refreshes even when its independent marker request completes nearby');
+    } else assert.equal(calls.at(-1).method, 'update');
     if (kind === 'spectrum') {
       assert.equal(calls.at(-1).args[1].zauto[0], false);
       assert.equal(calls.at(-1).args[1].zmin[0], -92);
@@ -95,17 +100,22 @@ const clone = value => JSON.parse(JSON.stringify(value));
     }
     if (kind === 'map') {
       detected = {...detected, timestamp: 999};
-      assert.equal(await update(clone(frame)), true,
+      const nextFrame = {...clone(frame), timestamp: 1001};
+      assert.equal(await update(nextFrame), true,
         'A late detection stream must not make the heatmap retry and burst');
-      assert.deepEqual(calls.at(-1).args[1].x[1], [], 'Do not overlay an older detection frame');
-      detected = {...detected, timestamp: 1000};
-      await scheduled();
+      const latestMapUpdate = calls.filter(call => call.method === 'update').at(-1);
+      assert.deepEqual(latestMapUpdate.args[1].x[1], [], 'Do not overlay an older detection frame');
+      detected = {...detected, timestamp: 1001};
+      const heatmapUpdatesBeforeMarker = calls.filter(call => call.method === 'update').length;
+      await update(nextFrame);
+      await Promise.resolve();
       assert.equal(calls.at(-1).method, 'restyle', 'Late detections update only marker trace');
       assert.deepEqual(calls.at(-1).args[2], [1]);
       assert.deepEqual(calls.at(-1).args[1].x, [[1]]);
-      assert.equal(calls.filter(call => call.method === 'update').length, 2,
+      assert.equal(calls.filter(call => call.method === 'update').length,
+        heatmapUpdatesBeforeMarker + 1,
         'Late detection completion must not repaint the heatmap');
-      const changedGrid = {...clone(frame), timestamp: 1001, delay: [1, 2], data: [[1, 2], [3, 4]]};
+      const changedGrid = {...clone(frame), timestamp: 1002, delay: [1, 2], data: [[1, 2], [3, 4]]};
       await update(changedGrid);
       assert.ok(calls.slice(-2).some(call => call.method === 'react'),
         'Map grid changes reconcile the existing Plotly root');

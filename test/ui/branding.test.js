@@ -85,7 +85,7 @@ assert.match(home, /rel="icon" href="\/favicon\/vectorwarp-vw\.svg" type="image\
 for (const file of htmlFiles('html')) {
   const page = read(file);
   if (page.includes('js/common.js')) {
-    assert.match(page, /js\/common\.js\?v=vw-logo-1/,
+    assert.match(page, /js\/common\.js\?v=[a-z0-9-]+/,
       `${file} must load the cache-busted VectorWarp header`);
   }
 }

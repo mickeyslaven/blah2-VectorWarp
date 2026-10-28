@@ -26,7 +26,7 @@ function spectrumColorRange(spectrum) {
 }
 
 // setup API
-var urlMap = liveApiUrl('/stash/iqdata');
+var urlMap = liveApiUrl(radarPresentationUrl('/stash/iqdata'));
 
 // setup plotly
 var layout = {

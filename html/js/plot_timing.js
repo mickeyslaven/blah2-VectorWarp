@@ -1,7 +1,7 @@
 var plottedKeys = '';
 
 // setup API
-var urlTiming = liveApiUrl('/stash/timing');
+var urlTiming = liveApiUrl(radarPresentationUrl('/stash/timing'));
 
 // setup plotly
 var layout = {

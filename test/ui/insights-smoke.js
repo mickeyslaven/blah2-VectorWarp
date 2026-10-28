@@ -158,6 +158,7 @@ global.fetch = global.fetchStatusResource;
 const common = require('../../html/js/common.js');
 global.getRadarRuntimeConfig = common.getRadarRuntimeConfig;
 global.startRadarUpdates = common.startRadarUpdates;
+global.radarPresentationUrl = common.radarPresentationUrl;
 
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 

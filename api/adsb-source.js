@@ -105,6 +105,9 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   discoveryCacheMs = 30000, setTimeoutFn = setTimeout} = {}) {
   const cache = new Map();
   const geometry = new DelayDopplerHistory(config);
+  // Display polling must not perturb the event-time history used by scoring.
+  // It also must not inherit the intentional multi-CPI association hold.
+  const presentationGeometry = new DelayDopplerHistory(config);
   let warmup = [];
   let fusionState = null;
   const sourceTimeoutMs = Number.isFinite(config.truth?.adsb?.source_timeout) ?
@@ -208,10 +211,10 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }
-  async function rawAircraft(targetAtMs = now()) {
+  async function rawAircraft(targetAtMs = now(), fusionOptions = {}) {
     const {healthy, failed} = await rawSnapshots();
     const data = fuseAircraftData(healthy, {nowMs: targetAtMs,
-      maxPositionAgeSeconds: geometry.maxAge});
+      maxPositionAgeSeconds: geometry.maxAge, ...fusionOptions});
     fusionState = {...data.vectorwarp_fusion, fused_at: targetAtMs,
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
@@ -252,6 +255,28 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     cache.set(kind, entry);
     return entry.promise;
   }
+  async function getPresentation(kind) {
+    if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
+    if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
+    // UI positions are a newest-known display, not a CPI truth association.
+    // Accept any observation already allowed by max_position_age and project it
+    // to now. This avoids the delayed-scoring request time rejecting otherwise
+    // fresh feeder snapshots and making every aircraft flash on and off.
+    const data = await rawAircraft(now(), {maxObservationOffsetSeconds: geometry.maxAge});
+    if (kind === 'aircraft') return data;
+    return presentationGeometry.update(data).data;
+  }
+  async function getPresentationAt(kind, targetAtMs) {
+    if (!Number.isFinite(targetAtMs)) throw new Error('ADS-B presentation time is invalid');
+    if (!config.truth?.adsb?.enabled) throw new Error('ADS-B is disabled');
+    if (preview) throw new Error('Preview: no live ADS-B connection');
+    if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
+    const data = await rawAircraft(targetAtMs,
+      {maxObservationOffsetSeconds: geometry.maxAge});
+    if (kind === 'aircraft') return data;
+    return presentationGeometry.update(data).data;
+  }
   async function status() {
     if (!config.truth?.adsb?.enabled) {
       const sources = slots.map(slot => ({...slot.state, state: 'disabled'}));
@@ -290,8 +315,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         message: online && warmup.length ? 'Feed online; waiting for motion updates.' :
           !online ? 'No healthy ADS-B source' : undefined}};
   }
-  return {get, getAt, status, clear: () => {
-    cache.clear(); geometry.clear(); fusionState = null;
+  return {get, getAt, getPresentation, getPresentationAt, status, clear: () => {
+    cache.clear(); geometry.clear(); presentationGeometry.clear(); fusionState = null;
     for (const slot of slots) slot.discoveryEntry = undefined;
   }};
 }
