@@ -23,11 +23,21 @@ std::string system_error(const std::string& message) {
   return message + ": " + std::strerror(errno);
 }
 std::pair<uint64_t,std::string> digest_file(const std::string& path) {
-  const int fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC); if(fd<0) throw std::runtime_error(system_error("Cannot hash clip"));
+  const int fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC);
+  if(fd<0) throw std::runtime_error(system_error("Cannot hash clip"));
   Sha256 digest; uint64_t size=0; std::array<uint8_t,65536> bytes{};
-  for(;;) { const auto count=::read(fd,bytes.data(),bytes.size());
-    if(count<0&&errno==EINTR)continue; if(count<0){const auto error=system_error("Cannot hash clip");::close(fd);throw std::runtime_error(error);}
-    if(!count)break; digest.update(bytes.data(),static_cast<std::size_t>(count)); size+=static_cast<uint64_t>(count); }
+  for(;;) {
+    const auto count=::read(fd,bytes.data(),bytes.size());
+    if(count<0&&errno==EINTR) continue;
+    if(count<0) {
+      const auto error=system_error("Cannot hash clip");
+      ::close(fd);
+      throw std::runtime_error(error);
+    }
+    if(!count) break;
+    digest.update(bytes.data(),static_cast<std::size_t>(count));
+    size+=static_cast<uint64_t>(count);
+  }
   ::close(fd); return {size,digest.finish()};
 }
 void write_synced(const std::string& path,const std::string& value) {
@@ -302,8 +312,12 @@ IqClipStatus PortableClipRecorder::write_job(const Job& job) {
     if(::rename(metadataPartial.c_str(),(file+".json").c_str()))throw std::runtime_error(system_error("Cannot publish clip metadata"));
     const int directoryFd=::open(directory.c_str(),O_RDONLY|O_CLOEXEC);
     if(directoryFd>=0){(void)::fsync(directoryFd);::close(directoryFd);}
-  } catch(...) { (void)::unlink(partial.c_str());(void)::unlink(metadataPartial.c_str());
-    if(dataPublished)(void)::unlink(file.c_str()); throw; }
+  } catch(...) {
+    (void)::unlink(partial.c_str());
+    (void)::unlink(metadataPartial.c_str());
+    if(dataPublished) (void)::unlink(file.c_str());
+    throw;
+  }
   return {job.request.revision, true, file, {}, written};
 }
 }
