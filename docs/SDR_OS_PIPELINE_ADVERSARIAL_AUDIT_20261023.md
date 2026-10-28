@@ -219,9 +219,7 @@ no motherboard-count/topology restriction, `clock_source`/`time_source` setting
 or readback, synchronization check, or LO/coherence qualification
 (`src/capture/usrp/UsrpSettings.h:19-28`, `src/capture/usrp/Usrp.cpp:42-70`). The
 class claims all USRP models (`src/capture/usrp/Usrp.h:3-8`), while setup correctly
-admits that clock/time source is not verified (`docs/SETUP.md:119-133`). This also
-conflicts with the illuminator executor's required “coherent timing verified”
-claim (`docs/ILLUMINATOR_SURVEY_EXECUTOR.md:98-103`).
+admits that clock/time source is not verified (`docs/SETUP.md:119-133`).
 
 **Reproduction proposal.** Present a fake multi-motherboard device whose channels
 read back identical RF settings but have independent time/clock domains, or use

@@ -24,6 +24,14 @@ int main()try{
  using gpu_tracker::persistentEvidence;
  using gpu_tracker::persistentRidgeContains;
  using gpu_tracker::stationaryRetirementPolicy;
+ using gpu_tracker::validFineSpatialEvidence;
+ require(validFineSpatialEvidence(1u,60),"primary-only fine spatial evidence was rejected");
+ require(validFineSpatialEvidence(1u|(2u<<7u),60),"missing tertiary fine peak was rejected");
+ require(validFineSpatialEvidence(1u|(2u<<7u)|(60u<<14u),60),"bounded three-peak evidence was rejected");
+ require(!validFineSpatialEvidence(0u,60),"missing primary fine peak was accepted");
+ require(!validFineSpatialEvidence(61u,60),"out-of-range primary fine peak was accepted");
+ require(!validFineSpatialEvidence(1u|(61u<<7u),60),"out-of-range secondary fine peak was accepted");
+ require(!validFineSpatialEvidence(1u|(61u<<14u),60),"out-of-range tertiary fine peak was accepted");
  auto a=boundInitiations(1024,1005,33,5);
  require(a.admittedDetections==3&&a.droppedDetections==30,"live saturation case was not bounded");
  require(a.initiatedTracks==15&&a.totalTracks==1020,"live saturation capacity arithmetic differs");

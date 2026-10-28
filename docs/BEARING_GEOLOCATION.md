@@ -435,10 +435,10 @@ node script/run-frequency-resolved-shadow.js \
   --output /var/lib/vectorwarp-api/calibration/frequency-resolved-reference.json
 ```
 
-Packaged `vectorwarp-frequency-resolved-shadow.service` and `.timer` units run
-that one-shot with least privilege every five minutes. Sites whose API is not
-on loopback can override `VECTORWARP_CONFIG_URL` in
-`/etc/vectorwarp/frequency-resolved-shadow.env`.
+When enabled, the API owns this observer's initial run and `interval_s`
+cadence. There is deliberately no packaged systemd timer: a second scheduler
+would create an overlapping Heimdall/MCHQ client. Sites that need a one-shot
+can use the command above while the API-owned observer is disabled.
 
 Promotion requires a separate processor implementation and held-out ADS-B
 comparison across multiple aircraft and sectors. In particular, a well-

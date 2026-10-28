@@ -12,6 +12,7 @@ function load(name) {
   if (value.capture.device.type === 'HackRF') value.capture.device.serial = ['0001', '0002'];
   return value;
 }
+const clone = value => JSON.parse(JSON.stringify(value));
 
 const firstRun = validateConfig(load('config.yml'));
 assert.equal(firstRun.valid, false);
@@ -23,6 +24,17 @@ for (const name of ['config-hackrf.yml', 'config-usrp.yml',
   assert.equal(result.valid, true, `${name}: ${result.errors.join('; ')}`);
 }
 
+const krakenProfile = load('config-kraken.yml');
+assert.equal(krakenProfile.network.tracker_forward.enabled, false,
+  'the generic Kraken profile must not start a disconnected external tracker feed');
+assert.equal(validateConfig({...krakenProfile, network: {
+  ...krakenProfile.network, tracker_forward: {enabled: false}}}).valid, true,
+  'a disabled tracker feed must not require an unused external endpoint');
+const incompleteEnabledTracker = clone(krakenProfile);
+incompleteEnabledTracker.network.tracker_forward.enabled = true;
+assert.equal(validateConfig(incompleteEnabledTracker).valid, false,
+  'enabling the tracker feed requires an explicit endpoint');
+
 const sixChannel = load('config-kraken.yml');
 sixChannel.capture.device.channel_count = 6;
 sixChannel.capture.device.surveillance_channels = [0, 1, 2, 3, 4, 5];
@@ -33,7 +45,6 @@ sixChannel.location.rx = {name: 'Test receiver', latitude: 40, longitude: -75, a
 sixChannel.location.tx = {name: 'Test transmitter', latitude: 41, longitude: -74, altitude: 120};
 assert.equal(validateConfig(sixChannel).valid, true);
 
-const clone = value => JSON.parse(JSON.stringify(value));
 const automaticClutter = clone(sixChannel);
 automaticClutter.process.ambiguity.delayMin = -8;
 automaticClutter.process.ambiguity.delayMax = 47;
@@ -60,11 +71,32 @@ coherentFusion.capture.device.array_geometry = {
   bearing_channels: [...coherentFusion.capture.device.surveillance_channels], elements:
   coherentFusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
     id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
-    position: [Math.cos(2 * Math.PI * index / 5) * .193548,
-      Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+    position: [Math.cos(2 * Math.PI * index / 5) * .2,
+      Math.sin(2 * Math.PI * index / 5) * .2, 0]
   }))};
 assert.equal(validateConfig(coherentFusion).valid, true,
   'coherent beam-bank fusion accepts complete Kraken geometry');
+const correlatedBeamTrials = clone(coherentFusion);
+correlatedBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(correlatedBeamTrials).valid, true,
+  'effective trials may be lower than the correlated beam-bank size');
+const excessiveBeamTrials = clone(coherentFusion);
+excessiveBeamTrials.process.surveillance_fusion.effective_beam_trials = 13;
+assert.equal(validateConfig(excessiveBeamTrials).valid, false,
+  'effective trials cannot exceed the beam-bank size');
+const defaultBeamTrials = clone(coherentFusion);
+delete defaultBeamTrials.process.surveillance_fusion.beams;
+defaultBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(defaultBeamTrials).valid, true,
+  'reduced effective trials also work with the default twelve-beam bank');
+defaultBeamTrials.process.surveillance_fusion.effective_beam_trials = 13;
+assert.equal(validateConfig(defaultBeamTrials).valid, false,
+  'effective trials cannot exceed the implicit twelve-beam bank');
+const noncoherentBeamTrials = clone(coherentFusion);
+noncoherentBeamTrials.process.surveillance_fusion.mode = 'noncoherent';
+noncoherentBeamTrials.process.surveillance_fusion.effective_beam_trials = 5;
+assert.equal(validateConfig(noncoherentBeamTrials).valid, false,
+  'noncoherent fusion cannot accept a coherent-bank trial correction');
 const measuredFusion = clone(coherentFusion);
 Object.assign(measuredFusion.capture.device.array_geometry,
   {mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true});

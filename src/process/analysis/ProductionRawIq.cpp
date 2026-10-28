@@ -49,6 +49,12 @@ RawIqStages::RawIqStages(Config config)
 
 void RawIqStages::resetReference() {
   reference_ = ArrayReferenceSynthesizer(config_.reference);
+  prepared_.reset();
+  for (auto& filter : filters_) filter.reset();
+  if (config_.borrowed)
+    for (auto& filter : filters_)
+      filter = std::make_unique<WienerHopf>(config_.clutterDelayMin,
+        config_.clutterDelayMax, config_.samples);
 }
 
 bool RawIqStages::clutter(IqData& reference,

@@ -58,6 +58,20 @@ function matrixVector(matrix, vector) {
     add(sum, multiply(value, vector[index])), [0, 0]));
 }
 
+function calibratedSteering(steering, anchor, nullFraction) {
+  const steeringNorm = steering.reduce((sum, value) => sum + magnitude2(value), 0);
+  const anchorNorm = anchor.reduce((sum, value) => sum + magnitude2(value), 0);
+  if (!(steeringNorm > 0) || !(anchorNorm > 0))
+    throw new Error('Steering and reference weights must have nonzero norm');
+  const normalized = steering.map(value => scale(value, 1 / Math.sqrt(steeringNorm)));
+  const normalizedAnchor = anchor.map(value => scale(value, 1 / Math.sqrt(anchorNorm)));
+  if (!(nullFraction > 0)) return normalized;
+  const projection = normalized.reduce((sum, value, channel) =>
+    add(sum, multiply(conjugate(normalizedAnchor[channel]), value)), [0, 0]);
+  return normalized.map((value, channel) => subtract(value,
+    scale(multiply(projection, normalizedAnchor[channel]), nullFraction)));
+}
+
 function mappings(count) {
   const result = [];
   for (const direction of ['forward', 'reverse']) for (let rotation = 0; rotation < count; ++rotation) {
@@ -100,7 +114,7 @@ function expectedReference(config, frequency, mapping, headingDegTrue, anchorCha
   const wave = 2 * Math.PI * frequency / 299792458;
   const values = positions.map((_, channel) => {
     const position = positions[mapping[channel]];
-    return polar(wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
+    return polar(-wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
   });
   const anchor = values[anchorChannel];
   return values.map(value => divide(value, anchor));
@@ -271,7 +285,7 @@ function weights(sample, config, mapping, beams) {
   const anchor = positions.map((_, channel) => {
     if (!fixedSite) return reference[channel];
     const position = positions[mapping[channel]];
-    return polar(wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
+    return polar(-wave * (position[0] * Math.cos(direct) + position[1] * Math.sin(direct)));
   });
   const norm = anchor.reduce((sum, value) => sum + magnitude2(value), 0);
   if (!(norm > 0)) throw new Error('Reference weights have zero norm');
@@ -284,15 +298,9 @@ function weights(sample, config, mapping, beams) {
       const position = positions[mapping[channel]];
       const relative = wave * (position[0] * (Math.cos(angle) - Math.cos(direct)) +
         position[1] * (Math.sin(angle) - Math.sin(direct)));
-      steering.push(multiply(anchor[channel], polar(relative)));
+      steering.push(multiply(anchor[channel], polar(-relative)));
     }
-    if (nullFraction > 0) {
-      const projection = scale(steering.reduce((sum, value, channel) =>
-        add(sum, multiply(conjugate(anchor[channel]), value)), [0, 0]), nullFraction / norm);
-      for (let channel = 0; channel < channels; ++channel)
-        steering[channel] = subtract(steering[channel], multiply(projection, anchor[channel]));
-    }
-    output.push(steering.map(value => scale(conjugate(value), 1 / Math.sqrt(norm))));
+    output.push(calibratedSteering(steering, anchor, nullFraction).map(conjugate));
   }
   return output;
 }
@@ -346,12 +354,7 @@ function bestMeasuredBearing(sample, config, manifold) {
   for (let beam = 0; beam < beams; ++beam) {
     let steering = manifold.responses[beam].map((value, channel) => fixedSite ? value :
       multiply(sample.reference_weights[channel], divide(value, manifold.responses[directBin][channel])));
-    if (nullFraction > 0) {
-      const projection = scale(steering.reduce((sum, value, channel) =>
-        add(sum, multiply(conjugate(anchor[channel]), value)), [0, 0]), nullFraction / anchorNorm);
-      steering = steering.map((value, channel) => subtract(value, multiply(projection, anchor[channel])));
-    }
-    const weights = steering.map(conjugate);
+    const weights = calibratedSteering(steering, anchor, nullFraction).map(conjugate);
     const value = score(sample.response, weights, covarianceInverse);
     if (value > bestScore) { bestScore = value; best = beam; }
   }

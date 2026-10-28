@@ -5,6 +5,14 @@
 #include <stdexcept>
 
 namespace gpu_tracker {
+// Fine-bearing evidence requires a primary lobe. Secondary and tertiary lobes
+// are optional (zero) but, when present, must be inside the configured bank.
+inline constexpr const char* fineSpatialInvalidGlsl=
+ "a==0u||a>post[83]||b>post[83]||c>post[83]";
+inline bool validFineSpatialEvidence(uint32_t spatial,uint32_t fineBeams){
+ const uint32_t primary=spatial&127u,secondary=(spatial>>7u)&127u,tertiary=(spatial>>14u)&127u;
+ return primary>0&&primary<=fineBeams&&secondary<=fineBeams&&tertiary<=fineBeams;
+}
 struct InitiationAdmission {
  uint32_t unmatched=0,admittedDetections=0,droppedDetections=0,initiatedTracks=0,totalTracks=0;
 };

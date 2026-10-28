@@ -12,7 +12,7 @@ namespace blah2::resident {
 class Coordinator {
  std::unique_ptr<Session> session_;
  uint32_t checks_=0;
- bool refChecked_=false,filteredChecked_=false,mapChecked_=false;
+ bool refChecked_=false,filteredChecked_=false,mapChecked_=false,productChecked_=false;
  const std::complex<double>* canonical_=nullptr;
  OutputViews ready_{},prepared_{};
  AccelerationStatus status_;
@@ -25,6 +25,56 @@ class Coordinator {
  throw;}}
  void oracle()const{wire::require(qualifying(),"CPU resident oracle called after qualification");}
  static bool finite(std::complex<double> v){return std::isfinite(v.real())&&std::isfinite(v.imag());}
+ static void compareJson(const rapidjson::Value& expected,const rapidjson::Value& actual,
+  const char* label,bool ignoreSnr=false){
+  wire::require(expected.GetType()==actual.GetType(),label);
+  if(expected.IsObject()){
+   for(auto member=expected.MemberBegin();member!=expected.MemberEnd();++member){
+    if(ignoreSnr&&std::string(member->name.GetString())=="snr")continue;
+    wire::require(actual.HasMember(member->name.GetString()),label);
+    compareJson(member->value,actual[member->name.GetString()],label,ignoreSnr);
+   }
+  }else if(expected.IsArray()){
+   wire::require(expected.Size()==actual.Size(),label);
+   for(rapidjson::SizeType i=0;i<expected.Size();++i)
+    compareJson(expected[i],actual[i],label,ignoreSnr);
+  }else if(expected.IsNumber()){
+   const double left=expected.GetDouble(),right=actual.GetDouble();
+   if(expected.IsInt64()&&actual.IsInt64())wire::require(expected.GetInt64()==actual.GetInt64(),label);
+   else if(expected.IsUint64()&&actual.IsUint64())wire::require(expected.GetUint64()==actual.GetUint64(),label);
+   else wire::require(std::isfinite(left)&&std::isfinite(right)&&
+    std::abs(left-right)<=0.010001+1e-7*std::max({1.0,std::abs(left),std::abs(right)}),label);
+  }else if(expected.IsString())wire::require(std::string(expected.GetString())==actual.GetString(),label);
+  else if(expected.IsBool())wire::require(expected.GetBool()==actual.GetBool(),label);
+  else wire::require(expected.IsNull()&&actual.IsNull(),label);
+ }
+ static void compareJson(const std::string& expected,const std::string& actual,
+  const char* label,bool ignoreSnr=false){rapidjson::Document left,right;
+  left.Parse<rapidjson::kParseFullPrecisionFlag>(expected.c_str());
+  right.Parse<rapidjson::kParseFullPrecisionFlag>(actual.c_str());
+  wire::require(!left.HasParseError()&&!right.HasParseError(),label);
+  compareJson(left,right,label,ignoreSnr);
+ }
+ static rapidjson::Document productFrame(const std::string& value,const char* label){
+  rapidjson::Document document;
+  document.Parse<rapidjson::kParseFullPrecisionFlag>(value.c_str());
+  wire::require(!document.HasParseError()&&document.IsObject()&&
+   document.HasMember("timestamp")&&document["timestamp"].IsUint64(),label);
+  return document;
+ }
+ bool cpuMapComparable()const{
+  return config().fusion.mode!=FusionMode::noiseWhitenedRegularPolygon&&
+   config().detector.integrationCpis==1;
+ }
+ bool cpuDetectorComparable()const{
+  return cpuMapComparable()&&config().detector.integrationCpis==1;
+ }
+ bool cpuTrackerComparable()const{
+  return cpuDetectorComparable()&&
+   config().detector.integrationBeamTolerance==UINT32_MAX&&
+   config().tracker.initiationMode==TrackerInitiationMode::hypothesisBank&&
+   !config().tracker.stationaryClutter&&!config().tracker.trackGuidedPromote;
+ }
 public:
  explicit Coordinator(Config c,GpuProcessOptions options={}):session_(createProcess(c,options)){status_.requested="gpu-resident";
  status_.active="vulkan-resident";
@@ -34,7 +84,7 @@ public:
  const Config& config()const{return session_->config();}
  bool qualifying()const{return checks_<Acceleration::TotalQualificationFrames;}
  const AccelerationStatus& status()const{return status_;}
- void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();wire::require(capture.size()==config().geometry.channels,"Resident capture channel count differs");auto input=session_->input();canonical_=input.data;size_t offset=0;for(const auto& channel:capture){const auto& samples=channel->view_data();wire::require(samples.size()==config().geometry.clutterSamples,"Resident captured CPI size differs");std::copy(samples.begin(),samples.end(),input.data+offset);offset+=samples.size();}wire::require(offset==input.size,"Resident canonical input shape differs");refChecked_=filteredChecked_=mapChecked_=false;uint64_t diagnostics=qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0;if(config().presence&bit(Section::detectionCells))diagnostics|=bit(Section::detectionCells);session_->begin(frame,diagnostics);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
+ void begin(const std::vector<std::unique_ptr<IqData>>& capture,Frame frame){sessionCall([&]{clearBorrowed();wire::require(capture.size()==config().geometry.channels,"Resident capture channel count differs");auto input=session_->input();canonical_=input.data;size_t offset=0;for(const auto& channel:capture){const auto& samples=channel->view_data();wire::require(samples.size()==config().geometry.clutterSamples,"Resident captured CPI size differs");std::copy(samples.begin(),samples.end(),input.data+offset);offset+=samples.size();}wire::require(offset==input.size,"Resident canonical input shape differs");refChecked_=filteredChecked_=mapChecked_=productChecked_=false;uint64_t diagnostics=qualifying()?(bit(Section::fullReference)|bit(Section::filtered)):0;if(config().presence&bit(Section::detectionCells))diagnostics|=bit(Section::detectionCells);session_->begin(frame,diagnostics);ready_=session_->receiveReferenceReady();wire::require(ready_.referenceCheckpoint.size==referenceCheckpoint_.size(),"Resident acknowledged reference checkpoint shape");std::memcpy(referenceCheckpoint_.data(),ready_.referenceCheckpoint.data,referenceCheckpoint_.size());haveReferenceCheckpoint_=true;ready_.referenceCheckpoint={referenceCheckpoint_.data(),referenceCheckpoint_.size()};});}
  const OutputViews& receivePrepared(){sessionCall([&]{if(!prepared_.preparedEvidence.data)prepared_=session_->receivePrepared();});
  return prepared_;}
  void checkReference(const IqData& reference,const ArrayReferenceSynthesizer::Metrics& metrics){oracle();
@@ -107,8 +157,53 @@ public:
  const json::CheckpointBinding binding{config().tracker.capacity,config().epoch,json::wordPair(w,12),json::wordPair(w,14),config().fusion.mode==FusionMode::noncoherent?0u:config().fusion.beams,config().bearing.scanBeams};
  result.tracks=json::trackerCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding);
  if(bearing.enabled)result.bearing=json::bearingCheckpoint(timestamp,{w,v.trackerCheckpoint.size},binding,bearing);}return result;}
+ void checkProducts(const Publication& resident,const std::string& cpuMap,
+  const std::string& cpuDetections,const std::string& cpuTracks){oracle();
+  const auto residentMap=productFrame(resident.map,
+   "Resident fused-map product contract rejected frame");
+  wire::require(residentMap.HasMember("nRows")&&residentMap["nRows"].IsUint()&&
+   residentMap["nRows"].GetUint()==config().geometry.doppler&&
+   residentMap.HasMember("nCols")&&residentMap["nCols"].IsUint()&&
+   residentMap["nCols"].GetUint()==config().geometry.delays&&
+   residentMap.HasMember("data")&&residentMap["data"].IsArray()&&
+   residentMap["data"].Size()==config().geometry.doppler,
+   "Resident fused-map product shape rejected frame");
+  for(const auto& row:residentMap["data"].GetArray())
+   wire::require(row.IsArray()&&row.Size()==config().geometry.delays,
+    "Resident fused-map product row rejected frame");
+  if(cpuMapComparable())
+   compareJson(cpuMap,resident.map,"Resident fused-map startup oracle rejected frame");
+  if(config().detector.enabled){
+   const auto residentDetections=productFrame(resident.detections,
+    "Resident detector product contract rejected frame");
+   wire::require(residentDetections.HasMember("delay")&&residentDetections["delay"].IsArray()&&
+    residentDetections.HasMember("doppler")&&residentDetections["doppler"].IsArray()&&
+    residentDetections.HasMember("snr")&&residentDetections["snr"].IsArray()&&
+    residentDetections["delay"].Size()==residentDetections["doppler"].Size()&&
+    residentDetections["delay"].Size()==residentDetections["snr"].Size()&&
+    residentDetections["delay"].Size()<=size_t(config().geometry.doppler)*config().geometry.delays,
+    "Resident detector product shape rejected frame");
+  }
+  if(config().detector.enabled&&cpuDetectorComparable())
+   // Fine-angle refinement legitimately changes SNR after the shared CPU
+   // detector. Cell count, delay and Doppler must still agree.
+   compareJson(cpuDetections,resident.detections,
+    "Resident detector startup oracle rejected frame",true);
+  if(config().tracker.enabled){
+   const auto residentTracks=productFrame(resident.tracks,
+    "Resident tracker product contract rejected frame");
+   wire::require(residentTracks.HasMember("n")&&residentTracks["n"].IsUint64()&&
+    residentTracks.HasMember("data")&&residentTracks["data"].IsArray()&&
+    residentTracks["data"].Size()<=residentTracks["n"].GetUint64(),
+    "Resident tracker product shape rejected frame");
+  }
+  if(config().tracker.enabled&&cpuTrackerComparable())
+   compareJson(cpuTracks,resident.tracks,
+    "Resident tracker startup oracle rejected frame");
+  productChecked_=true;
+ }
  void commit(){wire::require(prepared_.preparedEvidence.data,"Resident commit missing prepared frame");
- if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_,"Resident startup oracle missing before commit");
+ if(qualifying())wire::require(refChecked_&&filteredChecked_&&mapChecked_&&productChecked_,"Resident startup oracle missing before commit");
  sessionCall([&]{session_->commit(prepared_.trackerToken);});}
  void published(){sessionCall([&]{session_->published();});
  if(qualifying()){++checks_;

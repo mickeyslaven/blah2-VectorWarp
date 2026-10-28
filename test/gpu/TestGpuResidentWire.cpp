@@ -53,7 +53,7 @@ void configCases(){
  for(size_t i=0;i<c.dopplerAxis.size();++i)wire::Writer{{f.data(),f.size()}}.f64(i*8,c.dopplerAxis[i]);
  const auto decoded=decodeConfig(bytes(canonical),bytes(d),bytes(f));
  check(encodeConfig(decoded)==canonical&&decoded.delayAxis==c.delayAxis&&decoded.dopplerAxis==c.dopplerAxis,"Config/axes did not preserve canonical values");
- auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.193548,0,-1.2566370614359172,-.75,6};
+ auto coherent=c;coherent.fusion={FusionMode::coherentRegularPolygon,12,539000000,.2,0,-1.2566370614359172,-.75,6};
  coherent.detector.integrationMotionBins=1;coherent.detector.integrationBeamTolerance=1;
  const auto coherentBytes=encodeConfig(coherent);
  const auto coherentDecoded=decodeConfig(bytes(coherentBytes),bytes(d),bytes(f));

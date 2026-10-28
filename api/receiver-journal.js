@@ -58,11 +58,19 @@ function createReceiverJournal(configFile, {io = fs} = {}) {
       try { io.unlinkSync(temporary); } catch (_) {}
     }
   }
-  function recover() {
+  function recover(expectedRevision = null) {
     const value = load();
+    const settled = ['synchronized', 'already-matched', 'not-required'].includes(value.state);
+    // Preserve a completed managed-Apply attestation across an API restart only
+    // when it is bound to the exact configuration loaded by that process.  A
+    // restart is not new evidence, but it must not erase durable evidence that
+    // was already established before the restart.
+    if (expectedRevision && value.configRevision === expectedRevision && settled &&
+        value.reconciliationRequired === false && value.applicationVerified === true)
+      return value;
     return {...value, applicationVerified: false,
       state: value.state === 'in-progress' ? 'interrupted' :
-        ['synchronized', 'already-matched', 'not-required'].includes(value.state) ? 'unknown' : value.state};
+        settled ? 'unknown' : value.state};
   }
   return {load, write, recover, filename};
 }

@@ -33,6 +33,10 @@ HistoryView history;};
 struct TrackView {uint64_t timestamp=0,total=0,tentative=0,associated=0,active=0,coasting=0;
 View<PublishedTrack> published;};
 inline void require(bool yes,const char*why){if(!yes)throw std::invalid_argument(why);}
+inline bool validFineSpatialEvidence(uint32_t spatial,uint32_t fineBeams){
+ const uint32_t primary=spatial&127u,secondary=(spatial>>7u)&127u,tertiary=(spatial>>14u)&127u;
+ return primary>0&&primary<=fineBeams&&secondary<=fineBeams&&tertiary<=fineBeams;
+}
 inline void finite(double value){require(std::isfinite(value),"Nonfinite GPU JSON field");}
 inline bool ordinary(double value){return value>=-1e9&&value<=1e9;}
 template<class T> inline void shape(View<T>v){require(v.count==0||v.data,"Null GPU JSON view");
@@ -404,8 +408,7 @@ inline std::string trackerCheckpoint(uint64_t timestamp,View<uint32_t>bank,const
   stateName(w[at+6]);
   const uint32_t spatial=w[at+7];
   if(spatial&0x80000000u){const uint32_t scan=binding.scanBeamCount?binding.scanBeamCount:binding.beamCount*4u;
-   require((spatial&127u)>0&&(spatial&127u)<=scan&&((spatial>>7u)&127u)>0&&((spatial>>7u)&127u)<=scan&&
-    ((spatial>>14u)&127u)>0&&((spatial>>14u)&127u)<=scan,"GPU history multi-lobe metadata invalid");}
+   require(validFineSpatialEvidence(spatial,scan),"GPU history multi-lobe metadata invalid");}
   else{const uint32_t coarse=spatial&511u,fineBeam=(spatial>>9u)&2047u;
    require(coarse<=binding.beamCount&&fineBeam<=binding.beamCount*4u&&
     !(coarse==0&&fineBeam!=0),"GPU history beam metadata invalid");}
@@ -455,7 +458,9 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
  const uint32_t scanBeams=config.scanBeams?config.scanBeams:config.beamCount*config.refinementFactor;
  require(scanBeams>=config.beamCount&&scanBeams<=127&&scanBeams%config.beamCount==0,"Invalid bearing scan count");
  out.Key("fine_beams");out.Uint(scanBeams);
+ out.Key("scan_step_deg");out.Double(360.0/double(scanBeams));
  out.Key("aperture_uncertainty_floor_deg");out.Double(config.minimumUncertaintyDeg);
+ out.Key("physical_resolution_limited");out.Bool(config.minimumUncertaintyDeg>180.0/double(scanBeams));
  out.Key("min_peak_separation_db");out.Uint(config.minPeakSeparationDb);
  out.Key("data");out.StartArray();
  constexpr char hex[]="0123456789ABCDEF";
@@ -479,7 +484,7 @@ inline std::string bearingCheckpoint(uint64_t timestamp,View<uint32_t>bank,
    const double sampleDelay=realPair(w,at),sampleDoppler=realPair(w,at+2);
    if(spatial&0x80000000u){frame.bin={spatial&127u,(spatial>>7u)&127u,(spatial>>14u)&127u};
     frame.weight={1.0,double((spatial>>21u)&31u)/31.0,double((spatial>>26u)&31u)/31.0};
-    require(frame.bin[0]>0&&frame.bin[0]<=scanBeams&&frame.bin[1]>0&&frame.bin[1]<=scanBeams&&frame.bin[2]>0&&frame.bin[2]<=scanBeams,"GPU bearing multi-lobe metadata invalid");
+    require(validFineSpatialEvidence(spatial,scanBeams),"GPU bearing multi-lobe metadata invalid");
     current=frame.bin[0];currentQuality=frame.weight[1]>0?uint32_t(std::clamp(std::floor(10*std::log10(1/frame.weight[1])),0.0,15.0)):15u;}
    else{const uint32_t coarse=spatial&511u,fine=(spatial>>9u)&2047u,q=(spatial>>20u)&15u;
     require(coarse<=config.beamCount&&fine<=scanBeams&&!(coarse==0&&fine!=0),"GPU bearing spatial metadata invalid");if(!fine)continue;

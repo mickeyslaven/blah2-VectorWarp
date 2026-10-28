@@ -324,14 +324,22 @@ function connect(port) {
       'A new timing connection cannot reuse telemetry from the previous generation');
     await closeSocket(reconnectedTimingSocket);
     // Test-only frame marker; never touches a physical receiver.
+    const timestampOne = Date.now();
+    const timestampTwo = timestampOne + 1;
     const timestampSocket = await new Promise((resolve, reject) => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.write(String(Date.now())); resolve(socket);
+        const first = JSON.stringify({timestamp: timestampOne});
+        const second = JSON.stringify({timestamp: timestampTwo});
+        socket.write(first.slice(0, 7));
+        socket.write(first.slice(7) + second);
+        resolve(socket);
       });
       socket.on('error', reject);
     });
     await waitForSystemStatus(status => status.lastFrameAt !== null,
       'Timestamp frame was not observed while its socket remained connected');
+    assert.equal((await request('GET', '/api/timestamp')).body, timestampTwo,
+      'Fragmented/coalesced timestamp frames did not preserve the newest complete value');
     const timestampProbe = await connect(config.network.ports.timestamp);
     assert.notEqual((await request('GET', '/api/system/status')).body.lastFrameAt, null,
       'An empty probe must not steal the active timestamp stream');
@@ -438,7 +446,7 @@ function connect(port) {
     });
     const liveTimestampSocket = await new Promise((resolve, reject) => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.write(String(Date.now())); resolve(socket);
+        socket.write(JSON.stringify({timestamp: Date.now()})); resolve(socket);
       });
       socket.on('error', reject);
     });

@@ -136,6 +136,7 @@ try {
   fusion.process.performance.acceleration = 'gpu-resident';
   fusion.process.tracker.gpu_capacity = 128;
   fusion.process.surveillance_fusion.mode = 'coherent_beam_bank';
+  fusion.process.surveillance_fusion.beams = 6;
   fusion.process.surveillance_fusion.effective_beam_trials = 6;
   fusion.process.detection.integration_cpis = 2;
   fusion.process.detection.integration_motion_bins = 1;
@@ -149,13 +150,14 @@ try {
     bearing_channels: [...fusion.capture.device.surveillance_channels],
     elements: fusion.capture.device.surveillance_channels.map((daq_channel, index) => ({
       id: `channel-${daq_channel}`, daq_channel, receiver_serial: String(1000 + daq_channel),
-      position: [Math.cos(2 * Math.PI * index / 5) * .193548,
-        Math.sin(2 * Math.PI * index / 5) * .193548, 0]
+      position: [Math.cos(2 * Math.PI * index / 5) * .2,
+        Math.sin(2 * Math.PI * index / 5) * .2, 0]
     }))
   };
   persistGroup('kraken-coherent-fusion', krakenBase, fusion,
     ['process.performance.acceleration', 'process.tracker.gpu_capacity',
       'process.surveillance_fusion.mode',
+      'process.surveillance_fusion.beams',
       'process.surveillance_fusion.effective_beam_trials',
       'process.detection.integration_cpis',
       'process.detection.integration_motion_bins',
@@ -193,31 +195,6 @@ try {
       'process.surveillance_fusion.detection_manifold_automation.corpus_path',
       'process.surveillance_fusion.detection_manifold_automation.validation_path',
       'process.surveillance_fusion.detection_manifold_automation.candidate_path']);
-  const integrationShadow = clone(measuredBaseline);
-  integrationShadow.process.detection.integration_shadow = {
-    enabled: true,
-    queue_path: '/var/lib/vectorwarp-api/integration-shadow/queue',
-    results_path: '/var/lib/vectorwarp-api/integration-shadow/results',
-    receipt_key_path: '/etc/vectorwarp/integration-shadow-receipt.key',
-    dwell_seconds: [.05, .1, .2, .5],
-    fusion_modes: ['production', 'coherent_beam_bank',
-      'noise_whitened_beam_bank', 'noncoherent', 'physical_channels'],
-    max_pending: 64,
-    max_wall_seconds_per_clip: 1800
-  };
-  persistGroup('kraken-integration-shadow', measuredBaseline, integrationShadow,
-    ['process.detection.integration_shadow.enabled',
-      'process.detection.integration_shadow.queue_path',
-      'process.detection.integration_shadow.results_path',
-      'process.detection.integration_shadow.receipt_key_path',
-      'process.detection.integration_shadow.dwell_seconds',
-      'process.detection.integration_shadow.fusion_modes',
-      'process.detection.integration_shadow.max_pending',
-      'process.detection.integration_shadow.max_wall_seconds_per_clip']);
-  const missingProductionShadow = clone(integrationShadow);
-  missingProductionShadow.process.detection.integration_shadow.fusion_modes = ['noncoherent'];
-  assert.equal(validateConfig(missingProductionShadow, measuredBaseline).valid, false,
-    'enabled shadow matrix without a production baseline was accepted');
   const bearingBaseline = clone(fusion);
   Object.assign(bearingBaseline.capture.device.array_geometry, {
     mapping_confirmed: true, geometry_confirmed: true, orientation_confirmed: true

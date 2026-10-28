@@ -16,44 +16,36 @@ inline std::array<std::complex<double>,8> calibratedWeights(
  if(!channels||channels>8||!directWeights||!channelScale||
     !std::isfinite(nullFraction)||nullFraction<0||nullFraction>1)
   throw std::invalid_argument("Surveillance fusion calibration arguments invalid");
- double directNorm=0,steeringNorm=0;
+ std::array<std::complex<double>,8> combined{},anchor{};
+ double directNorm=0,combinedNorm=0;
  for(uint32_t channel=0;channel<channels;++channel){
   if(!std::isfinite(directWeights[channel].real())||
      !std::isfinite(directWeights[channel].imag())||
      !std::isfinite(steering[channel].real())||
-     !std::isfinite(steering[channel].imag()))
+     !std::isfinite(steering[channel].imag())||
+     !std::isfinite(channelScale[channel])||!(channelScale[channel]>0))
    throw std::invalid_argument("Surveillance fusion calibration weights invalid");
   directNorm+=std::norm(directWeights[channel]);
-  steeringNorm+=std::norm(steering[channel]);
+  combined[channel]=(whiten?channelScale[channel]:1.0)*steering[channel];
+  combinedNorm+=std::norm(combined[channel]);
  }
  if(!(directNorm>0)||!std::isfinite(directNorm)||
-    !(steeringNorm>0)||!std::isfinite(steeringNorm))
+    !(combinedNorm>0)||!std::isfinite(combinedNorm))
   throw std::invalid_argument("Surveillance fusion calibration has zero norm");
- const double steeringScale=std::sqrt(directNorm/steeringNorm);
- for(uint32_t channel=0;channel<channels;++channel)steering[channel]*=steeringScale;
- std::array<std::complex<double>,8> combined{};
- std::complex<double> projection{};
- for(uint32_t channel=0;channel<channels;++channel)
-  projection+=std::conj(directWeights[channel])*steering[channel];
- projection*=nullFraction/directNorm;
- for(uint32_t channel=0;channel<channels;++channel)
-  steering[channel]-=projection*directWeights[channel];
- if(whiten){
-  double combinedNorm=0;
-  for(uint32_t channel=0;channel<channels;++channel){
-   if(!std::isfinite(channelScale[channel])||!(channelScale[channel]>0))
-    throw std::invalid_argument("Noise-whitened fusion scale invalid");
-   combined[channel]=channelScale[channel]*steering[channel];
-   combinedNorm+=std::norm(combined[channel]);
-  }
-  if(!(combinedNorm>0)||!std::isfinite(combinedNorm))
-   throw std::invalid_argument("Noise-whitened fusion produced invalid weights");
-  const double combinedScale=1.0/std::sqrt(combinedNorm);
-  for(uint32_t channel=0;channel<channels;++channel)combined[channel]*=combinedScale;
- }else{
-  for(uint32_t channel=0;channel<channels;++channel)
-   combined[channel]=steering[channel]/std::sqrt(directNorm);
+ const double combinedScale=1.0/std::sqrt(combinedNorm);
+ const double anchorScale=1.0/std::sqrt(directNorm);
+ std::complex<double> alpha{};
+ for(uint32_t channel=0;channel<channels;++channel){
+  combined[channel]*=combinedScale;
+  anchor[channel]=directWeights[channel]*anchorScale;
+  alpha+=std::conj(anchor[channel])*combined[channel];
  }
+ // Apply the requested amplitude null after optional whitening and baseline
+ // normalization.  Do not renormalize afterward: doing so erases an aligned
+ // null, and inventing an arbitrary orthogonal component makes the result
+ // depend on an eigenvector's otherwise meaningless global phase.
+ if(nullFraction>0)for(uint32_t channel=0;channel<channels;++channel)
+  combined[channel]-=nullFraction*alpha*anchor[channel];
  return combined;
 }
 

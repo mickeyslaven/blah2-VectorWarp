@@ -579,54 +579,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (detection.integration_motion_bins !== undefined)
     number(detection.integration_motion_bins, 'process.detection.integration_motion_bins',
       {integer: true, min: 0, max: 1});
-  if (detection.integration_shadow !== undefined) {
-    const shadow = requireObject(detection.integration_shadow,
-      'process.detection.integration_shadow');
-    boolean(shadow.enabled, 'process.detection.integration_shadow.enabled');
-    for (const field of ['queue_path', 'results_path', 'receipt_key_path']) if (shadow[field] !== undefined) {
-      string(shadow[field], `process.detection.integration_shadow.${field}`);
-      if (typeof shadow[field] === 'string' && !path.isAbsolute(shadow[field]))
-        errors.push(`process.detection.integration_shadow.${field} must be an absolute path`);
-    }
-    if (shadow.enabled === true && !shadow.receipt_key_path)
-      errors.push('process.detection.integration_shadow.receipt_key_path is required when enabled');
-    if (shadow.dwell_seconds !== undefined) {
-      if (!Array.isArray(shadow.dwell_seconds) || !shadow.dwell_seconds.length ||
-          shadow.dwell_seconds.length > 8)
-        errors.push('process.detection.integration_shadow.dwell_seconds must contain 1 through 8 dwell lengths');
-      else {
-        shadow.dwell_seconds.forEach((value, index) => number(value,
-          `process.detection.integration_shadow.dwell_seconds[${index}]`,
-          {min: .02, max: 2}));
-        if (new Set(shadow.dwell_seconds).size !== shadow.dwell_seconds.length)
-          errors.push('process.detection.integration_shadow.dwell_seconds must not contain duplicates');
-      }
-    }
-    const modes = ['production', 'coherent_beam_bank', 'noise_whitened_beam_bank',
-      'noncoherent', 'physical_channels'];
-    if (shadow.fusion_modes !== undefined) {
-      if (!Array.isArray(shadow.fusion_modes) || !shadow.fusion_modes.length)
-        errors.push('process.detection.integration_shadow.fusion_modes must not be empty');
-      else {
-        shadow.fusion_modes.forEach((value, index) => {
-          string(value, `process.detection.integration_shadow.fusion_modes[${index}]`);
-          if (!modes.includes(value))
-            errors.push(`process.detection.integration_shadow.fusion_modes[${index}] is not supported`);
-        });
-        if (new Set(shadow.fusion_modes).size !== shadow.fusion_modes.length)
-          errors.push('process.detection.integration_shadow.fusion_modes must not contain duplicates');
-        if (shadow.enabled === true && shadow.fusion_modes.filter(value => value === 'production').length !== 1)
-          errors.push('process.detection.integration_shadow.fusion_modes must contain exactly one production baseline when enabled');
-      }
-    }
-    if (shadow.max_pending !== undefined)
-      number(shadow.max_pending, 'process.detection.integration_shadow.max_pending',
-        {integer: true, min: 1, max: 1024});
-    if (shadow.max_wall_seconds_per_clip !== undefined)
-      number(shadow.max_wall_seconds_per_clip,
-        'process.detection.integration_shadow.max_wall_seconds_per_clip',
-        {integer: true, min: 30, max: 86400});
-  }
   let trackBeforeDetect = null;
   if (detection.track_before_detect !== undefined) {
     trackBeforeDetect = requireObject(detection.track_before_detect,
@@ -789,11 +741,15 @@ function validateConfig(config, baseline = null, options = {}) {
       number(fusion.beams, 'process.surveillance_fusion.beams',
         {integer: true, min: 4, max: 360});
     if (fusion.effective_beam_trials !== undefined) {
+      const configuredBeams = fusion.beams ?? 12;
       number(fusion.effective_beam_trials,
         'process.surveillance_fusion.effective_beam_trials', {min: 1, max: 360});
-      if (Number.isFinite(fusion.beams) &&
-          fusion.effective_beam_trials > fusion.beams)
+      if (Number.isFinite(configuredBeams) &&
+          fusion.effective_beam_trials > configuredBeams)
         errors.push('effective_beam_trials cannot exceed surveillance_fusion.beams');
+      if (fusion.mode === 'noncoherent' && Number.isFinite(configuredBeams) &&
+          fusion.effective_beam_trials !== configuredBeams)
+        errors.push('noncoherent fusion does not support reduced effective beam trials');
     }
     if (fusion.direct_path_null_db !== undefined)
       number(fusion.direct_path_null_db,
@@ -856,6 +812,37 @@ function validateConfig(config, baseline = null, options = {}) {
       if (processConfig.performance?.acceleration === 'gpu-resident' &&
           device.array_geometry?.shape !== 'regular_polygon')
         errors.push(`gpu-resident ${label} fusion requires regular_polygon geometry`);
+      if (processConfig.performance?.acceleration === 'gpu-resident' &&
+          device.array_geometry?.shape === 'regular_polygon') {
+        const byChannel = new Map((device.array_geometry.elements || []).map(element =>
+          [element?.daq_channel, element?.position]));
+        const positions = (device.surveillance_channels || []).map(channel => byChannel.get(channel));
+        let regular = positions.length >= 3 && positions.every(position =>
+          Array.isArray(position) && position.length === 3 && position.every(Number.isFinite));
+        if (regular) {
+          const centre = [0, 1, 2].map(axis =>
+            positions.reduce((sum, position) => sum + position[axis], 0) / positions.length);
+          const radii = positions.map(position => Math.hypot(position[0] - centre[0],
+            position[1] - centre[1]));
+          const angles = positions.map(position => Math.atan2(position[1] - centre[1],
+            position[0] - centre[0]));
+          const radius = radii.reduce((sum, value) => sum + value, 0) / radii.length;
+          const wrap = angle => Math.atan2(Math.sin(angle), Math.cos(angle));
+          const step = wrap(angles[1] - angles[0]);
+          const tolerance = Math.max(1e-6, radius * 1e-5);
+          const angularTolerance = 1e-5;
+          regular = Number.isFinite(radius) && radius > 0 && Math.abs(step) > angularTolerance &&
+            Math.abs(wrap(positions.length * step)) <= angularTolerance &&
+            positions.every((position, index) =>
+              Math.abs(radii[index] - radius) <= tolerance &&
+              Math.abs(position[2] - centre[2]) <= tolerance &&
+              Math.abs(wrap(angles[index] - angles[0] - index * step)) <= angularTolerance &&
+              angles.slice(0, index).every(prior =>
+                Math.abs(wrap(angles[index] - prior)) > angularTolerance));
+        }
+        if (!regular)
+          errors.push(`gpu-resident ${label} geometry must be an exact planar uniformly stepped regular polygon`);
+      }
       if (fusion.mode === 'noise_whitened_beam_bank' &&
           processConfig.performance?.acceleration !== 'gpu-resident')
         errors.push('noise_whitened_beam_bank fusion requires gpu-resident acceleration');
@@ -1078,20 +1065,26 @@ function validateConfig(config, baseline = null, options = {}) {
     });
   if (trackerForward) {
     boolean(trackerForward.enabled, 'network.tracker_forward.enabled');
-    string(trackerForward.host, 'network.tracker_forward.host');
-    number(trackerForward.port, 'network.tracker_forward.port',
-      {integer: true, min: 1, max: 65535});
+    // A disabled live-site feed has no endpoint to validate or reconnect to.
+    // Keep endpoint validation for every configuration that could open a socket.
+    if (trackerForward.enabled === true) {
+      string(trackerForward.host, 'network.tracker_forward.host');
+      number(trackerForward.port, 'network.tracker_forward.port',
+        {integer: true, min: 1, max: 65535});
+    }
     if (trackerForward.annotate_adsb !== undefined)
       boolean(trackerForward.annotate_adsb, 'network.tracker_forward.annotate_adsb');
   }
   if (unassistedTrackerForward) {
     boolean(unassistedTrackerForward.enabled,
       'network.tracker_forward.unassisted.enabled');
-    string(unassistedTrackerForward.host,
-      'network.tracker_forward.unassisted.host');
-    number(unassistedTrackerForward.port,
-      'network.tracker_forward.unassisted.port',
-      {integer: true, min: 1, max: 65535});
+    if (unassistedTrackerForward.enabled === true) {
+      string(unassistedTrackerForward.host,
+        'network.tracker_forward.unassisted.host');
+      number(unassistedTrackerForward.port,
+        'network.tracker_forward.unassisted.port',
+        {integer: true, min: 1, max: 65535});
+    }
   }
 
   for (const [name, site] of [['rx', receiver], ['tx', transmitter]]) {

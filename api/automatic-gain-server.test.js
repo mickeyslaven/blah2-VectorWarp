@@ -210,7 +210,7 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal((await request('POST', '/api/processor/status', processor)).status, 204);
     await new Promise(resolve => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.end(String(Date.now())); setTimeout(resolve, 25);
+        socket.end(JSON.stringify({timestamp: Date.now()})); setTimeout(resolve, 25);
       });
     });
     assert.notEqual((await request('GET', '/api/detection')).status, 503,
@@ -265,7 +265,7 @@ async function stop() { if (child && child.exitCode === null) await new Promise(
     assert.equal((await request('POST', '/api/processor/status', processor)).status, 204);
     await new Promise(resolve => {
       const socket = net.createConnection({host: '127.0.0.1', port: config.network.ports.timestamp}, () => {
-        socket.end(String(Date.now())); setTimeout(resolve, 25);
+        socket.end(JSON.stringify({timestamp: Date.now()})); setTimeout(resolve, 25);
       });
     });
     assert.notEqual((await request('GET', '/api/detection')).status, 503,

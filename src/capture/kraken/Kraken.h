@@ -44,7 +44,8 @@ private:
   void connect_heimdall();
   void receive_exact(void *data, std::size_t length);
   std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE> receive_header();
-  static void clear_buffers(const std::vector<IqData *>& buffers);
+  void clear_buffers(const std::vector<IqData *>& buffers,
+    bool advanceProcessingEpoch=false);
 
 public:
   struct SamplePosition

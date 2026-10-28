@@ -108,7 +108,7 @@ case "$DISTRO" in
 esac
 
 for command in file realpath sha256sum stat tar visudo; do need_command "$command"; done
-for file in .vectorwarp-build bin/blah2 bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
+for file in .vectorwarp-build bin/blah2 bin/blah2-replay-verify bin/blah2-gpu-worker bin/blah2-gpu-vulkan.so bin/blah2-gpu-resident-vulkan.so bin/blah2-mixed-worker \
   bin/heimdall share/heimdall/build.json share/heimdall/sbom.cdx.json share/heimdall/service.py share/heimdall/controller.py \
   bin/libblah2-capture-core.so.1 bin/blah2-receiver-usrp.so \
   bin/blah2-receiver-hackrf.so \
@@ -296,6 +296,7 @@ if [[ $FORMAT == deb ]]; then
     "$VERSION" "$PACKAGE_RELEASE" >"$WORK_DIR/debian/shlibs.local"
   binaries=(
     "$STAGE/opt/vectorwarp/current/bin/blah2"
+    "$STAGE/opt/vectorwarp/current/bin/blah2-replay-verify"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-mixed-worker"
     "$STAGE/opt/vectorwarp/current/bin/blah2-gpu-vulkan.so"

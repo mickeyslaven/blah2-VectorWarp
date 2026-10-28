@@ -1,4 +1,5 @@
 #include "CoherentBeamBank.h"
+#include "process/ambiguity/ResidentFusionWeights.h"
 
 #include <cmath>
 #include <limits>
@@ -22,8 +23,8 @@ CoherentBeamBank::CoherentBeamBank(const Config& config)
     throw std::invalid_argument("Coherent fusion requires a positive RF frequency");
   if (config.beams < 4 || config.beams > 360)
     throw std::invalid_argument("Coherent fusion beam count must be from 4 through 360");
-  if (config.positionsM.empty())
-    throw std::invalid_argument("Coherent fusion requires antenna positions");
+  if (config.positionsM.empty() || config.positionsM.size() > 8)
+    throw std::invalid_argument("Coherent fusion requires from one through eight antenna positions");
   if (!std::isfinite(config.directPathAzimuthRad))
     throw std::invalid_argument("Coherent fusion direct-path azimuth must be finite");
   if (!std::isfinite(config.directPathNullDb) || config.directPathNullDb < 0 ||
@@ -82,7 +83,6 @@ void CoherentBeamBank::calibrate(
   }
   if (!(norm > 0) || !std::isfinite(norm))
     throw std::invalid_argument("Coherent calibration weights have zero norm");
-  const double scale = 1.0 / std::sqrt(norm);
   const double directX = std::cos(directPathAzimuthRad_);
   const double directY = std::sin(directPathAzimuthRad_);
   const double nullFraction = 1.0 - std::pow(10.0, -directPathNullDb_ / 20.0);
@@ -92,7 +92,6 @@ void CoherentBeamBank::calibrate(
     const double targetX = std::cos(azimuth);
     const double targetY = std::sin(azimuth);
     std::vector<std::complex<double>> steering(positionsM_.size());
-    std::complex<double> projection{0, 0};
     if (measuredResponses_.empty())
     {
       for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
@@ -102,7 +101,6 @@ void CoherentBeamBank::calibrate(
           (position[0] * (targetX - directX) +
            position[1] * (targetY - directY));
         steering[channel] = directPathWeights[channel] * std::polar(1.0, -relativePhase);
-        projection += std::conj(directPathWeights[channel]) * steering[channel];
       }
     }
     else
@@ -121,13 +119,20 @@ void CoherentBeamBank::calibrate(
       for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
       {
         steering[channel] *= steeringScale;
-        projection += std::conj(directPathWeights[channel]) * steering[channel];
       }
     }
-    projection *= nullFraction / norm;
+    std::array<std::complex<double>, 8> residentSteering{};
+    std::array<double, 8> unity{};
     for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
-      weights_[beam][channel] = scale *
-        std::conj(steering[channel] - projection * directPathWeights[channel]);
+    {
+      residentSteering[channel] = steering[channel];
+      unity[channel] = 1.0;
+    }
+    const auto calibrated = blah2::resident_fusion::calibratedWeights(
+      residentSteering, uint32_t(positionsM_.size()), directPathWeights.data(),
+      unity.data(), nullFraction, false);
+    for (std::size_t channel = 0; channel < positionsM_.size(); ++channel)
+      weights_[beam][channel] = std::conj(calibrated[channel]);
   }
 }
 

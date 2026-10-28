@@ -27,6 +27,13 @@ async function main() {
     journal.write({state: 'already-matched', reconciliationRequired: false, configRevision: 'a'});
     assert.strictEqual(journal.recover().state, 'unknown');
     assert.strictEqual(journal.recover().applicationVerified, false);
+    journal.write({state: 'already-matched', reconciliationRequired: false,
+      applicationVerified: true, configRevision: 'a'});
+    assert.strictEqual(journal.recover('a').state, 'already-matched');
+    assert.strictEqual(journal.recover('a').applicationVerified, true,
+      'An exact-revision managed Apply attestation must survive an API restart');
+    assert.strictEqual(journal.recover('b').applicationVerified, false,
+      'A receipt for another revision must never attest the loaded application');
     const before = fs.readFileSync(journal.filename, 'utf8');
     const failing = createReceiverJournal(filename, {io: {...fs,
       renameSync() { throw new Error('injected rename failure'); }}});

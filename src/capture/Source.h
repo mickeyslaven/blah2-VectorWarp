@@ -50,6 +50,10 @@ protected:
   uint32_t recordingChannels = 2;
 
 private:
+  // Monotonic signal-processing epoch. Receiver discontinuities advance this
+  // even when recording is disabled so adaptive DSP never spans incompatible
+  // hardware/sample epochs.
+  std::atomic<uint64_t> processingEpoch{0};
   mutable std::mutex recordingMutex;
   std::atomic<bool> recordingActive{false};
   std::atomic<bool> recordingResumePending{false};
@@ -118,13 +122,18 @@ public:
     return recordingActive.load() || recordingResumePending.load();
   }
   RecordingStatus recording_status() const;
+  uint64_t processing_epoch() const { return processingEpoch.load(std::memory_order_acquire); }
   // Preserve a partial file for diagnosis, but never mark it complete after a
   // receiver reports a gap, reset, overrun, or malformed callback.
   void recording_discontinuity(const std::string& error);
   // Close only the ambiguous epoch, then lazily start a new file on the first
   // qualified post-boundary block. This preserves receiver operation without
   // ever joining samples from different hardware-setting epochs.
-  void recording_epoch_discontinuity(const std::string& error);
+  void recording_epoch_discontinuity(const std::string& error,
+    bool advanceProcessingEpoch=true);
+  void advance_processing_epoch() noexcept {
+    processingEpoch.fetch_add(1, std::memory_order_acq_rel);
+  }
   void record_block(const blah2::IqBlock& samples);
   void record_block(const blah2::IqBlock& samples,
     const SampleTimePosition& startPosition);

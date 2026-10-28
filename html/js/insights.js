@@ -474,14 +474,17 @@
     const resolution = rangeResolutionKm(config) ?? .1;
     const rawDetections = detectionRows(detection).filter(item => item.delay !== null && item.delay > 0);
     const currentTrackStates = new Set(['ACTIVE', 'ASSOCIATED', 'CONFIRMED']);
-    const tracks = array(tracker?.data).map(track => ({
+    const trackerRows = array(tracker?.data);
+    const tracks = trackerRows.map(track => ({
       id: track.id,
       state: track.state,
       delay: trackRangeKm(track.delay, config)
     })).filter(track => track.delay !== null && track.delay > 0 &&
-      currentTrackStates.has(String(track.state || '').toUpperCase())).slice(0, 12);
-    const hiddenCoastingTracks = array(tracker?.data).filter(track =>
+      currentTrackStates.has(String(track.state || '').toUpperCase()));
+    const hiddenCoastingTracks = trackerRows.filter(track =>
       String(track?.state || '').toUpperCase() === 'COASTING').length;
+    const hiddenTentativeTracks = trackerRows.filter(track =>
+      String(track?.state || '').toUpperCase() === 'TENTATIVE').length;
     let bearingLocations = null;
     let bearingDiagnostic = null;
     if (config?.process?.bearing?.enable === true) {
@@ -587,7 +590,7 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    renderHtml(document.getElementById('view-summary'), `${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`);
+    renderHtml(document.getElementById('view-summary'), `${card(rawDetections.length, 'Raw detections')}${card(tracks.length, 'Current tracks')}${card(hiddenTentativeTracks, 'Tentative hidden')}${card(hiddenCoastingTracks, 'Coasting hidden')}${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`);
     const reference = bearingDiagnostic?.known_angle_reference;
     const referenceDiagnostic = !reference ? '' : reference.available ?
       `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
@@ -607,7 +610,7 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    renderDetail(`<div class="view-note">Orange ellipses show current delay-only tracks. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. Persistent stationary clutter is hidden by default but remains in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. Raw untracked detections remain hidden.</div>${diagnostic}${referenceDiagnostic}`);
+    renderDetail(`<div class="view-note">Orange ellipses show all ${tracks.length} current delay-only tracks; there is no display cap. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenTentativeTracks} tentative and ${hiddenCoastingTracks} coasting tracker rows are counted above but hidden from the current-track ellipses. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. Green ADS-B markers are validation overlays and never select a radar fix. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}`);
     if (locationMapIsBeingNavigated()) return;
     await Plotly.react('data', traces, {
       ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},

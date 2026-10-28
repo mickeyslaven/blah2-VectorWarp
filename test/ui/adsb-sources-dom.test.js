@@ -10,13 +10,13 @@ const {configurationForReceiver} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
 let saved = configurationForReceiver('RspDuo');
 let writes = 0;
-saved.location.rx.latitude = 40.4420304;
-saved.location.rx.longitude = -80.0566972;
-saved.truth.adsb.tar1090 = 'http://pi-zero.local/tar1090';
+saved.location.rx.latitude = 40;
+saved.location.rx.longitude = -80;
+saved.truth.adsb.tar1090 = 'http://adsb-primary.example.invalid/tar1090';
 saved.truth.adsb.sources = [
-  'http://pi-zero.local/tar1090',
-  'http://strix.local:8080',
-  'exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60'
+  'http://adsb-primary.example.invalid/tar1090',
+  'http://adsb-secondary.example.invalid/tar1090',
+  'exchange:https://opendata.adsb.fi/api/v3/lat/40/lon/-80/dist/60'
 ];
 let candidate = null;
 const dom = new JSDOM('<div id="configuration"></div>', {
@@ -64,7 +64,8 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     assert.equal(field.querySelector('label').textContent, 'ADS-B sources');
     const locals = field.querySelectorAll('[data-adsb-source="local"]');
     assert.deepEqual([...locals].map(input => input.value),
-      ['http://pi-zero.local/tar1090', 'http://strix.local:8080']);
+      ['http://adsb-primary.example.invalid/tar1090',
+        'http://adsb-secondary.example.invalid/tar1090']);
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-fi"]').checked, true);
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-lol"]').checked, false);
     assert.match(field.textContent, /newest healthy observation wins/i);
@@ -81,13 +82,14 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     const valid = await window.validateActiveConfiguration();
     assert.equal(valid, true, JSON.stringify(validateConfig(candidate, saved)));
     assert.deepEqual(candidate.truth.adsb.sources, [
-      'http://pi-zero.local/tar1090',
-      'http://strix.local:8080',
+      'http://adsb-primary.example.invalid/tar1090',
+      'http://adsb-secondary.example.invalid/tar1090',
       'http://backup.local/tar1090',
-      'exchange:https://opendata.adsb.fi/api/v3/lat/40.4420304/lon/-80.0566972/dist/60',
-      'exchange:https://api.adsb.lol/v2/point/40.4420304/-80.0566972/60'
+      'exchange:https://opendata.adsb.fi/api/v3/lat/40/lon/-80/dist/60',
+      'exchange:https://api.adsb.lol/v2/point/40/-80/60'
     ]);
-    assert.equal(candidate.truth.adsb.tar1090, 'http://pi-zero.local/tar1090');
+    assert.equal(candidate.truth.adsb.tar1090,
+      'http://adsb-primary.example.invalid/tar1090');
     const expectedSources = clone(candidate.truth.adsb.sources);
     await window.saveConfiguration();
     assert.equal(writes, 1, 'Structured local inputs and exchange switches save successfully');

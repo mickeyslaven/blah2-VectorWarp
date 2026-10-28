@@ -96,8 +96,8 @@ try {
   for (const gain of [1, 2]) {
     const candidate = clone(gainSaved.config);
     Object.assign(candidate.capture.device.heimdall, {gain, gain_control: 'measured'});
-    assert.notEqual(geometry.context(candidate), geometry.context(gainSaved.config),
-      'The default shared context still includes gain and control policy');
+    assert.equal(geometry.context(candidate), geometry.context(gainSaved.config),
+      'Physical-array context must exclude gain and control policy');
     gainSaved = saveConfig(gainFile, candidate, gainSaved.revision);
     for (const field of confirmationFields)
       assert.equal(gainSaved.config.capture.device.array_geometry[field], true,
@@ -116,13 +116,22 @@ try {
     Object.assign(candidate.capture.device.heimdall, {gain: 13, gain_control: 'fixed'});
     geometry.reconcile(candidate, previous);
     for (const field of confirmationFields)
-      assert.equal(candidate.capture.device.array_geometry[field], false,
-        'Fixed gain changes and leaving measured mode retain normal invalidation');
+      assert.equal(candidate.capture.device.array_geometry[field], true,
+        'Fixed gain changes and leaving measured mode preserve physical confirmations');
+  }
+  for (const mutate of [
+    c => { c.capture.fc += 100; }, c => { c.capture.fs += 1; },
+    c => { c.capture.device.heimdall.channel_gains = [1, 2, 3, 4, 5]; }
+  ]) {
+    const candidate = clone(confirmed); mutate(candidate); geometry.reconcile(candidate, confirmed);
+    for (const field of confirmationFields)
+      assert.equal(candidate.capture.device.array_geometry[field], true,
+        'RF and gain changes preserve physical confirmations');
   }
   for (const mutate of [
     c => { c.capture.device.channel_count = 4; }, c => { c.capture.device.reference_channel = 4; },
     c => { c.capture.device.surveillance_channels.reverse(); }, c => { c.process.reference_synthesis.mode = 'array_eigenbeam'; },
-    c => { c.capture.fc += 100; }, c => { c.capture.fs += 1; }, c => { c.capture.device.heimdall.host = '192.0.2.1'; },
+    c => { c.capture.device.heimdall.host = '192.0.2.1'; },
     c => { c.capture.device.heimdall.port += 1; }, c => { c.capture.device.heimdall.control_port += 1; },
     c => { c.capture.device.heimdall.other_setting = true; },
     c => { c.capture.device.array_geometry.elements.reverse(); },

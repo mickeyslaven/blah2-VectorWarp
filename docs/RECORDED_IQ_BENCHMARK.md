@@ -101,7 +101,7 @@ for a retry.
 | Host / completed pair CPU pipeline | Upstream CPU pipeline | Observed ratio | Status |
 | --- | ---: | ---: | --- |
 | Strix AMD (`strix`) / 46.751 s | 47.690 s | 1.020× | Stopped at 82 C during array CPU; no retry. AUTO 37.601 s and explicit GPU 37.007 s completed as single pair runs. |
-| HP Fedora (`fedora3`) / 107.571 s | 117.917 s | 1.096× | Stopped at its thermal cutoff during first AUTO-GPU run; no completed GPU result or retry. |
+| Fedora CPU test host / 107.571 s | 117.917 s | 1.096× | Stopped at its thermal cutoff during first AUTO-GPU run; no completed GPU result or retry. |
 
 Strix’s completed single pair runs had zero detection/track disagreement frames
 (one GPU run had one 0.01-unit rounding-only frame). HP’s two completed CPU

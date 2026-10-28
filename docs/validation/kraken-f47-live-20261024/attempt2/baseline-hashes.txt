@@ -1,6 +1,0 @@
-1eff9c21c65370956ff4b2e037484f486aa2abc1da186187c5bc42cbe4a4a546  /opt/vectorwarp-heimdall/heimdall
-15c8cdd5b7b8c01f6ed116dfe760887cd968a3e829959807a79233354d73a0f4  /opt/vectorwarp-heimdall/build-receipt.json
-6c994038dcacb08029d1c7947a16aee8132f79615e28e50ca04125c2c041d2d4  /etc/systemd/system/vectorwarp-heimdall.service
-469d59b9d5c4a7d1f326859020d6358c48e854df49bf88e7c5f9d66099495c40  /etc/systemd/system/vectorwarp-heimdall.service.d/20-vectorwarp-ports.conf
-7a61e0abb613cef8895c0e9fbc596f49f63705f4331d26816daafcfc79a489e0  /etc/vectorwarp/config.yml
-faad5bec6023effce1003a3a916d0478e05c21700ecd8f6e2f7e72bc145889d3  /var/lib/vectorwarp-heimdall/heimdall_settings.conf

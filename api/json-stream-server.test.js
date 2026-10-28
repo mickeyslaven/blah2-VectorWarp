@@ -82,13 +82,13 @@ async function send(port, chunks) {
       x_axis_bearing_deg_true: 80, bearing_channels: [0, 1, 2, 3, 4],
       elements: Array.from({length: 5}, (_, daq_channel) => ({id: `element-${daq_channel}`,
         daq_channel, receiver_serial: String(1000 + daq_channel),
-        position: [.193548 * Math.cos(2 * Math.PI * daq_channel / 5),
-          .193548 * Math.sin(2 * Math.PI * daq_channel / 5), 0]}))
+        position: [.2 * Math.cos(2 * Math.PI * daq_channel / 5),
+          .2 * Math.sin(2 * Math.PI * daq_channel / 5), 0]}))
     };
-    config.location.rx = {name: 'Receiver', latitude: 40.442030432817,
-      longitude: -80.056697229925, altitude: 0};
-    config.location.tx = {name: 'Illuminator', latitude: 40.49388889,
-      longitude: -80.01888889, altitude: 0};
+    config.location.rx = {name: 'Receiver', latitude: 40,
+      longitude: -80, altitude: 0};
+    config.location.tx = {name: 'Illuminator', latitude: 40.05,
+      longitude: -80, altitude: 0};
     const ports = await reservePorts(Object.keys(config.network.ports).length);
     Object.keys(config.network.ports).forEach((name, index) => { config.network.ports[name] = ports[index]; });
     config.network.ip = '127.0.0.1';

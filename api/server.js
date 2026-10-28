@@ -37,7 +37,6 @@ const {createOprsEventRecorder} = require('./oprs-event-recorder.js');
 const {verifyCaptureIntegrity, writeAdmissionSidecar, validateProcessorSampleRanges,
   captureArtifactState, admissionsNeedTruthSettlement} = require('./capture-admission.js');
 const {createTrackGuidedShadowRecorder} = require('./track-guided-shadow-recorder.js');
-const {IntegrationShadowQueue} = require('./integration-shadow-queue.js');
 const {createCaptureTriggerQueue, optionsFromEnvironment: captureTriggerOptions} =
   require('./capture-trigger-queue.js');
 const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceiverCapabilities,
@@ -97,7 +96,6 @@ const {exact: evidenceStatistics, operational: provisionalEvidenceStatistics} =
 const captureEvidenceStatistics = provisionalEvidenceStatistics;
 const oprsEventRecorder = createOprsEventRecorder(config,
   {filename: process.env.BLAH2_OPRS_EVENTS_PATH});
-const integrationShadowQueue = new IntegrationShadowQueue(config);
 
 async function finalizeCaptureAdmission(revision, file, samples) {
   const records = captureTriggerQueue.eventsForRevision(revision);
@@ -142,10 +140,6 @@ async function finalizeCaptureAdmission(revision, file, samples) {
   captureEvidenceStatistics.recordCaptureAdmissions(Object.fromEntries(Object.entries(admissions).map(([id, truth]) =>
     [id, {valid: truth.valid && integrity.valid, reasons: [...new Set([...(truth.reasons || []), ...(integrity.reasons || [])])]}])));
   captureEvidenceStatistics.acceptCaptureEvents(captureTriggerQueue.eventsForRevision(revision));
-  // Bind shadow work to the exact immutable admission document written above.
-  // Later in-memory bookkeeping adds admission_sidecar to `integrity`; that
-  // field is deliberately not allowed to change the queued sidecar digest.
-  if (admissionSidecar) integrationShadowQueue.accept(file, artifact, revision);
 }
 const trackGuidedShadowRecorder = createTrackGuidedShadowRecorder(config, adsbSource);
 if (startupDocument.setupRequired)
@@ -170,7 +164,7 @@ let processorStatus = null;
 let configWriteInProgress = false;
 // A saved file or API restart is not evidence of receiver application.
 const receiverJournal = createReceiverJournal(configFile);
-let receiverSyncState = receiverJournal.recover();
+let receiverSyncState = receiverJournal.recover(startupDocument.revision);
 let receiverReconciliationRequired = receiverSyncState.reconciliationRequired;
 function receiverTimeoutOption(name, maximum) {
   if (process.env[name] === undefined) return undefined;
@@ -488,9 +482,6 @@ app.get('/api/tracker-forward', (req, res) => {
 });
 app.get('/api/tracker/guided-shadow', (req, res) => {
   res.json(trackGuidedShadowRecorder.status());
-});
-app.get('/api/detection/integration-shadow', (req, res) => {
-  res.json(integrationShadowQueue.status());
 });
 app.get('/api/bearing', (req, res) => {
   if (config.process?.bearing?.enable !== true)
@@ -943,8 +934,12 @@ app.put('/api/config', async (req, res) => {
       receiverSync = await receiverSynchronizer.synchronize(currentDocument.config, req.body,
         {force: observeLiveReceiver});
     }
+    // Operator confirmations describe the physical array installation. RF
+    // retunes, calibration resets and gain writes change the scientific
+    // identity, but do not move elements or remap DAQ channels. Only a
+    // topology-changing receiver command invalidates those attestations.
     if (receiverSync.operations?.some(operation => operation.commandSent &&
-        (!measuredGain || !['set_gain', 'reset_lag_compensation'].includes(operation.operation))))
+        operation.operation === 'set_num_elements'))
       invalidateGeometry(req.body?.capture?.device?.array_geometry);
     let saved;
     try {
@@ -986,8 +981,11 @@ app.put('/api/config', async (req, res) => {
       receiverSync = {...receiverSync, priorOutcomeUnverified: true,
         priorReceiverReceipt: previousReceiverReceipt};
     if (receiverSyncRequired || startupOwned) receiverReconciliationRequired = false;
+    const applicationVerified = ['synchronized', 'already-matched', 'not-required'].includes(
+      receiverSync.status) && receiverReconciliationRequired === false;
     receiverSyncState = {state: receiverSync.status, completedAt: Date.now(),
       receipt: receiverSync, configRevision: saved.revision,
+      applicationVerified,
       reconciliationRequired: receiverReconciliationRequired};
     try { receiverJournal.write(receiverSyncState); }
     catch (error) {
@@ -1304,13 +1302,11 @@ const server_timestamp = net.createServer((socket)=>{
   const connection = {restart: restartGeneration, generation: timestampGeneration,
     id: ++timestampConnectionSequence};
   timestampConnections += 1;
-  socket.on("data",(msg)=>{
-    const value = msg.toString();
-    if (!/^\s*\d{10,}(?:\.\d+)?\s*$/.test(value)) {
-      serviceErrors.set('timestamp', 'timestamp connection: Expected numeric radar timestamp');
-      socket.destroy();
-      return;
-    }
+  const feed = jsonFrames(frame => {
+    const parsed = JSON.parse(frame);
+    const value = parsed?.timestamp;
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error('Expected a non-negative safe-integer radar timestamp');
     if (!timestampConnectionEligible(connection)) return;
     activeTimestampConnection = connection.id;
     serviceErrors.delete('timestamp');
@@ -1318,7 +1314,14 @@ const server_timestamp = net.createServer((socket)=>{
     completePendingGainRestart();
     if (gainPublicationBlocked) return;
     lastFrameAt = Date.now();
-    timestamp = value;
+    timestamp = String(value);
+  });
+  socket.on("data",(msg)=>{
+    try { feed(msg); }
+    catch (error) {
+      serviceErrors.set('timestamp', `timestamp connection: ${error.message}`);
+      socket.destroy();
+    }
   });
   socket.on("close",()=>{
       if (timestampConnectionCurrent(connection)) {

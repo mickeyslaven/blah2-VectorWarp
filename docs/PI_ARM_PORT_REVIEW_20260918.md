@@ -105,8 +105,6 @@ the user cannot physically replace the SD card.
 5. Retain only independently supported gains, then measure the combined port.
    Preserve the working installation until the candidate passes these checks.
 
-Local continuity artifacts (not for public packaging): PR67 source and metadata
-are under `../pi-arm-review/`; the existing relay helper is
-`/Users/michaelslaven/Projects/owlos/connect-pi-via-adsb.sh`. Prior experimental
-solver evidence is in that project's `benchmark/CURRENT.md`; final packaged
-PR67 results take precedence over historical experiment timings.
+Local continuity artifacts and private relay helpers are intentionally excluded
+from the public repository. Final packaged PR67 results take precedence over
+historical experiment timings.

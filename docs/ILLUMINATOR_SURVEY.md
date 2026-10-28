@@ -141,7 +141,6 @@ or otherwise unqualified reference win. This avoids treating a stronger direct
 path or more busy airspace as better radar performance. Confidence intervals and provenance still
 belong in the acquisition report; the evaluator cannot authenticate caller data.
 
-See [the executor design](ILLUMINATOR_SURVEY_EXECUTOR.md) for preview/intent,
-catalog and receiver contracts, durable restore, alternating blocks, opportunity
-definitions and failure tests. That document describes work still needed before
-automatic end-to-end surveys can run.
+Automatic end-to-end surveys require an external operator workflow for preview,
+intent, durable restore, alternating blocks, opportunity definitions and failure
+tests. Site-specific survey orchestration is intentionally not shipped here.

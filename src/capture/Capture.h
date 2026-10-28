@@ -119,6 +119,7 @@ public:
   void set_paired_cpi_queue(PairedCpiQueue* queue) { pairedCpiQueue = queue; }
   SamplePosition live_sample_position() const;
   std::vector<double> input_gain_db() const;
+  uint64_t input_generation() const;
   bool requires_kraken_time_provenance() const {
     // Replay retains the configured receiver identity, but the recording
     // format has no stored RF-time epoch. Mark it inexact too instead of

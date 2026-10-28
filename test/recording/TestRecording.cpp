@@ -191,9 +191,12 @@ int main() try {
     require(!gap.recording_status().error.empty(),"Source accepted a callback sample gap");
 
     MockSource discontinuity(directory.string(),&save);
+    require(discontinuity.processing_epoch()==0,"New source did not start in processing epoch zero");
     const auto discontinuityPath=discontinuity.open_file();
     discontinuity.record_block({{{1,2}},{{3,4}}});
     discontinuity.recording_discontinuity("mock capture gap");
+    require(discontinuity.processing_epoch()==1,
+      "Capture gap did not advance the adaptive-processing epoch");
     const auto discontinuityStatus=discontinuity.recording_status();
     require(!discontinuityStatus.active && discontinuityStatus.samples==1 &&
       discontinuityStatus.error=="mock capture gap","Discontinuity status was not retained");
@@ -204,6 +207,8 @@ int main() try {
     const auto ambiguousEpoch=segmented.open_file();
     segmented.record_block({{{1,2}},{{3,4}}});
     segmented.recording_epoch_discontinuity("mock setting epoch changed");
+    require(segmented.processing_epoch()==1,
+      "RF setting change did not advance the adaptive-processing epoch");
     const auto transition=segmented.recording_status();
     require(!transition.active && transition.resumePending && transition.samples==1,
       "Qualified epoch rollover did not retain a bounded resume request");
@@ -226,6 +231,20 @@ int main() try {
     std::filesystem::remove(ambiguousEpoch+".provenance.json");
     std::filesystem::remove(resumed.file);
     std::filesystem::remove(resumed.file+".provenance.json");
+
+    MockSource unrecordedEpoch(directory.string(),&save);
+    unrecordedEpoch.recording_epoch_discontinuity("unrecorded setting epoch changed");
+    require(unrecordedEpoch.processing_epoch()==1,
+      "An unrecorded live discontinuity did not reset adaptive processing");
+
+    MockSource coordinatedEpoch(directory.string(),&save);
+    coordinatedEpoch.recording_epoch_discontinuity(
+      "buffer clearing owns this boundary", false);
+    require(coordinatedEpoch.processing_epoch()==0,
+      "Deferred discontinuity published before coordinated buffer clearing");
+    coordinatedEpoch.advance_processing_epoch();
+    require(coordinatedEpoch.processing_epoch()==1,
+      "Coordinated buffer boundary did not publish its processing epoch");
 
     {
       RecordingWriter writer(path,{2,1000000,100000000,0,"blah2"});

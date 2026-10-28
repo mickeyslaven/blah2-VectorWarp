@@ -1,10 +1,10 @@
 'use strict';
 const assert = require('node:assert/strict');
 const {inverse, locate, BistaticHypothesisTracker, locationsFromBearing} = require('./bistatic-geolocation');
-const rx = {latitude: 40.442030432817, longitude: -80.056697229925};
-const tx = {latitude: 40.49388889, longitude: -80.01888889};
+const rx = {latitude: 40, longitude: -80};
+const tx = {latitude: 40.05, longitude: -80};
 const baseline = inverse(rx, tx);
-assert.ok(baseline.distanceM > 6000 && baseline.distanceM < 7000);
+assert.ok(baseline.distanceM > 5000 && baseline.distanceM < 6000);
 const along = locate(rx, tx, 1000, baseline.bearingDeg);
 assert.ok(along && along.rangeM > baseline.distanceM);
 const opposite = locate(rx, tx, 1000, baseline.bearingDeg + 180);

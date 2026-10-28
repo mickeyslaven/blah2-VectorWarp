@@ -1,6 +1,7 @@
 'use strict';
 const assert = require('assert');
-const {receiverSettlement, requested, sameSettings} = require('./vectorwarp-health-watchdog');
+const {receiverSettlement, requested, sameSettings, synchronizeAfterRestart} =
+  require('./vectorwarp-health-watchdog');
 
 const config = {capture: {fc: 563000000, fs: 2400000, device: {type: 'Kraken',
   channel_count: 5, heimdall: {gain: 2, channel_gains: [19.7, 25.4, 20.7, 25.4, 22.9]}}}};
@@ -18,4 +19,38 @@ assert.throws(() => receiverSettlement('revision-b', wanted,
   {...receipt, requested: {...wanted, frequency: 527000000}}), /exact configuration/);
 assert.throws(() => receiverSettlement('revision-b', wanted,
   {...receipt, status: 'pending'}), /settle/);
-console.log('PASS exact RF preservation and idempotent revision settlement');
+
+(async () => {
+  let attempts = 0, clock = 0;
+  const recovered = await synchronizeAfterRestart(config, {
+    factory: () => ({synchronize: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        const error = new Error('socket not listening');
+        error.code = 'KRAKEN_CONNECTION_FAILED';
+        throw error;
+      }
+      return receipt;
+    }}),
+    now: () => clock,
+    sleep: async milliseconds => { clock += milliseconds; },
+    timeoutMs: 1000
+  });
+  assert.equal(attempts, 3);
+  assert.deepEqual(recovered, receipt);
+
+  attempts = 0;
+  await assert.rejects(() => synchronizeAfterRestart(config, {
+    factory: () => ({synchronize: async () => {
+      attempts += 1;
+      const error = new Error('receiver rejected settings');
+      error.code = 'KRAKEN_REJECTED';
+      throw error;
+    }}),
+    now: () => 0,
+    sleep: async () => {},
+    timeoutMs: 1000
+  }), /receiver rejected settings/);
+  assert.equal(attempts, 1);
+  console.log('PASS exact RF preservation and bounded receiver-readiness retry');
+})().catch(error => { console.error(error); process.exitCode = 1; });

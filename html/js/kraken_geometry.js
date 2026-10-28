@@ -13,20 +13,23 @@
     if (object(geometry)) confirmations.forEach(key => { geometry[key] = false; });
     return geometry;
   }
-  function context(config, {ignoreGain = false} = {}) {
+  function context(config) {
     if (!config) return null;
     const device = config.capture?.device || {};
     const geometry = {...device.array_geometry};
     confirmations.forEach(key => { delete geometry[key]; });
-    const heimdall = ignoreGain && object(device.heimdall) ? {...device.heimdall} : device.heimdall;
-    if (ignoreGain && object(heimdall)) { delete heimdall.gain; delete heimdall.gain_control; }
-    return JSON.stringify([config.capture?.fc, config.capture?.fs, config.capture?.replay, device.type,
+    const heimdall = object(device.heimdall) ? {...device.heimdall} : device.heimdall;
+    if (object(heimdall)) {
+      delete heimdall.gain;
+      delete heimdall.gain_control;
+      delete heimdall.channel_gains;
+    }
+    return JSON.stringify([device.type,
       device.channel_count, device.reference_channel, device.surveillance_channels,
       heimdall, config.process?.reference_synthesis, geometry]);
   }
   function reconcile(config, previous) {
-    const options = {ignoreGain: config?.capture?.device?.heimdall?.gain_control === 'measured'};
-    if (previous && context(config, options) !== context(previous, options))
+    if (previous && context(config) !== context(previous))
       invalidate(config.capture?.device?.array_geometry);
     return config;
   }

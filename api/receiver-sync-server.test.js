@@ -24,12 +24,12 @@ const sockets = new Set();
 let suiteConnections = 0;
 const suiteState = {frequency: original.capture.fc, sampleRate: original.capture.fs,
   channels: original.capture.device.channel_count, maximum: 8,
-  reconfiguring: false, mode: 'coherent'};
+  reconfiguring: false, mode: 'coherent', gain: 20};
 let suiteBehavior = 'confirm';
 
 function suiteStatus() {
   return {settings: {center_freq: suiteState.frequency,
-    sample_rate: suiteState.sampleRate, gain: 20},
+    sample_rate: suiteState.sampleRate, gain: suiteState.gain},
   num_channels: suiteState.channels, max_elements: suiteState.maximum,
   reconfiguring: suiteState.reconfiguring, recovering: false,
   cooldown_active: false, operating_mode: suiteState.mode};
@@ -96,6 +96,10 @@ const suite = net.createServer(socket => {
           suiteState.reconfiguring = false;
           send(socket, suiteStatus());
         }, 12);
+      } else if (command.command === 'set_gain') {
+        suiteState.gain = command.gain;
+        send(socket, {status: 'success', gain: command.gain});
+        send(socket, suiteStatus());
       } else {
         send(socket, {status: 'error', message: 'unsupported command'});
       }
@@ -215,6 +219,14 @@ function withSixChannels(config) {
     assert.equal(yaml.load(fs.readFileSync(filename, 'utf8')).capture.fc,
       changed.capture.fc);
     revision = accepted.body.revision;
+    let settledStatus = await request(apiPort, 'GET', '/api/system/status');
+    assert.equal(settledStatus.body.receiverSynchronization.applicationVerified, true,
+      'A successful managed Apply must settle the exact config revision for the guard');
+    await restartApi(apiPort);
+    settledStatus = await request(apiPort, 'GET', '/api/system/status');
+    assert.equal(settledStatus.body.receiverSynchronization.applicationVerified, true,
+      'An exact-revision Apply attestation must survive an API restart');
+    assert.equal(settledStatus.body.receiverSynchronization.configRevision, revision);
 
     // Save operator statements, then leave tuning applied while the final
     // count operation fails. YAML must stay intact on that failure.
@@ -277,8 +289,10 @@ function withSixChannels(config) {
     const repaired = await request(apiPort, 'PUT', '/api/config?restart=false', unchanged, revision, intent);
     assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
     assert.deepEqual(commands.slice(beforeRepair), [{command: 'set_frequency', frequency: changed.capture.fc}]);
-    assert.equal(repaired.body.config.capture.device.array_geometry.mapping_confirmed, false);
-    assert.equal(repaired.body.config.capture.device.array_geometry.geometry_confirmed, false);
+    assert.equal(repaired.body.config.capture.device.array_geometry.mapping_confirmed, true,
+      'A frequency repair must preserve the confirmed physical mapping');
+    assert.equal(repaired.body.config.capture.device.array_geometry.geometry_confirmed, true,
+      'A frequency repair must preserve the confirmed physical geometry');
     assert.equal(repaired.body.receiverSync.hardwareVerified, false);
     revision = repaired.body.revision;
 
@@ -307,6 +321,16 @@ function withSixChannels(config) {
       assert.equal(commands.length, beforeMatchedCommands);
       suiteState[field] = previous;
     }
+    const gainTarget = clone(matchedTarget);
+    gainTarget.capture.device.heimdall.gain = 12.3;
+    const gainSave = await request(apiPort, 'PUT', '/api/config?restart=false', gainTarget, revision, intent);
+    assert.equal(gainSave.status, 200, JSON.stringify(gainSave.body));
+    assert.equal(gainSave.body.receiverSync.operations.at(-1).operation, 'set_gain');
+    assert.equal(gainSave.body.config.capture.device.array_geometry.mapping_confirmed, true,
+      'A gain write must preserve the confirmed physical mapping');
+    assert.equal(gainSave.body.config.capture.device.array_geometry.geometry_confirmed, true,
+      'A gain write must preserve the confirmed physical geometry');
+    revision = gainSave.body.revision;
 
     // A file race after receiver confirmation is necessarily partial: the API
     // must not overwrite the external edit or pretend both sides committed.
@@ -423,6 +447,8 @@ function withSixChannels(config) {
     assert.ok(directResult.body.receiverSync.priorReceiverReceipt);
     assert.equal((await request(apiPort, 'GET', '/api/system/status')).body.receiverSynchronization.reconciliationRequired, false,
       'A deliberate direct-backend Apply must permit its own SDK startup checks');
+    assert.equal((await request(apiPort, 'GET', '/api/system/status')).body.receiverSynchronization.applicationVerified, true,
+      'A managed direct-backend Apply must settle the revision before SDK startup');
     assert.equal(directResult.body.receiverSync.status, 'not-required');
     assert.match(directResult.body.receiverSync.acceptance.acknowledgement,
       /validated per-channel UHD getter readback/);

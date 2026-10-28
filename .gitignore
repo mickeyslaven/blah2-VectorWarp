@@ -18,6 +18,7 @@ __pycache__/
 # Private implementation ledger; keep it local to this workspace.
 docs/GPU_ACCELERATION_WORK.md
 # Local recorded-IQ campaign outputs and operational receipts are not source.
+results/
 bench/results/
 bench/*.csv
 bench/*.jsonl

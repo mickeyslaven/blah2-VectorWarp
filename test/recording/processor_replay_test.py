@@ -318,9 +318,10 @@ def assert_processor_outputs(sinks, receiver):
             raise AssertionError(f"{receiver} legacy replay {output_name} lacks an uncertainty reason")
         if receiver == "Usrp" and provenance.get("deviceTimeAvailable") is not False:
             raise AssertionError("Legacy USRP replay must not invent UHD device time")
-    timestamp = bytes(sinks.payloads["timestamp"]).strip()
-    if not timestamp or not timestamp.isdigit():
-        raise AssertionError("timestamp output is not numeric")
+    timestamp_frame = first_json(sinks.payloads["timestamp"], "timestamp")
+    timestamp = timestamp_frame.get("timestamp") if isinstance(timestamp_frame, dict) else None
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        raise AssertionError("timestamp output has no non-negative integer timestamp")
 
 
 def run_case(binary, receiver, channels, kind="complete", *, sample_rate=None, cpi=.02, clutter=False):

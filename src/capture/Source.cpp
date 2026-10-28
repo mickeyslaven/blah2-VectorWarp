@@ -267,11 +267,14 @@ Source::RecordingStatus Source::recording_status() const {
 }
 
 void Source::recording_discontinuity(const std::string& error) {
+  processingEpoch.fetch_add(1, std::memory_order_acq_rel);
   std::lock_guard<std::mutex> lock(recordingMutex);
   if (recordingWriter) recording_failed(error);
 }
 
-void Source::recording_epoch_discontinuity(const std::string& error) {
+void Source::recording_epoch_discontinuity(const std::string& error,
+    bool advanceProcessingEpoch) {
+  if (advanceProcessingEpoch) advance_processing_epoch();
   std::lock_guard<std::mutex> lock(recordingMutex);
   if (!recordingWriter || !recordingActive) return;
   recording_failed(error);

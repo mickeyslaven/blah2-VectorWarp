@@ -34,7 +34,7 @@ Config configuration(const char* device) {
   c.reference.channels = {0, 1, 2, 3, 4};
   c.reference.analysisSamples = 64;
   c.fusion = {FusionMode::coherentRegularPolygon, 12, 539000000,
-    .193548, 0, -2 * std::acos(-1.0) / 5, 80 * std::acos(-1.0) / 180, 6};
+    .2, 0, -2 * std::acos(-1.0) / 5, 80 * std::acos(-1.0) / 180, 6};
   c.detector.enabled = true;
   c.detector.guard = 1;
   c.detector.train = 2;

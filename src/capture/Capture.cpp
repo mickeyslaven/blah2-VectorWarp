@@ -32,7 +32,10 @@ Capture::SamplePosition Capture::live_sample_position() const
   if (replay) {
     std::lock_guard<std::mutex> lock(statusMutex);
     const auto& value=replayProgress.provenance;
-    if (!value.contractValid) return {};
+    // A native MCHT clip can carry a continuous receiver epoch/sample range
+    // even when it intentionally lacks exact bounded UTC or a portable v2
+    // provenance contract. Do not discard that relative source clock.
+    if (!value.contractValid && !value.sourceSampleAvailable) return {};
     const uint64_t base=value.sourceSampleAvailable ? value.sourceFirstSample : 0;
     if (replayProgress.samples>UINT64_MAX-base) return {};
     return {true,value.epoch,base+replayProgress.samples,0,0,0,0,0,
@@ -66,6 +69,12 @@ std::vector<double> Capture::input_gain_db() const
     return replayProgress.provenance.perChannelGainDb;}
   const auto* kraken=dynamic_cast<const Kraken*>(device.get());
   return kraken?kraken->actual_gain_db():std::vector<double>{};
+}
+
+uint64_t Capture::input_generation() const
+{
+  if (replay) return replayGeneration.load(std::memory_order_acquire);
+  return device ? device->processing_epoch() : 0;
 }
 
 void Capture::process(IqData *buffer1, IqData *buffer2, c4::yml::NodeRef config, 

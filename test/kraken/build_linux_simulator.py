@@ -56,8 +56,10 @@ def apply_patch(source, patch):
         run(['patch', '--batch', '--fuzz=0', '-p1', '-i', patch], cwd=source)
     else:
         # Minimal Linux hosts may already provide Git but no patch executable.
-        run(['git', 'apply', '--check', str(patch)], cwd=source)
-        run(['git', 'apply', str(patch)], cwd=source)
+        isolated = ['git', f'--git-dir={source / ".git-disabled"}',
+                    f'--work-tree={source}', 'apply', '--no-index']
+        run([*isolated, '--check', str(patch)], cwd=source)
+        run([*isolated, str(patch)], cwd=source)
 
 
 def require(condition, message):

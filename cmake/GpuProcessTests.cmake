@@ -162,6 +162,10 @@ target_link_libraries(testGpuResultJson PRIVATE blah2RapidJson
 add_test(NAME gpuResultJsonCpuCompatibility COMMAND testGpuResultJson)
 set_tests_properties(gpuResultJsonCpuCompatibility PROPERTIES TIMEOUT 10)
 
+add_test(NAME gpuSnrConvention
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_ROOT}/test/gpu/test_snr_convention.py ${PROJECT_ROOT})
+set_tests_properties(gpuSnrConvention PROPERTIES TIMEOUT 10)
+
 add_executable(testFrameDiagnostics ${PROJECT_ROOT}/test/gpu/TestFrameDiagnostics.cpp)
 target_compile_features(testFrameDiagnostics PRIVATE cxx_std_17)
 target_include_directories(testFrameDiagnostics PRIVATE ${PROJECT_ROOT})

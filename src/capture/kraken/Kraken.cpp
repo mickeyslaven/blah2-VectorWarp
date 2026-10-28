@@ -186,14 +186,14 @@ void Kraken::process_heimdall(const std::vector<IqData *>& buffers)
         socketFd = -1;
       }
       if (!running) return;
-      recording_epoch_discontinuity("Kraken input connection was interrupted");
+      recording_epoch_discontinuity("Kraken input connection was interrupted", false);
       clipRecorder->discontinuity("Kraken input connection was interrupted");
       samplePositionAvailable.store(false, std::memory_order_release);
       {
         std::lock_guard<std::mutex> lock(provenanceMutex);
         lastHeaderAvailable=false;
       }
-      clear_buffers(buffers);
+      clear_buffers(buffers, true);
       std::cerr << "[Kraken] " << error.what()
         << "; retrying in 1 second" << std::endl;
       std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -219,7 +219,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     receive_exact(payload.data(), payload.size());
     const int64_t receiptNanoseconds = wall_clock_nanoseconds();
     if (previousHeader && !HeimdallFrame::timing_contiguous(*previousHeader, header)) {
-      recording_epoch_discontinuity("Kraken upstream USB sample continuity changed");
+      recording_epoch_discontinuity("Kraken upstream USB sample continuity changed", false);
       clipRecorder->discontinuity("Kraken upstream USB sample continuity changed");
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
@@ -236,7 +236,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
 
     if (frequencyChangeCounter &&
         *frequencyChangeCounter != header.frequencyChangeCounter) {
-      recording_epoch_discontinuity("Kraken input retuned during recording");
+      recording_epoch_discontinuity("Kraken input retuned during recording", false);
       clipRecorder->discontinuity("Kraken input retuned during clip recording");
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
@@ -244,7 +244,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     frequencyChangeCounter = header.frequencyChangeCounter;
     if (!HeimdallFrame::is_synchronized_data(header))
     {
-      recording_epoch_discontinuity("Kraken input synchronization was lost");
+      recording_epoch_discontinuity("Kraken input synchronization was lost", false);
       clipRecorder->discontinuity("Kraken input synchronization was lost during clip recording");
       samplePositionAvailable.store(false, std::memory_order_release);
       resetPending = true;
@@ -253,7 +253,7 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     if (!resetPending && ((!frequencies.empty() && frequencies != header.frequencies) ||
         (!gains.empty() && gains != header.gains))) {
       recording_epoch_discontinuity(
-        "Kraken input per-channel frequency or gain metadata changed");
+        "Kraken input per-channel frequency or gain metadata changed", false);
       clipRecorder->discontinuity(
         "Kraken input per-channel frequency or gain metadata changed");
       samplePositionAvailable.store(false, std::memory_order_release);
@@ -268,18 +268,30 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
     if (resetPending)
     {
       samplePositionAvailable.store(false, std::memory_order_release);
-      clear_buffers(buffers);
+      // Clear pre-boundary samples and publish the new processing epoch while
+      // holding the same channel locks used by the CPI consumer.
+      clear_buffers(buffers, true);
       resetPending = false;
     }
 
     const auto channels = HeimdallFrame::decode_payload(header, payload);
-    for (auto *buffer : buffers) buffer->lock();
-    for (std::size_t channel = 0; channel < channels.size(); channel++)
-      buffers[channel]->append_unlocked(channels[channel]);
     blah2::KrakenClipRecorder::Position position;
     const bool recorded = clipRecorder->ingest(headerBytes, std::move(metadata),
       std::move(payload), header, &position, receiptNanoseconds);
     const bool hostReceiptDiscontinuity = recorded && position.discontinuity;
+    if (hostReceiptDiscontinuity) {
+      // The current frame begins a new host/sample epoch. Do not combine it
+      // with pre-step buffered samples in one CPI or recording interval.
+      recording_epoch_discontinuity("Kraken host-receipt/sample anchor discontinuity", false);
+      samplePositionAvailable.store(false, std::memory_order_release);
+      clear_buffers(buffers, true);
+      continue;
+    }
+
+    // Publish decoded samples only after every discontinuity check has passed.
+    // A consumer can therefore never drain the rejected boundary frame before
+    // clear_buffers() advances the coordinated processing epoch.
+    for (auto *buffer : buffers) buffer->lock();
     if (recorded && position.available)
     {
       sampleEpoch.store(position.epoch, std::memory_order_relaxed);
@@ -297,16 +309,10 @@ void Kraken::stream_heimdall(const std::vector<IqData *>& buffers)
       samplePositionAvailable.store(true, std::memory_order_release);
     }
     else samplePositionAvailable.store(false, std::memory_order_release);
+    for (std::size_t channel = 0; channel < channels.size(); channel++)
+      buffers[channel]->append_unlocked(channels[channel]);
     for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
       (*it)->unlock();
-
-    if (hostReceiptDiscontinuity) {
-      // The current frame begins a new host/sample epoch. Do not combine it
-      // with pre-step buffered samples in one CPI or recording interval.
-      recording_epoch_discontinuity("Kraken host-receipt/sample anchor discontinuity");
-      clear_buffers(buffers);
-      continue;
-    }
 
     Source::SampleTimePosition recordingStart;
     if (recorded && position.available &&
@@ -380,10 +386,12 @@ std::array<uint8_t, HeimdallFrame::FIXED_HEADER_SIZE> Kraken::receive_header()
   return header;
 }
 
-void Kraken::clear_buffers(const std::vector<IqData *>& buffers)
+void Kraken::clear_buffers(const std::vector<IqData *>& buffers,
+  bool advanceProcessingEpoch)
 {
   for (auto *buffer : buffers) buffer->lock();
   for (auto *buffer : buffers) buffer->clear();
+  if (advanceProcessingEpoch) advance_processing_epoch();
   for (auto it = buffers.rbegin(); it != buffers.rend(); ++it)
     (*it)->unlock();
 }
