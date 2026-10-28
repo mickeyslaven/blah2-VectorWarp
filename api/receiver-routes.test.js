@@ -85,11 +85,16 @@ async function main() {
   await routes['GET /api/receivers'](request('http://127.0.0.1:3000'), first);
   assert.equal(first.body.preview, true);
   assert.equal(first.body.managementAvailable, false);
+  assert.equal(discoveryCalls, 0, 'Read-only GET must never probe receiver hardware or host software');
   await routes['GET /api/receivers'](request('http://127.0.0.1:3000'), response());
-  assert.equal(discoveryCalls, 1);
+  assert.equal(discoveryCalls, 0);
   revision = 'changed';
   await routes['GET /api/receivers'](request('http://127.0.0.1:3000'), response());
-  assert.equal(discoveryCalls, 2);
+  assert.equal(discoveryCalls, 0);
+  const explicitDiscovery = response();
+  await routes['POST /api/receivers/discover'](
+    request('http://127.0.0.1:3000', undefined, {}), explicitDiscovery);
+  assert.equal(discoveryCalls, 1, 'Only an explicit settings action may run receiver discovery');
   const crossOrigin = response();
   await routes['GET /api/receivers'](request('http://external.invalid'), crossOrigin);
   assert.equal(crossOrigin.statusCode, 403);

@@ -119,9 +119,22 @@ function installReceiverRoutes(app, options) {
     promise.catch(() => { if (cached?.promise === promise) cached = null; });
     return promise;
   }
+  function passiveSnapshot() {
+    const document = readDocument();
+    if (cached && cached.revision === document.revision) return cached.promise;
+    // GET is used by legacy/shared headers. It must remain a zero-probe status
+    // read so an open radar page cannot launch USB, linker, systemd or upstream
+    // checks in the real-time receiver process. Explicit discovery is POST-only.
+    return Promise.resolve({schemaVersion: 1, receivers: [], configRevision: document.revision,
+      setupRequired: document.setupRequired === true, buildCapabilitiesKnown: compiledLiveTypes !== null,
+      preview, managementAvailable: false,
+      management: {available: false, actions: [], code: 'EXPLICIT_CHECK_REQUIRED',
+        message: 'Open Receiver settings and choose Check receiver software.'},
+      processor: options.processorStatus?.() || null});
+  }
   app.get('/api/receivers', async (req, res) => {
     if (!guard(req, res)) return;
-    try { res.json(await snapshot()); } catch (error) { failure(res, error); }
+    try { res.json(await passiveSnapshot()); } catch (error) { failure(res, error); }
   });
   app.post('/api/receivers/discover', async (req, res) => {
     if (!guard(req, res, true)) return;

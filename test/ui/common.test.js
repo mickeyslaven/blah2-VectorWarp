@@ -60,6 +60,11 @@ function page(origin, apiOrigin = origin) {
   assert.equal(toggle.headers['X-VectorWarp-Intent'], 'recording-toggle-v1');
 
   const test = page('http://radar.local:9876');
+  const commonSource = fs.readFileSync(require.resolve('../../html/js/common.js'), 'utf8');
+  assert.doesNotMatch(commonSource, /setInterval\(refreshReceiverDevices/,
+    'Shared radar/display headers must never schedule receiver host probes');
+  assert.doesNotMatch(commonSource, /\n\s*refreshReceiverDevices\(\);\n/,
+    'Shared radar/display headers must never launch receiver host probes on page load');
   for (const [radar, expected] of [['receiving', 'ONLINE'], ['stale', 'STALE'], ['no-data', 'OFFLINE']]) {
     test.state.radar = radar;
     await test.context.refreshLiveStatus();

@@ -1189,6 +1189,9 @@ function validateConfig(config, baseline = null, options = {}) {
   }
   if (adsb.source_timeout !== undefined) number(adsb.source_timeout,
     'truth.adsb.source_timeout', {min: .1, max: 10});
+  if (adsb.aircraft_photo_provider !== undefined &&
+      !['disabled', 'planespotters'].includes(adsb.aircraft_photo_provider))
+    errors.push('truth.adsb.aircraft_photo_provider must be disabled or planespotters');
   if (adsb.poll_interval !== undefined) number(adsb.poll_interval, 'truth.adsb.poll_interval', {min: .1, max: 60});
   if (adsb.smoothing_window !== undefined) number(adsb.smoothing_window, 'truth.adsb.smoothing_window', {integer: true, min: 2, max: 64});
   if (adsb.max_position_age !== undefined) number(adsb.max_position_age, 'truth.adsb.max_position_age', {min: .1, max: 300});

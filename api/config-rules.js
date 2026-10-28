@@ -135,6 +135,8 @@ const rules = {
     readOnly: 'Advanced multi-source setting; edit the YAML or configuration API.'},
   'truth.adsb.sources': {type: 'array', optional: true,
     structuredControl: 'truth.adsb.tar1090'},
+  'truth.adsb.aircraft_photo_provider': {type: 'string', optional: true,
+    choices: ['disabled', 'planespotters'], structuredControl: 'truth.adsb.tar1090'},
   'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
   'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
   'save.retention.automatic_cleanup': {type: 'boolean', optional: true},

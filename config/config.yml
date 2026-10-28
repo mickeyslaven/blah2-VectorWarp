@@ -111,6 +111,7 @@ truth:
   adsb:
     enabled: false
     tar1090: 'localhost:8080'
+    aircraft_photo_provider: disabled
     poll_interval: 1
     smoothing_window: 10
     max_position_age: 30

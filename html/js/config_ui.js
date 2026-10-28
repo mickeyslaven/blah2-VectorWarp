@@ -183,6 +183,7 @@ const CONFIG_META = {
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
+  'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional photos shown only after selecting an aircraft.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
   'truth.ais.enabled': ['AIS evaluation', 'Not implemented in this processor.'],
@@ -972,6 +973,36 @@ function adsbSourcesInput(legacyValue, path) {
       row.append(copy, label);
       wrapper.appendChild(row);
     }
+
+    const photoHeading = document.createElement('strong');
+    photoHeading.textContent = 'Aircraft photos';
+    wrapper.appendChild(photoHeading);
+    const photoRow = document.createElement('div');
+    photoRow.className = 'adsb-exchange-row';
+    const photoCopy = document.createElement('span');
+    const photoTitle = document.createElement('b');
+    photoTitle.textContent = 'Selected-aircraft photo';
+    const photoDetail = document.createElement('small');
+    photoDetail.textContent = 'Loaded only after a map selection; never blocks or enlarges the live ADS-B feed.';
+    photoCopy.append(photoTitle, photoDetail);
+    const photoSelect = document.createElement('select');
+    photoSelect.dataset.adsbPhotoProvider = 'true';
+    photoSelect.setAttribute('aria-label', 'Aircraft photo provider');
+    for (const [value, label] of [['disabled', 'Off (private and fastest)'],
+      ['planespotters', 'Planespotters.net thumbnails']]) {
+      const option = document.createElement('option');
+      option.value = value; option.textContent = label;
+      photoSelect.appendChild(option);
+    }
+    photoSelect.value = activeConfig.truth?.adsb?.aircraft_photo_provider || 'disabled';
+    photoSelect.addEventListener('change', () =>
+      setValue(['truth', 'adsb', 'aircraft_photo_provider'], photoSelect.value));
+    photoRow.append(photoCopy, photoSelect);
+    wrapper.appendChild(photoRow);
+    const photoNote = document.createElement('p');
+    photoNote.className = 'adsb-source-note';
+    photoNote.textContent = 'Planespotters receives the selected aircraft ICAO address. Photos include photographer credit and a link to the original.';
+    wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
       .filter(({source}) => source.startsWith('exchange:') && !adsbExchangeId(source));
@@ -2153,15 +2184,6 @@ function renderReceiverSetup() {
   output.setAttribute('role', 'status'); output.setAttribute('aria-live', 'polite');
   let buildPolls = 0;
   let buildPollTimer = null;
-  const scheduleDiscovery = () => {
-    if (window.blah2ReceiverDiscoveryTimer)
-      window.clearTimeout(window.blah2ReceiverDiscoveryTimer);
-    if (!section.isConnected) return;
-    window.blah2ReceiverDiscoveryTimer = window.setTimeout(() => {
-      window.blah2ReceiverDiscoveryTimer = null;
-      if (!saveInProgress && !restartInProgress && section.isConnected) discover();
-    }, 30000);
-  };
   const paragraph = text => { const p = document.createElement('p'); p.textContent = text; output.appendChild(p); return p; };
   const post = async (route, body, timeout = 30000, intent = 'receiver-management-v1') => {
     const response = await configFetch(liveApiUrl(route), {method: 'POST', headers: {
@@ -2385,11 +2407,10 @@ function renderReceiverSetup() {
       else paragraph('Use Save & Restart to test reception. Software checks do not test antenna wiring or calibration.');
       for (const error of result.errors || []) paragraph(error.message);
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
-    finally { check.disabled = false; scheduleDiscovery(); }
+    finally { check.disabled = false; }
   }
   check.addEventListener('click', discover);
   section.append(heading, description, check, output);
-  window.setTimeout(discover, 0);
   return section;
 }
 

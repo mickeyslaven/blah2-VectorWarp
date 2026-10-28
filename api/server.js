@@ -26,6 +26,7 @@ const {createReceiverJournal} = require('./receiver-journal.js');
 const gainRestart = require('./gain-restart.js');
 const {invalidate: invalidateGeometry} = require('../html/js/kraken_geometry');
 const {createAdsbSource} = require('./adsb-source.js');
+const {createAircraftPhotoLookup} = require('./aircraft-photo.js');
 const {createManifoldRecorder, siteFingerprint} = require('./manifold-recorder.js');
 const {createManifoldAutomation} = require('./manifold-automation.js');
 const {DetectionManifoldAutomation} = require('./detection-manifold-automation.js');
@@ -65,6 +66,7 @@ try {
 const startupDocument = readConfig(configFile);
 var config = startupDocument.config;
 const adsbSource = createAdsbSource(config, {preview: process.env.BLAH2_PREVIEW === 'true'});
+const aircraftPhotoLookup = createAircraftPhotoLookup(config);
 const manifoldRecorder = createManifoldRecorder(config, adsbSource);
 const manifoldAutomation = createManifoldAutomation(config, manifoldRecorder,
   {onQualified: promoteQualifiedManifold});
@@ -1237,6 +1239,15 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
 app.get('/api/adsb/status', async (req, res) => {
   if (replayTruthDisabled()) return res.json(replayTruthStatus());
   res.json(await adsbSource.status());
+});
+app.get('/api/adsb/aircraft-photo/:hex', async (req, res) => {
+  try {
+    const value = await aircraftPhotoLookup.lookup(req.params.hex);
+    res.set('Cache-Control', value.available ? 'private, max-age=86400' : 'private, max-age=900');
+    res.json(value);
+  } catch (error) {
+    res.status(error.statusCode || 503).json({available: false, error: error.message});
+  }
 });
 app.get('/api/bearing/manifold-recorder', (req, res) => {
   res.json(manifoldRecorder.status());

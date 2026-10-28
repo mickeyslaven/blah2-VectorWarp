@@ -13,16 +13,19 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}">Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}">Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}">Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
   const compactDevice = typeof window !== 'undefined' && window.innerWidth <= 1024;
   window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, compactDevice ? 5000 : 2500);
-  refreshReceiverDevices();
+  // Hardware/software discovery can launch several bounded host probes. Never
+  // run it from the shared header: every radar/display tab used to repeat those
+  // probes every five minutes and starve the real-time processor. Receiver
+  // setup exposes an explicit "Check receiver software" action instead.
   if (window.blah2ReceiverDeviceTimer)
     window.clearInterval(window.blah2ReceiverDeviceTimer);
-  window.blah2ReceiverDeviceTimer = window.setInterval(refreshReceiverDevices, 300000);
+  window.blah2ReceiverDeviceTimer = null;
   routeApiLinks();
   addRecordingControl();
   addFullscreenControl();
@@ -808,16 +811,18 @@ const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
   'Position age %{customdata[11]:.1f} s<extra></extra>';
 
 function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
+  // Tabler Icons v3.50.0 (MIT) gives these map markers a consistent,
+  // recognizable aviation vocabulary without inheriting tar1090's GPL UI.
   const paths = {
-    rotorcraft: '<path d="M12 5v14M7 11h10M4 5h16M9 19h6"/>',
-    drone: '<path d="M8 8l8 8m0-8l-8 8M5 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>',
-    ground: '<path d="M4 8h16v9H4zM7 8l2-4h6l2 4M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>',
-    heavy: '<path d="M12 2c1 0 1.5.8 1.5 1.8v5.4L22 14v2.5l-8.5-2.2v4.1l3 2V22L12 21l-4.5 1v-1.6l3-2v-4.1L2 16.5V14l8.5-4.8V3.8C10.5 2.8 11 2 12 2z"/>',
-    airliner: '<path d="M12 2c.8 0 1.3.7 1.3 1.6v6L21 14v2l-7.7-2.1V19l2.7 1.6V22L12 21l-4 .9v-1.4l2.7-1.6v-5L3 16v-2l7.7-4.4v-6C10.7 2.7 11.2 2 12 2z"/>',
-    light: '<path d="M12 2l1 8 7 5v1.5l-7-2V20l2 1v1l-3-.6-3 .6v-1l2-1v-5.5l-7 2V15l7-5 1-8z"/>',
-    aircraft: '<path d="M12 2l1.2 8L21 15v2l-7.8-2.3V20l2.8 1.4V22l-4-.8-4 .8v-.6l2.8-1.4v-5.3L3 17v-2l7.8-5L12 2z"/>'
+    rotorcraft: '<path d="M3 10l1 2h6"/><path d="M12 9a2 2 0 0 0-2 2v3c0 1.1.9 2 2 2h7a2 2 0 0 0 2-2c0-3.31-3.13-5-7-5h-2"/><path d="M13 9V6M5 6h15M15 9.1V13h5.5M15 19v-3M19 19h-8"/>',
+    drone: '<path d="M10 10h4v4h-4zM10 10 6.5 6.5M9.96 6A3.5 3.5 0 1 0 6 9.96M14 10l3.5-3.5M18 9.96A3.5 3.5 0 1 0 14.04 6M14 14l3.5 3.5M14.04 18A3.5 3.5 0 1 0 18 14.04M10 14l-3.5 3.5M6 14.04A3.5 3.5 0 1 0 9.96 18"/>',
+    ground: '<path d="M5 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M15 17a2 2 0 1 0 4 0 2 2 0 1 0-4 0M5 17H3V6a1 1 0 0 1 1-1h9v12M9 17h6M19 17h2v-6h-8M13 6h5l3 5"/>',
+    heavy: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>',
+    airliner: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>',
+    light: '<path d="m14.5 6.5 3-2.9a2.05 2.05 0 0 1 2.9 2.9l-2.9 3L20 17l-2.5 2.55L14 13l-3 3v3l-2 2-1.5-4.5L3 15l2-2h3l3-3-6.5-3.5L7 4l7.5 2.5"/>',
+    aircraft: '<path d="M16 10h4a2 2 0 0 1 0 4h-4l-4 7H9l2-7H7l-2 2H2l2-4-2-4h3l2 2h4L9 3h3l4 7"/>'
   };
-  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="#10251f" stroke-width="1.15" stroke-linejoin="round">${paths[aircraftKind(aircraft)]}</g></svg>`;
+  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths[aircraftKind(aircraft)]}</g></svg>`;
 }
 
 if (typeof module !== 'undefined')

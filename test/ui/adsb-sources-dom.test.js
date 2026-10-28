@@ -18,6 +18,7 @@ saved.truth.adsb.sources = [
   'http://adsb-secondary.example.invalid/tar1090',
   'exchange:https://opendata.adsb.fi/api/v3/lat/40/lon/-80/dist/60'
 ];
+saved.truth.adsb.aircraft_photo_provider = 'disabled';
 let candidate = null;
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
@@ -70,6 +71,9 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-lol"]').checked, false);
     assert.match(field.textContent, /newest healthy observation wins/i);
     assert.match(field.textContent, /not averaged/i);
+    const photoProvider = field.querySelector('[data-adsb-photo-provider]');
+    assert.equal(photoProvider.value, 'disabled');
+    assert.match(field.textContent, /loaded only after a map selection/i);
 
     field.querySelector('.adsb-source-add').click();
     const updatedLocals = field.querySelectorAll('[data-adsb-source="local"]');
@@ -79,6 +83,8 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     const lol = field.querySelector('[data-adsb-exchange="adsb-lol"]');
     lol.checked = true;
     lol.dispatchEvent(new window.Event('change', {bubbles: true}));
+    photoProvider.value = 'planespotters';
+    photoProvider.dispatchEvent(new window.Event('change', {bubbles: true}));
     const valid = await window.validateActiveConfiguration();
     assert.equal(valid, true, JSON.stringify(validateConfig(candidate, saved)));
     assert.deepEqual(candidate.truth.adsb.sources, [
@@ -90,6 +96,7 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     ]);
     assert.equal(candidate.truth.adsb.tar1090,
       'http://adsb-primary.example.invalid/tar1090');
+    assert.equal(candidate.truth.adsb.aircraft_photo_provider, 'planespotters');
     const expectedSources = clone(candidate.truth.adsb.sources);
     await window.saveConfiguration();
     assert.equal(writes, 1, 'Structured local inputs and exchange switches save successfully');

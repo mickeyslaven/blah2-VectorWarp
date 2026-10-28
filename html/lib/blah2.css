@@ -198,3 +198,47 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .receiver-software-card dd { margin:2px 0 0; overflow-wrap:anywhere; }
 @media (max-width:760px) { .receiver-software-card dl { grid-template-columns:1fr; } }
 .location-aircraft-icon{display:block;transform-origin:19px 19px}.location-aircraft-label{position:absolute;top:34px;left:50%;transform:translateX(-50%);padding:1px 4px;border-radius:4px;background:rgba(16,20,18,.84);color:#d9fff3;font:700 10px/1.3 Inter,system-ui,sans-serif;white-space:nowrap}.location-aircraft-tooltip{display:none;position:absolute;z-index:20;left:50%;top:50px;transform:translateX(-50%);width:max-content;max-width:min(270px,80vw);padding:8px 10px;border:1px solid rgba(77,212,176,.5);border-radius:8px;background:rgba(12,16,15,.96);color:#f3eee9;font:500 12px/1.45 Inter,system-ui,sans-serif;white-space:normal}.location-aircraft-marker:hover .location-aircraft-tooltip,.location-aircraft-marker:focus-within .location-aircraft-tooltip,.location-aircraft-marker.selected .location-aircraft-tooltip{display:block}.location-aircraft-tooltip a{color:#72e8c6;text-decoration:underline}
+.location-map-layout { grid-template-columns:minmax(0,1fr) minmax(300px,360px); align-items:start; }
+.location-map-panel .insight-plot { height:calc(100vh - 176px); min-height:620px; }
+.location-map-sidebar { display:grid; align-content:start; gap:12px; max-height:calc(100vh - 176px); overflow:auto; padding-right:2px; }
+.location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
+.location-map-sidebar .metric-card { min-height:66px; padding:10px 12px; }
+.location-map-sidebar .metric-card strong { font-size:18px; }
+.aircraft-detail-card header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.aircraft-detail-card header h2 { margin:2px 0 0; color:var(--ink); font-size:18px; letter-spacing:0; text-transform:none; }
+.aircraft-detail-kind { color:var(--status-ok); font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+.aircraft-detail-close { margin:0; }
+.aircraft-photo { display:grid; place-items:center; min-height:150px; margin:0 0 12px; overflow:hidden; border-radius:8px; background:var(--surface-raised); }
+.aircraft-photo img { display:block; width:100%; max-height:220px; object-fit:cover; }
+.aircraft-photo figcaption { width:100%; padding:7px 9px; color:var(--muted); font-size:10px; text-align:center; }
+.aircraft-photo-fallback { gap:8px; color:var(--muted); font-size:11px; text-align:center; }
+.aircraft-photo-fallback svg { width:64px; height:64px; }
+.aircraft-detail-card dl { grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 14px; }
+.aircraft-detail-card dl > div { display:block; padding:8px 0; }
+.aircraft-detail-card dd { margin-top:3px; text-align:left; }
+.aircraft-detail-prompt { display:grid; place-items:center; gap:12px; min-height:140px; color:var(--muted); text-align:center; }
+.aircraft-detail-prompt svg { width:58px; height:58px; }
+.aircraft-detail-prompt p { max-width:28ch; margin:0; font-size:12px; line-height:1.45; }
+.location-map-notes { padding:0; }
+.location-map-notes > summary { padding:12px 14px; color:var(--muted); font-size:11px; font-weight:750; cursor:pointer; }
+.location-map-notes[open] > summary { border-bottom:1px solid var(--line); }
+.location-map-notes > .view-note { border:0; border-radius:0; }
+.location-map-notes > .info-card { margin:10px; }
+@media (max-width:1000px) {
+  .location-map-layout { grid-template-columns:minmax(0,1fr) minmax(280px,320px); }
+  .location-map-panel .insight-plot { min-height:560px; }
+}
+@media (max-width:760px) {
+  .app-nav { grid-template-columns:repeat(5,minmax(0,1fr)); }
+  .location-map-layout { grid-template-columns:1fr; }
+  .location-map-panel .insight-plot { height:min(58svh,560px); min-height:390px; }
+  .location-map-sidebar { max-height:none; overflow:visible; }
+  .location-map-sidebar .insight-stats { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .location-map-sidebar .metric-card { min-height:58px; padding:8px; }
+  .location-map-sidebar .metric-card strong { font-size:16px; }
+}
+@media (max-width:440px) {
+  .app-nav a { padding:8px 4px; font-size:11px; }
+  .location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .aircraft-detail-card dl { grid-template-columns:1fr; }
+}
