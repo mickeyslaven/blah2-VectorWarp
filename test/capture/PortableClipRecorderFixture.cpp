@@ -28,6 +28,20 @@ blah2::IqClipStatus wait(blah2::PortableClipRecorder& recorder) {
   assert(false && "portable clip writer did not finish");
   return {};
 }
+
+bool ingest_when_available(blah2::PortableClipRecorder& recorder,
+    unsigned first, unsigned count, uint64_t epoch, int64_t receiptNanoseconds) {
+  // Ingest is intentionally non-blocking so optional recording can never stall
+  // a receiver callback.  The writer thread can briefly own the mutex while it
+  // starts, so retry the unchanged synthetic block instead of making this
+  // fixture depend on thread scheduling.
+  for (unsigned attempt = 0; attempt < 200; ++attempt) {
+    if (recorder.ingest(block(first, count), epoch, first, true,
+        receiptNanoseconds)) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return false;
+}
 }
 
 int main() {
@@ -45,11 +59,11 @@ int main() {
     // Receipt time describes the end of each block, establishing a zero-time
     // sample epoch while retaining only the configured 300-sample pre-roll.
     for (unsigned first = 0; first < 300; first += 100)
-      assert(recorder.ingest(block(first, 100), 7, first, true,
+      assert(ingest_when_available(recorder, first, 100, 7,
         int64_t(first + 100) * 1000000));
     recorder.request({1, 300, 150, 450, {"event"}, {"pass"}});
-    assert(recorder.ingest(block(300, 100), 7, 300, true, 400000000));
-    assert(recorder.ingest(block(400, 100), 7, 400, true, 500000000));
+    assert(ingest_when_available(recorder, 300, 100, 7, 400000000));
+    assert(ingest_when_available(recorder, 400, 100, 7, 500000000));
     const auto status = wait(recorder);
     assert(status.revision == 1 && status.error.empty());
     assert(status.samples == 300 && !status.file.empty());
