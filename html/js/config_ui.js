@@ -241,9 +241,13 @@ const SIMPLE_SETTING_PATHS = new Set([
   'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
   'capture.device.reference_channel', 'capture.device.surveillance_channels',
   'capture.device.serial', 'capture.device.address', 'capture.device.antenna',
-  'capture.device.gain', 'capture.device.gainReduction', 'capture.device.lnaState',
+  'capture.device.subdev', 'capture.device.gain', 'capture.device.gainReduction',
+  'capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable',
+  'capture.device.lnaState',
   'capture.device.agcSetPoint', 'capture.device.bandwidthNumber',
-  'capture.device.heimdall.gain', 'capture.device.heimdall.gain_control',
+  'capture.device.heimdall.host', 'capture.device.heimdall.port',
+  'capture.device.heimdall.control_port', 'capture.device.heimdall.gain',
+  'capture.device.heimdall.gain_control',
   'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
   'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
   'process.tracker.enable', 'process.performance.acceleration',
@@ -1342,12 +1346,17 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (dotted === 'capture.device.heimdall' && value.gain_control === undefined)
     content.appendChild(field('fixed', [...currentPath, 'gain_control']));
   if (advancedFields.children.length) content.appendChild(advancedReference);
-  if (dotted === 'process.performance' && activeConfig.process?.data?.buffer !== undefined)
+  if (settingsMode === 'advanced' && dotted === 'process.performance' &&
+      activeConfig.process?.data?.buffer !== undefined)
     content.appendChild(field(activeConfig.process.data.buffer, ['process', 'data', 'buffer']));
-  if (kraken && dotted === 'capture.device' && activeConfig.process?.reference_synthesis)
+  if (settingsMode === 'advanced' && kraken && dotted === 'capture.device' &&
+      activeConfig.process?.reference_synthesis)
     content.appendChild(group('reference_synthesis', activeConfig.process.reference_synthesis, ['process']));
-  if (dotted === 'capture.device' && geometryEditor &&
-      (kraken || activeConfig.capture?.device?.array_geometry !== undefined))
+  const savedGeometry = activeConfig.capture?.device?.array_geometry;
+  const geometryNeedsReview = savedGeometry !== undefined && (!savedGeometry ||
+    typeof savedGeometry !== 'object' || !['regular_polygon', 'custom'].includes(savedGeometry.shape));
+  if ((settingsMode === 'advanced' || geometryNeedsReview) && dotted === 'capture.device' && geometryEditor &&
+      (kraken || savedGeometry !== undefined))
     content.appendChild(makeGeometryEditor());
   details.append(summary, content);
   return details;
@@ -1899,6 +1908,12 @@ function renderEditor() {
     }
     panels.appendChild(panel);
   });
+  if (settingsMode === 'simple') {
+    const heading = document.createElement('div');
+    heading.className = 'config-section-heading';
+    heading.innerHTML = '<h2>Essential settings</h2><p>Only the settings normally needed to get a receiver running are shown below.</p>';
+    target.append(heading);
+  }
   target.append(tabs, panels);
   activate(initialTab);
   displayFieldErrors(validationErrors);
@@ -1907,7 +1922,7 @@ function renderEditor() {
   refreshSetupAssistant();
 }
 
-function renderReceiverOverload(status, target = document.getElementById('receiver-health')) {
+function renderReceiverOverload(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-health')) {
   if (typeof renderReceiverHealth === 'function')
     renderReceiverHealth(status, target, true);
 }
@@ -1985,7 +2000,7 @@ function clearReceiverStartupDetails(target) {
   target.querySelector('[data-receiver-startup-details]')?.remove();
 }
 
-function renderReceiverStartup(status, target = document.getElementById('receiver-startup')) {
+function renderReceiverStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   if (activeConfig.capture?.device?.type === 'HackRF') {
     renderHackrfStartup(status, target);
@@ -2034,7 +2049,7 @@ function renderReceiverStartup(status, target = document.getElementById('receive
     noteText: 'These checks do not measure RF performance, filtering or phase coherence.'});
 }
 
-function renderHackrfStartup(status, target = document.getElementById('receiver-startup')) {
+function renderHackrfStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   const processor = status?.processorFresh && status.processor?.receiver === 'HackRF' &&
     status.processor?.input === 'live' ? status.processor : null;
@@ -2076,7 +2091,7 @@ function renderHackrfStartup(status, target = document.getElementById('receiver-
     noteText: 'The API does not read back RF settings, shared-clock/trigger wiring, or hardware time. Pairing and event time remain provisional.'});
 }
 
-function renderUsrpStartup(status, target = document.getElementById('receiver-startup')) {
+function renderUsrpStartup(status, target = typeof document === 'undefined' ? null : document.getElementById('receiver-startup')) {
   if (!target) return;
   const processor = status?.processorFresh && status.processor?.receiver === 'Usrp' &&
     status.processor?.input === 'live' ? status.processor : null;
@@ -2267,8 +2282,34 @@ function renderReceiverSetup() {
         const runtime = receiver.capabilities.runtimeLoadable === true ? 'software loads' :
           receiver.capabilities.runtimeLoadable === false ? 'software cannot load' : 'software not checked';
         const detection = receiver.detection.configuredIdentityMatched === false ? 'selected device not found' : receiver.detection.state;
-        const service = receiver.managedService.required ? `; service ${receiver.managedService.state}` : '';
-        paragraph(`${receiver.label}: ${compiled}; ${runtime}; device ${detection}; dependencies ${receiver.dependencies.state}${service}.`);
+        const selected = receiver.type === activeConfig.capture?.device?.type;
+        const card = document.createElement('article');
+        card.className = `receiver-software-card${selected ? ' selected' : ''}`;
+        card.dataset.receiverType = receiver.type;
+        const cardHeader = document.createElement('header');
+        const cardTitle = document.createElement('strong');
+        cardTitle.textContent = receiver.label;
+        const cardState = document.createElement('span');
+        cardState.className = receiver.capabilities.liveCompiled && receiver.capabilities.runtimeLoadable !== false ?
+          'upstream-badge good' : 'upstream-badge warning';
+        cardState.textContent = selected ? 'Selected' : receiver.capabilities.detected ? 'Detected' : 'Available option';
+        cardHeader.append(cardTitle, cardState);
+        const facts = document.createElement('dl');
+        const fact = (label, value) => {
+          const row = document.createElement('div');
+          const term = document.createElement('dt'); term.textContent = label;
+          const detail = document.createElement('dd'); detail.textContent = value;
+          row.append(term, detail); facts.appendChild(row);
+        };
+        fact('VectorWarp adapter', compiled);
+        fact('Driver / API', runtime);
+        fact('Connected device', detection);
+        fact('Dependencies', receiver.dependencies.state);
+        if (receiver.managedService.required) fact('Receiver service', receiver.managedService.state);
+        fact('Saved connection', receiver.upstream.availability === 'available' ? 'available' :
+          receiver.upstream.availability || 'not configured');
+        card.append(cardHeader, facts);
+        output.appendChild(card);
         if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: saved connection is available and will be reused. Settings are checked when saving.`);
         if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
           paragraph('SDRplay API is running; no service restart needed.');
@@ -2609,12 +2650,14 @@ async function renderConfiguration() {
 }
 
 async function refreshConfigDiagnostics() {
+  if (typeof document === 'undefined') return;
   if (document.hidden) return;
   if (restartInProgress) { renderReceiverOverload(null); return; }
   const target = document.getElementById('config-diagnostics');
   if (!target) return;
   try {
     const status = await readRadarState();
+    if (typeof document === 'undefined' || !target.isConnected) return;
     lastReportingStatus = status;
     renderReceiverStartup(status);
     renderReceiverOverload(status);
@@ -2645,6 +2688,7 @@ async function refreshConfigDiagnostics() {
         status.radar !== 'receiving' ? status.message || 'Radar data is stale. Check the processing service.' : '';
     showReportAction(target, window.VectorWarpReports?.classify(status));
   } catch (_) {
+    if (typeof document === 'undefined' || !target.isConnected) return;
     renderReceiverStartup(null);
     renderReceiverOverload(null);
     target.textContent = 'Cannot read service status. Check the connection to VectorWarp.';

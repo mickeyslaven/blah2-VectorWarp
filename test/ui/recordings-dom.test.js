@@ -15,6 +15,7 @@ window.scrollTo = () => {};
 window.confirm = () => true;
 window.alert = message => { throw new Error(message); };
 const calls = [];
+let deferredRequests = null;
 const item = index => ({id: `id-${index}`, filename: `recording-${index}.blah2iq`,
   replay_file: `/recordings/recording-${index}.blah2iq`, title: `TEST${index}`,
   created_at: Date.now() - index, duration_seconds: 4, size_bytes: 1024,
@@ -23,6 +24,7 @@ const item = index => ({id: `id-${index}`, filename: `recording-${index}.blah2iq
 window.fetchStatusResource = async (url, options = {}) => {
   calls.push({url: String(url), options});
   if (String(url).startsWith('/api/recordings?')) {
+    if (deferredRequests) return new Promise(resolve => deferredRequests.push(resolve));
     const query = new URL(String(url), 'http://radar.local').searchParams;
     const offset = Number(query.get('offset'));
     return {ok: true, json: async () => ({total: 15, offset, limit: 10,
@@ -55,5 +57,22 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   const remove = window.document.querySelector('.recording-delete');
   remove.click(); await new Promise(resolve => setImmediate(resolve));
   assert.ok(calls.some(call => call.options.method === 'DELETE'));
+  const response = title => ({ok: true, json: async () => ({total: 1, offset: 0, limit: 10,
+    indexing: false, metadata_indexing: false, storage: {}, retention: {},
+    recordings: [{...item(0), title}]})});
+  deferredRequests = [];
+  const refresh = window.document.getElementById('recording-refresh');
+  refresh.click(); refresh.click();
+  assert.equal(deferredRequests.length, 2);
+  deferredRequests[0](response('STALE-A'));
+  await new Promise(resolve => setImmediate(resolve));
+  refresh.click();
+  assert.equal(deferredRequests.length, 3);
+  deferredRequests[2](response('NEWEST'));
+  await new Promise(resolve => setImmediate(resolve));
+  deferredRequests[1](response('STALE-B'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(window.document.querySelector('.recording-card').textContent, /NEWEST/,
+    'A late aborted request must not overwrite the newest recording page');
   console.log('Recording browser mobile pagination, compact layout and deletion passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

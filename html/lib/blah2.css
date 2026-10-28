@@ -161,3 +161,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 @media (max-width:520px) { .report-support { align-items:flex-start; flex-direction:column; }.report-support button { width:100%; } }
 @media (max-width:760px) { .recording-folder-control { justify-self:stretch; width:100%; } }
 @media (max-width:760px) { .recording-card { padding:11px 12px; }.recording-card > summary { align-items:center; }.recording-card > summary strong { font-size:14px; line-height:1.25; }.recording-card > summary small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.recording-card[open] { padding-bottom:14px; }.recording-card-body { padding-top:8px; } }
+.receiver-software-card { margin:12px 0 6px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface-raised); }
+.receiver-software-card.selected { border-color:var(--accent); }
+.receiver-software-card > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.receiver-software-card dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px; margin:0; }
+.receiver-software-card dl div { min-width:0; }
+.receiver-software-card dt { color:var(--muted); font-size:11px; }
+.receiver-software-card dd { margin:2px 0 0; overflow-wrap:anywhere; }
+@media (max-width:760px) { .receiver-software-card dl { grid-template-columns:1fr; } }

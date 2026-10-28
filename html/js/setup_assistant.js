@@ -87,6 +87,12 @@
     const rx = configuredSite(config.location?.rx), tx = configuredSite(config.location?.tx);
     const receiver = config.capture?.device?.type || 'Unconfigured';
     const measured = config.capture?.device?.heimdall?.gain_control === 'measured';
+    if (api.mode() === 'advanced') {
+      target.innerHTML = '<section class="setup-assistant setup-assistant-compact"><div class="setup-assistant-heading"><div><h2>Advanced settings</h2><p>All receiver, DSP, service, and diagnostic settings are shown below.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple">Simple</button><button type="button" data-mode="advanced" class="active">Advanced</button></div></div></section>';
+      target.querySelectorAll('[data-mode]').forEach(button =>
+        button.addEventListener('click', () => api.setMode(button.dataset.mode)));
+      return;
+    }
     target.innerHTML = `<section class="setup-assistant"><div class="setup-assistant-heading"><div><h2>Setup assistant</h2><p>Safe essentials first. Advanced mode reveals every DSP and service setting without changing saved values.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" class="${api.mode() === 'simple' ? 'active' : ''}">Simple</button><button type="button" data-mode="advanced" class="${api.mode() === 'advanced' ? 'active' : ''}">Advanced</button></div></div><div class="setup-grid">
       ${card('setup-receiver', 'Receiver', receiver === 'Unconfigured' ? 'Not selected' : receiver, receiver === 'Unconfigured' ? 'Choose and check a connected receiver before starting.' : 'Receiver dependencies and readback are checked before settings are applied.', '<button type="button" data-tab="capture">Receiver settings</button>')}
       ${card('setup-sites', 'Receiver and transmitter sites', rx && tx ? 'Configured' : 'Incomplete', rx && tx ? 'Both physical sites have coordinates and altitude.' : 'Set both sites so delay, range, geometry and ADS-B comparisons have physical meaning.', '<button type="button" data-tab="location">Site settings</button>')}

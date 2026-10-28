@@ -52,3 +52,13 @@ test('assistant renders a lightweight beginner workflow and applies draft-only h
   assert.ok(writes.some(([path, value]) => path === 'process.ambiguity.delayMax' && value === 801));
   assert.match(target.querySelector('[data-window-result]').textContent, /Save & Restart/);
 });
+
+test('advanced mode collapses the beginner workflow instead of duplicating two settings systems', () => {
+  const dom = new JSDOM('<div id="assistant"></div>');
+  const target = dom.window.document.getElementById('assistant');
+  render(target, {getConfig: () => ({capture: {device: {type: 'Kraken'}}}),
+    mode: () => 'advanced', setMode() {}, openTab() {}, set() {}, refresh() {}, refreshEditor() {}});
+  assert.equal(target.querySelectorAll('.setup-card').length, 0);
+  assert.match(target.textContent, /All receiver, DSP, service, and diagnostic settings are shown below/);
+  assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');
+});

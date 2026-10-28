@@ -9,7 +9,7 @@ const {prepare, readRegular, trustedTree, finishReport} = require('../script/vec
 const {setupDefaults, configurationForReceiver} = require('./config-store');
 const {validateConfig} = require('./config-manager');
 const {createReceiverJournal} = require('./receiver-journal');
-const {readSdrplayStartup} = require('./sdrplay-startup');
+const {readSdrplayStartup, readSdrplayStartupForReceiver} = require('./sdrplay-startup');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-sdrplay-'));
 const filename = path.join(dir, 'config.yml');
@@ -94,6 +94,9 @@ try {
   fs.writeFileSync(receiptFile, JSON.stringify(receipt));
   const readOptions = {filename: receiptFile, now: 2000, io};
   assert.deepEqual(readSdrplayStartup(receipt.configRevision, readOptions), receipt);
+  assert.equal(readSdrplayStartupForReceiver('Kraken', receipt.configRevision, readOptions), null,
+    'An old SDRplay receipt must never poison another receiver status');
+  assert.deepEqual(readSdrplayStartupForReceiver('RspDuo', receipt.configRevision, readOptions), receipt);
   assert.equal(readSdrplayStartup('b'.repeat(64), readOptions), null);
   assert.equal(readSdrplayStartup(receipt.configRevision, {...readOptions, now: 200000}).state, 'failed');
   fs.writeFileSync(receiptFile, JSON.stringify({...receipt, state: 'ready', inProgress: true}));

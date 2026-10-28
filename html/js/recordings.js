@@ -1,7 +1,8 @@
 (function (root) {
   'use strict';
   const pageSize = () => typeof window !== 'undefined' && window.innerWidth <= 760 ? 10 : 24;
-  const state = {offset: 0, total: 0, loading: false, controller: null};
+  const state = {offset: 0, total: 0, loading: false, controller: null,
+    requestId: 0, indexTimer: null, rendered: false};
   const bytes = value => {
     if (!Number.isFinite(value)) return '—';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -49,16 +50,21 @@
     document.getElementById('recording-next').disabled = result.offset + result.recordings.length >= result.total;
   }
   async function load({reset = false} = {}) {
-    if (state.loading) state.controller?.abort();
+    if (state.indexTimer) { window.clearTimeout(state.indexTimer); state.indexTimer = null; }
+    state.controller?.abort();
     if (reset) state.offset = 0;
-    state.controller = new AbortController(); state.loading = true;
+    const requestId = ++state.requestId;
+    const controller = new AbortController();
+    state.controller = controller; state.loading = true;
     const list = document.getElementById('recording-list');
     const summary = document.getElementById('recording-library-summary');
     try {
       const response = await fetchStatusResource(liveApiUrl(`/api/recordings?${query()}`),
-        {cache: 'no-store', signal: state.controller.signal}, 15000);
+        {cache: 'no-store', signal: controller.signal}, 15000);
       if (!response.ok) throw new Error('Recording library unavailable');
-      const result = await response.json(); state.total = result.total;
+      const result = await response.json();
+      if (requestId !== state.requestId) return;
+      state.total = result.total;
       const storage = result.storage || {}, retention = result.retention || {};
       const limits = [retention.maximumAgeDays > 0 ? `${retention.maximumAgeDays} days` : null,
         retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null].filter(Boolean).join(' or ');
@@ -66,14 +72,29 @@
       summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
       list.innerHTML = result.recordings?.length ? result.recordings.map(card).join('') :
         '<div class="empty-state"><strong>No matching recordings</strong><p>Change the filters, record manually, import a recording, or enable automatic aircraft clips.</p></div>';
+      state.rendered = true;
       pageControls(result);
-      if (result.indexing) window.setTimeout(() => load(), 1200);
+      // Metadata indexing is background work.  One slow, owned refresh is
+      // enough; stacked timers used to abort each other and intermittently
+      // replace a valid library with an error on mobile browsers.
+      if (result.indexing && !document.hidden)
+        state.indexTimer = window.setTimeout(() => load(), 5000);
     } catch (error) {
-      if (error?.name === 'AbortError') return;
-      summary.textContent = 'Recording storage is unavailable.';
-      list.innerHTML = `<div class="empty-state"><strong>Could not load recordings</strong><p>${escape(error.message)}</p><button type="button" id="recording-retry">Try again</button></div>`;
-      document.getElementById('recording-retry')?.addEventListener('click', () => load());
-    } finally { state.loading = false; }
+      if (error?.name === 'AbortError' || requestId !== state.requestId) return;
+      if (state.rendered) {
+        summary.innerHTML = '<div><strong>Refresh delayed</strong><span>The existing recording list is still available. Retrying shortly…</span></div>';
+        state.indexTimer = window.setTimeout(() => load(), 3000);
+      } else {
+        summary.textContent = 'Recording storage is unavailable.';
+        list.innerHTML = `<div class="empty-state"><strong>Could not load recordings</strong><p>${escape(error.message)}</p><button type="button" id="recording-retry">Try again</button></div>`;
+        document.getElementById('recording-retry')?.addEventListener('click', () => load());
+      }
+    } finally {
+      if (requestId === state.requestId) {
+        state.loading = false;
+        state.controller = null;
+      }
+    }
   }
   async function deleteRecording(button) {
     const name = button.dataset.name || 'this recording';

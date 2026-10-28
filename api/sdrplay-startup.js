@@ -31,4 +31,8 @@ function readSdrplayStartup(revision, {filename = STATUS, now = Date.now(), io =
   finally { if (fd !== undefined) io.closeSync(fd); }
 }
 
-module.exports = {readSdrplayStartup};
+function readSdrplayStartupForReceiver(receiverType, revision, options) {
+  return receiverType === 'RspDuo' ? readSdrplayStartup(revision, options) : null;
+}
+
+module.exports = {readSdrplayStartup, readSdrplayStartupForReceiver};

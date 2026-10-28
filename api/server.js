@@ -353,12 +353,22 @@ function currentGpuRuntime(freshness) {
 // api server
 const app = express();
 const {readSdrplayStartup} = require('./sdrplay-startup');
+// SDRplay's durable startup receipt is receiver-specific.  A stale receipt
+// from an earlier RSPduo session must never make Kraken, USRP or HackRF look
+// like their restart failed (or block their settings transactions).
+function activeSdrplayStartup(revision = null, receiverType = config.capture?.device?.type) {
+  return receiverType === 'RspDuo' ? readSdrplayStartup(revision) : null;
+}
 function completePendingGainRestart() {
   if (!gainPublicationBlocked || !gainRestart.pending(receiverSyncState)) return;
   try {
     const document = readConfig(configFile);
     const next = gainRestart.complete({state: receiverSyncState, config,
       revision: document.revision, loadedRevision: startupDocument.revision, serverId,
+      // The installed Linux restart helper writes this legacy-named receipt
+      // for automatic Kraken gain restarts too.  Keep it for the gain
+      // publication interlock; only operator-facing generic restart state is
+      // gated by receiver type below.
       restartReceipt: readSdrplayStartup(document.revision), processorStatus,
       timestampReceivedAt: gainRestartTimestampAt,
       timestampMaxAgeMs: Math.max(10000, (config.process?.data?.cpi || 1) * 3000)},
@@ -734,7 +744,7 @@ app.get('/api/system/status', async (req, res) => {
       message: lastFrameAt === null ? 'No radar frames received.' : null});
   }
   const document = readConfig(configFile);
-  const sdrplayStartup = readSdrplayStartup(document.revision);
+  const sdrplayStartup = activeSdrplayStartup(document.revision, document.config.capture?.device?.type);
   const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
       message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
@@ -818,7 +828,7 @@ const receiverManagement = installReceiverRoutes(app, {
   helperExecutable: process.env.BLAH2_RECEIVER_HELPER,
   extraOrigins: (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean),
   transactionBusy: () => configWriteInProgress || macRspduoBuild?.busy() || ['running', 'scheduled'].includes(restartState.state) ||
-    readSdrplayStartup(null)?.inProgress === true,
+    activeSdrplayStartup(null)?.inProgress === true,
   processorStatus: () => processorStatusFresh(processorStatus) ? processorStatus.value : null,
   preview: process.env.BLAH2_PREVIEW === 'true',
   compiledLiveTypes: process.env.BLAH2_RECEIVER_TYPES ?
@@ -826,7 +836,7 @@ const receiverManagement = installReceiverRoutes(app, {
 });
 if (macRspduoBuild) installMacRspduoBuildRoutes(app, {allowedOrigins: receiverOrigins, build: macRspduoBuild,
   transactionBusy: () => configWriteInProgress || receiverManagement.busy() ||
-    ['running', 'scheduled'].includes(restartState.state) || readSdrplayStartup(null)?.inProgress === true});
+    ['running', 'scheduled'].includes(restartState.state) || activeSdrplayStartup(null)?.inProgress === true});
 else installSdrplayBuildRoutes(app, {allowedOrigins: receiverOrigins,
   helper: process.env.BLAH2_SDRPLAY_BUILD_HELPER || '/opt/vectorwarp/libexec/vectorwarp-build-sdrplay'});
 app.post('/api/config/validate', async (req, res) => {
@@ -928,7 +938,7 @@ app.put('/api/config', async (req, res) => {
       (req.get(RECEIVER_SYNC_HEADER) !== RECEIVER_SYNC_INTENT || !sameReceiverOrigin(req, receiverOrigins)))
     return res.status(428).json({ok: false, code: 'SDRPLAY_START_INTENT_REQUIRED',
       errors: ['Apply RSPduo settings from the trusted VectorWarp page. Starting installed SDRplay requires explicit same-origin Apply intent.']});
-  if (readSdrplayStartup(null)?.inProgress)
+  if (activeSdrplayStartup(null, req.body?.capture?.device?.type)?.inProgress)
     return res.status(409).json({ok: false, errors: ['A receiver restart is already in progress. Wait for its result.']});
   if (saveLater && (req.query.restart !== 'false' ||
       req.get(RECEIVER_SYNC_HEADER) !== 'save-pending-v1' || !sameReceiverOrigin(req, receiverOrigins)))
@@ -1018,7 +1028,8 @@ app.put('/api/config', async (req, res) => {
     const networkErrors = await checkNetworkBindings(req.body, config, ownedPorts);
     if (networkErrors.length) return res.status(422).json({ok: false, errors: networkErrors});
     // Another request can finish while the asynchronous bind checks run.
-    if (restartState.state === 'running' || restartState.state === 'scheduled' || readSdrplayStartup(null)?.inProgress)
+    if (restartState.state === 'running' || restartState.state === 'scheduled' ||
+        activeSdrplayStartup(null, req.body?.capture?.device?.type)?.inProgress)
       return res.status(409).json({ok: false, errors: ['A restart is already in progress. Wait for its result.']});
     if (readConfig(configFile).revision !== currentDocument.revision)
       return res.status(409).json({ok: false,
@@ -1184,7 +1195,19 @@ app.get('/api/adsb2dd', (req, res) => {
 for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-doppler', 'delayDoppler']]) {
   app.get(route, async (req, res) => {
     if (replayTruthDisabled()) return res.json(replayTruthStatus());
-    try { res.json(await adsbSource.get(kind)); }
+    try {
+      const value = await adsbSource.get(kind);
+      if (kind === 'delayDoppler' && req.query.presentation === 'overlay') {
+        const compact = {};
+        for (const [id, aircraft] of Object.entries(value || {})) {
+          if (!aircraft || !Number.isFinite(aircraft.delay) || !Number.isFinite(aircraft.doppler)) continue;
+          compact[id] = {delay: aircraft.delay, doppler: aircraft.doppler,
+            flight: typeof aircraft.flight === 'string' ? aircraft.flight : ''};
+        }
+        return res.json(compact);
+      }
+      res.json(value);
+    }
     catch (error) { res.status(503).json({error: error.message}); }
   });
 }

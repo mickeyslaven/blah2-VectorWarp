@@ -9,6 +9,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
   for (const kind of ['map', 'spectrum', 'timing', 'detection']) {
     const calls = [];
     let update;
+    let scheduled;
     const running = {process: {data: {cpi: .2}, detection: {enable: true}}, truth: {adsb: {enabled: true}}};
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
     const context = vm.createContext({
@@ -16,6 +17,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
       fetchRadarJson: async url => url === '/api/detection' ? detected : new Promise(() => {}),
+      window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
+        setTimeout(callback) { scheduled = callback; return 1; }},
       Plotly: Object.fromEntries(['react', 'update', 'relayout', 'restyle'].map(method =>
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
       startRadarPlot: (_url, render) => { update = render; return {stop() {}}; }
@@ -92,16 +95,16 @@ const clone = value => JSON.parse(JSON.stringify(value));
     }
     if (kind === 'map') {
       detected = {...detected, timestamp: 999};
-      assert.equal(await update(clone(frame)), false, 'A late detection stream must remain retryable');
+      assert.equal(await update(clone(frame)), true,
+        'A late detection stream must not make the heatmap retry and burst');
       assert.deepEqual(calls.at(-1).args[1].x[1], [], 'Do not overlay an older detection frame');
-      const painted = calls.length;
-      assert.equal(await update(clone(frame)), false);
-      assert.equal(calls.length, painted, 'Waiting for detections must not repaint the heatmap');
       detected = {...detected, timestamp: 1000};
-      assert.equal(await update(clone(frame)), true);
+      await scheduled();
       assert.equal(calls.at(-1).method, 'restyle', 'Late detections update only marker trace');
       assert.deepEqual(calls.at(-1).args[2], [1]);
       assert.deepEqual(calls.at(-1).args[1].x, [[1]]);
+      assert.equal(calls.filter(call => call.method === 'update').length, 2,
+        'Late detection completion must not repaint the heatmap');
       const changedGrid = {...clone(frame), timestamp: 1001, delay: [1, 2], data: [[1, 2], [3, 4]]};
       await update(changedGrid);
       assert.ok(calls.slice(-2).some(call => call.method === 'react'),

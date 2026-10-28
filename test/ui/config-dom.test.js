@@ -27,6 +27,7 @@ let releaseValidation;
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.rememberApiPort = () => {};
+window.VectorWarpSetupAssistant = {render(_target, api) { window.__settingsModeApi = api; }};
 window.fetch = async (url, options = {}) => {
   let body;
   let status = 200;
@@ -428,6 +429,26 @@ function change(input, value, event = 'input') {
       window.Storage.prototype.getItem = previousGet;
       window.Storage.prototype.setItem = previousSet;
     }
+    window.__settingsModeApi.setMode('simple');
+    assert.ok(query('capture.fc'), 'Simple mode keeps essential tuning controls');
+    assert.ok(query('capture.device.heimdall.host'), 'Simple Kraken setup exposes the Suite host');
+    assert.ok(query('capture.device.heimdall.control_port'), 'Simple Kraken setup exposes the Suite control port');
+    assert.equal(query('process.reference_synthesis.mode'), null,
+      'Simple mode must not leak Kraken reference internals');
+    assert.equal(query('process.data.buffer'), null,
+      'Simple mode must not leak performance buffer internals');
+    assert.equal(window.document.querySelector('[role=tab][data-tab=network]'), null,
+      'Simple mode hides service/network internals');
+    assert.match(window.document.getElementById('config-fields').textContent, /Essential settings/);
+    window.switchDevice('Usrp');
+    assert.ok(query('capture.device.subdev'), 'Simple USRP setup exposes the channel mapping');
+    window.switchDevice('HackRF');
+    for (const path of ['capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable'])
+      assert.ok(query(path), `Simple HackRF setup exposes ${path}`);
+    window.switchDevice('Kraken');
+    window.__settingsModeApi.setMode('advanced');
+    assert.ok(query('process.reference_synthesis.mode'), 'Advanced mode restores receiver internals');
+    assert.ok(query('process.data.buffer'), 'Advanced mode restores performance internals');
     console.log('Browser DOM tests passed: all-device layout audit, site add/edit/cancel/select, grouped frequency, errors, stale validation, discard and save payloads.');
   } finally { window.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

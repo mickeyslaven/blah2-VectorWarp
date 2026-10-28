@@ -54,7 +54,7 @@ function mapPresentationUrl(path, width) {
 var urlDetection = liveApiUrl('/api/detection');
 urlMap = liveApiUrl(mapPresentationUrl(urlMap,
   typeof window === 'undefined' ? 1280 : window.innerWidth));
-var urlAdsbData = liveApiUrl('/api/adsb/delay-doppler');
+var urlAdsbData = liveApiUrl('/api/adsb/delay-doppler?presentation=overlay');
 
 // setup plotly
 var layout = {
@@ -121,11 +121,13 @@ var adsb = {};
 var adsbCache = null;
 var adsbReadAt = -Infinity;
 var adsbPending = false;
-var pendingDetectionTimestamp = null;
+var displayedMapTimestamp = null;
+var detectionFollowupTimer = null;
 
 function currentAdsbOverlay(enabled) {
   if (!enabled) return null;
-  if (!adsbPending && Date.now() - adsbReadAt >= 1000) {
+  const interval = typeof window !== 'undefined' && window.innerWidth <= 1024 ? 5000 : 1000;
+  if (!adsbPending && Date.now() - adsbReadAt >= interval) {
     adsbPending = true;
     adsbReadAt = Date.now();
     // An optional, slower truth service must not hold up radar frames.
@@ -138,6 +140,18 @@ function currentAdsbOverlay(enabled) {
 }
 
 Plotly.react('data', data, layout, config);
+
+function scheduleDetectionOverlay(timestamp) {
+  if (typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
+  if (detectionFollowupTimer) window.clearTimeout(detectionFollowupTimer);
+  detectionFollowupTimer = window.setTimeout(async function () {
+    detectionFollowupTimer = null;
+    if (displayedMapTimestamp !== timestamp) return;
+    const latest = await fetchRadarJson(urlDetection).catch(() => null);
+    if (latest?.timestamp !== timestamp || displayedMapTimestamp !== timestamp) return;
+    await Plotly.restyle('data', {x: [latest.delay], y: [latest.doppler]}, [1]);
+  }, 150);
+}
 
 if (typeof window !== 'undefined' && window.addEventListener) {
   let resizeTimer;
@@ -168,20 +182,6 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   const runningConfig = await getRadarRuntimeConfig();
   const detected = runningConfig.process?.detection?.enable !== false ?
     await fetchRadarJson(urlDetection).catch(() => null) : null;
-  // The map was already painted on the first attempt. While its detection
-  // stream catches up, avoid uploading the same heatmap on every retry.
-  if (pendingDetectionTimestamp === data.timestamp) {
-    if (runningConfig.process?.detection?.enable === false) {
-      pendingDetectionTimestamp = null;
-      return true;
-    }
-    if (detected?.timestamp !== data.timestamp) return false;
-    await Plotly.restyle('data', {
-      x: [detected.delay], y: [detected.doppler]
-    }, [1]);
-    pendingDetectionTimestamp = null;
-    return true;
-  }
   // Separate TCP streams may arrive at different times; never put old
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
@@ -256,8 +256,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
     };
     await Plotly.update('data', trace_update);
   }
-  const complete = runningConfig.process?.detection?.enable === false ||
-    detected?.timestamp === data.timestamp;
-  pendingDetectionTimestamp = complete ? null : data.timestamp;
-  return complete;
+  displayedMapTimestamp = data.timestamp;
+  if (runningConfig.process?.detection?.enable !== false && detected?.timestamp !== data.timestamp)
+    scheduleDetectionOverlay(data.timestamp);
+  return true;
 });
