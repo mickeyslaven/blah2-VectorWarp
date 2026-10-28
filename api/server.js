@@ -1223,11 +1223,23 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
         const compact = {};
         for (const [id, aircraft] of Object.entries(value || {})) {
           if (!aircraft || !Number.isFinite(aircraft.delay) || !Number.isFinite(aircraft.doppler)) continue;
-          compact[id] = Object.fromEntries([
+          const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
+          compact[id] = {...Object.fromEntries([
             'delay', 'doppler', 'hex', 'flight', 'r', 't', 'type', 'desc', 'category',
             'alt_baro', 'alt_geom', 'gs', 'track', 'geom_rate', 'baro_rate',
             'squawk', 'rssi', 'seen_pos'
-          ].filter(key => aircraft[key] !== undefined).map(key => [key, aircraft[key]]));
+          ].filter(key => aircraft[key] !== undefined).map(key => [key, aircraft[key]])),
+          hex: aircraft.hex || id,
+          category: aircraft.category ?? position.category,
+          alt_baro: aircraft.alt_baro ?? position.altitude_baro_ft,
+          alt_geom: aircraft.alt_geom ?? position.altitude_geom_ft,
+          gs: aircraft.gs ?? position.ground_speed_kt,
+          track: aircraft.track ?? position.track_deg_true,
+          geom_rate: aircraft.geom_rate ?? position.geom_rate_fpm,
+          baro_rate: aircraft.baro_rate ?? position.baro_rate_fpm,
+          squawk: aircraft.squawk ?? position.squawk,
+          rssi: aircraft.rssi ?? position.rssi_dbfs,
+          seen_pos: aircraft.seen_pos ?? position.seen_pos_s};
         }
         return res.json(compact);
       }

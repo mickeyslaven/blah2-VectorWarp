@@ -781,16 +781,21 @@ function aircraftLabel(aircraft = {}) {
 
 function aircraftInfo(aircraft = {}) {
   const finiteValue = value => Number.isFinite(Number(value)) ? Number(value) : null;
-  const altitude = finiteValue(aircraft.alt_geom) ?? finiteValue(aircraft.alt_baro);
-  const verticalRate = finiteValue(aircraft.geom_rate) ?? finiteValue(aircraft.baro_rate);
+  const position = aircraft.position && typeof aircraft.position === 'object' ? aircraft.position : {};
+  const altitude = finiteValue(aircraft.alt_geom) ?? finiteValue(aircraft.alt_baro) ??
+    finiteValue(position.altitude_geom_ft) ?? finiteValue(position.altitude_baro_ft);
+  const verticalRate = finiteValue(aircraft.geom_rate) ?? finiteValue(aircraft.baro_rate) ??
+    finiteValue(position.geom_rate_fpm) ?? finiteValue(position.baro_rate_fpm);
   return {
     label: aircraftLabel(aircraft), registration: String(aircraft.r || '').trim(),
     type: String(aircraft.t || aircraft.aircraft_type || '').trim(),
-    description: String(aircraft.desc || '').trim(), category: String(aircraft.category || '').trim(),
+    description: String(aircraft.desc || '').trim(), category: String(aircraft.category || position.category || '').trim(),
     hex: String(aircraft.hex || aircraft.id || '').trim().toUpperCase(), altitude,
-    speed: finiteValue(aircraft.gs), heading: finiteValue(aircraft.track), verticalRate,
-    squawk: String(aircraft.squawk || '').trim(), signal: finiteValue(aircraft.rssi),
-    age: finiteValue(aircraft.seen_pos), delay: finiteValue(aircraft.delay),
+    speed: finiteValue(aircraft.gs) ?? finiteValue(position.ground_speed_kt),
+    heading: finiteValue(aircraft.track) ?? finiteValue(position.track_deg_true), verticalRate,
+    squawk: String(aircraft.squawk || position.squawk || '').trim(),
+    signal: finiteValue(aircraft.rssi) ?? finiteValue(position.rssi_dbfs),
+    age: finiteValue(aircraft.seen_pos) ?? finiteValue(position.seen_pos_s), delay: finiteValue(aircraft.delay),
     doppler: finiteValue(aircraft.doppler)
   };
 }

@@ -7,12 +7,18 @@ const config = {capture: {fc: 100000000}, truth: {adsb: {smoothing_window: 3, ma
 assert.ok(Math.abs(ecef(0, 0, 0)[0] - 6378137) < 1e-6, 'WGS84 equatorial radius');
 assert.ok(Math.abs(distance(ecef(0, 0, 0), ecef(0, 1, 0)) - 111318.0779) < .2, 'WGS84 one-degree chord');
 const history = new DelayDopplerHistory(config);
-const point = (now, lon, seen = 0, extra = {}) => ({now, aircraft: [{hex: 'abc', flight: 'TEST', lat: 0, lon, alt_geom: 10000, seen_pos: seen, ...extra}]});
+const point = (now, lon, seen = 0, extra = {}) => ({now, aircraft: [{hex: 'abc', flight: 'TEST',
+  r: 'N123AB', t: 'C172', desc: 'Cessna 172', ownOp: 'Example operator', year: '2001',
+  lat: 0, lon, alt_geom: 10000, seen_pos: seen, ...extra}]});
 assert.deepEqual(history.update(point(100, .5)).data, {}, 'First position warms up');
 const first = history.update(point(101, .6)).data.abc;
 assert.ok(Number.isFinite(first.delay) && Number.isFinite(first.doppler));
 assert.equal(first.position.longitude, .6);
 assert.equal(first.position.altitude_geom_ft, 10000);
+assert.equal(first.hex, 'abc');
+assert.equal(first.r, 'N123AB');
+assert.equal(first.t, 'C172');
+assert.equal(first.desc, 'Cessna 172');
 assert.ok(Number.isFinite(first.geometry.bearing_deg_true));
 assert.ok(Number.isFinite(first.geometry.elevation_deg));
 assert.ok(Number.isFinite(first.geometry.ground_range_km));

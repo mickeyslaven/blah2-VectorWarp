@@ -162,6 +162,11 @@ function page(origin, apiOrigin = origin) {
   assert.match(hover, /12\.34 km/);
   assert.doesNotMatch(hover, /%\{/,
     'Radar aircraft hover text must contain values, never unresolved Plotly expressions');
+  const nestedHover = test.context.aircraftHoverText({flight: 'NESTED', hex: 'abc123', position: {
+    altitude_geom_ft: 12000, ground_speed_kt: 210, track_deg_true: 87,
+    baro_rate_fpm: 512, category: 'A1', squawk: '1200', rssi_dbfs: -8.5, seen_pos_s: .2}});
+  assert.match(nestedHover, /12,000 ft/);
+  assert.match(nestedHover, /210 kt/);
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.
   const mapTest = page('http://radar.local:9876');

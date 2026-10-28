@@ -203,7 +203,8 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
     runningConfig.process?.data?.cpi);
   if (data_adsb) {
-    for (const aircraft of Object.values(data_adsb)) {
+    for (const [hex, record] of Object.entries(data_adsb)) {
+      const aircraft = record?.hex ? record : {...record, hex};
       if (aircraft && 'doppler' in aircraft) {
         adsb.delay.push(aircraft.delay);
         adsb.doppler.push(aircraft.doppler);

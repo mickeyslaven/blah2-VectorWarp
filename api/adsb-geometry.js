@@ -85,7 +85,15 @@ class DelayDopplerHistory {
       if (!slopes.length) continue;
       const look = lookGeometry(this.rxSite, aircraft);
       const transmitterRange = distance(this.tx, target) / 1000;
-      const result = {timestamp, flight: typeof aircraft.flight === 'string' ? aircraft.flight.trim() : '',
+      const result = {timestamp,
+        hex: typeof aircraft.hex === 'string' ? aircraft.hex.trim().toLowerCase() : '',
+        flight: typeof aircraft.flight === 'string' ? aircraft.flight.trim() : '',
+        r: typeof aircraft.r === 'string' ? aircraft.r.trim() : '',
+        t: typeof aircraft.t === 'string' ? aircraft.t.trim() : '',
+        type: typeof aircraft.type === 'string' ? aircraft.type : '',
+        desc: typeof aircraft.desc === 'string' ? aircraft.desc : '',
+        ownOp: typeof aircraft.ownOp === 'string' ? aircraft.ownOp : '',
+        year: typeof aircraft.year === 'string' || Number.isFinite(aircraft.year) ? aircraft.year : '',
         delay: delay / 1000, doppler: -median(slopes) / (C / this.frequency),
         frequency_hz: this.frequency,
         delay_definition: 'excess_bistatic_path_km',
