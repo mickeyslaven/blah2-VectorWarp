@@ -8,6 +8,13 @@ const {JSDOM} = require('./jsdom');
 const {getDeviceProfiles, validateConfig, FIELD_RULES} = require('../../api/config-manager');
 const {configurationForReceiver} = require('../../api/config-store');
 const clone = value => JSON.parse(JSON.stringify(value));
+const stylesheet = fs.readFileSync(path.join(__dirname, '../../html/lib/blah2.css'), 'utf8');
+assert.match(stylesheet,
+  /@media \(max-width:760px\)[\s\S]*?\.config-tabs \{ grid-template-columns:repeat\(3,minmax\(0,1fr\)\); overflow-x:visible;/,
+  'Phone settings tabs must be a visible grid, not a hidden horizontal scroller');
+assert.match(stylesheet,
+  /@media \(max-width:420px\) \{ \.config-tabs \{ grid-template-columns:repeat\(2,minmax\(0,1fr\)\); \} \}/,
+  'Very narrow settings tabs must remain readable in two columns');
 const dom = new JSDOM('<div id="configuration"></div>', {
   url: 'http://127.0.0.1:3000/display/configuration/', runScripts: 'outside-only'
 });
