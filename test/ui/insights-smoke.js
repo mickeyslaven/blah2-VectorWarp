@@ -164,6 +164,7 @@ global.aircraftPlotSymbol = common.aircraftPlotSymbol;
 global.aircraftLabel = common.aircraftLabel;
 global.aircraftInfo = common.aircraftInfo;
 global.aircraftPlotData = common.aircraftPlotData;
+global.aircraftHoverText = common.aircraftHoverText;
 global.aircraftHoverTemplate = common.aircraftHoverTemplate;
 global.aircraftSvgMarkup = common.aircraftSvgMarkup;
 

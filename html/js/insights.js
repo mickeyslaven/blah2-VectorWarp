@@ -661,8 +661,8 @@
       type: 'scattermapbox', mode: 'markers', name: 'ADS-B',
       lat: aircraft.map(item => item.lat), lon: aircraft.map(item => item.lon),
       marker: {size: 24, color: 'rgba(77,212,176,.32)'},
-      customdata: aircraft.map(aircraftPlotData),
-      hovertemplate: aircraftHoverTemplate
+      text: aircraft.map(item => aircraftHoverText(item)),
+      hovertemplate: '%{text}<extra></extra>'
     });
 
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
@@ -759,7 +759,7 @@
     renderHtml(detail, aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.'));
     const traces = [
       {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: 'Radar detections', marker: {size: 10, color: colors[0]}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
-      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(aircraftLabel), textposition: 'top center', marker: {size: 11, color: colors[1], symbol: aircraft.map(aircraftPlotSymbol), line: {width: 2}}, customdata: aircraft.map(aircraftPlotData), hovertemplate: aircraftHoverTemplate.replace('<extra>', '<br>Range %{x:.2f} km · Doppler %{y:.1f} Hz<extra>')}
+      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(aircraftLabel), hovertext: aircraft.map(item => aircraftHoverText(item, {delay: finite(item.delay), doppler: finite(item.doppler)})), textposition: 'top center', marker: {size: 11, color: colors[1], symbol: aircraft.map(aircraftPlotSymbol), line: {width: 2}}, hovertemplate: '%{hovertext}<extra></extra>'}
     ];
     await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'Bistatic range (km)', gridcolor: '#47362e'}, yaxis: {title: 'Bistatic Doppler (Hz)', gridcolor: '#47362e'}}, plotConfig);
     setState(`ADS-B online · ${timeLabel(detection?.timestamp)}`, 'good');
