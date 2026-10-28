@@ -64,6 +64,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
     }[kind];
     assert.notEqual(await update(clone(frame)), false);
     assert.equal(calls.filter(call => call.method === 'react').length, 2, `${kind}: initial real frame must create correct traces without tearing down its plot root`);
+    if (kind === 'map') {
+      const initialTraces = calls.filter(call => call.method === 'react').at(-1).args[1];
+      assert.equal(initialTraces[2].marker.symbol, 'circle',
+        'ADS-B truth stays a uniform green-dot overlay on delay–Doppler');
+      assert.equal(initialTraces[1].marker.symbol, undefined,
+        'Radar detections keep their established circular marker styling');
+    }
     if (kind === 'spectrum') {
       const trace = calls.at(-1).args[1][0];
       assert.deepEqual(trace.x, [100, 100.001]);
