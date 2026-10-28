@@ -14,6 +14,8 @@
   const configuredSite = site => finite(site?.latitude) && finite(site?.longitude) &&
     (Math.abs(site.latitude) > 1e-8 || Math.abs(site.longitude) > 1e-8) &&
     !/^Set (receiver|transmitter) site$/.test(site.name || '');
+  const gpuActive = value => typeof value?.active === 'string' &&
+    value.active.startsWith('vulkan') && value.state === 'ready';
   function recordingEstimate(config) {
     const fs = Number(config.capture?.fs) || 0, count = channels(config);
     const kraken = config.capture?.device?.type === 'Kraken';
@@ -44,7 +46,7 @@
       const status = statusResponse.ok ? await statusResponse.json() : null;
       const acceleration = target.querySelector('#setup-performance');
       if (acceleration && status) {
-        const active = status.acceleration?.active === 'vulkan';
+        const active = gpuActive(status.acceleration);
         acceleration.querySelector('header span').textContent = active ? 'GPU active' : 'CPU active';
         acceleration.querySelector('p').textContent = active ?
           `${status.acceleration.device || 'Qualified GPU'} is processing delay–Doppler.` :
@@ -119,7 +121,7 @@
     });
     void enrich(target);
   }
-  root.VectorWarpSetupAssistant = {render, recordingEstimate, searchWindow};
+  root.VectorWarpSetupAssistant = {render, recordingEstimate, searchWindow, gpuActive};
   if (typeof module !== 'undefined' && module.exports)
-    module.exports = {render, recordingEstimate, searchWindow};
+    module.exports = {render, recordingEstimate, searchWindow, gpuActive};
 })(typeof window !== 'undefined' ? window : globalThis);

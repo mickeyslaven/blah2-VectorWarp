@@ -2657,7 +2657,8 @@ function accelerationSummary(value, radar) {
   if (radar !== 'receiving') return 'Waiting for radar';
   if (!value) return 'Not reported';
   if (value.state === 'checking') return `Checking GPU: ${value.device || 'detected device'}`;
-  if (value.active === 'vulkan') return `GPU: ${value.device}`;
+  if (typeof value.active === 'string' && value.active.startsWith('vulkan'))
+    return `GPU: ${value.device}`;
   return `CPU${value.reason ? ` — ${value.reason}` : ''}`;
 }
 

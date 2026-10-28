@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {JSDOM} = require('./jsdom');
-const {render, recordingEstimate, searchWindow} = require('../../html/js/setup_assistant.js');
+const {render, recordingEstimate, searchWindow, gpuActive} = require('../../html/js/setup_assistant.js');
 
 test('recording estimates distinguish compact Kraken clips from portable recordings', () => {
   const config = {capture: {fs: 2_400_000, device: {type: 'Kraken', channel_count: 5},
@@ -23,6 +23,12 @@ test('automatic search window conservatively covers range and target speed', () 
 
 test('automatic search window rejects incomplete setup', () => {
   assert.equal(searchWindow({capture: {}}, 50, 300), null);
+});
+
+test('GPU status recognizes both staged and fully resident Vulkan processing', () => {
+  assert.equal(gpuActive({active: 'vulkan', state: 'ready'}), true);
+  assert.equal(gpuActive({active: 'vulkan-resident', state: 'ready'}), true);
+  assert.equal(gpuActive({active: 'cpu', state: 'ready'}), false);
 });
 
 test('assistant renders a lightweight beginner workflow and applies draft-only helpers', () => {
