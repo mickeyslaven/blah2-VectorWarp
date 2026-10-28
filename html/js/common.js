@@ -207,11 +207,30 @@ function addFullscreenControl() {
   button.className = 'fullscreen-button';
   button.type = 'button';
   button.textContent = 'Fullscreen';
+  const fullscreenElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+  const fallbackActive = () => panel.classList.contains('fullscreen-fallback');
+  const setFallback = active => {
+    panel.classList.toggle('fullscreen-fallback', active);
+    document.documentElement.classList.toggle('fullscreen-page', active);
+    document.body.classList.toggle('fullscreen-page', active);
+    button.textContent = active ? 'Exit fullscreen' : 'Fullscreen';
+  };
   button.addEventListener('click', async () => {
+    if (fallbackActive()) {
+      setFallback(false);
+      return;
+    }
+    const exitFullscreen = document.exitFullscreen || document.webkitExitFullscreen;
+    const requestFullscreen = panel.requestFullscreen || panel.webkitRequestFullscreen;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await panel.requestFullscreen();
-    } catch (_) { /* Browser policy or unsupported fullscreen. */ }
+      if (fullscreenElement() && exitFullscreen) await exitFullscreen.call(document);
+      else if (requestFullscreen) await requestFullscreen.call(panel);
+      else setFallback(true);
+    } catch (_) {
+      // iPhone Safari does not expose element fullscreen. Keep the radar usable
+      // with an in-page fullscreen mode instead of leaving a dead control.
+      setFallback(true);
+    }
   });
   panel.classList.add('fullscreen-target');
   panel.classList.add('has-fullscreen');
@@ -269,11 +288,16 @@ function addFullscreenControl() {
     observer.observe(visual);
   }
   window.addEventListener('resize', resizePlot);
-  document.addEventListener('fullscreenchange', () => {
-    button.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
+  const fullscreenChanged = () => {
+    button.textContent = fullscreenElement() ? 'Exit fullscreen' : 'Fullscreen';
     resizePlot();
     window.setTimeout(resizePlot, 120);
     window.setTimeout(resizePlot, 360);
+  };
+  document.addEventListener('fullscreenchange', fullscreenChanged);
+  document.addEventListener('webkitfullscreenchange', fullscreenChanged);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && fallbackActive()) setFallback(false);
   });
 }
 

@@ -151,8 +151,13 @@ function page(origin, apiOrigin = origin) {
   const mapTest = page('http://radar.local:9876');
   const raf = [], afterPlot = [];
   let styleLoaded = false, observedResize, relayoutCalls = 0, width = 800;
-  let finishResize;
-  const panel = {classList: {add() {}}, appendChild() {}};
+  let finishResize, fullscreenClick, fullscreenButton;
+  const panelClasses = new Set(), pageClasses = new Set();
+  const classList = set => ({
+    add: value => set.add(value), contains: value => set.has(value),
+    toggle: (value, active) => active ? set.add(value) : set.delete(value)
+  });
+  const panel = {classList: classList(panelClasses), appendChild() {}};
   const visual = {closest: () => panel, layout: {},
     _fullLayout: {mapbox: {_subplot: {map: {isStyleLoaded: () => styleLoaded}}}},
     getBoundingClientRect: () => ({width, height: 600}),
@@ -160,7 +165,11 @@ function page(origin, apiOrigin = origin) {
   Object.assign(mapTest.context.document, {
     getElementById: id => id === 'data' ? visual : null,
     querySelector: () => null,
-    createElement: () => ({addEventListener() {}}), addEventListener() {}
+    documentElement: {classList: classList(pageClasses)},
+    body: {classList: classList(pageClasses)},
+    createElement: () => (fullscreenButton = {addEventListener(event, callback) {
+      if (event === 'click') fullscreenClick = callback;
+    }}), addEventListener() {}
   });
   Object.assign(mapTest.context.window, {
     addEventListener() {}, requestAnimationFrame: callback => raf.push(callback),
@@ -171,6 +180,12 @@ function page(origin, apiOrigin = origin) {
     }}
   });
   mapTest.context.addFullscreenControl();
+  await fullscreenClick();
+  assert.ok(panelClasses.has('fullscreen-fallback'),
+    'Mobile browsers without the Fullscreen API need an in-page fullscreen fallback');
+  assert.equal(fullscreenButton.textContent, 'Exit fullscreen');
+  await fullscreenClick();
+  assert.ok(!panelClasses.has('fullscreen-fallback'));
   raf.shift()();
   assert.equal(relayoutCalls, 0);
   observedResize(); raf.shift()();
