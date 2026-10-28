@@ -135,8 +135,16 @@ function page(origin, apiOrigin = origin) {
   test.state.failWrite = true;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {method: 'PUT'}), /Response lost/);
   assert.equal(test.calls.filter(call => call.method === 'PUT').length, 1, 'Never automatically retry a write');
+  await test.context.fetchStatusResource('/api/config');
   test.state.stallBody = true;
+  const discoveryCallsBeforeTimeout = test.calls.filter(call =>
+    call.url.endsWith('/api/system/status')).length;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {}, 20), /timed out/);
+  test.state.stallBody = false;
+  await test.context.fetchStatusResource('/api/config');
+  assert.equal(test.calls.filter(call => call.url.endsWith('/api/system/status')).length,
+    discoveryCallsBeforeTimeout,
+    'A transient body timeout must not trigger an API endpoint rediscovery storm');
   assert.equal(test.context.recordingDuration(3723000), '01:02:03');
   // ResizeObserver fires during Mapbox initialization, before the first plot
   // finishes. Relayout at that point throws asynchronously inside Mapbox.

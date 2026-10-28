@@ -19,6 +19,9 @@
     uirevision: view
   };
   let refreshing = false;
+  let nextRefreshAt = 0;
+  let consecutiveRefreshFailures = 0;
+  const minimumRefreshIntervalMs = 2000;
 
   function finite(value) {
     if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
@@ -820,15 +823,30 @@
   const renderers = {overview: renderOverview, detections: renderDetections, health: renderHealth, activity: renderActivity, site: renderSite, locations: renderLocations, evaluation: renderEvaluation, tracks: renderTracks, statistics: renderStatistics, calibration: renderCalibration};
 
   async function refresh() {
-    if (refreshing || !renderers[view]) return;
+    const now = Date.now();
+    if (refreshing || now < nextRefreshAt || !renderers[view]) return;
+    nextRefreshAt = now + minimumRefreshIntervalMs;
     refreshing = true;
     try {
       await renderers[view]();
+      // Every renderer, including HTML-only views, has now produced a valid
+      // snapshot.  A later transient failure must never erase it.
+      root.dataset.ready = 'true';
+      consecutiveRefreshFailures = 0;
       window.blah2ViewLastError = null;
     } catch (error) {
       window.blah2ViewLastError = error?.message || String(error);
-      setState('Data unavailable', 'bad');
-      if (!root.dataset.ready || !root.children.length) root.innerHTML = empty('This view cannot reach its live data', error.message || 'Check the radar API connection.');
+      consecutiveRefreshFailures++;
+      const hasSnapshot = root.dataset.ready === 'true' && root.children.length > 0;
+      if (!hasSnapshot) {
+        setState('Data unavailable', 'bad');
+        root.innerHTML = empty('This view cannot reach its live data', error.message || 'Check the radar API connection.');
+      } else if (consecutiveRefreshFailures >= 3) {
+        // Preserve the last valid snapshot.  One or two missed polls are
+        // intentionally silent so routine mobile jitter does not flash an
+        // alarming state between healthy frames.
+        setState('Refresh delayed · showing last update', 'warning');
+      }
     } finally {
       refreshing = false;
     }

@@ -312,7 +312,10 @@ function pageOrigin() {
   return window.location.origin || `${window.location.protocol}//${window.location.hostname}${window.location.port ? `:${window.location.port}` : ''}`;
 }
 
-async function readResponse(url, options = {}, timeoutMs = 1800) {
+// Mobile browsers and remote LAN/VPN routes can briefly take longer than a
+// local desktop request without the radar being unavailable.  Keep a bounded
+// timeout, but do not turn normal network jitter into a page-wide failure.
+async function readResponse(url, options = {}, timeoutMs = 5000) {
   const controller = new AbortController();
   let timeout;
   try {
@@ -361,7 +364,7 @@ async function discoverApiEndpoint() {
   return apiDiscovery;
 }
 
-async function fetchStatusResource(url, options = {}, timeoutMs = 1800) {
+async function fetchStatusResource(url, options = {}, timeoutMs = 5000) {
   const parsed = new URL(url, pageOrigin());
   const internal = /^\/(api|stash|capture)(\/|$)/.test(parsed.pathname) &&
     parsed.hostname === new URL(pageOrigin()).hostname;
@@ -371,7 +374,12 @@ async function fetchStatusResource(url, options = {}, timeoutMs = 1800) {
     // URLs created before discovery/restart must also follow the selected API.
     return await readResponse(liveApiUrl(parsed.pathname + parsed.search), options, timeoutMs);
   } catch (error) {
-    apiEndpoint = null; // Rediscover on the next request; never replay a write/toggle.
+    // A slow response does not invalidate a successfully discovered endpoint.
+    // Clearing it here caused every timeout to start another discovery request,
+    // amplifying a brief mobile-network delay into a refresh storm.  Real
+    // transport failures still trigger discovery on the next request.  Writes
+    // are never replayed in either case.
+    if (error?.message !== 'Request timed out') apiEndpoint = null;
     throw error;
   }
 }
