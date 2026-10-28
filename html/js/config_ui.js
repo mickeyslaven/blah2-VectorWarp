@@ -2270,7 +2270,7 @@ function renderReceiverSetup() {
     output.replaceChildren();
     paragraph('Checking receiver software…');
     try {
-      const result = await post('/api/receivers/discover', {});
+      const result = await post('/api/receivers/discover', {}, 30000, 'receiver-discovery-v2');
       output.replaceChildren();
       const detected = (result.receivers || []).filter(receiver =>
         receiver.capabilities?.detected === true);

@@ -21,7 +21,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 PINS = ROOT / 'config/kraken-macos-sources.json'
 PATCHES = {
-    'suite': ['heimdall-v2-macos.patch', 'heimdall-v2-coherent-channel-gains.patch', 'heimdall-v2-ingest-timing.patch', 'heimdall-v2-portable-cpu.patch'],
+    'suite': ['heimdall-v2-macos.patch', 'heimdall-v2-coherent-channel-gains.patch', 'heimdall-v2-ingest-timing.patch', 'heimdall-v2-portable-cpu.patch', 'heimdall-v2-continuous-streaming.patch'],
     'rtlsdr': ['kraken-librtlsdr-macos.patch'],
 }
 

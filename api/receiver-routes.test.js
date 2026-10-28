@@ -4,9 +4,9 @@ const assert = require('assert/strict');
 const {installReceiverRoutes, sameReceiverOrigin, trustedOrigins} = require('./receiver-routes');
 const {receiverSetupGuide} = require('./receiver-setup-guide');
 
-function request(origin, host = '127.0.0.1:3000', body = {}) {
+function request(origin, host = '127.0.0.1:3000', body = {}, intent = 'receiver-management-v1') {
   return {body, method: 'POST', get: name => ({Origin: origin, Host: host,
-    'X-VectorWarp-Intent': 'receiver-management-v1', 'Content-Type': 'application/json'})[name]};
+    'X-VectorWarp-Intent': intent, 'Content-Type': 'application/json'})[name]};
 }
 function response() {
   return {statusCode: 200, body: null, removed: [],
@@ -93,7 +93,7 @@ async function main() {
   assert.equal(discoveryCalls, 0);
   const explicitDiscovery = response();
   await routes['POST /api/receivers/discover'](
-    request('http://127.0.0.1:3000', undefined, {}), explicitDiscovery);
+    request('http://127.0.0.1:3000', undefined, {}, 'receiver-discovery-v2'), explicitDiscovery);
   assert.equal(discoveryCalls, 1, 'Only an explicit settings action may run receiver discovery');
   const crossOrigin = response();
   await routes['GET /api/receivers'](request('http://external.invalid'), crossOrigin);

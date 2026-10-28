@@ -7,6 +7,7 @@ const {createReceiverHelperClient} = require('./receiver-helper-client');
 const {createMacReceiverManagement} = require('./macos-receiver-management');
 const {receiverSetupGuide} = require('./receiver-setup-guide');
 const INTENT = 'receiver-management-v1';
+const DISCOVERY_INTENT = 'receiver-discovery-v2';
 
 function trustedOrigins(port, extra = [], networkInterfaces = os.networkInterfaces, warn = console.warn) {
   const explicit = [];
@@ -63,7 +64,7 @@ function installReceiverRoutes(app, options) {
     throw new Error('The receiver helper executable must be an installed absolute path.');
   const grants = new Map();
   let cached, running = false;
-  function guard(req, res, mutation = false) {
+  function guard(req, res, mutation = false, intent = INTENT) {
     const trusted = sameReceiverOrigin(req, allowed);
     res.removeHeader('Access-Control-Allow-Origin');
     if (trusted && req.get('Origin')) {
@@ -72,7 +73,7 @@ function installReceiverRoutes(app, options) {
     }
     res.set('Cache-Control', 'no-store');
     if (!trusted || (mutation &&
-        (req.get('X-VectorWarp-Intent') !== INTENT ||
+        (req.get('X-VectorWarp-Intent') !== intent ||
          !/^application\/json(?:\s*;|$)/i.test(req.get('Content-Type') || '')))) {
       res.status(403).json({ok: false, code: 'RECEIVER_ORIGIN_REQUIRED',
         errors: ['Open Receiver setup from the trusted VectorWarp address and review the action there.']});
@@ -137,7 +138,7 @@ function installReceiverRoutes(app, options) {
     try { res.json(await passiveSnapshot()); } catch (error) { failure(res, error); }
   });
   app.post('/api/receivers/discover', async (req, res) => {
-    if (!guard(req, res, true)) return;
+    if (!guard(req, res, true, DISCOVERY_INTENT)) return;
     if (!validBody(req.body, [])) return res.status(422).json({ok: false, errors: ['Discovery takes no receiver or endpoint overrides.']});
     try { res.json(await snapshot(true)); } catch (error) { failure(res, error); }
   });
