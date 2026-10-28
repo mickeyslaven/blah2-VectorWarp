@@ -308,10 +308,20 @@ function change(input, value, event = 'input') {
       assert.deepEqual(key.split('.').reduce((item, part) => item?.[part], saved), value,
         `Hidden compatibility setting ${key} must survive browser saves`);
     assert.equal(saved.capture.device.heimdall.control_port, 8092);
+    window.switchDevice('RspDuo');
+    assert.equal(query('capture.device.type').querySelector('select').selectedOptions[0].textContent,
+      'SDRplay RSPduo');
+    assert.match(window.document.getElementById('config-message').textContent,
+      /install the SDRplay API.*Receiver setup.*live adapter/i);
+    assert.doesNotMatch(window.document.getElementById('config-message').textContent,
+      /replay only/i);
     window.switchDevice('Usrp');
-    assert.match(query('capture.device.type').querySelector('select').selectedOptions[0].textContent,
-      /Ettus USRP \(replay only\)/);
-    assert.match(window.document.getElementById('config-message').textContent, /replay only/i);
+    assert.equal(query('capture.device.type').querySelector('select').selectedOptions[0].textContent,
+      'Ettus USRP');
+    assert.match(window.document.getElementById('config-message').textContent,
+      /install its receiver software in Receiver setup/i);
+    assert.doesNotMatch(window.document.getElementById('config-message').textContent,
+      /replay only/i);
     assert.equal(await window.validateActiveConfiguration(), true);
     assert.equal(query('capture.device.antenna').querySelectorAll('input').length, 2);
     let restartChecks = 0;

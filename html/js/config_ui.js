@@ -623,7 +623,9 @@ function switchDevice(type) {
   applyDeviceProfile(activeConfig, profile);
   validationErrors = [];
   showMessage(profile.liveAvailable === false ?
-    `${profile.label} is replay only on this installation. Enable replay before saving.` :
+    (profile.type === 'RspDuo' ?
+      `${profile.label} selected. Install the SDRplay API, then use Receiver setup to build its live adapter before saving.` :
+      `${profile.label} selected. Install its receiver software in Receiver setup before saving.`) :
     `${profile.label} defaults loaded. Review its hardware settings before saving.`, 'warning');
   renderEditor();
   scheduleValidation();
@@ -1053,7 +1055,7 @@ function typedInput(value, path) {
             optionValue === 'dedicated' ? 'Use one dedicated input' : String(optionValue)) :
         ['process.performance.surveillance_workers', 'process.performance.fft_threads'].includes(key) && optionValue === 0 ?
           'Auto' :
-        (profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` :
+        (profile ? profile.label :
           key === 'capture.device.type' && optionValue === 'Unconfigured' ?
             'Choose a receiver…' : words(String(optionValue)));
       option.selected = String(optionValue) === String(value);
@@ -1169,7 +1171,7 @@ function group(key, value, path, topLevel = false, options = {}) {
   if (options.groupMeta?.[dotted]) [title, description] = options.groupMeta[dotted];
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
-    title = profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` : value.type || title;
+    title = profile ? profile.label : value.type || title;
     description = 'Connection and receiver-specific settings';
   }
   const details = document.createElement('details');
