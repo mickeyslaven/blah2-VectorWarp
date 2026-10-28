@@ -1225,6 +1225,8 @@ function field(value, path) {
   help.textContent = description;
   copy.append(label, help);
   const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
+  if (control.classList?.contains('adsb-source-editor'))
+    wrapper.classList.add('config-field-wide', 'config-field-adsb-sources');
   const rule = capabilities.fieldRules?.[path.join('.')];
   const unusedDedicatedInput = path.join('.') === 'capture.device.reference_channel' &&
     activeConfig.process?.reference_synthesis?.mode === 'array_eigenbeam';
