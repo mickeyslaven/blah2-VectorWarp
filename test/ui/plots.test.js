@@ -24,6 +24,16 @@ const clone = value => JSON.parse(JSON.stringify(value));
     assert.ok(!source.includes('setInterval'), `${kind} must use shared frame timing`);
     vm.runInContext(source, context);
     assert.equal(typeof update, 'function');
+    if (kind === 'map') {
+      const mobile = context.delayDopplerPresentation(390);
+      const desktop = context.delayDopplerPresentation(1200);
+      assert.ok(mobile.margin.l + mobile.margin.r < desktop.margin.l + desktop.margin.r,
+        'Phone layout must reserve materially more width for the delay-Doppler heatmap');
+      assert.equal(mobile.xTitle, 'Range (km)');
+      assert.equal(mobile.yTitle, 'Hz');
+      assert.equal(mobile.colorbar.title.text, 'dB');
+      assert.ok(mobile.colorbar.thickness < desktop.colorbar.thickness);
+    }
     if (kind === 'spectrum') {
       const fallback = context.spectrumColorRange([[NaN, Infinity]]);
       assert.equal(fallback.zmin, -120);

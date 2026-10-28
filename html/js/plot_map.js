@@ -2,6 +2,43 @@ var gridSignature = '';
 var range_x = [];
 var range_y = [];
 
+function delayDopplerPresentation(width) {
+  const compact = Number.isFinite(width) && width <= 600;
+  return compact ? {
+    margin: {l: 46, r: 42, b: 44, t: 14, pad: 0},
+    fontSize: 10,
+    axisTitleSize: 11,
+    xTitle: 'Range (km)',
+    yTitle: 'Hz',
+    tickSize: 9,
+    tickCount: 5,
+    colorbar: {
+      title: {text: 'dB', side: 'right', font: {color: '#f3eee9', size: 10}},
+      tickfont: {color: '#f3eee9', size: 8},
+      outlinecolor: '#47362e', thickness: 8, len: .72, xpad: 2
+    }
+  } : {
+    margin: {l: 92, r: 132, b: 50, t: 36, pad: 0},
+    fontSize: 12,
+    axisTitleSize: 18,
+    xTitle: 'Bistatic Range (km)',
+    yTitle: 'Bistatic Doppler (Hz)',
+    tickSize: 12,
+    tickCount: 0,
+    colorbar: {
+      title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 13}},
+      tickfont: {color: '#f3eee9', size: 11},
+      outlinecolor: '#47362e', thickness: 14
+    }
+  };
+}
+
+function currentDelayDopplerPresentation() {
+  return delayDopplerPresentation(typeof window === 'undefined' ? 1024 : window.innerWidth);
+}
+
+var plotPresentation = currentDelayDopplerPresentation();
+
 // setup API
 var urlDetection = liveApiUrl('/api/detection');
 urlMap = liveApiUrl(urlMap);
@@ -9,15 +46,9 @@ var urlAdsbData = liveApiUrl('/api/adsb/delay-doppler');
 
 // setup plotly
 var layout = {
-  font: {color: '#f3eee9'},
+  font: {color: '#f3eee9', size: plotPresentation.fontSize},
   autosize: true,
-  margin: {
-    l: 92,
-    r: 132,
-    b: 50,
-    t: 36,
-    pad: 0
-  },
+  margin: plotPresentation.margin,
   hoverlabel: {
     namelength: 0
   },
@@ -30,22 +61,28 @@ var layout = {
   xaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
-      text: 'Bistatic Range (km)',
+      text: plotPresentation.xTitle,
       font: {
-        size: 18
+        size: plotPresentation.axisTitleSize
       }
     },
+    tickfont: {size: plotPresentation.tickSize},
+    nticks: plotPresentation.tickCount || undefined,
+    automargin: true,
     ticks: '',
     side: 'bottom'
   },
   yaxis: {
     gridcolor: '#47362e', zerolinecolor: '#47362e',
     title: {
-      text: 'Bistatic Doppler (Hz)',
+      text: plotPresentation.yTitle,
       font: {
-        size: 18
+        size: plotPresentation.axisTitleSize
       }
     },
+    tickfont: {size: plotPresentation.tickSize},
+    nticks: plotPresentation.tickCount || undefined,
+    automargin: true,
     ticks: '',
     ticksuffix: ' ',
     categoryorder: "total descending"
@@ -88,6 +125,29 @@ function currentAdsbOverlay(enabled) {
 }
 
 Plotly.react('data', data, layout, config);
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+  let resizeTimer;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      plotPresentation = currentDelayDopplerPresentation();
+      Plotly.relayout('data', {
+        margin: plotPresentation.margin,
+        'font.size': plotPresentation.fontSize,
+        'xaxis.title.text': plotPresentation.xTitle,
+        'xaxis.title.font.size': plotPresentation.axisTitleSize,
+        'xaxis.tickfont.size': plotPresentation.tickSize,
+        'xaxis.nticks': plotPresentation.tickCount || undefined,
+        'yaxis.title.text': plotPresentation.yTitle,
+        'yaxis.title.font.size': plotPresentation.axisTitleSize,
+        'yaxis.tickfont.size': plotPresentation.tickSize,
+        'yaxis.nticks': plotPresentation.tickCount || undefined
+      });
+      Plotly.restyle('data', {colorbar: plotPresentation.colorbar}, [0]);
+    }, 100);
+  });
+}
 
 // callback function
 var radarUpdates = startRadarPlot(urlMap, async function (data) {
@@ -142,12 +202,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         zauto: false,
         zmin: 0,
         zmax: Math.max(13, data.maxPower),
-        colorbar: {
-          title: {text: 'Power (dB)', side: 'right', font: {color: '#f3eee9', size: 13}},
-          tickfont: {color: '#f3eee9', size: 11},
-          outlinecolor: '#47362e',
-          thickness: 14
-        },
+        colorbar: plotPresentation.colorbar,
         type: 'heatmap'
     };
     var trace2 = {
