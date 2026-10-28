@@ -226,6 +226,50 @@ let receiverApplyPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
 let lastDetectedReceiverTypes = new Set();
+let settingsMode = 'advanced';
+let settingsModeStored = false;
+let activateSettingsTab = () => {};
+try {
+  const storedMode = window.localStorage.getItem('vectorwarp-settings-mode');
+  if (storedMode === 'advanced' || storedMode === 'simple') {
+    settingsMode = storedMode;
+    settingsModeStored = true;
+  }
+} catch (_) { /* Remembering the preferred detail level is optional. */ }
+
+const SIMPLE_SETTING_PATHS = new Set([
+  'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
+  'capture.device.reference_channel', 'capture.device.surveillance_channels',
+  'capture.device.serial', 'capture.device.address', 'capture.device.antenna',
+  'capture.device.gain', 'capture.device.gainReduction', 'capture.device.lnaState',
+  'capture.device.agcSetPoint', 'capture.device.bandwidthNumber',
+  'capture.device.heimdall.gain', 'capture.device.heimdall.gain_control',
+  'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
+  'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
+  'process.tracker.enable', 'process.performance.acceleration',
+  'truth.adsb.enabled', 'truth.adsb.tar1090'
+]);
+function simpleSettingHidden(path) {
+  if (settingsMode === 'advanced') return false;
+  if (path === 'network' || path.startsWith('network.')) return true;
+  if (path.startsWith('save.') || path.startsWith('location.')) return false;
+  if ([...SIMPLE_SETTING_PATHS].some(allowed => allowed.startsWith(`${path}.`))) return false;
+  return !SIMPLE_SETTING_PATHS.has(path);
+}
+function refreshSetupAssistant() {
+  const target = document.getElementById('setup-assistant-root');
+  if (!target || !window.VectorWarpSetupAssistant || !activeConfig) return;
+  window.VectorWarpSetupAssistant.render(target, {
+    getConfig: () => activeConfig, mode: () => settingsMode,
+    setMode(mode) {
+      settingsMode = mode === 'advanced' ? 'advanced' : 'simple';
+      try { window.localStorage.setItem('vectorwarp-settings-mode', settingsMode); } catch (_) {}
+      renderEditor();
+    },
+    openTab(tab) { activateSettingsTab(tab); document.getElementById('config-fields')?.scrollIntoView({behavior: 'smooth'}); },
+    set: setValue, refresh: renderEditor, refreshEditor: renderEditor
+  });
+}
 
 function siteValue(site) {
   if (!site || typeof site.name !== 'string' || !site.name.trim() ||
@@ -1750,7 +1794,8 @@ function renderEditor() {
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
   const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'network'];
-  const entries = Object.entries(activeConfig).sort(([left], [right]) =>
+  const entries = Object.entries(activeConfig).filter(([key]) =>
+    settingsMode === 'advanced' || key !== 'network').sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
   let savedTab = null;
@@ -1770,6 +1815,10 @@ function renderEditor() {
     });
     try { sessionStorage.setItem('blah2-settings-tab', selectedKey); }
     catch (_) { /* Remembering a tab is optional. */ }
+  };
+  activateSettingsTab = selectedKey => {
+    if (!tabs.querySelector(`[data-tab="${selectedKey}"]`)) return;
+    activate(selectedKey);
   };
   entries.forEach(([key, value]) => {
     const [title, description] = metadata([key]);
@@ -1805,11 +1854,18 @@ function renderEditor() {
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
       panel.appendChild(group(key, value, [], true, {skipPath: path =>
         (key === 'process' && receiverSpecificProcessPath(path)) ||
-        (key === 'capture' && path.startsWith('capture.aircraft_clips'))}));
+        (key === 'capture' && path.startsWith('capture.aircraft_clips')) ||
+        simpleSettingHidden(path)}));
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
-      panel.appendChild(renderReceiverFeatures());
+      if (settingsMode === 'advanced') panel.appendChild(renderReceiverFeatures());
+      else {
+        const note = document.createElement('p');
+        note.className = 'config-simple-note';
+        note.textContent = 'Advanced mode contains receiver-specific array, synchronization, and diagnostic controls.';
+        panel.appendChild(note);
+      }
       if (['RspDuo', 'Usrp', 'HackRF'].includes(activeConfig.capture?.device?.type)) {
         const startup = document.createElement('section');
         startup.id = 'receiver-startup';
@@ -1848,6 +1904,7 @@ function renderEditor() {
   displayFieldErrors(validationErrors);
   displayValidationNotices();
   updateDirtyState();
+  refreshSetupAssistant();
 }
 
 function renderReceiverOverload(status, target = document.getElementById('receiver-health')) {
@@ -2442,6 +2499,7 @@ async function renderConfiguration() {
     configRevision = configResponse.headers.get('ETag')?.replace(/^"|"$/g, '');
     capabilities = capabilitiesResponse.ok ? await capabilitiesResponse.json() :
       {editable: false, restartAvailable: false, changesRequireRestart: true};
+    if (capabilities.setupRequired && !settingsModeStored) settingsMode = 'simple';
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
     originalConfig = serializeConfig(activeConfig);
@@ -2477,10 +2535,13 @@ async function renderConfiguration() {
       setup.append(title, copy);
     }
     target.querySelector('.config-toolbar').after(setup);
+    const assistant = document.createElement('div');
+    assistant.id = 'setup-assistant-root';
+    setup.after(assistant);
     const diagnostics = document.createElement('div');
     diagnostics.id = 'config-diagnostics';
     diagnostics.setAttribute('role', 'status');
-    setup.after(diagnostics);
+    assistant.after(diagnostics);
     const acceleration = document.createElement('div');
     acceleration.id = 'acceleration-status';
     acceleration.className = 'config-setup-note';

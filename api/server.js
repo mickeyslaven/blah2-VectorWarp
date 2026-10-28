@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
 const {pipeline} = require('stream/promises');
 const {buildMetadata} = require('./build-metadata');
 const {execFile} = require('child_process');
@@ -1381,6 +1382,20 @@ app.use((req, res, next) => {
     .replace('<head>', `<head><script>window.BLAH2_API_PORT=${JSON.stringify(String(PORT))};</script>`)
     .replace(/<body([^>]*)>/, `<body$1>${preview}`);
   res.type('html').send(html);
+});
+let compressedPlotly = null;
+app.get('/lib/plotly-2.20.0.min.js', (req, res, next) => {
+  if (!/(^|,)\s*gzip\b/.test(req.get('Accept-Encoding') || '')) return next();
+  try {
+    if (!compressedPlotly) {
+      const filename = path.join(__dirname, '..', 'html', 'lib', 'plotly-2.20.0.min.js');
+      compressedPlotly = zlib.gzipSync(fs.readFileSync(filename), {level: 6});
+    }
+    res.set('Content-Encoding', 'gzip');
+    res.set('Vary', 'Accept-Encoding');
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.type('application/javascript').send(compressedPlotly);
+  } catch (_) { next(); }
 });
 app.use(express.static(path.join(__dirname, '..', 'html'), {setHeaders(response, filename) {
   const extension = path.extname(filename).toLowerCase();

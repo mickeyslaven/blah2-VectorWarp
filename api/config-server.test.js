@@ -190,6 +190,11 @@ function connect(port) {
     const plotlyHeaders = await request('HEAD', '/lib/plotly-2.20.0.min.js');
     assert.match(plotlyHeaders.headers['cache-control'] || '', /immutable/,
       'The large versioned plotting library must be reusable across pages');
+    const compressedPlotly = await request('HEAD', '/lib/plotly-2.20.0.min.js', undefined,
+      {'Accept-Encoding': 'gzip'});
+    assert.equal(compressedPlotly.headers['content-encoding'], 'gzip');
+    assert.ok(Number(compressedPlotly.headers['content-length']) < 1_500_000,
+      'Plotting-library first load should be compressed for mobile browsers');
     // Query parsing is exposed by every HTTP route. These hostile-looking
     // inputs must stay data, never poison objects or take the API down.
     for (const query of [

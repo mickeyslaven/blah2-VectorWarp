@@ -27,7 +27,7 @@ window.fetch = async (url, options = {}) => {
   else if (url === '/api/config/capabilities')
     body = {editable: true, deviceProfiles: getDeviceProfiles(), fieldRules: FIELD_RULES};
   else if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
-  else if (url === '/api/system/status') {
+  else if (url.startsWith('/api/system/status')) {
     if (statusFails) throw new Error('Connection lost');
     body = status;
   } else if (url === '/api/upstream/status') body = {supported: false};
