@@ -159,6 +159,13 @@ const common = require('../../html/js/common.js');
 global.getRadarRuntimeConfig = common.getRadarRuntimeConfig;
 global.startRadarUpdates = common.startRadarUpdates;
 global.radarPresentationUrl = common.radarPresentationUrl;
+global.aircraftKind = common.aircraftKind;
+global.aircraftPlotSymbol = common.aircraftPlotSymbol;
+global.aircraftLabel = common.aircraftLabel;
+global.aircraftInfo = common.aircraftInfo;
+global.aircraftPlotData = common.aircraftPlotData;
+global.aircraftHoverTemplate = common.aircraftHoverTemplate;
+global.aircraftSvgMarkup = common.aircraftSvgMarkup;
 
 vm.runInThisContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), {filename: 'insights.js'});
 

@@ -751,8 +751,78 @@ async function renderRuntimeSummary() {
   }
 }
 
+// Original, license-neutral aircraft classification shared by every ADS-B view.
+// ICAO emitter categories are preferred; type-code/description fallbacks keep
+// mixed tar1090 and public-exchange feeds useful without a separate database.
+function aircraftKind(aircraft = {}) {
+  const category = String(aircraft.category || '').toUpperCase();
+  const type = String(aircraft.t || aircraft.aircraft_type || '').toUpperCase();
+  const description = String(aircraft.desc || '').toLowerCase();
+  if (category === 'A7' || /^H\d/.test(type) || /helicopter|rotorcraft/.test(description)) return 'rotorcraft';
+  if (category === 'B6' || /(?:^|\W)(?:uav|drone)(?:\W|$)/.test(description)) return 'drone';
+  if (/^C[12]$/.test(category) || /ground|surface|vehicle/.test(description)) return 'ground';
+  if (category === 'A5' || /heavy/.test(description)) return 'heavy';
+  if (/^A[34]$/.test(category) || /large|wide.?body/.test(description)) return 'airliner';
+  if (/^(?:A[12]|B[134])$/.test(category) || /light|small|glider|ultralight/.test(description)) return 'light';
+  return 'aircraft';
+}
+
+function aircraftPlotSymbol(aircraft) {
+  return ({rotorcraft: 'star', drone: 'diamond', ground: 'square', heavy: 'triangle-up',
+    airliner: 'triangle-up', light: 'triangle-up-open', aircraft: 'circle-open'})[aircraftKind(aircraft)];
+}
+
+function aircraftLabel(aircraft = {}) {
+  return String(aircraft.flight || aircraft.callsign || aircraft.r || aircraft.hex || 'Aircraft').trim();
+}
+
+function aircraftInfo(aircraft = {}) {
+  const finiteValue = value => Number.isFinite(Number(value)) ? Number(value) : null;
+  const altitude = finiteValue(aircraft.alt_geom) ?? finiteValue(aircraft.alt_baro);
+  const verticalRate = finiteValue(aircraft.geom_rate) ?? finiteValue(aircraft.baro_rate);
+  return {
+    label: aircraftLabel(aircraft), registration: String(aircraft.r || '').trim(),
+    type: String(aircraft.t || aircraft.aircraft_type || '').trim(),
+    description: String(aircraft.desc || '').trim(), category: String(aircraft.category || '').trim(),
+    hex: String(aircraft.hex || aircraft.id || '').trim().toUpperCase(), altitude,
+    speed: finiteValue(aircraft.gs), heading: finiteValue(aircraft.track), verticalRate,
+    squawk: String(aircraft.squawk || '').trim(), signal: finiteValue(aircraft.rssi),
+    age: finiteValue(aircraft.seen_pos), delay: finiteValue(aircraft.delay),
+    doppler: finiteValue(aircraft.doppler)
+  };
+}
+
+function aircraftPlotData(aircraft = {}) {
+  const info = aircraftInfo(aircraft);
+  return [info.label, info.registration, info.type, info.description, info.hex,
+    info.altitude, info.speed, info.heading, info.verticalRate, info.squawk,
+    info.signal, info.age, info.category];
+}
+
+const aircraftHoverTemplate = '<b>%{customdata[0]}</b><br>' +
+  'Registration %{customdata[1]} · Type %{customdata[2]}<br>' +
+  '%{customdata[3]}<br>ICAO %{customdata[4]} · Category %{customdata[12]}<br>' +
+  'Altitude %{customdata[5]:,.0f} ft · Speed %{customdata[6]:.0f} kt<br>' +
+  'Heading %{customdata[7]:.0f}° · Vertical rate %{customdata[8]:+.0f} ft/min<br>' +
+  'Squawk %{customdata[9]} · Signal %{customdata[10]:.1f} dBFS<br>' +
+  'Position age %{customdata[11]:.1f} s<extra></extra>';
+
+function aircraftSvgMarkup(aircraft, color = '#4dd4b0') {
+  const paths = {
+    rotorcraft: '<path d="M12 5v14M7 11h10M4 5h16M9 19h6"/>',
+    drone: '<path d="M8 8l8 8m0-8l-8 8M5 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM5 22a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm14 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>',
+    ground: '<path d="M4 8h16v9H4zM7 8l2-4h6l2 4M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/>',
+    heavy: '<path d="M12 2c1 0 1.5.8 1.5 1.8v5.4L22 14v2.5l-8.5-2.2v4.1l3 2V22L12 21l-4.5 1v-1.6l3-2v-4.1L2 16.5V14l8.5-4.8V3.8C10.5 2.8 11 2 12 2z"/>',
+    airliner: '<path d="M12 2c.8 0 1.3.7 1.3 1.6v6L21 14v2l-7.7-2.1V19l2.7 1.6V22L12 21l-4 .9v-1.4l2.7-1.6v-5L3 16v-2l7.7-4.4v-6C10.7 2.7 11.2 2 12 2z"/>',
+    light: '<path d="M12 2l1 8 7 5v1.5l-7-2V20l2 1v1l-3-.6-3 .6v-1l2-1v-5.5l-7 2V15l7-5 1-8z"/>',
+    aircraft: '<path d="M12 2l1.2 8L21 15v2l-7.8-2.3V20l2.8 1.4V22l-4-.8-4 .8v-.6l2.8-1.4v-5.3L3 17v-2l7.8-5L12 2z"/>'
+  };
+  return `<svg viewBox="0 0 24 24" width="38" height="38" aria-hidden="true"><g fill="${color}" stroke="#10251f" stroke-width="1.15" stroke-linejoin="round">${paths[aircraftKind(aircraft)]}</g></svg>`;
+}
+
 if (typeof module !== 'undefined')
   module.exports = {configuredApiPort, liveApiUrl,
     recordingDuration, rememberApiPort, radarFrameIntervalMs, startRadarUpdates,
     startRadarPlot, getRadarRuntimeConfig, radarPresentationUrl, discoverApiEndpoint, fetchStatusResource,
-    refreshLiveStatus, refreshReceiverDevices};
+    refreshLiveStatus, refreshReceiverDevices, aircraftKind, aircraftPlotSymbol,
+    aircraftLabel, aircraftInfo, aircraftPlotData, aircraftHoverTemplate, aircraftSvgMarkup};

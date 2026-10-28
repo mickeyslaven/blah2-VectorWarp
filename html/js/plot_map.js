@@ -193,7 +193,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // Separate TCP streams may arrive at different times; never put old
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
-  adsb = {delay: [], doppler: [], flight: []};
+  adsb = {delay: [], doppler: [], flight: [], symbol: [], customdata: []};
   const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
     runningConfig.process?.data?.cpi);
   if (data_adsb) {
@@ -201,7 +201,9 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       if (aircraft && 'doppler' in aircraft) {
         adsb.delay.push(aircraft.delay);
         adsb.doppler.push(aircraft.doppler);
-        adsb.flight.push(aircraft.flight);
+        adsb.flight.push(aircraftLabel(aircraft));
+        adsb.symbol.push(aircraftPlotSymbol(aircraft));
+        adsb.customdata.push(aircraftPlotData(aircraft));
       }
     }
   }
@@ -246,8 +248,14 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       type: 'scatter',
       marker: {
         size: 16,
-        opacity: 0.6
-      }
+        opacity: 0.78,
+        color: '#4dd4b0',
+        symbol: adsb.symbol,
+        line: {color: '#10251f', width: 1.2}
+      },
+      customdata: adsb.customdata,
+      hovertemplate: aircraftHoverTemplate.replace('<extra>',
+        '<br>Bistatic range %{x:.2f} km · Doppler %{y:.1f} Hz<extra>')
   };
 
     var data_trace = [trace1, trace2, trace3];
@@ -261,7 +269,9 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       y: [data.doppler, detection.doppler, adsb.doppler],
       z: [data.data, [], []],
       zmax: [Math.max(13, data.maxPower), [], []],
-      text: [[], [], adsb.flight]
+      text: [[], [], adsb.flight],
+      customdata: [[], [], adsb.customdata],
+      'marker.symbol': [[], [], adsb.symbol]
     };
     await Plotly.update('data', trace_update);
   }

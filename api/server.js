@@ -1221,8 +1221,11 @@ for (const [route, kind] of [['/api/adsb', 'aircraft'], ['/api/adsb/delay-dopple
         const compact = {};
         for (const [id, aircraft] of Object.entries(value || {})) {
           if (!aircraft || !Number.isFinite(aircraft.delay) || !Number.isFinite(aircraft.doppler)) continue;
-          compact[id] = {delay: aircraft.delay, doppler: aircraft.doppler,
-            flight: typeof aircraft.flight === 'string' ? aircraft.flight : ''};
+          compact[id] = Object.fromEntries([
+            'delay', 'doppler', 'hex', 'flight', 'r', 't', 'type', 'desc', 'category',
+            'alt_baro', 'alt_geom', 'gs', 'track', 'geom_rate', 'baro_rate',
+            'squawk', 'rssi', 'seen_pos'
+          ].filter(key => aircraft[key] !== undefined).map(key => [key, aircraft[key]]));
         }
         return res.json(compact);
       }

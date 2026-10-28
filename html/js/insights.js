@@ -386,6 +386,7 @@
   let locationMapViewport = null;
   let locationMapDragging = false;
   let locationMapHoldUntil = 0;
+  let selectedAircraftId = null;
 
   function bindLocationMapInteraction() {
     const map = document.getElementById('data');
@@ -431,8 +432,25 @@
         Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
           transform: 'translate(-50%, -50%)', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.9))'});
         const heading = finite(item.track) ?? 0;
-        const label = escapeHtml(String(item.flight || item.hex || 'Aircraft').trim());
-        marker.innerHTML = `<svg viewBox="0 0 24 24" width="38" height="38" style="display:block;transform:rotate(${heading}deg)" aria-hidden="true"><path fill="#4dd4b0" stroke="#10251f" stroke-width="1.2" d="M21 16v-2l-8-5V3.5C13 2.67 12.33 2 11.5 2S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5L21 16z"/></svg><span style="position:absolute;top:34px;left:50%;transform:translateX(-50%);padding:1px 4px;border-radius:4px;background:rgba(16,20,18,.84);color:#d9fff3;font:700 10px/1.3 Inter,system-ui,sans-serif;white-space:nowrap">${label}</span>`;
+        const info = aircraftInfo(item);
+        const aircraftId = info.hex || info.label;
+        const detail = [info.registration, info.type, info.description,
+          info.altitude === null ? '' : `${Math.round(info.altitude).toLocaleString()} ft`,
+          info.speed === null ? '' : `${Math.round(info.speed)} kt`,
+          info.hex ? `ICAO ${info.hex}` : '', info.squawk ? `Squawk ${info.squawk}` : '']
+          .filter(Boolean).map(escapeHtml).join('<br>');
+        marker.style.pointerEvents = 'auto';
+        marker.tabIndex = 0;
+        marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
+        marker.setAttribute('aria-label', `${info.label}${detail ? `, ${detail.replace(/<br>/g, ', ')}` : ''}`);
+        const provider = info.hex ? `<br><a href="https://globe.adsbexchange.com/?icao=${encodeURIComponent(info.hex.toLowerCase())}" target="_blank" rel="noopener noreferrer">Open aircraft details</a>` : '';
+        marker.innerHTML = `<span class="location-aircraft-icon" style="transform:rotate(${heading}deg)">${aircraftSvgMarkup(item)}</span><span class="location-aircraft-label">${escapeHtml(info.label)}</span><span class="location-aircraft-tooltip"><strong>${escapeHtml(info.label)}</strong>${detail ? `<br>${detail}` : ''}${provider}</span>`;
+        marker.addEventListener?.('click', event => {
+          if (event.target?.closest?.('a')) return;
+          event.stopPropagation?.();
+          selectedAircraftId = selectedAircraftId === aircraftId ? null : aircraftId;
+          marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
+        });
         layer.appendChild(marker);
         return {item, marker};
       });
@@ -575,8 +593,8 @@
       type: 'scattermapbox', mode: 'markers', name: 'ADS-B',
       lat: aircraft.map(item => item.lat), lon: aircraft.map(item => item.lon),
       marker: {size: 24, color: 'rgba(77,212,176,.32)'},
-      customdata: aircraft.map(item => [String(item.flight || item.hex || 'Aircraft').trim(), item.alt_geom ?? item.alt_baro ?? null, item.seen_pos]),
-      hovertemplate: '<b>%{customdata[0]}</b><br>ADS-B<br>Altitude %{customdata[1]} ft<br>Position age %{customdata[2]:.1f} s<extra></extra>'
+      customdata: aircraft.map(aircraftPlotData),
+      hovertemplate: aircraftHoverTemplate
     });
 
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
@@ -672,7 +690,7 @@
     renderHtml(detail, aircraft.length ? table(['Aircraft', 'Bistatic range (km)', 'Doppler (Hz)', 'Position age'], aircraftRows) : empty('No aircraft in the feed', 'ADS-B is connected.'));
     const traces = [
       {x: radar.map(item => item.delay), y: radar.map(item => item.doppler), type: 'scatter', mode: 'markers', name: 'Radar detections', marker: {size: 10, color: colors[0]}, customdata: radar.map(item => item.snr), hovertemplate: 'Radar<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<br>SNR %{customdata:.1f} dB<extra></extra>'},
-      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(item => item.flight || item.callsign || ''), textposition: 'top center', marker: {size: 10, color: colors[1], symbol: 'circle-open', line: {width: 2}}, hovertemplate: '%{text}<br>Range %{x:.2f} km<br>Doppler %{y:.1f} Hz<extra></extra>'}
+      {x: aircraft.map(item => finite(item.delay)), y: aircraft.map(item => finite(item.doppler)), type: 'scatter', mode: 'markers+text', name: 'ADS-B', text: aircraft.map(aircraftLabel), textposition: 'top center', marker: {size: 11, color: colors[1], symbol: aircraft.map(aircraftPlotSymbol), line: {width: 2}}, customdata: aircraft.map(aircraftPlotData), hovertemplate: aircraftHoverTemplate.replace('<extra>', '<br>Range %{x:.2f} km · Doppler %{y:.1f} Hz<extra>')}
     ];
     await Plotly.react('data', traces, {...plotBase, xaxis: {title: 'Bistatic range (km)', gridcolor: '#47362e'}, yaxis: {title: 'Bistatic Doppler (Hz)', gridcolor: '#47362e'}}, plotConfig);
     setState(`ADS-B online · ${timeLabel(detection?.timestamp)}`, 'good');

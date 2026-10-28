@@ -3,6 +3,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
+const common = require('../../html/js/common.js');
 const clone = value => JSON.parse(JSON.stringify(value));
 
 (async () => {
@@ -17,6 +18,10 @@ const clone = value => JSON.parse(JSON.stringify(value));
       radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
       getRadarRuntimeConfig: async () => running,
+      aircraftLabel: common.aircraftLabel,
+      aircraftPlotSymbol: common.aircraftPlotSymbol,
+      aircraftPlotData: common.aircraftPlotData,
+      aircraftHoverTemplate: common.aircraftHoverTemplate,
       fetchRadarJson: async url => url.startsWith('/api/detection') ? detected : new Promise(() => {}),
       window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
