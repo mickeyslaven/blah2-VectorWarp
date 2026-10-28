@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 
 const RECORDING_EXTENSIONS = new Set(['.blah2iq', '.mchq']);
@@ -10,11 +11,11 @@ const MAX_LIMIT = 500;
 const MINIMUM_DELETE_AGE_MS = 10 * 60 * 1000;
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
-const readJson = filename => {
+const readJson = async filename => {
   try {
-    const stat = fs.statSync(filename);
+    const stat = await fsp.stat(filename);
     if (!stat.isFile() || stat.size > 4 * 1024 * 1024) return null;
-    return JSON.parse(fs.readFileSync(filename, 'utf8'));
+    return JSON.parse(await fsp.readFile(filename, 'utf8'));
   } catch (_) { return null; }
 };
 const encodeId = relative => Buffer.from(relative, 'utf8').toString('base64url');
@@ -29,6 +30,7 @@ const recordingDirectory = config => path.resolve(config?.save?.path || '/var/li
 const options = config => {
   const value = config?.save?.retention || {};
   return {automaticCleanup: value.automatic_cleanup === true,
+    lowSpacePolicy: value.low_space_policy === 'delete_oldest' ? 'delete_oldest' : 'stop_recording',
     maximumAgeDays: finite(value.maximum_age_days) ? value.maximum_age_days : 0,
     maximumTotalGb: finite(value.maximum_total_gb) ? value.maximum_total_gb : 0,
     minimumFreeGb: finite(value.minimum_free_gb) ? value.minimum_free_gb : 5};
@@ -41,8 +43,13 @@ const storage = directory => {
       free_bytes: stat.bavail * stat.bsize};
   } catch (_) { return {capacity_bytes: null, free_bytes: null}; }
 };
-const sidecarsFor = filename => SIDECAR_SUFFIXES.map(suffix => `${filename}${suffix}`)
-  .filter(candidate => fs.existsSync(candidate));
+const sidecarsFor = filename => SIDECAR_SUFFIXES.map(suffix => `${filename}${suffix}`);
+const cloneItems = items => items.map(item => ({...item,
+  aircraft: item.aircraft.map(value => ({...value}))}));
+const timestamp = (value, fallback) => {
+  const parsed = typeof value === 'string' ? Date.parse(value) : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 
 function aircraft(admission, passes) {
   const captures = Object.values(admission?.captures || {});
@@ -76,29 +83,34 @@ class RecordingLibrary {
   }
   directory() { return recordingDirectory(this.getConfig()); }
   retention() { return options(this.getConfig()); }
-  scan({activeFile = '', passes = []} = {}) {
+  async scan({activeFile = '', passes = []} = {}) {
     const directory = this.directory();
     let directoryMtime = 0;
-    try { directoryMtime = fs.statSync(directory).mtimeMs; } catch (_) {}
+    try { directoryMtime = (await fsp.stat(directory)).mtimeMs; } catch (_) {}
     const passKey = [...passes].map(item => `${item.pass_id}:${item.flight || ''}:${item.hex || ''}`).join('|');
     const cacheKey = `${directory}:${directoryMtime}:${path.resolve(activeFile || '')}:${passKey}`;
     if (this.cache?.key === cacheKey && this.now() - this.cache.at < 5000)
-      return this.cache.items.map(item => ({...item, aircraft: item.aircraft.map(value => ({...value}))}));
+      return cloneItems(this.cache.items);
     const passMap = new Map([...passes].map(item => [item.pass_id, item]));
     let names = [];
-    try { names = fs.readdirSync(directory); } catch (_) { return []; }
-    const items = names.filter(name => RECORDING_EXTENSIONS.has(path.extname(name).toLowerCase()))
-      .flatMap(name => {
+    try { names = await fsp.readdir(directory); } catch (_) { return []; }
+    const recordingNames = names.filter(name => RECORDING_EXTENSIONS.has(path.extname(name).toLowerCase()));
+    const items = [];
+    // Yield between bounded batches: a large archive must never block live API polling.
+    for (let start = 0; start < recordingNames.length; start += 24) {
+      const batch = await Promise.all(recordingNames.slice(start, start + 24).map(async name => {
         const filename = path.join(directory, name);
         let stat;
-        try { stat = fs.statSync(filename); } catch (_) { return []; }
-        if (!stat.isFile()) return [];
-        const metadata = readJson(`${filename}.json`) || {};
-        const admission = readJson(`${filename}.admission.json`) || {};
+        try { stat = await fsp.stat(filename); } catch (_) { return null; }
+        if (!stat.isFile()) return null;
+        const [metadataValue, admissionValue] = await Promise.all([
+          readJson(`${filename}.json`), readJson(`${filename}.admission.json`)]);
+        const metadata = metadataValue || {};
+        const admission = admissionValue || {};
         const samples = metadata.samplesPerChannel ?? metadata.samples ?? null;
         const rate = metadata.sampleRate ?? null;
         const item = {id: encodeId(name), filename: name, path: filename,
-          size_bytes: stat.size, created_at: metadata.createdAt || stat.birthtimeMs || stat.mtimeMs,
+          size_bytes: stat.size, created_at: timestamp(metadata.createdAt, stat.birthtimeMs || stat.mtimeMs),
           modified_at: stat.mtimeMs, format: metadata.format || path.extname(name).slice(1),
           receiver: metadata.receiver || null, channels: metadata.channels ?? null,
           sample_rate_hz: rate, frequency_hz: metadata.frequency ?? null,
@@ -109,16 +121,20 @@ class RecordingLibrary {
           kind: Array.isArray(metadata.eventIds) && metadata.eventIds.length ? 'automatic' : 'manual',
           aircraft: aircraft(admission, passMap)};
         item.title = titleFor(item);
-        return [item];
-      }).sort((left, right) => right.created_at - left.created_at);
+        return item;
+      }));
+      items.push(...batch.filter(Boolean));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    items.sort((left, right) => right.created_at - left.created_at);
     this.cache = {key: cacheKey, at: this.now(), items};
-    return items.map(item => ({...item, aircraft: item.aircraft.map(value => ({...value}))}));
+    return cloneItems(items);
   }
-  list({activeFile = '', passes = [], search = '', offset = 0, limit = DEFAULT_LIMIT} = {}) {
+  async list({activeFile = '', passes = [], search = '', offset = 0, limit = DEFAULT_LIMIT} = {}) {
     const normalized = String(search || '').trim().toLowerCase();
     const boundedOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
     const boundedLimit = Number.isInteger(limit) ? Math.max(1, Math.min(MAX_LIMIT, limit)) : DEFAULT_LIMIT;
-    let items = this.scan({activeFile, passes});
+    let items = await this.scan({activeFile, passes});
     if (normalized) items = items.filter(item => [item.title, item.filename, item.receiver,
       ...item.aircraft.flatMap(value => [value.flight, value.icao])]
       .some(value => String(value || '').toLowerCase().includes(normalized)));
@@ -142,15 +158,18 @@ class RecordingLibrary {
     return {allowed: current.free_bytes === null || current.free_bytes > required,
       free_bytes: current.free_bytes, required_free_bytes: required};
   }
-  cleanup({activeFile = '', force = false} = {}) {
+  async cleanup({activeFile = '', force = false} = {}) {
     const retention = this.retention();
-    if (!retention.automaticCleanup && !force)
-      return {enabled: false, deleted: [], ...this.list({activeFile, limit: 1}).storage};
+    const initial = this.canRecord();
+    const lowSpaceDeletion = !initial.allowed && retention.lowSpacePolicy === 'delete_oldest';
+    if (!retention.automaticCleanup && !force && !lowSpaceDeletion)
+      return {enabled: false, deleted: [], ...initial};
     const now = this.now();
     const active = path.resolve(activeFile || '');
-    const items = this.scan({activeFile}).filter(item => !item.active && item.complete &&
+    const scanned = await this.scan({activeFile});
+    const items = scanned.filter(item => !item.active && item.complete &&
       now - item.modified_at >= MINIMUM_DELETE_AGE_MS).sort((a, b) => a.created_at - b.created_at);
-    let total = this.scan({activeFile}).reduce((sum, item) => sum + item.size_bytes, 0);
+    let total = scanned.reduce((sum, item) => sum + item.size_bytes, 0);
     let current = storage(this.directory());
     const maxBytes = retention.maximumTotalGb > 0 ? bytesFromGb(retention.maximumTotalGb) : 0;
     const minFree = bytesFromGb(retention.minimumFreeGb);
@@ -161,17 +180,31 @@ class RecordingLibrary {
       const oversized = maxBytes > 0 && total > maxBytes;
       const lowSpace = current.free_bytes !== null && current.free_bytes < minFree;
       if (!expired && !oversized && !lowSpace) continue;
+      // The low-space opt-in removes automatic aircraft clips, never manual recordings.
+      // Age/size retention remains separately controlled by automatic_cleanup.
+      if (lowSpace && !expired && !oversized && item.kind !== 'automatic') continue;
       if (path.resolve(item.path) === active) continue;
       const files = [item.path, ...sidecarsFor(item.path)];
-      for (const filename of files) fs.rmSync(filename, {force: true});
+      for (const filename of files) await fsp.rm(filename, {force: true});
       this.cache = null;
       total = Math.max(0, total - item.size_bytes);
       deleted.push({id: item.id, filename: item.filename, size_bytes: item.size_bytes,
         reason: expired ? 'age' : oversized ? 'storage-limit' : 'free-space-floor'});
       current = storage(this.directory());
+      if (lowSpace && current.free_bytes !== null && current.free_bytes >= minFree &&
+          !expired && !oversized) break;
     }
     return {enabled: true, deleted, capacity_bytes: current.capacity_bytes,
       free_bytes: current.free_bytes, recording_bytes: total};
+  }
+  async prepareForRecording({activeFile = ''} = {}) {
+    let status = this.canRecord();
+    if (!status.allowed && this.retention().lowSpacePolicy === 'delete_oldest') {
+      const cleanup = await this.cleanup({activeFile});
+      status = this.canRecord();
+      return {...status, deleted: cleanup.deleted || []};
+    }
+    return status;
   }
 }
 

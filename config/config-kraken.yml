@@ -222,6 +222,7 @@ save:
   path: "/var/lib/vectorwarp/recordings/"
   retention:
     automatic_cleanup: false
+    low_space_policy: stop_recording
     maximum_age_days: 30
     maximum_total_gb: 100
     minimum_free_gb: 5

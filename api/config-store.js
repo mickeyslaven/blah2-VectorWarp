@@ -63,7 +63,7 @@ function setupDefaults() {
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
     save: {iq: false, map: false, detection: false, timing: false,
       path: '/var/lib/vectorwarp/recordings/',
-      retention: {automatic_cleanup: false, maximum_age_days: 30,
+      retention: {automatic_cleanup: false, low_space_policy: 'stop_recording', maximum_age_days: 30,
         maximum_total_gb: 100, minimum_free_gb: 5}}
   };
 }

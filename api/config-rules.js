@@ -138,6 +138,8 @@ const rules = {
   'truth.adsb.delay_tolerance': {...numeric(0, 1000), optional: true},
   'truth.adsb.doppler_tolerance': {...numeric(0, 10000), optional: true},
   'save.retention.automatic_cleanup': {type: 'boolean', optional: true},
+  'save.retention.low_space_policy': {type: 'string',
+    choices: ['stop_recording', 'delete_oldest'], optional: true},
   'save.retention.maximum_age_days': {...numeric(0, 3650), optional: true},
   'save.retention.maximum_total_gb': {...numeric(0, 100000), optional: true},
   'save.retention.minimum_free_gb': {...numeric(0, 10000), optional: true},

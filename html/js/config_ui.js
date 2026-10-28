@@ -11,6 +11,7 @@ const CONFIG_META = {
   'save': ['Recording', 'Files and recording folder'],
   'save.retention': ['Storage retention', 'Keep recordings bounded by age, total storage, and free disk space.'],
   'save.retention.automatic_cleanup': ['Delete old recordings automatically', 'Off until you enable it. Only completed, inactive recordings are removed.'],
+  'save.retention.low_space_policy': ['When the disk reserve is reached', 'Stop recording or delete oldest aircraft clips. Manual recordings stay.'],
   'save.retention.maximum_age_days': ['Keep recordings for (days)', 'Oldest completed recordings become eligible for cleanup. Set 0 to disable the age limit.'],
   'save.retention.maximum_total_gb': ['Maximum recording storage (GB)', 'Cleanup removes the oldest completed recordings above this total. Set 0 for no size limit.'],
   'save.retention.minimum_free_gb': ['Always leave disk free (GB)', 'New recordings stop or are refused below this safety floor.'],

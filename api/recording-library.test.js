@@ -8,6 +8,7 @@ const {RecordingLibrary, encodeId, decodeId} = require('./recording-library');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-recordings-'));
 const now = Date.UTC(2026, 9, 28, 12);
 const config = {save: {path: directory, retention: {automatic_cleanup: true,
+  low_space_policy: 'stop_recording',
   maximum_age_days: 1, maximum_total_gb: 0, minimum_free_gb: 0}}};
 const automatic = path.join(directory, 'aircraft.mchq');
 fs.writeFileSync(automatic, Buffer.alloc(256));
@@ -28,23 +29,48 @@ fs.writeFileSync(`${manual}.json`, JSON.stringify({schema: 'vectorwarp-recording
   frequency: 100000000, samples: 2000000, receiver: 'Usrp'}));
 
 const library = new RecordingLibrary(() => config, {now: () => now});
-const listed = library.list({passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]});
+async function main() {
+const listed = await library.list({passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]});
 assert.equal(listed.total, 2);
 assert.equal(listed.recordings[0].kind, 'manual');
 assert.equal(listed.recordings[1].aircraft[0].flight, 'TEST123');
 assert.match(listed.recordings[1].title, /TEST123/);
 assert.equal(listed.recordings[1].duration_seconds, 4);
-assert.equal(library.list({search: 'a1b2c3'}).total, 1);
+assert.equal((await library.list({search: 'a1b2c3'})).total, 1);
 assert.equal(decodeId(encodeId('aircraft.mchq')), 'aircraft.mchq');
 assert.equal(decodeId(encodeId('../escape.mchq')), null);
 assert.equal(library.resolve(encodeId('manual.blah2iq')), manual);
 
-let cleaned = library.cleanup({activeFile: automatic});
+let cleaned = await library.cleanup({activeFile: automatic});
 assert.equal(cleaned.deleted.length, 0, 'active recordings are never deleted');
-cleaned = library.cleanup();
+cleaned = await library.cleanup();
 assert.deepEqual(cleaned.deleted.map(item => item.filename), ['aircraft.mchq']);
 assert.equal(fs.existsSync(automatic), false);
 assert.equal(fs.existsSync(`${automatic}.json`), false);
 assert.equal(fs.existsSync(manual), true);
 fs.rmSync(directory, {recursive: true, force: true});
+
+const policyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-recording-policy-'));
+const policyConfig = {save: {path: policyDirectory, retention: {automatic_cleanup: false,
+  low_space_policy: 'stop_recording', maximum_age_days: 0,
+  maximum_total_gb: 0, minimum_free_gb: 10000}}};
+const policyClip = path.join(policyDirectory, 'old-aircraft.mchq');
+const policyManual = path.join(policyDirectory, 'old-manual.blah2iq');
+fs.writeFileSync(policyClip, Buffer.alloc(32));
+fs.writeFileSync(`${policyClip}.json`, JSON.stringify({createdAt: now - 86400000,
+  complete: true, eventIds: ['aircraft:test']}));
+fs.writeFileSync(policyManual, Buffer.alloc(32));
+fs.writeFileSync(`${policyManual}.json`, JSON.stringify({createdAt: now - 86400000, complete: true}));
+for (const filename of [policyClip, `${policyClip}.json`, policyManual, `${policyManual}.json`])
+  fs.utimesSync(filename, old, old);
+const policyLibrary = new RecordingLibrary(() => policyConfig, {now: () => now});
+assert.equal((await policyLibrary.cleanup()).deleted.length, 0,
+  'stop-recording policy never deletes clips');
+policyConfig.save.retention.low_space_policy = 'delete_oldest';
+const policyCleanup = await policyLibrary.cleanup();
+assert.deepEqual(policyCleanup.deleted.map(item => item.filename), ['old-aircraft.mchq']);
+assert.equal(fs.existsSync(policyManual), true, 'low-space cleanup preserves manual recordings');
+fs.rmSync(policyDirectory, {recursive: true, force: true});
 console.log('Recording library metadata, search, safe paths and retention passed.');
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });

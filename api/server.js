@@ -280,16 +280,23 @@ let captureRevision = 0;
 // Keep the safety check cheap and independent of browser activity. A manual
 // recording is asked to stop before it can consume the configured reserve;
 // automatic clips are separately rejected before admission.
-setInterval(() => {
-  if (capture && !recordingLibrary.canRecord().allowed) {
+setInterval(async () => {
+  let disk = recordingLibrary.canRecord();
+  if (!disk.allowed && recordingLibrary.retention().lowSpacePolicy === 'delete_oldest') {
+    const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+    try { await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''}); }
+    catch (error) { console.error(`Low-space clip cleanup failed: ${error.message}`); }
+    disk = recordingLibrary.canRecord();
+  }
+  if (capture && !disk.allowed) {
     capture = false; captureRevision += 1; captureStartedAt = null;
     console.error('Recording stopped to preserve the configured free-disk reserve.');
   }
 }, 15000).unref();
-setInterval(() => {
+setInterval(async () => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   try {
-    const result = recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''});
+    const result = await recordingLibrary.cleanup({activeFile: processor?.recordingFile || ''});
     if (result.deleted?.length)
       console.error(`Recording retention removed ${result.deleted.length} completed recording(s).`);
   } catch (error) { console.error(`Recording retention failed: ${error.message}`); }
@@ -516,15 +523,17 @@ function publicRecording(item) {
   const {path: replay_file, ...value} = item;
   return {...value, replay_file};
 }
-app.get('/api/recordings', (req, res) => {
+app.get('/api/recordings', async (req, res, next) => {
+  try {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   const offset = Number.parseInt(req.query.offset, 10);
   const limit = Number.parseInt(req.query.limit, 10);
-  const result = recordingLibrary.list({activeFile: processor?.recordingFile || '',
+  const result = await recordingLibrary.list({activeFile: processor?.recordingFile || '',
     passes: recordingPasses(), search: req.query.search,
     offset: Number.isInteger(offset) ? offset : 0,
     limit: Number.isInteger(limit) ? limit : undefined});
   res.json({...result, recordings: result.recordings.map(publicRecording)});
+  } catch (error) { next(error); }
 });
 app.get('/api/recordings/:id/file', (req, res) => {
   const filename = recordingLibrary.resolve(req.params.id);
@@ -533,11 +542,12 @@ app.get('/api/recordings/:id/file', (req, res) => {
   res.set('Content-Disposition', `attachment; filename="${path.basename(filename).replace(/["\\]/g, '_')}"`);
   res.sendFile(filename);
 });
-app.post('/api/recordings/cleanup', (req, res) => {
+app.post('/api/recordings/cleanup', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-cleanup-v1')
     return res.status(403).json({error: 'Recording cleanup requires a trusted VectorWarp origin and intent.'});
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
-  res.json(recordingLibrary.cleanup({activeFile: processor?.recordingFile || '', force: true}));
+  try { res.json(await recordingLibrary.cleanup({activeFile: processor?.recordingFile || '', force: true})); }
+  catch (error) { next(error); }
 });
 app.get('/api/tracker-forward', (req, res) => {
   res.json(trackerForwarder.status());
@@ -1229,7 +1239,7 @@ app.get('/capture/status', (req, res) => {
   res.json(status);
 });
 // toggle state of capture
-app.post('/capture/toggle', (req, res) => {
+app.post('/capture/toggle', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== RECORDING_INTENT)
     return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
   if (gainPublicationBlocked)
@@ -1237,8 +1247,13 @@ app.post('/capture/toggle', (req, res) => {
   const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
   if (processor?.input === 'replay' || config.capture.replay?.state === true)
     return res.status(409).json({error: 'Recording is unavailable while replay is active.'});
-  if (!capture && !recordingLibrary.canRecord().allowed)
-    return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
+  if (!capture) {
+    let disk;
+    try { disk = await recordingLibrary.prepareForRecording({activeFile: processor?.recordingFile || ''}); }
+    catch (error) { return next(error); }
+    if (!disk.allowed)
+      return res.status(507).json({error: 'Recording would cross the configured free-disk reserve. Clean up recordings or change the retention settings.'});
+  }
   if (!capture && (lastFrameAt === null || Date.now() - lastFrameAt >
       Math.max(10000, (config.process.data.cpi || 1) * 3000)))
     return res.status(409).json({error: 'No live radar frames. Start the radar before recording.'});
