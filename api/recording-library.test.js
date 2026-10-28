@@ -49,6 +49,15 @@ assert.equal((await library.list({search: 'a1b2c3',
 assert.equal(decodeId(encodeId('aircraft.mchq')), 'aircraft.mchq');
 assert.equal(decodeId(encodeId('../escape.mchq')), null);
 assert.equal(library.resolve(encodeId('manual.blah2iq')), manual);
+assert.equal((await library.list({kind: 'automatic'})).total, 1);
+assert.equal((await library.list({receiver: 'Usrp'})).total, 1);
+assert.equal((await library.list({frequency: 509000000})).total, 1);
+assert.equal((await library.list({sort: 'oldest'})).recordings[0].filename, 'aircraft.mchq');
+const folder = await library.createDirectory('site-a/session-one');
+assert.equal(folder.path, `${path.join(directory, 'site-a', 'session-one')}/`);
+assert.ok((await library.directories()).directories.some(item => item.path === folder.path));
+assert.equal((await library.remove(encodeId('missing.blah2iq'))).reason, 'not-found');
+assert.equal((await library.remove(encodeId('manual.blah2iq'), {activeFile: manual})).reason, 'active');
 
 let cleaned = await library.cleanup({activeFile: automatic});
 assert.equal(cleaned.deleted.length, 0, 'active recordings are never deleted');
@@ -57,6 +66,8 @@ assert.deepEqual(cleaned.deleted.map(item => item.filename), ['aircraft.mchq']);
 assert.equal(fs.existsSync(automatic), false);
 assert.equal(fs.existsSync(`${automatic}.json`), false);
 assert.equal(fs.existsSync(manual), true);
+assert.equal((await library.remove(encodeId('manual.blah2iq'))).removed, true);
+assert.equal(fs.existsSync(manual), false);
 fs.rmSync(directory, {recursive: true, force: true});
 
 const policyDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-recording-policy-'));

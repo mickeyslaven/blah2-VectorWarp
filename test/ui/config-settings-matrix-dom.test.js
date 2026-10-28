@@ -41,6 +41,8 @@ window.fetch = async (url, options = {}) => {
     message: 'Not contacted by this DOM fixture.'};
   else if (url === '/api/system/status') body = {serverId: 'matrix', configRevision: revision,
     loadedRevision: revision, radar: 'no-data', errors: []};
+  else if (url === '/api/recordings/directories') body = {root: '/tmp/vectorwarp-matrix/', directories: [
+    {path: '/var/lib/vectorwarp/recordings/'}, {path: '/tmp/vectorwarp-matrix/'}]};
   else throw new Error(`Unexpected URL: ${url}`);
   return {ok: true, status: 200, headers: {get: key => key === 'ETag' ? `"${revision}"` : null},
     json: async () => clone(body)};
@@ -95,6 +97,7 @@ async function saveAndAssert(label, expected) {
 (async () => {
   try {
     await window.renderConfiguration();
+    await new Promise(resolve => setImmediate(resolve));
     // These legacy/reserved values must survive saves but have no misleading UI.
     for (const [key, rule] of Object.entries(FIELD_RULES))
       if (rule.readOnly) assert.equal(field(key), null, `${key} is intentionally not editable`);

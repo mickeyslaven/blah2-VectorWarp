@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const dns = require('dns');
 const path = require('path');
 const os = require('os');
+const {pipeline} = require('stream/promises');
 const {buildMetadata} = require('./build-metadata');
 const {execFile} = require('child_process');
 const {restartCommandFromEnvironment, commandAvailable, launch: launchLifecycleRestart} = require('./lifecycle.js');
@@ -275,6 +276,7 @@ var timestamp = '';
 var timing = '';
 var iqdata = '';
 var capture = false;
+var capturePaused = false;
 var captureStartedAt = null;
 let captureRevision = 0;
 // Keep the safety check cheap and independent of browser activity. A manual
@@ -289,7 +291,7 @@ setInterval(async () => {
     disk = recordingLibrary.canRecord();
   }
   if (capture && !disk.allowed) {
-    capture = false; captureRevision += 1; captureStartedAt = null;
+    capture = false; capturePaused = false; captureRevision += 1; captureStartedAt = null;
     console.error('Recording stopped to preserve the configured free-disk reserve.');
   }
 }, 15000).unref();
@@ -390,7 +392,7 @@ app.use(function(req, res, next) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
   }
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', `Content-Type, If-Match, ${RECEIVER_SYNC_HEADER}, X-VectorWarp-Intent`);
   res.header('Access-Control-Expose-Headers', 'ETag');
   res.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
@@ -529,11 +531,22 @@ app.get('/api/recordings', async (req, res, next) => {
   const offset = Number.parseInt(req.query.offset, 10);
   const limit = Number.parseInt(req.query.limit, 10);
   const result = await recordingLibrary.list({activeFile: processor?.recordingFile || '',
-    passes: recordingPasses(), search: req.query.search,
+    passes: recordingPasses(), search: req.query.search, kind: req.query.kind,
+    receiver: req.query.receiver, frequency: req.query.frequency, sort: req.query.sort,
     offset: Number.isInteger(offset) ? offset : 0,
     limit: Number.isInteger(limit) ? limit : undefined, waitForIndex: false});
   res.json({...result, recordings: result.recordings.map(publicRecording)});
   } catch (error) { next(error); }
+});
+app.get('/api/recordings/directories', async (req, res, next) => {
+  try { res.json(await recordingLibrary.directories()); }
+  catch (error) { next(error); }
+});
+app.post('/api/recordings/directories', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-directory-v1')
+    return res.status(403).json({error: 'Recording-folder changes require a trusted VectorWarp origin and intent.'});
+  try { res.json(await recordingLibrary.createDirectory(req.body?.name)); }
+  catch (error) { next(error); }
 });
 app.get('/api/recordings/:id/file', (req, res) => {
   const filename = recordingLibrary.resolve(req.params.id);
@@ -541,6 +554,48 @@ app.get('/api/recordings/:id/file', (req, res) => {
   res.type('application/octet-stream');
   res.set('Content-Disposition', `attachment; filename="${path.basename(filename).replace(/["\\]/g, '_')}"`);
   res.sendFile(filename);
+});
+app.delete('/api/recordings/:id', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-delete-v1')
+    return res.status(403).json({error: 'Deleting a recording requires a trusted VectorWarp origin and intent.'});
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  try {
+    const result = await recordingLibrary.remove(req.params.id,
+      {activeFile: processor?.recordingFile || ''});
+    if (!result.removed) return res.status(result.reason === 'active' ? 409 : 404).json(result);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+app.post('/api/recordings/import', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-import-v1')
+    return res.status(403).json({error: 'Importing a recording requires a trusted VectorWarp origin and intent.'});
+  const original = path.basename(String(req.query.filename || ''));
+  const extension = path.extname(original).toLowerCase();
+  if (!original || !['.blah2iq', '.mchq'].includes(extension))
+    return res.status(400).json({error: 'Choose a .blah2iq or .mchq recording.'});
+  let temporary = null;
+  try {
+    const disk = await recordingLibrary.prepareForRecording({});
+    const length = Number(req.get('Content-Length'));
+    if (!disk.allowed || (Number.isFinite(length) && disk.free_bytes !== null &&
+        disk.free_bytes - length <= disk.required_free_bytes))
+      return res.status(507).json({error: 'The import would cross the configured free-disk reserve.'});
+    const directory = recordingLibrary.directory();
+    await fs.promises.mkdir(directory, {recursive: true, mode: 0o770});
+    const stem = path.basename(original, extension).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 120) || 'recording';
+    let filename = path.join(directory, `${stem}${extension}`);
+    if (fs.existsSync(filename)) filename = path.join(directory, `${stem}-${Date.now()}${extension}`);
+    temporary = path.join(directory, `.import-${crypto.randomUUID()}.partial`);
+    await pipeline(req, fs.createWriteStream(temporary, {flags: 'wx', mode: 0o660}));
+    const stat = await fs.promises.stat(temporary);
+    if (!stat.size) throw Object.assign(new Error('The selected recording was empty.'), {status: 400});
+    await fs.promises.rename(temporary, filename); temporary = null;
+    recordingLibrary.cache = null;
+    res.status(201).json({imported: true, filename: path.basename(filename), size_bytes: stat.size});
+  } catch (error) {
+    if (temporary) await fs.promises.rm(temporary, {force: true}).catch(() => {});
+    next(error);
+  }
 });
 app.post('/api/recordings/cleanup', async (req, res, next) => {
   if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-cleanup-v1')
@@ -1221,6 +1276,7 @@ app.get('/capture/status', (req, res) => {
       (!disk.allowed ? 'Recording paused to preserve the configured free-disk reserve.' :
         (!receiving && !capture ? 'Start live radar and wait for frames before recording.' : null)),
     requested: capture,
+    paused: capturePaused,
     revision: captureRevision,
     acknowledged: acknowledged === true,
     recording,
@@ -1257,12 +1313,35 @@ app.post('/capture/toggle', async (req, res, next) => {
   if (!capture && (lastFrameAt === null || Date.now() - lastFrameAt >
       Math.max(10000, (config.process.data.cpi || 1) * 3000)))
     return res.status(409).json({error: 'No live radar frames. Start the radar before recording.'});
-  capture = !capture;
+  if (capturePaused) { capture = false; capturePaused = false; }
+  else capture = !capture;
   captureRevision += 1;
   captureStartedAt = capture ? Date.now() : null;
-  res.json({requested: capture, revision: captureRevision, recording: processor?.recording === true,
+  res.json({requested: capture, paused: capturePaused, revision: captureRevision, recording: processor?.recording === true,
     acknowledged: processor?.input === 'live' && processor.recordingRequestId === captureRevision && processor.recording === capture,
     startedAt: captureStartedAt});
+});
+app.post('/capture/pause', async (req, res, next) => {
+  if (!configWriteOriginAllowed(req) || req.get('X-VectorWarp-Intent') !== 'recording-pause-v1')
+    return res.status(403).json({error: 'Recording changes require a trusted VectorWarp origin and intent.'});
+  const pause = req.body?.paused === true;
+  if (pause && !capture)
+    return res.status(409).json({error: 'Start a manual recording before pausing it.'});
+  if (!pause && !capturePaused)
+    return res.status(409).json({error: 'No paused manual recording is available to resume.'});
+  if (!pause) {
+    const disk = await recordingLibrary.prepareForRecording({});
+    if (!disk.allowed)
+      return res.status(507).json({error: 'Recording cannot resume without crossing the free-disk reserve.'});
+  }
+  capture = !pause;
+  capturePaused = pause;
+  captureRevision += 1;
+  captureStartedAt = capture ? Date.now() : null;
+  // A safe pause finalizes the current portable recording. Resume starts a new
+  // segment so no discontinuous sample epochs are silently joined.
+  res.json({requested: capture, paused: capturePaused, revision: captureRevision,
+    startedAt: captureStartedAt, segmented: true});
 });
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError || error.type === 'entity.too.large')

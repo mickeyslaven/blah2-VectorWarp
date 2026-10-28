@@ -1145,7 +1145,7 @@ function field(value, path) {
   const help = document.createElement('small');
   help.textContent = description;
   copy.append(label, help);
-  const control = typedInput(value, path);
+  const control = path.join('.') === 'save.path' ? recordingFolderControl(value, path) : typedInput(value, path);
   const rule = capabilities.fieldRules?.[path.join('.')];
   const unusedDedicatedInput = path.join('.') === 'capture.device.reference_channel' &&
     activeConfig.process?.reference_synthesis?.mode === 'array_eigenbeam';
@@ -1166,6 +1166,55 @@ function field(value, path) {
   error.className = 'config-field-error';
   error.setAttribute('aria-live', 'polite');
   wrapper.append(copy, control, error);
+  return wrapper;
+}
+
+function recordingFolderControl(value, path) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'recording-folder-control';
+  const select = document.createElement('select');
+  select.required = true;
+  const current = document.createElement('option');
+  current.value = value; current.textContent = value; current.selected = true;
+  select.appendChild(current);
+  select.addEventListener('change', () => setValue(path, select.value));
+  const create = document.createElement('button');
+  create.type = 'button'; create.className = 'button-secondary'; create.textContent = 'New folder';
+  const load = async selected => {
+    try {
+      const response = await configFetch(liveApiUrl('/api/recordings/directories'), {cache: 'no-store'});
+      if (!response.ok) throw new Error('Folder list unavailable');
+      const result = await response.json();
+      select.replaceChildren();
+      for (const item of result.directories || []) {
+        const option = document.createElement('option');
+        option.value = item.path; option.textContent = item.path;
+        option.selected = item.path === selected; select.appendChild(option);
+      }
+      if (![...select.options].some(option => option.value === selected)) {
+        const unavailable = document.createElement('option');
+        unavailable.value = selected; unavailable.textContent = `${selected} (not writable)`;
+        unavailable.selected = true; unavailable.disabled = true; select.prepend(unavailable);
+      }
+      select.disabled = !capabilities.editable;
+      select.dataset.originalDisabled = String(select.disabled);
+    } catch (_) { select.disabled = true; select.dataset.originalDisabled = 'true'; }
+  };
+  create.addEventListener('click', async () => {
+    const name = window.prompt('New folder name inside VectorWarp recording storage');
+    if (!name) return;
+    create.disabled = true;
+    try {
+      const response = await configFetch(liveApiUrl('/api/recordings/directories'), {method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'recording-directory-v1'},
+        body: JSON.stringify({name})});
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not create folder');
+      setValue(path, result.path); await load(result.path);
+    } catch (error) { window.alert(error.message); }
+    finally { create.disabled = false; }
+  });
+  wrapper.append(select, create); void load(value);
   return wrapper;
 }
 

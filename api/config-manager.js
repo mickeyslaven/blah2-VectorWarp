@@ -1212,6 +1212,15 @@ function validateConfig(config, baseline = null, options = {}) {
   if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
       path.isAbsolute(save.path) && !servicePathWithin(pathPolicy.recordingRoot, save.path))
     errors.push(`save.path must remain under ${pathPolicy.recordingRoot}/ for the packaged Linux service`);
+  if (pathPolicy?.kind === 'systemd-linux' && typeof save.path === 'string' &&
+      fs.existsSync(pathPolicy.recordingRoot)) {
+    if (!fs.existsSync(save.path) || !fs.statSync(save.path).isDirectory())
+      errors.push('save.path must be an existing recording folder created in VectorWarp');
+    else {
+      try { fs.accessSync(save.path, fs.constants.R_OK | fs.constants.W_OK); }
+      catch (_) { errors.push('save.path is not readable and writable by the VectorWarp service'); }
+    }
+  }
   return {valid: errors.length === 0, errors: [...new Set(errors)], notices, arrayGeometry,
     warnings: notices.map(notice => notice.message),
     estimatedMemoryBytes: Number.isFinite(estimatedBytes) ? estimatedBytes : null};

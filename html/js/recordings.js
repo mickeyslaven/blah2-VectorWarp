@@ -1,5 +1,7 @@
 (function (root) {
   'use strict';
+  const pageSize = () => typeof window !== 'undefined' && window.innerWidth <= 760 ? 10 : 24;
+  const state = {offset: 0, total: 0, loading: false, controller: null};
   const bytes = value => {
     if (!Number.isFinite(value)) return '—';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -12,7 +14,6 @@
   const frequency = value => Number.isFinite(value) ? `${(value / 1e6).toFixed(3)} MHz` : '—';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, character =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[character]));
-  let indexTimer = null;
   const aircraft = item => item.aircraft?.length ? item.aircraft.map(value => {
     const name = value.flight || value.icao || 'Aircraft';
     const details = [value.icao && value.flight ? value.icao : null,
@@ -21,43 +22,119 @@
       .filter(Boolean).join(' · ');
     return `<span class="recording-aircraft"><strong>${escape(name)}</strong>${details ? `<small>${escape(details)}</small>` : ''}</span>`;
   }).join('') : '<span class="recording-aircraft"><strong>No aircraft label</strong><small>Manual recording or unavailable ADS-B metadata</small></span>';
+  const integrity = item => item.complete === false ? '<span class="recording-integrity bad">Incomplete</span>' :
+    item.admission ? `<span class="recording-integrity">${escape(item.admission)}</span>` :
+      '<span class="recording-integrity">Portable recording</span>';
   function card(item) {
-    const replay = `/display/configuration?replayFile=${encodeURIComponent(item.replay_file || '')}`;
-    return `<article class="recording-card"><header><div><h2>${escape(item.title)}</h2><p>${escape(item.filename)}</p></div><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></header><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link" href="${replay}">Load for replay</a><a class="button-link button-secondary" href="${escape(liveApiUrl(`/api/recordings/${item.id}/file`))}">Download</a>${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></article>`;
+    const expanded = typeof window === 'undefined' || window.innerWidth > 760 ? ' open' : '';
+    const quick = [duration(item.duration_seconds), bytes(item.size_bytes), frequency(item.frequency_hz)].filter(value => value !== '—').join(' · ');
+    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><button class="button-link recording-replay" type="button" data-file="${escape(item.replay_file || '')}">Start replay</button><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
   }
-  async function load() {
+  function query() {
+    const params = new URLSearchParams({offset: state.offset, limit: pageSize(),
+      search: document.getElementById('recording-search')?.value || '',
+      kind: document.getElementById('recording-kind')?.value || '',
+      sort: document.getElementById('recording-sort')?.value || 'newest'});
+    return params;
+  }
+  function pageControls(result) {
+    const start = result.total ? result.offset + 1 : 0;
+    const end = Math.min(result.total, result.offset + result.recordings.length);
+    document.getElementById('recording-page-status').textContent =
+      result.metadata_indexing ? `Showing ${start}–${end} of ${result.total}. Indexing aircraft metadata for complete search…` :
+        `Showing ${start}–${end} of ${result.total}`;
+    document.getElementById('recording-page').textContent =
+      `Page ${result.total ? Math.floor(result.offset / pageSize()) + 1 : 1} of ${Math.max(1, Math.ceil(result.total / pageSize()))}`;
+    document.getElementById('recording-previous').disabled = result.offset <= 0;
+    document.getElementById('recording-next').disabled = result.offset + result.recordings.length >= result.total;
+  }
+  async function load({reset = false} = {}) {
+    if (state.loading) state.controller?.abort();
+    if (reset) state.offset = 0;
+    state.controller = new AbortController(); state.loading = true;
     const list = document.getElementById('recording-list');
     const summary = document.getElementById('recording-library-summary');
-    const search = document.getElementById('recording-search')?.value || '';
     try {
-      const response = await fetchStatusResource(liveApiUrl(`/api/recordings?limit=200&search=${encodeURIComponent(search)}`), {cache: 'no-store'});
+      const response = await fetchStatusResource(liveApiUrl(`/api/recordings?${query()}`),
+        {cache: 'no-store', signal: state.controller.signal}, 15000);
       if (!response.ok) throw new Error('Recording library unavailable');
-      const result = await response.json();
+      const result = await response.json(); state.total = result.total;
       const storage = result.storage || {}, retention = result.retention || {};
       const limits = [retention.maximumAgeDays > 0 ? `${retention.maximumAgeDays} days` : null,
-        retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null]
-        .filter(Boolean).join(' or ');
-      const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ?
-        'Delete oldest aircraft clips' : 'Stop recording';
-      summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
+        retention.maximumTotalGb > 0 ? `${retention.maximumTotalGb} GB` : null].filter(Boolean).join(' or ');
+      const lowSpace = retention.lowSpacePolicy === 'delete_oldest' ? 'Delete oldest aircraft clips' : 'Stop recording';
+      summary.innerHTML = `<div><strong>${result.indexing ? 'Indexing recordings…' : `${result.total} matching recording${result.total === 1 ? '' : 's'}`}</strong><span>${escape(bytes(storage.recording_bytes))} stored · ${escape(bytes(storage.free_bytes))} disk free</span></div><div><strong>${retention.automaticCleanup ? 'Automatic cleanup on' : 'Automatic cleanup off'}</strong><span>${retention.automaticCleanup ? `Keep up to ${escape(limits || 'configured limits')}; reserve ${escape(retention.minimumFreeGb)} GB free` : `${escape(lowSpace)} at the ${escape(retention.minimumFreeGb)} GB reserve`}</span></div>`;
       list.innerHTML = result.recordings?.length ? result.recordings.map(card).join('') :
-        '<div class="empty-state"><strong>No matching recordings</strong><p>Record manually from Live radar or enable automatic aircraft clips in Settings.</p></div>';
-      clearTimeout(indexTimer);
-      if (result.indexing) indexTimer = setTimeout(load, 1500);
+        '<div class="empty-state"><strong>No matching recordings</strong><p>Change the filters, record manually, import a recording, or enable automatic aircraft clips.</p></div>';
+      pageControls(result);
+      if (result.indexing) window.setTimeout(() => load(), 1200);
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       summary.textContent = 'Recording storage is unavailable.';
       list.innerHTML = `<div class="empty-state"><strong>Could not load recordings</strong><p>${escape(error.message)}</p><button type="button" id="recording-retry">Try again</button></div>`;
-      document.getElementById('recording-retry')?.addEventListener('click', load);
-    }
+      document.getElementById('recording-retry')?.addEventListener('click', () => load());
+    } finally { state.loading = false; }
+  }
+  async function deleteRecording(button) {
+    const name = button.dataset.name || 'this recording';
+    if (!window.confirm(`Permanently delete ${name} and its metadata?`)) return;
+    button.disabled = true; button.textContent = 'Deleting…';
+    const response = await fetchStatusResource(liveApiUrl(`/api/recordings/${button.dataset.id}`),
+      {method: 'DELETE', headers: {'X-VectorWarp-Intent': 'recording-delete-v1'}, cache: 'no-store'}, 15000);
+    if (!response.ok) { button.disabled = false; button.textContent = 'Delete'; window.alert('The recording could not be deleted.'); return; }
+    if (state.offset >= Math.max(0, state.total - 1)) state.offset = Math.max(0, state.offset - pageSize());
+    await load();
+  }
+  async function importRecording(input) {
+    const file = input.files?.[0]; if (!file) return;
+    const status = document.getElementById('recording-import-status');
+    status.textContent = `Importing ${file.name} (${bytes(file.size)})…`;
+    try {
+      const response = await fetchStatusResource(liveApiUrl(`/api/recordings/import?filename=${encodeURIComponent(file.name)}`),
+        {method: 'POST', headers: {'Content-Type': 'application/octet-stream',
+          'X-VectorWarp-Intent': 'recording-import-v1'}, body: file}, 60 * 60 * 1000);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Import failed');
+      status.textContent = `Imported ${result.filename} (${bytes(result.size_bytes)}).`;
+      input.value = ''; await load({reset: true});
+    } catch (error) { status.textContent = error.message; }
+  }
+  async function configureReplay(file) {
+    if (!window.confirm('Start this IQ replay now? Live receiver processing will restart and can be restored from Settings.')) return;
+    const response = await fetchStatusResource(liveApiUrl('/api/config'), {cache: 'no-store'});
+    if (!response.ok) return window.alert('Saved settings are unavailable.');
+    const config = await response.json();
+    config.capture.replay = {...config.capture.replay, state: true, file, format: 'auto'};
+    const saved = await fetchStatusResource(liveApiUrl('/api/config?restart=true'), {method: 'PUT',
+      headers: {'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || '',
+        'X-VectorWarp-Intent': 'config-write-v1', 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'},
+      body: JSON.stringify(config)}, 15000);
+    const result = await saved.json().catch(() => ({}));
+    if (!saved.ok) return window.alert((result.errors || [result.error || 'Replay could not start.']).join(' '));
+    window.location.href = '/';
   }
   function renderRecordings() {
     let timer = null;
-    document.getElementById('recording-refresh')?.addEventListener('click', load);
+    document.getElementById('recording-refresh')?.addEventListener('click', () => load());
+    for (const id of ['recording-kind', 'recording-sort'])
+      document.getElementById(id)?.addEventListener('change', () => load({reset: true}));
     document.getElementById('recording-search')?.addEventListener('input', () => {
-      clearTimeout(timer); timer = setTimeout(load, 250);
+      clearTimeout(timer); timer = setTimeout(() => load({reset: true}), 300);
     });
+    document.getElementById('recording-previous')?.addEventListener('click', () => {
+      state.offset = Math.max(0, state.offset - pageSize()); load(); window.scrollTo({top: 0, behavior: 'smooth'});
+    });
+    document.getElementById('recording-next')?.addEventListener('click', () => {
+      state.offset += pageSize(); load(); window.scrollTo({top: 0, behavior: 'smooth'});
+    });
+    document.getElementById('recording-list')?.addEventListener('click', event => {
+      const remove = event.target.closest('.recording-delete'); if (remove) deleteRecording(remove);
+      const replay = event.target.closest('.recording-replay'); if (replay) configureReplay(replay.dataset.file);
+    });
+    document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));
     load();
   }
   root.renderRecordings = renderRecordings;
-  if (typeof module !== 'undefined' && module.exports) module.exports = {bytes, duration, frequency};
+  if (typeof module !== 'undefined' && module.exports)
+    module.exports = {bytes, duration, frequency, pageSize};
 })(typeof window !== 'undefined' ? window : globalThis);

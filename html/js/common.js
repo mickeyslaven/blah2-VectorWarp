@@ -68,7 +68,8 @@ function routeApiLinks() {
   });
 }
 
-let recordingState = {recording: false, requested: false, acknowledged: false, startedAt: null, available: true};
+let recordingState = {recording: false, requested: false, paused: false,
+  acknowledged: false, startedAt: null, available: true};
 let recordingRequestPending = false;
 
 function recordingDuration(milliseconds) {
@@ -86,21 +87,32 @@ function renderRecordingState() {
   const status = control.querySelector('.recording-status');
   const copy = control.querySelector('.recording-copy');
   const button = control.querySelector('.recording-toggle');
+  const pause = control.querySelector('.recording-pause');
   control.classList.toggle('recording', recordingState.recording);
   control.classList.toggle('unavailable', !recordingState.available);
   button.disabled = recordingRequestPending || !recordingState.available;
+  if (pause) pause.disabled = recordingRequestPending ||
+    (!recordingState.recording && !recordingState.paused);
   if (!recordingState.available) {
     status.innerHTML = '<span class="recording-dot"></span>Recording unavailable';
     copy.textContent = recordingState.reason || 'The recording control cannot reach the VectorWarp API.';
     button.textContent = 'Unavailable';
+    if (pause) pause.hidden = true;
     return;
   }
+  if (pause) pause.hidden = false;
   if (recordingState.recording) {
     const elapsed = recordingState.startedAt ?
       recordingDuration(Date.now() - recordingState.startedAt) : 'Recording';
     status.innerHTML = `<span class="recording-dot"></span><strong>REC</strong><time>${elapsed}</time>`;
     copy.textContent = recordingState.file ? `Writing ${recordingState.file}` : 'Recording confirmed.';
     button.textContent = 'Stop recording';
+    if (pause) pause.textContent = 'Pause';
+  } else if (recordingState.paused) {
+    status.innerHTML = '<span class="recording-dot"></span><strong>PAUSED</strong>';
+    copy.textContent = 'The previous file is safely finalized. Resume starts a new linked segment.';
+    button.textContent = 'End session';
+    if (pause) pause.textContent = 'Resume';
   } else if (recordingState.requested) {
     status.innerHTML = '<span class="recording-dot"></span>Starting recording';
     copy.textContent = recordingState.reason || 'Waiting for recording to start.';
@@ -119,6 +131,7 @@ async function readRecordingState() {
     if (response.ok) {
       const state = await response.json();
       recordingState = {recording: state.recording === true, requested: state.requested === true,
+        paused: state.paused === true,
         acknowledged: state.acknowledged === true,
         startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null,
         available: state.supported !== false && state.available !== false, reason: state.recordingError || state.reason,
@@ -128,7 +141,7 @@ async function readRecordingState() {
       if (!response.ok) throw new Error('Recording status unavailable');
       const active = (await response.text()).trim() === 'true';
       recordingState = {recording: active, requested: active, acknowledged: false,
-        startedAt: active ? recordingState.startedAt : null, available: true};
+        paused: false, startedAt: active ? recordingState.startedAt : null, available: true};
     }
   } catch (_) {
     recordingState.available = false;
@@ -148,6 +161,7 @@ async function toggleRecording() {
     try { state = await response.json(); } catch (_) { /* Older API. */ }
     if (typeof state?.requested === 'boolean') {
       recordingState = {recording: state.recording === true, requested: state.requested,
+        paused: state.paused === true,
         acknowledged: state.acknowledged === true,
         startedAt: state.recording && Number.isFinite(state.startedAt) ? state.startedAt : null,
         available: true};
@@ -162,6 +176,22 @@ async function toggleRecording() {
   }
 }
 
+async function pauseRecording() {
+  if (recordingRequestPending || (!recordingState.recording && !recordingState.paused)) return;
+  recordingRequestPending = true; renderRecordingState();
+  try {
+    const response = await fetchStatusResource(liveApiUrl('/capture/pause'), {method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-VectorWarp-Intent': 'recording-pause-v1'},
+      body: JSON.stringify({paused: !recordingState.paused}), cache: 'no-store'});
+    if (!response.ok) throw new Error('Recording pause unavailable');
+    const state = await response.json();
+    recordingState = {...recordingState, requested: state.requested === true,
+      paused: state.paused === true, recording: false,
+      startedAt: Number.isFinite(state.startedAt) ? state.startedAt : null};
+  } catch (_) { await readRecordingState(); }
+  finally { recordingRequestPending = false; renderRecordingState(); }
+}
+
 function addRecordingControl() {
   const visual = document.getElementById('data');
   if (!visual || document.getElementById('recording-control')) return;
@@ -171,7 +201,8 @@ function addRecordingControl() {
   control.className = 'recording-control';
   control.setAttribute('role', 'status');
   control.setAttribute('aria-live', 'polite');
-  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop. <a href="/display/recordings">Browse recordings</a></div><button class="recording-toggle" type="button">Start recording</button>';
+  control.innerHTML = '<div class="recording-status"><span class="recording-dot"></span>Checking recording…</div><div class="recording-copy">Press Space to start. Press again to stop. <a href="/display/recordings">Browse recordings</a></div><button class="recording-pause button-secondary" type="button" hidden>Pause</button><button class="recording-toggle" type="button">Start recording</button>';
+  control.querySelector('.recording-pause').addEventListener('click', pauseRecording);
   control.querySelector('.recording-toggle')
     .addEventListener('click', toggleRecording);
   panel.classList.add('recording-panel');

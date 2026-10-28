@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const {spawn} = require('child_process');
 const yaml = require('js-yaml');
+const {encodeId} = require('./recording-library');
 
 const source = path.join(__dirname, '..', 'config', 'config-kraken.yml');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-api-test-'));
@@ -45,6 +46,8 @@ const suiteFixture = net.createServer(socket => {
 suiteFixture.listen(suitePort, '127.0.0.1');
 config.capture.device.heimdall.host = '127.0.0.1';
 config.capture.device.heimdall.control_port = suitePort;
+config.save.path = `${path.join(directory, 'recordings')}/`;
+fs.mkdirSync(config.save.path, {recursive: true});
 const truthRequests = [];
 const truthFixture = http.createServer((req, res) => {
   truthRequests.push(req.url);
@@ -112,6 +115,22 @@ function requestOnce(method, pathname, body, headers = {}) {
     req.on('error', reject);
     if (payload) req.write(payload);
     req.end();
+  });
+}
+
+function requestBinary(pathname, data, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({hostname: '127.0.0.1', port: config.network.ports.api,
+      path: pathname, method: 'POST', headers: {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'Content-Type': 'application/octet-stream', 'Content-Length': data.length,
+        'X-VectorWarp-Intent': 'recording-import-v1', ...headers}}, response => {
+      let text = ''; response.setEncoding('utf8'); response.on('data', chunk => { text += chunk; });
+      response.on('end', () => {
+        let body = text; try { body = text ? JSON.parse(text) : null; } catch (_) {}
+        resolve({status: response.statusCode, body});
+      });
+    });
+    req.on('error', reject); req.end(data);
   });
 }
 
@@ -194,6 +213,23 @@ function connect(port) {
     assert.equal(capabilities.body.deviceProfiles.find(item => item.type === 'Kraken').liveAvailable, true);
     for (const type of ['RspDuo', 'Usrp', 'HackRF'])
       assert.equal(capabilities.body.deviceProfiles.find(item => item.type === type).liveAvailable, false);
+    const folders = await request('GET', '/api/recordings/directories');
+    assert.equal(folders.status, 200);
+    assert.ok(folders.body.directories.some(item => item.path === config.save.path));
+    const createdFolder = await request('POST', '/api/recordings/directories', {name: 'portable/session-a'},
+      {'X-VectorWarp-Intent': 'recording-directory-v1'});
+    assert.equal(createdFolder.status, 200);
+    assert.ok(fs.statSync(createdFolder.body.path).isDirectory());
+    const imported = await requestBinary('/api/recordings/import?filename=portable.blah2iq',
+      Buffer.from('portable-recording-fixture'));
+    assert.equal(imported.status, 201);
+    assert.equal(fs.readFileSync(path.join(config.save.path, imported.body.filename), 'utf8'),
+      'portable-recording-fixture');
+    const removedImport = await request('DELETE', `/api/recordings/${encodeId(imported.body.filename)}`,
+      undefined, {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-delete-v1'});
+    assert.equal(removedImport.status, 200);
+    assert.equal(fs.existsSync(path.join(config.save.path, imported.body.filename)), false);
     const aircraft = await request('GET', '/api/adsb');
     assert.equal(aircraft.status, 200);
     assert.equal(aircraft.body.aircraft[0].hex, 'abc123');
@@ -373,15 +409,36 @@ function connect(port) {
     assert.equal(activeCapture.body.acknowledged, true);
     assert.equal(activeCapture.body.recordingFile, '/tmp/new.blah2');
     assert.equal(activeCapture.body.recordedSamples, 128);
+    const pausedCapture = await request('POST', '/capture/pause', {paused: true},
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-pause-v1'});
+    assert.equal(pausedCapture.body.requested, false);
+    assert.equal(pausedCapture.body.paused, true);
+    assert.equal(pausedCapture.body.segmented, true);
+    assert.equal(pausedCapture.body.revision, 2);
+    assert.equal((await request('POST', '/api/processor/status', {
+      ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
+    })).status, 204);
+    assert.equal((await request('GET', '/capture/status')).body.paused, true);
+    const resumedCapture = await request('POST', '/capture/pause', {paused: false},
+      {Origin: `http://127.0.0.1:${config.network.ports.api}`,
+        'X-VectorWarp-Intent': 'recording-pause-v1'});
+    assert.equal(resumedCapture.body.requested, true);
+    assert.equal(resumedCapture.body.paused, false);
+    assert.equal(resumedCapture.body.revision, 3);
+    assert.equal((await request('POST', '/api/processor/status', {
+      ...liveRecording, recording: true, recordingRequestId: 3,
+      recordingFile: '/tmp/new-segment.blah2'
+    })).status, 204);
     const stoppedCapture = await request('POST', '/capture/toggle', undefined,
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'});
     assert.equal(stoppedCapture.body.requested, false);
-    assert.equal(stoppedCapture.body.revision, 2);
+    assert.equal(stoppedCapture.body.revision, 4);
     assert.equal(stoppedCapture.body.recording, true);
     assert.equal(stoppedCapture.body.startedAt, null);
     assert.equal((await request('POST', '/api/processor/status', {
-      ...liveRecording, recording: false, recordingRequestId: 2, recordingFile: ''
+      ...liveRecording, recording: false, recordingRequestId: 4, recordingFile: ''
     })).status, 204);
     assert.equal((await request('GET', '/capture/status')).body.acknowledged, true);
     assert.equal((await request('GET', '/capture/toggle')).status, 404);
@@ -395,7 +452,7 @@ function connect(port) {
       {Origin: `http://127.0.0.1:${config.network.ports.api}`,
         'X-VectorWarp-Intent': 'recording-toggle-v1'})).body.requested, true);
     assert.equal((await request('POST', '/api/processor/status', {
-      ...liveRecording, recording: false, recordingRequestId: 3, recordingError: 'Disk full\nrecording stopped'
+      ...liveRecording, recording: false, recordingRequestId: 5, recordingError: 'Disk full\nrecording stopped'
     })).status, 204);
     const failedCapture = await request('GET', '/capture/status');
     assert.equal(failedCapture.body.requested, false,

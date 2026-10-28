@@ -4,11 +4,11 @@ const assert = require('assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const {setupDefaults} = require('./config-store');
+const {configurationForReceiver} = require('./config-store');
 const {validateConfig, linuxServicePathPolicy} = require('./config-manager');
 
 const clone = value => JSON.parse(JSON.stringify(value));
-const source = setupDefaults();
+const source = configurationForReceiver('Kraken');
 const policy = linuxServicePathPolicy({VECTORWARP_LINUX_SERVICE: '1'});
 const validateLinux = value => validateConfig(value, null, {pathPolicy: policy});
 

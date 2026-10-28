@@ -8,6 +8,7 @@ const RECORDING_EXTENSIONS = new Set(['.blah2iq', '.mchq']);
 const SIDECAR_SUFFIXES = ['.admission.json', '.json'];
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
+const METADATA_BATCH = 32;
 const MINIMUM_DELETE_AGE_MS = 10 * 60 * 1000;
 
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -44,6 +45,7 @@ const storage = directory => {
   } catch (_) { return {capacity_bytes: null, free_bytes: null}; }
 };
 const sidecarsFor = filename => SIDECAR_SUFFIXES.map(suffix => `${filename}${suffix}`);
+const metadataKey = item => `${item.filename}\0${item.modified_at}`;
 const cloneItems = items => items.map(item => ({...item,
   aircraft: item.aircraft.map(value => ({...value}))}));
 const timestamp = (value, fallback) => {
@@ -51,7 +53,7 @@ const timestamp = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-function aircraft(admission, passes) {
+function aircraft(admission, passes = new Map()) {
   const captures = Object.values(admission?.captures || {});
   const result = new Map();
   for (const capture of captures) {
@@ -78,20 +80,29 @@ function titleFor(item) {
 }
 
 class RecordingLibrary {
-  constructor(getConfig, {now = Date.now} = {}) {
+  constructor(getConfig, {now = Date.now, environment = process.env} = {}) {
     this.getConfig = getConfig; this.now = now; this.cache = null;
+    this.environment = environment;
     this.scanPromise = null; this.scanError = null; this.metadataCache = new Map();
+    this.metadataIndexPromise = null; this.metadataIndexKey = null;
   }
   directory() { return recordingDirectory(this.getConfig()); }
+  root() {
+    if (this.environment.VECTORWARP_RECORDING_ROOT)
+      return path.resolve(this.environment.VECTORWARP_RECORDING_ROOT);
+    if (this.environment.VECTORWARP_LINUX_SERVICE === '1')
+      return '/var/lib/vectorwarp/recordings';
+    if (this.environment.VECTORWARP_MACOS_STATE)
+      return path.resolve(this.environment.VECTORWARP_MACOS_STATE, 'recordings');
+    return this.directory();
+  }
   retention() { return options(this.getConfig()); }
   async scan({activeFile = '', passes = []} = {}) {
     const directory = this.directory();
     let directoryMtime = 0;
     try { directoryMtime = (await fsp.stat(directory)).mtimeMs; } catch (_) {}
-    const passKey = [...passes].map(item => `${item.pass_id}:${item.flight || ''}:${item.hex || ''}`).join('|');
-    const cacheKey = `${directory}:${directoryMtime}:${path.resolve(activeFile || '')}:${passKey}`;
-    if (this.cache?.key === cacheKey && this.now() - this.cache.at < 5000)
-      return cloneItems(this.cache.items);
+    const cacheKey = `${directory}:${directoryMtime}`;
+    if (this.cache?.key === cacheKey) return this.cache.items;
     let names = [];
     try { names = await fsp.readdir(directory); } catch (_) { return []; }
     const recordingNames = names.filter(name => RECORDING_EXTENSIONS.has(path.extname(name).toLowerCase()));
@@ -108,7 +119,7 @@ class RecordingLibrary {
           modified_at: stat.mtimeMs, format: path.extname(name).slice(1),
           receiver: null, channels: null, sample_rate_hz: null, frequency_hz: null,
           duration_seconds: null, complete: true,
-          active: path.resolve(activeFile || '') === filename,
+          active: false,
           admission: null, kind: path.extname(name).toLowerCase() === '.mchq' ? 'automatic' : 'manual',
           aircraft: []};
         item.title = titleFor(item);
@@ -119,11 +130,17 @@ class RecordingLibrary {
     }
     items.sort((left, right) => right.created_at - left.created_at);
     this.cache = {key: cacheKey, at: this.now(), items};
-    return cloneItems(items);
+    this.pruneMetadata(recordingNames);
+    return items;
   }
-  async enrich(item, passMap, passKey) {
-    const key = `${item.filename}:${item.modified_at}:${passKey}`;
-    if (this.metadataCache.has(key)) return cloneItems([this.metadataCache.get(key)])[0];
+  pruneMetadata(recordingNames) {
+    const names = new Set(recordingNames);
+    for (const key of this.metadataCache.keys())
+      if (!names.has(key.split('\0', 1)[0])) this.metadataCache.delete(key);
+  }
+  async metadata(item) {
+    const key = metadataKey(item);
+    if (this.metadataCache.has(key)) return this.metadataCache.get(key);
     const [metadataValue, admissionValue] = await Promise.all([
       readJson(`${item.path}.json`), readJson(`${item.path}.admission.json`)]);
     const metadata = metadataValue || {};
@@ -138,10 +155,36 @@ class RecordingLibrary {
       duration_seconds: finite(samples) && finite(rate) && rate > 0 ? samples / rate : null,
       complete: metadata.complete !== false, admission: admission.state || null,
       kind: Array.isArray(metadata.eventIds) && metadata.eventIds.length ? 'automatic' : item.kind,
-      aircraft: aircraft(admission, passMap)};
+      aircraft: aircraft(admission)};
     enriched.title = titleFor(enriched);
     this.metadataCache.set(key, enriched);
+    return enriched;
+  }
+  async enrich(item, passMap, activeFile = '') {
+    const base = await this.metadata(item);
+    const enriched = {...base, active: path.resolve(activeFile || '') === base.path,
+      aircraft: base.aircraft.map(value => {
+      const known = value.pass_id ? passMap.get(value.pass_id) : null;
+      return {...value, icao: value.icao || known?.hex || null,
+        flight: value.flight || known?.flight || null};
+    })};
+    enriched.title = titleFor(enriched);
     return cloneItems([enriched])[0];
+  }
+  startMetadataIndex(items) {
+    const key = this.cache?.key || '';
+    if (this.metadataIndexKey === key && !this.metadataIndexPromise) return null;
+    if (this.metadataIndexPromise) return this.metadataIndexPromise;
+    this.metadataIndexPromise = (async () => {
+      for (let start = 0; start < items.length; start += METADATA_BATCH) {
+        await Promise.all(items.slice(start, start + METADATA_BATCH).map(item => this.metadata(item)));
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      this.metadataIndexKey = key;
+    })().catch(error => { this.scanError = error.message; }).finally(() => {
+      this.metadataIndexPromise = null;
+    });
+    return this.metadataIndexPromise;
   }
   startScan(options) {
     if (!this.scanPromise) {
@@ -153,7 +196,8 @@ class RecordingLibrary {
     }
     return this.scanPromise;
   }
-  async list({activeFile = '', passes = [], search = '', offset = 0, limit = DEFAULT_LIMIT,
+  async list({activeFile = '', passes = [], search = '', kind = '', receiver = '',
+      frequency = '', since = '', sort = 'newest', offset = 0, limit = DEFAULT_LIMIT,
       waitForIndex = true} = {}) {
     const normalized = String(search || '').trim().toLowerCase();
     const boundedOffset = Number.isInteger(offset) && offset >= 0 ? offset : 0;
@@ -161,23 +205,53 @@ class RecordingLibrary {
     const stale = !this.cache || this.now() - this.cache.at >= 5000;
     if (stale) this.startScan({activeFile, passes});
     let items = waitForIndex ? await this.startScan({activeFile, passes}) :
-      cloneItems(this.cache?.items || []);
-    const passKey = [...passes].map(item => `${item.pass_id}:${item.flight || ''}:${item.hex || ''}`).join('|');
+      (this.cache?.items || []);
     const passMap = new Map([...passes].map(item => [item.pass_id, item]));
+    // Opening the library must not turn into an archive-wide I/O job. Only an
+    // explicit metadata-dependent query indexes every recording; a normal page
+    // enriches just the visible rows below.
+    const needsMetadataIndex = Boolean(normalized || kind || receiver || frequency);
+    const metadataIndex = needsMetadataIndex ? this.startMetadataIndex(items) : null;
+    if (metadataIndex) await metadataIndex;
+    const facets = {receivers: [...new Set(items.map(item =>
+      this.metadataCache.get(metadataKey(item))?.receiver).filter(Boolean))].sort(),
+    frequencies: [...new Set(items.map(item =>
+      this.metadataCache.get(metadataKey(item))?.frequency_hz)
+      .filter(value => Number.isFinite(value)))].sort((a, b) => a - b)};
     if (normalized) items = items.filter(item => {
-      const cached = this.metadataCache.get(`${item.filename}:${item.modified_at}:${passKey}`) || item;
+      const cached = this.metadataCache.get(metadataKey(item)) || item;
       return [cached.title, cached.filename, cached.receiver,
       ...cached.aircraft.flatMap(value => [value.flight, value.icao])]
       .some(value => String(value || '').toLowerCase().includes(normalized));
     });
+    if (['manual', 'automatic'].includes(kind)) items = items.filter(item => {
+      const cached = this.metadataCache.get(metadataKey(item)) || item;
+      return cached.kind === kind;
+    });
+    if (receiver) items = items.filter(item => {
+      const cached = this.metadataCache.get(metadataKey(item)) || item;
+      return String(cached.receiver || '').toLowerCase() === String(receiver).toLowerCase();
+    });
+    if (frequency) items = items.filter(item => {
+      const cached = this.metadataCache.get(metadataKey(item)) || item;
+      return Number(cached.frequency_hz) === Number(frequency);
+    });
+    if (Number.isFinite(Number(since)) && Number(since) > 0)
+      items = items.filter(item => item.created_at >= Number(since));
+    if (sort !== 'newest') items = items.slice();
+    if (sort === 'oldest') items.sort((left, right) => left.created_at - right.created_at);
+    else if (sort === 'largest') items.sort((left, right) => right.size_bytes - left.size_bytes);
+    else if (sort === 'smallest') items.sort((left, right) => left.size_bytes - right.size_bytes);
     const total = items.length;
     const page = await Promise.all(items.slice(boundedOffset, boundedOffset + boundedLimit)
-      .map(item => this.enrich(item, passMap, passKey)));
+      .map(item => this.enrich(item, passMap, activeFile)));
     return {schema: 'vectorwarp-recording-library-v1', directory: this.directory(),
       storage: {...storage(this.directory()), recording_bytes:
         (this.cache?.items || items).reduce((sum, item) => sum + item.size_bytes, 0)},
       retention: this.retention(), total, offset: boundedOffset, limit: boundedLimit,
-      indexing: this.scanPromise !== null, index_error: this.scanError,
+      facets,
+      indexing: this.scanPromise !== null, metadata_indexing: this.metadataIndexPromise !== null,
+      index_error: this.scanError,
       recordings: page};
   }
   resolve(id) {
@@ -186,6 +260,55 @@ class RecordingLibrary {
     const filename = path.resolve(this.directory(), name);
     if (path.dirname(filename) !== this.directory()) return null;
     try { return fs.statSync(filename).isFile() ? filename : null; } catch (_) { return null; }
+  }
+  async directories() {
+    const root = this.root();
+    const result = [];
+    const visit = async (directory, depth) => {
+      let entries;
+      try {
+        await fsp.access(directory, fs.constants.R_OK | fs.constants.W_OK);
+        result.push({path: `${directory.replace(/\/$/, '')}/`, selected:
+          path.resolve(directory) === this.directory()});
+        if (depth >= 3) return;
+        entries = await fsp.readdir(directory, {withFileTypes: true});
+      } catch (_) { return; }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
+        await visit(path.join(directory, entry.name), depth + 1);
+      }
+    };
+    await visit(root, 0);
+    return {root: `${root.replace(/\/$/, '')}/`, directories: result};
+  }
+  async createDirectory(name) {
+    const relative = String(name || '').trim();
+    if (!relative || relative.length > 160 || relative.includes('..') ||
+        path.isAbsolute(relative) || !/^[A-Za-z0-9][A-Za-z0-9._ /-]*$/.test(relative))
+      throw Object.assign(new Error('Choose a simple folder name inside the VectorWarp recordings directory.'), {status: 400});
+    const root = this.root();
+    const directory = path.resolve(root, relative);
+    if (!directory.startsWith(`${path.resolve(root)}${path.sep}`))
+      throw Object.assign(new Error('Recording folders must remain inside the VectorWarp recordings directory.'), {status: 400});
+    await fsp.mkdir(directory, {recursive: true, mode: 0o770});
+    const [realRoot, realDirectory] = await Promise.all([fsp.realpath(root), fsp.realpath(directory)]);
+    if (realDirectory !== realRoot && !realDirectory.startsWith(`${realRoot}${path.sep}`))
+      throw Object.assign(new Error('The selected folder resolves outside VectorWarp storage.'), {status: 400});
+    await fsp.access(directory, fs.constants.R_OK | fs.constants.W_OK);
+    return {path: `${directory.replace(/\/$/, '')}/`};
+  }
+  async remove(id, {activeFile = ''} = {}) {
+    const filename = this.resolve(id);
+    if (!filename) return {removed: false, reason: 'not-found'};
+    if (path.resolve(activeFile || '') === filename)
+      return {removed: false, reason: 'active'};
+    const stat = await fsp.stat(filename);
+    for (const candidate of [filename, ...sidecarsFor(filename)])
+      await fsp.rm(candidate, {force: true});
+    this.cache = null;
+    for (const key of this.metadataCache.keys())
+      if (key.startsWith(`${path.basename(filename)}:`)) this.metadataCache.delete(key);
+    return {removed: true, filename: path.basename(filename), size_bytes: stat.size};
   }
   canRecord() {
     const retention = this.retention();
