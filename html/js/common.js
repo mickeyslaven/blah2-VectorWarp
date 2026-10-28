@@ -17,11 +17,12 @@ function renderAppHeader(active) {
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
-  window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, 2000);
+  const compactDevice = typeof window !== 'undefined' && window.innerWidth <= 1024;
+  window.blah2LiveStatusTimer = window.setInterval(refreshLiveStatus, compactDevice ? 5000 : 2500);
   refreshReceiverDevices();
   if (window.blah2ReceiverDeviceTimer)
     window.clearInterval(window.blah2ReceiverDeviceTimer);
-  window.blah2ReceiverDeviceTimer = window.setInterval(refreshReceiverDevices, 30000);
+  window.blah2ReceiverDeviceTimer = window.setInterval(refreshReceiverDevices, 300000);
   routeApiLinks();
   addRecordingControl();
   addFullscreenControl();
@@ -31,7 +32,7 @@ function renderAppHeader(active) {
 // but the running receiver and saved configuration are never changed here.
 async function refreshReceiverDevices() {
   const target = document.getElementById('receiver-device-alert');
-  if (!target || window.blah2ReceiverDevicePending) return;
+  if (!target || document.hidden || window.blah2ReceiverDevicePending) return;
   window.blah2ReceiverDevicePending = true;
   try {
     const response = await fetchStatusResource(liveApiUrl('/api/receivers'), {cache: 'no-store'});
@@ -541,10 +542,10 @@ async function refreshLiveStatus() {
   const radarLabel = document.getElementById('live-status');
   const adsbLabel = document.getElementById('adsb-status');
   const processorAlert = document.getElementById('processor-alert');
-  if (!radarLabel || window.blah2LiveStatusPending) return;
+  if (!radarLabel || document.hidden || window.blah2LiveStatusPending) return;
   window.blah2LiveStatusPending = true;
   try {
-    const response = await fetchStatusResource(liveApiUrl('/api/system/status'), {cache: 'no-store'});
+    const response = await fetchStatusResource(liveApiUrl('/api/system/status?summary=1'), {cache: 'no-store'});
     if (!response.ok) throw new Error('Radar status unavailable');
     const status = await response.json();
     renderReceiverHealth(status);
@@ -569,11 +570,13 @@ async function refreshLiveStatus() {
     window.blah2AdsbEnabled = status.adsbEnabled === true && !replay;
     if (adsbLabel) {
       adsbLabel.hidden = !window.blah2AdsbEnabled;
-      if (window.blah2AdsbEnabled) {
+      const adsbDue = !window.blah2AdsbStatusAt || Date.now() - window.blah2AdsbStatusAt >= 10000;
+      if (window.blah2AdsbEnabled && adsbDue) {
         try {
           const adsbResponse = await fetchStatusResource(liveApiUrl('/api/adsb/status'), {cache: 'no-store'});
           if (!adsbResponse.ok) throw new Error('ADS-B status unavailable');
           const feeds = await adsbResponse.json();
+          window.blah2AdsbStatusAt = Date.now();
           const label = feeds.online ? 'ONLINE' : feeds.aircraft?.available || feeds.delayDoppler?.available ? 'PARTIAL' : 'OFFLINE';
           adsbLabel.innerHTML = `<span class="live-dot${feeds.online ? '' : ' offline'}"></span>ADS-B ${label}`;
           adsbLabel.title = [feeds.aircraft?.message, feeds.delayDoppler?.message].filter(Boolean).join(' · ');

@@ -713,13 +713,30 @@ app.post('/api/illuminator-survey/fast-evaluate', (req, res) => {
   }
 });
 app.get('/api/system/status', async (req, res) => {
+  const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
+  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
+  const radar = gainPublicationBlocked || lastFrameAt === null ? 'no-data' :
+    Date.now() - lastFrameAt < freshness ? 'receiving' : 'stale';
+  // The header is present on every page and polls continuously. Keep its
+  // response cheap: receiver discovery, GPU setup, build metadata and the full
+  // ADS-B source report belong to their dedicated/settings views.
+  if (req.query.summary === '1') {
+    const headerProcessor = processor ? {
+      input: processor.input, state: processor.state, error: processor.error || '',
+      receiver: processor.receiver, receiverHealth: processor.receiverHealth,
+      totalSamples: processor.totalSamples, positionSamples: processor.positionSamples
+    } : null;
+    return res.json({radar, adsbEnabled: config.truth?.adsb?.enabled === true,
+      restart: {state: restartState.state}, gainCheckPending: gainPublicationBlocked,
+      processor: headerProcessor, processorFresh: processor !== null,
+      errors: [...serviceErrors.values()],
+      message: lastFrameAt === null ? 'No radar frames received.' : null});
+  }
   const document = readConfig(configFile);
   const sdrplayStartup = readSdrplayStartup(document.revision);
   const persistedRestart = sdrplayStartup && sdrplayStartup.updatedAt >= (restartState.requestedAt || 0) ?
     {state: sdrplayStartup.inProgress ? 'running' : sdrplayStartup.state === 'failed' ? 'failed' : 'command-complete',
       message: sdrplayStartup.message, startedAt: sdrplayStartup.updatedAt} : restartState;
-  const processor = processorStatusFresh(processorStatus) ? processorStatus.value : null;
-  const freshness = Math.max(10000, (config.process?.data?.cpi || 1) * 3000);
   const gpuSetup = await gpuSetupStatus(() => currentGpuRuntime(freshness));
   const backend = currentTimingBackend();
   const adsb = await adsbSource.status();
@@ -735,8 +752,7 @@ app.get('/api/system/status', async (req, res) => {
     lastFrameAt, timestampConnections,
     adsbEnabled: config.truth?.adsb?.enabled === true,
     gainCheckPending: gainPublicationBlocked,
-    radar: gainPublicationBlocked || lastFrameAt === null ? 'no-data' : Date.now() - lastFrameAt <
-      Math.max(10000, (config.process?.data?.cpi || 1) * 3000) ? 'receiving' : 'stale',
+    radar,
     processor: processor && {...processor, receivedAt: processorStatus.receivedAt},
     processorFresh: processor !== null,
     errors: [...serviceErrors.values()],
@@ -1366,7 +1382,13 @@ app.use((req, res, next) => {
     .replace(/<body([^>]*)>/, `<body$1>${preview}`);
   res.type('html').send(html);
 });
-app.use(express.static(path.join(__dirname, '..', 'html')));
+app.use(express.static(path.join(__dirname, '..', 'html'), {setHeaders(response, filename) {
+  const extension = path.extname(filename).toLowerCase();
+  if (path.basename(filename) === 'plotly-2.20.0.min.js')
+    response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  else if (['.js', '.css', '.svg', '.png', '.woff', '.woff2'].includes(extension))
+    response.setHeader('Cache-Control', 'public, max-age=3600, must-revalidate');
+}}));
 app.use((error, req, res, next) => {
   console.error(`API request failed: ${error.message}`);
   res.status(500).json({ok: false, errors: ['The server could not complete this request. Check the VectorWarp API log.']});

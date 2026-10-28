@@ -14,8 +14,8 @@ function page(origin, apiOrigin = origin) {
     failWrite: false, stallBody: false};
   const context = vm.createContext({
     URL, URLSearchParams, AbortController,
-    document: {getElementById: id => labels[id] || null, querySelectorAll: () => []},
-    window: {location: new URL(origin), setTimeout, clearTimeout,
+    document: {hidden: false, getElementById: id => labels[id] || null, querySelectorAll: () => []},
+    window: {location: new URL(origin), innerWidth: 1280, setTimeout, clearTimeout,
       localStorage: {getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value)}},
     fetch: async (url, options = {}) => {
       const target = new URL(url, origin);
@@ -100,6 +100,7 @@ function page(origin, apiOrigin = origin) {
   assert.equal(test.calls.filter(call => call.url.endsWith('/api/adsb/status')).length, adsbCallsBeforeReplay,
     'Replay must not request a live ADS-B status');
   test.state.processor = {input: 'live', state: 'live', error: ''};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.equal(test.labels['adsb-status'].hidden, false);
   test.state.processorFresh = false;
@@ -107,13 +108,16 @@ function page(origin, apiOrigin = origin) {
   assert.equal(test.labels['adsb-status'].hidden, false);
   test.state.adsbEnabled = true;
   test.state.adsb = {online: false, aircraft: {available: true}, delayDoppler: {available: false, message: 'Converter unavailable'}};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B PARTIAL'));
   assert.equal(test.labels['adsb-status'].title, 'Converter unavailable');
   test.state.adsb = {online: false};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B OFFLINE'));
   test.state.adsb = {online: true};
+  test.context.window.blah2AdsbStatusAt = 0;
   await test.context.refreshLiveStatus();
   assert.ok(test.labels['adsb-status'].innerHTML.endsWith('ADS-B ONLINE'));
   assert.ok(!test.calls.some(call => call.url.endsWith('/api/timestamp')), 'Status must not treat an old timestamp as online');
@@ -138,11 +142,11 @@ function page(origin, apiOrigin = origin) {
   await test.context.fetchStatusResource('/api/config');
   test.state.stallBody = true;
   const discoveryCallsBeforeTimeout = test.calls.filter(call =>
-    call.url.endsWith('/api/system/status')).length;
+    call.url.includes('/api/system/status')).length;
   await assert.rejects(test.context.fetchStatusResource('/api/config', {}, 20), /timed out/);
   test.state.stallBody = false;
   await test.context.fetchStatusResource('/api/config');
-  assert.equal(test.calls.filter(call => call.url.endsWith('/api/system/status')).length,
+  assert.equal(test.calls.filter(call => call.url.includes('/api/system/status')).length,
     discoveryCallsBeforeTimeout,
     'A transient body timeout must not trigger an API endpoint rediscovery storm');
   assert.equal(test.context.recordingDuration(3723000), '01:02:03');

@@ -182,6 +182,14 @@ function connect(port) {
     revision = capabilities.body.configRevision;
     assert.equal(capabilities.body.editable, true);
     assert.equal(capabilities.body.restartAvailable, true);
+    const compactStatus = await request('GET', '/api/system/status?summary=1');
+    assert.equal(compactStatus.status, 200);
+    assert.equal(compactStatus.body.radar, 'no-data');
+    assert.equal(compactStatus.body.build, undefined,
+      'The continuously polled header status must omit full build/setup data');
+    const plotlyHeaders = await request('HEAD', '/lib/plotly-2.20.0.min.js');
+    assert.match(plotlyHeaders.headers['cache-control'] || '', /immutable/,
+      'The large versioned plotting library must be reusable across pages');
     // Query parsing is exposed by every HTTP route. These hostile-looking
     // inputs must stay data, never poison objects or take the API down.
     for (const query of [
