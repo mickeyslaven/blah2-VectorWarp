@@ -44,7 +44,8 @@ assert.equal(listed.recordings[0].kind, 'manual');
 assert.equal(listed.recordings[1].aircraft[0].flight, 'TEST123');
 assert.match(listed.recordings[1].title, /TEST123/);
 assert.equal(listed.recordings[1].duration_seconds, 4);
-assert.equal((await library.list({search: 'a1b2c3'})).total, 1);
+assert.equal((await library.list({search: 'a1b2c3',
+  passes: [{pass_id: 'pass-one', hex: 'a1b2c3', flight: 'TEST123'}]})).total, 1);
 assert.equal(decodeId(encodeId('aircraft.mchq')), 'aircraft.mchq');
 assert.equal(decodeId(encodeId('../escape.mchq')), null);
 assert.equal(library.resolve(encodeId('manual.blah2iq')), manual);

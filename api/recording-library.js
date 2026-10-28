@@ -80,7 +80,7 @@ function titleFor(item) {
 class RecordingLibrary {
   constructor(getConfig, {now = Date.now} = {}) {
     this.getConfig = getConfig; this.now = now; this.cache = null;
-    this.scanPromise = null; this.scanError = null;
+    this.scanPromise = null; this.scanError = null; this.metadataCache = new Map();
   }
   directory() { return recordingDirectory(this.getConfig()); }
   retention() { return options(this.getConfig()); }
@@ -92,35 +92,25 @@ class RecordingLibrary {
     const cacheKey = `${directory}:${directoryMtime}:${path.resolve(activeFile || '')}:${passKey}`;
     if (this.cache?.key === cacheKey && this.now() - this.cache.at < 5000)
       return cloneItems(this.cache.items);
-    const passMap = new Map([...passes].map(item => [item.pass_id, item]));
     let names = [];
     try { names = await fsp.readdir(directory); } catch (_) { return []; }
     const recordingNames = names.filter(name => RECORDING_EXTENSIONS.has(path.extname(name).toLowerCase()));
     const items = [];
     // Yield between bounded batches: a large archive must never block live API polling.
-    for (let start = 0; start < recordingNames.length; start += 24) {
-      const batch = await Promise.all(recordingNames.slice(start, start + 24).map(async name => {
+    for (let start = 0; start < recordingNames.length; start += 64) {
+      const batch = await Promise.all(recordingNames.slice(start, start + 64).map(async name => {
         const filename = path.join(directory, name);
         let stat;
         try { stat = await fsp.stat(filename); } catch (_) { return null; }
         if (!stat.isFile()) return null;
-        const [metadataValue, admissionValue] = await Promise.all([
-          readJson(`${filename}.json`), readJson(`${filename}.admission.json`)]);
-        const metadata = metadataValue || {};
-        const admission = admissionValue || {};
-        const samples = metadata.samplesPerChannel ?? metadata.samples ?? null;
-        const rate = metadata.sampleRate ?? null;
         const item = {id: encodeId(name), filename: name, path: filename,
-          size_bytes: stat.size, created_at: timestamp(metadata.createdAt, stat.birthtimeMs || stat.mtimeMs),
-          modified_at: stat.mtimeMs, format: metadata.format || path.extname(name).slice(1),
-          receiver: metadata.receiver || null, channels: metadata.channels ?? null,
-          sample_rate_hz: rate, frequency_hz: metadata.frequency ?? null,
-          duration_seconds: finite(samples) && finite(rate) && rate > 0 ? samples / rate : null,
-          complete: metadata.complete !== false,
+          size_bytes: stat.size, created_at: stat.birthtimeMs || stat.mtimeMs,
+          modified_at: stat.mtimeMs, format: path.extname(name).slice(1),
+          receiver: null, channels: null, sample_rate_hz: null, frequency_hz: null,
+          duration_seconds: null, complete: true,
           active: path.resolve(activeFile || '') === filename,
-          admission: admission.state || null,
-          kind: Array.isArray(metadata.eventIds) && metadata.eventIds.length ? 'automatic' : 'manual',
-          aircraft: aircraft(admission, passMap)};
+          admission: null, kind: path.extname(name).toLowerCase() === '.mchq' ? 'automatic' : 'manual',
+          aircraft: []};
         item.title = titleFor(item);
         return item;
       }));
@@ -130,6 +120,28 @@ class RecordingLibrary {
     items.sort((left, right) => right.created_at - left.created_at);
     this.cache = {key: cacheKey, at: this.now(), items};
     return cloneItems(items);
+  }
+  async enrich(item, passMap, passKey) {
+    const key = `${item.filename}:${item.modified_at}:${passKey}`;
+    if (this.metadataCache.has(key)) return cloneItems([this.metadataCache.get(key)])[0];
+    const [metadataValue, admissionValue] = await Promise.all([
+      readJson(`${item.path}.json`), readJson(`${item.path}.admission.json`)]);
+    const metadata = metadataValue || {};
+    const admission = admissionValue || {};
+    const samples = metadata.samplesPerChannel ?? metadata.samples ?? null;
+    const rate = metadata.sampleRate ?? null;
+    const enriched = {...item,
+      created_at: timestamp(metadata.createdAt, item.created_at),
+      format: metadata.format || item.format, receiver: metadata.receiver || null,
+      channels: metadata.channels ?? null, sample_rate_hz: rate,
+      frequency_hz: metadata.frequency ?? null,
+      duration_seconds: finite(samples) && finite(rate) && rate > 0 ? samples / rate : null,
+      complete: metadata.complete !== false, admission: admission.state || null,
+      kind: Array.isArray(metadata.eventIds) && metadata.eventIds.length ? 'automatic' : item.kind,
+      aircraft: aircraft(admission, passMap)};
+    enriched.title = titleFor(enriched);
+    this.metadataCache.set(key, enriched);
+    return cloneItems([enriched])[0];
   }
   startScan(options) {
     if (!this.scanPromise) {
@@ -150,15 +162,23 @@ class RecordingLibrary {
     if (stale) this.startScan({activeFile, passes});
     let items = waitForIndex ? await this.startScan({activeFile, passes}) :
       cloneItems(this.cache?.items || []);
-    if (normalized) items = items.filter(item => [item.title, item.filename, item.receiver,
-      ...item.aircraft.flatMap(value => [value.flight, value.icao])]
-      .some(value => String(value || '').toLowerCase().includes(normalized)));
+    const passKey = [...passes].map(item => `${item.pass_id}:${item.flight || ''}:${item.hex || ''}`).join('|');
+    const passMap = new Map([...passes].map(item => [item.pass_id, item]));
+    if (normalized) items = items.filter(item => {
+      const cached = this.metadataCache.get(`${item.filename}:${item.modified_at}:${passKey}`) || item;
+      return [cached.title, cached.filename, cached.receiver,
+      ...cached.aircraft.flatMap(value => [value.flight, value.icao])]
+      .some(value => String(value || '').toLowerCase().includes(normalized));
+    });
     const total = items.length;
+    const page = await Promise.all(items.slice(boundedOffset, boundedOffset + boundedLimit)
+      .map(item => this.enrich(item, passMap, passKey)));
     return {schema: 'vectorwarp-recording-library-v1', directory: this.directory(),
-      storage: {...storage(this.directory()), recording_bytes: items.reduce((sum, item) => sum + item.size_bytes, 0)},
+      storage: {...storage(this.directory()), recording_bytes:
+        (this.cache?.items || items).reduce((sum, item) => sum + item.size_bytes, 0)},
       retention: this.retention(), total, offset: boundedOffset, limit: boundedLimit,
       indexing: this.scanPromise !== null, index_error: this.scanError,
-      recordings: items.slice(boundedOffset, boundedOffset + boundedLimit)};
+      recordings: page};
   }
   resolve(id) {
     const name = decodeId(id);
@@ -192,7 +212,7 @@ class RecordingLibrary {
     const maxAge = retention.maximumAgeDays > 0 ? retention.maximumAgeDays * 86400000 : 0;
     const deleted = [];
     for (const item of items) {
-      const expired = maxAge > 0 && now - item.created_at > maxAge;
+      const expired = maxAge > 0 && now - Math.min(item.created_at, item.modified_at) > maxAge;
       const oversized = maxBytes > 0 && total > maxBytes;
       const lowSpace = current.free_bytes !== null && current.free_bytes < minFree;
       if (!expired && !oversized && !lowSpace) continue;
