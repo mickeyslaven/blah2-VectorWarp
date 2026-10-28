@@ -258,6 +258,8 @@ async function saveAndAssert(label, expected) {
       'capture.device.type': 'HackRF'});
 
     window.switchDevice('Usrp');
+    assert.ok(field('capture.aircraft_clips.enabled'),
+      'Automatic aircraft IQ clips are receiver independent');
     setScalar('capture.device.address', 'type=b200,serial=matrix');
     setScalar('capture.device.subdev', 'A:0 A:1');
     const antennas = field('capture.device.antenna').querySelectorAll('input');
@@ -269,6 +271,8 @@ async function saveAndAssert(label, expected) {
 
     window.switchDevice('Kraken');
     assert.ok(field('capture.aircraft_clips.enabled'), 'Kraken exposes automatic aircraft clips');
+    assert.ok(field('capture.aircraft_clips.maximum_slant_range_km'),
+      'Automatic clips expose range selection');
     assert.ok(field('process.surveillance_fusion.mode'), 'Kraken exposes coherent fusion controls');
     setScalar('process.detection.integration_cpis', 1);
     setScalar('capture.device.heimdall.host', '127.0.0.1');

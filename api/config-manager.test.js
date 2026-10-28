@@ -612,4 +612,11 @@ const excessiveAircraftClip = clone(sixChannel);
 excessiveAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 6, post_seconds: 5};
 assert.equal(validateConfig(excessiveAircraftClip).valid, false,
   'Automatic aircraft IQ clips must fit the bounded ten-second recorder');
+const portableAircraftClip = configurationForReceiver('Usrp', load('config.yml'));
+portableAircraftClip.capture.aircraft_clips = {enabled: true, pre_seconds: 2,
+  post_seconds: 3, minimum_slant_range_km: 5, maximum_slant_range_km: 80,
+  minimum_elevation_deg: 1, maximum_elevation_deg: 45,
+  minimum_interval_seconds: 10};
+assert.equal(validateConfig(portableAircraftClip).valid, true,
+  'Automatic aircraft IQ clips are valid for a non-Kraken receiver');
 console.log(`Exhaustive type checks passed for ${checked} device-setting leaves; boundary and cross-field tests passed.`);

@@ -159,11 +159,12 @@ evidence, not a physical RF or coherence test.
 ## Receiver settings: application and verification
 
 The **Receiver** tab changes with the selected backend. It contains only that
-radio's connection, tuning, gain, and hardware-specific controls. Kraken also
-shows its coherent reference, fusion, resident integration, bearing, manifold,
-and optional automatic-aircraft-clip controls there. Those controls are hidden
-for RSPduo, USRP, and HackRF because their current two-stream adapters do not
-provide the coherent array ABI they require.
+radio's connection, tuning, gain, and hardware-specific controls. Automatic
+aircraft IQ clips are receiver-independent and appear under **Recording** for
+every live receiver; their range, elevation, pre/post-roll, and minimum-spacing
+policy is configured there. Kraken additionally shows coherent reference, fusion, resident
+integration, bearing, and manifold controls. Only those array controls are
+hidden for RSPduo, USRP, and HackRF.
 
 Portable processing remains in **Radar** for every backend: CPI and ambiguity
 limits, clutter removal, CFAR detection, the basic tracker, CPU/GPU selection,

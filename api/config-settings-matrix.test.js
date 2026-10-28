@@ -19,6 +19,8 @@ function invalidFor(rule) { return rule.type === 'boolean' ? 'false' : rule.type
 function validDifferent(key, current, rule) {
   const explicit = {
     'capture.fs': 2000001, 'capture.fc': 204640001, 'capture.device.heimdall.host': '127.0.0.2',
+    'capture.aircraft_clips.maximum_slant_range_km': 999,
+    'capture.aircraft_clips.maximum_elevation_deg': 89,
     'capture.device.heimdall.port': 8093, 'capture.device.heimdall.control_port': 8094,
     'capture.device.heimdall.gain': -1, 'capture.device.heimdall.gain_control': 'fixed',
     'capture.device.address': 'type=b200,serial=0000000000000001',
@@ -71,8 +73,8 @@ try {
   let rejected = 0;
   let changed = 0;
   const edited = new Set();
-  // Prefer Kraken for shared fields whose enabled form is intentionally
-  // receiver-gated (notably bounded automatic aircraft IQ clips).
+  // Prefer Kraken first while still validating portable fields across every
+  // shipped receiver profile.
   const sources = [...['config-kraken.yml', 'config-hackrf.yml', 'config-usrp.yml'].map(shipped), rspSource];
   for (const [key, rule] of Object.entries(FIELD_RULES)) {
     if (rule.readOnly) continue;

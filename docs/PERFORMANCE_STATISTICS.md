@@ -131,11 +131,12 @@ manifold-recorder corpus. `BLAH2_STATISTICS_PATH` can select another writable
 location.
 
 The opt-in ADS-B-triggered IQ window defaults to two seconds before and three
-seconds after the eligibility event. Configure it in **Settings → Receiver →
-Automatic aircraft clips**; the sum must fit the native ten-second clip limit.
-The bounded pre-roll recorder currently uses Kraken Suite's clip service, so the
-control appears only for Kraken. Manual recording and replay remain available
-for every supported receiver backend.
+seconds after the eligibility event. Configure it in **Settings → Recording →
+Automatic aircraft IQ clips**; the sum must fit the ten-second clip limit.
+The portable bounded recorder is available for every live receiver backend;
+Kraken retains its optimized native-frame path. Range, elevation, and minimum
+time-between-clips controls bound disk and recorder load. Manual recording and
+replay remain available for every supported receiver backend.
 Environment overrides remain available for managed installations. The status
 endpoint reports the applied bounds.
 

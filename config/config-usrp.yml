@@ -1,7 +1,10 @@
 capture:
   fs: 2000000
   fc: 204640000
-  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3}
+  aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
+    minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
+    minimum_elevation_deg: 0, maximum_elevation_deg: 90,
+    minimum_interval_seconds: 5}
   device:
     type: "Usrp"
     address: "type=b200"

@@ -18,7 +18,6 @@ const DEVICE_PROFILES = [
     label: 'KrakenSDR Suite V2',
     description: '2–8 coherent channels streamed by HeIMDALL',
     features: {
-      automaticAircraftClips: true,
       coherentArray: true,
       residentIntegration: true,
       bearing: true,
@@ -285,11 +284,32 @@ function validateConfig(config, baseline = null, options = {}) {
     boolean(aircraftClips.enabled, 'capture.aircraft_clips.enabled');
     number(aircraftClips.pre_seconds, 'capture.aircraft_clips.pre_seconds', {min: 0, max: 10});
     number(aircraftClips.post_seconds, 'capture.aircraft_clips.post_seconds', {min: 0, max: 10});
+    if (aircraftClips.minimum_slant_range_km !== undefined)
+      number(aircraftClips.minimum_slant_range_km,
+        'capture.aircraft_clips.minimum_slant_range_km', {min: 0, max: 1000});
+    if (aircraftClips.maximum_slant_range_km !== undefined)
+      number(aircraftClips.maximum_slant_range_km,
+        'capture.aircraft_clips.maximum_slant_range_km', {min: 0, max: 1000});
+    if (aircraftClips.minimum_elevation_deg !== undefined)
+      number(aircraftClips.minimum_elevation_deg,
+        'capture.aircraft_clips.minimum_elevation_deg', {min: -10, max: 90});
+    if (aircraftClips.maximum_elevation_deg !== undefined)
+      number(aircraftClips.maximum_elevation_deg,
+        'capture.aircraft_clips.maximum_elevation_deg', {min: -10, max: 90});
+    if (aircraftClips.minimum_interval_seconds !== undefined)
+      number(aircraftClips.minimum_interval_seconds,
+        'capture.aircraft_clips.minimum_interval_seconds', {min: 0, max: 3600});
     if (Number.isFinite(aircraftClips.pre_seconds) && Number.isFinite(aircraftClips.post_seconds) &&
         aircraftClips.pre_seconds + aircraftClips.post_seconds > 10)
       errors.push('capture.aircraft_clips pre_seconds plus post_seconds cannot exceed 10 seconds');
-    if (aircraftClips.enabled === true && device.type !== 'Kraken')
-      errors.push('automatic aircraft IQ clips currently require a Kraken receiver');
+    if (Number.isFinite(aircraftClips.minimum_slant_range_km) &&
+        Number.isFinite(aircraftClips.maximum_slant_range_km) &&
+        aircraftClips.minimum_slant_range_km > aircraftClips.maximum_slant_range_km)
+      errors.push('capture.aircraft_clips minimum slant range cannot exceed maximum slant range');
+    if (Number.isFinite(aircraftClips.minimum_elevation_deg) &&
+        Number.isFinite(aircraftClips.maximum_elevation_deg) &&
+        aircraftClips.minimum_elevation_deg > aircraftClips.maximum_elevation_deg)
+      errors.push('capture.aircraft_clips minimum elevation cannot exceed maximum elevation');
   }
   string(device.type, 'capture.device.type');
   const profile = DEVICE_PROFILES.find(item => item.type === device.type);

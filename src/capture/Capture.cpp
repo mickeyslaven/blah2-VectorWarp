@@ -343,7 +343,7 @@ std::string Capture::status_json() const {
   document.AddMember("recordingRequestId",recordingRequestId,a);
   blah2::IqClipStatus clip;
   if (device) clip = device->clip_status();
-  if (!clip.revision && unsupportedClipRevision)
+  if (unsupportedClipRevision > clip.revision)
     clip = {unsupportedClipRevision, true, {}, unsupportedClipError, 0};
   if (clip.terminal && clip.revision) {
     document.AddMember("clipRevision", clip.revision, a);

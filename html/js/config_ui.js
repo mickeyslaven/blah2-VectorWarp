@@ -11,10 +11,15 @@ const CONFIG_META = {
   'save': ['Recording', 'Files and recording folder'],
   'capture.fs': ['Sample rate', 'Radio samples per second. Kraken is fixed at 2.4 MS/s.'],
   'capture.fc': ['Center frequency', 'Tune in MHz, kHz and Hz.'],
-  'capture.aircraft_clips': ['Automatic aircraft clips', 'Optionally save bounded raw-IQ clips when ADS-B identifies an eligible aircraft pass.'],
-  'capture.aircraft_clips.enabled': ['Record eligible aircraft automatically', 'Off by default. Requires ADS-B and a live Kraken receiver; manual recording is unaffected.'],
+  'capture.aircraft_clips': ['Automatic aircraft IQ clips', 'Receiver-independent bounded recordings triggered by eligible ADS-B aircraft passes.'],
+  'capture.aircraft_clips.enabled': ['Record eligible aircraft automatically', 'Off by default. Requires ADS-B and a live receiver; manual recording is unaffected.'],
   'capture.aircraft_clips.pre_seconds': ['Seconds before aircraft event', 'Raw-IQ pre-roll retained before the eligible pass event.'],
   'capture.aircraft_clips.post_seconds': ['Seconds after aircraft event', 'Raw-IQ post-roll. Pre-roll plus post-roll cannot exceed 10 seconds.'],
+  'capture.aircraft_clips.minimum_slant_range_km': ['Nearest aircraft range (km)', 'Ignore aircraft closer than this receiver slant range, in kilometres.'],
+  'capture.aircraft_clips.maximum_slant_range_km': ['Farthest aircraft range (km)', 'Ignore aircraft beyond this receiver slant range, in kilometres.'],
+  'capture.aircraft_clips.minimum_elevation_deg': ['Lowest aircraft elevation (°)', 'Ignore aircraft below this geometric elevation angle.'],
+  'capture.aircraft_clips.maximum_elevation_deg': ['Highest aircraft elevation (°)', 'Ignore aircraft above this geometric elevation angle.'],
+  'capture.aircraft_clips.minimum_interval_seconds': ['Minimum time between clips (s)', 'Limits recorder and disk load when several aircraft become eligible together.'],
   'capture.device': ['Receiver hardware', 'Settings for the selected radio.'],
   'capture.device.type': ['Receiver type', 'Choose your SDR.'],
   'capture.device.array_geometry': ['Antenna layout', 'Record your layout; this does not configure the receiver.'],
@@ -451,6 +456,13 @@ function words(value) {
 
 function metadata(path, receiverType = activeConfig?.capture?.device?.type) {
   const key = path.join('.');
+  if (key === 'capture.fs') {
+    if (receiverType === 'Kraken')
+      return ['Sample rate', 'Kraken Suite currently streams at a fixed 2.4 MS/s.'];
+    if (receiverType === 'RspDuo')
+      return ['Sample rate', 'RSPduo dual-tuner output rate, from 62.5 kS/s to 2 MS/s.'];
+    return ['Sample rate', 'Radio samples per second for the selected receiver.'];
+  }
   if (key === 'capture.device.serial' && receiverType === 'RspDuo')
     return ['RSPduo serial', 'Optional exact selection; blank only with one matching receiver.'];
   if (CONFIG_META[key]) return CONFIG_META[key];
@@ -541,8 +553,6 @@ function applyDeviceProfile(config, profile) {
   if (geometry !== undefined) config.capture.device.array_geometry = geometryEditor ?
     geometryEditor.invalidate(geometry) : geometry;
   config.capture.fs = profile.sampleRate;
-  if (!profile.features?.automaticAircraftClips && config.capture.aircraft_clips)
-    config.capture.aircraft_clips.enabled = false;
   const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
     result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
       merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
@@ -1156,6 +1166,7 @@ function group(key, value, path, topLevel = false, options = {}) {
   const dotted = currentPath.join('.');
   const kraken = activeConfig.capture?.device?.type === 'Kraken';
   let [title, description] = metadata(currentPath);
+  if (options.groupMeta?.[dotted]) [title, description] = options.groupMeta[dotted];
   if (dotted === 'capture.device') {
     const profile = capabilities.deviceProfiles?.find(item => item.type === value.type);
     title = profile ? `${profile.label}${profile.liveAvailable === false ? ' (replay only)' : ''}` : value.type || title;
@@ -1242,24 +1253,35 @@ function group(key, value, path, topLevel = false, options = {}) {
 }
 
 function renderReceiverFeatures() {
-  const fragment = document.createDocumentFragment();
+  const section = document.createElement('section');
+  section.className = 'receiver-feature-section';
   const type = activeConfig.capture?.device?.type;
   const features = receiverFeatureCapabilities(type, capabilities.deviceProfiles || []);
   if (!features.coherentArray) {
     const note = document.createElement('p');
     note.className = 'config-capability-note';
-    note.textContent = 'Array beamforming, bearing, manifold, and resident multi-CPI controls are hidden because this receiver backend does not provide the coherent array data they require.';
-    fragment.appendChild(note);
-    return fragment;
+    note.textContent = 'This receiver uses its reference and surveillance inputs directly. Kraken array controls are hidden.';
+    section.appendChild(note);
+    return section;
   }
+  const heading = document.createElement('h3');
+  heading.textContent = 'Kraken array processing';
+  const copy = document.createElement('p');
+  copy.textContent = 'Optional coherent combining, longer integration, bearing, and site-manifold tools for the selected Kraken array.';
+  section.append(heading, copy);
+  const featureOptions = {groupMeta: {
+    'process.detection': ['Coherent integration', 'Combine consecutive radar intervals and search short motion paths.'],
+    'process.tracker': ['Array recovery experiments', 'Bounded array-only recovery tests; normal tracking remains in Radar.']
+  }};
   const process = activeConfig.process || {};
   if (process.surveillance_fusion)
-    fragment.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process']));
+    section.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
+      featureOptions));
   const detection = process.detection || {};
   const residentDetection = Object.fromEntries(['integration_cpis', 'integration_motion_bins',
     'track_before_detect'].filter(key => detection[key] !== undefined).map(key => [key, detection[key]]));
   if (Object.keys(residentDetection).length)
-    fragment.appendChild(group('detection', residentDetection, ['process']));
+    section.appendChild(group('detection', residentDetection, ['process'], false, featureOptions));
   const tracker = process.tracker || {};
   const residentTracker = {};
   for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
@@ -1267,9 +1289,10 @@ function renderReceiverFeatures() {
   if (tracker.initiate?.stationary_clutter !== undefined)
     residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
   if (Object.keys(residentTracker).length)
-    fragment.appendChild(group('tracker', residentTracker, ['process']));
-  if (process.bearing) fragment.appendChild(group('bearing', process.bearing, ['process']));
-  return fragment;
+    section.appendChild(group('tracker', residentTracker, ['process'], false, featureOptions));
+  if (process.bearing)
+    section.appendChild(group('bearing', process.bearing, ['process'], false, featureOptions));
+  return section;
 }
 
 function makeGeometryEditor() {
@@ -1721,14 +1744,11 @@ function renderEditor() {
     panel.setAttribute('aria-label', title);
     panel.className = 'config-tab-panel';
     const receiverType = activeConfig.capture?.device?.type;
-    const receiverFeatures = receiverFeatureCapabilities(receiverType,
-      capabilities.deviceProfiles || []);
     if (key === 'location') panel.appendChild(renderSiteSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
       panel.appendChild(group(key, value, [], true, {skipPath: path =>
         (key === 'process' && receiverSpecificProcessPath(path)) ||
-        (key === 'capture' && path.startsWith('capture.aircraft_clips') &&
-          !receiverFeatures.automaticAircraftClips)}));
+        (key === 'capture' && path.startsWith('capture.aircraft_clips'))}));
     else
       panel.appendChild(field(value, [key]));
     if (key === 'capture') {
@@ -1750,6 +1770,14 @@ function renderEditor() {
       }
       panel.appendChild(renderReceiverSetup());
       if (upstream) panel.appendChild(upstream);
+    }
+    if (key === 'save') {
+      panel.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
+        ['capture']));
+      const note = document.createElement('p');
+      note.className = 'config-capability-note';
+      note.textContent = 'Start and stop manual raw-IQ recordings from Live radar. Automatic clips above run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
+      panel.appendChild(note);
     }
     panels.appendChild(panel);
   });

@@ -41,6 +41,9 @@ assert.equal(adsbPublicSource('adsb-lol', {location: {rx: {latitude: 40.5, longi
   'exchange:https://api.adsb.lol/v2/point/40.5/-80.1/60');
 assert.equal(metadata(['capture', 'device', 'serial'], 'RspDuo')[0], 'RSPduo serial');
 assert.equal(metadata(['capture', 'device', 'serial'], 'HackRF')[0], 'HackRF serial numbers');
+assert.match(metadata(['capture', 'fs'], 'Kraken')[1], /2\.4 MS\/s/);
+assert.match(metadata(['capture', 'fs'], 'RspDuo')[1], /62\.5 kS\/s to 2 MS\/s/);
+assert.doesNotMatch(metadata(['capture', 'fs'], 'Usrp')[1], /Kraken/);
 assert.equal(metadata(['capture', 'aircraft_clips', 'enabled'])[0],
   'Record eligible aircraft automatically');
 assert.equal(metadata(['process', 'clutter', 'followAmbiguity'])[0], 'Follow radar delay range');
@@ -63,7 +66,6 @@ for (const profile of getDeviceProfiles()) {
   assert.equal(validateConfig(changed, base).valid, true, profile.type);
   const features = receiverFeatureCapabilities(profile.type, getDeviceProfiles());
   assert.equal(Boolean(features.coherentArray), profile.type === 'Kraken');
-  assert.equal(Boolean(features.automaticAircraftClips), profile.type === 'Kraken');
 }
 assert.equal(receiverSpecificProcessPath('process.surveillance_fusion.mode'), true);
 assert.equal(receiverSpecificProcessPath('process.bearing.manifold_recorder.enabled'), true);
@@ -80,7 +82,8 @@ krakenOnlyEnabled.process.bearing.manifold_recorder.enabled = true;
 krakenOnlyEnabled.process.tracker.track_guided_shadow.enable = true;
 const rspProfile = getDeviceProfiles().find(profile => profile.type === 'RspDuo');
 applyDeviceProfile(krakenOnlyEnabled, rspProfile);
-assert.equal(krakenOnlyEnabled.capture.aircraft_clips.enabled, false);
+assert.equal(krakenOnlyEnabled.capture.aircraft_clips.enabled, true,
+  'Automatic aircraft clips remain enabled when changing receivers');
 assert.equal(krakenOnlyEnabled.process.detection.integration_cpis, 1);
 assert.equal(krakenOnlyEnabled.process.detection.track_before_detect.enable, false);
 assert.equal(krakenOnlyEnabled.process.bearing.enable, false);

@@ -16,7 +16,10 @@ function setupDefaults() {
     '/var/lib/vectorwarp-api/calibration/manifold-samples.jsonl';
   return {
     capture: {fs: 2000000, fc: 204640000,
-      aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3},
+      aircraft_clips: {enabled: false, pre_seconds: 2, post_seconds: 3,
+        minimum_slant_range_km: 0, maximum_slant_range_km: 1000,
+        minimum_elevation_deg: 0, maximum_elevation_deg: 90,
+        minimum_interval_seconds: 5},
       // Never infer hardware on a fresh install. An invalid marker keeps the
       // processor fail-closed while still allowing the API and Settings UI to
       // load the canonical configuration and receiver profiles.
@@ -68,8 +71,6 @@ function configurationForReceiver(type, base = setupDefaults()) {
   const config = JSON.parse(JSON.stringify(base));
   config.capture.device = JSON.parse(JSON.stringify(profile.device));
   config.capture.fs = profile.sampleRate;
-  if (!profile.features?.automaticAircraftClips && config.capture.aircraft_clips)
-    config.capture.aircraft_clips.enabled = false;
   const merge = (target, source) => Object.entries(source || {}).reduce((result, [key, value]) => {
     result[key] = value && typeof value === 'object' && !Array.isArray(value) ?
       merge(result[key] && typeof result[key] === 'object' ? result[key] : {}, value) :
