@@ -246,6 +246,31 @@ const server = http.createServer((request, response) => {
       'live refresh and resize must preserve the operator map longitude');
     assert.equal(state.labels, 2);
     assert.equal(photoRequests, 1, 'aircraft photo metadata must be prefetched once and reused from cache');
+    stage = 'mobile aircraft label collision avoidance';
+    fixtures['/api/adsb'] = {aircraft: Array.from({length: 54}, (_, index) => ({
+      hex: (0xa10000 + index).toString(16), flight: `T${String(index).padStart(3, '0')}`,
+      lat: 39.93 + (index % 9) * .016, lon: -80.17 + Math.floor(index / 9) * .025,
+      alt_baro: 8000 + index * 500, gs: 190, track: 70, seen_pos: 0
+    }))};
+    await page.setViewportSize({width: 390, height: 844});
+    await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length >= 50,
+      null, {timeout: 7000});
+    const labelLayout = await page.evaluate(() => {
+      const labels = [...document.querySelectorAll('.location-aircraft-label')]
+        .filter(label => getComputedStyle(label).display !== 'none')
+        .map(label => label.getBoundingClientRect());
+      let collisions = 0;
+      for (let left = 0; left < labels.length; left++) for (let right = left + 1; right < labels.length; right++) {
+        const a = labels[left], b = labels[right];
+        if (!(a.right + 3 <= b.left || a.left >= b.right + 3 ||
+            a.bottom + 2 <= b.top || a.top >= b.bottom + 2)) collisions++;
+      }
+      return {visible: labels.length, collisions};
+    });
+    assert.ok(labelLayout.visible > 0 && labelLayout.visible <= 22,
+      'the mobile regional map keeps a bounded useful set of aircraft labels');
+    assert.equal(labelLayout.collisions, 0,
+      'visible mobile aircraft labels must not cover one another');
     console.log('Real Chromium locations map: initialization, escaped site labels, updates and resize passed (synthetic data).');
   } catch (error) {
     let state;

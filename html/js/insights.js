@@ -886,6 +886,10 @@
           }
         }
         const modelInstances = [];
+        const aircraftLabelCandidates = [];
+        const mapWidth = container.clientWidth || 0;
+        const mapHeight = container.clientHeight || 0;
+        const mapZoom = finite(map.getZoom?.()) ?? 0;
         [...layer._aircraftMarkers.values(), ...layer._siteMarkers.values()].forEach(
           ({item, marker, icon, heading, flightPathAngle, isAircraft}) => {
         const point = map.project([Number(item.lon), Number(item.lat)]);
@@ -893,18 +897,56 @@
         marker.style.left = `${point.x}px`;
         marker.style.top = `${point.y - altitudeLift}px`;
         if (isAircraft && icon) {
+          const aircraftId = aircraftInfo(item).hex || aircraftInfo(item).label;
+          aircraftLabelCandidates.push({marker, item, x: point.x, y: point.y - altitudeLift,
+            selected: selectedAircraftId === aircraftId,
+            radarTracked: Boolean(item.radar_track_id)});
           const rotation = aircraftScreenRotation(heading, map.getBearing?.());
           const yaw = rotation === null ? 0 : rotation;
           const pitch = Number.isFinite(flightPathAngle) ? flightPathAngle : 0;
           icon.dataset.flightPath = pitch > .5 ? 'climbing' : pitch < -.5 ? 'descending' : 'level';
+          const modelSize = mapZoom < 6 ? 11 : mapZoom < 7.5 ? 13.5 : 16.5;
           modelInstances.push({model: aircraftKind(item), x: point.x, y: point.y - altitudeLift,
-            yaw, pitch, size: 16.5, color: aircraftAltitudeColor(item)});
+            yaw, pitch, size: modelSize, color: aircraftAltitudeColor(item)});
         } else {
           modelInstances.push({model: item.kind === 'transmitter' ? 'transmitter' : 'receiver',
             x: point.x, y: point.y - 23, yaw: -(finite(map.getBearing?.()) ?? 0), pitch: 0,
             size: item.kind === 'transmitter' ? 15 : 14, color: item.kind === 'transmitter' ? '#ff8754' : '#8fe7df'});
         }
         });
+        // Aircraft labels are HTML overlays rather than Mapbox symbols, so
+        // Mapbox cannot perform collision avoidance for them.  Apply a stable
+        // screen-space declutter pass on every camera update.  Selected and
+        // radar-associated aircraft win, then fresh positions nearest the map
+        // centre.  Icons remain visible; only overlapping labels are hidden.
+        const occupied = [];
+        for (const {item} of layer._siteMarkers.values()) {
+          const point = map.project([Number(item.lon), Number(item.lat)]);
+          occupied.push({left: point.x - 22, right: point.x + 128,
+            top: point.y - 48, bottom: point.y + 8});
+        }
+        const mobile = mapWidth <= 760;
+        const labelLimit = mapZoom < 6 ? (mobile ? 12 : 28) :
+          mapZoom < 7.5 ? (mobile ? 22 : 48) : (mobile ? 36 : 90);
+        const overlaps = box => occupied.some(other => !(box.right + 4 <= other.left ||
+          box.left >= other.right + 4 || box.bottom + 3 <= other.top || box.top >= other.bottom + 3));
+        aircraftLabelCandidates.sort((left, right) =>
+          Number(right.selected) - Number(left.selected) ||
+          Number(right.radarTracked) - Number(left.radarTracked) ||
+          Number(left.item?._snapshot_stale === true) - Number(right.item?._snapshot_stale === true) ||
+          Math.hypot(left.x - mapWidth / 2, left.y - mapHeight / 2) -
+            Math.hypot(right.x - mapWidth / 2, right.y - mapHeight / 2));
+        let visibleLabels = 0;
+        for (const candidate of aircraftLabelCandidates) {
+          const text = candidate.marker.querySelector?.('.location-aircraft-label')?.textContent || '';
+          const width = Math.min(86, Math.max(34, text.length * 6.3 + 10));
+          const box = {left: candidate.x - width / 2, right: candidate.x + width / 2,
+            top: candidate.y + 8, bottom: candidate.y + 24};
+          const onScreen = box.right >= 0 && box.left <= mapWidth && box.bottom >= 0 && box.top <= mapHeight;
+          const visible = onScreen && visibleLabels < labelLimit && !overlaps(box);
+          candidate.marker.classList.toggle('label-hidden', !visible);
+          if (visible) { occupied.push(box); visibleLabels++; }
+        }
         layer._modelRenderer?.render(modelInstances);
         const history = selectedAircraftId ? aircraftTrackHistories.get(selectedAircraftId) || [] : [];
         const points = history.map(point => {
