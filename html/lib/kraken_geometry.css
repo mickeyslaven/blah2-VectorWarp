@@ -10,6 +10,20 @@
 .kraken-geometry .config-field > small { min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
 .kraken-geometry .config-field > small:empty { display: none; }
 .geometry-element .geometry-role { grid-column: 1 / -1; margin: .2rem 0; font-size: 12px; overflow-wrap: anywhere; }
+.geometry-visual-host { grid-column:1 / -1; min-width:0; }
+.geometry-visual { display:grid; grid-template-columns:minmax(280px,1.25fr) minmax(220px,.75fr); gap:14px; padding:12px; border:1px solid var(--line); border-radius:10px; background:rgb(13 10 10 / .55); }
+.geometry-visual-drawing { min-width:0; }
+.geometry-visual svg { display:block; width:100%; max-height:330px; border-radius:8px; background:radial-gradient(circle at center,#211816 0,#120e0d 72%); touch-action:pan-y; }
+.geometry-axis { stroke:#ffffff20; stroke-width:1; }.geometry-axis-label { fill:var(--muted); font-size:12px; }
+.geometry-ideal-ring,.geometry-ideal-spacing { fill:none; stroke:#50dfc0; stroke-width:2; stroke-dasharray:8 7; }
+.geometry-ideal-node { fill:#50dfc0; opacity:.75; }.geometry-actual-outline { fill:#ff7e4b16; stroke:#ff8055; stroke-width:3; stroke-linejoin:round; }
+.geometry-actual-node { fill:#ff8055; stroke:#24110b; stroke-width:3; }.geometry-node-label { fill:#140b08; font-size:9px; font-weight:900; text-anchor:middle; }
+.geometry-empty-label { fill:var(--muted); font-size:13px; text-anchor:middle; }
+.geometry-visual-copy { min-width:0; align-self:center; }.geometry-visual-copy h3 { margin:0 0 6px; font-size:15px; }.geometry-visual-copy p { margin:0 0 12px!important; color:var(--muted); font-size:11px!important; line-height:1.5!important; }
+.geometry-visual-copy dl { display:grid; gap:7px; margin:0; }.geometry-visual-copy dl div { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); }
+.geometry-visual-copy dt { color:var(--muted); font-size:10px; }.geometry-visual-copy dd { margin:0; color:var(--ink); font-size:12px; font-weight:800; text-align:right; }.geometry-visual-copy .actual dd { color:#ff9b75; }.geometry-visual-copy .ideal dd { color:#66dfc5; }
+.geometry-visual-legend { display:flex; justify-content:center; gap:18px; margin:7px 0 0!important; }.geometry-visual-legend span::before { content:''; display:inline-block; width:14px; height:3px; margin-right:6px; vertical-align:middle; background:currentColor; }.geometry-visual-legend .actual { color:#ff9b75; }.geometry-visual-legend .ideal { color:#66dfc5; }
 .kraken-geometry button { justify-self: start; max-width: 100%; min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface-raised); white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
 .kraken-geometry button:disabled { opacity: .65; cursor: not-allowed; }
 @media (min-width: 761px) { .kraken-geometry > .config-fields > .config-field { grid-template-columns: minmax(0, 1fr) minmax(0, 320px); } .kraken-geometry > .config-fields > .config-field > small { grid-column: 1; } }
+@media (max-width:760px) { .geometry-visual { grid-template-columns:1fr; }.geometry-visual svg { max-height:270px; }.geometry-visual-copy { order:-1; } }

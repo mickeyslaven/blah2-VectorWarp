@@ -9,6 +9,121 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const confirmations = ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed'];
   const shapes = ['custom', 'cross', 'regular_polygon', 'ula'];
+  const lightSpeed = 299792458;
+  const median = values => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  };
+  function layoutComparison(config) {
+    const geometry = config?.capture?.device?.array_geometry;
+    const frequencyHz = Number(config?.capture?.fc);
+    const wavelengthM = frequencyHz > 0 ? lightSpeed / frequencyHz : null;
+    const idealSpacingM = wavelengthM === null ? null : wavelengthM / 2;
+    const bearing = new Set(Array.isArray(geometry?.bearing_channels) ? geometry.bearing_channels : []);
+    let elements = Array.isArray(geometry?.elements) ? geometry.elements.filter(element =>
+      Array.isArray(element?.position) && finite(element.position[0]) && finite(element.position[1])) : [];
+    const selected = elements.filter(element => bearing.has(element.daq_channel));
+    if (selected.length >= 2) elements = selected;
+    const points = elements.map(element => ({id: element.id || `CH${element.daq_channel ?? '?'}`,
+      channel: element.daq_channel, x: element.position[0], y: element.position[1]}));
+    const nearest = points.map((point, index) => Math.min(...points
+      .filter((_, other) => other !== index).map(other => Math.hypot(point.x - other.x, point.y - other.y))))
+      .filter(finite);
+    const radii = points.map(point => Math.hypot(point.x, point.y));
+    const idealRadiusM = idealSpacingM !== null && points.length >= 3 ?
+      idealSpacingM / (2 * Math.sin(Math.PI / points.length)) : null;
+    return {frequencyHz, wavelengthM, idealSpacingM, idealRadiusM, points,
+      actualSpacingM: median(nearest), actualRadiusM: median(radii), shape: geometry?.shape || 'custom'};
+  }
+  const metres = value => finite(value) ? `${value < .1 ? value.toFixed(3) : value.toFixed(3)} m` : '—';
+  function comparisonVisual(document, config) {
+    const model = layoutComparison(config);
+    const shell = document.createElement('section');
+    shell.className = 'geometry-visual';
+    const copy = document.createElement('div');
+    copy.className = 'geometry-visual-copy';
+    const title = document.createElement('h3');
+    title.textContent = 'Actual vs λ/2 reference layout';
+    const explanation = document.createElement('p');
+    explanation.textContent = model.wavelengthM === null ?
+      'Set a center frequency to calculate a wavelength-based reference layout.' :
+      `At ${(model.frequencyHz / 1e6).toFixed(3)} MHz, wavelength is ${metres(model.wavelengthM)}. The dashed guide uses half-wavelength nearest-neighbour spacing, a common no-grating-lobe reference rather than a universal optimum.`;
+    copy.append(title, explanation);
+    const stats = document.createElement('dl');
+    const row = (label, value, className = '') => {
+      const wrapper = document.createElement('div');
+      if (className) wrapper.className = className;
+      const term = document.createElement('dt'); term.textContent = label;
+      const detail = document.createElement('dd'); detail.textContent = value;
+      wrapper.append(term, detail); stats.appendChild(wrapper);
+    };
+    row('Measured elements', String(model.points.length));
+    row('Actual neighbour spacing', metres(model.actualSpacingM), 'actual');
+    row('λ/2 reference spacing', metres(model.idealSpacingM), 'ideal');
+    if (model.points.length >= 3) {
+      row('Actual median radius', metres(model.actualRadiusM), 'actual');
+      row(`Reference radius (${model.points.length} elements)`, metres(model.idealRadiusM), 'ideal');
+    }
+    copy.appendChild(stats);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 520 340');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', 'Top-down antenna array showing measured elements and half-wavelength reference geometry');
+    const add = (name, attributes = {}, text = '') => {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', name);
+      Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, String(value)));
+      if (text) node.textContent = text;
+      svg.appendChild(node); return node;
+    };
+    const centerX = 260, centerY = 170;
+    const extent = Math.max(.001, model.idealRadiusM || 0,
+      ...model.points.map(point => Math.hypot(point.x, point.y)));
+    const scale = 128 / extent;
+    add('line', {x1: 50, y1: centerY, x2: 470, y2: centerY, class: 'geometry-axis'});
+    add('line', {x1: centerX, y1: 30, x2: centerX, y2: 310, class: 'geometry-axis'});
+    add('text', {x: 468, y: centerY - 8, class: 'geometry-axis-label'}, '+x');
+    add('text', {x: centerX + 8, y: 42, class: 'geometry-axis-label'}, '+y');
+    if (finite(model.idealRadiusM)) {
+      add('circle', {cx: centerX, cy: centerY, r: model.idealRadiusM * scale,
+        class: 'geometry-ideal-ring'});
+      for (let index = 0; index < model.points.length; index++) {
+        const angle = 2 * Math.PI * index / model.points.length;
+        add('circle', {cx: centerX + Math.cos(angle) * model.idealRadiusM * scale,
+          cy: centerY - Math.sin(angle) * model.idealRadiusM * scale, r: 5,
+          class: 'geometry-ideal-node'});
+      }
+    } else if (finite(model.idealSpacingM)) {
+      add('line', {x1: centerX - model.idealSpacingM * scale / 2, y1: centerY + 95,
+        x2: centerX + model.idealSpacingM * scale / 2, y2: centerY + 95,
+        class: 'geometry-ideal-spacing'});
+    }
+    if (model.points.length >= 2) {
+      const ordered = [...model.points].sort((left, right) =>
+        Math.atan2(left.y, left.x) - Math.atan2(right.y, right.x));
+      const polygon = ordered.map(point => `${centerX + point.x * scale},${centerY - point.y * scale}`).join(' ');
+      add(model.shape === 'ula' ? 'polyline' : 'polygon', {points: polygon,
+        class: 'geometry-actual-outline'});
+    }
+    model.points.forEach(point => {
+      const x = centerX + point.x * scale, y = centerY - point.y * scale;
+      add('circle', {cx: x, cy: y, r: 11, class: 'geometry-actual-node'});
+      add('text', {x, y: y + 4, class: 'geometry-node-label'},
+        Number.isInteger(point.channel) ? `CH${point.channel}` : point.id.slice(0, 5));
+    });
+    if (!model.points.length)
+      add('text', {x: centerX, y: centerY, class: 'geometry-empty-label'},
+        'Enter measured x/y positions to draw the actual array');
+    const legend = document.createElement('p');
+    legend.className = 'geometry-visual-legend';
+    legend.innerHTML = '<span class="actual">Measured layout</span><span class="ideal">λ/2 reference</span>';
+    const drawing = document.createElement('div');
+    drawing.className = 'geometry-visual-drawing';
+    drawing.append(svg, legend);
+    shell.append(drawing, copy);
+    return shell;
+  }
   function invalidate(geometry) {
     if (object(geometry)) confirmations.forEach(key => { geometry[key] = false; });
     return geometry;
@@ -133,6 +248,11 @@
       note('Kept for Kraken. Select Kraken to edit, or remove it from the draft.');
       return section;
     }
+    const visualHost = document.createElement('div');
+    visualHost.className = 'geometry-visual-host';
+    content.appendChild(visualHost);
+    const drawVisual = () => visualHost.replaceChildren(comparisonVisual(document, config));
+    drawVisual();
     const assessment = document.createElement('p'); assessment.id = 'geometry-assessment';
     assessment.setAttribute('aria-live', 'polite'); content.appendChild(assessment);
     if (!object(geometry) || !Array.isArray(geometry.elements) || geometry.elements.length > 8) {
@@ -143,6 +263,7 @@
       if (!canEdit()) return;
       if (!attestation) invalidate(geometry);
       action();
+      drawVisual();
       if (!attestation) section.querySelectorAll('[data-attestation]').forEach(input => { input.checked = false; });
       changed(rebuild);
     };
@@ -243,5 +364,5 @@
     target.textContent = assessment.valid ? 'Layout complete; measurements are unverified.' :
       `Layout needs review: ${errors.slice(0, 3).map(issue => issue.message).join(' ')}${errors.length > 3 ? ' Review additional measurements or mappings.' : ''}`;
   }
-  return {recordErrors, emptyRecord, invalidate, context, reconcile, render, showAssessment};
+  return {recordErrors, emptyRecord, invalidate, context, reconcile, layoutComparison, render, showAssessment};
 });

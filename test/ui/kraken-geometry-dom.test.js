@@ -151,6 +151,11 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     assert.deepEqual(geometry.elements.map(element => element.position), points);
     assert.deepEqual(geometry.bearing_channels, [3, 0, 4, 1]);
     assert.equal(geometry.shape, 'cross');
+    assert.equal(doc.querySelectorAll('.geometry-actual-node').length, 4,
+      'Visual follows the selected measured bearing elements');
+    assert.ok(doc.querySelector('.geometry-visual').textContent.includes('Actual neighbour spacing'));
+    assert.ok(doc.querySelector('.geometry-ideal-ring'),
+      'Multi-element arrays show the wavelength-derived reference ring');
     assert.equal(await window.validateActiveConfiguration(), true);
     assert.ok(doc.getElementById('geometry-assessment').textContent.includes('Layout complete'));
     for (const name of ['mapping_confirmed', 'geometry_confirmed', 'orientation_confirmed']) change(g(name), true);

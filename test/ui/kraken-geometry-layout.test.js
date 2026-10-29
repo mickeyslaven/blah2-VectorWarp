@@ -13,6 +13,22 @@ const root = path.resolve(__dirname, '../..');
 const evidence = fs.mkdtempSync(path.join(os.tmpdir(), 'kraken-geometry-layout-evidence-'));
 const css = ['html/lib/blah2.css', 'html/lib/kraken_geometry.css'].map(file => fs.readFileSync(path.join(root, file), 'utf8')).join('\n');
 const results = [];
+{
+  const config = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
+  config.capture.fc = 509000000;
+  config.capture.device.array_geometry = {
+    ...helper.emptyRecord(5), shape: 'regular_polygon', bearing_channels: [0, 1, 2, 3, 4],
+    elements: Array.from({length: 5}, (_, index) => ({id: `CH${index}`, daq_channel: index,
+      position: [Math.cos(2 * Math.PI * index / 5) * .193548,
+        Math.sin(2 * Math.PI * index / 5) * .193548, 0]}))
+  };
+  const comparison = helper.layoutComparison(config);
+  assert.equal(comparison.points.length, 5);
+  assert.ok(Math.abs(comparison.wavelengthM - .588983) < .00001);
+  assert.ok(Math.abs(comparison.idealSpacingM - .2944915) < .00001);
+  assert.ok(Math.abs(comparison.idealRadiusM - .2505) < .001);
+  assert.ok(Math.abs(comparison.actualRadiusM - .193548) < .000001);
+}
 for (const width of [1440, 390, 320]) {
   const config = applyDeviceProfile(setupDefaults(), getDeviceProfiles()[0]);
   config.capture.device.channel_count = 8;
@@ -31,6 +47,8 @@ for (const width of [1440, 390, 320]) {
   const dom = new JSDOM(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body><main class="app-shell config-shell" style="max-width:${width}px"><p>CSS/DOM fixture only — render this file in a real browser to inspect layout.</p><div class="config-tab-panel"><details class="config-group" open><summary>Receiver</summary><div id="geometry-root"></div></details></div></main></body></html>`, {pretendToBeVisual: true});
   const doc = dom.window.document;
   doc.getElementById('geometry-root').appendChild(helper.render(doc, config, () => {}, true));
+  assert.ok(doc.querySelector('.geometry-visual svg'), 'Array editor includes a top-down visual');
+  assert.match(doc.querySelector('.geometry-visual').textContent, /λ\/2 reference layout/);
   assert.equal(doc.querySelectorAll('.geometry-element').length, 8);
   const invalid = doc.querySelector('[data-path="capture.device.array_geometry.shape"]');
   invalid.classList.add('invalid');
