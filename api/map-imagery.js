@@ -22,17 +22,19 @@ function readManifest(root) {
 
 function installMapImageryRoutes(app, {root = process.env.BLAH2_MAP_IMAGERY_ROOT || DEFAULT_ROOT} = {}) {
   app.get('/api/map/imagery', (_req, res) => res.json(readManifest(root)));
-  app.get('/api/map/imagery/local/:z/:x/:y.jpg', (req, res) => {
+  app.get('/api/map/imagery/local/:z/:x/:y', (req, res) => {
     const values = ['z', 'x', 'y'].map(name => Number(req.params[name]));
     if (!values.every(Number.isInteger) || values.some(value => value < 0))
       return res.status(400).json({error: 'Invalid map tile coordinates.'});
     const [z, x, y] = values;
     if (z > 22 || x >= 2 ** z || y >= 2 ** z)
       return res.status(404).end();
-    const filename = path.join(root, 'tiles', String(z), String(x), `${y}.jpg`);
-    if (!fs.existsSync(filename)) return res.status(404).end();
+    const directory = path.join(root, 'tiles', String(z), String(x));
+    const filename = ['jpg', 'png'].map(extension => path.join(directory, `${y}.${extension}`))
+      .find(candidate => fs.existsSync(candidate));
+    if (!filename) return res.status(404).end();
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
-    res.type('image/jpeg').sendFile(filename);
+    res.type(path.extname(filename)).sendFile(filename);
   });
 }
 

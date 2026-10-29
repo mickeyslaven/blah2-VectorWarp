@@ -641,7 +641,7 @@
         },
         'vectorwarp-local-imagery': {
           type: 'raster', tileSize: 256, minzoom: 6, maxzoom: 16,
-          tiles: ['/api/map/imagery/local/{z}/{x}/{y}.jpg'],
+          tiles: ['/api/map/imagery/local/{z}/{x}/{y}'],
           attribution: 'Aerial imagery &copy; USGS, USDA, The National Map'
         },
         'vectorwarp-terrain': {
