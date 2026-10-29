@@ -13,7 +13,8 @@ function renderAppHeader(active) {
   ensureBrandFavicon();
   const target = document.querySelector('.app-header');
   if (!target) return;
-  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}">Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}">Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}">Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}">Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}">Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
+  const current = name => active === name ? ' aria-current="page"' : '';
+  target.innerHTML = `<a class="brand" href="/"><img class="brand-logo" src="/favicon/vectorwarp-vw.svg" alt="VectorWarp"><span>VectorWarp</span></a><nav class="app-nav" aria-label="Primary navigation"><a href="/" class="${active === 'radar' ? 'active' : ''}"${current('radar')}>Live radar</a><a href="/display/locations" class="${active === 'map' ? 'active' : ''}"${current('map')}>Map</a><a href="/controller" class="${active === 'controller' ? 'active' : ''}"${current('controller')}>Displays</a><a href="/display/recordings" class="${active === 'recordings' ? 'active' : ''}"${current('recordings')}>Recordings</a><a href="/display/configuration" class="${active === 'settings' ? 'active' : ''}"${current('settings')}>Settings</a></nav><div class="service-statuses" aria-label="Service status"><div class="live-status" id="live-status" role="status" aria-live="polite"><span class="live-dot"></span>RADAR CONNECTING</div><div class="live-status" id="adsb-status" role="status" aria-live="polite" hidden><span class="live-dot"></span>ADS-B CONNECTING</div></div><div class="processor-alert" id="processor-alert" role="alert" hidden></div><a class="receiver-device-alert" id="receiver-device-alert" href="/display/configuration?setup=1" role="alert" hidden></a><div class="receiver-health-status" id="receiver-health-status" role="status" aria-live="polite" aria-atomic="true" hidden></div>`;
   refreshLiveStatus();
   if (window.blah2LiveStatusTimer)
     window.clearInterval(window.blah2LiveStatusTimer);
@@ -197,6 +198,9 @@ async function pauseRecording() {
 }
 
 function addRecordingControl() {
+  // Starting/stopping raw-IQ capture is an operational action, not a chart
+  // feature. Only explicitly opted-in live radar pages may expose it.
+  if (document.body?.dataset.captureControls !== 'true') return;
   const visual = document.getElementById('data');
   if (!visual || document.getElementById('recording-control')) return;
   const panel = visual.closest('.panel') || visual.parentElement;
@@ -689,8 +693,18 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
 
 function startRadarPlot(url, render) {
   let renderedTimestamp;
+  let consecutiveFailures = 0;
   const target = typeof document === 'undefined' ? null : document.getElementById('data');
-  target?.classList?.add('visualization-loading');
+  const panel = target?.closest?.('.panel') || target?.parentElement;
+  let status = panel?.querySelector?.('.plot-state');
+  if (panel && !status) {
+    status = document.createElement('div');
+    status.className = 'plot-state loading';
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.textContent = 'Loading live data…';
+    panel.appendChild(status);
+  }
   target?.setAttribute?.('aria-busy', 'true');
   // A full heatmap is materially heavier than a status card.  Tablets and
   // phones should display fresh radar data without continuously parsing and
@@ -699,18 +713,38 @@ function startRadarPlot(url, render) {
   // follow the running CPI instead of imposing a separate one-second clock.
   const minimumIntervalMs = 100;
   return startRadarUpdates(async () => {
-    const data = await fetchRadarJson(url);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-    const stamp = data.frameTimestamp ?? data.timestamp;
-    if (stamp === undefined || stamp === null) return;
-    const key = JSON.stringify(stamp);
-    if (key === renderedTimestamp) return;
-    const complete = await render(data);
-    // Failed fetches/renders can be retried on the next tick.
-    if (complete !== false) {
-      renderedTimestamp = key;
-      target?.classList?.remove('visualization-loading');
-      target?.setAttribute?.('aria-busy', 'false');
+    try {
+      const data = await fetchRadarJson(url);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        if (status && renderedTimestamp === undefined) {
+          status.className = 'plot-state waiting';
+          status.textContent = 'Waiting for the first radar frame…';
+        }
+        target?.setAttribute?.('aria-busy', 'false');
+        return;
+      }
+      const stamp = data.frameTimestamp ?? data.timestamp;
+      if (stamp === undefined || stamp === null) return;
+      const key = JSON.stringify(stamp);
+      if (key === renderedTimestamp) return;
+      const complete = await render(data);
+      // Failed fetches/renders can be retried on the next tick.
+      if (complete !== false) {
+        renderedTimestamp = key;
+        consecutiveFailures = 0;
+        target?.setAttribute?.('aria-busy', 'false');
+        if (status) status.hidden = true;
+      }
+    } catch (error) {
+      consecutiveFailures++;
+      if (status && consecutiveFailures >= 3) {
+        status.hidden = false;
+        status.className = 'plot-state error';
+        status.textContent = renderedTimestamp === undefined ?
+          'Live radar data is unavailable. Retrying automatically…' :
+          'Refresh delayed. Showing the last valid radar frame while retrying…';
+      }
+      throw error;
     }
   }, minimumIntervalMs);
 }

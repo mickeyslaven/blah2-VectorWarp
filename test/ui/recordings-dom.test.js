@@ -16,6 +16,7 @@ window.confirm = () => true;
 window.alert = message => { throw new Error(message); };
 const calls = [];
 let deferredRequests = null;
+let deleteFailure = false;
 const item = index => ({id: `id-${index}`, filename: `recording-${index}.blah2iq`,
   replay_file: `/recordings/recording-${index}.blah2iq`, title: `TEST${index}`,
   created_at: Date.now() - index, duration_seconds: 4, size_bytes: 1024,
@@ -35,7 +36,10 @@ window.fetchStatusResource = async (url, options = {}) => {
   }
   if (String(url).startsWith('/api/recordings/import'))
     return {ok: true, json: async () => ({filename: 'import.blah2iq', size_bytes: 4})};
-  if (options.method === 'DELETE') return {ok: true, json: async () => ({removed: true})};
+  if (options.method === 'DELETE') {
+    if (deleteFailure) throw new Error('Network disconnected');
+    return {ok: true, json: async () => ({removed: true})};
+  }
   throw new Error(`Unexpected request ${url}`);
 };
 window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'), 'utf8'));
@@ -49,6 +53,10 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
     'Mobile details start collapsed');
   assert.equal(window.document.body.textContent.includes('Download'), false,
     'Local browser does not offer redundant downloads');
+  const replay = window.document.querySelector('.recording-replay');
+  assert.equal(replay.tagName, 'A');
+  assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq$/,
+    'Replay must be reviewed through the canonical Settings save/restart flow');
   window.document.getElementById('recording-next').click();
   await new Promise(resolve => setImmediate(resolve));
   assert.match(calls.at(-1).url, /offset=10/);
@@ -79,5 +87,14 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   await new Promise(resolve => setImmediate(resolve));
   assert.match(window.document.querySelector('.recording-card').textContent, /NEWEST/,
     'A late aborted request must not overwrite the newest recording page');
+  deferredRequests = null;
+  deleteFailure = true;
+  const failedDelete = window.document.querySelector('.recording-delete');
+  failedDelete.click(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(failedDelete.disabled, false, 'A failed delete restores the action');
+  assert.equal(failedDelete.textContent, 'Delete');
+  assert.match(window.document.getElementById('recording-operation-status').textContent,
+    /Network disconnected.*try again/,
+    'A failed delete reports a recoverable in-page error');
   console.log('Recording browser mobile pagination, compact layout and deletion passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

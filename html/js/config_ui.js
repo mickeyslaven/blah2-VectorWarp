@@ -1846,8 +1846,10 @@ function renderEditor() {
   let savedTab = null;
   try { savedTab = sessionStorage.getItem('blah2-settings-tab'); }
   catch (_) { /* Remembering a tab is optional. */ }
-  const initialTab = capabilities.setupRequired ? 'capture' : entries.some(([key]) => key === savedTab) ?
-    savedTab : entries[0]?.[0];
+  const requestedTab = new URLSearchParams(window.location.search).get('tab');
+  const initialTab = capabilities.setupRequired ? 'capture' :
+    entries.some(([key]) => key === requestedTab) ? requestedTab :
+      entries.some(([key]) => key === savedTab) ? savedTab : entries[0]?.[0];
   const activate = selectedKey => {
     tabs.querySelectorAll('[role="tab"]').forEach(button => {
       const selected = button.dataset.tab === selectedKey;

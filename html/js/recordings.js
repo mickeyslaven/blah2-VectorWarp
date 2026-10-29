@@ -29,7 +29,8 @@
   function card(item) {
     const expanded = typeof window === 'undefined' || window.innerWidth > 760 ? ' open' : '';
     const quick = [duration(item.duration_seconds), bytes(item.size_bytes), frequency(item.frequency_hz)].filter(value => value !== '—').join(' · ');
-    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><button class="button-link recording-replay" type="button" data-file="${escape(item.replay_file || '')}">Start replay</button><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
+    const replay = `/display/configuration?replayFile=${encodeURIComponent(item.replay_file || '')}`;
+    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Review replay</a><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
   }
   function query() {
     const params = new URLSearchParams({offset: state.offset, limit: pageSize(),
@@ -106,11 +107,19 @@
     const name = button.dataset.name || 'this recording';
     if (!window.confirm(`Permanently delete ${name} and its metadata?`)) return;
     button.disabled = true; button.textContent = 'Deleting…';
-    const response = await fetchStatusResource(liveApiUrl(`/api/recordings/${button.dataset.id}`),
-      {method: 'DELETE', headers: {'X-VectorWarp-Intent': 'recording-delete-v1'}, cache: 'no-store'}, 15000);
-    if (!response.ok) { button.disabled = false; button.textContent = 'Delete'; window.alert('The recording could not be deleted.'); return; }
-    if (state.offset >= Math.max(0, state.total - 1)) state.offset = Math.max(0, state.offset - pageSize());
-    await load();
+    const status = document.getElementById('recording-operation-status');
+    try {
+      const response = await fetchStatusResource(liveApiUrl(`/api/recordings/${button.dataset.id}`),
+        {method: 'DELETE', headers: {'X-VectorWarp-Intent': 'recording-delete-v1'}, cache: 'no-store'}, 15000);
+      if (!response.ok) throw new Error('The recording could not be deleted.');
+      if (state.offset >= Math.max(0, state.total - 1)) state.offset = Math.max(0, state.offset - pageSize());
+      if (status) status.textContent = `${name} was deleted.`;
+      await load();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Delete';
+      if (status) status.textContent = `${error.message || 'Delete failed'} The recording list was not changed; try again.`;
+    }
   }
   async function importRecording(input) {
     const file = input.files?.[0]; if (!file) return;
@@ -125,20 +134,6 @@
       status.textContent = `Imported ${result.filename} (${bytes(result.size_bytes)}).`;
       input.value = ''; await load({reset: true});
     } catch (error) { status.textContent = error.message; }
-  }
-  async function configureReplay(file) {
-    if (!window.confirm('Start this IQ replay now? Live receiver processing will restart and can be restored from Settings.')) return;
-    const response = await fetchStatusResource(liveApiUrl('/api/config'), {cache: 'no-store'});
-    if (!response.ok) return window.alert('Saved settings are unavailable.');
-    const config = await response.json();
-    config.capture.replay = {...config.capture.replay, state: true, file, format: 'auto'};
-    const saved = await fetchStatusResource(liveApiUrl('/api/config?restart=true'), {method: 'PUT',
-      headers: {'Content-Type': 'application/json', 'If-Match': response.headers.get('ETag') || '',
-        'X-VectorWarp-Intent': 'config-write-v1', 'X-VectorWarp-Receiver-Sync': 'synchronize-v1'},
-      body: JSON.stringify(config)}, 15000);
-    const result = await saved.json().catch(() => ({}));
-    if (!saved.ok) return window.alert((result.errors || [result.error || 'Replay could not start.']).join(' '));
-    window.location.href = '/';
   }
   function renderRecordings() {
     let timer = null;
@@ -156,7 +151,6 @@
     });
     document.getElementById('recording-list')?.addEventListener('click', event => {
       const remove = event.target.closest('.recording-delete'); if (remove) deleteRecording(remove);
-      const replay = event.target.closest('.recording-replay'); if (replay) configureReplay(replay.dataset.file);
     });
     document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));
     load();
