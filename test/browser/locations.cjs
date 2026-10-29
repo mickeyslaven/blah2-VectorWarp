@@ -75,6 +75,17 @@ const server = http.createServer((request, response) => {
     await page.goto(base + '/display/locations/', {waitUntil: 'domcontentloaded'});
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
+    assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
+      'geographic radar ellipses are opt-in');
+    assert.equal(await page.locator('.location-radar-track-path').count(), 0);
+    await page.locator('#show-radar-tracks-on-map').check();
+    await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
+    const firstTrackPath = await page.locator('.location-radar-track-path').getAttribute('d');
+    const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
+    const sidebarBounds = await page.locator('.location-map-sidebar').boundingBox();
+    assert.ok(fullscreenBounds && sidebarBounds &&
+      fullscreenBounds.x + fullscreenBounds.width < sidebarBounds.x,
+    'fullscreen control must remain outside the map information overlay');
     stage = 'persistent map interaction across refresh intervals';
     await page.evaluate(() => {
       window.locationAfterPlotCount = 0;
@@ -91,17 +102,19 @@ const server = http.createServer((request, response) => {
     const plotsWhileEngaged = await page.evaluate(() => window.locationAfterPlotCount);
     await page.mouse.wheel(0, -180);
     await page.waitForTimeout(2300);
+    assert.notEqual(await page.locator('.location-radar-track-path').getAttribute('d'), firstTrackPath,
+      'radar track overlays must move while Plotly map reconciliation is paused');
     await page.mouse.wheel(0, -180);
     await page.waitForTimeout(200);
     assert.equal(await page.evaluate(() => window.locationAfterPlotCount), plotsWhileEngaged,
       'live refresh must not reconcile the Mapbox scene while the pointer remains on the map');
     await page.mouse.move(2, 2);
+    const requestsAfterLeave = trackerRequests;
     const resumedDeadline = Date.now() + 4000;
-    while (await page.evaluate(() => window.locationAfterPlotCount) <= plotsWhileEngaged &&
-      Date.now() < resumedDeadline)
+    while (trackerRequests <= requestsAfterLeave && Date.now() < resumedDeadline)
       await page.waitForTimeout(100);
-    assert.ok(await page.evaluate(() => window.locationAfterPlotCount) > plotsWhileEngaged,
-      'map trace reconciliation must resume after the pointer leaves the map');
+    assert.ok(trackerRequests > requestsAfterLeave,
+      'live data refresh must continue after the pointer leaves the map');
     stage = 'touch map interaction persists until an outside tap';
     const touchPlots = await page.evaluate(() => window.locationAfterPlotCount);
     await page.dispatchEvent('#data', 'pointerdown', {pointerType: 'touch', pointerId: 2});
@@ -110,12 +123,12 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.evaluate(() => window.locationAfterPlotCount), touchPlots,
       'touch map engagement must survive refreshes between successive gestures');
     await page.dispatchEvent('body', 'pointerdown', {pointerType: 'touch', pointerId: 3});
+    const touchRequests = trackerRequests;
     const touchResumeDeadline = Date.now() + 4000;
-    while (await page.evaluate(() => window.locationAfterPlotCount) <= touchPlots &&
-      Date.now() < touchResumeDeadline)
+    while (trackerRequests <= touchRequests && Date.now() < touchResumeDeadline)
       await page.waitForTimeout(100);
-    assert.ok(await page.evaluate(() => window.locationAfterPlotCount) > touchPlots,
-      'an outside touch must release the persistent map interaction session');
+    assert.ok(trackerRequests > touchRequests,
+      'an outside touch must leave live data refresh active');
     const preservedCenter = await page.evaluate(() =>
       document.getElementById('data')._fullLayout.mapbox.center);
     stage = 'map style and dimensions after viewport resize';

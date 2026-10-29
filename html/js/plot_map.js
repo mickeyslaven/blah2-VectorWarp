@@ -118,6 +118,30 @@ var data = [
   }
 ];
 var detection = [];
+var radarOverlayMode = 'all';
+try {
+  const saved = localStorage.getItem('vectorwarp-radar-overlay-mode');
+  if (['all', 'tracks', 'detections'].includes(saved)) radarOverlayMode = saved;
+} catch (_) { /* Persistence is optional. */ }
+function overlayVisibility() {
+  return {detections: radarOverlayMode !== 'tracks', tracks: radarOverlayMode !== 'detections'};
+}
+function updateOverlayControl() {
+  const control = typeof document === 'undefined' ? null : document.getElementById('radar-overlay-mode');
+  if (control) control.value = radarOverlayMode;
+  if (typeof document !== 'undefined') document.querySelectorAll('[data-overlay-kind]').forEach(item => {
+    item.hidden = !overlayVisibility()[item.dataset.overlayKind];
+  });
+}
+if (typeof document !== 'undefined') {
+  const control = document.getElementById('radar-overlay-mode');
+  updateOverlayControl();
+  control?.addEventListener('change', () => {
+    radarOverlayMode = control.value;
+    try { localStorage.setItem('vectorwarp-radar-overlay-mode', radarOverlayMode); } catch (_) {}
+    updateOverlayControl();
+  });
+}
 var adsb = {};
 var adsbCache = null;
 var adsbReadAt = -Infinity;
@@ -203,15 +227,20 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 var radarUpdates = startRadarPlot(urlMap, async function (data) {
   const runningConfig = await getRadarRuntimeConfig();
   const detectionEnabled = runningConfig.process?.detection?.enable !== false;
+  const visible = overlayVisibility();
   // Bind overlays to the heatmap's exact processor frame. Waiting for these two
   // compact responses avoids clearing markers between independently selected
   // presentation snapshots and prevents adjacent-CPI data from being mixed.
   const [detected, trackerFrame] = await Promise.all([
-    detectionEnabled ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
+    detectionEnabled && visible.detections ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
     fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null)
   ]);
   detection = detected || {delay: [], doppler: []};
   const tracked = trackerOverlay(trackerFrame, runningConfig);
+  if (!visible.tracks) {
+    tracked.updated = {delay: [], doppler: [], hover: []};
+    tracked.coasting = {delay: [], doppler: [], hover: []};
+  }
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
   const data_adsb = currentAdsbOverlay(adsbEnabled,

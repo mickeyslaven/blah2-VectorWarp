@@ -209,8 +209,9 @@ setTimeout(() => {
       (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
     errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && mode === 'rich' &&
-      lastPlot?.traces?.filter(trace => String(trace.name).startsWith('Radar track ')).length !== 1)
-    errors.push('confirmed radar tracks were hidden or pre-confirmation candidates leaked');
+      (lastPlot?.traces?.some(trace => String(trace.name).startsWith('Radar track ')) ||
+       !rendered.includes('kept on the main radar display only')))
+    errors.push('geographic radar tracks were not hidden by the safe default');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
   if (view === 'statistics' && mode === 'rich' &&

@@ -149,6 +149,12 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(latestMapUpdate.args[1].x[4][0], 10 * 299792458 / 2400000 / 1000,
         'A coasting track does not disappear between direct detections');
       assert.ok(fetchUrls.some(url => url.includes('frame_timestamp=1001')));
+      context.radarOverlayMode = 'tracks';
+      detected = {timestamp: 1002, delay: [99], doppler: [99]};
+      await update({...clone(frame), timestamp: 1002});
+      const tracksOnly = calls.filter(call => call.method === 'update').at(-1);
+      assert.deepEqual(tracksOnly.args[1].x[1], [], 'Tracks-only mode hides raw detections');
+      assert.ok(tracksOnly.args[1].x[3].length, 'Tracks-only mode preserves confirmed tracks');
       const changedGrid = {...clone(frame), timestamp: 1002, delay: [1, 2], data: [[1, 2], [3, 4]]};
       const changedGridCallsBefore = calls.length;
       await update(changedGrid);

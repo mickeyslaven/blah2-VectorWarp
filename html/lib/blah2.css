@@ -19,6 +19,8 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .radar-panel .visualization { flex:1 1 auto; height:calc(100dvh - 138px); min-height:430px; }
 .fullscreen-target { position:relative; }.fullscreen-button { position:absolute; z-index:10; top:9px; right:12px; padding:5px 9px; border:1px solid var(--line); border-radius:6px; background:var(--surface-raised); color:var(--muted); font:600 11px inherit; cursor:pointer; }.fullscreen-button:hover { color:var(--ink); border-color:var(--accent); }.fullscreen-target:fullscreen,.fullscreen-target:-webkit-full-screen,.fullscreen-target.fullscreen-fallback { display:flex; width:100vw; height:100vh; height:100dvh; border:0; border-radius:0; background:var(--canvas); }.fullscreen-target.fullscreen-fallback { position:fixed; inset:0; z-index:10000; margin:0; }.fullscreen-target:fullscreen .visualization,.fullscreen-target:-webkit-full-screen .visualization,.fullscreen-target.fullscreen-fallback .visualization { flex:1 1 auto; width:100%; height:100%; min-width:0; min-height:0; max-height:none; }.fullscreen-page { overflow:hidden !important; overscroll-behavior:none; }
 .radar-panel > .fullscreen-button { z-index:20; top:auto; right:14px; bottom:14px; background:rgb(36 29 26 / .96); box-shadow:0 4px 16px rgb(0 0 0 / .3); }
+.radar-overlay-control { position:absolute; z-index:8; top:9px; right:12px; display:flex; align-items:center; gap:7px; padding:5px 7px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.9); color:var(--muted); font-size:9px; font-weight:700; backdrop-filter:blur(4px); }
+.radar-overlay-control select { width:auto; min-height:26px; padding:3px 24px 3px 7px; border:1px solid var(--line); border-radius:5px; background:var(--surface-raised); color:var(--ink); font:650 10px inherit; }
 .recording-panel { display:flex; flex-direction:column; }
 .recording-panel:not(.radar-panel):not(.insight-plot-card) .visualization { flex:1 1 auto; height:calc(100vh - 158px); min-height:430px; }
 .recording-control { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:10px; min-height:50px; padding:8px 12px; border-top:1px solid var(--line); background:rgb(24 18 16 / .97); color:var(--muted); font-size:11px; }
@@ -253,6 +255,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 }
 .location-aircraft-trails { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .location-aircraft-trails path { fill:none; vector-effect:non-scaling-stroke; stroke-linecap:round; stroke-linejoin:round; }
+.location-radar-track-path { stroke:#ff8754; stroke-width:4; opacity:.9; filter:drop-shadow(0 0 3px rgba(255,135,84,.48)); }
 .location-aircraft-ground-trail { stroke:rgba(243,238,233,.46); stroke-width:2; stroke-dasharray:4 6; }
 .location-aircraft-flight-trail { filter:drop-shadow(0 0 4px rgba(91,231,255,.54)); }
 .location-aircraft-flight-trail path { stroke-width:3.5; }
@@ -265,6 +268,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .location-map-sidebar-body { display:grid; align-content:start; gap:10px; padding:10px; }
 .map-auto-select { display:flex; align-items:flex-start; gap:9px; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:rgba(255,255,255,.025); cursor:pointer; }
 .map-auto-select input { flex:0 0 auto; margin:2px 0 0; accent-color:var(--accent); }
+.map-auto-select.disabled { opacity:.5; cursor:not-allowed; }
 .map-auto-select span { display:grid; gap:3px; min-width:0; }
 .map-auto-select strong { color:var(--ink); font-size:11px; line-height:1.3; }
 .map-auto-select small { color:var(--muted); font-size:9px; line-height:1.35; }
@@ -295,6 +299,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .aircraft-altitude-legend { display:grid; grid-template-columns:auto repeat(6,1fr); align-items:end; gap:4px; padding:8px 10px; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-size:9px; text-align:center; }
 .aircraft-altitude-legend strong { grid-column:1; grid-row:1 / span 2; align-self:center; color:var(--ink); font-size:10px; }
 .aircraft-altitude-gradient { grid-column:2 / -1; height:7px; border-radius:999px; background:linear-gradient(90deg,#8f9994 0 7%,#f39a4a 8%,#f2b84b 24%,#e36a72 42%,#c45fca 60%,#8f66e5 78%,#6658d3 92%,#e05a7a); }
+.location-map-panel > .fullscreen-button { z-index:14; top:auto; right:auto; bottom:12px; left:12px; background:rgb(36 29 26 / .96); box-shadow:0 4px 16px rgb(0 0 0 / .3); }
 @media (max-width:1000px) {
   .location-map-panel .insight-plot { min-height:560px; }
 }
@@ -315,6 +320,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .recording-list.is-loading > .empty-state { display:none; }
 .recording-list.is-loading > .recording-card { opacity:.58; }
 .radar-overlay-key { position:absolute; z-index:6; top:10px; left:12px; display:flex; flex-wrap:wrap; gap:7px 12px; padding:6px 9px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.82); color:var(--muted); font-size:9px; pointer-events:none; backdrop-filter:blur(4px); }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }
+@media (max-width:600px) { .radar-overlay-control { top:auto; right:auto; bottom:10px; left:10px; }.radar-panel > .fullscreen-button { right:10px; bottom:10px; }.radar-overlay-key { max-width:calc(100% - 24px); } }
 .page-loading { display:grid; place-items:center; gap:8px; min-height:240px; padding:32px; color:var(--muted); text-align:center; }
 .page-loading strong { color:var(--ink); }
 .page-loading small { max-width:38ch; }
