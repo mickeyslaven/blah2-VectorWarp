@@ -137,6 +137,20 @@ const rich = {
   '/api/dd': {abc123: {flight: 'TEST1', delay: 1.3, doppler: 40, timestamp: Date.now() / 1000}}
 };
 
+Object.assign(rich['/api/statistics'].windows.hour, {
+  elevation_strata: {bands: {'5-10': {eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}},
+  azimuth_strata: {bands: {'90-135': {eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}},
+  delay_strata: {bands: {'5-10': {eligible_passes: 4, detected_passes: 3,
+    tracked_passes: 2, detection_yield: .75, tracking_yield: .5}}},
+  receiver_slant_range_strata: {bands: {'10-20': {eligible_passes: 5,
+    detected_passes: 3, tracked_passes: 2, detection_yield: .6, tracking_yield: .4}}},
+  azimuth_elevation_strata: {bands: {'90-135|5-10': {azimuth_band: '90-135',
+    elevation_band: '5-10', eligible_passes: 6, detected_passes: 4,
+    tracked_passes: 3, detection_yield: .667, tracking_yield: .5}}}
+});
+
 global.fetchStatusResource = async (url, options = {}) => {
   url = new URL(url, window.location.origin).href;
   const fixtures = mode === 'rich' ? rich : portable;
@@ -199,6 +213,10 @@ setTimeout(() => {
     errors.push('confirmed radar tracks were hidden or pre-confirmation candidates leaked');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
+  if (view === 'statistics' && mode === 'rich' &&
+      (!rendered.includes('statistics-yield-chart') || !rendered.includes('Detected') ||
+       !rendered.includes('Tracked') || !rendered.includes('statistics-matrix-cell')))
+    errors.push('statistics yield and joint-angle visuals were not rendered');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||
       !rendered.includes('Hard-disabled — never automatic') ||
       !rendered.includes('Support / uncertainty') ||
