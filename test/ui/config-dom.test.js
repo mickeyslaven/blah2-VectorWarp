@@ -87,6 +87,21 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 7);
     assert.ok(window.document.querySelector('[data-tab="experimental"]'),
       'Advanced settings expose one dedicated Experimental category');
+    const recordingPanel = window.document.querySelector('#settings-panel-save');
+    assert.match(recordingPanel.textContent, /IQ recordings/,
+      'Recording starts with the raw-IQ workflow');
+    assert.ok(query('capture.aircraft_clips.enabled'),
+      'Automatic aircraft IQ recording remains visible in Recording');
+    assert.equal(recordingPanel.querySelector('[data-path="save.map"]'), null,
+      'Processed radar-map export is not presented as ordinary recording');
+    assert.equal(recordingPanel.querySelector('[data-path="save.detection"]'), null,
+      'Detection metadata export is not presented as ordinary recording');
+    const diagnosticExports = window.document.querySelector(
+      '#settings-panel-experimental [data-config-group="save.diagnostic_exports"]');
+    assert.ok(diagnosticExports, 'Advanced users can still reach diagnostic exports');
+    assert.match(diagnosticExports.textContent, /not IQ recording/i);
+    assert.ok(diagnosticExports.querySelector('[data-path="save.map"]'));
+    assert.ok(diagnosticExports.querySelector('[data-path="save.detection"]'));
     assert.ok([...query('process.performance.acceleration').querySelector('select').options]
       .some(option => option.value === 'gpu-resident'),
     'Every backend-supported GPU acceleration mode is selectable');

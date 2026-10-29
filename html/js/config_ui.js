@@ -202,10 +202,10 @@ const CONFIG_META = {
   'location.tx.altitude': ['Altitude', 'Meters above mean sea level'],
   'location.rx.name': ['Site name', 'Receiver location name'],
   'location.tx.name': ['Site name', 'Transmitter location name'],
-  'save.iq': ['Legacy IQ flag', 'Spacebar recording controls raw IQ; this legacy value is preserved.'],
-  'save.map': ['Record radar maps', 'Write processed radar maps to disk'],
-  'save.detection': ['Record detections', 'Write detected targets to disk'],
-  'save.timing': ['Timing file flag', 'Reserved value; live timing is streamed but not file-saved here.'],
+  'save.iq': ['Legacy manual-IQ flag', 'Compatibility value only. Manual IQ recording is controlled from Live radar.'],
+  'save.map': ['Export processed radar maps', 'Writes processed delay–Doppler values for offline diagnostics. This is not IQ and does not control aircraft clips.'],
+  'save.detection': ['Export detection metadata', 'Writes detector output for offline diagnostics. This is not IQ and does not control aircraft clips.'],
+  'save.timing': ['Export timing metadata', 'Compatibility diagnostic flag. This is not IQ and does not control aircraft clips.'],
   'save.path': ['Recording folder', 'Directory used for saved data']
 };
 
@@ -1537,12 +1537,60 @@ function renderExperimentalSettings() {
   add('publication', process.tracker?.publication, ['process', 'tracker']);
   if (coherentArray) add('frequency_resolved_shadow', process.bearing?.frequency_resolved_shadow,
     ['process', 'bearing']);
+  const diagnosticKeys = ['map', 'detection']
+    .filter(key => activeConfig.save?.[key] !== undefined);
+  if (diagnosticKeys.length) {
+    const diagnostics = document.createElement('details');
+    diagnostics.className = 'config-group';
+    diagnostics.dataset.configGroup = 'save.diagnostic_exports';
+    const summary = document.createElement('summary');
+    const heading = document.createElement('span');
+    const strong = document.createElement('strong');
+    const small = document.createElement('small');
+    strong.textContent = 'Diagnostic exports (not IQ recording)';
+    small.textContent = 'Legacy processed products for offline debugging. These do not record receiver samples or aircraft clips.';
+    heading.append(strong, small);
+    summary.append(heading);
+    const fields = document.createElement('div');
+    fields.className = 'config-fields';
+    diagnosticKeys.forEach(key => fields.appendChild(field(activeConfig.save[key], ['save', key])));
+    diagnostics.append(summary, fields);
+    section.appendChild(diagnostics);
+  }
   if (!section.querySelector('.config-field')) {
     const empty = document.createElement('p');
     empty.className = 'config-capability-note';
     empty.textContent = 'This build does not advertise any experimental controls.';
     section.appendChild(empty);
   }
+  return section;
+}
+
+function renderRecordingSettings() {
+  const section = document.createElement('section');
+  section.className = 'recording-settings';
+  const intro = document.createElement('div');
+  intro.className = 'config-section-heading';
+  intro.innerHTML = '<h2>IQ recordings</h2><p>Raw receiver samples are recorded manually from Live radar or automatically for eligible aircraft below. Processed radar-map and detection exports are separate advanced diagnostics.</p>';
+  section.appendChild(intro);
+  if (activeConfig.capture?.aircraft_clips &&
+      typeof activeConfig.capture.aircraft_clips === 'object') {
+    section.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
+      ['capture'], true));
+  } else {
+    const unavailable = document.createElement('p');
+    unavailable.className = 'config-capability-note';
+    unavailable.textContent = 'Automatic aircraft clips require a backend version that advertises those settings.';
+    section.appendChild(unavailable);
+  }
+  if (activeConfig.save?.path !== undefined)
+    section.appendChild(field(activeConfig.save.path, ['save', 'path']));
+  if (activeConfig.save?.retention && typeof activeConfig.save.retention === 'object')
+    section.appendChild(group('retention', activeConfig.save.retention, ['save']));
+  const note = document.createElement('p');
+  note.className = 'config-capability-note';
+  note.textContent = 'Manual raw-IQ recording is controlled from Live radar. Automatic clips run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
+  section.appendChild(note);
   return section;
 }
 
@@ -2008,6 +2056,7 @@ function renderEditor() {
     panel.className = 'config-tab-panel';
     const receiverType = activeConfig.capture?.device?.type;
     if (key === 'location') panel.appendChild(renderSiteSettings());
+    else if (key === 'save') panel.appendChild(renderRecordingSettings());
     else if (key === 'experimental') panel.appendChild(renderExperimentalSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
       panel.appendChild(group(key, value, [], true, {skipPath: path =>
@@ -2042,19 +2091,6 @@ function renderEditor() {
       }
       panel.appendChild(renderReceiverSetup());
       if (upstream) panel.appendChild(upstream);
-    }
-    if (key === 'save') {
-      const note = document.createElement('p');
-      note.className = 'config-capability-note';
-      if (activeConfig.capture?.aircraft_clips &&
-          typeof activeConfig.capture.aircraft_clips === 'object') {
-        panel.appendChild(group('aircraft_clips', activeConfig.capture.aircraft_clips,
-          ['capture']));
-        note.textContent = 'Start and stop manual raw-IQ recordings from Live radar. Automatic clips above run only when enabled and an eligible ADS-B aircraft meets the selected bounds.';
-      } else {
-        note.textContent = 'Manual raw-IQ recording is available from Live radar. Automatic aircraft clips require a backend version that advertises those settings.';
-      }
-      panel.appendChild(note);
     }
     panels.appendChild(panel);
   });
