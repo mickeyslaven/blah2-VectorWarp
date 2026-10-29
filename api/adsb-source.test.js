@@ -69,14 +69,18 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(associationOrder, ['wait', 'fetch'],
     'The catch-up wait must precede acquisition of the newest ADS-B snapshot');
 
-  const displayClock = 102000;
+  let displayClock = 102000;
   const displaySource = createAdsbSource(delayedStatusConfig, {now: () => displayClock,
-    fetchJson: async () => ({now: 100.5, aircraft: [{hex: 'fed123', flight: 'DISPLAY',
-      lat: 1, lon: 2, alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]})});
+    fetchJson: async () => {
+      displayClock += 250;
+      return {now: 100.5, aircraft: [{hex: 'fed123', flight: 'DISPLAY',
+        lat: 1, lon: 2, alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
   const latestDisplay = await displaySource.getPresentation('aircraft');
   assert.equal(latestDisplay.aircraft.length, 1,
     'Latest display positions accept and project feeder snapshots within max_position_age');
-  assert.equal(latestDisplay.aircraft[0].vectorwarp.projected_seconds, 1.5);
+  assert.equal(latestDisplay.aircraft[0].vectorwarp.projected_seconds, 1.75,
+    'Display freshness is measured after source I/O instead of before it');
 
   let exactReads = 0;
   const exactProjection = createAdsbSource(config, {now: () => 100000,

@@ -225,11 +225,16 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }
-  async function rawAircraft(targetAtMs = now(), fusionOptions = {}) {
+  async function rawAircraft(targetAtMs, fusionOptions = {}) {
     const {healthy, failed} = await rawSnapshots();
-    const data = fuseAircraftData(healthy, {nowMs: targetAtMs,
+    // Presentation callers intentionally omit a target. Stamp those snapshots
+    // after I/O completes; otherwise source latency makes newly acquired local
+    // positions look future-dated and distorts freshness diagnostics. Scoring
+    // callers pass the exact historical CPI time and retain that projection.
+    const fusionAtMs = Number.isFinite(targetAtMs) ? targetAtMs : now();
+    const data = fuseAircraftData(healthy, {nowMs: fusionAtMs,
       maxPositionAgeSeconds: geometry.maxAge, ...fusionOptions});
-    fusionState = {...data.vectorwarp_fusion, fused_at: targetAtMs,
+    fusionState = {...data.vectorwarp_fusion, fused_at: fusionAtMs,
       healthy_sources: healthy.length, failed_sources: failed};
     return data;
   }
@@ -277,7 +282,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     // Accept any observation already allowed by max_position_age and project it
     // to now. This avoids the delayed-scoring request time rejecting otherwise
     // fresh feeder snapshots and making every aircraft flash on and off.
-    const data = await rawAircraft(now(), {maxObservationOffsetSeconds: geometry.maxAge});
+    const data = await rawAircraft(undefined, {maxObservationOffsetSeconds: geometry.maxAge});
     if (kind === 'aircraft') return data;
     return presentationGeometry.update(data).data;
   }
