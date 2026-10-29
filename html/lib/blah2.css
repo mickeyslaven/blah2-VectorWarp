@@ -239,6 +239,8 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .report-context-action { margin:8px 0 0; }.report-dialog { width:min(640px,calc(100vw - 24px)); }.report-dialog > p { color:var(--muted); font-size:12px; line-height:1.55; }
 .report-preview { max-height:300px; overflow:auto; padding:12px; border:1px solid var(--line); border-radius:8px; background:#120e0d; color:var(--ink); font-size:10px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .report-state { min-height:18px; color:var(--muted); font-size:11px; }.report-dialog a { color:var(--accent); }
+.report-comment { display:grid; gap:7px; margin:14px 0; font-weight:650; }
+.report-comment textarea { width:100%; min-height:110px; resize:vertical; font:inherit; line-height:1.45; }
 @media (max-width:520px) { .report-support { align-items:flex-start; flex-direction:column; }.report-support button { width:100%; } }
 @media (max-width:760px) { .recording-folder-control { justify-self:stretch; width:100%; } }
 @media (max-width:760px) { .recording-card { padding:11px 12px; }.recording-card > summary { align-items:center; }.recording-card > summary strong { font-size:14px; line-height:1.25; }.recording-card > summary small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.recording-card[open] { padding-bottom:14px; }.recording-card-body { padding-top:8px; } }

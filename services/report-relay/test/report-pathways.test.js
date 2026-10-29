@@ -163,14 +163,14 @@ test('every supported receiver family can be represented without a hardware iden
   }
 });
 
-test('arbitrary text is discarded while allowlisted diagnostic scalars survive', async () => {
+test('user comments are sanitized while allowlisted diagnostic scalars survive', async () => {
   const value = baseReport(pathways[2]);
   value.incident.message = 'Authorization: Basic dXNlcjpwYXNz password=“correct horse battery staple”';
   value.comment = '["safe","SECOND_SECRET"] {\\"icao24\\":\\"abc123\\",\\"call_sign\\":\\"SECRET7\\"}';
   const report = normalizeReport(value);
   const issue = githubIssue(report, await reportFingerprint(report), 'test-report-id');
 
-  assert.equal(report.comment, null);
+  assert.ok(report.comment);
   assert.equal(report.incident.message,
     'VectorWarp detected SDR_STREAM_LOST during receiver stream.');
   assert.doesNotMatch(issue.body,

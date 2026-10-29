@@ -10,8 +10,9 @@ VectorWarp repository is intentionally not the automatic-report destination.
 - The JSON schema is an allowlist. Unknown diagnostic fields and unsupported
   values are rejected.
 - Incident messages are generated from a fixed incident catalog. Free-form
-  error text, comments, browser strings, and receiver model strings are never
-  forwarded.
+  error text, browser strings, and receiver model strings are never forwarded.
+  An optional user-authored description is bounded and independently redacted
+  by both the browser and relay before it is included.
 - Diagnostic details are limited to named booleans, non-negative integers, and
   small enumerations. VectorWarp applies this boundary locally and the relay
   independently validates it again.

@@ -5,7 +5,6 @@ const {createReceiverManager, RECEIVER_TYPES} = require('./receiver-manager');
 const {createReceiverProbes} = require('./receiver-probes');
 const {createReceiverHelperClient} = require('./receiver-helper-client');
 const {createMacReceiverManagement} = require('./macos-receiver-management');
-const {receiverSetupGuide} = require('./receiver-setup-guide');
 const INTENT = 'receiver-management-v1';
 const DISCOVERY_INTENT = 'receiver-discovery-v2';
 
@@ -109,8 +108,7 @@ function installReceiverRoutes(app, options) {
             {...action, available: false, code: 'REMOTE_ENDPOINT',
               message: 'The saved Suite endpoint is remote; local receiver service control does not apply.'} : action)};
         return {...discovery,
-        receivers: discovery.receivers.map(receiver => ({...receiver,
-          setupGuide: receiverSetupGuide(receiver, helperExecutable, {platform})})),
+        receivers: discovery.receivers,
         configRevision: document.revision,
         setupRequired: document.setupRequired === true, buildCapabilitiesKnown: compiledLiveTypes !== null,
         preview, managementAvailable: managed.available, management: managed,

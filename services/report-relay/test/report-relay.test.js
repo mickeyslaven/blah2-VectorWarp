@@ -50,7 +50,7 @@ test('valid report becomes a bounded GitHub issue with separate grouping and rec
   assert.deepEqual(issue.labels, ['bug', 'anonymous-report']);
 });
 
-test('adversarial free text and structured secrets are discarded before GitHub', async () => {
+test('user comments are retained but adversarial secrets are redacted before GitHub', async () => {
   const dirty = sample();
   const probes = [
     'Authorization: Basic dXNlcjpwYXNz', 'Authorization: "Bearer ghp_quoted"',
@@ -66,7 +66,7 @@ test('adversarial free text and structured secrets are discarded before GitHub',
   const issue = githubIssue(report, await reportFingerprint(report), await submissionReceiptId(report));
   assert.equal(report.incident.message,
     'VectorWarp detected SDR_OPEN_FAILED during receiver open.');
-  assert.equal(report.comment, null); assert.equal(report.system.browser, null);
+  assert.ok(report.comment); assert.equal(report.system.browser, null);
   assert.equal(report.receiver.model, null);
   assert.doesNotMatch(issue.body,
     /dXNlcjpwYXNz|ghp_quoted|correct horse|battery staple|a1b2c3|PRIVATE12|abc123|VW123|SECRET7|SECOND_SECRET/);

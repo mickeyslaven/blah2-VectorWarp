@@ -27,6 +27,7 @@ window.fetch = async (url, options = {}) => {
   else if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
   else if (url === '/api/system/status') body = {radar: 'no-data', errors: []};
   else if (url === '/api/upstream/status') body = {supported: false};
+  else if (url === '/api/sdrplay-build') body = {buildable: false, state: 'unavailable'};
   else if (url === '/api/receivers/discover') body = {
     configRevision: 'a'.repeat(64), buildCapabilitiesKnown: true, managementAvailable: true,
     receivers: [{type: 'RspDuo', label: 'SDRplay RSPduo',
@@ -45,7 +46,7 @@ for (const file of ['kraken_geometry.js', 'config_ui.js'])
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const check = async () => {
   const button = [...window.document.querySelectorAll('#receiver-setup button')]
-    .find(item => item.textContent === 'Check receiver software');
+    .find(item => item.textContent === 'Scan for receivers');
   assert.ok(button); button.click(); await flush(); await flush();
 };
 
@@ -57,30 +58,27 @@ const check = async () => {
     const link = [...output.querySelectorAll('a')].find(item =>
       item.href === 'https://sdrplay.com/hardware-api/');
     assert.ok(link, 'Unknown SDRplay inventory must expose the official link immediately.');
-    assert.match(output.textContent, /Could not check SDRplay API/);
+    assert.match(output.textContent, /Install SDRplay’s API once/);
     assert.equal([...output.querySelectorAll('button')].some(item =>
       item.textContent.startsWith('Setup guide:')), false,
     'The official link must not require opening the optional setup guide.');
 
     dependencyState = 'missing';
     await check();
-    assert.match(output.textContent, /SDRplay API was not found/);
-    assert.match(output.textContent, /accept its license locally/);
+    assert.match(output.textContent, /requires accepting its vendor license/);
     assert.ok([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'));
 
     dependencyState = 'installed'; serviceState = 'stopped';
     await check();
-    assert.match(output.textContent, /SDRplay API is stopped/);
-    assert.match(output.textContent, /Save & Restart starts the standard local service/);
     assert.ok([...output.querySelectorAll('button')].some(item =>
-      item.textContent === 'Review Start SDRplay'),
-    'Installed/stopped guidance must retain the existing reviewed start action.');
+      item.textContent === 'Start SDRplay'),
+    'Installed/stopped state must offer the action rather than a guide.');
 
     serviceState = 'running';
     await check();
-    assert.match(output.textContent, /SDRplay API is running; no service restart needed/);
     assert.equal([...output.querySelectorAll('a')].some(item => item.href === 'https://sdrplay.com/hardware-api/'), false,
       'An observed installed SDK must not be prompted for download.');
+    assert.doesNotMatch(output.textContent, /Setup guide|How settings apply|Review Start/);
     Object.assign(saved, configurationForReceiver('RspDuo'));
     await window.renderConfiguration();
     const startup = window.document.getElementById('receiver-startup');

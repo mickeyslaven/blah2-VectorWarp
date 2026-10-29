@@ -45,12 +45,16 @@
   function clean(value, maximum = 256) {
     if (value === undefined || value === null) return null;
     return String(value).normalize('NFKC').replace(/[\u0000-\u001f\u007f`]+/g, ' ')
+      .replace(/\\(["'])/g, '$1')
       .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, '[URL redacted]')
       .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email redacted]')
       .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP redacted]')
       .replace(IPV6_PATTERN, '[IP redacted]')
       .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi, 'Bearer [redacted]')
-      .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign|flight)["']?\s*(?::|=|\s)\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
+      .replace(/\b(?:authorization\s*[:=]\s*)?basic\s+[A-Za-z0-9+/]+={0,2}/gi, 'Basic [redacted]')
+      .replace(/\{[^}\r\n]{0,1024}\}/g, '[structured text redacted]')
+      .replace(/\[[^\]\r\n]{0,512}\]/g, '[structured text redacted]')
+      .replace(/["'“”]?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign|flight)["'“”]?\s*(?::|=|\s)\s*(?:["“](?:\\.|[^"”\\])*["”]|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
         '[sensitive value redacted]')
       .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
         match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
@@ -213,7 +217,7 @@
           runtime.configRevision : null,
         uptimeSeconds: integer(runtime.uptimeSeconds), details: scalars(runtime.details)},
       recentEvents: Array.isArray(value.recentEvents) ? value.recentEvents.slice(0, 20)
-        .map(event => normalizedIncident(event, now)) : [], comment: null};
+        .map(event => normalizedIncident(event, now)) : [], comment: clean(value.comment, 2000)};
   }
   function buildReport({incident, status = {}, config = {}, comment = '', now = Date.now()}) {
     const type = receiverType(status, config);
@@ -250,7 +254,7 @@
       uptimeSeconds: integer(status.uptimeSeconds),
       details: scalars({...incident.details, lastFrameAgeMs: integer(status.lastFrameAt ? Math.max(0, now - status.lastFrameAt) : null),
         timestampConnections: integer(status.timestampConnections), processorFresh: status.processorFresh === true})},
-    recentEvents: [], comment: null};
+    recentEvents: [], comment: clean(comment, 2000)};
   }
   function retain(report, storage = reportStorage()) { storage.setItem(STORAGE_KEY, JSON.stringify(report)); }
   function clear(storage = reportStorage()) { storage.removeItem(STORAGE_KEY); }
@@ -272,18 +276,27 @@
     document.getElementById('report-dialog')?.remove();
     const report = normalizeReport(retainedReport || buildReport({incident, status, config, comment}));
     const dialog = document.createElement('dialog'); dialog.id = 'report-dialog'; dialog.className = 'site-dialog report-dialog';
-    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver type and operating measurements, and service state.</p><p>It will not include free-form error text or comments, your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
+    dialog.innerHTML = '<h2>Send diagnostic report?</h2><p>VectorWarp will send diagnostic information to the project maintainer for analysis and bug fixing. This includes a controlled error category, VectorWarp and system versions, receiver type and operating measurements, and service state.</p><p>It will not include your location, network addresses, receiver serial numbers, full configuration, ADS-B data, recordings, raw IQ, or credentials. Your optional description is sanitized before it is sent; do not include passwords or other secrets.</p><p>Select View report to inspect the exact data. If you have privacy concerns or want complete control over what is shared, cancel and file a <a href="https://github.com/mickeyslaven/blah2-VectorWarp/issues/new" target="_blank" rel="noreferrer">GitHub issue</a> instead.</p>';
+    const commentLabel = document.createElement('label');
+    commentLabel.className = 'report-comment'; commentLabel.textContent = 'What happened?';
+    const commentInput = document.createElement('textarea');
+    commentInput.rows = 5; commentInput.maxLength = 2000;
+    commentInput.placeholder = 'Describe what you were doing, what you expected, and what went wrong.';
+    commentInput.value = report.comment || '';
+    commentLabel.append(commentInput);
     const preview = document.createElement('pre'); preview.className = 'report-preview'; preview.hidden = true; preview.textContent = JSON.stringify(report, null, 2);
     const state = document.createElement('p'); state.className = 'report-state'; state.setAttribute('role', 'status');
     const actions = document.createElement('div'); actions.className = 'site-dialog-actions';
     const view = button('View report'); const copy = button('Copy report'); copy.hidden = true;
     const cancel = button('Cancel'); const send = button('Send report', 'button-primary');
-    view.onclick = () => { preview.hidden = !preview.hidden; copy.hidden = preview.hidden; view.textContent = preview.hidden ? 'View report' : 'Hide report'; };
+    const updateComment = () => { report.comment = clean(commentInput.value, 2000); preview.textContent = JSON.stringify(report, null, 2); };
+    commentInput.addEventListener('input', updateComment);
+    view.onclick = () => { updateComment(); preview.hidden = !preview.hidden; copy.hidden = preview.hidden; view.textContent = preview.hidden ? 'View report' : 'Hide report'; };
     copy.onclick = async () => { await navigator.clipboard.writeText(preview.textContent); state.textContent = 'Report copied.'; };
     const close = () => { dialog.close?.(); dialog.remove(); };
     cancel.onclick = close; dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
-    send.onclick = async () => { send.disabled = true; state.textContent = 'Sending…'; try { const id = await submit(report); state.textContent = `Report sent. Report ID: ${id}`; send.textContent = 'Sent'; cancel.textContent = 'Close'; } catch (error) { retain(report); state.textContent = `${error.message}. The report is retained in this browser; retry or copy it.`; send.disabled = false; send.textContent = 'Retry'; preview.hidden = false; copy.hidden = false; } };
-    actions.append(view, copy, cancel, send); dialog.append(preview, state, actions); document.body.append(dialog); dialog.showModal?.(); if (!dialog.open) dialog.setAttribute('open', '');
+    send.onclick = async () => { updateComment(); send.disabled = true; state.textContent = 'Sending…'; try { const id = await submit(report); state.textContent = `Report sent. Report ID: ${id}`; send.textContent = 'Sent'; cancel.textContent = 'Close'; } catch (error) { retain(report); state.textContent = `${error.message}. The report is retained in this browser; retry or copy it.`; send.disabled = false; send.textContent = 'Retry'; preview.hidden = false; copy.hidden = false; } };
+    actions.append(view, copy, cancel, send); dialog.append(commentLabel, preview, state, actions); document.body.append(dialog); dialog.showModal?.(); if (!dialog.open) dialog.setAttribute('open', '');
   }
   function addSettingsEntry(container, context) {
     const retainedReport = pending();

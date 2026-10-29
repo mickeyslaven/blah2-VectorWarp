@@ -69,13 +69,18 @@ function redactText(value, maximum, name, required = false) {
   let result = value.normalize('NFKC')
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/`/g, "'")
+    .replace(/\\(["'])/g, '$1')
     .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"']+/gi, '[URL redacted]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email redacted]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP redacted]')
     .replace(IPV6_PATTERN, '[IP redacted]')
     .replace(/\b(?:authorization\s*[:=]\s*)?bearer\s+[A-Za-z0-9._~+\/-]+={0,2}/gi,
       'Bearer [redacted]')
-    .replace(/["']?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign|flight)["']?\s*(?::|=|\s)\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
+    .replace(/\b(?:authorization\s*[:=]\s*)?basic\s+[A-Za-z0-9+/]+={0,2}/gi,
+      'Basic [redacted]')
+    .replace(/\{[^}\r\n]{0,1024}\}/g, '[structured text redacted]')
+    .replace(/\[[^\]\r\n]{0,512}\]/g, '[structured text redacted]')
+    .replace(/["'“”]?(?:serial(?:[\s_-]*number)?|access[_-]?token(?:value)?|api[_-]?key|token|password|secret|hostname|host|endpoint|address|aircraft[\s_-]*hex|hex|icao|callsign|flight)["'“”]?\s*(?::|=|\s)\s*(?:["“](?:\\.|[^"”\\])*["”]|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
       '[sensitive value redacted]')
     .replace(/["']?(?:lat(?:itude)?|lon(?:gitude)?)["']?\s*[:=]\s*["']?-?\d+(?:\.\d+)?["']?/gi,
       match => `${match.split(/\s*[:=]\s*/)[0]}=[redacted]`)
@@ -255,7 +260,7 @@ export function normalizeReport(value) {
     },
     recentEvents: recentEvents.map((event, index) => normalizeIncident(event,
       `recentEvents[${index}]`)),
-    comment: null
+    comment: redactText(value.comment, 2000, 'comment')
   };
 }
 

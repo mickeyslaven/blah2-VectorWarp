@@ -2285,10 +2285,10 @@ function renderReceiverSetup() {
   const heading = document.createElement('h3');
   heading.textContent = 'Receiver software';
   const description = document.createElement('p');
-  description.textContent = 'Find receivers and check their software without changing settings.';
+  description.textContent = 'VectorWarp detects connected receivers and prepares their software automatically.';
   const check = document.createElement('button');
   check.type = 'button'; check.className = 'button-secondary';
-  check.textContent = 'Check receiver software';
+  check.textContent = 'Scan for receivers';
   const output = document.createElement('div');
   output.setAttribute('role', 'status'); output.setAttribute('aria-live', 'polite');
   let buildPolls = 0;
@@ -2313,10 +2313,11 @@ function renderReceiverSetup() {
     output.appendChild(element);
     return element;
   };
-  const sdrplayLink = () => {
+  const sdrplayLink = (label = 'Install SDRplay support') => {
     const link = document.createElement('a');
     link.href = 'https://sdrplay.com/hardware-api/';
-    link.textContent = 'Download SDRplay API';
+    link.className = 'button-secondary';
+    link.textContent = label;
     link.target = '_blank'; link.rel = 'noopener noreferrer';
     output.appendChild(link);
   };
@@ -2329,50 +2330,39 @@ function renderReceiverSetup() {
       discover();
     }, 5000);
   };
-  const settingApplication = (receiver, item) => {
-    const label = metadata(item.configField.split('.'), receiver.type)[0];
-    if (item.direction === 'browser-to-upstream-after-ack-and-readback')
-      return `${label}: sent to Suite V2, then checked against its reply and updated status.`;
-    if (item.direction === 'upstream-authoritative-mismatch-block')
-      return `${label}: must match Suite V2 before applying. VectorWarp does not change it in Suite V2.`;
-    if (item.direction === 'config-only')
-      return `${label}: used by VectorWarp only; not sent to Suite V2.`;
-    if (receiver.type === 'Usrp')
-      return `${label}: applied through UHD after Save & Restart. Both channels are checked before streaming.`;
-    if (receiver.type === 'RspDuo')
-      return `${label}: applied through SDRplay API v3 at startup. SDK errors are reported; tuner values are not read back.`;
-    if (receiver.type === 'HackRF')
-      return `${label}: applied to both HackRFs at startup. Driver errors are checked; tuner values are not read back.`;
-    return `${label}: saved for this receiver.`;
-  };
   async function reviewAction(receiverType, actionId) {
     if (serializeConfig(activeConfig) !== originalConfig)
       throw new Error('Save or discard your edits first. Receiver actions use saved settings.');
     const plan = await post('/api/receivers/plan', {receiverType, actionId});
     if (plan.status === 'not-required') { paragraph(plan.message); return; }
-    if (plan.requiresAuthorization !== false) {
-      paragraph('Run this command on the VectorWarp computer to authorize this action, then return here.');
-      const command = document.createElement('pre'); command.textContent = plan.authorizationCommand;
-      output.appendChild(command);
-    }
-    paragraph(`Review: ${plan.review}. The plan expires in ${plan.lifetimeSeconds} seconds.`);
-    for (const item of plan.transaction?.changes || [])
-      paragraph(`Install ${item.name} ${item.version} (${item.architecture}; ${item.origin} ${item.archive}; ${item.site}).`);
-    button(plan.requiresAuthorization === false ? 'Run reviewed action' : 'Run authorized action', async element => {
-      if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
-        throw new Error('Settings changed. Check receiver software and review the action again.');
-      element.textContent = 'Running…';
-      let result;
-      try { result = await post('/api/receivers/execute', {nonce: plan.nonce, configRevision: plan.configRevision}, 210000); }
-      catch (error) {
-        element.remove();
-        throw new Error(`${error.message} Check receiver software again before retrying.`);
-      }
-      element.remove();
-      paragraph(result.message);
-      await discover();
-    });
+    if (plan.requiresAuthorization !== false)
+      throw new Error('This installation cannot complete the action from the web app. Reinstall the complete VectorWarp package.');
+    if (serializeConfig(activeConfig) !== originalConfig || configRevision !== plan.configRevision)
+      throw new Error('Settings changed. Scan for receivers again.');
+    const result = await post('/api/receivers/execute',
+      {nonce: plan.nonce, configRevision: plan.configRevision}, 210000);
+    paragraph(result.message);
+    await discover();
   }
+  async function runBuild() {
+    const result = await post('/api/sdrplay-build', {}, 210000, 'sdrplay-local-build-v1');
+    paragraph(result.message || 'SDRplay support is being prepared.');
+    buildPolls = 0;
+    refreshBuildStatus();
+  }
+  async function runAction(receiverType, actionId, element) {
+    element.textContent = 'Working…';
+    try {
+      await reviewAction(receiverType, actionId);
+    } catch (error) {
+      throw new Error(`${error.message} Scan again before retrying.`);
+    }
+  }
+  /*
+   * Receiver installation is intentionally action-oriented. Do not add setup
+   * guides or expose package paths here: a supported package is ready, a
+   * button performs the bounded action, or the installation is incomplete.
+   */
   async function discover() {
     if (buildPollTimer) { window.clearTimeout(buildPollTimer); buildPollTimer = null; }
     check.disabled = true;
@@ -2407,13 +2397,14 @@ function renderReceiverSetup() {
       }
       lastDetectedReceiverTypes = detectedTypes;
       if (result.configRevision !== configRevision) paragraph('Saved settings changed. Reload them before continuing.');
-      if (!result.buildCapabilitiesKnown) paragraph('This build does not list its supported receivers. Live capture support is unknown.');
+      if (!result.buildCapabilitiesKnown) paragraph('This VectorWarp installation is incomplete. Reinstall the current package.');
       for (const receiver of result.receivers || []) {
-        const compiled = receiver.capabilities.liveCompiled ? 'adapter built' : 'adapter not built';
-        const runtime = receiver.capabilities.runtimeLoadable === true ? 'software loads' :
-          receiver.capabilities.runtimeLoadable === false ? 'software cannot load' : 'software not checked';
-        const detection = receiver.detection.configuredIdentityMatched === false ? 'selected device not found' : receiver.detection.state;
         const selected = receiver.type === activeConfig.capture?.device?.type;
+        const ready = receiver.capabilities.liveCompiled && receiver.capabilities.runtimeLoadable !== false &&
+          receiver.dependencies.state !== 'missing';
+        const needsSdrplay = receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed';
+        const incomplete = !receiver.capabilities.liveCompiled &&
+          !(receiver.type === 'RspDuo' && receiver.capabilities.localBuildable);
         const card = document.createElement('article');
         card.className = `receiver-software-card${selected ? ' selected' : ''}`;
         card.dataset.receiverType = receiver.type;
@@ -2421,39 +2412,22 @@ function renderReceiverSetup() {
         const cardTitle = document.createElement('strong');
         cardTitle.textContent = receiver.label;
         const cardState = document.createElement('span');
-        cardState.className = receiver.capabilities.liveCompiled && receiver.capabilities.runtimeLoadable !== false ?
-          'upstream-badge good' : 'upstream-badge warning';
-        cardState.textContent = selected ? 'Selected' : receiver.capabilities.detected ? 'Detected' : 'Available option';
+        cardState.className = ready ? 'upstream-badge good' : 'upstream-badge warning';
+        cardState.textContent = selected ? 'Selected' : receiver.capabilities.detected ? 'Detected' :
+          needsSdrplay ? 'Install required' : ready ? 'Ready' : 'Unavailable';
         cardHeader.append(cardTitle, cardState);
-        const facts = document.createElement('dl');
-        const fact = (label, value) => {
-          const row = document.createElement('div');
-          const term = document.createElement('dt'); term.textContent = label;
-          const detail = document.createElement('dd'); detail.textContent = value;
-          row.append(term, detail); facts.appendChild(row);
-        };
-        fact('VectorWarp adapter', compiled);
-        fact('Driver / API', runtime);
-        fact('Connected device', detection);
-        fact('Dependencies', receiver.dependencies.state);
-        if (receiver.managedService.required) fact('Receiver service', receiver.managedService.state);
-        fact('Saved connection', receiver.upstream.availability === 'available' ? 'available' :
-          receiver.upstream.availability || 'not configured');
-        card.append(cardHeader, facts);
+        const state = document.createElement('p');
+        state.textContent = needsSdrplay ? 'Install SDRplay’s API once; VectorWarp will build and configure the RSPduo adapter automatically.' :
+          incomplete ? 'This receiver is missing from the installed VectorWarp package.' :
+          receiver.capabilities.detected ? 'Connected and ready to configure.' :
+          ready ? 'Support is installed. Connect the receiver when you are ready.' :
+          'Connect the receiver and scan again.';
+        card.append(cardHeader, state);
         output.appendChild(card);
-        if (receiver.upstream.availability === 'available') paragraph(`${receiver.label}: saved connection is available and will be reused. Settings are checked when saving.`);
-        if (receiver.type === 'RspDuo' && receiver.managedService.state === 'running')
-          paragraph('SDRplay API is running; no service restart needed.');
         if (receiver.type === 'RspDuo' && receiver.dependencies.state !== 'installed') {
-          paragraph(receiver.dependencies.state === 'missing' ?
-            'SDRplay API was not found. Download it from SDRplay and accept its license locally.' :
-            'Could not check SDRplay API. Use the link below if you need to install it.');
+          paragraph('SDRplay requires accepting its vendor license. After installation, return here; VectorWarp completes the adapter automatically.');
           sdrplayLink();
         }
-        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'stopped')
-          paragraph('SDRplay API is stopped. Save & Restart starts the standard local service. Custom services need administrator setup.');
-        else if (receiver.type === 'RspDuo' && receiver.managedService.state === 'unknown')
-          paragraph('SDRplay API service status could not be checked.');
         if (receiver.type === 'RspDuo') {
           try {
             const response = await configFetch(liveApiUrl('/api/sdrplay-build'), {}, 5000);
@@ -2461,65 +2435,32 @@ function renderReceiverSetup() {
             const relevantProgress = build.progress && (!build.progress.kit_id ||
               build.progress.kit_id === build.kit_id) ? build.progress : null;
             if (build.buildable && ['missing', 'stale'].includes(build.state)) {
-              paragraph(`SDRplay adapter: ${relevantProgress?.state || build.state}. ${relevantProgress?.reason || build.reason || 'Building does not start radar.'}`);
-              sdrplayLink();
-              button('Build SDRplay support', async element => {
-                element.textContent = 'Starting build…';
-                const result = await post('/api/sdrplay-build', {}, 210000, 'sdrplay-local-build-v1');
-                paragraph(result.message || 'Build requested. Checking progress…');
-                buildPolls = 0;
-                refreshBuildStatus();
-              });
-            } else if (build.buildable && build.state === 'current') paragraph('SDRplay adapter is up to date. See device and service status above.');
-            else if (build.buildable) { paragraph(build.reason || 'Cannot check the SDRplay adapter. No build started.'); sdrplayLink(); }
-            else if (build.reason) paragraph(build.reason);
+              if (receiver.dependencies.state === 'installed') button('Install SDRplay support', runBuild);
+            } else if (build.buildable && build.state === 'current') paragraph('SDRplay support is ready.');
+            else if (!needsSdrplay && !build.buildable) paragraph('This VectorWarp installation is missing its SDRplay adapter kit. Reinstall the current package.');
             if (relevantProgress && ['queued', 'running'].includes(relevantProgress.state)) refreshBuildStatus();
-          } catch (_) { paragraph('Cannot check the SDRplay adapter. No build started.'); }
+          } catch (_) { if (!needsSdrplay) paragraph('SDRplay support could not be checked. Scan again.'); }
         }
-        if (receiver.setupGuide?.length) button(`Setup guide: ${receiver.label}`, () => {
-          for (const step of receiver.setupGuide) {
-            paragraph(step.text);
-            if (step.command) {
-              const command = document.createElement('pre'); command.textContent = step.command;
-              output.appendChild(command);
-            }
-            if (step.link) {
-              const url = new URL(step.link);
-              if (url.protocol !== 'https:') continue;
-              const link = document.createElement('a'); link.href = url.href;
-              link.textContent = step.label; link.target = '_blank'; link.rel = 'noopener noreferrer';
-              output.appendChild(link);
-            }
-          }
-        });
-        if (receiver.settings?.length) button(`How settings apply: ${receiver.label}`, () => {
-          paragraph(`${receiver.label}: software checks do not test antenna wiring, calibration or RF performance.`);
-          for (const item of receiver.settings) paragraph(settingApplication(receiver, item));
-        });
         if (receiver.capabilities.liveCompiled ||
-            (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Choose ${receiver.label} for settings`, () => {
+            (receiver.type === 'RspDuo' && receiver.capabilities.localBuildable)) button(`Use ${receiver.label}`, () => {
           switchDevice(receiver.type);
-          paragraph(receiver.capabilities.liveCompiled ?
-            `${receiver.label} selected. Save to apply.` :
-            `${receiver.label} selected but not saved. Build its adapter before live capture.`);
+          paragraph(`${receiver.label} selected. Save to apply.`);
         });
         for (const action of result.management?.actions?.filter(item => item.receiverType === receiver.type) || []) {
           if (action.available && !action.ready) button(action.kind === 'start-service' ?
-            (receiver.type === 'RspDuo' ? 'Review Start SDRplay' : 'Review receiver service start') : 'Review missing dependency install',
-            () => reviewAction(receiver.type, action.id));
-          else if (!action.available) paragraph(action.message || 'The installed action needs local review.');
+            (receiver.type === 'RspDuo' ? 'Start SDRplay' : 'Start receiver') : 'Install receiver software',
+            (_element) => runAction(receiver.type, action.id, _element));
         }
       }
-      if (!result.managementAvailable) paragraph(result.management?.message || 'Local receiver management is unavailable.');
-      else if (!result.management.actions?.length) paragraph('Automatic software setup is unavailable in this build. Installed software and remote receivers can still be used.');
       if (result.processor?.state === 'error') paragraph(`Processor input error: ${result.processor.error}`);
-      else paragraph('Use Save & Restart to test reception. Software checks do not test antenna wiring or calibration.');
-      for (const error of result.errors || []) paragraph(error.message);
+      else paragraph('Select a ready receiver, then Save & Restart. VectorWarp verifies reception automatically.');
+      if (result.errors?.length) paragraph('One or more receiver checks failed. Scan again or send a diagnostic report.');
     } catch (error) { output.replaceChildren(); paragraph(error.message); }
     finally { check.disabled = false; }
   }
   check.addEventListener('click', discover);
   section.append(heading, description, check, output);
+  window.setTimeout(() => { if (section.isConnected) discover(); }, 0);
   return section;
 }
 
