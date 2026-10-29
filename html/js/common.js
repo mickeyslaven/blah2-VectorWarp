@@ -678,6 +678,9 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
 
 function startRadarPlot(url, render) {
   let renderedTimestamp;
+  const target = typeof document === 'undefined' ? null : document.getElementById('data');
+  target?.classList?.add('visualization-loading');
+  target?.setAttribute?.('aria-busy', 'true');
   // A full heatmap is materially heavier than a status card.  Tablets and
   // phones should display fresh radar data without continuously parsing and
   // repainting faster than their browser can keep up.
@@ -693,7 +696,11 @@ function startRadarPlot(url, render) {
     if (key === renderedTimestamp) return;
     const complete = await render(data);
     // Failed fetches/renders can be retried on the next tick.
-    if (complete !== false) renderedTimestamp = key;
+    if (complete !== false) {
+      renderedTimestamp = key;
+      target?.classList?.remove('visualization-loading');
+      target?.setAttribute?.('aria-busy', 'false');
+    }
   }, minimumIntervalMs);
 }
 

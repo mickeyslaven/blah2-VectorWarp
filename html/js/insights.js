@@ -1006,11 +1006,18 @@
     if (refreshing || now < nextRefreshAt || !renderers[view]) return;
     nextRefreshAt = now + minimumRefreshIntervalMs;
     refreshing = true;
+    if (root.dataset.ready !== 'true' && root.dataset.loading !== 'true') {
+      root.dataset.loading = 'true';
+      root.setAttribute?.('aria-busy', 'true');
+      root.innerHTML = '<div class="page-loading" role="status"><span class="loading-spinner" aria-hidden="true"></span><strong>Loading live data…</strong><small>The last valid view will remain visible during later refreshes.</small></div>';
+    }
     try {
       await renderers[view]();
       // Every renderer, including HTML-only views, has now produced a valid
       // snapshot.  A later transient failure must never erase it.
       root.dataset.ready = 'true';
+      root.dataset.loading = 'false';
+      root.setAttribute?.('aria-busy', 'false');
       consecutiveRefreshFailures = 0;
       window.blah2ViewLastError = null;
     } catch (error) {

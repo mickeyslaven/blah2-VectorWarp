@@ -58,6 +58,10 @@
     state.controller = controller; state.loading = true;
     const list = document.getElementById('recording-list');
     const summary = document.getElementById('recording-library-summary');
+    list?.classList.add('is-loading');
+    list?.setAttribute('aria-busy', 'true');
+    const pageStatus = document.getElementById('recording-page-status');
+    if (pageStatus) pageStatus.textContent = 'Loading recordings…';
     try {
       const response = await fetchStatusResource(liveApiUrl(`/api/recordings?${query()}`),
         {cache: 'no-store', signal: controller.signal}, 15000);
@@ -93,6 +97,8 @@
       if (requestId === state.requestId) {
         state.loading = false;
         state.controller = null;
+        list?.classList.remove('is-loading');
+        list?.setAttribute('aria-busy', 'false');
       }
     }
   }

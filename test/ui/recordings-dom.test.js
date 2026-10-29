@@ -64,12 +64,17 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
   const refresh = window.document.getElementById('recording-refresh');
   refresh.click(); refresh.click();
   assert.equal(deferredRequests.length, 2);
+  assert.equal(window.document.getElementById('recording-list').getAttribute('aria-busy'), 'true');
+  assert.match(window.document.getElementById('recording-page-status').textContent, /Loading recordings/);
   deferredRequests[0](response('STALE-A'));
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(window.document.getElementById('recording-list').getAttribute('aria-busy'), 'true',
+    'A stale response cannot clear the newest request loading state');
   refresh.click();
   assert.equal(deferredRequests.length, 3);
   deferredRequests[2](response('NEWEST'));
   await new Promise(resolve => setImmediate(resolve));
+  assert.equal(window.document.getElementById('recording-list').getAttribute('aria-busy'), 'false');
   deferredRequests[1](response('STALE-B'));
   await new Promise(resolve => setImmediate(resolve));
   assert.match(window.document.querySelector('.recording-card').textContent, /NEWEST/,

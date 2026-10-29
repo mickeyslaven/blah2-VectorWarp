@@ -252,3 +252,14 @@ a { color:inherit; } a:hover { color:var(--accent); }
   .location-map-sidebar .insight-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .aircraft-detail-card dl { grid-template-columns:1fr; }
 }
+.recording-list.is-loading::before { content:"Loading recordings…"; display:block; padding:22px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; }
+.recording-list.is-loading > .empty-state { display:none; }
+.recording-list.is-loading > .recording-card { opacity:.58; }
+.page-loading { display:grid; place-items:center; gap:8px; min-height:240px; padding:32px; color:var(--muted); text-align:center; }
+.page-loading strong { color:var(--ink); }
+.page-loading small { max-width:38ch; }
+.loading-spinner { width:26px; height:26px; border:3px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:loading-spin .8s linear infinite; }
+@keyframes loading-spin { to { transform:rotate(360deg); } }
+.visualization-loading { position:relative; }
+.visualization-loading::after { content:"Loading live data…"; position:absolute; z-index:30; inset:0; display:grid; place-items:center; background:rgba(16,12,11,.72); color:var(--muted); font-size:12px; pointer-events:none; }
+@media (prefers-reduced-motion:reduce) { .loading-spinner { animation:none; } }
