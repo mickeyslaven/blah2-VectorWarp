@@ -85,6 +85,12 @@ class HomebrewReleaseTest(unittest.TestCase):
         self.command("--output-tap-dir", str(output))
         self.assertTrue((output / "homebrew-release.json").is_file())
 
+    def test_accepts_public_third_party_notices(self):
+        self.write_archive("THIRD_PARTY_NOTICES.md", b"# Third-party notices\n")
+        output = self.root / "third-party-notices"
+        self.command("--output-tap-dir", str(output))
+        self.assertTrue((output / "homebrew-release.json").is_file())
+
     def test_public_core_header_is_allowed_without_admitting_private_or_binary_paths(self):
         header = ROOT / "core/GpuReferenceSpectrum.private.h"
         self.write_archive("core/GpuReferenceSpectrum.private.h", header.read_bytes())

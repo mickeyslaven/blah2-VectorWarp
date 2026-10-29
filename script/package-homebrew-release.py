@@ -22,7 +22,7 @@ ALLOWED_ROOT_DIRS = {
     "examples", "html", "lib", "oprs", "packaging", "schemas", "script", "src", "test", "vm-lab",
 }
 ALLOWED_SERVICE_DIRS = {"report-relay"}
-ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md"}
+ALLOWED_ROOT_FILES = {".gitattributes", ".gitignore", "CMakeLists.txt", "CMakePresets.json", "Doxyfile", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"}
 DENIED_ROOTS = {".git", "bin", "build", "data", "node_modules", "private", "sdk", "secrets"}
 DENIED_FILE_SUFFIXES = {".dmg", ".dylib", ".mchq", ".pkg", ".so"}
 VERSION = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.-]+)?$")
