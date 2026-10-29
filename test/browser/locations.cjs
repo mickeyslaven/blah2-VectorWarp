@@ -91,6 +91,12 @@ const server = http.createServer((request, response) => {
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
     await page.locator('#show-radar-tracks-on-map').check();
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
+    assert.equal(await page.locator('.location-radar-track-cage').count(), 1,
+      'each confirmed track gets one consistent 3D uncertainty cage');
+    assert.equal(await page.locator('.location-radar-track-slice').count(), 4,
+      'the cage exposes four altitude slices on desktop and mobile');
+    assert.ok(await page.locator('.location-radar-track-ribs').getAttribute('d'),
+      'the altitude slices are joined by sparse vertical ribs');
     const firstTrackPath = await page.locator('.location-radar-track-path').getAttribute('d');
     const overlayStyle = await page.evaluate(() => ({
       overflow: getComputedStyle(document.querySelector('.location-aircraft-trails')).overflow,
