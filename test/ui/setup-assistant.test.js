@@ -86,7 +86,13 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
   assert.equal(target.querySelectorAll('[data-wizard-step]').length, 6);
-  assert.equal(target.querySelector('[data-wizard-step="3"]').disabled, true,
+  assert.equal(target.querySelector('[data-wizard-step="0"]').disabled, false,
+    'A completed receiver step remains directly selectable');
+  assert.equal(target.querySelector('[data-wizard-step="1"]').disabled, false,
+    'A completed tuning step remains directly selectable');
+  assert.equal(target.querySelector('[data-wizard-step="3"]').disabled, false,
+    'A completed radar step remains directly selectable even when an earlier site step is active');
+  assert.equal(target.querySelector('[data-wizard-step="4"]').disabled, true,
     'Future steps cannot be skipped before current settings are saved');
   target.querySelector('[data-wizard-next]').click();
   await new Promise(resolve => setImmediate(resolve));
