@@ -31,33 +31,42 @@ test('GPU status recognizes both staged and fully resident Vulkan processing', (
   assert.equal(gpuActive({active: 'cpu', state: 'ready'}), false);
 });
 
-test('assistant renders a lightweight beginner workflow and applies draft-only helpers', () => {
+test('assistant opens a guided tabbed wizard and applies draft-only helpers', () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const config = {capture: {fc: 509_000_000, fs: 2_400_000,
     device: {type: 'Kraken', channel_count: 5, heimdall: {gain_control: 'fixed'}},
     aircraft_clips: {pre_seconds: 2, post_seconds: 2}},
-  process: {ambiguity: {delayMin: 0, delayMax: 100, dopplerMin: -100, dopplerMax: 100},
+  process: {data: {cpi: .5}, detection: {enable: true}, tracker: {enable: true},
+    ambiguity: {delayMin: 0, delayMax: 100, dopplerMin: -100, dopplerMax: 100},
     clutter: {followAmbiguity: false}}, location: {rx: {}, tx: {}}};
   const writes = [], modes = [], target = dom.window.document.getElementById('assistant');
-  render(target, {getConfig: () => config, mode: () => 'simple', setMode: value => modes.push(value),
-    openTab() {}, set: (path, value) => { writes.push([path.join('.'), value]); },
-    refresh() {}, refreshEditor() {}});
-  assert.equal(target.querySelectorAll('.setup-card').length, 9);
-  assert.match(target.textContent, /GPU processing is active|whether qualified GPU processing is active/i);
+  const api = {getConfig: () => config, mode: () => 'simple', setMode: value => modes.push(value),
+    set: (path, value) => { writes.push([path.join('.'), value]);
+      let cursor = config; for (const key of path.slice(0, -1)) cursor = cursor[key]; cursor[path.at(-1)] = value; },
+    receiverProfiles: () => [{type: 'Kraken', label: 'KrakenSDR'}], switchReceiver() {}, save() {},
+    refresh: () => render(target, api), refreshEditor: () => render(target, api)};
+  render(target, api);
+  assert.equal(target.querySelectorAll('.setup-card').length, 0,
+    'The assistant no longer duplicates settings as a card wall');
+  assert.match(target.textContent, /essentials ready/i);
   target.querySelector('[data-mode="advanced"]').click();
   assert.deepEqual(modes, ['advanced']);
-  target.querySelector('[data-auto-gain]').click();
-  assert.deepEqual(writes.shift(), ['capture.device.heimdall.gain_control', 'measured']);
-  target.querySelector('[data-window]').click();
+  target.querySelector('[data-start-setup]').click();
+  assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
+  assert.equal(target.querySelectorAll('[data-wizard-step]').length, 6);
+  target.querySelector('[data-wizard-step="3"]').click();
+  assert.match(target.querySelector('.setup-wizard-content').textContent, /radar search/i);
+  target.querySelector('[data-wizard-next]').click();
   assert.ok(writes.some(([path, value]) => path === 'process.ambiguity.delayMax' && value === 801));
-  assert.match(target.querySelector('[data-window-result]').textContent, /Save & Restart/);
+  assert.ok(target.querySelector('.setup-wizard'), 'The next guided step remains in the wizard');
 });
 
 test('advanced mode collapses the beginner workflow instead of duplicating two settings systems', () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const target = dom.window.document.getElementById('assistant');
   render(target, {getConfig: () => ({capture: {device: {type: 'Kraken'}}}),
-    mode: () => 'advanced', setMode() {}, openTab() {}, set() {}, refresh() {}, refreshEditor() {}});
+    mode: () => 'advanced', setMode() {}, openTab() {}, set() {}, refresh() {}, refreshEditor() {},
+    receiverProfiles: () => [], switchReceiver() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
   assert.match(target.textContent, /All receiver, DSP, service, and diagnostic settings are shown below/);
   assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');

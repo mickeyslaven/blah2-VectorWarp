@@ -35,97 +35,115 @@
       dopplerMax: Math.ceil((2 * speedMps * frequency / c) / 10) * 10,
       kmPerBin};
   }
-  const card = (id, title, state, body, action = '') => `<article class="setup-card" id="${id}"><header><strong>${escape(title)}</strong><span>${escape(state)}</span></header><p>${escape(body)}</p>${action}</article>`;
-  async function enrich(target) {
-    try {
-      const [statusResponse, calibrationResponse, surveyResponse] = await Promise.all([
-        fetchStatusResource(liveApiUrl('/api/system/status'), {cache: 'no-store'}),
-        fetchStatusResource(liveApiUrl('/api/array-calibration/status'), {cache: 'no-store'}),
-        fetchStatusResource(liveApiUrl('/api/illuminator-survey'), {cache: 'no-store'})
-      ]);
-      const status = statusResponse.ok ? await statusResponse.json() : null;
-      const acceleration = target.querySelector('#setup-performance');
-      if (acceleration && status) {
-        const active = gpuActive(status.acceleration);
-        acceleration.querySelector('header span').textContent = active ? 'GPU active' : 'CPU active';
-        acceleration.querySelector('p').textContent = active ?
-          `${status.acceleration.device || 'Qualified GPU'} is processing delay–Doppler.` :
-          `GPU is ${status.acceleration?.state === 'checking' ? 'being checked' : 'not active'}; VectorWarp is using CPU processing.`;
-      }
-      const health = target.querySelector('#setup-health');
-      if (health && status) {
-        const errors = Array.isArray(status.errors) ? status.errors.filter(Boolean) : [];
-        health.querySelector('header span').textContent = status.radar === 'receiving' ? 'Receiving' : 'Needs review';
-        health.querySelector('p').textContent = errors.length ? errors.join(' ') :
-          status.radar === 'receiving' ? 'Receiver and processing frames are current.' :
-            (status.message || 'Live radar data is not current.');
-      }
-      const calibration = calibrationResponse.ok ? await calibrationResponse.json() : null;
-      const calibrationCard = target.querySelector('#setup-calibration');
-      if (calibrationCard && calibration) {
-        const corpus = calibration.corpus || {};
-        calibrationCard.querySelector('header span').textContent = corpus.enabled ?
-          `${corpus.accepted_samples_this_process || 0} accepted now` : 'Collection off';
-        calibrationCard.querySelector('p').textContent = corpus.error ||
-          (corpus.enabled ? 'ADS-B-labelled array responses are being collected. Bearing and detection models qualify separately.' :
-            'Array calibration collection is not enabled for this receiver configuration.');
-      }
-      const survey = surveyResponse.ok ? await surveyResponse.json() : null;
-      const surveyCard = target.querySelector('#setup-illuminator');
-      if (surveyCard && survey) {
-        const plans = Object.keys(survey.band_plans || {}).length;
-        surveyCard.querySelector('header span').textContent = survey.capabilities?.rf_prescreen ? 'Receiver supported' : 'Limited';
-        surveyCard.querySelector('p').textContent = survey.capabilities?.rf_prescreen ?
-          `${plans} broadcast band plans are available. Candidate measurements can be ranked by headroom, waveform quality, cancellation and held-out radar performance.` :
-          (survey.capabilities?.limitation || 'This receiver cannot run the coherent RF prescreen.');
-      }
-    } catch (_) { /* Normal settings remain available if an assistant status fails. */ }
+  let wizardOpen = false;
+  let wizardStep = 0;
+  const wizardVisited = new Set();
+
+  function wizardChecks(config) {
+    const clips = config.capture?.aircraft_clips;
+    return [
+      {title: 'Receiver', complete: Boolean(config.capture?.device?.type &&
+        config.capture.device.type !== 'Unconfigured')},
+      {title: 'Tuning', complete: Number(config.capture?.fc) > 0 && Number(config.capture?.fs) > 0},
+      {title: 'Sites', complete: configuredSite(config.location?.rx) && configuredSite(config.location?.tx)},
+      {title: 'Radar', complete: Number(config.process?.data?.cpi) > 0 &&
+        typeof config.process?.detection?.enable === 'boolean' &&
+        typeof config.process?.tracker?.enable === 'boolean'},
+      {title: 'Data', complete: wizardVisited.has(4) ||
+        (typeof config.truth?.adsb?.enabled === 'boolean' && (!clips || typeof clips.enabled === 'boolean'))},
+      {title: 'Review', complete: false}
+    ];
+  }
+
+  const valueAttr = value => escape(value === null || value === undefined ? '' : value);
+  const checked = value => value === true ? ' checked' : '';
+
+  function wizardPanel(config, index, profiles) {
+    const estimate = recordingEstimate(config);
+    if (index === 0) return `<h2>Choose the receiver</h2><p>Select the SDR connected to this computer. VectorWarp loads the correct receiver-specific defaults and checks required software before saving.</p><label class="setup-wizard-field">Receiver<select data-wizard-receiver>${profiles.map(profile => `<option value="${escape(profile.type)}"${profile.type === config.capture?.device?.type ? ' selected' : ''}>${escape(profile.label || profile.type)}</option>`).join('')}</select></label><p class="setup-wizard-hint">Current selection: <strong>${escape(config.capture?.device?.type || 'Not configured')}</strong></p>`;
+    if (index === 1) return `<h2>Set frequency and sample rate</h2><p>Use the center frequency of the illuminator and a sample rate supported by the selected receiver.</p><div class="setup-wizard-fields"><label class="setup-wizard-field">Center frequency (MHz)<input data-wizard-fc type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fc || 0) / 1e6)}"></label><label class="setup-wizard-field">Sample rate (MS/s)<input data-wizard-fs type="number" min="0.001" step="0.001" value="${valueAttr(Number(config.capture?.fs || 0) / 1e6)}"></label></div>`;
+    if (index === 2) {
+      const site = (role, title) => { const item = config.location?.[role] || {}; return `<fieldset class="setup-wizard-site"><legend>${title}</legend><label>Name<input data-site="${role}.name" value="${valueAttr(item.name)}"></label><label>Latitude<input data-site="${role}.latitude" type="number" min="-90" max="90" step="any" value="${valueAttr(item.latitude)}"></label><label>Longitude<input data-site="${role}.longitude" type="number" min="-180" max="180" step="any" value="${valueAttr(item.longitude)}"></label><label>Altitude (m)<input data-site="${role}.altitude" type="number" step="any" value="${valueAttr(item.altitude)}"></label></fieldset>`; };
+      return `<h2>Locate the receiver and illuminator</h2><p>These coordinates make range, delay, ADS-B comparisons, and map geometry meaningful.</p><div class="setup-wizard-sites">${site('rx','Receiver site')}${site('tx','Illuminator site')}</div>`;
+    }
+    if (index === 3) return `<h2>Choose the radar search</h2><p>Enter the longest receiver-to-aircraft range and fastest target you want to cover. VectorWarp calculates conservative delay and Doppler limits.</p><div class="setup-wizard-fields"><label class="setup-wizard-field">CPI (seconds)<input data-wizard-cpi type="number" min="0.01" step="0.01" value="${valueAttr(config.process?.data?.cpi)}"></label><label class="setup-wizard-field">Maximum range (km)<input data-wizard-range type="number" min="1" max="1000" value="50"></label><label class="setup-wizard-field">Maximum speed (m/s)<input data-wizard-speed type="number" min="10" max="3000" value="300"></label></div><div class="setup-wizard-options"><label><input data-wizard-detection type="checkbox"${checked(config.process?.detection?.enable)}> Detect radar returns</label><label><input data-wizard-tracker type="checkbox"${checked(config.process?.tracker?.enable)}> Build persistent tracks</label></div>`;
+    if (index === 4) return `<h2>Choose data collection</h2><p>These features are optional. ADS-B enables aircraft comparison and automatic clips can preserve short IQ recordings around eligible passes.</p><div class="setup-wizard-options"><label><input data-wizard-adsb type="checkbox"${checked(config.truth?.adsb?.enabled)}> Enable ADS-B comparison</label>${config.capture?.aircraft_clips ? `<label><input data-wizard-clips type="checkbox"${checked(config.capture.aircraft_clips.enabled)}> Automatically record eligible aircraft clips</label>` : ''}</div><div class="setup-wizard-summary"><strong>Storage estimate</strong><span>${estimate.clipLabel}</span><span>Manual IQ: ${formatBytes(estimate.manualHour)} per hour</span><span>Aircraft clip: about ${formatBytes(estimate.clip)} each</span></div>`;
+    const checks = wizardChecks(config).slice(0, 5);
+    return `<h2>Review setup</h2><p>Nothing changes on the receiver until you choose Finish and Save. VectorWarp will validate the complete configuration before restarting.</p><div class="setup-wizard-review">${checks.map(item => `<div class="${item.complete ? 'complete' : 'incomplete'}"><span>${item.complete ? '✓' : '!'}</span><strong>${escape(item.title)}</strong><small>${item.complete ? 'Ready' : 'Needs attention'}</small></div>`).join('')}</div><p class="setup-wizard-hint">Receiver: <strong>${escape(config.capture?.device?.type || 'Unconfigured')}</strong> · ${(Number(config.capture?.fc || 0) / 1e6).toFixed(3)} MHz · ${(Number(config.capture?.fs || 0) / 1e6).toFixed(3)} MS/s</p>`;
+  }
+
+  function mountWizard(target, api) {
+    if (!wizardOpen) return;
+    const config = api.getConfig();
+    const checks = wizardChecks(config);
+    wizardStep = Math.max(0, Math.min(checks.length - 1, wizardStep));
+    const dialog = target.ownerDocument.createElement('dialog');
+    dialog.className = 'setup-wizard';
+    dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong>VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, api.receiverProfiles())}<footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Save' : 'Save step & Continue'}</button></footer></section></div>`;
+    target.appendChild(dialog);
+    const close = () => { wizardOpen = false; if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
+    dialog.querySelector('[data-wizard-close]').addEventListener('click', close);
+    dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    dialog.querySelectorAll('[data-wizard-step]').forEach(button => button.addEventListener('click', () => {
+      wizardStep = Number(button.dataset.wizardStep); render(target, api);
+    }));
+    dialog.querySelector('[data-wizard-back]')?.addEventListener('click', () => {
+      wizardStep -= 1; render(target, api);
+    });
+    dialog.querySelector('[data-wizard-next]').addEventListener('click', () => {
+      if (wizardStep === 0) {
+        const type = dialog.querySelector('[data-wizard-receiver]').value;
+        wizardVisited.add(0); wizardStep += 1;
+        if (type !== config.capture?.device?.type) return api.switchReceiver(type);
+      } else if (wizardStep === 1) {
+        api.set(['capture','fc'], Number(dialog.querySelector('[data-wizard-fc]').value) * 1e6);
+        api.set(['capture','fs'], Number(dialog.querySelector('[data-wizard-fs]').value) * 1e6);
+        wizardVisited.add(1); wizardStep += 1;
+      } else if (wizardStep === 2) {
+        dialog.querySelectorAll('[data-site]').forEach(input => {
+          const [role, key] = input.dataset.site.split('.');
+          api.set(['location', role, key], key === 'name' ? input.value.trim() : Number(input.value));
+        });
+        wizardVisited.add(2); wizardStep += 1;
+      } else if (wizardStep === 3) {
+        api.set(['process','data','cpi'], Number(dialog.querySelector('[data-wizard-cpi]').value));
+        api.set(['process','detection','enable'], dialog.querySelector('[data-wizard-detection]').checked);
+        api.set(['process','tracker','enable'], dialog.querySelector('[data-wizard-tracker]').checked);
+        const result = searchWindow(config, Number(dialog.querySelector('[data-wizard-range]').value), Number(dialog.querySelector('[data-wizard-speed]').value));
+        if (result) { api.set(['process','ambiguity','delayMax'], result.delayMax); api.set(['process','ambiguity','dopplerMin'], -result.dopplerMax); api.set(['process','ambiguity','dopplerMax'], result.dopplerMax); }
+        wizardVisited.add(3); wizardStep += 1;
+      } else if (wizardStep === 4) {
+        api.set(['truth','adsb','enabled'], dialog.querySelector('[data-wizard-adsb]').checked);
+        if (config.capture?.aircraft_clips) api.set(['capture','aircraft_clips','enabled'], dialog.querySelector('[data-wizard-clips]').checked);
+        wizardVisited.add(4); wizardStep += 1;
+      } else { close(); return api.save(); }
+      api.refresh();
+    });
+    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
   }
   function render(target, api) {
     if (!target) return;
-    const config = api.getConfig(), estimate = recordingEstimate(config);
-    const rx = configuredSite(config.location?.rx), tx = configuredSite(config.location?.tx);
-    const receiver = config.capture?.device?.type || 'Unconfigured';
-    const measured = config.capture?.device?.heimdall?.gain_control === 'measured';
+    const config = api.getConfig();
     if (api.mode() === 'advanced') {
+      wizardOpen = false;
       target.innerHTML = '<section class="setup-assistant setup-assistant-compact"><div class="setup-assistant-heading"><div><h2>Advanced settings</h2><p>All receiver, DSP, service, and diagnostic settings are shown below.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple">Simple</button><button type="button" data-mode="advanced" class="active">Advanced</button></div></div></section>';
       target.querySelectorAll('[data-mode]').forEach(button =>
         button.addEventListener('click', () => api.setMode(button.dataset.mode)));
       return;
     }
-    target.innerHTML = `<section class="setup-assistant"><div class="setup-assistant-heading"><div><h2>Setup assistant</h2><p>Safe essentials first. Advanced mode reveals every DSP and service setting without changing saved values.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" class="${api.mode() === 'simple' ? 'active' : ''}">Simple</button><button type="button" data-mode="advanced" class="${api.mode() === 'advanced' ? 'active' : ''}">Advanced</button></div></div><div class="setup-grid">
-      ${card('setup-receiver', 'Receiver', receiver === 'Unconfigured' ? 'Not selected' : receiver, receiver === 'Unconfigured' ? 'Choose and check a connected receiver before starting.' : 'Receiver dependencies and readback are checked before settings are applied.', '<button type="button" data-tab="capture">Receiver settings</button>')}
-      ${card('setup-sites', 'Receiver and transmitter sites', rx && tx ? 'Configured' : 'Incomplete', rx && tx ? 'Both physical sites have coordinates and altitude.' : 'Set both sites so delay, range, geometry and ADS-B comparisons have physical meaning.', '<button type="button" data-tab="location">Site settings</button>')}
-      ${card('setup-gain', 'Safe gain', receiver === 'Kraken' ? (measured ? 'Automatic check' : 'Fixed') : 'Receiver controlled', receiver === 'Kraken' ? (measured ? 'Apply measures every active channel, rejects unsafe headroom and records the accepted gain.' : 'Fixed gain is useful for controlled comparisons; automatic headroom checking is available.') : 'Gain controls and overload feedback follow the selected receiver.', receiver === 'Kraken' && !measured ? '<button type="button" data-auto-gain>Use automatic safe gain</button>' : '<button type="button" data-tab="capture">Review gain</button>')}
-      ${card('setup-illuminator', 'Illuminator survey', 'Reading capabilities', 'Checking the selected receiver and broadcast band plans.', '<button type="button" data-tab="capture">Frequency settings</button>')}
-      ${card('setup-window', 'Search window', 'Automatic calculator', 'Choose the farthest receiver range and fastest target; VectorWarp calculates conservative delay and Doppler limits.', '<div class="setup-window-inputs"><label>Range (km)<input type="number" min="1" max="1000" value="50" data-range></label><label>Speed (m/s)<input type="number" min="10" max="3000" value="300" data-speed></label><button type="button" data-window>Calculate & apply</button></div><small data-window-result></small>')}
-      ${card('setup-performance', 'Processing hardware', 'Reading status', 'Checking whether qualified GPU processing is active.', '<button type="button" data-tab="process">Performance settings</button>')}
-      ${card('setup-recording', 'Recording storage', estimate.clipLabel, `Manual recording uses ${formatBytes(estimate.manualHour)} per hour. One ${estimate.clipSeconds.toFixed(1)} second aircraft clip is approximately ${formatBytes(estimate.clip)}.`, '<button type="button" data-tab="save">Recording settings</button>')}
-      ${card('setup-calibration', 'Array calibration', 'Reading status', 'Checking installed-array evidence collection and qualification.', '<a class="button-link" href="/display/calibration">Open calibration assistant</a>')}
-      ${card('setup-health', 'System health', 'Reading status', 'Checking current receiver and processing state.', '<a class="button-link" href="/display/health">Open system health</a>')}
-    </div></section>`;
-    target.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => api.setMode(button.dataset.mode)));
-    target.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => api.openTab(button.dataset.tab)));
-    target.querySelector('[data-auto-gain]')?.addEventListener('click', () => {
-      api.set(['capture', 'device', 'heimdall', 'gain_control'], 'measured'); api.refresh();
+    const checks = wizardChecks(config).slice(0, 5);
+    const ready = checks.filter(item => item.complete).length;
+    target.innerHTML = `<section class="setup-assistant setup-assistant-launcher"><div class="setup-assistant-heading"><div><h2>Setup assistant</h2><p>A guided setup for receiver, tuning, sites, radar search, and data collection.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" class="active">Simple</button><button type="button" data-mode="advanced">Advanced</button></div></div><div class="setup-launcher-body"><div class="setup-launcher-progress"><strong>${ready} of ${checks.length} essentials ready</strong><div>${checks.map(item => `<span class="${item.complete ? 'complete' : ''}">${item.complete ? '✓' : '○'} ${escape(item.title)}</span>`).join('')}</div></div><button type="button" class="button-primary" data-start-setup>${ready === checks.length ? 'Review setup' : 'Start setup'}</button></div></section>`;
+    target.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
+      wizardOpen = false; api.setMode(button.dataset.mode);
+    }));
+    target.querySelector('[data-start-setup]').addEventListener('click', () => {
+      wizardOpen = true;
+      wizardStep = checks.findIndex(item => !item.complete);
+      if (wizardStep < 0) wizardStep = 0;
+      render(target, api);
     });
-    target.querySelector('[data-window]')?.addEventListener('click', () => {
-      const range = Number(target.querySelector('[data-range]').value);
-      const speed = Number(target.querySelector('[data-speed]').value);
-      const result = searchWindow(config, range, speed);
-      const output = target.querySelector('[data-window-result]');
-      if (!result) { output.textContent = 'Enter a valid range and speed after selecting a receiver frequency and sample rate.'; return; }
-      api.set(['process', 'ambiguity', 'delayMax'], result.delayMax);
-      api.set(['process', 'ambiguity', 'dopplerMin'], -result.dopplerMax);
-      api.set(['process', 'ambiguity', 'dopplerMax'], result.dopplerMax);
-      if (config.process?.clutter?.followAmbiguity) {
-        api.set(['process', 'clutter', 'delayMin'], config.process.ambiguity.delayMin);
-        api.set(['process', 'clutter', 'delayMax'], result.delayMax);
-      }
-      output.textContent = `Applied ${result.delayMax} delay bins (≈${(result.delayMax * result.kmPerBin).toFixed(1)} km excess path) and ±${result.dopplerMax} Hz. Save & Restart when ready.`;
-      api.refreshEditor();
-    });
-    void enrich(target);
+    mountWizard(target, api);
   }
   root.VectorWarpSetupAssistant = {render, recordingEstimate, searchWindow, gpuActive};
   if (typeof module !== 'undefined' && module.exports)

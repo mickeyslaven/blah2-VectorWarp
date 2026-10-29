@@ -272,7 +272,10 @@ function refreshSetupAssistant() {
       renderEditor();
     },
     openTab(tab) { activateSettingsTab(tab); document.getElementById('config-fields')?.scrollIntoView({behavior: 'smooth'}); },
-    set: setValue, refresh: renderEditor, refreshEditor: renderEditor
+    set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
+    receiverProfiles: () => capabilities.deviceProfiles || [],
+    switchReceiver: switchDevice,
+    save: () => document.getElementById('config-save')?.click()
   });
 }
 
