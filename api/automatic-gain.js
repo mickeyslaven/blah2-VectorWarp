@@ -8,6 +8,20 @@ const enabled = config => liveKraken(config) &&
   automaticPolicies.has(config.capture.device.heimdall?.gain_control);
 const fixedGain = gain => typeof gain === 'number' && Number.isFinite(gain) &&
   gain >= 0 && gain <= 50 && Math.round(gain * 10) === gain * 10;
+// Exact ordered table returned by the bundled Kraken R820T fork. Requests
+// between entries round upward in the receiver and can make an otherwise
+// atomic five-channel update fail partway through, so automatic selection
+// walks real hardware steps. The fallback supports other Suite readbacks.
+const KRAKEN_GAIN_STEPS_DB = Object.freeze([0, .9, 1.4, 2.7, 3.7, 7.7, 8.7,
+  12.5, 14.4, 15.7, 16.6, 19.7, 20.7, 22.9, 25.4, 28, 29.7, 32.8, 33.8,
+  36.4, 37.2, 38.6, 40.2, 42.1, 43.4, 43.9, 44.5, 48, 49.6]);
+function adjacentGain(gain, direction) {
+  const index = KRAKEN_GAIN_STEPS_DB.indexOf(gain);
+  if (index >= 0) return KRAKEN_GAIN_STEPS_DB[Math.max(0,
+    Math.min(KRAKEN_GAIN_STEPS_DB.length - 1, index + direction))];
+  return Math.max(LIMITS.gainMinDb, Math.min(LIMITS.gainMaxDb,
+    Math.round((gain + direction * LIMITS.commonRequestedGainStepDb) * 10) / 10));
+}
 const MAX_AUTOMATIC_GAIN_MS = 1235000;
 const LIMITS = Object.freeze({maxTrialSettings: 16, maxProbeCaptures: 32,
   gainMinDb: 0, gainMaxDb: 50, commonRequestedGainStepDb: 1,
@@ -283,10 +297,9 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
         restoreConfig.capture.device.heimdall.channel_gains = actualChannelGains;
         automatic.claims.measured =
           'Headroom of delivered calibrated wire samples at independently selected Suite channel gains.';
-        automatic.gainSteps = {source: 'Suite per-channel gain requests',
-          perChannelRequestedGainStepDb: LIMITS.commonRequestedGainStepDb,
-          hardwareGainStepsVerified: false,
-          limitation: 'Suite has not advertised a verified tuner gain table; a 1 dB request is not a guaranteed physical gain change.'};
+        automatic.gainSteps = {source: 'bundled Kraken R820T gain table',
+          hardwareGainStepsVerified: true, tableDb: [...KRAKEN_GAIN_STEPS_DB],
+          limitation: 'Every selection still requires exact receiver readback.'};
         let trialGains = Array.isArray(endpoint.channel_gains) &&
           endpoint.channel_gains.length === count && endpoint.channel_gains.every(fixedGain) ?
           [...endpoint.channel_gains] : [...actualChannelGains];
@@ -329,14 +342,12 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
                     `Channel ${index} exceeds headroom limits at zero gain.`);
                 seekingDown[index] = true;
                 return lastSafe[index] !== null && lastSafe[index] < gain ?
-                  lastSafe[index] : Math.max(LIMITS.gainMinDb,
-                    Math.round((gain - LIMITS.commonRequestedGainStepDb) * 10) / 10);
+                  lastSafe[index] : adjacentGain(gain, -1);
               }
               if (increase && !seekingDown[index] && clearHeadroom(measured, index) &&
                   gain < LIMITS.gainMaxDb) {
                 lastSafe[index] = gain;
-                return Math.min(LIMITS.gainMaxDb,
-                  Math.round((gain + LIMITS.commonRequestedGainStepDb) * 10) / 10);
+                return adjacentGain(gain, 1);
               }
               return gain;
             });
@@ -376,7 +387,7 @@ function createAutomaticGain({synchronizer, measureGain, waitForGainSettled,
       automatic.gainSteps = {source: 'Suite common gain requests',
         commonRequestedGainStepDb: LIMITS.commonRequestedGainStepDb,
         hardwareGainStepsVerified: false,
-        limitation: 'Suite has not advertised a verified tuner gain table; a 1 dB request is not a guaranteed physical gain change.'};
+        limitation: 'Suite has not advertised a verified common-gain table; a 1 dB request is not a guaranteed physical gain change.'};
       let trialGain = fixedGain(endpoint.gain) ? endpoint.gain : actual.gain;
       let lastSafeGain = null, seekingDown = false;
       for (let trial = 1; trial <= LIMITS.maxTrialSettings; trial++) {

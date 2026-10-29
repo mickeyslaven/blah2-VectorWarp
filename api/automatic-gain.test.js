@@ -145,8 +145,10 @@ async function rejected(run, code) {
   // Independent mode may raise a weak channel while lowering a clipped one,
   // then persists the verified tuner vector rather than collapsing it to the
   // worst channel's common gain.
-  const perChannelPrevious = config(20);
-  const perChannel = fixture({previous: perChannelPrevious, probes: [next => {
+  const perChannelPrevious = config(19.7);
+  perChannelPrevious.capture.device.heimdall.channel_gains =
+    [19.7, 19.7, 19.7, 19.7, 19.7];
+  const perChannel = fixture({previous: perChannelPrevious, actualGain: 19.7, probes: [next => {
     const probe = measurement(next, .65);
     Object.assign(probe.channels[0], {peakFraction: .7, p999Fraction: .2});
     Object.assign(probe.channels[1], {peakFraction: .97, p999Fraction: .8});
@@ -155,13 +157,13 @@ async function rejected(run, code) {
   perChannel.candidate.capture.device.heimdall.gain_control = 'measured_per_channel';
   result = await perChannel.controller.apply(perChannel.previous, perChannel.candidate);
   assert.deepEqual(result.config.capture.device.heimdall.channel_gains,
-    [21, 19, 20, 20, 20]);
+    [20.7, 16.6, 19.7, 19.7, 19.7]);
   assert.deepEqual(result.receiverSync.automaticGain.selectedChannelGainsDb,
-    [21, 19, 20, 20, 20]);
+    [20.7, 16.6, 19.7, 19.7, 19.7]);
   assert.equal(result.receiverSync.automaticGain.finalPassingProbes, 2);
   assert.deepEqual(perChannel.calls.filter(call => call.stage === 'synchronize')
     .map(call => call.config.capture.device.heimdall.channel_gains),
-  [[20, 20, 20, 20, 20], [21, 19, 20, 20, 20]]);
+  [[19.7, 19.7, 19.7, 19.7, 19.7], [20.7, 16.6, 19.7, 19.7, 19.7]]);
 
   run = fixture({rawProbes: [.6, .6]});
   result = await run.controller.apply(run.previous, run.candidate);
