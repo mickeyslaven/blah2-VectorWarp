@@ -49,6 +49,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
     if (kind === 'map') {
       const mobile = context.delayDopplerPresentation(390);
       const desktop = context.delayDopplerPresentation(1200);
+      const landscapePhone = context.delayDopplerPresentation(844, 390);
       assert.ok(mobile.margin.l + mobile.margin.r < desktop.margin.l + desktop.margin.r,
         'Phone layout must reserve materially more width for the delay-Doppler heatmap');
       assert.equal(mobile.xTitle, 'Range (km)');
@@ -58,6 +59,8 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(mobile.showScale, false,
         'Phone layout must reserve the narrow viewport for radar data, not a color scale');
       assert.equal(desktop.showScale, true);
+      assert.equal(landscapePhone.showScale, false);
+      assert.equal(landscapePhone.xTitle, 'Range (km)');
       assert.equal(context.mapPresentationUrl('/api/map', 768),
         '/api/map?max_rows=128&max_cols=128',
         'Tablets request the bounded peak-preserving map representation');

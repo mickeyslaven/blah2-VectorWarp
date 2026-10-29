@@ -2,8 +2,12 @@ var gridSignature = '';
 var range_x = [];
 var range_y = [];
 
-function delayDopplerPresentation(width) {
-  const compact = Number.isFinite(width) && width <= 600;
+function delayDopplerPresentation(width, height) {
+  // A landscape phone has a wide CSS viewport, but very little vertical room.
+  // Treat either constrained dimension as compact so fullscreen does not waste
+  // the display on desktop margins, long axis labels, or a color scale.
+  const compact = (Number.isFinite(width) && width <= 600) ||
+    (Number.isFinite(height) && height <= 600);
   return compact ? {
     margin: {l: 38, r: 6, b: 38, t: 8, pad: 0},
     fontSize: 10,
@@ -36,7 +40,8 @@ function delayDopplerPresentation(width) {
 }
 
 function currentDelayDopplerPresentation() {
-  return delayDopplerPresentation(typeof window === 'undefined' ? 1024 : window.innerWidth);
+  return delayDopplerPresentation(typeof window === 'undefined' ? 1024 : window.innerWidth,
+    typeof window === 'undefined' ? 768 : window.innerHeight);
 }
 
 var plotPresentation = currentDelayDopplerPresentation();

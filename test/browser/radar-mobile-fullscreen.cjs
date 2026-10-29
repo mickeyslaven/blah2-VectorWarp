@@ -64,6 +64,20 @@ const server = http.createServer((request, response) => {
     assert.ok(bounds && bounds.width <= 40 && bounds.height <= 40,
       `fallback fullscreen control must stay compact, got ${JSON.stringify(bounds)}`);
     assert.equal(await page.locator('.radar-panel.fullscreen-fallback').count(), 1);
+    assert.equal(await page.locator('.radar-panel.fullscreen-fallback .recording-control').isVisible(), false,
+      'phone fullscreen must hide recording chrome');
+    assert.equal(await page.locator('.radar-panel.fullscreen-fallback .radar-overlay-key').isVisible(), false,
+      'phone fullscreen must hide the marker legend');
+    assert.equal(await page.locator('.radar-panel.fullscreen-fallback .radar-overlay-control').isVisible(), false,
+      'phone fullscreen must hide the marker selector');
+    const fullscreenPlot = await page.locator('.radar-panel .visualization').boundingBox();
+    assert.ok(fullscreenPlot && fullscreenPlot.height >= 800,
+      `phone fullscreen plot must consume the viewport, got ${JSON.stringify(fullscreenPlot)}`);
+    await page.setViewportSize({width: 844, height: 390});
+    await page.waitForTimeout(150);
+    const landscapePlot = await page.locator('.radar-panel .visualization').boundingBox();
+    assert.ok(landscapePlot && landscapePlot.height >= 385 && landscapePlot.width >= 839,
+      `landscape phone fullscreen plot must fill the viewport, got ${JSON.stringify(landscapePlot)}`);
     await page.setViewportSize({width: 1194, height: 834});
     await page.getByRole('button', {name: 'Exit fullscreen'}).click();
     await page.waitForTimeout(50);

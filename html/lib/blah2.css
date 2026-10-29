@@ -396,6 +396,45 @@ a { color:inherit; } a:hover { color:var(--accent); }
   .radar-toolbar > .fullscreen-button { flex-basis:34px; height:34px; border-radius:9px; font-size:21px; }
   .recording-pause[hidden] { display:none; }
 }
+/* Fullscreen on phones is a plot mode, not a larger copy of the whole card.
+ * Remove operational chrome from layout and leave only an exit affordance in
+ * the safe area.  This also covers landscape phones whose width resembles a
+ * tablet but whose short dimension is unmistakably handset-sized. */
+@media (max-width:760px), (max-height:600px) {
+  .radar-panel:fullscreen .recording-control,
+  .radar-panel:-webkit-full-screen .recording-control,
+  .radar-panel.fullscreen-fallback .recording-control { display:none; }
+  .radar-panel:fullscreen .radar-toolbar,
+  .radar-panel:-webkit-full-screen .radar-toolbar,
+  .radar-panel.fullscreen-fallback .radar-toolbar {
+    position:absolute;
+    z-index:40;
+    top:max(6px,env(safe-area-inset-top));
+    right:max(6px,env(safe-area-inset-right));
+    width:40px;
+    min-height:0;
+    padding:0;
+    border:0;
+    background:transparent;
+    pointer-events:none;
+  }
+  .radar-panel:fullscreen .radar-overlay-key,
+  .radar-panel:-webkit-full-screen .radar-overlay-key,
+  .radar-panel.fullscreen-fallback .radar-overlay-key,
+  .radar-panel:fullscreen .radar-overlay-control,
+  .radar-panel:-webkit-full-screen .radar-overlay-control,
+  .radar-panel.fullscreen-fallback .radar-overlay-control { display:none; }
+  .radar-panel:fullscreen .radar-toolbar > .fullscreen-button,
+  .radar-panel:-webkit-full-screen .radar-toolbar > .fullscreen-button,
+  .radar-panel.fullscreen-fallback .radar-toolbar > .fullscreen-button {
+    width:40px;
+    height:40px;
+    flex-basis:40px;
+    pointer-events:auto;
+    background:rgb(36 29 26 / .94);
+    box-shadow:0 4px 16px rgb(0 0 0 / .35);
+  }
+}
 .page-loading { display:grid; place-items:center; gap:8px; min-height:240px; padding:32px; color:var(--muted); text-align:center; }
 .page-loading strong { color:var(--ink); }
 .page-loading small { max-width:38ch; }
