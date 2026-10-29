@@ -48,6 +48,7 @@ const {bandPlans: illuminatorBandPlans, receiverCapabilities: illuminatorReceive
 const {catalogSources: illuminatorCatalogSources} = require('./illuminator-catalog.js');
 const {RecordingLibrary} = require('./recording-library.js');
 const {checkNetworkBindings, bindMessage} = require('./network-check.js');
+const {installMapImageryRoutes} = require('./map-imagery.js');
 const {status: validateProcessorStatus, fresh: processorStatusFresh} = require('./processor-status.js');
 const {createGpuSetupStatus} = require('./gpu-setup.js');
 const jsonFrames = require('./json-frames.js');
@@ -457,6 +458,7 @@ app.use(function(req, res, next) {
   res.header('Pragma', 'no-cache');
   next();
 });
+installMapImageryRoutes(app);
 app.options('*', (req, res) => {
   if (['/api/config', '/api/config/validate', '/capture/toggle'].includes(req.path) && !configWriteOriginAllowed(req))
     return res.status(403).json({ok: false,

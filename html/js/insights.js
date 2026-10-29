@@ -235,7 +235,7 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-coverage-filter"><span>Aircraft and radar</span><select id="radar-map-display-mode"><option value="all">All tracks (radar ellipses)</option><option value="confirmed">Radar-confirmed ADS-B (no ellipses)</option><option value="adsb">ADS-B only</option></select><small>Radar-confirmed shows only ADS-B/MLAT aircraft matched to a confirmed radar track.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-coverage-filter"><span>Background</span><select id="map-background-mode"><option value="aerial">Aerial imagery + roads</option><option value="street">Street map + terrain</option></select><small>Local aerial imagery is used where an offline pack is installed.</small></label><label class="map-coverage-filter"><span>Aircraft and radar</span><select id="radar-map-display-mode"><option value="all">All tracks (radar ellipses)</option><option value="confirmed">Radar-confirmed ADS-B (no ellipses)</option><option value="adsb">ADS-B only</option></select><small>Radar-confirmed shows only ADS-B/MLAT aircraft matched to a confirmed radar track.</small></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
     const coverageLabel = root.querySelector?.('#show-radar-coverage-on-map')?.closest?.('label');
     if (coverageLabel) {
@@ -245,6 +245,7 @@
     const sidebar = root.querySelector?.('.location-map-sidebar');
     if (sidebar) sidebar.open = !window.matchMedia?.('(max-width:760px)')?.matches;
     const trackDisplayMode = document.getElementById('radar-map-display-mode');
+    const backgroundMode = document.getElementById('map-background-mode');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
     const coverageAltitude = document.getElementById('radar-coverage-altitude');
     const autoSelect = document.getElementById('auto-select-radar-aircraft');
@@ -262,6 +263,13 @@
       }
     };
     syncTrackControls();
+    if (backgroundMode) backgroundMode.value = mapBackgroundMode;
+    backgroundMode?.addEventListener?.('change', () => {
+      mapBackgroundMode = backgroundMode.value === 'street' ? 'street' : 'aerial';
+      try { localStorage.setItem('vectorwarp-map-background-mode', mapBackgroundMode); }
+      catch (_) { /* Persistence is optional. */ }
+      syncMapBackground(document.getElementById('data')?._vectorwarpMap);
+    });
     trackDisplayMode?.addEventListener?.('change', () => {
       radarMapDisplayMode = ['all', 'confirmed', 'adsb'].includes(trackDisplayMode.value) ?
         trackDisplayMode.value : 'confirmed';
@@ -483,6 +491,7 @@
   let showRadarCoverageOnMap = true;
   let radarCoverageAltitudeBand = 'all';
   let radarCoverageCache = null;
+  let mapBackgroundMode = 'aerial';
   try { autoSelectRadarAircraft = localStorage.getItem('vectorwarp-auto-select-radar-aircraft') === 'true'; }
   catch (_) { /* Persistence is optional. */ }
   try {
@@ -490,6 +499,8 @@
     radarMapDisplayMode = ['all', 'confirmed', 'adsb'].includes(savedMode) ? savedMode : 'confirmed';
     showRadarTracksOnMap = radarMapDisplayMode === 'all';
   } catch (_) { /* Persistence is optional. */ }
+  try { mapBackgroundMode = localStorage.getItem('vectorwarp-map-background-mode') || 'aerial'; }
+  catch (_) { /* Persistence is optional. */ }
   try {
     const stored = localStorage.getItem('vectorwarp-show-radar-coverage-on-map');
     showRadarCoverageOnMap = stored === null ? true : stored === 'true';
@@ -628,6 +639,11 @@
             'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'],
           attribution: '&copy; OpenStreetMap contributors'
         },
+        'vectorwarp-local-imagery': {
+          type: 'raster', tileSize: 256, minzoom: 6, maxzoom: 16,
+          tiles: ['/api/map/imagery/local/{z}/{x}/{y}.jpg'],
+          attribution: 'Aerial imagery &copy; USGS, USDA, The National Map'
+        },
         'vectorwarp-terrain': {
           type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
           tileSize: 256, attribution: 'Terrain &copy; Mapterhorn'
@@ -640,11 +656,19 @@
       terrain: {source: 'vectorwarp-terrain', exaggeration: 1.12},
       layers: [
         {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'},
+        {id: 'vectorwarp-local-imagery', type: 'raster', source: 'vectorwarp-local-imagery'},
         {id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-hillshade',
           paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
             'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}}
       ]
     };
+  }
+
+  function syncMapBackground(map) {
+    if (!map?.getLayer || !map?.setLayoutProperty) return;
+    const aerial = mapBackgroundMode === 'aerial';
+    for (const id of ['vectorwarp-local-imagery'])
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', aerial ? 'visible' : 'none');
   }
 
   async function ensureLocationMap(viewport) {
@@ -681,6 +705,7 @@
         }
       });
     });
+    syncMapBackground(map);
     return map;
   }
 
