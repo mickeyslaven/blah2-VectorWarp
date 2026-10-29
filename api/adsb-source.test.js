@@ -254,6 +254,23 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
     'Presentation reuses the last validated snapshot while upstream refreshes');
   presentationRelease();
 
+  let throttledReads = 0;
+  const throttled = createAdsbSource(presentationConfig, {now: () => clock,
+    fetchJson: async () => {
+      throttledReads += 1;
+      if (throttledReads > 1) throw new Error('HTTP 429');
+      return {now: clock / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
+  await throttled.getPresentation('aircraft');
+  clock += 101;
+  assert.equal((await throttled.getPresentation('aircraft')).aircraft.length, 1,
+    'A failed refresh retains the last validated presentation snapshot');
+  clock += 101;
+  await throttled.getPresentation('aircraft');
+  assert.equal(throttledReads, 2,
+    'A failed refresh enters backoff instead of retrying on every CPI');
+
   const server = http.createServer((req, res) => {
     if (req.url === '/stall') { res.writeHead(200); res.write('{'); return; }
     if (req.url === '/large') return res.end('x'.repeat(200));

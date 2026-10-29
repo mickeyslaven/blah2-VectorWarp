@@ -169,8 +169,16 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     const startedAt = now();
     try {
       const selection = await resolveSource(slot);
-      const data = validateAircraftData(await selection.read(),
-        {now, maxAgeSeconds: geometry.maxAge});
+      let data;
+      try {
+        data = validateAircraftData(await selection.read(),
+          {now, maxAgeSeconds: geometry.maxAge});
+      } catch (error) {
+        // A transport failure may temporarily reuse a prior validated frame;
+        // invalid or stale payloads must never make that fallback look healthy.
+        error.invalidSnapshot = true;
+        throw error;
+      }
       const receivedAtMs = now();
       const ages = data.aircraft.filter(aircraft => Number.isFinite(aircraft?.lat) &&
         Number.isFinite(aircraft?.lon) && Number.isFinite(aircraft?.seen_pos) &&
@@ -205,11 +213,26 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   }
   async function readSourcePaced(slot) {
     const interval = slot.state.kind === 'exchange' ? exchangePollMs : pollMs;
-    if (slot.lastValue && now() - slot.lastReadAt < interval) return slot.lastValue;
-    const value = await readSource(slot);
-    slot.lastReadAt = now();
-    slot.lastValue = value;
-    return value;
+    const failures = Math.max(0, Number(slot.state.consecutive_failures) || 0);
+    const retryInterval = interval * Math.min(8, 2 ** failures);
+    if (slot.lastValue && now() - (slot.lastAttemptAt || slot.lastReadAt) < retryInterval)
+      return slot.lastValue;
+    if (!slot.lastValue && slot.lastAttemptAt && now() - slot.lastAttemptAt < retryInterval)
+      throw new Error('ADS-B source retry backoff active');
+    slot.lastAttemptAt = now();
+    try {
+      const value = await readSource(slot);
+      slot.lastReadAt = now();
+      slot.lastValue = value;
+      return value;
+    } catch (error) {
+      // A failed refresh must not erase a previously validated feed. Event-time
+      // filtering retires its aircraft naturally, while exponential backoff
+      // prevents a throttled public endpoint from being hammered every CPI.
+      if (error.invalidSnapshot === true) slot.lastAttemptAt = now() - interval;
+      if (slot.lastValue && error.invalidSnapshot !== true) return slot.lastValue;
+      throw error;
+    }
   }
   async function rawSnapshots() {
     const previous = cache.get('raw');
