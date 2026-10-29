@@ -289,6 +289,11 @@ function presentationCutoff(req) {
   return req.query.presentation === 'aligned' ? Date.now() - presentationDelayMs : null;
 }
 function presentationFrame(req, name, current) {
+  if (req.query.presentation === 'aligned' && req.query.frame_timestamp !== undefined) {
+    const requested = Number(req.query.frame_timestamp);
+    if (!Number.isSafeInteger(requested) || requested < 0) return '';
+    return presentationHistories[name].exact(requested) ?? '';
+  }
   const cutoff = presentationCutoff(req);
   return cutoff === null ? current : presentationHistories[name].at(cutoff) ?? current;
 }

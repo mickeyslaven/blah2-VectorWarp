@@ -38,6 +38,12 @@ class PresentationHistory {
     }
     return match?.frame ?? null;
   }
+  exact(timestamp) {
+    for (let index = this.entries.length - 1; index >= 0; index -= 1) {
+      if (this.entries[index].timestamp === timestamp) return this.entries[index].frame;
+    }
+    return null;
+  }
   clear() { this.entries = []; this.bytes = 0; }
 }
 

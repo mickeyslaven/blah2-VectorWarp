@@ -265,6 +265,7 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .recording-list.is-loading::before { content:"Loading recordings…"; display:block; padding:22px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); text-align:center; }
 .recording-list.is-loading > .empty-state { display:none; }
 .recording-list.is-loading > .recording-card { opacity:.58; }
+.radar-overlay-key { position:absolute; z-index:6; top:10px; left:12px; display:flex; flex-wrap:wrap; gap:7px 12px; padding:6px 9px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.82); color:var(--muted); font-size:9px; pointer-events:none; backdrop-filter:blur(4px); }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:13px; height:13px; border:2px solid #ff7a45; background:radial-gradient(circle,#ff7a45 0 2px,transparent 2.5px); }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }
 .page-loading { display:grid; place-items:center; gap:8px; min-height:240px; padding:32px; color:var(--muted); text-align:center; }
 .page-loading strong { color:var(--ink); }
 .page-loading small { max-width:38ch; }

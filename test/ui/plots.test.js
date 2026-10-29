@@ -9,14 +9,18 @@ const clone = value => JSON.parse(JSON.stringify(value));
 (async () => {
   for (const kind of ['map', 'spectrum', 'timing', 'detection']) {
     const calls = [];
+    const fetchUrls = [];
     let update;
     let scheduled;
     const running = {capture: {fs: 2400000}, process: {data: {cpi: .2},
       detection: {enable: true}}, truth: {adsb: {enabled: true}}};
     let detected = {timestamp: 1000, delay: [1], doppler: [2]};
-    let tracked = {timestamp: 1000,
-      data: [{id: 9, state: 'ACTIVE', delay: 8, doppler: 2}]};
+    let tracked = {timestamp: 1000, data: [
+      {id: 9, state: 'ACTIVE', delay: 8, doppler: 2},
+      {id: 10, state: 'COASTING', delay: 10, doppler: -3}
+    ]};
     const context = vm.createContext({
+      URL,
       liveApiUrl: url => url,
       radarPresentationUrl: url => `${url}${url.includes('?') ? '&' : '?'}presentation=aligned`,
       urlMap: '/api/map', xTitle: 'Time', yTitle: 'Doppler', xVariable: 'timestamp', yVariable: 'doppler',
@@ -27,9 +31,12 @@ const clone = value => JSON.parse(JSON.stringify(value));
       aircraftHoverText: common.aircraftHoverText,
       aircraftHoverTemplate: common.aircraftHoverTemplate,
       stabilizeAircraftSnapshots: common.stabilizeAircraftSnapshots,
-      fetchRadarJson: async url => url.startsWith('/api/detection') ? detected :
-        url.startsWith('/api/tracker') ? tracked : new Promise(() => {}),
-      window: {innerWidth: 1200, addEventListener() {}, clearTimeout() {},
+      fetchRadarJson: async url => {
+        fetchUrls.push(url);
+        return url.startsWith('/api/detection') ? detected :
+          url.startsWith('/api/tracker') ? tracked : new Promise(() => {});
+      },
+      window: {innerWidth: 1200, location: new URL('http://vectorwarp.test/display/map/'), addEventListener() {}, clearTimeout() {},
         setTimeout(callback) { scheduled = callback; return 1; }},
       Plotly: Object.fromEntries(['react', 'update', 'relayout', 'restyle'].map(method =>
         [method, async (...args) => { calls.push({method, args: clone(args)}); }])),
@@ -76,14 +83,18 @@ const clone = value => JSON.parse(JSON.stringify(value));
         'ADS-B truth stays a uniform green-dot overlay on delay–Doppler');
       assert.equal(initialTraces[1].marker.symbol, 'circle',
         'Radar detections keep their established circular marker styling');
-      assert.equal(initialTraces[3].marker.color, '#ff6f3c',
-        'Persistent radar tracks render as orange markers');
-      assert.ok(calls.some(call => call.method === 'restyle' && call.args[2]?.[0] === 1),
-        'An exact-frame detection response that beats heatmap rendering is applied after the trace exists');
-      const trackerRestyle = calls.find(call => call.method === 'restyle' && call.args[2]?.[0] === 3);
-      assert.ok(trackerRestyle, 'The persistent tracker stream is rendered on delay–Doppler');
-      assert.equal(trackerRestyle.args[1].x[0][0], 8 * 299792458 / 2400000 / 1000,
+      assert.equal(initialTraces[1].marker.size, 8, 'Raw detections are small, light markers');
+      assert.equal(initialTraces[3].marker.color, '#ff7a45',
+        'Updated radar tracks render as strongly outlined orange markers');
+      assert.equal(initialTraces[3].marker.symbol, 'circle-open-dot');
+      assert.equal(initialTraces[3].x[0], 8 * 299792458 / 2400000 / 1000,
         'Tracker sample bins convert to excess-path kilometres');
+      assert.equal(initialTraces[4].marker.symbol, 'circle-open',
+        'Coasting persistent tracks remain visible as hollow orange rings');
+      assert.equal(initialTraces[4].x[0], 10 * 299792458 / 2400000 / 1000);
+      assert.ok(fetchUrls.some(url => url.includes('/api/detection') && url.includes('frame_timestamp=1000')));
+      assert.ok(fetchUrls.some(url => url.includes('/api/tracker') && url.includes('frame_timestamp=1000')),
+        'Both overlays are requested for the exact heatmap frame');
     }
     if (kind === 'spectrum') {
       const trace = calls.at(-1).args[1][0];
@@ -125,31 +136,17 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(calls.at(-1).method, 'react', 'Timing stage changes reconcile the existing Plotly root');
     }
     if (kind === 'map') {
-      detected = {...detected, timestamp: 700};
-      tracked = {...tracked, timestamp: 700};
       const nextFrame = {...clone(frame), timestamp: 1001};
       assert.equal(await update(nextFrame), true,
-        'A late detection stream must not make the heatmap retry and burst');
+        'An exact-frame overlay request must not make the heatmap retry and burst');
       const latestMapUpdate = calls.filter(call => call.method === 'update').at(-1);
       assert.deepEqual(latestMapUpdate.args[1].x[1], [1],
-        'An adjacent-CPI detection remains visible while independent streams align');
+        'The matching raw detection is updated atomically with the heatmap');
       assert.equal(latestMapUpdate.args[1].x[3][0], 8 * 299792458 / 2400000 / 1000,
-        'An adjacent-CPI persistent track remains visible while independent streams align');
-      detected = {...detected, timestamp: 1001};
-      tracked = {...tracked, timestamp: 1001};
-      const heatmapUpdatesBeforeMarker = calls.filter(call => call.method === 'update').length;
-      const markerCallsBefore = calls.length;
-      await update(nextFrame);
-      await Promise.resolve();
-      const lateMarkerCalls = calls.slice(markerCallsBefore);
-      const detectionRestyle = lateMarkerCalls.find(call => call.method === 'restyle' && call.args[2]?.[0] === 1);
-      const trackerRestyle = lateMarkerCalls.find(call => call.method === 'restyle' && call.args[2]?.[0] === 3);
-      assert.ok(detectionRestyle, 'Late detections update only their marker trace');
-      assert.deepEqual(detectionRestyle.args[1].x, [[1]]);
-      assert.ok(trackerRestyle, 'Late tracks update only their marker trace');
-      assert.equal(calls.filter(call => call.method === 'update').length,
-        heatmapUpdatesBeforeMarker + 1,
-        'Late detection completion must not repaint the heatmap');
+        'The matching updated track is rendered in the same Plotly update');
+      assert.equal(latestMapUpdate.args[1].x[4][0], 10 * 299792458 / 2400000 / 1000,
+        'A coasting track does not disappear between direct detections');
+      assert.ok(fetchUrls.some(url => url.includes('frame_timestamp=1001')));
       const changedGrid = {...clone(frame), timestamp: 1002, delay: [1, 2], data: [[1, 2], [3, 4]]};
       const changedGridCallsBefore = calls.length;
       await update(changedGrid);

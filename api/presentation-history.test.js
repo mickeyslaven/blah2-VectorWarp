@@ -14,6 +14,8 @@ history.add(JSON.stringify({timestamp: 2000, value: 'c'}), 2000);
 assert.equal(JSON.parse(history.at(1750)).value, 'b');
 assert.equal(history.at(999), null);
 assert.equal(JSON.parse(history.at(9999)).value, 'c');
+assert.equal(JSON.parse(history.exact(1500)).value, 'b');
+assert.equal(history.exact(1750), null, 'Exact-frame presentation never substitutes an adjacent CPI');
 history.clear();
 assert.equal(history.at(9999), null);
 

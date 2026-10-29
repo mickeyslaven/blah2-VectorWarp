@@ -122,36 +122,34 @@ var adsb = {};
 var adsbCache = null;
 var adsbReadAt = -Infinity;
 var adsbPending = false;
-var displayedMapTimestamp = null;
-var detectionCache = null;
-var detectionPending = false;
-var trackerCache = null;
-var trackerPending = false;
-var overlayToleranceMs = 1;
-
-function overlayFrameMatches(frame, timestamp, toleranceMs = 1) {
-  const frameTimestamp = Number(frame?.frameTimestamp ?? frame?.timestamp);
-  const targetTimestamp = Number(timestamp);
-  return Number.isFinite(frameTimestamp) && Number.isFinite(targetTimestamp) &&
-    Math.abs(frameTimestamp - targetTimestamp) <= toleranceMs;
+function exactFrameUrl(path, timestamp) {
+  const url = new URL(path, typeof window === 'undefined' ?
+    'http://vectorwarp.invalid' : window.location.href);
+  url.searchParams.set('frame_timestamp', String(timestamp));
+  return path.startsWith('http://') || path.startsWith('https://') ? url.href :
+    `${url.pathname}${url.search}`;
 }
 
 function trackerOverlay(frame, runningConfig) {
   const sampleRate = Number(runningConfig?.capture?.fs);
   const kilometresPerBin = Number.isFinite(sampleRate) && sampleRate > 0 ?
     299792458 / sampleRate / 1000 : null;
-  const visibleStates = new Set(['ACTIVE', 'ASSOCIATED', 'CONFIRMED']);
-  const result = {delay: [], doppler: [], hover: []};
+  const updatedStates = new Set(['ACTIVE', 'ASSOCIATED', 'CONFIRMED']);
+  const result = {
+    updated: {delay: [], doppler: [], hover: []},
+    coasting: {delay: [], doppler: [], hover: []}
+  };
   if (kilometresPerBin === null) return result;
   for (const track of Array.isArray(frame?.data) ? frame.data : []) {
     const delay = Number(track?.delay), doppler = Number(track?.doppler);
     const state = String(track?.state || '').toUpperCase();
     if (!Number.isFinite(delay) || !Number.isFinite(doppler) ||
-        !visibleStates.has(state)) continue;
+        (!updatedStates.has(state) && state !== 'COASTING')) continue;
     const range = delay * kilometresPerBin;
-    result.delay.push(range);
-    result.doppler.push(doppler);
-    result.hover.push(`Radar track ${track.id ?? '—'}<br>${state}<br>${range.toFixed(2)} km · ${doppler.toFixed(1)} Hz`);
+    const group = state === 'COASTING' ? result.coasting : result.updated;
+    group.delay.push(range);
+    group.doppler.push(doppler);
+    group.hover.push(`Radar track ${track.id ?? '—'}<br>${state}<br>${range.toFixed(2)} km · ${doppler.toFixed(1)} Hz`);
   }
   return result;
 }
@@ -173,56 +171,6 @@ function currentAdsbOverlay(enabled, cpiSeconds) {
 }
 
 Plotly.react('data', data, layout, config);
-
-function requestDetectionOverlay(timestamp, enabled) {
-  if (!enabled || detectionPending) return;
-  detectionPending = true;
-  // Detection markers are optional decoration. Fetch them beside the heatmap,
-  // never in front of it, so a slow marker response cannot add latency to the
-  // CPI-paced radar image. Independent API reads may select adjacent frames,
-  // so accept at most one loaded CPI while rejecting genuinely stale markers.
-  fetchRadarJson(urlDetection)
-    .then(async latest => {
-      detectionCache = latest;
-      if (!overlayFrameMatches(latest, timestamp, overlayToleranceMs) ||
-          displayedMapTimestamp !== timestamp) return;
-      await Plotly.restyle('data', {x: [latest.delay], y: [latest.doppler]}, [1]);
-    })
-    .catch(() => {})
-    .finally(() => { detectionPending = false; });
-}
-
-async function applyDetectionOverlay(timestamp) {
-  if (!overlayFrameMatches(detectionCache, timestamp, overlayToleranceMs) ||
-      displayedMapTimestamp !== timestamp) return false;
-  await Plotly.restyle('data', {x: [detectionCache.delay], y: [detectionCache.doppler]}, [1]);
-  return true;
-}
-
-function requestTrackerOverlay(timestamp, runningConfig) {
-  if (trackerPending) return;
-  trackerPending = true;
-  fetchRadarJson(urlTracker)
-    .then(async latest => {
-      trackerCache = latest;
-      if (!overlayFrameMatches(latest, timestamp, overlayToleranceMs) ||
-          displayedMapTimestamp !== timestamp) return;
-      const overlay = trackerOverlay(latest, runningConfig);
-      await Plotly.restyle('data', {x: [overlay.delay], y: [overlay.doppler],
-        text: [overlay.hover]}, [3]);
-    })
-    .catch(() => {})
-    .finally(() => { trackerPending = false; });
-}
-
-async function applyTrackerOverlay(timestamp, runningConfig) {
-  if (!overlayFrameMatches(trackerCache, timestamp, overlayToleranceMs) ||
-      displayedMapTimestamp !== timestamp) return false;
-  const overlay = trackerOverlay(trackerCache, runningConfig);
-  await Plotly.restyle('data', {x: [overlay.delay], y: [overlay.doppler],
-    text: [overlay.hover]}, [3]);
-  return true;
-}
 
 if (typeof window !== 'undefined' && window.addEventListener) {
   let resizeTimer;
@@ -251,19 +199,16 @@ if (typeof window !== 'undefined' && window.addEventListener) {
 // callback function
 var radarUpdates = startRadarPlot(urlMap, async function (data) {
   const runningConfig = await getRadarRuntimeConfig();
-  overlayToleranceMs = Math.max(1,
-    (Number(runningConfig.process?.data?.cpi) || 0) * 1000 + 5);
   const detectionEnabled = runningConfig.process?.detection?.enable !== false;
-  const detected = detectionEnabled &&
-    overlayFrameMatches(detectionCache, data.timestamp, overlayToleranceMs) ?
-    detectionCache : null;
-  requestDetectionOverlay(data.timestamp, detectionEnabled);
-  const tracked = overlayFrameMatches(trackerCache, data.timestamp, overlayToleranceMs) ?
-    trackerOverlay(trackerCache, runningConfig) : {delay: [], doppler: [], hover: []};
-  requestTrackerOverlay(data.timestamp, runningConfig);
-  // Separate TCP streams may arrive at different times; never put old
-  // detections onto a newly arrived map.
+  // Bind overlays to the heatmap's exact processor frame. Waiting for these two
+  // compact responses avoids clearing markers between independently selected
+  // presentation snapshots and prevents adjacent-CPI data from being mixed.
+  const [detected, trackerFrame] = await Promise.all([
+    detectionEnabled ? fetchRadarJson(exactFrameUrl(urlDetection, data.timestamp)).catch(() => null) : null,
+    fetchRadarJson(exactFrameUrl(urlTracker, data.timestamp)).catch(() => null)
+  ]);
   detection = detected || {delay: [], doppler: []};
+  const tracked = trackerOverlay(trackerFrame, runningConfig);
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
   const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
   const data_adsb = currentAdsbOverlay(adsbEnabled,
@@ -306,18 +251,20 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
         type: 'heatmap'
     };
     var trace2 = {
+        name: 'Raw detection',
         x: detection.delay,
         y: detection.doppler,
         mode: 'markers',
         type: 'scatter',
         marker: {
-          size: 16,
-          opacity: 0.6,
-          color: '#ff9b65',
+          size: 8,
+          opacity: 0.68,
+          color: '#f4b183',
           symbol: 'circle'
         }
     };
     var trace3 = {
+      name: 'ADS-B aircraft',
       x: adsb.delay,
       y: adsb.doppler,
       mode: 'markers',
@@ -334,42 +281,53 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       hovertemplate: '%{text}<extra></extra>'
     };
     var trace4 = {
-      x: tracked.delay,
-      y: tracked.doppler,
+      name: 'Updated radar track',
+      x: tracked.updated.delay,
+      y: tracked.updated.doppler,
       mode: 'markers',
       type: 'scatter',
       marker: {
-        size: 14,
-        opacity: .95,
-        color: '#ff6f3c',
-        symbol: 'circle',
-        line: {color: '#2b120a', width: 1.5}
+        size: 18,
+        opacity: 1,
+        color: '#ff7a45',
+        symbol: 'circle-open-dot',
+        line: {color: '#ff7a45', width: 2.5}
       },
-      text: tracked.hover,
+      text: tracked.updated.hover,
+      hovertemplate: '%{text}<extra></extra>'
+    };
+    var trace5 = {
+      name: 'Coasting radar track',
+      x: tracked.coasting.delay,
+      y: tracked.coasting.doppler,
+      mode: 'markers',
+      type: 'scatter',
+      marker: {
+        size: 16,
+        opacity: .72,
+        color: '#ff7a45',
+        symbol: 'circle-open',
+        line: {color: '#ff7a45', width: 2}
+      },
+      text: tracked.coasting.hover,
       hovertemplate: '%{text}<extra></extra>'
     };
 
-    var data_trace = [trace1, trace2, trace3, trace4];
+    var data_trace = [trace1, trace2, trace3, trace4, trace5];
     await Plotly.react('data', data_trace, layout, config);
     gridSignature = gridKey;
   }
   // case update plot
   else {
     var trace_update = {
-      x: [data.delay, detection.delay, adsb.delay, tracked.delay],
-      y: [data.doppler, detection.doppler, adsb.doppler, tracked.doppler],
-      z: [data.data, [], [], []],
-      zmax: [Math.max(13, data.maxPower), [], [], []],
-      text: [[], [], adsb.hover, tracked.hover],
-      customdata: [[], [], adsb.customdata, []]
+      x: [data.delay, detection.delay, adsb.delay, tracked.updated.delay, tracked.coasting.delay],
+      y: [data.doppler, detection.doppler, adsb.doppler, tracked.updated.doppler, tracked.coasting.doppler],
+      z: [data.data, [], [], [], []],
+      zmax: [Math.max(13, data.maxPower), [], [], [], []],
+      text: [[], [], adsb.hover, tracked.updated.hover, tracked.coasting.hover],
+      customdata: [[], [], adsb.customdata, [], []]
     };
     await Plotly.update('data', trace_update);
   }
-  displayedMapTimestamp = data.timestamp;
-  // The marker request often wins the race against the heavier Plotly heatmap
-  // render. Apply its cached exact-frame result after the marker trace exists;
-  // otherwise every detection is discarded one frame early and never shown.
-  await applyDetectionOverlay(data.timestamp);
-  await applyTrackerOverlay(data.timestamp, runningConfig);
   return true;
 });
