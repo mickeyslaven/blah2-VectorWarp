@@ -300,7 +300,7 @@ function requestedPresentationTimestamp(req) {
   // Map is the visual presentation clock. Selecting it once prevents requests
   // that arrive on opposite sides of a CPI boundary from mixing adjacent radar
   // frames across heatmap, detection, tracker, timing and ADS-B layers.
-  return frameTimestamp(presentationHistories.map.at(cutoff));
+  return presentationHistories.map.timestampAt(cutoff);
 }
 function presentationFrame(req, name, current) {
   if (req.query.presentation === 'aligned') {
@@ -683,8 +683,7 @@ app.get('/api/presentation/status', (req, res) => {
   const now = Date.now();
   const expectedIntervalMs = Number.isFinite(config.process?.data?.cpi) ?
     config.process.data.cpi * 1000 : null;
-  const selectedTimestamp = frameTimestamp(
-    presentationHistories.map.at(now - presentationDelayMs));
+  const selectedTimestamp = presentationHistories.map.timestampAt(now - presentationDelayMs);
   const aligned = selectedTimestamp === null ? {} : Object.fromEntries(
     Object.entries(presentationHistories).map(([name, history]) =>
       [name, history.exact(selectedTimestamp) !== null]));

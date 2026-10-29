@@ -38,6 +38,13 @@ class PresentationHistory {
     }
     return match?.frame ?? null;
   }
+  timestampAt(timestamp) {
+    let match = null;
+    for (const entry of this.entries) {
+      if (entry.timestamp <= timestamp && (!match || entry.timestamp > match.timestamp)) match = entry;
+    }
+    return match?.timestamp ?? null;
+  }
   exact(timestamp) {
     for (let index = this.entries.length - 1; index >= 0; index -= 1) {
       if (this.entries[index].timestamp === timestamp) return this.entries[index].frame;
