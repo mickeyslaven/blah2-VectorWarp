@@ -86,7 +86,9 @@ const clone = value => JSON.parse(JSON.stringify(value));
       assert.equal(initialTraces[1].marker.size, 8, 'Raw detections are small, light markers');
       assert.equal(initialTraces[3].marker.color, '#ff7a45',
         'Updated radar tracks render as strongly outlined orange markers');
-      assert.equal(initialTraces[3].marker.symbol, 'circle-open-dot');
+      assert.equal(initialTraces[3].marker.symbol, 'circle');
+      assert.equal(initialTraces[3].marker.size, 11,
+        'Updated tracks are compact solid orange dots rather than bullseyes');
       assert.equal(initialTraces[3].x[0], 8 * 299792458 / 2400000 / 1000,
         'Tracker sample bins convert to excess-path kilometres');
       assert.equal(initialTraces[4].marker.symbol, 'circle-open',

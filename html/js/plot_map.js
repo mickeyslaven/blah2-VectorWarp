@@ -287,11 +287,11 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       mode: 'markers',
       type: 'scatter',
       marker: {
-        size: 18,
+        size: 11,
         opacity: 1,
         color: '#ff7a45',
-        symbol: 'circle-open-dot',
-        line: {color: '#ff7a45', width: 2.5}
+        symbol: 'circle',
+        line: {color: '#542012', width: 1.4}
       },
       text: tracked.updated.hover,
       hovertemplate: '%{text}<extra></extra>'
@@ -303,7 +303,7 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
       mode: 'markers',
       type: 'scatter',
       marker: {
-        size: 16,
+        size: 13,
         opacity: .72,
         color: '#ff7a45',
         symbol: 'circle-open',
