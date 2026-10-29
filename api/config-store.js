@@ -38,8 +38,9 @@ function setupDefaults() {
         minDelay: 5, minDoppler: 15, nCentroid: 6, integration_cpis: 1,
         integration_motion_bins: 0,
         track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
-      tracker: {enable: true, initiate: {M: 3, N: 5, maxAcc: 10,
-        acceleration_model: 'hypothesis_bank'}, delete: 10, smooth: 'none',
+      tracker: {enable: true, profile: 'conservative', initiate: {M: 3, N: 6,
+        maxAcc: 10, min_snr_db: 7, acceleration_model: 'hypothesis_bank'},
+        delete: 3, smooth: 'none',
         track_guided_shadow: {enable: false, max_tracks: 64}},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
         frequency_resolved_shadow: {enabled: false, fft_size: 2048, subbands: 24,
@@ -146,6 +147,13 @@ function readConfig(filename) {
     parsed = null;
   }
   const defaults = setupDefaults();
+  // A released configuration without a profile is the legacy permissive
+  // tracker. Do not silently migrate it merely by reading and saving another
+  // setting; fresh configurations still start conservative.
+  if (parsed?.process?.tracker && parsed.process.tracker.profile === undefined) {
+    delete defaults.process.tracker.profile;
+    delete defaults.process.tracker.initiate.min_snr_db;
+  }
   const profile = getDeviceProfiles().find(item => item.type === parsed?.capture?.device?.type);
   if (profile) {
     defaults.capture.device = profile.device;

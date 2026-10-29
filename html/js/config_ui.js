@@ -144,10 +144,12 @@ const CONFIG_META = {
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
   'process.tracker.enable': ['Track targets', 'Run the multi-frame tracker'],
+  'process.tracker.profile': ['Tracking strictness', 'Conservative rejects weak one-off returns before track initiation. Permissive preserves the legacy behavior and may create many false candidates.'],
   'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
   'process.tracker.initiate.N': ['Confirmation window', 'Frames examined when starting a track'],
   'process.tracker.initiate.maxAcc': ['Maximum Doppler acceleration', 'Largest Doppler change allowed when starting a track, in Hz/s.'],
+  'process.tracker.initiate.min_snr_db': ['Minimum initiation SNR', 'Conservative mode uses this threshold: weaker detections may update an existing track but cannot start one. Permissive mode disables this gate.'],
   'process.tracker.initiate.acceleration_model': ['Acceleration initiation', 'Choose duplicate acceleration hypotheses or one adaptive tentative track.'],
   'process.tracker.initiate.stationary_clutter': ['Persistent clutter initiation filter', 'Learn recurring low-Doppler cells and prevent only new tracks from starting there. Existing moving tracks may cross zero Doppler.'],
   'process.tracker.initiate.stationary_clutter.enable': ['Enable persistent clutter filter', 'Apply the learned clutter map only when starting a new GPU-resident track.'],
@@ -251,7 +253,7 @@ const SIMPLE_SETTING_PATHS = new Set([
   'capture.device.heimdall.gain_control',
   'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
   'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
-  'process.tracker.enable', 'process.performance.acceleration',
+  'process.tracker.enable', 'process.tracker.profile', 'process.performance.acceleration',
   'truth.adsb.enabled', 'truth.adsb.tar1090'
 ]);
 function simpleSettingHidden(path) {
@@ -260,6 +262,18 @@ function simpleSettingHidden(path) {
   if (path.startsWith('save.') || path.startsWith('location.')) return false;
   if ([...SIMPLE_SETTING_PATHS].some(allowed => allowed.startsWith(`${path}.`))) return false;
   return !SIMPLE_SETTING_PATHS.has(path);
+}
+
+function exposeLegacyTrackerProfile(config) {
+  const tracker = config?.process?.tracker;
+  if (!tracker || tracker.profile !== undefined) return config;
+  // Released configurations predate profiles and are behaviorally permissive.
+  // Make that safe legacy choice visible without changing it merely by opening
+  // Settings. A later explicit save persists the selected profile.
+  tracker.profile = 'permissive';
+  if (tracker.initiate && tracker.initiate.min_snr_db === undefined)
+    tracker.initiate.min_snr_db = 7;
+  return config;
 }
 function refreshSetupAssistant() {
   const target = document.getElementById('setup-assistant-root');
@@ -1095,6 +1109,10 @@ function typedInput(value, path) {
   if (key === 'process.performance.acceleration')
     return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
       {value: 'gpu', label: 'GPU (with CPU fallback)'}], value,
+      selected => setValue(path, selected));
+  if (key === 'process.tracker.profile')
+    return selectInput([{value: 'conservative', label: 'Conservative (recommended)'},
+      {value: 'permissive', label: 'Permissive (legacy)'}], value,
       selected => setValue(path, selected));
   if (Array.isArray(value)) return arrayInput(value, path);
   if (rule.choices && !['capture.device.type',
@@ -2564,7 +2582,7 @@ async function renderConfiguration() {
       configFetch(liveApiUrl('/api/config/capabilities'), {cache: 'no-store'})
     ]);
     if (!configResponse.ok) throw new Error('The saved configuration is unavailable.');
-    activeConfig = await configResponse.json();
+    activeConfig = exposeLegacyTrackerProfile(await configResponse.json());
     configRevision = configResponse.headers.get('ETag')?.replace(/^"|"$/g, '');
     capabilities = capabilitiesResponse.ok ? await capabilitiesResponse.json() :
       {editable: false, restartAvailable: false, changesRequireRestart: true};

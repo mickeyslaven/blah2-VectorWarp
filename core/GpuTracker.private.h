@@ -6,6 +6,7 @@ struct TrackerConfig {
  uint32_t capacity=0,m=0,n=0,nDelete=0;
  bool adaptiveGate=false;
  double cpi=0,maxAccInit=0,rangeRes=0,lambda=0;
+ double minInitiationSnrDb=-100;
  bool stationaryClutter=false;
  uint32_t stationaryPersistenceCpis=0;
  double stationaryMaxDopplerHz=0;
@@ -34,6 +35,7 @@ double resolution=0;};
 inline Admission validate(const TrackerConfig& c,uint32_t cells){
  if(!c.enabled||!c.capacity||!cells||cells>UINT32_MAX/24||!c.m||c.m>c.n||c.n>255||!std::isfinite(c.cpi)||c.cpi<=0||
     !std::isfinite(c.maxAccInit)||c.maxAccInit<0||!std::isfinite(c.rangeRes)||c.rangeRes<=0||!std::isfinite(c.lambda)||c.lambda<=0||
+    !std::isfinite(c.minInitiationSnrDb)||c.minInitiationSnrDb < -100||c.minInitiationSnrDb > 100||
     !std::isfinite(c.stationaryMaxDopplerHz)||c.stationaryMaxDopplerHz<0||
     (c.stationaryClutter?(c.stationaryPersistenceCpis<2||c.stationaryPersistenceCpis>65535):
       (c.stationaryPersistenceCpis||c.stationaryMaxDopplerHz!=0))||
@@ -63,7 +65,7 @@ inline Admission validate(const TrackerConfig& c,uint32_t cells){
 }
 inline bool sameToken(const TrackerToken& a,const TrackerToken& b){return a.epoch==b.epoch&&a.transaction==b.transaction&&a.generation==b.generation&&a.consumedSequence==b.consumedSequence;}
 inline bool sameDouble(double a,double b){return std::memcmp(&a,&b,sizeof(a))==0;}
-inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.trackGuidedShadow==b.trackGuidedShadow&&a.trackGuidedPromote==b.trackGuidedPromote&&a.trackGuidedShadowMaxTracks==b.trackGuidedShadowMaxTracks&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
+inline bool sameConfig(const TrackerConfig& a,const TrackerConfig& b){return a.enabled==b.enabled&&a.capacity==b.capacity&&a.m==b.m&&a.n==b.n&&a.nDelete==b.nDelete&&a.adaptiveGate==b.adaptiveGate&&a.stationaryClutter==b.stationaryClutter&&a.stationaryPersistenceCpis==b.stationaryPersistenceCpis&&a.trackGuidedShadow==b.trackGuidedShadow&&a.trackGuidedPromote==b.trackGuidedPromote&&a.trackGuidedShadowMaxTracks==b.trackGuidedShadowMaxTracks&&a.epoch==b.epoch&&sameDouble(a.cpi,b.cpi)&&sameDouble(a.maxAccInit,b.maxAccInit)&&sameDouble(a.rangeRes,b.rangeRes)&&sameDouble(a.lambda,b.lambda)&&sameDouble(a.minInitiationSnrDb,b.minInitiationSnrDb)&&sameDouble(a.stationaryMaxDopplerHz,b.stationaryMaxDopplerHz);}
 const char* common=R"glsl(#version 450
 #extension GL_ARB_gpu_shader_fp64 : require
 layout(local_size_x=128) in;
@@ -145,7 +147,8 @@ uint nearestDopplerRow(double value){uint count=post[32],low=0u,high=count;
  double left=packDouble2x32(uvec2(post[post[44]+2u*(low-1u)],post[post[44]+2u*(low-1u)+1u]));
  return abs(value-left)<=abs(right-value)?low-1u:low;}
 bool initiationEligible(uint i){if(s[m[6]+i]!=0u)return false;
- if(!clutterAware())return true;uint at=m[5]+8u*i;double doppler=sd(at+2u);
+ uint at=m[5]+8u*i;if(sd(at+4u)<md(50u))return false;
+ if(!clutterAware())return true;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));
  if(maximum>0.0LF&&abs(doppler)>maximum)return true;uint cell=s[post[41]+i];
  if(cell>=m[4]||post[33]==0u)return false;
@@ -494,6 +497,9 @@ class Stage {
   putDouble(s.data(),44,config_.rangeRes);
   putDouble(s.data(),46,config_.lambda);
   putDouble(s.data(),48,admission_.resolution);
+  // Words 50-51 are configuration scratch. 52-53 echo generation and 58 is
+  // the commit acknowledgement, so neither can safely carry this threshold.
+  putDouble(s.data(),50,config_.minInitiationSnrDb);
   std::memcpy(metadata_->mapped,s.data(),sizeof(s));
   metadata_->flush(0,sizeof(s));
  }

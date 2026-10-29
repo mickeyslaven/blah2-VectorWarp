@@ -85,7 +85,7 @@ const portable = {
 const rich = {
   '/api/config': {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', gain: [10, 10, 10, 10, 10, 10]}}, location: {rx: {name: 'Test receiver', latitude: 40.0, longitude: -80.0, altitude: 250}, tx: {name: 'Test illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}}, process: {data: {cpi: .2, overlap: .1}, ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -800, dopplerMax: 800}, detection: {enable: true, pfa: .0001}, tracker: {enable: true, initiate: {M: 3, N: 5}}, bearing: {enable: true}, spectrum: {enable: true}}, truth: {adsb: {enabled: true, display_range_km: 30}, ais: {enabled: false}}},
   '/api/detection': {timestamp: Date.now(), delay: [1.25], doppler: [42], snr: [18]},
-  '/api/tracker': {timestamp: Date.now(), n: 15, nTentative: 1, nAssociated: 13, nActive: 0, nCoasting: 1, data: [...Array.from({length: 13}, (_, index) => ({id: `T${index + 1}`, state: 'ASSOCIATED', delay: 10 + index, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', 'ASSOCIATED']})), {id: 'tentative', state: 'TENTATIVE', delay: 8, doppler: 5, n: 1}, {id: 'coasting', state: 'COASTING', delay: 9, doppler: 6, n: 5}]},
+  '/api/tracker': {timestamp: Date.now(), n: 15, nTentative: 1, nAssociated: 12, nActive: 1, nCoasting: 1, data: [...Array.from({length: 13}, (_, index) => ({id: `T${index + 1}`, state: index === 0 ? 'ACTIVE' : 'ASSOCIATED', delay: 10 + index, doppler: 42, n: 3, associated_delay: [8, 9, 10], associated_doppler: [38, 40, 42], associated_state: ['TENTATIVE', 'ASSOCIATED', index === 0 ? 'ACTIVE' : 'ASSOCIATED']})), {id: 'tentative', state: 'TENTATIVE', delay: 8, doppler: 5, n: 1}, {id: 'coasting', state: 'COASTING', delay: 9, doppler: 6, n: 5}]},
   '/api/timing': {timestamp: Date.now(), nCpi: 10, uptime_s: 50, cpi_data_ms: 200, cpi_hop_ms: 100, capture_backlog_ms: 4, reference_synthesis: 4, ambiguity_processing: 20, detector: 1, tracker: .1, cpi: 35},
   '/api/statistics': {schema: 'vectorwarp-evidence-statistics-v1', collecting: true,
     updated_at: Date.now(), limits: {detectionMinDelayKm: .624, delayMaxKm: 62.456,
@@ -195,8 +195,8 @@ setTimeout(() => {
       (!rendered.includes('Bearing estimates') || !rendered.includes('Unresolved shown')))
     errors.push('bearing diagnostic counts were not rendered');
   if (view === 'locations' && mode === 'rich' &&
-      lastPlot?.traces?.filter(trace => String(trace.name).startsWith('Radar track ')).length !== 13)
-    errors.push('current radar tracks were silently capped or hidden');
+      lastPlot?.traces?.filter(trace => String(trace.name).startsWith('Radar track ')).length !== 1)
+    errors.push('confirmed radar tracks were hidden or pre-confirmation candidates leaked');
   if (view === 'locations' && JSON.stringify(lastPlot?.traces || []).includes('Radar return'))
     errors.push('unconfirmed radar returns were plotted as ellipses');
   if (view === 'calibration' && (!rendered.includes('Detection manifold shadow') ||

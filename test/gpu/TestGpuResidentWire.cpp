@@ -124,6 +124,13 @@ void configCases(){
   encodeConfig(adaptiveDecoded)==adaptiveBytes,"Adaptive tracker initiation did not round trip");
  check(wire::configHash(adaptive)!=wire::configHash(c),
   "Adaptive tracker initiation is not bound to config identity");
+ auto conservative=adaptive;conservative.tracker.minInitiationSnrDb=7;
+ const auto conservativeBytes=encodeConfig(conservative);
+ const auto conservativeDecoded=decodeConfig(bytes(conservativeBytes),bytes(d),bytes(f));
+ check(conservativeDecoded.tracker.minInitiationSnrDb==7&&
+  encodeConfig(conservativeDecoded)==conservativeBytes&&
+  wire::configHash(conservative)!=wire::configHash(adaptive),
+  "Tracker initiation SNR did not round trip or bind config identity");
  auto clutterAware=adaptive;clutterAware.tracker.stationaryClutter=true;
  clutterAware.tracker.stationaryPersistenceCpis=8;clutterAware.tracker.stationaryMaxDopplerHz=15;
  const auto clutterBytes=encodeConfig(clutterAware);

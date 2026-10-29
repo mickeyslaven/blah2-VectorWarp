@@ -677,7 +677,9 @@
 
     const resolution = rangeResolutionKm(config) ?? .1;
     const rawDetections = detectionRows(detection).filter(item => item.delay !== null && item.delay > 0);
-    const currentTrackStates = new Set(['ACTIVE', 'ASSOCIATED', 'CONFIRMED']);
+    // Operational map overlays must not present pre-confirmation ASSOCIATED
+    // candidates as aircraft tracks. They remain visible on Tracks.
+    const currentTrackStates = new Set(['ACTIVE', 'CONFIRMED']);
     const trackerRows = array(tracker?.data);
     const tracks = trackerRows.map(track => ({
       id: track.id,
@@ -690,6 +692,8 @@
       String(track?.state || '').toUpperCase() === 'COASTING').length;
     const hiddenTentativeTracks = trackerRows.filter(track =>
       String(track?.state || '').toUpperCase() === 'TENTATIVE').length;
+    const hiddenAssociatedTracks = trackerRows.filter(track =>
+      String(track?.state || '').toUpperCase() === 'ASSOCIATED').length;
     let bearingLocations = null;
     let bearingDiagnostic = null;
     if (config?.process?.bearing?.enable === true) {
@@ -818,7 +822,7 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    renderHtml(document.getElementById('view-summary'), `${card(rawDetections.length, 'Raw detections')}${card(tracks.length, 'Current tracks')}${card(hiddenTentativeTracks, 'Tentative hidden')}${card(hiddenCoastingTracks, 'Coasting hidden')}${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`);
+    renderHtml(document.getElementById('view-summary'), `${card(rawDetections.length, 'Raw detections')}${card(tracks.length, 'Confirmed active tracks')}${card(hiddenAssociatedTracks, 'Candidates hidden')}${card(hiddenTentativeTracks, 'Tentative hidden')}${card(hiddenCoastingTracks, 'Coasting hidden')}${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}`);
     const reference = bearingDiagnostic?.known_angle_reference;
     const referenceDiagnostic = !reference ? '' : reference.available ?
       `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
@@ -838,7 +842,7 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">Orange ellipses show all ${tracks.length} current delay-only tracks; there is no display cap. Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenTentativeTracks} tentative and ${hiddenCoastingTracks} coasting tracker rows are counted above but hidden from the current-track ellipses. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
+    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">Orange ellipses show all ${tracks.length} confirmed active delay-only tracks; there is no display cap. Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are counted above but hidden from operational ellipses. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
     renderSelectedAircraftCard(aircraft);
     if (locationMapIsBeingNavigated()) return;
     // ADS-B uses the keyed icon overlay below. Do not also send it through
@@ -916,7 +920,7 @@
     const [config, tracker] = await Promise.all([getConfig(), apiJson('/api/tracker')]);
     const enabled = config?.process?.tracker?.enable === true;
     const tracks = array(tracker?.data);
-    renderHtml(document.getElementById('view-summary'), `${card(tracker?.nActive ?? 0, 'Active')}${card(tracker?.nAssociated ?? 0, 'Associated')}${card(tracker?.nCoasting ?? 0, 'Coasting')}${card(tracker?.nTentative ?? 0, 'Tentative')}`);
+    renderHtml(document.getElementById('view-summary'), `${card(tracker?.nActive ?? 0, 'Confirmed active')}${card(tracker?.nAssociated ?? 0, 'Associated candidates')}${card(tracker?.nCoasting ?? 0, 'Confirmed coasting')}${card(tracker?.nTentative ?? 0, 'Tentative candidates')}`);
     const detail = document.getElementById('view-detail');
     if (!enabled) {
       renderHtml(detail, empty('Tracking is disabled', 'Enable the tracker in Settings and restart radar processing.', '<a class="button-link" href="/display/configuration">Open Settings</a>'));
@@ -925,7 +929,8 @@
       return;
     }
     const rows = tracks.map(track => `<tr><td>${escapeHtml(track.id)}</td><td><span class="state-pill ${escapeHtml(String(track.state || '').toLowerCase())}">${escapeHtml(humanize(track.state))}</span></td><td>${number(trackRangeKm(track.delay, config), 2)}</td><td>${number(track.doppler, 1)}</td><td>${integer(track.n)}</td></tr>`);
-    renderHtml(detail, tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.'));
+    const stateGuide = '<p class="view-note"><strong>State guide:</strong> Tentative and associated rows are candidates still completing the M-of-N confirmation rule. Active is confirmed. Coasting was confirmed but has temporarily missed detections. Only confirmed active tracks appear on the operational Map.</p>';
+    renderHtml(detail, stateGuide + (tracks.length ? table(['Track', 'State', 'Bistatic range (km)', 'Doppler (Hz)', 'Observations'], rows) : empty(tracker?.nTentative ? 'Waiting for track confirmation' : 'No confirmed tracks', tracker?.nTentative ? `${tracker.nTentative} tentative track${tracker.nTentative === 1 ? ' needs' : 's need'} more detections.` : 'No detection sequence meets the tracking rules.')));
     const traces = [];
     tracks.forEach((track, index) => {
       const ranges = array(track.associated_delay).map(value => trackRangeKm(value, config));

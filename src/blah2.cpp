@@ -987,7 +987,8 @@ try
   // set up process tracker
   uint8_t m, n, nDelete;
   double maxAcc, rangeRes, lambda;
-  std::string smooth,trackerAccelerationModel="hypothesis_bank";
+  std::string smooth,trackerAccelerationModel="hypothesis_bank",trackerProfile="permissive";
+  double trackerMinInitiationSnrDb=-100;
   bool stationaryClutter=residentMode;
   uint32_t stationaryPersistenceCpis=residentMode?60u:0u;
   // Zero means the full configured ambiguity Doppler span. A positive legacy
@@ -1000,6 +1001,17 @@ try
   tree["process"]["tracker"]["initiate"]["N"] >> n;
   tree["process"]["tracker"]["delete"] >> nDelete;
   tree["process"]["tracker"]["initiate"]["maxAcc"] >> maxAcc;
+  if(tree["process"]["tracker"].has_child("profile"))
+    tree["process"]["tracker"]["profile"] >> trackerProfile;
+  if(trackerProfile!="conservative"&&trackerProfile!="permissive")
+    throw std::invalid_argument("Tracker profile must be conservative or permissive");
+  if(trackerProfile=="conservative")trackerMinInitiationSnrDb=7.0;
+  if(trackerProfile=="conservative"&&
+     tree["process"]["tracker"]["initiate"].has_child("min_snr_db"))
+    tree["process"]["tracker"]["initiate"]["min_snr_db"] >> trackerMinInitiationSnrDb;
+  if(!std::isfinite(trackerMinInitiationSnrDb)||trackerMinInitiationSnrDb < -100 ||
+     trackerMinInitiationSnrDb > 100)
+    throw std::invalid_argument("Tracker min_snr_db must be between -100 and 100 dB");
   if(tree["process"]["tracker"]["initiate"].has_child("acceleration_model"))
     tree["process"]["tracker"]["initiate"]["acceleration_model"] >> trackerAccelerationModel;
   if(tree["process"]["tracker"]["initiate"].has_child("stationary_clutter")){
@@ -1020,7 +1032,8 @@ try
   rangeRes = (double)Constants::c/fs;
   lambda = (double)Constants::c/fc;
   Tracker *tracker = new Tracker(m, n, nDelete,
-    ambiguity.front()->get_cpi(), maxAcc, rangeRes, lambda);
+    ambiguity.front()->get_cpi(), maxAcc, rangeRes, lambda,
+    trackerMinInitiationSnrDb);
 
   // set up process spectrum analyser
   double spectrumBandwidth = 2000;
@@ -1123,7 +1136,7 @@ try
       tree["process"]["tracker"]["gpu_capacity"] >> capacity;
       residentConfig.tracker={true,capacity,m,n,nDelete,
         trackerAccelerationModel=="adaptive_gate"?blah2::resident::TrackerInitiationMode::adaptiveGate:blah2::resident::TrackerInitiationMode::hypothesisBank,
-        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,stationaryClutter,
+        ambiguity.front()->get_cpi(),maxAcc,rangeRes,lambda,trackerMinInitiationSnrDb,stationaryClutter,
         stationaryPersistenceCpis,stationaryMaxDopplerHz,
         trackGuidedShadow,trackGuidedPromote,trackGuidedShadowMaxTracks};
     }
@@ -1398,7 +1411,7 @@ try
             }
             delete tracker;
             tracker = new Tracker(m, n, nDelete, ambiguity.front()->get_cpi(),
-              maxAcc, rangeRes, lambda);
+              maxAcc, rangeRes, lambda, trackerMinInitiationSnrDb);
           }
           // Advance signal time for every accepted input CPI, even if clutter
           // later rejects it. UI publication timestamps remain wall-clock.

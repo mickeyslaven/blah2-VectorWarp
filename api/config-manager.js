@@ -664,6 +664,8 @@ function validateConfig(config, baseline = null, options = {}) {
       detection.minDoppler > Math.max(Math.abs(dopplerMin), Math.abs(dopplerMax)))
     errors.push('process.detection.minDoppler must be inside the Doppler span');
   boolean(tracker.enable, 'process.tracker.enable');
+  if (tracker.profile !== undefined)
+    oneOf(tracker.profile, 'process.tracker.profile', ['conservative', 'permissive']);
   ['M', 'N'].forEach(key => number(initiate[key],
     `process.tracker.initiate.${key}`, {integer: true, min: 1, max: 255}));
   if (Number.isInteger(initiate.M) && Number.isInteger(initiate.N) &&
@@ -671,6 +673,9 @@ function validateConfig(config, baseline = null, options = {}) {
     errors.push('process.tracker.initiate.M cannot exceed process.tracker.initiate.N');
   const maxAcc = number(initiate.maxAcc,
     'process.tracker.initiate.maxAcc', {min: 0, max: INT32_MAX});
+  if (initiate.min_snr_db !== undefined)
+    number(initiate.min_snr_db, 'process.tracker.initiate.min_snr_db',
+      {min: -100, max: 100});
   if (initiate.acceleration_model !== undefined)
     oneOf(initiate.acceleration_model, 'process.tracker.initiate.acceleration_model',
       ['hypothesis_bank', 'adaptive_gate']);

@@ -121,11 +121,11 @@ void validateConfig(const Config& c){
   (d.integrationBeamTolerance==UINT32_MAX||(f.mode!=FusionMode::noncoherent&&d.integrationBeamTolerance<=f.beams/2)),"Resident detector bounds invalid");
  const auto& t=c.tracker;
  if(t.enabled){const uint32_t recordWords=trackerRecordWords(t);
- require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0))&&(t.trackGuidedShadow?(t.trackGuidedShadowMaxTracks&&t.trackGuidedShadowMaxTracks<=t.capacity):(!t.trackGuidedPromote&&!t.trackGuidedShadowMaxTracks)),"Resident tracker configuration invalid");
+ require(t.capacity&&t.capacity<=(UINT32_MAX-trackerHeaderWords)/recordWords&&t.capacity<=(UINT32_MAX-127)/128&&t.m&&t.m<=t.n&&t.n<=255&&(t.initiationMode==TrackerInitiationMode::hypothesisBank||t.initiationMode==TrackerInitiationMode::adaptiveGate)&&std::isfinite(t.cpi)&&t.cpi>0&&std::isfinite(t.maxAccInit)&&t.maxAccInit>=0&&std::isfinite(t.rangeRes)&&t.rangeRes>0&&std::isfinite(t.lambda)&&t.lambda>0&&std::isfinite(t.minInitiationSnrDb)&&t.minInitiationSnrDb>=-100&&t.minInitiationSnrDb<=100&&std::isfinite(t.stationaryMaxDopplerHz)&&t.stationaryMaxDopplerHz>=0&&(t.stationaryClutter?(t.stationaryPersistenceCpis>=2&&t.stationaryPersistenceCpis<=65535):(!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0))&&(t.trackGuidedShadow?(t.trackGuidedShadowMaxTracks&&t.trackGuidedShadowMaxTracks<=t.capacity):(!t.trackGuidedPromote&&!t.trackGuidedShadowMaxTracks)),"Resident tracker configuration invalid");
  double actual=(double(c.correlation)*g.doppler)/c.sampleRate;
  require(std::memcmp(&actual,&t.cpi,8)==0,"Resident tracker CPI must be actual CPI");
  require(!t.trackGuidedShadow||d.integrationCpis>2,"Track-guided shadow requires rolling track-before-detect history");}
- else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.trackGuidedShadow&&!t.trackGuidedPromote&&!t.trackGuidedShadowMaxTracks,"Disabled resident tracker has configuration");
+ else require(!t.capacity&&!t.m&&!t.n&&!t.nDelete&&t.initiationMode==TrackerInitiationMode::hypothesisBank&&t.cpi==0&&t.maxAccInit==0&&t.rangeRes==0&&t.lambda==0&&t.minInitiationSnrDb==-100&&!t.stationaryClutter&&!t.stationaryPersistenceCpis&&t.stationaryMaxDopplerHz==0&&!t.trackGuidedShadow&&!t.trackGuidedPromote&&!t.trackGuidedShadowMaxTracks,"Disabled resident tracker has configuration");
  require(!c.device.empty()&&c.device.size()<96&&c.device.find('\0')==std::string::npos,"Resident device selector invalid");
  resident_replay::validateExportConfig(c);
  const uint64_t mandatory=wire::mandatoryPresence(c),known=((uint64_t(1)<<32)-2);
@@ -247,7 +247,7 @@ const auto&g=c.geometry;
 const auto&r=c.reference;
 const auto&d=c.detector;
 const auto&t=c.tracker;
- w.u32(0,4);
+ w.u32(0,5);
  w.u32(4,configBytes);
  w.u64(8,c.epoch);
  w.u32(16,c.stages());
@@ -330,6 +330,7 @@ const auto&t=c.tracker;
  w.u32(620,uint32_t(c.fusion.directResponse.size()));
  w.u64(624,c.replay.maxBytes);
  w.u32(632,c.replay.maxFrames);
+ w.f32(636,float(t.minInitiationSnrDb));
  size_t at=640;
  for(const auto value:c.fusion.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
  for(const auto value:c.bearing.manifoldResponses){w.f32(at,value.real());w.f32(at+4,value.imag());at+=8;}
@@ -345,7 +346,7 @@ const auto&t=c.tracker;
  return b;}
 Config decodeConfig(ConstBytes b,ConstBytes delays,ConstBytes doppler){require(b.size==configBytes,"Resident config size differs");
 Reader r{b};
-require(r.u32(0)==4&&r.u32(4)==configBytes,"Resident config schema differs");
+require(r.u32(0)==5&&r.u32(4)==configBytes,"Resident config schema differs");
 require(r.u32(112)==1,"Resident first route requires captured array");
 Config c;
 c.epoch=r.u64(8);
@@ -376,7 +377,7 @@ require(bearingChannels<=8,"Resident bearing mapping count invalid");
 for(uint32_t i=0;i<bearingChannels;++i)bearing.channelMapping.push_back(r.u32(548+4*i));
 r.zeros(548+4*bearingChannels,4*(8-bearingChannels));
 const uint32_t manifoldCount=r.u32(580);require(manifoldCount<=127*8,"Resident bearing manifold count invalid");
- c.replay.maxBytes=r.u64(624);c.replay.maxFrames=r.u32(632);r.zeros(636,4);
+ c.replay.maxBytes=r.u64(624);c.replay.maxFrames=r.u32(632);
 require(uint64_t(fusionManifoldCount)+manifoldCount+fusionDirectCount<=(configBytes-640-(c.replay.maxBytes?152:0))/8,
  "Resident measured manifold counts exceed config capacity");
 size_t at=640;c.fusion.manifoldResponses.reserve(fusionManifoldCount);
@@ -451,6 +452,7 @@ ref.centreHz=r.f64(160);
  t.maxAccInit=r.f64(320);
  t.rangeRes=r.f64(328);
  t.lambda=r.f64(336);
+ t.minInitiationSnrDb=r.f32(636);
  t.stationaryClutter=boolean(584);
  t.stationaryPersistenceCpis=r.u32(588);
  t.stationaryMaxDopplerHz=r.f64(592);

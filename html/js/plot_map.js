@@ -134,7 +134,10 @@ function trackerOverlay(frame, runningConfig) {
   const sampleRate = Number(runningConfig?.capture?.fs);
   const kilometresPerBin = Number.isFinite(sampleRate) && sampleRate > 0 ?
     299792458 / sampleRate / 1000 : null;
-  const updatedStates = new Set(['ACTIVE', 'ASSOCIATED', 'CONFIRMED']);
+  // ASSOCIATED is a pre-confirmation M-of-N candidate, not an operational
+  // aircraft track. ACTIVE/CONFIRMED are established; COASTING is retained
+  // separately because it was previously established.
+  const updatedStates = new Set(['ACTIVE', 'CONFIRMED']);
   const result = {
     updated: {delay: [], doppler: [], hover: []},
     coasting: {delay: [], doppler: [], hover: []}

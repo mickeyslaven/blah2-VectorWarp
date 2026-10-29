@@ -35,6 +35,9 @@ private:
   /// @brief Maximum acceleration to initiate track (Hz/s).
   double maxAccInit;
 
+  /// @brief Minimum SNR allowed to start a new tentative track (dB).
+  double minInitiationSnr;
+
   /// @brief Range resolution for kinematics equations (m).
   double rangeRes;
 
@@ -63,8 +66,9 @@ public:
   /// @param rangeRes Range resolution for kinematics equations (m).
   /// @param lambda Wavelength for kinematics equations (m).
   /// @return The object.
-  Tracker(uint32_t m, uint32_t n, uint32_t nDelete, double cpi, 
-    double maxAccInit, double rangeRes, double lambda);
+  Tracker(uint32_t m, uint32_t n, uint32_t nDelete, double cpi,
+    double maxAccInit, double rangeRes, double lambda,
+    double minInitiationSnr = -100);
 
   /// @brief Destructor.
   /// @return Void.

@@ -83,6 +83,8 @@ const rules = {
   'process.tracker.initiate.M': integer(1, 255),
   'process.tracker.initiate.N': integer(1, 255),
   'process.tracker.initiate.maxAcc': numeric(0, 2147483647),
+  'process.tracker.profile': {type: 'string', choices: ['conservative', 'permissive'], optional: true},
+  'process.tracker.initiate.min_snr_db': {...numeric(-100, 100), optional: true},
   'process.tracker.initiate.acceleration_model': {type: 'string', choices: ['hypothesis_bank', 'adaptive_gate'], optional: true},
   'process.tracker.initiate.stationary_clutter.enable': {type: 'boolean', optional: true},
   'process.tracker.initiate.stationary_clutter.persistence_cpis': {...integer(2, 65535), optional: true},

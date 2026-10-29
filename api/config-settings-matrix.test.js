@@ -288,6 +288,11 @@ try {
   // Explicit resident capacity is optional in legacy files but must persist
   // as a coherent resident-mode edit without changing unrelated settings.
   const residentBase = clone(fusion); const resident = clone(residentBase);
+  const conservativeTracker = clone(residentBase);
+  conservativeTracker.process.tracker.profile = 'conservative';
+  conservativeTracker.process.tracker.initiate.min_snr_db = 7;
+  persistGroup('conservative-tracker-profile', residentBase, conservativeTracker, [
+    'process.tracker.profile', 'process.tracker.initiate.min_snr_db']);
   resident.process.tracker.initiate.acceleration_model = 'adaptive_gate';
   resident.process.tracker.initiate.stationary_clutter = {enable: true,
     persistence_cpis: 8, max_doppler_hz: 15};
