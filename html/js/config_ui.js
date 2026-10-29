@@ -211,6 +211,7 @@ const CONFIG_META = {
 
 let activeConfig = null;
 let originalConfig = '';
+let originalConfigObject = null;
 let capabilities = {};
 let restartInProgress = false;
 let pendingLiveConfig = null;
@@ -230,8 +231,11 @@ let receiverApplyPending = false;
 let recentSites = [];
 let receiverInvalidatedGeometry = false;
 let lastDetectedReceiverTypes = new Set();
-let settingsMode = 'advanced';
+let settingsMode = 'simple';
 let settingsModeStored = false;
+let settingsSearch = '';
+let settingsEditedOnly = false;
+let refreshSettingsFilter = () => {};
 let activateSettingsTab = () => {};
 try {
   const storedMode = window.localStorage.getItem('vectorwarp-settings-mode');
@@ -244,17 +248,12 @@ try {
 const SIMPLE_SETTING_PATHS = new Set([
   'capture.fc', 'capture.fs', 'capture.device.type', 'capture.device.channel_count',
   'capture.device.reference_channel', 'capture.device.surveillance_channels',
-  'capture.device.serial', 'capture.device.address', 'capture.device.antenna',
-  'capture.device.subdev', 'capture.device.gain', 'capture.device.gainReduction',
-  'capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable',
-  'capture.device.lnaState',
-  'capture.device.agcSetPoint', 'capture.device.bandwidthNumber',
   'capture.device.heimdall.gain', 'capture.device.heimdall.gain_control',
   'capture.device.heimdall.channel_gains',
   'process.reference_synthesis.mode', 'process.reference_synthesis.channels',
   'capture.replay.state', 'capture.replay.file', 'capture.replay.loop',
   'process.data.cpi', 'process.clutter.enable', 'process.detection.enable',
-  'process.tracker.enable', 'process.tracker.profile', 'process.performance.acceleration',
+  'process.tracker.enable', 'process.tracker.profile',
   'truth.adsb.enabled', 'truth.adsb.tar1090'
 ]);
 const EXPERIMENTAL_SETTING_PREFIXES = [
@@ -612,6 +611,7 @@ function setValue(path, value) {
     geometryEditor.invalidate(activeConfig.capture?.device?.array_geometry);
     refreshGeometryEditor();
   }
+  refreshSettingsFilter();
   scheduleValidation();
 }
 
@@ -2000,6 +2000,88 @@ function receiverFailureMessage(result) {
   return message;
 }
 
+function valueAtPath(value, dotted) {
+  return dotted.split('.').reduce((item, key) => item?.[key], value);
+}
+
+function rememberOriginalConfig(config) {
+  originalConfig = serializeConfig(config);
+  originalConfigObject = JSON.parse(JSON.stringify(config));
+}
+
+function settingEdited(dotted) {
+  if (!originalConfigObject) return false;
+  return serializeConfig(valueAtPath(activeConfig, dotted)) !==
+    serializeConfig(valueAtPath(originalConfigObject, dotted));
+}
+
+function makeSettingsFilter(tabs, panels, activate) {
+  const toolbar = document.createElement('div');
+  toolbar.className = 'settings-filter';
+  const search = document.createElement('label');
+  search.className = 'settings-search';
+  const searchLabel = document.createElement('span');
+  searchLabel.textContent = 'Find a setting';
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.placeholder = 'Gain, tracking, port…';
+  input.value = settingsSearch;
+  input.autocomplete = 'off';
+  const edited = document.createElement('label');
+  edited.className = 'settings-edited';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = settingsEditedOnly;
+  edited.append(checkbox, document.createTextNode('Edited only'));
+  const status = document.createElement('span');
+  status.className = 'settings-filter-status';
+  status.setAttribute('role', 'status');
+  search.append(searchLabel, input);
+  toolbar.append(search, edited, status);
+
+  const apply = () => {
+    const query = settingsSearch.trim().toLowerCase();
+    const filtering = Boolean(query || settingsEditedOnly);
+    const fields = [...panels.querySelectorAll('.config-field')];
+    let visible = 0;
+    for (const field of fields) {
+      const path = field.dataset.path || '';
+      const matchesText = !query || `${path} ${field.textContent}`.toLowerCase().includes(query);
+      const matchesEdit = !settingsEditedOnly || settingEdited(path);
+      field.hidden = !(matchesText && matchesEdit);
+      field.classList.toggle('config-field-edited', settingEdited(path));
+      if (!field.hidden) visible += 1;
+    }
+    const groups = [...panels.querySelectorAll('[data-config-group]')].reverse();
+    for (const group of groups) {
+      const descendants = [...group.querySelectorAll('.config-field')];
+      if (descendants.length) group.hidden = filtering && !descendants.some(field => !field.hidden);
+    }
+    const availableTabs = [];
+    for (const button of tabs.querySelectorAll('[role="tab"]')) {
+      const panel = panels.querySelector(`[data-tab="${button.dataset.tab}"]`);
+      const descendants = [...panel.querySelectorAll('.config-field')];
+      const customTextMatch = query && panel.textContent.toLowerCase().includes(query);
+      const matches = !filtering || descendants.some(field => !field.hidden) ||
+        (!settingsEditedOnly && customTextMatch);
+      button.hidden = !matches;
+      if (matches) availableTabs.push(button.dataset.tab);
+    }
+    const selected = tabs.querySelector('[role="tab"][aria-selected="true"]');
+    if (selected?.hidden && availableTabs.length) activate(availableTabs[0]);
+    status.textContent = filtering ? `${visible} matching setting${visible === 1 ? '' : 's'}` :
+      `${fields.length} settings in this receiver profile`;
+  };
+  input.addEventListener('input', () => { settingsSearch = input.value; apply(); });
+  checkbox.addEventListener('change', () => {
+    settingsEditedOnly = checkbox.checked;
+    apply();
+  });
+  refreshSettingsFilter = apply;
+  window.setTimeout(apply, 0);
+  return toolbar;
+}
+
 function invalidateGeometryAfterReceiverChange() {
   receiverInvalidatedGeometry = true;
   geometryEditor?.invalidate(activeConfig.capture?.device?.array_geometry);
@@ -2123,8 +2205,11 @@ function renderEditor() {
   if (settingsMode === 'simple') {
     const heading = document.createElement('div');
     heading.className = 'config-section-heading';
-    heading.innerHTML = '<h2>Essential settings</h2><p>Only the settings normally needed to get a receiver running are shown below.</p>';
+    heading.innerHTML = '<h2>Essential settings</h2><p>Routine controls only. Receiver wiring, service ports, DSP internals, and diagnostics remain under Advanced.</p>';
     target.append(heading);
+    refreshSettingsFilter = () => {};
+  } else {
+    target.append(makeSettingsFilter(tabs, panels, activate));
   }
   target.append(tabs, panels);
   activate(initialTab);
@@ -2596,7 +2681,7 @@ async function saveConfiguration(mode) {
     configRevision = result.revision;
     if (result.config) activeConfig = result.config;
     receiverInvalidatedGeometry = false;
-    originalConfig = serializeConfig(activeConfig);
+    rememberOriginalConfig(activeConfig);
     capabilities.setupRequired = false;
     pendingLiveConfig = null;
     restartRetry = false;
@@ -2693,7 +2778,7 @@ async function renderConfiguration() {
     if (capabilities.setupRequired && !settingsModeStored) settingsMode = 'simple';
     receiverApplyPending = ['unknown', 'saved-pending', 'partial', 'indeterminate', 'failed',
       'receiver-confirmed-config-not-saved'].includes(capabilities.receiverSynchronization?.applicationState);
-    originalConfig = serializeConfig(activeConfig);
+    rememberOriginalConfig(activeConfig);
     const replayFile = new URLSearchParams(window.location.search).get('replayFile');
     if (replayFile) {
       activeConfig.capture.replay = {...activeConfig.capture.replay,
@@ -2746,7 +2831,7 @@ async function renderConfiguration() {
       validatedSnapshot = null;
       if (pendingLiveConfig !== null) {
         activeConfig = pendingLiveConfig;
-        originalConfig = serializeConfig(pendingLiveConfig);
+        rememberOriginalConfig(pendingLiveConfig);
         configRevision = pendingRevision;
         pendingLiveConfig = null;
         showMessage('Reloaded the saved configuration.', 'success');

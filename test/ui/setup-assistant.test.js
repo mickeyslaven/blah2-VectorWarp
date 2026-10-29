@@ -131,6 +131,6 @@ test('advanced mode collapses the beginner workflow instead of duplicating two s
     receiverProfiles: () => [], discoverReceivers: async () => [],
     switchReceiver() {}, saveStep() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
-  assert.match(target.textContent, /All receiver, DSP, service, and diagnostic settings are shown below/);
+  assert.match(target.textContent, /Expert receiver, DSP, service, and diagnostic controls/);
   assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');
 });

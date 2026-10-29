@@ -80,6 +80,13 @@ function change(input, value, event = 'input') {
     saved.capture.aircraft_clips = aircraftClipSettings;
     await window.renderConfiguration();
     await window.validateActiveConfiguration();
+    assert.equal(window.document.querySelectorAll('[role=tab]').length, 5,
+      'Simple settings are the default and expose only task-level categories');
+    assert.equal(window.document.querySelector('[data-tab="experimental"]'), null,
+      'Experimental controls are not part of the default settings surface');
+    assert.equal(query('capture.device.serial'), null,
+      'Simple settings hide receiver identity and connection internals');
+    window.__settingsModeApi.setMode('advanced');
     const optionalSerial = query('capture.device.serial').querySelector('input');
     assert.equal(optionalSerial.value, '');
     assert.equal(optionalSerial.required, false, 'One unambiguous RSPduo does not require an explicit serial');
@@ -88,6 +95,26 @@ function change(input, value, event = 'input') {
     assert.equal(window.document.querySelectorAll('[role=tab]').length, 7);
     assert.ok(window.document.querySelector('[data-tab="experimental"]'),
       'Advanced settings expose one dedicated Experimental category');
+    const settingsSearch = window.document.querySelector('.settings-search input');
+    assert.ok(settingsSearch, 'Advanced settings provide a searchable expert surface');
+    change(settingsSearch, 'AGC target');
+    assert.equal(query('capture.device.agcSetPoint')?.hidden, false,
+      'Search retains the matching expert setting');
+    assert.equal(query('capture.fc')?.hidden, true,
+      'Search filters unrelated controls without rebuilding the page');
+    change(settingsSearch, '');
+    window.setValue(['capture', 'fc'], saved.capture.fc + 1000);
+    const editedOnly = window.document.querySelector('.settings-edited input');
+    editedOnly.checked = true;
+    editedOnly.dispatchEvent(new window.Event('change', {bubbles: true}));
+    assert.equal(query('capture.fc').hidden, false,
+      'Edited-only view retains unsaved controls');
+    assert.equal(query('capture.device.agcSetPoint').hidden, true,
+      'Edited-only view hides untouched expert controls');
+    editedOnly.checked = false;
+    editedOnly.dispatchEvent(new window.Event('change', {bubbles: true}));
+    window.setValue(['capture', 'fc'], saved.capture.fc);
+    await window.validateActiveConfiguration();
     const recordingPanel = window.document.querySelector('#settings-panel-save');
     assert.match(recordingPanel.textContent, /IQ recordings/,
       'Recording starts with the raw-IQ workflow');
@@ -477,10 +504,11 @@ function change(input, value, event = 'input') {
       'Simple mode hides service/network internals');
     assert.match(window.document.getElementById('config-fields').textContent, /Essential settings/);
     window.switchDevice('Usrp');
-    assert.ok(query('capture.device.subdev'), 'Simple USRP setup exposes the channel mapping');
+    assert.equal(query('capture.device.subdev'), null,
+      'Simple USRP setup hides low-level channel mapping after setup');
     window.switchDevice('HackRF');
     for (const path of ['capture.device.gain_lna', 'capture.device.gain_vga', 'capture.device.amp_enable'])
-      assert.ok(query(path), `Simple HackRF setup exposes ${path}`);
+      assert.equal(query(path), null, `Simple HackRF setup hides expert control ${path}`);
     window.switchDevice('Kraken');
     window.__settingsModeApi.setMode('advanced');
     assert.ok(query('capture.device.heimdall.host'), 'Advanced mode exposes the Suite host');

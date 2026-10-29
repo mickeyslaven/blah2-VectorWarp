@@ -196,7 +196,7 @@
     const config = api.getConfig();
     if (api.mode() === 'advanced') {
       wizardOpen = false;
-      target.innerHTML = '<section class="setup-assistant setup-assistant-compact"><div class="setup-assistant-heading"><div><h2>Advanced settings</h2><p>All receiver, DSP, service, and diagnostic settings are shown below.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" aria-pressed="false">Simple</button><button type="button" data-mode="advanced" class="active" aria-pressed="true">Advanced</button></div></div></section>';
+      target.innerHTML = '<section class="setup-assistant setup-assistant-compact"><div class="setup-assistant-heading"><div><h2>Advanced settings</h2><p>Expert receiver, DSP, service, and diagnostic controls. Use search or Edited only to keep this view manageable.</p></div><div class="settings-mode" role="group" aria-label="Settings detail"><button type="button" data-mode="simple" aria-pressed="false">Simple</button><button type="button" data-mode="advanced" class="active" aria-pressed="true">Advanced</button></div></div></section>';
       target.querySelectorAll('[data-mode]').forEach(button =>
         button.addEventListener('click', () => api.setMode(button.dataset.mode)));
       return;

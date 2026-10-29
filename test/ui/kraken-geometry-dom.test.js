@@ -96,6 +96,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     dom = new JSDOM('<div id="configuration"></div>', {url: `${base}/display/configuration/`, runScripts: 'outside-only', pretendToBeVisual: true});
     const window = dom.window;
     window.liveApiUrl = value => value; window.rememberApiPort = () => {};
+    window.localStorage.setItem('vectorwarp-settings-mode', 'advanced');
     let upstream = {supported: true, available: false, matched: false, message: 'Fixture has no receiver'};
     window.fetch = async (url, options = {}) => {
       if (url === '/api/upstream/status') return {ok: true, json: async () => upstream};

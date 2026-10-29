@@ -26,6 +26,7 @@ const covered = new Set();
 window.liveApiUrl = value => value;
 window.fetchStatusResource = (url, options) => window.fetch(url, options);
 window.rememberApiPort = () => {};
+window.localStorage.setItem('vectorwarp-settings-mode', 'advanced');
 window.fetch = async (url, options = {}) => {
   let body;
   if (url === '/api/config/validate') body = validateConfig(JSON.parse(options.body), saved);
