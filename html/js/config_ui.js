@@ -936,11 +936,6 @@ function adsbSourcesInput(legacyValue, path) {
     intro.textContent = 'One aircraft is shown once. The newest healthy observation wins; positions are not averaged.';
     wrapper.appendChild(intro);
 
-    const timingWarning = document.createElement('p');
-    timingWarning.className = 'adsb-source-note warning';
-    timingWarning.textContent = 'Using only local ADS-B can add feed and host-arrival timing uncertainty to pass statistics. Add an online source for independent coverage and observation-time cross-checking; exact radar event time is still required for decision-grade scoring.';
-    wrapper.appendChild(timingWarning);
-
     const localHeading = document.createElement('strong');
     localHeading.textContent = 'Local receivers';
     wrapper.appendChild(localHeading);
