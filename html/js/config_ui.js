@@ -66,7 +66,7 @@ const CONFIG_META = {
   'process.performance.acceleration': ['Processing hardware', 'Automatic checks GPU accuracy and speed. Falls back to CPU if needed.'],
   'process.data': ['Frame timing', ''],
   'process.data.cpi': ['Frame interval (CPI)', 'Seconds per radar frame and display update. Applies after restart.'],
-  'process.data.buffer': ['Buffered intervals', 'Number of processing intervals held in memory. Minimum 1; start with 2.'],
+  'process.data.buffer': ['Live capture queue (CPI frames)', 'Processing backlog capacity, measured in complete CPI frames. This is separate from the automatic IQ recorder’s seconds of pre-roll.'],
   'process.data.overlap': ['Frame overlap', 'Not used by this processor. Frames do not overlap.'],
   'process.ambiguity': ['Delay & Doppler', 'Limits of the radar map'],
   'process.ambiguity.delayMin': ['Minimum delay bin', 'First extra-path sample shown in the radar map.'],
