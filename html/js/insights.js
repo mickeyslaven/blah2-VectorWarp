@@ -1068,6 +1068,19 @@
       layer._updatePositions = () => {
         const line = points => points.map((point, index) =>
           `${index ? 'L' : 'M'}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(' ');
+        // MapLibre's public project() samples terrain elevation. That is right
+        // for aircraft and site markers, but it makes mathematical bistatic
+        // ellipses visibly ripple over hills. Project radar cages against the
+        // zero-elevation map plane so their geometry stays smooth and exact.
+        const projectFlatRadarPoint = (longitude, latitude) => {
+          const transform = map?._camera?.transform;
+          const LngLat = window.maplibregl?.LngLat;
+          if (transform?.locationToScreenPoint && LngLat?.convert) {
+            try { return transform.locationToScreenPoint(LngLat.convert([longitude, latitude]), null); }
+            catch (_) { /* Fall back for older MapLibre builds. */ }
+          }
+          return map.project([longitude, latitude]);
+        };
         const coverageRows = Array.isArray(layer._radarCoverage?.points) ?
           layer._radarCoverage.points.map(point => ({bin: Number(point.bin),
             point: map.project([point.longitude, point.latitude])}))
@@ -1096,7 +1109,7 @@
         layer._coveragePath?.setAttribute('d', layer._coverageUsesMapLayer ? '' : coveragePath);
         for (const {item, path: radarPath, slices, ribs, associated} of layer._radarTrackPaths.values()) {
           const ground = item.latitude.map((latitude, index) => ({latitude,
-            point: map.project([item.longitude[index], latitude])}));
+            point: projectFlatRadarPoint(item.longitude[index], latitude)}));
           radarPath.setAttribute('d', line(ground.map(value => value.point)));
           const sliceAltitudes = [10000, 20000, 30000, 40000, 60000];
           const lifted = altitude => ground.map(value => ({x: value.point.x,

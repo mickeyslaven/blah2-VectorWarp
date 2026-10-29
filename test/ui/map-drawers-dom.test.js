@@ -5,6 +5,10 @@ const fs = require('fs');
 const vm = require('vm');
 const {JSDOM} = require('./jsdom');
 
+const source = fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8');
+assert.match(source, /locationToScreenPoint\(LngLat\.convert\(\[longitude, latitude\]\), null\)/,
+  'radar ellipses project on a flat reference plane instead of terrain');
+
 const dom = new JSDOM(`<!doctype html><body data-insight-view="locations">
   <span id="view-state"></span><div id="view-root"></div></body>`,
 {url: 'http://radar.example.invalid/display/locations'});
@@ -20,7 +24,7 @@ const context = vm.createContext({
     JSON.stringify(url.includes('/tracker') ? {data: []} : {})})
 });
 dom.window.matchMedia = () => ({matches: true, addEventListener() {}, removeEventListener() {}});
-vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'utf8'), context,
+vm.runInContext(source, context,
   {filename: 'insights.js'});
 
 (async () => {
