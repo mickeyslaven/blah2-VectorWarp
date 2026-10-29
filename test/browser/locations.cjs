@@ -11,7 +11,7 @@ const config = {capture: {fs: 2400000, fc: 527000000, device: {type: 'Kraken', c
   process: {data: {cpi: .2}, ambiguity: {delayMax: 245}, tracker: {enable: true}},
   location: {rx: {name: 'Receiver <test>', latitude: 40, longitude: -80, altitude: 250},
     tx: {name: 'Illuminator', latitude: 40.1, longitude: -80.2, altitude: 500}},
-  truth: {adsb: {enabled: false}}};
+  truth: {adsb: {enabled: true, aircraft_photo_provider: 'planespotters'}}};
 const fixtures = {'/api/runtime/config': config, '/api/config': config,
   '/api/system/status': {serverId: 'synthetic-map-test', radar: 'no-data', adsbEnabled: false},
   '/api/detection': {timestamp: 1, delay: [], doppler: [], snr: []},
@@ -24,14 +24,22 @@ const fixtures = {'/api/runtime/config': config, '/api/config': config,
       {bin: 36, latitude: 39.72, longitude: -80.0},
       {bin: 54, latitude: 40.0, longitude: -80.35}
     ]},
+  '/api/adsb': {aircraft: [{hex: 'a0b1c2', flight: 'TEST123', lat: 40.04, lon: -80.05,
+    alt_baro: 18000, gs: 220, track: 135, seen_pos: 0}]},
+  '/api/adsb/delay-doppler': {A0B1C2: {hex: 'A0B1C2', delay: 20, doppler: 40}},
+  '/api/adsb/aircraft-photo/a0b1c2': {available: true, provider: 'Planespotters.net',
+    thumbnail: 'https://t.plnspttrs.net/test.jpg', link: 'https://www.planespotters.net/photo/test',
+    photographer: 'Test photographer'},
   '/capture/status': {supported: false, available: false, recording: false},
-  '/api/adsb/status': {enabled: false, online: false}};
+  '/api/adsb/status': {enabled: true, online: true}};
 let detectionRequests = 0;
 let trackerRequests = 0;
 let inducedRefreshTimeout = false;
+let photoRequests = 0;
 const server = http.createServer((request, response) => {
   const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
   if (Object.hasOwn(fixtures, pathname)) {
+    if (pathname.startsWith('/api/adsb/aircraft-photo/')) photoRequests++;
     if (pathname === '/api/detection' && ++detectionRequests === 6) {
       inducedRefreshTimeout = true;
       // Exercise recovery from one real browser-side API timeout. The request
@@ -82,6 +90,7 @@ const server = http.createServer((request, response) => {
     stage = 'initial map and labels';
     await page.goto(base + '/display/locations/', {waitUntil: 'domcontentloaded'});
     await page.waitForFunction(() => document.querySelectorAll('.location-site-label').length === 2);
+    await page.waitForFunction(() => document.querySelectorAll('.location-aircraft-marker').length === 1);
     assert.deepEqual(await page.locator('.location-site-label').allTextContents(), ['Receiver <test>', 'Illuminator']);
     assert.equal(await page.locator('#show-radar-tracks-on-map').isChecked(), false,
       'geographic radar ellipses are opt-in');
@@ -89,6 +98,11 @@ const server = http.createServer((request, response) => {
       'radar-confirmed rolling coverage is visible by default');
     await page.waitForFunction(() => document.querySelector('.location-radar-coverage-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
+    assert.equal(await page.locator('.location-aircraft-tooltip').count(), 0,
+      'map markers must remain label-only; aircraft data belongs in the sidebar');
+    assert.equal(await page.locator('.location-aircraft-label').textContent(), 'TEST123');
+    await page.waitForFunction(() => window.photoRequestsForTest === undefined || true);
+    await page.locator('.map-controls-panel > summary').click();
     await page.locator('#show-radar-tracks-on-map').check();
     await page.waitForFunction(() => document.querySelector('.location-radar-track-path')?.getAttribute('d'));
     assert.equal(await page.locator('.location-radar-track-cage').count(), 1,
@@ -108,6 +122,14 @@ const server = http.createServer((request, response) => {
     assert.equal(overlayStyle.coverageFilter, 'none', 'coverage outline cannot use Safari-smearing SVG filters');
     assert.equal(overlayStyle.trackFilter, 'none', 'radar paths cannot use Safari-smearing SVG filters');
     assert.equal(overlayStyle.trailFilter, 'none', 'flight trails cannot use Safari-smearing SVG filters');
+    const mapTouchAction = await page.evaluate(() =>
+      getComputedStyle(document.querySelector('.location-map-panel .mapboxgl-map')).touchAction);
+    assert.equal(mapTouchAction, 'none', 'map gestures must not zoom or scroll the surrounding web page');
+    await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('movestart'));
+    assert.equal(await page.locator('.location-aircraft-trails').evaluate(node =>
+      getComputedStyle(node).visibility), 'hidden', 'projected SVG paths hide while the map transforms');
+    await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('moveend'));
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.location-aircraft-trails')).visibility !== 'hidden');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
     const sidebarBounds = await page.locator('.location-map-sidebar').boundingBox();
     assert.ok(fullscreenBounds && sidebarBounds &&
@@ -188,6 +210,7 @@ const server = http.createServer((request, response) => {
     assert.ok(Math.abs(state.center.lon - preservedCenter.lon) < 1e-6,
       'live refresh and resize must preserve the operator map longitude');
     assert.equal(state.labels, 2);
+    assert.equal(photoRequests, 1, 'aircraft photo metadata must be prefetched once and reused from cache');
     console.log('Real Chromium locations map: initialization, escaped site labels, updates and resize passed (synthetic data).');
   } catch (error) {
     let state;

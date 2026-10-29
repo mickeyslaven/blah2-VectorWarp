@@ -235,8 +235,10 @@
 
   function setupLocationMapScaffold() {
     if (root.dataset.ready) return;
-    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar" open><summary>Map information</summary><div class="location-map-sidebar-body"><label class="map-auto-select"><input type="checkbox" id="show-radar-tracks-on-map"><span><strong>Show radar tracks on this map</strong><small>Confirmed tracks use the same 3D uncertainty cage on mobile and desktop.</small></span></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>Radar-confirmed coverage · last 24 h</strong><small>Only positions associated with confirmed radar tracks expand this boundary.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10,000–20,000 ft</option><option value="high">20,000–30,000 ft</option><option value="very_high">30,000–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar-associated aircraft</strong><small>Hold the current match; switch only when it is no longer associated.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
+    root.innerHTML = `<section class="insight-content insight-content-wide location-map-layout"><div class="panel insight-plot-card location-map-panel"><div class="visualization insight-plot" id="data"></div><details class="location-map-sidebar"><summary><span class="map-sidebar-title">Map</span><span class="map-sidebar-selected" id="map-sidebar-selected">Layers & aircraft</span></summary><div class="location-map-sidebar-body"><details class="map-controls-panel"><summary>Layers and controls</summary><div class="map-controls-body"><label class="map-auto-select"><input type="checkbox" id="show-radar-tracks-on-map"><span><strong>Show radar tracks</strong><small>Confirmed tracks use the 3D uncertainty cage.</small></span></label><label class="map-auto-select"><input type="checkbox" id="show-radar-coverage-on-map"><span><strong>24 h radar-confirmed coverage</strong><small>Online feed-only positions never expand it.</small></span></label><label class="map-coverage-filter"><span>Coverage altitude</span><select id="radar-coverage-altitude"><option value="all">All altitudes</option><option value="low">0–10,000 ft</option><option value="medium">10–20,000 ft</option><option value="high">20–30,000 ft</option><option value="very_high">30–40,000 ft</option><option value="extreme">40,000+ ft</option></select></label><label class="map-auto-select"><input type="checkbox" id="auto-select-radar-aircraft"><span><strong>Auto-select radar matches</strong><small>Keep the current radar-associated aircraft selected.</small></span></label><div class="aircraft-altitude-legend" aria-label="Aircraft altitude colors"><strong>Altitude</strong><span class="aircraft-altitude-gradient"></span><span>Ground</span><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k+ ft</span></div></div></details><div class="insight-stats" id="view-summary"></div><div id="selected-aircraft-detail" aria-live="polite"></div><div id="view-detail"></div></div></details></div></section>`;
     root.dataset.ready = 'true';
+    const sidebar = root.querySelector?.('.location-map-sidebar');
+    if (sidebar) sidebar.open = !window.matchMedia?.('(max-width:760px)')?.matches;
     const showTracks = document.getElementById('show-radar-tracks-on-map');
     const showCoverage = document.getElementById('show-radar-coverage-on-map');
     const coverageAltitude = document.getElementById('radar-coverage-altitude');
@@ -472,6 +474,10 @@
   } catch (_) { /* Persistence is optional. */ }
   const aircraftTrackHistories = new Map();
   const aircraftPhotoCache = new Map();
+  const aircraftPhotoInFlight = new Map();
+  const aircraftPhotoQueue = [];
+  const queuedAircraftPhotos = new Set();
+  let aircraftPhotoPumpActive = false;
 
   async function radarCoverage() {
     if (!showRadarCoverageOnMap) return null;
@@ -499,16 +505,49 @@
     const photoMarkup = photo?.available ?
       `<figure class="aircraft-photo"><img src="${escapeHtml(photo.thumbnail)}" alt="${escapeHtml(info.label)} aircraft" loading="lazy" referrerpolicy="no-referrer"><figcaption>Photo by ${escapeHtml(photo.photographer || 'contributor')} · <a href="${escapeHtml(photo.link)}" target="_blank" rel="noopener noreferrer">Planespotters.net</a></figcaption></figure>` :
       `<div class="aircraft-photo aircraft-photo-fallback">${aircraftSvgMarkup(item)}<span>${photo?.loading ? 'Looking for a photo…' : photo?.enabled === false ? 'Aircraft photos are off in ADS-B settings' : 'No photo available'}</span></div>`;
-    return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header>${photoMarkup}<dl>
-      <div><dt>Registration</dt><dd>${aircraftValue(info.registration)}</dd></div><div><dt>Aircraft</dt><dd>${aircraftValue(info.type)}${info.description ? ` · ${escapeHtml(info.description)}` : ''}</dd></div>
-      <div><dt>ICAO address</dt><dd>${aircraftValue(info.hex)}</dd></div><div><dt>Emitter category</dt><dd>${aircraftValue(info.category)}</dd></div>
-      <div><dt>Altitude</dt><dd>${info.altitude === null ? '—' : `${integer(info.altitude)} ft`}</dd></div><div><dt>Ground speed</dt><dd>${info.speed === null ? '—' : `${integer(info.speed)} kt`}</dd></div>
-      <div><dt>Heading</dt><dd>${info.heading === null ? '—' : `${integer(info.heading)}°`}</dd></div><div><dt>Vertical rate</dt><dd>${info.verticalRate === null ? '—' : `${integer(info.verticalRate)} ft/min`}</dd></div>
-      <div><dt>Squawk</dt><dd>${aircraftValue(info.squawk)}</dd></div><div><dt>Signal</dt><dd>${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div>
-      <div><dt>Position source</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''}</dd></div><div><dt>Position age</dt><dd>${info.age === null ? '—' : `${number(info.age, 1)} s`}</dd></div>
-      <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div>
-      <div><dt>Excess bistatic path</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`}</dd></div><div><dt>Predicted Doppler</dt><dd>${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
-    </dl><p class="aircraft-track-note">The selected aircraft shows a recent ground trail and, when the map is tilted, an altitude-lifted 3D trail. Its color follows the altitude legend: warm colors are lower and purple/indigo colors are higher.</p></section>`;
+    return `<section class="info-card aircraft-detail-card"><header><div><span class="aircraft-detail-kind">${escapeHtml(humanize(aircraftKind(item)))}</span><h2>${escapeHtml(info.label)}</h2><span class="aircraft-detail-subtitle">${aircraftValue(info.registration)} · ${aircraftValue(info.type)}</span></div><button type="button" class="button-secondary aircraft-detail-close" aria-label="Close aircraft details">Close</button></header>${photoMarkup}<div class="aircraft-primary-metrics">
+      <div><strong>${info.altitude === null ? '—' : integer(info.altitude)}</strong><span>ft altitude</span></div><div><strong>${info.speed === null ? '—' : integer(info.speed)}</strong><span>kt speed</span></div><div><strong>${info.heading === null ? '—' : `${integer(info.heading)}°`}</strong><span>heading</span></div><div><strong>${info.verticalRate === null ? '—' : integer(info.verticalRate)}</strong><span>ft/min</span></div>
+    </div><details class="aircraft-detail-section"><summary>Aircraft and source</summary><dl>
+      <div><dt>Description</dt><dd>${aircraftValue(info.description)}</dd></div><div><dt>ICAO / category</dt><dd>${aircraftValue(info.hex)} · ${aircraftValue(info.category)}</dd></div>
+      <div><dt>Squawk / signal</dt><dd>${aircraftValue(info.squawk)} · ${info.signal === null ? '—' : `${number(info.signal, 1)} dBFS`}</dd></div><div><dt>Position</dt><dd>${aircraftValue(info.positionSource)}${info.provider ? ` · ${escapeHtml(info.provider)}` : ''} · ${info.age === null ? '—' : `${number(info.age, 1)} s old`}</dd></div>
+    </dl></details><details class="aircraft-detail-section"><summary>Radar geometry</summary><dl>
+      <div><dt>Coordinates</dt><dd>${number(item.lat, 4)}, ${number(item.lon, 4)}</dd></div><div><dt>Excess path / Doppler</dt><dd>${info.delay === null ? '—' : `${number(info.delay, 2)} km`} · ${info.doppler === null ? '—' : `${number(info.doppler, 1)} Hz`}</dd></div>
+      <div><dt>Radar association</dt><dd>${item.radar_track_id ? `Track ${escapeHtml(item.radar_track_id)} · ${escapeHtml(humanize(item.radar_track_state))}` : 'No confirmed match'}</dd></div>
+    </dl></details></section>`;
+  }
+
+  function loadAircraftPhoto(hex) {
+    if (!hex) return Promise.resolve(null);
+    if (aircraftPhotoCache.has(hex) && !aircraftPhotoCache.get(hex)?.loading)
+      return Promise.resolve(aircraftPhotoCache.get(hex));
+    if (aircraftPhotoInFlight.has(hex)) return aircraftPhotoInFlight.get(hex);
+    aircraftPhotoCache.set(hex, {loading: true});
+    const request = fetchJson(liveApiUrl(`/api/adsb/aircraft-photo/${encodeURIComponent(hex)}`))
+      .then(value => value || {available: false}, () => ({available: false}))
+      .then(value => { aircraftPhotoCache.set(hex, value); return value; })
+      .finally(() => aircraftPhotoInFlight.delete(hex));
+    aircraftPhotoInFlight.set(hex, request);
+    return request;
+  }
+
+  function prefetchAircraftPhotos(aircraft = []) {
+    aircraft.map(item => aircraftInfo(item).hex.toLowerCase())
+      .filter(hex => /^[0-9a-f]{6}$/.test(hex) && !aircraftPhotoCache.has(hex) &&
+        !queuedAircraftPhotos.has(hex)).slice(0, 24).forEach(hex => {
+        queuedAircraftPhotos.add(hex); aircraftPhotoQueue.push(hex);
+      });
+    if (aircraftPhotoPumpActive || !aircraftPhotoQueue.length) return;
+    const pump = async () => {
+      const hex = aircraftPhotoQueue.shift();
+      if (!hex) { aircraftPhotoPumpActive = false; return; }
+      aircraftPhotoPumpActive = true;
+      await loadAircraftPhoto(hex);
+      queuedAircraftPhotos.delete(hex);
+      setTimeout(pump, 250);
+    };
+    const run = () => pump().catch(() => { aircraftPhotoPumpActive = false; });
+    if (window.requestIdleCallback) window.requestIdleCallback(run, {timeout: 1500});
+    else setTimeout(run, 0);
   }
 
   function renderSelectedAircraftCard(aircraft = []) {
@@ -520,6 +559,8 @@
     });
     if (current) selectedAircraftSnapshot = current;
     const item = current || (selectedAircraftId ? selectedAircraftSnapshot : null);
+    const sidebarLabel = document.getElementById('map-sidebar-selected');
+    if (sidebarLabel) sidebarLabel.textContent = item ? aircraftInfo(item).label : 'Layers & aircraft';
     const hex = item ? aircraftInfo(item).hex.toLowerCase() : '';
     renderHtml(target, selectedAircraftMarkup(item, hex ? aircraftPhotoCache.get(hex) : null));
     target.querySelector?.('.aircraft-detail-close')?.addEventListener('click', () => {
@@ -529,16 +570,12 @@
         marker.classList.remove('selected'));
       document.querySelector?.('.location-aircraft-layer')?._updatePositions?.();
     });
-    if (!hex || aircraftPhotoCache.has(hex)) return;
-    aircraftPhotoCache.set(hex, {loading: true});
+    if (!hex || (aircraftPhotoCache.has(hex) && !aircraftPhotoCache.get(hex)?.loading)) return;
     renderHtml(target, selectedAircraftMarkup(item, {loading: true}));
-    fetchJson(liveApiUrl(`/api/adsb/aircraft-photo/${encodeURIComponent(hex)}`))
-      .then(value => aircraftPhotoCache.set(hex, value || {available: false}),
-        () => aircraftPhotoCache.set(hex, {available: false}))
-      .finally(() => {
+    loadAircraftPhoto(hex).finally(() => {
         if (selectedAircraftId === (aircraftInfo(item).hex || aircraftInfo(item).label))
           renderSelectedAircraftCard(aircraft);
-      });
+    });
   }
 
   function bindLocationMapInteraction() {
@@ -629,6 +666,17 @@
         };
         map.on('move', layer._schedulePositionUpdate);
         map.on('resize', layer._schedulePositionUpdate);
+        const beginMapTransform = () => layer.classList.add('map-transforming');
+        const endMapTransform = () => {
+          layer._schedulePositionUpdate();
+          schedule(() => schedule(() => {
+            if (!map.isMoving?.()) layer.classList.remove('map-transforming');
+          }));
+        };
+        ['movestart', 'zoomstart', 'rotatestart', 'pitchstart'].forEach(name =>
+          map.on(name, beginMapTransform));
+        ['moveend', 'zoomend', 'rotateend', 'pitchend'].forEach(name =>
+          map.on(name, endMapTransform));
       }
       layer._aircraftMarkers ||= new Map();
       layer._siteMarkers ||= new Map();
@@ -672,12 +720,14 @@
           marker.className = 'location-aircraft-marker';
           Object.assign(marker.style, {position: 'absolute', width: '42px', height: '52px',
             transform: 'translate(-50%, -50%)', filter: 'drop-shadow(0 2px 3px rgba(0,0,0,.9))',
-            pointerEvents: 'auto'});
-          marker.tabIndex = 0;
-          marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span><span class="location-aircraft-tooltip"></span>';
+            pointerEvents: 'none'});
+          marker.tabIndex = -1;
+          marker.innerHTML = '<span class="location-aircraft-icon"></span><span class="location-aircraft-label"></span>';
           record = {marker, icon: marker.children[0], label: marker.children[1],
-            tooltip: marker.children[2], item, heading, signature: '', isAircraft: true};
-          marker.addEventListener?.('click', event => {
+            item, heading, signature: '', isAircraft: true};
+          record.icon.tabIndex = 0;
+          record.icon.setAttribute('role', 'button');
+          const selectAircraft = event => {
             if (event.target?.closest?.('a')) return;
             event.stopPropagation?.();
             const currentInfo = aircraftInfo(record.item);
@@ -690,6 +740,10 @@
             if (selectedAircraftId && sidebar) sidebar.open = true;
             renderSelectedAircraftCard(layer._aircraftSnapshot || []);
             layer._updatePositions?.();
+          };
+          record.icon.addEventListener?.('click', selectAircraft);
+          record.icon.addEventListener?.('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectAircraft(event); }
           });
           layer.appendChild(marker);
           layer._aircraftMarkers.set(aircraftId, record);
@@ -699,27 +753,19 @@
         const marker = record.marker;
         const color = aircraftAltitudeColor(item);
         const radarTracked = Boolean(item.radar_track_id);
-        const detail = [info.positionSource === 'MLAT' ? `MLAT position${info.provider ? ` · ${info.provider}` : ''}` : '',
-          info.registration, info.type, info.description,
-          info.altitude === null ? '' : `${Math.round(info.altitude).toLocaleString()} ft`,
-          info.speed === null ? '' : `${Math.round(info.speed)} kt`,
-          info.hex ? `ICAO ${info.hex}` : '', info.squawk ? `Squawk ${info.squawk}` : '',
-          radarTracked ? `Radar track ${item.radar_track_id} · ${humanize(item.radar_track_state)}` : '']
-          .filter(Boolean).map(escapeHtml).join('<br>');
         marker.classList?.toggle('selected', selectedAircraftId === aircraftId);
         marker.classList?.toggle('snapshot-stale', item._snapshot_stale === true);
         marker.classList?.toggle('mlat-position', info.positionSource === 'MLAT');
         marker.classList?.toggle('radar-tracked', radarTracked);
         marker.classList?.toggle('radar-active', radarTracked &&
           ['ACTIVE', 'CONFIRMED'].includes(String(item.radar_track_state).toUpperCase()));
-        const signature = [aircraftKind(item), color, heading, info.label, detail,
+        const signature = [aircraftKind(item), color, heading, info.label,
           info.positionSource, radarTracked].join('|');
         if (signature !== record.signature) {
           record.icon.innerHTML = aircraftSvgMarkup(item, color);
           record.label.textContent = info.label;
           record.label.style.borderColor = color;
-          record.tooltip.innerHTML = `<strong>${escapeHtml(info.label)}</strong>${detail ? `<br>${detail}` : ''}<br>Tap for full details`;
-          marker.setAttribute('aria-label', `${info.label}${detail ? `, ${detail.replace(/<br>/g, ', ')}` : ''}`);
+          record.icon.setAttribute('aria-label', `${info.label}. Select for aircraft details.`);
           record.signature = signature;
         }
       }
@@ -930,6 +976,7 @@
             radar_track_id: candidate.track.id, radar_track_state: candidate.track.state};
         });
         updateAircraftTrackHistories(aircraftTrackHistories, aircraft);
+        prefetchAircraftPhotos(aircraft);
         selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, aircraft,
           autoSelectRadarAircraft && showRadarTracksOnMap);
         selectedAircraftSnapshot = aircraft.find(item => aircraftIdentity(item) === selectedAircraftId) ||
@@ -1019,7 +1066,7 @@
     }
     const resolvedBearings = bearingRows.filter(item => item.location).length;
     const unresolvedBearings = bearingRows.length - resolvedBearings;
-    renderHtml(document.getElementById('view-summary'), `${card(rawDetections.length, 'Raw detections')}${card(tracks.length, 'Confirmed active tracks')}${card(hiddenAssociatedTracks, 'Candidates hidden')}${card(hiddenTentativeTracks, 'Tentative hidden')}${card(hiddenCoastingTracks, 'Coasting hidden')}${card(bearingRows.length, 'Bearing estimates')}${card(resolvedBearings, 'Resolved fixes')}${card(unresolvedBearings, 'Unresolved shown')}${card(hiddenStationary, 'Stationary hidden')}${card(aircraft.length, 'ADS-B')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, '24 h coverage tracks') : ''}`);
+    renderHtml(document.getElementById('view-summary'), `${card(tracks.length, 'Radar tracks')}${card(aircraft.length, 'Aircraft')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     const reference = bearingDiagnostic?.known_angle_reference;
     const referenceDiagnostic = !reference ? '' : reference.available ?
       `<section class="info-card"><h2>Known-angle reference · shadow only</h2><dl>
@@ -1039,7 +1086,7 @@
         <div><dt>Decision</dt><dd>${bearingDiagnostic.evidence_ready ? 'Evidence threshold met for review' : 'Still collecting coverage'}; changes are never applied automatically.</dd></div>
       </dl><p class="view-note">${escapeHtml(bearingDiagnostic.identifiability)}</p></section>` :
       `<section class="info-card"><h2>Bearing wiring diagnostic</h2><p>${escapeHtml(bearingDiagnostic.reason)}</p></section>`;
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are counted above but hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} counted above but hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
+    renderDetail(`<details class="info-card location-map-notes"><summary>Map and bearing details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `Orange 3D uncertainty cages show all ${visibleTracks.length} visible confirmed active delay-only tracks. A highlighted altitude slice means ADS-B/MLAT identified the tracked aircraft; the radar did not independently measure altitude.` : `Confirmed radar tracks are currently kept on the main radar display only; enable “Show radar tracks on this map” above to add their 3D uncertainty cages here.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position.</div>${diagnostic}${referenceDiagnostic}</details>`);
     renderSelectedAircraftCard(aircraft);
     renderAircraftOverlays(aircraft, [
       {...receiver, name: receiver.name || 'Receiver'},

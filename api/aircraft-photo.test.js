@@ -37,6 +37,14 @@ assert.equal(normalizePlanespotters({photos: [{thumbnail: {src: 'https://evil.in
   assert.equal(first.available, true);
   assert.deepEqual(second, first);
   assert.equal(calls, 1, 'Repeated selected-aircraft requests must use the bounded cache');
+  let failures = 0;
+  const failing = createAircraftPhotoLookup({truth: {adsb: {
+    aircraft_photo_provider: 'planespotters'}}}, {fetchJson: async () => {
+    failures++; throw new Error('provider unavailable');
+  }});
+  assert.equal((await failing.lookup('abcdef')).temporarily_unavailable, true);
+  assert.equal((await failing.lookup('ABCDEF')).temporarily_unavailable, true);
+  assert.equal(failures, 1, 'Provider errors must be negatively cached instead of retried per CPI');
   await assert.rejects(() => enabled.lookup('../../etc/passwd'), /six hexadecimal/i);
   console.log('Aircraft photo provider: opt-in, sanitized and cached lookup passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

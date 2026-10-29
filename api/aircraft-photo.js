@@ -88,9 +88,9 @@ function createAircraftPhotoLookup(config, {fetchJson = readJson, now = Date.now
       .then(normalizePlanespotters).then(value => {
         entry.expiresAt = now() + (value.available ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS);
         return value;
-      }, error => {
-        cache.delete(key);
-        throw error;
+      }, () => {
+        entry.expiresAt = now() + ERROR_TTL_MS;
+        return {available: false, provider: 'Planespotters.net', temporarily_unavailable: true};
       });
     cache.set(key, entry);
     prune();

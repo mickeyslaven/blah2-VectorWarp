@@ -185,7 +185,7 @@ const CONFIG_META = {
   'truth.adsb.poll_interval': ['Poll interval', 'Seconds between raw ADS-B reads.'],
   'truth.adsb.smoothing_window': ['Motion smoothing', 'Recent position updates used for Doppler.'],
   'truth.adsb.max_position_age': ['Maximum position age', 'Ignore aircraft positions older than this many seconds.'],
-  'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional photos shown only after selecting an aircraft.'],
+  'truth.adsb.aircraft_photo_provider': ['Aircraft photos', 'Optional aircraft photos cached in the background and shown in Map details.'],
   'truth.adsb.provisional_event_time_uncertainty_s': ['Provisional UTC uncertainty', 'Seconds of SDR event-time uncertainty included in validation gates.'],
   'truth.ais': ['AIS (not implemented)', 'Reserved maritime-feed settings; preserved but not editable.'],
   'truth.ais.enabled': ['AIS evaluation', 'Not implemented in this processor.'],
@@ -1018,7 +1018,7 @@ function adsbSourcesInput(legacyValue, path) {
     wrapper.appendChild(photoRow);
     const photoNote = document.createElement('p');
     photoNote.className = 'adsb-source-note';
-    photoNote.textContent = 'Planespotters receives the selected aircraft ICAO address. Photos include photographer credit and a link to the original.';
+    photoNote.textContent = 'When enabled, Planespotters receives visible aircraft ICAO addresses. VectorWarp caches bounded photo metadata, loads images only in Map details, and preserves photographer credit plus the original link.';
     wrapper.appendChild(photoNote);
 
     const custom = sources.map((source, index) => ({source, index}))
