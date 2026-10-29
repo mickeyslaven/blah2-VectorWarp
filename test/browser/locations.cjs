@@ -1,5 +1,5 @@
 'use strict';
-// Real Plotly/Mapbox in Chromium, with synthetic sites/API data and local tiles.
+// Real MapLibre terrain map in Chromium, with synthetic sites/API data and local tiles.
 // No receiver, production service, aircraft feed, or live RF is used.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -58,7 +58,8 @@ const server = http.createServer((request, response) => {
   if (!filename.startsWith(root + path.sep) || !fs.existsSync(filename) || !fs.statSync(filename).isFile()) {
     response.writeHead(404); response.end(); return;
   }
-  response.setHeader('Content-Type', {'.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'}[path.extname(filename)] || 'application/octet-stream');
+  response.setHeader('Content-Type', {'.js': 'application/javascript', '.mjs': 'application/javascript',
+    '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml'}[path.extname(filename)] || 'application/octet-stream');
   fs.createReadStream(filename).pipe(response);
 });
 
@@ -86,6 +87,15 @@ const server = http.createServer((request, response) => {
     });
     await page.route(/^https:\/\/[ab]\.tile\.openstreetmap\.org\//, async route => {
       await new Promise(resolve => setTimeout(resolve, 100));
+      await route.fulfill({contentType: 'image/png', body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')});
+    });
+    await page.route(/^https:\/\/tiles\.mapterhorn\.com\//, async route => {
+      if (route.request().url().endsWith('tilejson.json')) {
+        await route.fulfill({contentType: 'application/json', body: JSON.stringify({tilejson: '3.0.0',
+          tiles: ['https://tiles.mapterhorn.com/tiles/{z}/{x}/{y}.png'], minzoom: 0, maxzoom: 12})});
+        return;
+      }
       await route.fulfill({contentType: 'image/png', body: Buffer.from(
         'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64')});
     });
@@ -121,29 +131,36 @@ const server = http.createServer((request, response) => {
       'the map defaults to radar-confirmed ADS-B aircraft without uncertainty ellipses');
     assert.equal(await page.locator('#show-radar-coverage-on-map').isChecked(), true,
       'radar-confirmed rolling coverage is visible by default');
-    await page.waitForFunction(() => document.getElementById('data')._fullLayout.mapbox._subplot.map
-      .getSource('vectorwarp-radar-coverage'));
+    await page.waitForFunction(() => document.getElementById('data')._vectorwarpMap
+      ?.getSource('vectorwarp-radar-coverage'));
     const coverageGeometry = await page.evaluate(() => {
-      const map = document.getElementById('data')._fullLayout.mapbox._subplot.map;
+      const map = document.getElementById('data')._vectorwarpMap;
       const source = map.getSource('vectorwarp-radar-coverage');
-      return {data: source._data, fill: Boolean(map.getLayer('vectorwarp-radar-coverage-fill')),
-        line: Boolean(map.getLayer('vectorwarp-radar-coverage-line'))};
+      return {data: source._vectorwarpData, fill: Boolean(map.getLayer('vectorwarp-radar-coverage-fill')),
+        line: Boolean(map.getLayer('vectorwarp-radar-coverage-line')),
+        renderer: document.getElementById('data').dataset.mapRenderer,
+        pitch: map.getPitch(), maxPitch: map.getMaxPitch(), terrain: map.getTerrain()};
     });
     assert.equal(coverageGeometry.data.features.length, 4,
       'unsupported bearing gaps remain four separate geographic radials');
     assert.ok(coverageGeometry.fill && coverageGeometry.line,
       'coverage fill and line are native geographic map layers');
+    assert.equal(coverageGeometry.renderer, 'maplibre-terrain');
+    assert.ok(coverageGeometry.pitch > 45 && coverageGeometry.maxPitch >= 80,
+      'the terrain renderer starts in a readable 3D view and permits steep pitch');
+    assert.equal(coverageGeometry.terrain.source, 'vectorwarp-terrain',
+      'the basemap is draped over a real raster DEM source');
     assert.equal(await page.locator('.location-radar-coverage-path').getAttribute('d'), '',
       'the screen-space SVG coverage path is disabled when native map layers are available');
     await page.evaluate(() => {
-      const map = document.getElementById('data')._fullLayout.mapbox._subplot.map;
+      const map = document.getElementById('data')._vectorwarpMap;
       map.zoomTo(map.getZoom() + 1, {duration: 0});
     });
     await page.waitForTimeout(100);
-    assert.equal(await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map
-      .getSource('vectorwarp-radar-coverage')._data.features.length), 4,
+    assert.equal(await page.evaluate(() => document.getElementById('data')._vectorwarpMap
+      .getSource('vectorwarp-radar-coverage')._vectorwarpData.features.length), 4,
     'zooming preserves the geographic coverage geometry without rebuilding screen paths');
-    assert.ok((await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox.zoom)) > 5,
+    assert.ok((await page.evaluate(() => document.getElementById('data')._vectorwarpMap.getZoom())) > 5,
       'online ADS-B acquisition radius must not define the radar map distance');
     assert.equal(await page.locator('.location-radar-track-path').count(), 0);
     assert.equal(await page.locator('.location-aircraft-tooltip').count(), 0,
@@ -171,16 +188,16 @@ const server = http.createServer((request, response) => {
     assert.equal(overlayStyle.trackFilter, 'none', 'radar paths cannot use Safari-smearing SVG filters');
     assert.equal(overlayStyle.trailFilter, 'none', 'flight trails cannot use Safari-smearing SVG filters');
     const mapTouchAction = await page.evaluate(() =>
-      getComputedStyle(document.querySelector('.location-map-panel .mapboxgl-map')).touchAction);
+      getComputedStyle(document.querySelector('.location-map-panel .maplibregl-map')).touchAction);
     assert.equal(mapTouchAction, 'none', 'map gestures must not zoom or scroll the surrounding web page');
-    await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('movestart'));
+    await page.evaluate(() => document.getElementById('data')._vectorwarpMap.fire('movestart'));
     assert.notEqual(await page.locator('.location-aircraft-trails').evaluate(node =>
       getComputedStyle(node).visibility), 'hidden',
     'projected paths must remain visible while the operator rotates or zooms the map');
     assert.notEqual(await page.locator('.location-3d-model-layer').evaluate(node =>
       getComputedStyle(node).visibility), 'hidden',
     '3D aircraft and sites must remain visible during map navigation');
-    await page.evaluate(() => document.getElementById('data')._fullLayout.mapbox._subplot.map.fire('moveend'));
+    await page.evaluate(() => document.getElementById('data')._vectorwarpMap.fire('moveend'));
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.location-aircraft-trails')).visibility !== 'hidden');
     const fullscreenBounds = await page.getByRole('button', {name: 'Fullscreen'}).boundingBox();
     const sidebarBounds = await page.locator('.location-map-sidebar').boundingBox();
@@ -188,27 +205,26 @@ const server = http.createServer((request, response) => {
       fullscreenBounds.x + fullscreenBounds.width < sidebarBounds.x,
     'fullscreen control must remain outside the map information overlay');
     stage = 'persistent map interaction across refresh intervals';
-    await page.evaluate(() => {
-      window.locationAfterPlotCount = 0;
-      document.getElementById('data').on('plotly_afterplot', () => window.locationAfterPlotCount++);
+    const mapIdentity = await page.evaluate(() => {
+      const map = document.getElementById('data')._vectorwarpMap;
+      map.__vectorwarpTestIdentity = crypto.randomUUID();
+      return map.__vectorwarpTestIdentity;
     });
     const mapBounds = await page.locator('#data').boundingBox();
     assert.ok(mapBounds, 'map must have interactive bounds');
     await page.mouse.move(mapBounds.x + mapBounds.width / 2, mapBounds.y + mapBounds.height / 2);
     await page.mouse.down();
     await page.mouse.up();
-    // Let any refresh that began before the click finish before measuring the
-    // protected interaction interval.
     await page.waitForTimeout(300);
-    const plotsWhileEngaged = await page.evaluate(() => window.locationAfterPlotCount);
     await page.mouse.wheel(0, -180);
     await page.waitForTimeout(2300);
     assert.notEqual(await page.locator('.location-radar-track-path').getAttribute('d'), firstTrackPath,
-      'radar track overlays must move while Plotly map reconciliation is paused');
+      'radar track overlays must move with the MapLibre camera');
     await page.mouse.wheel(0, -180);
     await page.waitForTimeout(200);
-    assert.equal(await page.evaluate(() => window.locationAfterPlotCount), plotsWhileEngaged,
-      'live refresh must not reconcile the Mapbox scene while the pointer remains on the map');
+    assert.equal(await page.evaluate(() => document.getElementById('data')._vectorwarpMap
+      .__vectorwarpTestIdentity), mapIdentity,
+    'live refresh must update map sources without recreating the map');
     await page.mouse.move(2, 2);
     const requestsAfterLeave = trackerRequests;
     const resumedDeadline = Date.now() + 4000;
@@ -217,12 +233,12 @@ const server = http.createServer((request, response) => {
     assert.ok(trackerRequests > requestsAfterLeave,
       'live data refresh must continue after the pointer leaves the map');
     stage = 'touch map interaction persists until an outside tap';
-    const touchPlots = await page.evaluate(() => window.locationAfterPlotCount);
     await page.dispatchEvent('#data', 'pointerdown', {pointerType: 'touch', pointerId: 2});
     await page.dispatchEvent('#data', 'pointerup', {pointerType: 'touch', pointerId: 2});
     await page.waitForTimeout(2300);
-    assert.equal(await page.evaluate(() => window.locationAfterPlotCount), touchPlots,
-      'touch map engagement must survive refreshes between successive gestures');
+    assert.equal(await page.evaluate(() => document.getElementById('data')._vectorwarpMap
+      .__vectorwarpTestIdentity), mapIdentity,
+    'touch interaction and live refresh must preserve one map instance');
     await page.dispatchEvent('body', 'pointerdown', {pointerType: 'touch', pointerId: 3});
     const touchRequests = trackerRequests;
     // This may coincide with the fixture's intentional API timeout. Give the
@@ -232,15 +248,19 @@ const server = http.createServer((request, response) => {
       await page.waitForTimeout(100);
     assert.ok(trackerRequests > touchRequests,
       'an outside touch must leave live data refresh active');
-    const preservedCenter = await page.evaluate(() =>
-      document.getElementById('data')._fullLayout.mapbox.center);
+    const preservedCenter = await page.evaluate(() => {
+      const center = document.getElementById('data')._vectorwarpMap.getCenter();
+      return {lat: center.lat, lon: center.lng};
+    });
     stage = 'map style and dimensions after viewport resize';
-    for (const width of [1200, 1050, 1400]) await page.setViewportSize({width, height: 900});
+    for (const width of [1200, 1050, 1400]) {
+      await page.setViewportSize({width, height: 900});
+      await page.evaluate(() => document.getElementById('data')._vectorwarpMap.resize());
+    }
     await page.waitForFunction(() => {
       const graph = document.getElementById('data');
-      // Autosizing leaves layout.width unset; _fullLayout holds rendered dimensions.
-      return graph?._fullLayout?.mapbox?._subplot?.map?.isStyleLoaded() &&
-        graph._fullLayout.width === Math.floor(graph.getBoundingClientRect().width);
+      const map = graph?._vectorwarpMap;
+      return map?.isStyleLoaded() && map.getCanvas().clientWidth === Math.floor(graph.getBoundingClientRect().width);
     });
     stage = 'live refresh and final assertions';
     const refreshDeadline = Date.now() + 8000;
@@ -250,15 +270,14 @@ const server = http.createServer((request, response) => {
     await page.waitForFunction(() => window.blah2ViewLastError === null);
     const state = await page.evaluate(() => {
       const graph = document.getElementById('data');
-      const sites = graph.data.find(trace => trace.name === 'Radar sites');
+      const center = graph._vectorwarpMap.getCenter();
       return {error: window.blah2ViewLastError || window.blah2PlotResizeError || null,
-        center: graph._fullLayout.mapbox.center, latitude: sites.lat, longitude: sites.lon,
+        center: {lat: center.lat, lon: center.lng}, renderer: graph.dataset.mapRenderer,
         labels: document.querySelectorAll('.location-site-label').length};
     });
     assert.equal(state.error, null);
     assert.deepEqual(errors, []);
-    assert.deepEqual(state.latitude, [40, 40.1]);
-    assert.deepEqual(state.longitude, [-80, -80.2]);
+    assert.equal(state.renderer, 'maplibre-terrain');
     assert.ok(Math.abs(state.center.lat - preservedCenter.lat) < 1e-6,
       'live refresh and resize must preserve the operator map latitude');
     assert.ok(Math.abs(state.center.lon - preservedCenter.lon) < 1e-6,
@@ -274,8 +293,7 @@ const server = http.createServer((request, response) => {
     await page.setViewportSize({width: 390, height: 844});
     await page.evaluate(async () => {
       const graph = document.getElementById('data');
-      await Plotly.Plots.resize(graph);
-      const map = graph._fullLayout.mapbox._subplot.map;
+      const map = graph._vectorwarpMap;
       map.resize();
       map.jumpTo({center: [-80.08, 40.02], zoom: 5.8, bearing: 0, pitch: 0});
     });
@@ -314,13 +332,13 @@ const server = http.createServer((request, response) => {
     try {
       state = await page?.evaluate(() => {
         const graph = document.getElementById('data');
-        const map = graph?._fullLayout?.mapbox?._subplot?.map;
+        const map = graph?._vectorwarpMap;
         const bounds = graph?.getBoundingClientRect();
         return {
           labels: document.querySelectorAll('.location-site-label').length,
           mapExists: Boolean(map), styleLoaded: map?.isStyleLoaded(), mapLoaded: map?.loaded(),
-          layoutWidth: graph?.layout?.width, fullLayoutWidth: graph?._fullLayout?.width,
-          layoutHeight: graph?.layout?.height, fullLayoutHeight: graph?._fullLayout?.height,
+          renderer: graph?.dataset?.mapRenderer,
+          canvasWidth: map?.getCanvas?.()?.clientWidth, canvasHeight: map?.getCanvas?.()?.clientHeight,
           measuredWidth: bounds?.width, measuredHeight: bounds?.height,
           viewportWidth: window.innerWidth, pixelRatio: window.devicePixelRatio,
           viewError: window.blah2ViewLastError, frameError: window.blah2FrameError,

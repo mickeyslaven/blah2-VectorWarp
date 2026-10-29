@@ -316,7 +316,8 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .location-aircraft-altitude-connector { stroke-width:1.5; stroke-dasharray:3 4; opacity:.72; }
 .location-map-layout { display:block; }
 .location-map-panel { position:relative; }
-.location-map-panel #data, .location-map-panel .mapboxgl-map, .location-map-panel .mapboxgl-canvas-container { touch-action:none!important; overscroll-behavior:contain; }
+.location-map-panel #data, .location-map-panel .mapboxgl-map, .location-map-panel .mapboxgl-canvas-container,
+.location-map-panel .maplibregl-map, .location-map-panel .maplibregl-canvas-container { touch-action:none!important; overscroll-behavior:contain; }
 .location-map-panel .insight-plot { height:calc(100dvh - 138px); min-height:520px; }
 .location-map-sidebar { position:absolute; z-index:12; top:12px; right:12px; width:min(310px,calc(100% - 24px)); max-height:calc(100% - 24px); overflow:auto; border:1px solid rgba(255,135,84,.32); border-radius:12px; background:rgba(18,14,13,.96); box-shadow:0 8px 28px rgba(0,0,0,.34); }
 .location-map-sidebar:not([open]) { width:auto; max-width:180px; overflow:hidden; }

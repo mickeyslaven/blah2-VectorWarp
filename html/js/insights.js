@@ -475,10 +475,6 @@
   }
 
   let locationMapViewport = null;
-  let locationMapDragging = false;
-  let locationMapEngaged = false;
-  let locationMapHoldUntil = 0;
-  let locationPlotSignature = null;
   let selectedAircraftId = null;
   let selectedAircraftSnapshot = null;
   let autoSelectRadarAircraft = false;
@@ -617,47 +613,126 @@
     });
   }
 
-  function bindLocationMapInteraction() {
-    const map = document.getElementById('data');
-    if (!map?.addEventListener || !window.addEventListener || map.dataset.locationInputBound) return;
-    map.dataset.locationInputBound = 'true';
-    // Plotly.react can reconcile the Mapbox scene whenever live track traces
-    // change.  Do not do that in the middle of an operator's map session: on
-    // desktop, one click should keep pan/zoom active until the pointer leaves
-    // the map.  Touch gestures retain the shorter release grace because they
-    // do not reliably produce pointerleave on every browser.
-    map.addEventListener('pointerdown', () => {
-      locationMapDragging = true;
-      locationMapEngaged = true;
-    });
-    map.addEventListener('pointerleave', event => {
-      if (event.pointerType !== 'touch') locationMapEngaged = false;
-    });
-    // Touch screens have no durable hover/leave lifecycle. Keep the map
-    // engaged across successive pan/pinch gestures and release it only when
-    // the operator taps elsewhere on the page.
-    document.addEventListener?.('pointerdown', event => {
-      if (event.pointerType === 'touch' && !map.contains?.(event.target))
-        locationMapEngaged = false;
-    }, true);
-    const release = () => {
-      locationMapDragging = false;
-      locationMapHoldUntil = Date.now() + 900;
-    };
-    window.addEventListener('pointerup', release);
-    window.addEventListener('pointercancel', release);
-    map.addEventListener('wheel', () => {
-      locationMapHoldUntil = Date.now() + 1200;
-    }, {passive: true});
-  }
-
-  function locationMapIsBeingNavigated() {
-    return locationMapEngaged || locationMapDragging || Date.now() < locationMapHoldUntil;
-  }
-
   const radarCoverageSourceId = 'vectorwarp-radar-coverage';
   const radarCoverageFillLayerId = 'vectorwarp-radar-coverage-fill';
   const radarCoverageLineLayerId = 'vectorwarp-radar-coverage-line';
+  const bearingOverlaySourceId = 'vectorwarp-bearing-overlays';
+
+  function locationMapStyle() {
+    return {
+      version: 8,
+      sources: {
+        'vectorwarp-basemap': {
+          type: 'raster', tileSize: 256,
+          tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          attribution: '&copy; OpenStreetMap contributors'
+        },
+        'vectorwarp-terrain': {
+          type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
+          tileSize: 256, attribution: 'Terrain &copy; Mapterhorn'
+        },
+        'vectorwarp-hillshade': {
+          type: 'raster-dem', url: 'https://tiles.mapterhorn.com/tilejson.json',
+          tileSize: 256
+        }
+      },
+      terrain: {source: 'vectorwarp-terrain', exaggeration: 1.12},
+      layers: [
+        {id: 'vectorwarp-basemap', type: 'raster', source: 'vectorwarp-basemap'},
+        {id: 'vectorwarp-hillshade', type: 'hillshade', source: 'vectorwarp-hillshade',
+          paint: {'hillshade-exaggeration': .34, 'hillshade-shadow-color': '#30251f',
+            'hillshade-highlight-color': '#f4d4ad', 'hillshade-accent-color': '#7d614f'}}
+      ]
+    };
+  }
+
+  async function ensureLocationMap(viewport) {
+    const graph = document.getElementById('data');
+    if (graph?._vectorwarpMap) return graph._vectorwarpMap;
+    const maplibre = await (window.vectorwarpMapLibreReady || Promise.resolve(window.maplibregl));
+    if (!maplibre?.Map) throw new Error('Map renderer could not load');
+    const map = new maplibre.Map({
+      container: graph,
+      style: locationMapStyle(),
+      center: [viewport.center.lon, viewport.center.lat],
+      zoom: viewport.zoom,
+      pitch: 58,
+      bearing: 0,
+      minPitch: 0,
+      maxPitch: 85,
+      attributionControl: true,
+      cooperativeGestures: false,
+      renderWorldCopies: false,
+      dragRotate: true,
+      touchPitch: true
+    });
+    graph._vectorwarpMap = map;
+    graph.dataset.mapRenderer = 'maplibre-terrain';
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('Map renderer timed out')), 15000);
+      map.once('load', () => { window.clearTimeout(timeout); resolve(); });
+      map.once('error', event => {
+        // A missing terrain tile must not prevent the base map and live radar
+        // overlays from loading. Only fail before the style itself exists.
+        if (!map.isStyleLoaded?.() && !map.getStyle?.()) {
+          window.clearTimeout(timeout);
+          reject(event?.error || new Error('Map renderer failed'));
+        }
+      });
+    });
+    return map;
+  }
+
+  function bearingOverlayGeoJson(rows) {
+    const features = [];
+    for (const item of rows) {
+      const properties = {track: String(item.id ?? ''),
+        uncertainty: finite(item.uncertainty_deg), state: String(item.state || '')};
+      const corridor = array(item.uncertainty_corridor).map(point =>
+        [finite(point.longitude), finite(point.latitude)]).filter(point => point.every(Number.isFinite));
+      if (corridor.length > 1) features.push({type: 'Feature',
+        properties: {...properties, kind: 'corridor'},
+        geometry: {type: 'LineString', coordinates: corridor}});
+      const resolved = item.location && [finite(item.location.longitude), finite(item.location.latitude)];
+      if (resolved && resolved.every(Number.isFinite)) features.push({type: 'Feature',
+        properties: {...properties, kind: 'resolved'}, geometry: {type: 'Point', coordinates: resolved}});
+      const estimate = !item.location && item.estimate &&
+        [finite(item.estimate.longitude), finite(item.estimate.latitude)];
+      if (estimate && estimate.every(Number.isFinite)) features.push({type: 'Feature',
+        properties: {...properties, kind: 'estimate'}, geometry: {type: 'Point', coordinates: estimate}});
+      if (!item.location) for (const candidate of array(item.candidates)) {
+        const coordinates = [finite(candidate.longitude), finite(candidate.latitude)];
+        if (coordinates.every(Number.isFinite)) features.push({type: 'Feature',
+          properties: {...properties, kind: 'candidate'}, geometry: {type: 'Point', coordinates}});
+      }
+    }
+    return {type: 'FeatureCollection', features};
+  }
+
+  function syncBearingOverlayLayers(map, rows) {
+    if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return;
+    const data = bearingOverlayGeoJson(rows);
+    const source = map.getSource(bearingOverlaySourceId);
+    if (source?.setData) source.setData(data);
+    else map.addSource(bearingOverlaySourceId, {type: 'geojson', data});
+    const activeSource = map.getSource(bearingOverlaySourceId);
+    if (activeSource) activeSource._vectorwarpData = data;
+    const add = layer => { if (!map.getLayer(layer.id)) map.addLayer(layer); };
+    add({id: 'vectorwarp-bearing-corridors', type: 'line', source: bearingOverlaySourceId,
+      filter: ['==', ['get', 'kind'], 'corridor'],
+      paint: {'line-color': '#f7c75f', 'line-opacity': .72, 'line-width': 6}});
+    add({id: 'vectorwarp-bearing-resolved', type: 'circle', source: bearingOverlaySourceId,
+      filter: ['==', ['get', 'kind'], 'resolved'],
+      paint: {'circle-radius': 7, 'circle-color': '#f7c75f', 'circle-opacity': .95,
+        'circle-stroke-color': '#211812', 'circle-stroke-width': 2}});
+    add({id: 'vectorwarp-bearing-estimates', type: 'circle', source: bearingOverlaySourceId,
+      filter: ['==', ['get', 'kind'], 'estimate'],
+      paint: {'circle-radius': 6, 'circle-color': '#b99cff', 'circle-opacity': .58}});
+    add({id: 'vectorwarp-bearing-candidates', type: 'circle', source: bearingOverlaySourceId,
+      filter: ['==', ['get', 'kind'], 'candidate'],
+      paint: {'circle-radius': 5, 'circle-color': '#f7c75f', 'circle-opacity': .55}});
+  }
 
   function radarCoverageGeoJson(coverage, receiver) {
     const rows = Array.isArray(coverage?.points) ? coverage.points.map(point => ({
@@ -693,12 +768,13 @@
 
   function syncRadarCoverageLayer(map, coverage, receiver) {
     if (!map?.addSource || !map?.getSource || !map?.addLayer || !map?.getLayer) return false;
-    if (map.isStyleLoaded && !map.isStyleLoaded()) return false;
     const data = radarCoverageGeoJson(coverage, receiver);
     try {
       const source = map.getSource(radarCoverageSourceId);
       if (source?.setData) source.setData(data);
       else map.addSource(radarCoverageSourceId, {type: 'geojson', data});
+      const activeSource = map.getSource(radarCoverageSourceId);
+      if (activeSource) activeSource._vectorwarpData = data;
       if (!map.getLayer(radarCoverageFillLayerId)) map.addLayer({
         id: radarCoverageFillLayerId, type: 'fill', source: radarCoverageSourceId,
         filter: ['==', '$type', 'Polygon'],
@@ -710,7 +786,7 @@
       });
       return true;
     } catch (_) {
-      // Older Plotly/Mapbox builds may not expose style mutation. Retain the
+      // Older geographic renderers may not expose style mutation. Retain the
       // screen-space SVG path below as a compatibility fallback.
       return false;
     }
@@ -720,7 +796,7 @@
     const schedule = window.requestAnimationFrame || (callback => callback());
     schedule(() => {
       const graph = document.getElementById('data');
-      const map = graph?._fullLayout?.mapbox?._subplot?.map;
+      const map = graph?._vectorwarpMap || graph?._fullLayout?.mapbox?._subplot?.map;
       const container = map?.getContainer?.();
       if (!container || !document.createElement) return;
       let layer = container.querySelector?.('.location-aircraft-layer');
@@ -876,7 +952,7 @@
       }
       for (const [id, record] of layer._aircraftMarkers)
         if (!seenAircraft.has(id)) { record.marker.remove(); layer._aircraftMarkers.delete(id); }
-      // Plotly's raster OSM style has no glyph source. Keep site labels in
+      // The raster base map has no glyph source. Keep site labels in
       // the existing HTML overlay instead of requesting unsupported symbols.
       const seenSites = new Set();
       for (const site of sites) {
@@ -990,8 +1066,8 @@
             size: item.kind === 'transmitter' ? 15 : 14, color: item.kind === 'transmitter' ? '#ff8754' : '#8fe7df'});
         }
         });
-        // Aircraft labels are HTML overlays rather than Mapbox symbols, so
-        // Mapbox cannot perform collision avoidance for them.  Apply a stable
+        // Aircraft labels are HTML overlays rather than native map symbols, so
+        // the map cannot perform collision avoidance for them. Apply a stable
         // screen-space declutter pass on every camera update.  Selected and
         // radar-associated aircraft win, then fresh positions nearest the map
         // centre.  Icons remain visible; only overlapping labels are hidden.
@@ -1070,7 +1146,6 @@
 
   async function renderLocations() {
     setupLocationMapScaffold();
-    bindLocationMapInteraction();
     const [config, detection, tracker, coverage] = await Promise.all([
       getConfig(), apiJson('/api/detection'), apiJson('/api/tracker'),
       radarCoverage().catch(() => radarCoverageCache?.value || null)
@@ -1081,7 +1156,8 @@
       .some(value => finite(value) === null)) {
       renderHtml(document.getElementById('view-summary'), card('Unavailable', 'Site coordinates'));
       renderDetail(empty('Map is unavailable', 'Configure receiver and illuminator coordinates in Settings.'));
-      await emptyPlot('Receiver and illuminator coordinates are required.');
+      renderHtml(document.getElementById('data'), empty('Map is unavailable',
+        'Receiver and illuminator coordinates are required.'));
       setState('Configuration incomplete', 'warning');
       return;
     }
@@ -1187,50 +1263,14 @@
     const mapAircraft = radarMapDisplayMode === 'confirmed' ?
       aircraft.filter(item => item.radar_track_id !== undefined) : aircraft;
     const radarTrackOverlays = visibleTracks.map(item => radarTrackOverlay(item));
-    const traces = [];
     // The map is also a bearing diagnostic: show every tracker state and every
     // finite estimate. Resolution remains a separate strict signal used by
-    // downstream consumers.
+    // downstream consumers. MapLibre receives these as one stable GeoJSON
+    // source below rather than rebuilding a Plotly scene every CPI.
     const allBearingRows = array(bearingLocations?.data).filter(item => item &&
       (item.location || item.estimate || array(item.candidates).length));
     const hiddenStationary = showStationary ? 0 : allBearingRows.filter(item => item.publishable === false).length;
     const bearingRows = showStationary ? allBearingRows : allBearingRows.filter(item => item.publishable !== false);
-    for (const item of bearingRows) {
-      if (array(item.uncertainty_corridor).length > 1) traces.push({
-        type: 'scattermapbox', mode: 'lines', name: `Bearing uncertainty ${item.id}`,
-        lat: item.uncertainty_corridor.map(point => point.latitude),
-        lon: item.uncertainty_corridor.map(point => point.longitude),
-        line: {color: 'rgba(247,199,95,.75)', width: 7},
-        hovertemplate: `Track ${escapeHtml(item.id)}<br>Bearing uncertainty ±${number(item.uncertainty_deg, 1)}°<extra></extra>`
-      });
-      if (item.location) traces.push({
-        type: 'scattermapbox', mode: 'markers', name: `Bearing fix ${item.id}`,
-        lat: [item.location.latitude], lon: [item.location.longitude],
-        // Plotly's bundled open-street-map style has no sprite/glyph source;
-        // use native circle layers so live updates do not fail in Mapbox GL.
-        marker: {size: 14, color: '#f7c75f', opacity: .95},
-        hovertemplate: `Track ${escapeHtml(item.id)}<br>${number(item.bearing_deg_true, 1)}° true<br>±${number(item.uncertainty_deg, 1)}°<br>${number(item.excess_path_km, 2)} km excess path<extra></extra>`
-      });
-      if (!item.location && item.estimate) traces.push({
-        type: 'scattermapbox', mode: 'markers', name: `Unresolved estimate ${item.id}`,
-        lat: [item.estimate.latitude], lon: [item.estimate.longitude],
-        marker: {size: 12, color: '#b99cff', opacity: .58},
-        hovertemplate: `Track ${escapeHtml(item.id)}<br>${escapeHtml(humanize(item.state || 'unknown'))}<br>${number(item.bearing_deg_true, 1)}° true · unresolved<br>±${number(item.uncertainty_deg, 1)}°<br>Peak separation ${number(item.peak_separation_db, 1)} dB<br>Temporal consistency ${number(item.temporal_consistency, 2)}<br>Diagnostic estimate only<extra></extra>`
-      });
-      if (!item.location && item.candidates?.length) traces.push({
-        type: 'scattermapbox', mode: 'markers', name: `Bearing candidates ${item.id}`,
-        lat: item.candidates.map(point => point.latitude), lon: item.candidates.map(point => point.longitude),
-        marker: {size: 10, color: 'rgba(247,199,95,.55)', opacity: .65},
-        hovertemplate: `Unresolved track ${escapeHtml(item.id)}<br>Candidate only<extra></extra>`
-      });
-    }
-    traces.push({
-      type: 'scattermapbox', mode: 'markers', name: 'Radar sites',
-      lat: [receiver.latitude, transmitter.latitude], lon: [receiver.longitude, transmitter.longitude],
-      text: [receiver.name || 'Receiver', transmitter.name || 'Illuminator'],
-      marker: {size: [13, 13], color: ['#f3eee9', '#f7c75f']},
-      hovertemplate: '%{text}<br>%{lat:.5f}, %{lon:.5f}<extra></extra>'
-    });
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
     const configuredExcessKm = configuredDelayBins * resolution;
     const viewportKey = [receiver.latitude, receiver.longitude, transmitter.latitude,
@@ -1254,6 +1294,8 @@
     const unresolvedBearings = bearingRows.length - resolvedBearings;
     renderHtml(document.getElementById('view-summary'), `${showRadarTracksOnMap ? card(visibleTracks.length, 'Radar ellipses') : radarMapDisplayMode === 'confirmed' ? card(mapAircraft.length, 'Radar-confirmed ADS-B') : card('Off', 'Radar overlays')}${card(mapAircraft.length, 'Aircraft shown')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
     renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${showRadarTracksOnMap ? `All ${visibleTracks.length} current confirmed radar tracks use orange delay-uncertainty ellipses.` : radarMapDisplayMode === 'confirmed' ? `Only the ${mapAircraft.length} ADS-B/MLAT aircraft matched to confirmed radar tracks are shown; uncertainty ellipses are off.` : `All ADS-B/MLAT aircraft are shown without radar ellipses or radar highlighting.`} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
+    const map = await ensureLocationMap(locationMapViewport);
+    syncBearingOverlayLayers(map, bearingRows);
     renderSelectedAircraftCard(mapAircraft);
     renderAircraftOverlays(mapAircraft, [
       {...receiver, kind: 'receiver', name: receiver.name || 'Receiver'},
@@ -1262,25 +1304,6 @@
     const trackStateLabel = tracks.length ?
       `${tracks.length} current radar track${tracks.length === 1 ? '' : 's'} · ${radarMapDisplayMode === 'all' ? 'ellipses shown' : radarMapDisplayMode === 'confirmed' ? `${mapAircraft.length} ADS-B confirmed` : 'ADS-B only'}` :
       'No current radar tracks';
-    if (locationMapIsBeingNavigated()) {
-      setState(aircraftError || trackStateLabel,
-        aircraftError ? 'warning' : tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
-      return;
-    }
-    // ADS-B uses the keyed icon overlay below. Do not also send it through
-    // Plotly: that duplicate path rebuilt the entire Mapbox scene every CPI.
-    const plotSignature = JSON.stringify(traces.map(trace => [trace.name, trace.lat,
-      trace.lon, trace.line, trace.marker]));
-    if (plotSignature !== locationPlotSignature || !document.getElementById('data')?._fullLayout?.mapbox) {
-      await Plotly.react('data', traces, {
-        ...plotBase, margin: {l: 8, r: 8, t: 8, b: 8},
-        uirevision: locationMapViewport.key,
-        mapbox: {style: 'open-street-map', center: locationMapViewport.center,
-          zoom: locationMapViewport.zoom, uirevision: locationMapViewport.key},
-        legend: {orientation: 'h', x: 0, y: 1.03, bgcolor: 'rgba(20,16,14,.82)'}
-      }, plotConfig);
-      locationPlotSignature = plotSignature;
-    }
     setState(aircraftError || trackStateLabel,
       aircraftError ? 'warning' : tracks.length && showRadarTracksOnMap ? 'good' : 'warning');
   }
