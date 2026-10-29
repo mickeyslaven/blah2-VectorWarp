@@ -40,6 +40,7 @@
   const wizardVisited = new Set();
   let wizardBusy = false;
   let wizardError = '';
+  let wizardNotice = '';
 
   function receiverHardwareReady(device = {}) {
     if (device.type === 'HackRF')
@@ -112,7 +113,7 @@
     const dialog = target.ownerDocument.createElement('dialog');
     dialog.className = 'setup-wizard';
     dialog.setAttribute('aria-labelledby', 'setup-wizard-title');
-    dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${index > wizardStep ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
+    dialog.innerHTML = `<div class="setup-wizard-shell"><aside><div><strong id="setup-wizard-title">VectorWarp setup</strong><small>Step ${wizardStep + 1} of ${checks.length}</small></div><nav aria-label="Setup steps">${checks.map((item, index) => `<button type="button" data-wizard-step="${index}" class="${index === wizardStep ? 'active' : ''} ${item.complete ? 'complete' : ''}"${index === wizardStep ? ' aria-current="step"' : ''}${index > wizardStep ? ' disabled' : ''}><span>${item.complete ? '✓' : index + 1}</span>${escape(item.title)}</button>`).join('')}</nav></aside><section class="setup-wizard-content">${wizardPanel(config, wizardStep, profiles)}<p class="setup-wizard-notice" role="status"${wizardNotice ? '' : ' hidden'}>${escape(wizardNotice)}</p><p class="setup-wizard-error" role="alert"${wizardError ? '' : ' hidden'}>${escape(wizardError)}</p><footer><button type="button" class="button-secondary" data-wizard-close>Cancel</button><span></span>${wizardStep ? '<button type="button" class="button-secondary" data-wizard-back>Back</button>' : ''}<button type="button" class="button-primary" data-wizard-next>${wizardStep === checks.length - 1 ? 'Finish & Start radar' : 'Save step & Continue'}</button></footer></section></div>`;
     target.appendChild(dialog);
     const close = () => { wizardOpen = false; if (typeof dialog.close === 'function') dialog.close(); dialog.remove(); };
     dialog.querySelector('[data-wizard-close]').addEventListener('click', close);
@@ -206,11 +207,29 @@
     target.querySelectorAll('[data-mode]').forEach(button => button.addEventListener('click', () => {
       wizardOpen = false; api.setMode(button.dataset.mode);
     }));
-    target.querySelector('[data-start-setup]').addEventListener('click', () => {
+    target.querySelector('[data-start-setup]').addEventListener('click', async event => {
+      const button = event.currentTarget;
+      button.disabled = true; button.textContent = 'Looking for SDR…';
+      wizardError = ''; wizardNotice = '';
+      try {
+        const detected = typeof api.discoverReceivers === 'function' ?
+          await api.discoverReceivers() : [];
+        if (detected.length === 1) {
+          const receiver = detected[0];
+          if (receiver.type !== api.getConfig().capture?.device?.type)
+            await api.switchReceiver(receiver.type);
+          wizardNotice = `${receiver.label || receiver.type} was detected and selected automatically.`;
+        } else if (detected.length > 1) {
+          wizardNotice = `${detected.length} supported receivers were detected. Choose the one to use.`;
+        } else wizardNotice = 'No supported receiver was detected automatically. Choose one to configure manually.';
+      } catch (error) {
+        wizardNotice = 'Automatic receiver detection was unavailable. You can still choose a receiver manually.';
+      }
       wizardOpen = true;
-      wizardStep = checks.findIndex(item => !item.complete);
+      const refreshedChecks = wizardChecks(api.getConfig(), api.receiverProfiles()).slice(0, 5);
+      wizardStep = refreshedChecks.findIndex(item => !item.complete);
       if (wizardStep < 0) wizardStep = 0;
-      render(target, api);
+      api.refresh();
     });
     mountWizard(target, api);
   }

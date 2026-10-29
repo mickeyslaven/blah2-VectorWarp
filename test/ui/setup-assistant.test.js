@@ -73,6 +73,7 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
     set: (path, value) => { writes.push([path.join('.'), value]);
       let cursor = config; for (const key of path.slice(0, -1)) cursor = cursor[key]; cursor[path.at(-1)] = value; },
     receiverProfiles: () => [{type: 'Kraken', label: 'KrakenSDR'}], switchReceiver() {},
+    discoverReceivers: async () => [],
     saveStep: async () => true, save: async () => true,
     refresh: () => render(target, api), refreshEditor: () => render(target, api)};
   render(target, api);
@@ -82,6 +83,7 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   target.querySelector('[data-mode="advanced"]').click();
   assert.deepEqual(modes, ['advanced']);
   target.querySelector('[data-start-setup]').click();
+  await new Promise(resolve => setImmediate(resolve));
   assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
   assert.equal(target.querySelectorAll('[data-wizard-step]').length, 6);
   assert.equal(target.querySelector('[data-wizard-step="3"]').disabled, true,
@@ -94,12 +96,34 @@ test('assistant opens a guided tabbed wizard, saves each step and applies helper
   assert.ok(target.querySelector('.setup-wizard'), 'The next guided step remains in the wizard');
 });
 
+test('assistant automatically selects one discovered supported receiver', async () => {
+  const dom = new JSDOM('<div id="assistant"></div>');
+  const target = dom.window.document.getElementById('assistant');
+  const config = configurationForReceiver('Usrp');
+  config.capture.device.type = 'Unconfigured';
+  let selected = null;
+  const profiles = getDeviceProfiles().map(profile => ({...profile, liveAvailable: true}));
+  const api = {getConfig: () => config, mode: () => 'simple', setMode() {}, set() {},
+    receiverProfiles: () => profiles, discoverReceivers: async () => [
+      {type: 'Usrp', label: 'Ettus USRP'}],
+    switchReceiver: type => { selected = type; Object.assign(config,
+      configurationForReceiver(type)); }, saveStep: async () => true, save: async () => true,
+    refresh: () => render(target, api)};
+  render(target, api);
+  target.querySelector('[data-start-setup]').click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(selected, 'Usrp');
+  assert.equal(config.capture.device.type, 'Usrp');
+  assert.match(target.textContent, /detected and selected automatically/i);
+});
+
 test('advanced mode collapses the beginner workflow instead of duplicating two settings systems', () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const target = dom.window.document.getElementById('assistant');
   render(target, {getConfig: () => ({capture: {device: {type: 'Kraken'}}}),
     mode: () => 'advanced', setMode() {}, openTab() {}, set() {}, refresh() {}, refreshEditor() {},
-    receiverProfiles: () => [], switchReceiver() {}, saveStep() {}, save() {}});
+    receiverProfiles: () => [], discoverReceivers: async () => [],
+    switchReceiver() {}, saveStep() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
   assert.match(target.textContent, /All receiver, DSP, service, and diagnostic settings are shown below/);
   assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');

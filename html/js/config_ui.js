@@ -298,6 +298,17 @@ function refreshSetupAssistant() {
     set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
     receiverProfiles: () => capabilities.deviceProfiles || [],
     switchReceiver: switchDevice,
+    discoverReceivers: async () => {
+      const response = await configFetch(liveApiUrl('/api/receivers/discover'), {
+        method: 'POST', headers: {'Content-Type': 'application/json',
+          'X-VectorWarp-Intent': 'receiver-discovery-v2'}, body: '{}'
+      }, 30000);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Receiver discovery failed.');
+      return (result.receivers || []).filter(receiver =>
+        receiver.capabilities?.detected === true &&
+        (capabilities.deviceProfiles || []).some(profile => profile.type === receiver.type));
+    },
     saveStep: () => saveConfiguration('pending'),
     save: () => saveConfiguration()
   });
