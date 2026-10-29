@@ -665,12 +665,21 @@ function radarFrameIntervalMs(config) {
 
 function startRadarUpdates(update, minimumIntervalMs = 16) {
   let stopped = false;
+  let running = false;
   let timer;
   let due = 0;
   let interval = null;
   let loadedConfig = null;
   async function tick() {
-    if (stopped) return;
+    if (stopped || running) return;
+    // Background tabs cannot paint a useful radar frame.  Pausing here avoids
+    // redundant heatmap compression, transfer and Plotly work while another
+    // visible tab continues normally. Resume immediately when shown again.
+    if (typeof document !== 'undefined' && document.hidden) {
+      timer = window.setTimeout(tick, 1000);
+      return;
+    }
+    running = true;
     try {
       try { loadedConfig = await getRadarRuntimeConfig(); } catch (_) { /* Retry after an API restart. */ }
       if (stopped) return;
@@ -684,6 +693,7 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
     } catch (error) {
       window.blah2FrameError = error?.message || String(error);
     } finally {
+      running = false;
       // Account for request/render time; never run overlapping updates or queue
       // missed frames. If a slow network/render ran past the deadline, start a
       // fresh interval now instead of issuing catch-up requests back-to-back.
@@ -693,8 +703,21 @@ function startRadarUpdates(update, minimumIntervalMs = 16) {
         Math.max(16, Math.min(2000, due - Date.now())));
     }
   }
+  const visibilityChanged = () => {
+    if (stopped || document.hidden) return;
+    due = 0;
+    window.clearTimeout(timer);
+    void tick();
+  };
+  if (typeof document !== 'undefined')
+    document.addEventListener?.('visibilitychange', visibilityChanged);
   tick();
-  return {stop() { stopped = true; window.clearTimeout(timer); }};
+  return {stop() {
+    stopped = true;
+    window.clearTimeout(timer);
+    if (typeof document !== 'undefined')
+      document.removeEventListener?.('visibilitychange', visibilityChanged);
+  }};
 }
 
 function startRadarPlot(url, render) {

@@ -5,6 +5,9 @@ const zlib = require('zlib');
 let cachedSource = null;
 let cachedKey = '';
 let cachedResult = null;
+let cachedEncodedSource = null;
+let cachedEncodedResult = null;
+const pendingEncodedResults = new Map();
 
 function requestedLimit(value) {
   if (!/^\d+$/.test(String(value ?? ''))) return null;
@@ -81,4 +84,32 @@ function encodeMapResponse(frame, query = {}, acceptEncoding = '') {
     contentEncoding: 'gzip'};
 }
 
-module.exports = {encodeMapResponse, presentMap, presentationQuery, requestedLimit};
+function gzip(body) {
+  return new Promise((resolve, reject) => zlib.gzip(body,
+    {level: zlib.constants.Z_BEST_SPEED}, (error, result) =>
+      error ? reject(error) : resolve(result)));
+}
+
+// Compression of a full desktop frame can consume tens of milliseconds.
+// zlib's asynchronous API runs on the libuv worker pool, and this cache lets
+// simultaneous browsers share one compressed representation of a frame.
+async function encodeMapResponseAsync(frame, query = {}, acceptEncoding = '') {
+  const presented = presentMap(frame, query);
+  const body = typeof presented === 'string' ? presented : JSON.stringify(presented);
+  if (!/(?:^|[\s,])gzip(?:[\s,;]|$)/i.test(acceptEncoding))
+    return {body, contentEncoding: null};
+  if (cachedEncodedSource === presented && cachedEncodedResult)
+    return cachedEncodedResult;
+  if (pendingEncodedResults.has(presented)) return pendingEncodedResults.get(presented);
+  const pending = gzip(body).then(compressed => {
+    const result = {body: compressed, contentEncoding: 'gzip'};
+    cachedEncodedSource = presented;
+    cachedEncodedResult = result;
+    return result;
+  }).finally(() => pendingEncodedResults.delete(presented));
+  pendingEncodedResults.set(presented, pending);
+  return pending;
+}
+
+module.exports = {encodeMapResponse, encodeMapResponseAsync, presentMap,
+  presentationQuery, requestedLimit};

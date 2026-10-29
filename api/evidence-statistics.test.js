@@ -457,8 +457,8 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     'Detailed finalized passes must remain bounded for restart-safe persistence');
   assert.equal(boundedState.state.rollup.passes, 1);
   assert.equal(boundedState.state.rollup.tracked, 1);
-  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 16);
-  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 16);
+  assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 4);
+  assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 0);
   boundedState.state.active.abcdef = {id: 'active-pass', hex: 'abcdef',
     siteKey: boundedState.key, startedAt: 1, lastAt: 2, frames: 1000,
     sampledBuckets: Array.from({length: 1000}, (_, row) => row),
@@ -470,9 +470,9 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
       capture_id: 'clip-1', truth_samples: Array.from({length: 12}, (_, row) =>
         ({timestamp_ms: row}))}]});
   boundedState.persist();
-  assert.equal(boundedState.state.active.abcdef.cpiAudit.length, 64,
+  assert.equal(boundedState.state.active.abcdef.cpiAudit.length, 16,
     'Active engineering detail must not make persistence block the API event loop');
-  assert.equal(boundedState.state.active.abcdef.sampledBuckets.length, 64);
+  assert.equal(boundedState.state.active.abcdef.sampledBuckets.length, 16);
   assert.equal(boundedState.state.eligibilityEvents.at(-1).truth_samples.length, 30);
   assert.equal(boundedState.state.eligibilityEvents.at(-1).capture_windows[0].truth_samples.length, 12,
     'Compaction must preserve the exact truth bracket copied into a recording window');

@@ -15,8 +15,12 @@ const MAX_ELIGIBILITY_EVENTS = 250;
 // First/last truth remain separately preserved on every pass. Sixteen detailed
 // tail rows are enough for diagnosis without letting 500 passes approach the
 // 64 MiB normal operating target.
-const MAX_FINALIZED_CPI_AUDIT = 16;
-const MAX_FINALIZED_TRUTH_SAMPLES = 16;
+const MAX_FINALIZED_CPI_AUDIT = 4;
+// Finalized rows already preserve firstTruth, lastTruth, all stratified
+// counters and any exact recording-window truth.  Keeping another expanded
+// trajectory in truthHistory only duplicates tens of megabytes of data.
+const MAX_FINALIZED_TRUTH_SAMPLES = 0;
+const MAX_FINALIZED_EVENT_TRUTH_SAMPLES = 4;
 const MAX_STATE_INPUT_BYTES = 256 * 1024 * 1024;
 // Keep the trigger window permanently while retaining a recent tail for pass
 // diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
@@ -40,7 +44,7 @@ const MAX_PENDING_SAMPLES = 32;
 // freeze, even though the radar itself is healthy.  Eligibility counters,
 // extents, first/last truth, capture truth windows and lifetime rollups are
 // maintained separately; this is only the recent engineering tail.
-const MAX_CPI_AUDIT = 64;
+const MAX_CPI_AUDIT = 16;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
@@ -319,7 +323,8 @@ function compactFinalizedPass(pass) {
     pass.cpiAudit = pass.cpiAudit.slice(-MAX_FINALIZED_CPI_AUDIT);
   if (Array.isArray(pass.truthHistory) &&
       pass.truthHistory.length > MAX_FINALIZED_TRUTH_SAMPLES)
-    pass.truthHistory = pass.truthHistory.slice(-MAX_FINALIZED_TRUTH_SAMPLES);
+    pass.truthHistory = MAX_FINALIZED_TRUTH_SAMPLES ?
+      pass.truthHistory.slice(-MAX_FINALIZED_TRUTH_SAMPLES) : [];
   return pass;
 }
 
@@ -328,15 +333,24 @@ function compactActivePass(pass) {
   for (const key of ['cpiAudit', 'sampledBuckets'])
     if (Array.isArray(pass[key]) && pass[key].length > MAX_CPI_AUDIT)
       pass[key] = pass[key].slice(-MAX_CPI_AUDIT);
-  if (Array.isArray(pass.truthHistory) &&
-      pass.truthHistory.length > MAX_EVENT_TRUTH_SAMPLES)
-    pass.truthHistory = pass.truthHistory.slice(-MAX_EVENT_TRUTH_SAMPLES);
+  if (Array.isArray(pass.truthHistory)) {
+    // Once eligibility exists, the event owns the recent truth tail and each
+    // recording window owns its exact bracket. Do not retain a third copy.
+    if (pass.eligibilityEventId) pass.truthHistory = [];
+    else if (pass.truthHistory.length > MAX_EVENT_TRUTH_SAMPLES)
+      pass.truthHistory = pass.truthHistory.slice(-MAX_EVENT_TRUTH_SAMPLES);
+  }
   return pass;
 }
 
 function compactEligibilityEvent(event) {
-  if (Array.isArray(event?.truth_samples) &&
-      event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
+  if (!Array.isArray(event?.truth_samples)) return event;
+  // Once a pass is finalized, automatic recording has also finished. Exact
+  // brackets live in capture_windows; the parent trajectory is redundant.
+  if (event.state === 'finalized' &&
+      event.truth_samples.length > MAX_FINALIZED_EVENT_TRUTH_SAMPLES)
+    event.truth_samples = event.truth_samples.slice(-MAX_FINALIZED_EVENT_TRUTH_SAMPLES);
+  else if (event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
     event.truth_samples = event.truth_samples.slice(-MAX_EVENT_TRUTH_SAMPLES);
   return event;
 }

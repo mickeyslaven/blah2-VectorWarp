@@ -58,7 +58,7 @@ settings.
 
 ## Live dev acceptance
 
-The conservative profile was deployed on the Ford Street development node as
+The conservative profile was deployed on the private development node as
 release `/opt/vectorwarp/releases/20261029T0115Z-conservative-tracker-67f6a31`
 from source `67f6a31676c27bf496a0aa4a4dfa84254af59396`. The native Fedora suite passed
 49 of 49 tests before deployment. Managed config revision

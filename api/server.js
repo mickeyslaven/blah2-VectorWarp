@@ -254,10 +254,11 @@ var stash_map = require('./stash/maxhold.js');
 var stash_detection = require('./stash/detection.js');
 var stash_iqdata = require('./stash/iqdata.js');
 var stash_timing = require('./stash/timing.js');
-const {encodeMapResponse, presentationQuery} = require('./map-presentation');
+const {encodeMapResponseAsync, presentationQuery} = require('./map-presentation');
 
-function sendMapResponse(req, res, frame) {
-  const encoded = encodeMapResponse(frame, presentationQuery(req), req.get('Accept-Encoding') || '');
+async function sendMapResponse(req, res, frame) {
+  const encoded = await encodeMapResponseAsync(frame, presentationQuery(req),
+    req.get('Accept-Encoding') || '');
   res.type('application/json').vary('Accept-Encoding');
   if (encoded.contentEncoding) res.set('Content-Encoding', encoded.contentEncoding);
   res.send(encoded.body);
@@ -519,8 +520,9 @@ app.get('/', (req, res, next) => {
   if (fs.existsSync(path.join(__dirname, '..', 'html', 'index.html'))) return next();
   res.json({service: 'VectorWarp API', settings: '/api/config', status: '/api/system/status'});
 });
-app.get('/api/map', (req, res) => {
-  sendMapResponse(req, res, presentationFrame(req, 'map', map));
+app.get('/api/map', async (req, res, next) => {
+  try { await sendMapResponse(req, res, presentationFrame(req, 'map', map)); }
+  catch (error) { next(error); }
 });
 app.get('/api/detection', (req, res) => {
   res.send(presentationFrame(req, 'detection', detection));
@@ -1335,8 +1337,9 @@ app.get('/api/bearing/frequency-resolved-shadow', (req, res) => {
 });
 
 // stash API
-app.get('/stash/map', (req, res) => {
-  sendMapResponse(req, res, stash_map.get_data_map());
+app.get('/stash/map', async (req, res, next) => {
+  try { await sendMapResponse(req, res, stash_map.get_data_map()); }
+  catch (error) { next(error); }
 });
 app.get('/stash/detection', (req, res) => {
   res.send(stash_detection.get_data_detection());

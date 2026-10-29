@@ -2,7 +2,8 @@
 
 const assert = require('assert');
 const zlib = require('zlib');
-const {encodeMapResponse, presentMap, presentationQuery, requestedLimit} = require('./map-presentation');
+const {encodeMapResponse, encodeMapResponseAsync, presentMap, presentationQuery,
+  requestedLimit} = require('./map-presentation');
 
 const frame = {timestamp: 123, nRows: 6, nCols: 6,
   doppler: [-3, -2, -1, 0, 1, 2], delay: [0, 1, 2, 3, 4, 5],
@@ -49,3 +50,13 @@ assert.ok(encoded.body.length < Buffer.byteLength(serialized) / 5,
 assert.strictEqual(compact, frame);
 
 console.log('Peak-preserving mobile map presentation passed.');
+
+Promise.all([
+  encodeMapResponseAsync(serialized, {max_rows: '32', max_cols: '32'}, 'gzip'),
+  encodeMapResponseAsync(serialized, {max_rows: '32', max_cols: '32'}, 'gzip')
+]).then(([first, second]) => {
+  assert.strictEqual(first, second,
+    'concurrent browser requests must share one worker-pool compression');
+  assert.equal(JSON.parse(zlib.gunzipSync(first.body)).data.length, 32);
+  console.log('Asynchronous shared map compression passed.');
+}).catch(error => { console.error(error); process.exitCode = 1; });

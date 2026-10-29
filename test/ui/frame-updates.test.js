@@ -71,6 +71,29 @@ function clockedPage(cpi = .5) {
     'Heavy mobile views can impose a display cadence without changing radar CPI');
   boundedLoop.stop();
 
+  const background = clockedPage(.2);
+  const visibilityListeners = new Set();
+  background.context.document = {
+    hidden: true,
+    addEventListener(name, listener) {
+      if (name === 'visibilitychange') visibilityListeners.add(listener);
+    },
+    removeEventListener(name, listener) {
+      if (name === 'visibilitychange') visibilityListeners.delete(listener);
+    }
+  };
+  const backgroundTimes = [];
+  const backgroundLoop = background.context.startRadarUpdates(() =>
+    backgroundTimes.push(background.now()));
+  await background.advance(3000);
+  assert.deepEqual(backgroundTimes, [], 'Hidden tabs must not poll live radar frames');
+  background.context.document.hidden = false;
+  for (const listener of visibilityListeners) listener();
+  await background.settle();
+  assert.deepEqual(backgroundTimes, [3000], 'A visible tab resumes immediately without catch-up');
+  backgroundLoop.stop();
+  assert.equal(visibilityListeners.size, 0, 'Stopping a view releases its visibility listener');
+
   for (const cpi of [null, undefined, 0, -1, Infinity, NaN, '0.5'])
     assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi}}}), 1000);
   assert.equal(page.context.radarFrameIntervalMs({process: {data: {cpi: .001}}}), 16);
