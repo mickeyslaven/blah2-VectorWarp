@@ -391,3 +391,9 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .visualization-loading { position:relative; }
 .visualization-loading::after { content:"Loading live data…"; position:absolute; z-index:30; inset:0; display:grid; place-items:center; background:rgba(16,12,11,.72); color:var(--muted); font-size:12px; pointer-events:none; }
 @media (prefers-reduced-motion:reduce) { .loading-spinner { animation:none; } }
+.view-tabs{display:flex;gap:.55rem;flex-wrap:wrap;margin:0 0 1rem}.view-tabs a{border:1px solid var(--line);border-radius:.7rem;padding:.65rem .9rem;color:var(--muted);text-decoration:none}.view-tabs a.active{border-color:var(--accent);color:var(--ink);background:var(--surface-raised)}
+.developer-section summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;cursor:pointer}.developer-section summary small{color:var(--muted);font-weight:400}
+.confirmation-dialog{max-width:min(92vw,30rem);border:1px solid var(--line);border-radius:1rem;background:var(--surface);color:var(--ink);padding:1.25rem}.confirmation-dialog::backdrop{background:#0009}.confirmation-dialog .dialog-actions{display:flex;justify-content:flex-end;gap:.7rem}.button-danger{background:#9d3f35;color:#fff;border-color:#c9685b}
+.recording-import-controls progress{width:min(16rem,100%)}
+.adsb-source-diagnostics{display:grid;gap:.35rem}.adsb-cadence{margin:0;padding:.5rem .65rem;border-radius:.55rem;background:var(--surface-raised)}.adsb-cadence.good{border-left:3px solid var(--status-ok)}.adsb-cadence.warning{border-left:3px solid #f7c75f}
+.experimental-settings>.config-section-heading{margin-bottom:1rem}.experimental-settings>.config-group{margin-bottom:.75rem}

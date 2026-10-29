@@ -63,6 +63,29 @@ function configuredSources(config) {
   return Array.isArray(values) && values.length ? [...values] : [config.truth?.adsb?.tar1090];
 }
 
+function publicationCadence(slot, snapshotNow) {
+  if (!Number.isFinite(snapshotNow)) return slot.state.publication_cadence || null;
+  if (Number.isFinite(slot.lastPublishedSnapshot) && snapshotNow !== slot.lastPublishedSnapshot) {
+    const interval = snapshotNow - slot.lastPublishedSnapshot;
+    if (interval > 0 && interval < 60) {
+      slot.publicationIntervals ||= [];
+      slot.publicationIntervals.push(interval);
+      if (slot.publicationIntervals.length > 32) slot.publicationIntervals.shift();
+    }
+  }
+  if (!Number.isFinite(slot.lastPublishedSnapshot) || snapshotNow !== slot.lastPublishedSnapshot)
+    slot.lastPublishedSnapshot = snapshotNow;
+  const samples = slot.publicationIntervals || [];
+  if (!samples.length) return {samples: 0, state: 'measuring'};
+  const sorted = [...samples].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return {samples: samples.length, median_interval_s: median,
+    observed_hz: median > 0 ? 1 / median : null,
+    statistics_suitable: median <= .5,
+    recommendation: median <= .5 ? 'CPI-level statistics cadence' :
+      'Publish aircraft.json every 0.5 seconds or faster; 0.25 seconds is recommended'};
+}
+
 
 function readJson(url, {timeoutMs = 1500, maxBytes = 4 * 1024 * 1024} = {}) {
   return new Promise((resolve, reject) => {
@@ -187,6 +210,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         throw error;
       }
       const receivedAtMs = now();
+      const cadence = publicationCadence(slot, data.now);
       const ages = data.aircraft.filter(aircraft => Number.isFinite(aircraft?.lat) &&
         Number.isFinite(aircraft?.lon) && Number.isFinite(aircraft?.seen_pos) &&
         aircraft.seen_pos >= 0).map(aircraft => receivedAtMs / 1000 -
@@ -203,6 +227,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
         consecutive_failures: 0,
         consecutive_successes: (slot.state.consecutive_successes || 0) + 1,
         last_success_at: receivedAtMs, latency_ms: Math.max(0, receivedAtMs - startedAt),
+        publication_cadence: cadence,
         freshness: {snapshot_age_s: receivedAtMs / 1000 - data.now,
           positioned: ages.length, usable_positions: usable.length,
           fresh_positions: fresh.length, stale_positions: ages.length - usable.length,
@@ -379,9 +404,14 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
   }
   return {get, getAt, getPresentation, getPresentationAt, status, clear: () => {
     cache.clear(); geometry.clear(); presentationGeometry.clear(); fusionState = null;
-    for (const slot of slots) slot.discoveryEntry = undefined;
+    for (const slot of slots) {
+      slot.discoveryEntry = undefined;
+      slot.lastValue = undefined;
+      slot.lastReadAt = undefined;
+      slot.lastAttemptAt = undefined;
+    }
   }};
 }
 
 module.exports = {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
-  normalizeAircraftSnapshot, readJson, createAdsbSource};
+  normalizeAircraftSnapshot, publicationCadence, readJson, createAdsbSource};

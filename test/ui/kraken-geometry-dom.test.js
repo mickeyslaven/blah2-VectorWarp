@@ -125,7 +125,7 @@ const request = (url, options = {}) => new Promise((resolve, reject) => {
     };
     await window.renderConfiguration();
     assert.ok(doc.querySelector('#settings-panel-capture .kraken-geometry'));
-    assert.equal(doc.querySelectorAll('[role=tab]').length, 6);
+    assert.equal(doc.querySelectorAll('[role=tab]').length, 7);
     assert.equal(current().capture.device.array_geometry, undefined);
     click('Add antenna layout');
     assert.equal(g('elements.0.daq_channel').value, '', 'No DAQ wiring guess');

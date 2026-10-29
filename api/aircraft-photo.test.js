@@ -1,6 +1,9 @@
 'use strict';
 
 const assert = require('assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {createAircraftPhotoLookup, normalizePlanespotters} = require('./aircraft-photo');
 
 assert.deepEqual(normalizePlanespotters({photos: []}),
@@ -37,6 +40,21 @@ assert.equal(normalizePlanespotters({photos: [{thumbnail: {src: 'https://evil.in
   assert.equal(first.available, true);
   assert.deepEqual(second, first);
   assert.equal(calls, 1, 'Repeated selected-aircraft requests must use the bounded cache');
+  const cacheDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'vectorwarp-photo-cache-'));
+  const cacheFile = path.join(cacheDirectory, 'photos.json');
+  const durable = createAircraftPhotoLookup({truth: {adsb: {
+    aircraft_photo_provider: 'planespotters'}}}, {cacheFile, fetchJson: async () => ({photos: [{
+      thumbnail: {src: 'https://t.plnspttrs.net/durable.jpg'},
+      link: 'https://www.planespotters.net/photo/durable'}]})});
+  await durable.lookup('123abc');
+  await new Promise(resolve => setTimeout(resolve, 75));
+  const restored = createAircraftPhotoLookup({truth: {adsb: {
+    aircraft_photo_provider: 'planespotters'}}}, {cacheFile, fetchJson: async () => {
+    throw new Error('durable cache should avoid a second provider request');
+  }});
+  assert.equal((await restored.lookup('123abc')).available, true,
+    'Photo metadata survives an API restart');
+  fs.rmSync(cacheDirectory, {recursive: true, force: true});
   let failures = 0;
   const failing = createAircraftPhotoLookup({truth: {adsb: {
     aircraft_photo_provider: 'planespotters'}}}, {fetchJson: async () => {

@@ -256,6 +256,15 @@ const SIMPLE_SETTING_PATHS = new Set([
   'process.tracker.enable', 'process.tracker.profile', 'process.performance.acceleration',
   'truth.adsb.enabled', 'truth.adsb.tar1090'
 ]);
+const EXPERIMENTAL_SETTING_PREFIXES = [
+  'process.surveillance_fusion.detection_manifold_automation',
+  'process.tracker.track_guided_shadow',
+  'process.tracker.publication',
+  'process.bearing.frequency_resolved_shadow'
+];
+function experimentalSettingPath(path) {
+  return EXPERIMENTAL_SETTING_PREFIXES.some(prefix => path === prefix || path.startsWith(`${prefix}.`));
+}
 function simpleSettingHidden(path) {
   if (settingsMode === 'advanced') return false;
   if (path === 'network' || path.startsWith('network.')) return true;
@@ -289,7 +298,8 @@ function refreshSetupAssistant() {
     set: setValue, refresh: renderEditor, refreshEditor: renderEditor,
     receiverProfiles: () => capabilities.deviceProfiles || [],
     switchReceiver: switchDevice,
-    save: () => document.getElementById('config-save')?.click()
+    saveStep: () => saveConfiguration('pending'),
+    save: () => saveConfiguration()
   });
 }
 
@@ -939,6 +949,11 @@ function adsbSourcesInput(legacyValue, path) {
     const localHeading = document.createElement('strong');
     localHeading.textContent = 'Local receivers';
     wrapper.appendChild(localHeading);
+    const diagnostics = document.createElement('div');
+    diagnostics.className = 'adsb-source-diagnostics';
+    diagnostics.setAttribute('role', 'status');
+    diagnostics.textContent = 'Measuring source publication cadence…';
+    wrapper.appendChild(diagnostics);
     sources.forEach((source, index) => {
       if (source.startsWith('exchange:')) return;
       const {row, input} = sourceRow(source, 'local');
@@ -989,6 +1004,28 @@ function adsbSourcesInput(legacyValue, path) {
       row.append(copy, label);
       wrapper.appendChild(row);
     }
+    Promise.resolve().then(async () => {
+      try {
+        const response = await fetchStatusResource(liveApiUrl('/api/adsb/status'),
+          {cache: 'no-store'}, 5000);
+        if (!response.ok || !diagnostics.isConnected) return;
+        const status = await response.json();
+        const local = (status.sources || []).filter(source =>
+          !String(source.id || '').startsWith('exchange:'));
+        diagnostics.replaceChildren();
+        for (const source of local) {
+          const row = document.createElement('p');
+          const cadence = source.publication_cadence;
+          const interval = Number(cadence?.median_interval_s);
+          row.className = `adsb-cadence ${cadence?.statistics_suitable ? 'good' : 'warning'}`;
+          row.textContent = `${source.label || source.id}: ${Number.isFinite(interval) ?
+            `${interval.toFixed(2)} s updates (${(1 / interval).toFixed(1)} Hz)` : 'measuring cadence'}${
+            cadence?.statistics_suitable === false ? ' — too slow for reliable CPI-level pass statistics' : ''}`;
+          diagnostics.appendChild(row);
+        }
+        if (!local.length) diagnostics.textContent = 'No local ADS-B receiver is configured.';
+      } catch (_) { if (diagnostics.isConnected) diagnostics.textContent = 'Source cadence is temporarily unavailable.'; }
+    });
 
     const photoHeading = document.createElement('strong');
     photoHeading.textContent = 'Aircraft photos';
@@ -1107,7 +1144,8 @@ function typedInput(value, path) {
   if (key === 'capture.device.lnaState') return rspDuoLnaInput(value);
   if (key === 'process.performance.acceleration')
     return selectInput([{value: 'auto', label: 'Automatic'}, {value: 'cpu', label: 'CPU'},
-      {value: 'gpu', label: 'GPU (with CPU fallback)'}], value,
+      {value: 'gpu', label: 'GPU (with CPU fallback)'},
+      {value: 'gpu-resident', label: 'GPU resident (advanced)'}], value,
       selected => setValue(path, selected));
   if (key === 'process.tracker.profile')
     return selectInput([{value: 'conservative', label: 'Conservative (recommended)'},
@@ -1439,7 +1477,7 @@ function renderReceiverFeatures() {
   const process = activeConfig.process || {};
   if (process.surveillance_fusion)
     section.appendChild(group('surveillance_fusion', process.surveillance_fusion, ['process'], false,
-      featureOptions));
+      {...featureOptions, skipPath: experimentalSettingPath}));
   const detection = process.detection || {};
   const residentDetection = Object.fromEntries(['integration_cpis', 'integration_motion_bins',
     'track_before_detect'].filter(key => detection[key] !== undefined).map(key => [key, detection[key]]));
@@ -1448,13 +1486,42 @@ function renderReceiverFeatures() {
   const tracker = process.tracker || {};
   const residentTracker = {};
   for (const key of ['gpu_capacity', 'beam_tolerance', 'track_guided_shadow'])
-    if (tracker[key] !== undefined) residentTracker[key] = tracker[key];
+    if (tracker[key] !== undefined && !experimentalSettingPath(`process.tracker.${key}`))
+      residentTracker[key] = tracker[key];
   if (tracker.initiate?.stationary_clutter !== undefined)
     residentTracker.initiate = {stationary_clutter: tracker.initiate.stationary_clutter};
   if (Object.keys(residentTracker).length)
     section.appendChild(group('tracker', residentTracker, ['process'], false, featureOptions));
   if (process.bearing)
-    section.appendChild(group('bearing', process.bearing, ['process'], false, featureOptions));
+    section.appendChild(group('bearing', process.bearing, ['process'], false,
+      {...featureOptions, skipPath: experimentalSettingPath}));
+  return section;
+}
+
+function renderExperimentalSettings() {
+  const section = document.createElement('section');
+  section.className = 'experimental-settings';
+  section.innerHTML = '<div class="config-section-heading"><h2>Experimental</h2><p>Shadow collectors and optional publication paths for evaluation. These controls can add storage, network, or processing load and never promote a learned model automatically.</p></div>';
+  const process = activeConfig.process || {};
+  const coherentArray = receiverFeatureCapabilities(activeConfig.capture?.device?.type,
+    capabilities.deviceProfiles || []).coherentArray;
+  const add = (key, value, path) => {
+    if (value !== undefined) section.appendChild(group(key, value, path, false));
+  };
+  if (coherentArray) add('detection_manifold_automation',
+    process.surveillance_fusion?.detection_manifold_automation,
+    ['process', 'surveillance_fusion']);
+  if (coherentArray) add('track_guided_shadow', process.tracker?.track_guided_shadow,
+    ['process', 'tracker']);
+  add('publication', process.tracker?.publication, ['process', 'tracker']);
+  if (coherentArray) add('frequency_resolved_shadow', process.bearing?.frequency_resolved_shadow,
+    ['process', 'bearing']);
+  if (!section.querySelector('.config-field')) {
+    const empty = document.createElement('p');
+    empty.className = 'config-capability-note';
+    empty.textContent = 'This build does not advertise any experimental controls.';
+    section.appendChild(empty);
+  }
   return section;
 }
 
@@ -1855,9 +1922,13 @@ function renderEditor() {
   tabs.setAttribute('aria-label', 'Settings categories');
   const panels = document.createElement('div');
   panels.className = 'config-tab-panels';
-  const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'network'];
+  const tabOrder = ['capture', 'location', 'process', 'truth', 'save', 'experimental', 'network'];
   const entries = Object.entries(activeConfig).filter(([key]) =>
     settingsMode === 'advanced' || key !== 'network').sort(([left], [right]) =>
+    (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
+    (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
+  if (settingsMode === 'advanced') entries.push(['experimental', {}]);
+  entries.sort(([left], [right]) =>
     (tabOrder.includes(left) ? tabOrder.indexOf(left) : 100) -
     (tabOrder.includes(right) ? tabOrder.indexOf(right) : 100));
   let savedTab = null;
@@ -1885,7 +1956,8 @@ function renderEditor() {
     activate(selectedKey);
   };
   entries.forEach(([key, value]) => {
-    const [title, description] = metadata([key]);
+    const [title, description] = key === 'experimental' ?
+      ['Experimental', 'Shadow and evaluation features'] : metadata([key]);
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.tab = key;
@@ -1915,9 +1987,11 @@ function renderEditor() {
     panel.className = 'config-tab-panel';
     const receiverType = activeConfig.capture?.device?.type;
     if (key === 'location') panel.appendChild(renderSiteSettings());
+    else if (key === 'experimental') panel.appendChild(renderExperimentalSettings());
     else if (value !== null && typeof value === 'object' && !Array.isArray(value))
       panel.appendChild(group(key, value, [], true, {skipPath: path =>
         (key === 'process' && receiverSpecificProcessPath(path)) ||
+        (key === 'process' && experimentalSettingPath(path)) ||
         (key === 'capture' && path.startsWith('capture.aircraft_clips')) ||
         simpleSettingHidden(path)}));
     else
@@ -2440,8 +2514,10 @@ function renderReceiverSetup() {
 
 async function saveConfiguration(mode) {
   const saveLater = mode === 'pending';
-  const button = document.getElementById(saveLater ? 'config-save-later' : 'config-save');
-  if (saveInProgress || restartInProgress || pendingLiveConfig || document.getElementById('site-dialog')) return;
+  const button = document.getElementById(saveLater ? 'config-save-later' : 'config-save') ||
+    document.getElementById('config-save');
+  if (saveInProgress || restartInProgress || pendingLiveConfig || document.getElementById('site-dialog'))
+    return false;
   saveInProgress = true;
   updateDirtyState();
   button.textContent = 'Saving…';
@@ -2451,14 +2527,14 @@ async function saveConfiguration(mode) {
   let responseReceived = false;
   let fileOutcomeUnknown = false;
   try {
-    if (!(await validateActiveConfiguration())) return;
+    if (!(await validateActiveConfiguration())) return false;
     const snapshot = serializeConfig(activeConfig);
     const body = JSON.stringify(activeConfig);
     let previousState = {};
     try { previousState = await readRadarState(); } catch (_) { /* Already offline. */ }
     if (snapshot !== serializeConfig(activeConfig) || snapshot !== validatedSnapshot) {
       showMessage('A setting changed during validation. Review it and save again.', 'warning');
-      return;
+      return false;
     }
     restartInProgress = true;
     const measuredGain = !saveLater && activeConfig.capture?.replay?.state !== true &&
@@ -2545,6 +2621,7 @@ async function saveConfiguration(mode) {
     updateDirtyState();
     if (saveLater) button.textContent = 'Save for later';
   }
+  return saved;
 }
 
 async function syncConfigurationFromServer() {

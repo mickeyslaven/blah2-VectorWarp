@@ -29,7 +29,7 @@ function setupDefaults() {
         provenance: 'legacy-unqualified'}},
     process: {
       performance: {surveillance_workers: 0, fft_threads: 0, acceleration: 'auto'},
-      data: {cpi: 0.5, buffer: 2, overlap: 0},
+      data: {cpi: 0.5, buffer: 2},
       ambiguity: {delayMin: -10, delayMax: 400, dopplerMin: -200, dopplerMax: 200},
       // The numeric interval remains available for legacy/manual tuning, but
       // fresh configurations track the full ambiguity interval by default.
@@ -40,7 +40,7 @@ function setupDefaults() {
         track_before_detect: {enable: false, max_cpis: 8, motion_bins: 1}},
       tracker: {enable: true, profile: 'conservative', initiate: {M: 3, N: 6,
         maxAcc: 10, min_snr_db: 7, acceleration_model: 'hypothesis_bank'},
-        delete: 3, smooth: 'none',
+        delete: 3,
         track_guided_shadow: {enable: false, max_tracks: 64}},
       bearing: {enable: false, min_consistent: 3, min_peak_separation_db: 3,
         frequency_resolved_shadow: {enabled: false, fft_size: 2048, subbands: 24,
@@ -58,8 +58,7 @@ function setupDefaults() {
       timestamp: 4000, timing: 4001, iqdata: 4002, config: 4003}},
     truth: {adsb: {enabled: false, tar1090: 'localhost:8080', poll_interval: 1,
       smoothing_window: 10, max_position_age: 30,
-      provisional_event_time_uncertainty_s: 1},
-      ais: {enabled: false, ip: '0.0.0.0', port: 30001}},
+      provisional_event_time_uncertainty_s: 1}},
     location: {rx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set receiver site'},
       tx: {latitude: 0, longitude: 0, altitude: 0, name: 'Set transmitter site'}},
     save: {iq: false, map: false, detection: false, timing: false,
@@ -117,6 +116,14 @@ function configurationForReceiver(type, base = setupDefaults()) {
   return config;
 }
 
+function stripLegacyNoOps(config) {
+  if (!config || typeof config !== 'object') return config;
+  if (config.process?.data) delete config.process.data.overlap;
+  if (config.process?.tracker) delete config.process.tracker.smooth;
+  if (config.truth) delete config.truth.ais;
+  return config;
+}
+
 function readConfig(filename) {
   let raw = '';
   let exists = false;
@@ -131,6 +138,7 @@ function readConfig(filename) {
       throw new Error('The YAML root must contain configuration sections.');
     if (parsed.truth?.adsb && Object.prototype.hasOwnProperty.call(parsed.truth.adsb, 'adsb2dd'))
       delete parsed.truth.adsb.adsb2dd;
+    stripLegacyNoOps(parsed);
     // Detect cycles/aliases before recursive form rendering and validation.
     let nodes = 0;
     const visit = (value, parents = new Set(), depth = 0) => {
@@ -276,7 +284,7 @@ function saveConfig(filename, candidate, expectedRevision) {
     error.status = 422;
     throw error;
   }
-  const prepared = reconcile(JSON.parse(JSON.stringify(candidate)), before.config);
+  const prepared = stripLegacyNoOps(reconcile(JSON.parse(JSON.stringify(candidate)), before.config));
   const previousGain = before.config.capture?.device?.heimdall?.gain ?? 'keep';
   const selectedGain = prepared.capture?.device?.heimdall?.gain ?? 'keep';
   const bearing = prepared.process?.bearing;
@@ -296,4 +304,4 @@ function saveConfig(filename, candidate, expectedRevision) {
 }
 
 module.exports = {readConfig, writable, saveConfig, setupDefaults, configurationForReceiver,
-  migrateKnownDefaults};
+  migrateKnownDefaults, stripLegacyNoOps};

@@ -478,6 +478,16 @@
     radarCoverageAltitudeBand = localStorage.getItem('vectorwarp-radar-coverage-altitude') || 'all';
   } catch (_) { /* Persistence is optional. */ }
   const aircraftTrackHistories = new Map();
+  try {
+    const saved = JSON.parse(localStorage.getItem('vectorwarp-aircraft-trails-v1') || '{}');
+    const cutoff = Date.now() - 15 * 60 * 1000;
+    for (const [id, points] of Object.entries(saved)) {
+      const recent = Array.isArray(points) ? points.filter(point => Number(point.at) >= cutoff &&
+        Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))).slice(-180) : [];
+      if (recent.length) aircraftTrackHistories.set(id, recent);
+    }
+  } catch (_) { /* Trail continuity is an optional browser cache. */ }
+  let aircraftTrailPersistAt = 0;
   const aircraftPhotoCache = new Map();
   const aircraftPhotoInFlight = new Map();
   const aircraftPhotoQueue = [];
@@ -1004,6 +1014,13 @@
             radar_track_id: candidate.track.id, radar_track_state: candidate.track.state};
         });
         updateAircraftTrackHistories(aircraftTrackHistories, aircraft);
+        if (Date.now() - aircraftTrailPersistAt > 5000) {
+          aircraftTrailPersistAt = Date.now();
+          try {
+            localStorage.setItem('vectorwarp-aircraft-trails-v1', JSON.stringify(
+              Object.fromEntries([...aircraftTrackHistories].slice(-200))));
+          } catch (_) { /* A full/private browser cache must not affect the map. */ }
+        }
         prefetchAircraftPhotos(aircraft);
         selectedAircraftId = selectRadarAssociatedAircraft(selectedAircraftId, aircraft,
           autoSelectRadarAircraft && showRadarTracksOnMap);

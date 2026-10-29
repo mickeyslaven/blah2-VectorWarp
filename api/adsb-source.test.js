@@ -3,7 +3,7 @@ const assert = require('assert');
 const http = require('http');
 const {sourceAddress, aircraftUrl, configuredSources, configuredAircraftSource,
   normalizeAircraftSnapshot, readJson,
-  createAdsbSource} = require('./adsb-source');
+  publicationCadence, createAdsbSource} = require('./adsb-source');
 const {DelayDopplerHistory} = require('./adsb-geometry');
 
 (async () => {
@@ -28,6 +28,12 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   assert.deepEqual(normalizeAircraftSnapshot({now: 2000000000123,
     ac: [{hex: 'abc123', seen_pos: .5}]}, 'adsbx-v2'),
   {now: 2000000000.123, aircraft: [{hex: 'abc123', seen_pos: .5}]});
+  const cadenceSlot = {state: {}};
+  assert.equal(publicationCadence(cadenceSlot, 10).state, 'measuring');
+  assert.equal(publicationCadence(cadenceSlot, 10.25).statistics_suitable, true);
+  publicationCadence(cadenceSlot, 11.25);
+  assert.equal(publicationCadence(cadenceSlot, 12.25).statistics_suitable, false,
+    'Observed one-second publication is reported as unsuitable for CPI-level pass statistics');
   for (const address of ['file:///etc/passwd', 'ftp://receiver', 'http://name:password@receiver', 'receiver?url=other', 'receiver#bad', 'bad host'])
     assert.throws(() => sourceAddress(address), undefined, address);
 

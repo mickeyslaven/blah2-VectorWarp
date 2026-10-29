@@ -33,7 +33,6 @@ const rules = {
   'capture.replay.legacy_block_samples': {...integer(1, 262144), optional: true},
   'process.data.cpi': {...numeric(), exclusiveMin: 0},
   'process.data.buffer': numeric(1),
-  'process.data.overlap': {...numeric(0), readOnly: 'Not used by this processor.'},
   'process.detection.pfa': {...numeric(), exclusiveMin: 0, exclusiveMax: 1},
   'process.detection.nGuard': integer(0, 127),
   'process.detection.nTrain': integer(1, 127),
@@ -107,7 +106,6 @@ const rules = {
   'process.tracker.publication.native_min_associations': {...integer(1, 65535), optional: true},
   'process.tracker.publication.delay_tolerance': {...numeric(0, 1000), optional: true},
   'process.tracker.publication.doppler_tolerance': {...numeric(0, 10000), optional: true},
-  'process.tracker.smooth': {type: 'string', readOnly: 'Not used by this processor.'},
   'process.performance.surveillance_workers': integer(0, 8),
   'process.performance.fft_threads': integer(0, 256),
   'process.performance.acceleration': {type: 'string', choices: ['auto', 'cpu', 'gpu', 'gpu-resident']},
@@ -153,8 +151,7 @@ const rules = {
   'network.tracker_forward.annotate_adsb': {type: 'boolean', optional: true},
   'network.tracker_forward.unassisted.enabled': {type: 'boolean', optional: true},
   'network.tracker_forward.unassisted.host': {type: 'string', optional: true},
-  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true},
-  'truth.ais.port': {...integer(1, 65535), readOnly: 'AIS input is not implemented.'}
+  'network.tracker_forward.unassisted.port': {...integer(1, 65535), optional: true}
 };
 for (const group of ['ambiguity', 'clutter']) {
   for (const name of ['delayMin', 'delayMax', ...(group === 'ambiguity' ?
@@ -178,18 +175,18 @@ for (const name of ['capture.replay.state','capture.replay.loop',
   'capture.device.dabNotch','capture.device.rfNotch','process.clutter.enable',
   'process.clutter.followAmbiguity',
   'process.detection.enable','process.tracker.enable','truth.adsb.enabled',
-  'truth.ais.enabled','save.iq','save.map','save.detection','save.timing'])
+  'save.iq','save.map','save.detection','save.timing'])
   rules[name] = {type: 'boolean'};
 for (const name of ['capture.device.type','capture.device.heimdall.host',
   'capture.device.address','capture.device.subdev','capture.device.serial','capture.replay.file',
-  'network.ip','truth.adsb.tar1090','truth.ais.ip','save.path'])
+  'network.ip','truth.adsb.tar1090','save.path'])
   rules[name] = {type: 'string'};
 for (const name of ['capture.device.surveillance_channels','capture.device.serial',
   'capture.device.antenna','capture.device.gain','capture.device.gain_lna',
   'capture.device.gain_vga','capture.device.gainReduction',
   'capture.device.amp_enable','process.reference_synthesis.channels'])
   rules[name] = {type: 'array'};
-for (const name of ['truth.ais.enabled','truth.ais.ip','save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
+for (const name of ['save.iq','save.timing']) rules[name].readOnly = 'Not used by this processor.';
 rules['truth.adsb.tar1090'].sourceChoices = SOURCE_CHOICES;
 rules['capture.device.serial'] = {type: 'serial'};
 rules['capture.replay.provenance'] = {type: 'string',

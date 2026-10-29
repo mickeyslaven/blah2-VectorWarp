@@ -48,7 +48,6 @@ process:
   data:
     cpi: 0.5
     buffer: 2.0
-    overlap: 0
   ambiguity:
     delayMin: -10
     delayMax: 400
@@ -118,7 +117,6 @@ process:
       maxAcc: 10
       acceleration_model: hypothesis_bank
     delete: 10
-    smooth: "none"
     # Optional maximum circular winning-beam change for track association.
     # Omit to preserve delay/Doppler-only association.
     # beam_tolerance: 1
@@ -197,10 +195,6 @@ truth:
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
-  ais:
-    enabled: false
-    ip: 0.0.0.0
-    port: 30001
 
 location:
   rx:

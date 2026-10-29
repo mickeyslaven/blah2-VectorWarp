@@ -22,7 +22,6 @@ process:
   data:
     cpi: 0.5
     buffer: 1.5
-    overlap: 0
   ambiguity:
     delayMin: -10
     delayMax: 400
@@ -60,7 +59,6 @@ process:
       maxAcc: 10
       acceleration_model: hypothesis_bank
     delete: 10
-    smooth: "none"
   bearing:
     enable: false
     min_consistent: 3
@@ -111,10 +109,6 @@ truth:
     smoothing_window: 10
     max_position_age: 30
     provisional_event_time_uncertainty_s: 1
-  ais:
-    enabled: false
-    ip: 0.0.0.0
-    port: 30001
 
 location:
   rx:

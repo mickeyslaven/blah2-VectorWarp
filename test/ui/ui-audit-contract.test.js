@@ -21,6 +21,11 @@ for (const file of pageFiles) {
   const html = fs.readFileSync(file, 'utf8');
   const route = path.relative(root, file);
   assert.match(html, /<h1(?:\s|>)/i, `${route} must expose a page heading`);
+  if (route === 'html/display/map/index.html') {
+    assert.match(html, /location\.replace\(['"]\/['"]\)/,
+      `${route} must redirect to canonical Live radar`);
+    continue;
+  }
   assert.match(html, /common\.js/, `${route} must use shared navigation/status behavior`);
 }
 

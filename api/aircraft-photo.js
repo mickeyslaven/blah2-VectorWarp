@@ -1,6 +1,8 @@
 'use strict';
 
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const POSITIVE_TTL_MS = 24 * 60 * 60 * 1000;
 const NEGATIVE_TTL_MS = 15 * 60 * 1000;
@@ -61,8 +63,34 @@ function normalizePlanespotters(payload) {
     photographer: String(photo.photographer || '').slice(0, 120)};
 }
 
-function createAircraftPhotoLookup(config, {fetchJson = readJson, now = Date.now} = {}) {
+function createAircraftPhotoLookup(config, {fetchJson = readJson, now = Date.now,
+  cacheFile = null} = {}) {
   const cache = new Map();
+  const disk = new Map();
+  if (cacheFile) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      for (const [key, entry] of Object.entries(saved.entries || {}))
+        if (entry && Number.isFinite(entry.expiresAt) && entry.value)
+          disk.set(key, entry);
+    } catch (_) { /* An absent or old cache must never block the live map. */ }
+  }
+  let writePending = false;
+  function persist() {
+    if (!cacheFile || writePending) return;
+    writePending = true;
+    setTimeout(async () => {
+      writePending = false;
+      try {
+        const entries = Object.fromEntries([...disk].filter(([, entry]) => entry.expiresAt > now())
+          .slice(-MAX_CACHE_ENTRIES));
+        await fs.promises.mkdir(path.dirname(cacheFile), {recursive: true});
+        const temporary = `${cacheFile}.${process.pid}.tmp`;
+        await fs.promises.writeFile(temporary, JSON.stringify({version: 1, entries}), {mode: 0o600});
+        await fs.promises.rename(temporary, cacheFile);
+      } catch (_) { /* Photo metadata caching is optional. */ }
+    }, 25).unref?.();
+  }
   function prune() {
     while (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
   }
@@ -83,20 +111,29 @@ function createAircraftPhotoLookup(config, {fetchJson = readJson, now = Date.now
     const key = `${provider}:${normalized}`;
     const prior = cache.get(key);
     if (prior && now() < prior.expiresAt) return prior.promise;
+    const saved = disk.get(key);
+    if (saved && now() < saved.expiresAt) {
+      const promise = Promise.resolve(saved.value);
+      cache.set(key, {expiresAt: saved.expiresAt, promise});
+      return promise;
+    }
     const entry = {expiresAt: now() + ERROR_TTL_MS};
     entry.promise = fetchJson(new URL(`https://api.planespotters.net/pub/photos/hex/${normalized}`))
       .then(normalizePlanespotters).then(value => {
         entry.expiresAt = now() + (value.available ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS);
+        disk.set(key, {expiresAt: entry.expiresAt, value}); persist();
         return value;
       }, () => {
         entry.expiresAt = now() + ERROR_TTL_MS;
-        return {available: false, provider: 'Planespotters.net', temporarily_unavailable: true};
+        const value = {available: false, provider: 'Planespotters.net', temporarily_unavailable: true};
+        disk.set(key, {expiresAt: entry.expiresAt, value}); persist();
+        return value;
       });
     cache.set(key, entry);
     prune();
     return entry.promise;
   }
-  return {lookup, cache};
+  return {lookup, cache, disk};
 }
 
 module.exports = {createAircraftPhotoLookup, normalizePlanespotters, readJson};

@@ -84,7 +84,12 @@ function change(input, value, event = 'input') {
     assert.equal(optionalSerial.required, false, 'One unambiguous RSPduo does not require an explicit serial');
     assert.equal(optionalSerial.checkValidity(), true);
     assert.equal(query('capture.device.serial').querySelector('label').textContent, 'RSPduo serial');
-    assert.equal(window.document.querySelectorAll('[role=tab]').length, 6);
+    assert.equal(window.document.querySelectorAll('[role=tab]').length, 7);
+    assert.ok(window.document.querySelector('[data-tab="experimental"]'),
+      'Advanced settings expose one dedicated Experimental category');
+    assert.ok([...query('process.performance.acceleration').querySelector('select').options]
+      .some(option => option.value === 'gpu-resident'),
+    'Every backend-supported GPU acceleration mode is selectable');
     const receiverStartup = window.document.getElementById('receiver-startup');
     const device = saved.capture.device;
     const receiverStatus = {radar: 'receiving', processorFresh: true, processor: {

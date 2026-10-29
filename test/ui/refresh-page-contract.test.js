@@ -25,7 +25,7 @@ const insightPages = new Set([
   'display/overview', 'display/site', 'display/statistics', 'display/tracks'
 ]);
 const plotPages = new Map([
-  ['index', 'plot_map.js'], ['display/map', 'plot_map.js'],
+  ['index', 'plot_map.js'],
   ['display/maxhold', 'plot_map.js'], ['display/spectrum', 'plot_spectrum.js'],
   ['display/timing', 'plot_timing.js'],
   ['display/detection/delay', 'plot_detection.js'],
@@ -33,10 +33,16 @@ const plotPages = new Map([
   ['display/detection/delay-doppler', 'plot_detection.js']
 ]);
 const nonLivePages = new Set(['controller', 'display/configuration', 'display/recordings']);
+const redirectPages = new Set(['display/map']);
 
 for (const page of pages) {
   const html = fs.readFileSync(page === 'index' ? path.join(htmlRoot, 'index.html') :
     path.join(htmlRoot, page, 'index.html'), 'utf8');
+  if (redirectPages.has(page)) {
+    assert.match(html, /location\.replace\(['"]\/['"]\)/,
+      `${page} must redirect to canonical Live radar`);
+    continue;
+  }
   assert.match(html, /common\.js/, `${page} must use the shared bounded API client`);
   if (insightPages.has(page)) {
     assert.match(html, /insights\.js/, `${page} must use shared snapshot-preserving refresh`);
@@ -49,7 +55,7 @@ for (const page of pages) {
   }
 }
 
-assert.deepEqual(pages, [...insightPages, ...plotPages.keys(), ...nonLivePages].sort(),
+assert.deepEqual(pages, [...insightPages, ...plotPages.keys(), ...nonLivePages, ...redirectPages].sort(),
   'every display page must be covered by a refresh behavior regression');
 
 const insights = fs.readFileSync(path.join(root, 'html/js/insights.js'), 'utf8');

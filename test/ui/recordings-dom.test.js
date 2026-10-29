@@ -14,6 +14,19 @@ window.recordingDuration = milliseconds => `00:00:${String(Math.floor(millisecon
 window.scrollTo = () => {};
 window.confirm = () => true;
 window.alert = message => { throw new Error(message); };
+class FakeUpload {
+  constructor() { this.upload = {}; this.headers = {}; FakeUpload.last = this; }
+  open(method, url) { this.method = method; this.url = url; }
+  setRequestHeader(name, value) { this.headers[name] = value; }
+  send(file) {
+    this.file = file;
+    this.upload.onprogress?.({lengthComputable: true, loaded: file.size, total: file.size});
+    this.status = 200; this.responseText = JSON.stringify({filename: file.name, size_bytes: file.size});
+    setImmediate(() => this.onload());
+  }
+  abort() { this.onabort?.(); }
+}
+window.XMLHttpRequest = FakeUpload;
 const calls = [];
 let deferredRequests = null;
 let deleteFailure = false;
@@ -53,6 +66,15 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/recordings.js'),
     'Mobile details start collapsed');
   assert.equal(window.document.body.textContent.includes('Download'), false,
     'Local browser does not offer redundant downloads');
+  const importInput = window.document.getElementById('recording-import');
+  Object.defineProperty(importInput, 'files', {configurable: true,
+    value: [new window.File(['test'], 'portable.blah2iq')]});
+  importInput.dispatchEvent(new window.Event('change', {bubbles: true}));
+  assert.equal(window.document.getElementById('recording-import-cancel').hidden, false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(window.document.getElementById('recording-import-status').textContent,
+    /Imported portable\.blah2iq/);
+  assert.equal(FakeUpload.last.headers['X-VectorWarp-Intent'], 'recording-import-v1');
   const replay = window.document.querySelector('.recording-replay');
   assert.equal(replay.tagName, 'A');
   assert.match(replay.href, /\/display\/configuration\?replayFile=%2Frecordings%2Frecording-0\.blah2iq$/,

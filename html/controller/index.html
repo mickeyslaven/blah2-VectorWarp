@@ -2,31 +2,33 @@
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>VectorWarp · Displays</title><link rel="stylesheet" href="../lib/blah2.css?v=mlat-1"></head>
 <body><main class="app-shell controller-shell"><header class="app-header"></header>
   <section class="controller-intro"><div><h1>Displays &amp; data</h1></div><p id="runtime-summary">Reading receiver configuration…</p></section>
-  <section class="controller-section" aria-label="Operational views"><h2>Understand the radar</h2>
+  <section class="controller-section" aria-label="Everyday views"><h2>Everyday use</h2><p>Start here for normal operation.</p>
     <nav class="display-list">
-      <a href="/display/overview"><span>Overview</span><small id="display-overview-meta">Reading active system…</small><b>→</b></a>
+      <a href="/"><span>Live radar</span><small id="display-live-meta">Delay–Doppler, detections, tracks and ADS-B truth</small><b>→</b></a>
+      <a href="/display/locations"><span>Map</span><small id="display-locations-meta">Aircraft, confirmed radar tracks and site geometry</small><b>→</b></a>
+      <a href="/display/recordings"><span>Recordings</span><small>Browse, import, replay and manage local IQ recordings</small><b>→</b></a>
+      <a href="/display/statistics"><span>Radar results</span><small>Detection, tracking and bearing results by range, direction and elevation</small><b>→</b></a>
+      <a href="/display/overview"><span>System status</span><small id="display-overview-meta">Receiver, processing, GPU and data-source health</small><b>→</b></a>
+    </nav>
+  </section>
+  <section class="controller-section" aria-label="Analysis views"><h2>Analysis</h2><p>Inspect what the detector and tracker are doing.</p>
+    <nav class="display-list">
       <a href="/display/detections"><span>Current detections</span><small id="display-detections-meta">Reading detector settings…</small><b>→</b></a>
       <a href="/display/tracks"><span>Tracks</span><small id="display-tracks-meta">Reading tracker settings…</small><b>→</b></a>
-      <a href="/display/statistics"><span>Performance statistics</span><small>Hourly, daily, weekly and lifetime tracking and bearing evidence</small><b>→</b></a>
-      <a href="/display/recordings"><span>Recordings</span><small>Browse, download, and load manual or aircraft-triggered IQ recordings for replay</small><b>→</b></a>
+      <a href="/display/evaluation"><span>ADS-B comparison</span><small id="display-evaluation-meta">Truth sources, pass matching and source timing</small><b>→</b></a>
       <a href="/display/calibration"><span>Array calibration</span><small>Installed-manifold corpus coverage, qualification gates and blockers</small><b>→</b></a>
-      <a href="/display/health"><span>System health</span><small id="display-health-meta">Reading processing settings…</small><b>→</b></a>
-      <a href="/display/activity"><span>Activity timeline</span><small>Detections, tracks, signal strength, and processing load</small><b>→</b></a>
       <a href="/display/site"><span>Site geometry</span><small id="display-site-meta">Reading configured sites…</small><b>→</b></a>
-      <a href="/display/locations"><span>Map</span><small id="display-locations-meta">Live aircraft, radar tracks, and possible locations</small><b>→</b></a>
-      <a href="/display/evaluation"><span>ADS-B</span><small id="display-evaluation-meta">Reading ADS-B settings…</small><b>→</b></a>
     </nav>
   </section>
-  <section class="controller-section" aria-label="Radar plots"><h2>Radar plots</h2>
+  <section class="controller-section" aria-label="Advanced signal diagnostics"><h2>Advanced signal diagnostics</h2><p>Engineering views for diagnosing signals and processing.</p>
     <nav class="display-list">
-      <a href="/"><span>Live delay–Doppler</span><small id="display-live-meta">Reading active receiver…</small><b>→</b></a>
       <a href="/display/maxhold"><span>Decaying max-hold</span><small id="display-maxhold-meta">Reading search window…</small><b>→</b></a>
       <a href="/display/spectrum"><span>Reference spectrum</span><small id="display-spectrum-meta">Reading reference settings…</small><b>→</b></a>
-      <a href="/display/detection/delay"><span>Bistatic range history</span><small id="display-range-meta">Reading site configuration…</small><b>→</b></a>
-      <a href="/display/detection/doppler"><span>Bistatic Doppler history</span><small id="display-doppler-meta">Reading Doppler window…</small><b>→</b></a>
-      <a href="/display/detection/delay-doppler"><span>Detection scatter</span><small id="display-scatter-meta">Reading search window…</small><b>→</b></a>
+      <a href="/display/detection/delay-doppler"><span>Detection history</span><small>Range, Doppler and range–Doppler history views</small><b>→</b></a>
+      <a href="/display/activity"><span>Activity timeline</span><small>Detections, tracks, signal strength and processing load</small><b>→</b></a>
       <a href="/display/timing"><span>Pipeline timing</span><small id="display-timing-meta">Reading frame timing…</small><b>→</b></a>
+      <a href="/display/health"><span>Detailed health</span><small id="display-health-meta">Processing stages, queues and resource diagnostics</small><b>→</b></a>
     </nav>
   </section>
-  <section class="controller-section" aria-label="API endpoints"><h2>Data API</h2><div class="api-list"><a href="/api/map">/api/map</a><a href="/api/detection">/api/detection</a><a href="/api/tracker">/api/tracker</a><a href="/api/bearing">/api/bearing</a><a href="/api/statistics">/api/statistics</a><a href="/api/bearing/manifold-progress">/api/bearing/manifold-progress</a><a href="/api/locations">/api/locations</a><a href="/api/timing">/api/timing</a><a href="/api/iqdata">/api/iqdata</a><a href="/api/timestamp">/api/timestamp</a></div></section>
+  <details class="controller-section developer-section"><summary><strong>Developer API</strong><small>Raw JSON endpoints for integrations and debugging</small></summary><div class="api-list"><a href="/api/map">/api/map</a><a href="/api/detection">/api/detection</a><a href="/api/tracker">/api/tracker</a><a href="/api/bearing">/api/bearing</a><a href="/api/statistics">/api/statistics</a><a href="/api/bearing/manifold-progress">/api/bearing/manifold-progress</a><a href="/api/locations">/api/locations</a><a href="/api/timing">/api/timing</a><a href="/api/iqdata">/api/iqdata</a><a href="/api/timestamp">/api/timestamp</a></div></details>
 </main><script src="../js/common.js?v=mlat-1"></script><script>renderAppHeader('controller');renderRuntimeSummary();</script></body></html>

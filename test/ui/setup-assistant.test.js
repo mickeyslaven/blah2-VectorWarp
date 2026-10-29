@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {JSDOM} = require('./jsdom');
-const {render, recordingEstimate, searchWindow, gpuActive} = require('../../html/js/setup_assistant.js');
+const {render, recordingEstimate, searchWindow, gpuActive, receiverHardwareReady,
+  wizardChecks} = require('../../html/js/setup_assistant.js');
+const {configurationForReceiver} = require('../../api/config-store');
+const {getDeviceProfiles} = require('../../api/config-manager');
 
 test('recording estimates distinguish compact Kraken clips from portable recordings', () => {
   const config = {capture: {fs: 2_400_000, device: {type: 'Kraken', channel_count: 5},
@@ -31,10 +34,36 @@ test('GPU status recognizes both staged and fully resident Vulkan processing', (
   assert.equal(gpuActive({active: 'cpu', state: 'ready'}), false);
 });
 
-test('assistant opens a guided tabbed wizard and applies draft-only helpers', () => {
+test('assistant recognizes every supported SDR profile and refuses unavailable software', () => {
+  for (const profile of getDeviceProfiles()) {
+    if (profile.type === 'Unconfigured') continue;
+    const config = configurationForReceiver(profile.type);
+    if (profile.type === 'HackRF') config.capture.device.serial = ['abc123', 'def456'];
+    config.location.rx = {name: 'Receiver', latitude: 1, longitude: 1, altitude: 1};
+    config.location.tx = {name: 'Transmitter', latitude: 2, longitude: 2, altitude: 2};
+    const readyProfile = {...profile, liveAvailable: true};
+    assert.equal(wizardChecks(config, [readyProfile])[0].complete, true, profile.type);
+    assert.equal(wizardChecks(config, [{...profile, liveAvailable: false}])[0].complete, false,
+      `${profile.type} cannot finish when its live adapter is unavailable`);
+  }
+});
+
+test('assistant identifies receiver-specific hardware requirements', () => {
+  assert.equal(receiverHardwareReady({type: 'Kraken', heimdall: {
+    host: '127.0.0.1', port: 8091, control_port: 8092}}), true);
+  assert.equal(receiverHardwareReady({type: 'RspDuo', serial: ''}), true,
+    'RSPduo may use the first discovered receiver');
+  assert.equal(receiverHardwareReady({type: 'Usrp', address: 'type=b200', subdev: 'A:A A:B'}), true);
+  assert.equal(receiverHardwareReady({type: 'HackRF', serial: ['abc123', 'def456']}), true);
+  assert.equal(receiverHardwareReady({type: 'HackRF', serial: [
+    'REFERENCE_DEVICE_SERIAL_NUMBER', 'SURVEILLANCE_DEVICE_SERIAL_NUMBER']}), false);
+});
+
+test('assistant opens a guided tabbed wizard, saves each step and applies helpers', async () => {
   const dom = new JSDOM('<div id="assistant"></div>');
   const config = {capture: {fc: 509_000_000, fs: 2_400_000,
-    device: {type: 'Kraken', channel_count: 5, heimdall: {gain_control: 'fixed'}},
+    device: {type: 'Kraken', channel_count: 5, heimdall: {
+      host: '127.0.0.1', port: 8091, control_port: 8092, gain_control: 'fixed'}},
     aircraft_clips: {pre_seconds: 2, post_seconds: 2}},
   process: {data: {cpi: .5}, detection: {enable: true}, tracker: {enable: true},
     ambiguity: {delayMin: 0, delayMax: 100, dopplerMin: -100, dopplerMax: 100},
@@ -43,7 +72,8 @@ test('assistant opens a guided tabbed wizard and applies draft-only helpers', ()
   const api = {getConfig: () => config, mode: () => 'simple', setMode: value => modes.push(value),
     set: (path, value) => { writes.push([path.join('.'), value]);
       let cursor = config; for (const key of path.slice(0, -1)) cursor = cursor[key]; cursor[path.at(-1)] = value; },
-    receiverProfiles: () => [{type: 'Kraken', label: 'KrakenSDR'}], switchReceiver() {}, save() {},
+    receiverProfiles: () => [{type: 'Kraken', label: 'KrakenSDR'}], switchReceiver() {},
+    saveStep: async () => true, save: async () => true,
     refresh: () => render(target, api), refreshEditor: () => render(target, api)};
   render(target, api);
   assert.equal(target.querySelectorAll('.setup-card').length, 0,
@@ -54,7 +84,10 @@ test('assistant opens a guided tabbed wizard and applies draft-only helpers', ()
   target.querySelector('[data-start-setup]').click();
   assert.ok(target.querySelector('.setup-wizard'), 'Start setup opens a modal wizard');
   assert.equal(target.querySelectorAll('[data-wizard-step]').length, 6);
-  target.querySelector('[data-wizard-step="3"]').click();
+  assert.equal(target.querySelector('[data-wizard-step="3"]').disabled, true,
+    'Future steps cannot be skipped before current settings are saved');
+  target.querySelector('[data-wizard-next]').click();
+  await new Promise(resolve => setImmediate(resolve));
   assert.match(target.querySelector('.setup-wizard-content').textContent, /radar search/i);
   target.querySelector('[data-wizard-next]').click();
   assert.ok(writes.some(([path, value]) => path === 'process.ambiguity.delayMax' && value === 801));
@@ -66,7 +99,7 @@ test('advanced mode collapses the beginner workflow instead of duplicating two s
   const target = dom.window.document.getElementById('assistant');
   render(target, {getConfig: () => ({capture: {device: {type: 'Kraken'}}}),
     mode: () => 'advanced', setMode() {}, openTab() {}, set() {}, refresh() {}, refreshEditor() {},
-    receiverProfiles: () => [], switchReceiver() {}, save() {}});
+    receiverProfiles: () => [], switchReceiver() {}, saveStep() {}, save() {}});
   assert.equal(target.querySelectorAll('.setup-card').length, 0);
   assert.match(target.textContent, /All receiver, DSP, service, and diagnostic settings are shown below/);
   assert.ok(target.querySelector('[data-mode="simple"]'), 'The operator can always return to Simple mode');

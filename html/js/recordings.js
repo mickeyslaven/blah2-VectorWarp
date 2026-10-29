@@ -2,7 +2,7 @@
   'use strict';
   const pageSize = () => typeof window !== 'undefined' && window.innerWidth <= 760 ? 10 : 24;
   const state = {offset: 0, total: 0, loading: false, controller: null,
-    requestId: 0, indexTimer: null, rendered: false};
+    requestId: 0, indexTimer: null, rendered: false, importRequest: null};
   const bytes = value => {
     if (!Number.isFinite(value)) return '—';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -30,7 +30,7 @@
     const expanded = typeof window === 'undefined' || window.innerWidth > 760 ? ' open' : '';
     const quick = [duration(item.duration_seconds), bytes(item.size_bytes), frequency(item.frequency_hz)].filter(value => value !== '—').join(' · ');
     const replay = `/display/configuration?replayFile=${encodeURIComponent(item.replay_file || '')}`;
-    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Review replay</a><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
+    return `<details class="recording-card" data-recording-id="${escape(item.id)}"${expanded}><summary><span><strong>${escape(item.title)}</strong><small>${escape(quick)}</small></span><span class="recording-kind ${escape(item.kind)}">${item.kind === 'automatic' ? 'Aircraft clip' : 'Manual'}</span></summary><div class="recording-card-body"><p class="recording-filename">${escape(item.filename)}</p><div class="recording-aircraft-list">${aircraft(item)}</div><dl><div><dt>Recorded</dt><dd>${escape(new Date(item.created_at).toLocaleString())}</dd></div><div><dt>Length</dt><dd>${escape(duration(item.duration_seconds))}</dd></div><div><dt>Size</dt><dd>${escape(bytes(item.size_bytes))}</dd></div><div><dt>Frequency</dt><dd>${escape(frequency(item.frequency_hz))}</dd></div><div><dt>Receiver</dt><dd>${escape(item.receiver || '—')}</dd></div><div><dt>Channels</dt><dd>${escape(item.channels ?? '—')}</dd></div></dl><footer><a class="button-link recording-replay" href="${escape(replay)}">Load for replay</a><button class="button-secondary recording-delete" type="button" data-id="${escape(item.id)}" data-name="${escape(item.filename)}" ${item.active ? 'disabled' : ''}>Delete</button>${integrity(item)}${item.active ? '<strong class="recording-active">Recording now</strong>' : ''}</footer></div></details>`;
   }
   function query() {
     const params = new URLSearchParams({offset: state.offset, limit: pageSize(),
@@ -103,9 +103,19 @@
       }
     }
   }
+  function confirmDelete(name) {
+    const dialog = document.getElementById('recording-delete-dialog');
+    if (!dialog || typeof dialog.showModal !== 'function')
+      return Promise.resolve(window.confirm(`Permanently delete ${name} and its metadata?`));
+    document.getElementById('recording-delete-copy').textContent = name;
+    return new Promise(resolve => {
+      const done = () => { dialog.removeEventListener('close', done); resolve(dialog.returnValue === 'confirm'); };
+      dialog.addEventListener('close', done); dialog.showModal();
+    });
+  }
   async function deleteRecording(button) {
     const name = button.dataset.name || 'this recording';
-    if (!window.confirm(`Permanently delete ${name} and its metadata?`)) return;
+    if (!(await confirmDelete(name))) return;
     button.disabled = true; button.textContent = 'Deleting…';
     const status = document.getElementById('recording-operation-status');
     try {
@@ -124,16 +134,36 @@
   async function importRecording(input) {
     const file = input.files?.[0]; if (!file) return;
     const status = document.getElementById('recording-import-status');
+    const progress = document.getElementById('recording-import-progress');
+    const cancel = document.getElementById('recording-import-cancel');
     status.textContent = `Importing ${file.name} (${bytes(file.size)})…`;
+    progress.hidden = false; progress.value = 0; cancel.hidden = false; input.disabled = true;
     try {
-      const response = await fetchStatusResource(liveApiUrl(`/api/recordings/import?filename=${encodeURIComponent(file.name)}`),
-        {method: 'POST', headers: {'Content-Type': 'application/octet-stream',
-          'X-VectorWarp-Intent': 'recording-import-v1'}, body: file}, 60 * 60 * 1000);
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Import failed');
+      const result = await new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest(); state.importRequest = request;
+        request.open('POST', liveApiUrl(`/api/recordings/import?filename=${encodeURIComponent(file.name)}`));
+        request.timeout = 60 * 60 * 1000;
+        request.setRequestHeader('Content-Type', 'application/octet-stream');
+        request.setRequestHeader('X-VectorWarp-Intent', 'recording-import-v1');
+        request.upload.onprogress = event => {
+          if (!event.lengthComputable) return;
+          progress.value = Math.round(event.loaded / event.total * 100);
+          status.textContent = `Importing ${file.name}: ${progress.value}%`;
+        };
+        request.onload = () => {
+          let body = {}; try { body = JSON.parse(request.responseText || '{}'); } catch (_) {}
+          if (request.status < 200 || request.status >= 300) reject(new Error(body.error || 'Import failed'));
+          else resolve(body);
+        };
+        request.onerror = () => reject(new Error('Import connection failed'));
+        request.ontimeout = () => reject(new Error('Import timed out'));
+        request.onabort = () => reject(new DOMException('Import cancelled', 'AbortError'));
+        request.send(file);
+      });
       status.textContent = `Imported ${result.filename} (${bytes(result.size_bytes)}).`;
       input.value = ''; await load({reset: true});
-    } catch (error) { status.textContent = error.message; }
+    } catch (error) { status.textContent = error.name === 'AbortError' ? 'Import cancelled.' : error.message; }
+    finally { state.importRequest = null; progress.hidden = true; cancel.hidden = true; input.disabled = false; }
   }
   function renderRecordings() {
     let timer = null;
@@ -153,6 +183,7 @@
       const remove = event.target.closest('.recording-delete'); if (remove) deleteRecording(remove);
     });
     document.getElementById('recording-import')?.addEventListener('change', event => importRecording(event.target));
+    document.getElementById('recording-import-cancel')?.addEventListener('click', () => state.importRequest?.abort());
     load();
   }
   root.renderRecordings = renderRecordings;

@@ -511,7 +511,6 @@ function validateConfig(config, baseline = null, options = {}) {
 
   const cpi = number(data.cpi, 'process.data.cpi', {exclusiveMin: 0});
   const buffer = number(data.buffer, 'process.data.buffer', {min: 1});
-  number(data.overlap, 'process.data.overlap', {min: 0});
   const sampleRate = Number.isFinite(capture.fs) ? capture.fs : null;
   const cpiSamples = cpi !== null && sampleRate !== null ?
     Math.floor(cpi * sampleRate) : null;
@@ -705,7 +704,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (tracker.beam_tolerance !== undefined)
     number(tracker.beam_tolerance, 'process.tracker.beam_tolerance',
       {integer: true, min: 0, max: 180});
-  string(tracker.smooth, 'process.tracker.smooth');
   if (processConfig.performance !== undefined) {
     const performance = requireObject(processConfig.performance,
       'process.performance');
@@ -1151,7 +1149,6 @@ function validateConfig(config, baseline = null, options = {}) {
   if (receiver.latitude === transmitter.latitude && receiver.longitude === transmitter.longitude)
     advise('location', 'Set separate receiver and transmitter locations to use the map.');
   const adsb = requireObject(truth.adsb, 'truth.adsb');
-  const ais = requireObject(truth.ais, 'truth.ais');
   boolean(adsb.enabled, 'truth.adsb.enabled');
   string(adsb.tar1090, 'truth.adsb.tar1090');
   const validateAdsbSource = (source, key) => {
@@ -1209,9 +1206,6 @@ function validateConfig(config, baseline = null, options = {}) {
     'truth.adsb.delay_tolerance', {min: 0, max: 1000});
   if (adsb.doppler_tolerance !== undefined) number(adsb.doppler_tolerance,
     'truth.adsb.doppler_tolerance', {min: 0, max: 10000});
-  boolean(ais.enabled, 'truth.ais.enabled');
-  string(ais.ip, 'truth.ais.ip');
-  number(ais.port, 'truth.ais.port', {integer: true, min: 1, max: 65535});
   ['iq', 'map', 'detection', 'timing'].forEach(key =>
     boolean(save[key], `save.${key}`));
   string(save.path, 'save.path');
