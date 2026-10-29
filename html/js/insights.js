@@ -942,7 +942,8 @@
         let visibleLabels = 0;
         for (const candidate of aircraftLabelCandidates) {
           const text = candidate.marker.querySelector?.('.location-aircraft-label')?.textContent || '';
-          const width = Math.min(86, Math.max(34, text.length * 6.3 + 10));
+          const provenanceWidth = candidate.marker.classList.contains('mlat-position') ? 34 : 0;
+          const width = Math.min(112, Math.max(38, text.length * 7 + 12 + provenanceWidth));
           const box = {left: candidate.x - width / 2, right: candidate.x + width / 2,
             top: candidate.y + 8, bottom: candidate.y + 24};
           const onScreen = box.right >= 0 && box.left <= mapWidth && box.bottom >= 0 && box.top <= mapHeight;
