@@ -15,6 +15,10 @@ const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blah2-api-test-'));
 const filename = path.join(directory, 'config.yml');
 const restartMarker = path.join(directory, 'restart-called');
 const config = yaml.load(fs.readFileSync(source, 'utf8'));
+// Generic API validation does not exercise the separately covered automatic-
+// gain transaction; keep this fixture fixed so unrelated validation failures
+// are returned before any receiver lifecycle work.
+config.capture.device.heimdall.gain_control = 'fixed';
 const basePort = 20000 + (process.pid % 10000);
 const truthPort = basePort + 20;
 const suitePort = basePort + 21;
@@ -586,7 +590,7 @@ function connect(port) {
       switched.capture.fs = profile.sampleRate;
       switched.capture.device = profile.device;
       if (profile.type === 'Kraken') switched.capture.device.heimdall = {...profile.device.heimdall,
-        host: '127.0.0.1', control_port: suitePort};
+        host: '127.0.0.1', control_port: suitePort, gain_control: 'fixed'};
       switched.capture.replay.state = profile.liveAvailable === false;
       if (profile.type === 'HackRF') switched.capture.device.serial = ['0001', '0002'];
       for (const key of ['performance', 'reference_synthesis']) {

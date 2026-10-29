@@ -273,6 +273,17 @@ const HOST = net.isIP(config.network?.ip || '') ? config.network.ip : '0.0.0.0';
 const receiverOrigins = trustedOrigins(PORT, (process.env.BLAH2_RECEIVER_ORIGINS || '').split(',').filter(Boolean));
 const CONFIG_INTENT = 'config-write-v1';
 const RECORDING_INTENT = 'recording-toggle-v1';
+function siteNamesOnlyChange(before, after) {
+  const currentRx = before?.location?.rx?.name;
+  const currentTx = before?.location?.tx?.name;
+  const nextRx = after?.location?.rx?.name;
+  const nextTx = after?.location?.tx?.name;
+  if (currentRx === nextRx && currentTx === nextTx) return false;
+  const normalized = JSON.parse(JSON.stringify(after));
+  if (normalized.location?.rx) normalized.location.rx.name = currentRx;
+  if (normalized.location?.tx) normalized.location.tx.name = currentTx;
+  return JSON.stringify(normalized) === JSON.stringify(before);
+}
 var map = '';
 var detection = '';
 var track = '';
@@ -1040,6 +1051,26 @@ app.put('/api/config', async (req, res) => {
   const validation = validateConfig(req.body, currentDocument.config);
   if (!validation.valid)
     return res.status(422).json({ok: false, errors: validation.errors});
+  // Site labels are presentation metadata. They do not retune the receiver,
+  // change radar geometry, or alter processing, so do not force automatic-gain
+  // measurement or stop a healthy processor merely to rename a map marker.
+  if (!saveLater && !wantsRestart && siteNamesOnlyChange(currentDocument.config, req.body)) {
+    const saved = saveConfig(configFile, req.body, currentDocument.revision);
+    const priorReceipt = receiverSyncState.receipt || {schemaVersion: 1,
+      receiverType: req.body.capture.device.type, status: 'not-required', operations: []};
+    const receipt = {...priorReceipt, configRevision: saved.revision,
+      configPersisted: true, metadataOnly: true};
+    const settledState = ['synchronized', 'already-matched', 'not-required'].includes(
+      receiverSyncState.state) ? receiverSyncState.state : receipt.status;
+    receiverSyncState = {...receiverSyncState, state: settledState,
+      completedAt: Date.now(), receipt, configRevision: saved.revision,
+      applicationVerified: true, reconciliationRequired: false};
+    receiverJournal.write(receiverSyncState);
+    upstreamCache = null;
+    return res.json({ok: true, restarting: false, revision: saved.revision,
+      config: saved.config, receiverSync: receipt,
+      message: 'Site names saved. Live receiver and radar processing were not restarted.'});
+  }
   const measuredGain = !saveLater && automaticGainEnabled(req.body);
   if (measuredGain && !gainRestart.installedGainRestartSupported(restartCommand))
     return res.status(409).json({ok: false, code: 'GAIN_CHECK_RESTART_UNSUPPORTED',

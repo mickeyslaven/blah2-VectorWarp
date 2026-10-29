@@ -34,12 +34,19 @@ const configured = () => {
   profiles.applyClutterMode(config, 'off'); assert.equal(config.process.clutter.enable, false);
   profiles.applyClutterMode(config, 'custom');
   assert.deepEqual([config.process.clutter.enable, config.process.clutter.followAmbiguity], [true, false]);
+  profiles.applyClutterMode(config, 'full_window');
+  assert.equal(profiles.clutterMode(config), 'full_window');
+  assert.deepEqual([config.process.clutter.delayMin, config.process.clutter.delayMax],
+    [config.process.ambiguity.delayMin, config.process.ambiguity.delayMax]);
 }
 {
   const config = configured();
   profiles.applyDetectionSensitivity(config, 'sensitive');
   assert.equal(config.process.detection.pfa, .0001);
   assert.equal(profiles.detectionSensitivity(config), 'sensitive');
+  profiles.applyDetectionSensitivity(config, 'research');
+  assert.equal(config.process.detection.pfa, .005);
+  assert.equal(profiles.detectionSensitivity(config), 'research');
   profiles.applyWeakTargetMode(config, 'four');
   assert.equal(config.process.detection.track_before_detect.enable, true);
   assert.equal(config.process.detection.track_before_detect.max_cpis, 4);

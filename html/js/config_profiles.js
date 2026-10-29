@@ -10,7 +10,8 @@
   const detectionProfiles = Object.freeze({
     conservative: 0.000001,
     balanced: 0.00001,
-    sensitive: 0.0001
+    sensitive: 0.0001,
+    research: 0.005
   });
 
   function gainMode(config) {
@@ -36,13 +37,22 @@
   function clutterMode(config) {
     const clutter = config?.process?.clutter || {};
     if (clutter.enable !== true) return 'off';
-    return clutter.followAmbiguity === true ? 'automatic' : 'custom';
+    if (clutter.followAmbiguity === true) return 'automatic';
+    const ambiguity = config?.process?.ambiguity || {};
+    return clutter.delayMin === ambiguity.delayMin && clutter.delayMax === ambiguity.delayMax ?
+      'full_window' : 'custom';
   }
 
   function applyClutterMode(config, mode) {
     const clutter = ensure(ensure(config, 'process'), 'clutter');
     clutter.enable = mode !== 'off';
     if (mode === 'automatic') clutter.followAmbiguity = true;
+    if (mode === 'full_window') {
+      const ambiguity = config.process.ambiguity || {};
+      clutter.followAmbiguity = false;
+      clutter.delayMin = ambiguity.delayMin ?? 0;
+      clutter.delayMax = ambiguity.delayMax ?? 0;
+    }
     if (mode === 'custom') {
       clutter.followAmbiguity = false;
       const ambiguity = config.process.ambiguity || {};

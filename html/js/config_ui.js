@@ -145,7 +145,7 @@ const CONFIG_META = {
   'process.detection.track_before_detect.max_cpis': ['Longest weak-target bank', 'Use 2/4 banks or 2/4/8 banks; longer banks add sensitivity and latency.'],
   'process.detection.track_before_detect.motion_bins': ['Trajectory search radius', 'Delay and Doppler cells allowed to move per CPI along a constant path.'],
   'process.tracker': ['Tracking', 'Joins repeated detections into persistent tracks.'],
-  'process.tracker.enable': ['Track targets', 'Run the multi-frame tracker'],
+  'process.tracker.enable': ['Multi-CPI data-association tracker', 'Associate thresholded detections across CPIs using M-of-N confirmation and state estimation. This does not add CPI power; multi-CPI integration and track-before-detect are configured separately.'],
   'process.tracker.profile': ['Tracking strictness', 'Conservative rejects weak one-off returns before track initiation. Permissive preserves the legacy behavior and may create many false candidates.'],
   'process.tracker.initiate': ['Track confirmation', 'Detections needed to start a track'],
   'process.tracker.initiate.M': ['Required detections', 'Detections required inside the confirmation window'],
@@ -258,6 +258,7 @@ function renderClutterSettings() {
   const select = selectInput([
     {value: 'off', label: 'Off'},
     {value: 'automatic', label: 'Automatic (match the radar range)'},
+    {value: 'full_window', label: 'Full current search window'},
     {value: 'custom', label: 'Custom filter range'}
   ], configProfiles.clutterMode(activeConfig), value => {
     applyComposite(config => configProfiles.applyClutterMode(config, value));
@@ -282,6 +283,7 @@ function renderDetectionSettings() {
     {value: 'conservative', label: 'Fewer false alarms'},
     {value: 'balanced', label: 'Balanced (recommended)'},
     {value: 'sensitive', label: 'Weak targets (more false alarms)'},
+    {value: 'research', label: 'Maximum sensitivity — research (many false alarms)'},
     {value: 'custom', label: 'Custom'}
   ], configProfiles.detectionSensitivity(activeConfig), value => {
     if (value !== 'custom') applyComposite(config => configProfiles.applyDetectionSensitivity(config, value));
@@ -318,8 +320,8 @@ function renderWeakTargetSettings() {
     capabilities.deviceProfiles || []).coherentArray;
   const residentCoherent = coherent &&
     activeConfig.capture?.device?.array_geometry?.shape === 'regular_polygon';
-  const {details, body} = compositeGroup('Weak-target recovery',
-    'Combine consecutive coherent frames when a single frame is too weak. Adds latency and GPU work.');
+  const {details, body} = compositeGroup('Multi-CPI integration and track-before-detect',
+    'Accumulate target energy across coherent processing intervals before conventional tracking. Longer banks add latency, trajectory hypotheses, and GPU work.');
   const choices = [{value: 'off', label: 'Off (single frame)'},
     {value: 'two', label: 'Two-frame integration'},
     {value: 'two_motion', label: 'Two-frame integration + motion search'},
@@ -334,8 +336,8 @@ function renderWeakTargetSettings() {
   else if (!residentCoherent) [...select.options].forEach(option => {
     if (['four', 'eight'].includes(option.value)) option.disabled = true;
   });
-  body.appendChild(compositeField('Recovery depth', coherent ?
-    'Longer banks can recover motion-consistent energy but delay a result by additional CPIs.' :
+  body.appendChild(compositeField('Integration / accumulation mode', coherent ?
+    'Two-frame modes integrate adjacent CPIs. Four- and eight-frame modes use track-before-detect to accumulate motion-consistent subthreshold energy.' :
     'Multi-frame coherent recovery requires a supported coherent array receiver.', select,
   'process.detection.integration_cpis'));
   const custom = document.createElement('details'); custom.className = 'config-group composite-tuning';
