@@ -305,14 +305,14 @@ void main(){uint i=indexOf();if(m[0]!=0u||m[2]!=2u||!clutterAware())return;
  if(i>=m[19])return;uint at=m[5]+8u*i;double doppler=sd(at+2u);
  double maximum=packDouble2x32(uvec2(clutterPersistence[2],clutterPersistence[3]));if(maximum>0.0LF&&abs(doppler)>maximum)return;
  uint cell=s[post[41]+i];if(cell>=m[4]||post[33]==0u){reject(320u);return;}
- // Paint a bounded 3x3 neighborhood. Recurrent site clutter commonly jitters
- // by one quantized delay or Doppler cell; joining only that immediate
- // neighborhood lets it accumulate without turning a delay column into a
- // notch. An independent moving target still has to occupy the neighborhood
- // for the full configured persistence interval before initiation is blocked.
+ // Paint a bounded 9x3 neighborhood. Narrow waveform/site ridges can walk a
+ // few quantized delay cells between CFAR appearances while retaining their
+ // Doppler identity. Join that delay walk but keep Doppler locality tight so
+ // this never becomes a delay-column notch. An independent moving target still
+ // has to occupy the neighborhood for the configured persistence interval.
  uint delayBins=post[33],row=cell/delayBins,rows=post[32],delay=cell%delayBins;
  for(int rowOffset=-1;rowOffset<=1;++rowOffset){int candidateRow=int(row)+rowOffset;if(candidateRow<0||candidateRow>=int(rows))continue;
-  for(int delayOffset=-1;delayOffset<=1;++delayOffset){int candidateDelay=int(delay)+delayOffset;if(candidateDelay<0||candidateDelay>=int(delayBins))continue;
+  for(int delayOffset=-4;delayOffset<=4;++delayOffset){int candidateDelay=int(delay)+delayOffset;if(candidateDelay<0||candidateDelay>=int(delayBins))continue;
   uint index=10u+uint(candidateRow)*delayBins+uint(candidateDelay),prior=clutterPersistence[index],current=m[10]&65535u;
   while(true){uint last=prior>>16u,streak=prior&65535u;if(prior!=0u&&last==current)break;
    uint age=(current-last)&65535u,missed=age>0u?age-1u:0u,leaked=missed/4u;

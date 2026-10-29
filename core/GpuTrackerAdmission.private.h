@@ -45,7 +45,8 @@ inline uint32_t persistentCell(uint32_t delayBin,uint32_t dopplerRow,
 }
 
 inline bool persistentRidgeContains(uint32_t learnedCell,uint32_t candidateCell,
- uint32_t delayBins,uint32_t dopplerRows,uint32_t radius=1){
+ uint32_t delayBins,uint32_t dopplerRows,uint32_t delayRadius=4,
+ uint32_t dopplerRadius=1){
  if(!delayBins||!dopplerRows||learnedCell>=uint64_t(delayBins)*dopplerRows||
     candidateCell>=uint64_t(delayBins)*dopplerRows)
   throw std::invalid_argument("GPU tracker persistent-ridge geometry invalid");
@@ -55,7 +56,7 @@ inline bool persistentRidgeContains(uint32_t learnedCell,uint32_t candidateCell,
   learnedDelay-candidateDelay:candidateDelay-learnedDelay;
  const uint32_t rowDelta=learnedRow>candidateRow?
   learnedRow-candidateRow:candidateRow-learnedRow;
- return delayDelta<=radius&&rowDelta<=radius;
+ return delayDelta<=delayRadius&&rowDelta<=dopplerRadius;
 }
 
 // One credit leaks per four missed CPIs. Recurrence with short CFAR/quantizer
