@@ -324,9 +324,11 @@ a { color:inherit; } a:hover { color:var(--accent); }
 .recording-list.is-loading > .recording-card { opacity:.58; }
 .radar-overlay-key { position:absolute; z-index:6; top:10px; left:12px; display:flex; flex-wrap:wrap; gap:7px 12px; padding:6px 9px; border:1px solid rgb(71 54 46 / .72); border-radius:7px; background:rgba(18,14,13,.82); color:var(--muted); font-size:9px; pointer-events:none; backdrop-filter:blur(4px); }.radar-overlay-key span { display:flex; align-items:center; gap:5px; white-space:nowrap; }.radar-overlay-key i { display:block; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }.radar-overlay-key .raw { background:#f4b183; opacity:.68; }.radar-overlay-key .track { width:11px; height:11px; border:1px solid #542012; background:#ff7a45; }.radar-overlay-key .coasting { width:13px; height:13px; border:2px solid rgb(255 122 69 / .72); background:transparent; }.radar-overlay-key .adsb { width:11px; height:11px; background:#4dd4b0; border:1px solid #10251f; }
 @media (max-width:600px) {
-  .radar-overlay-control { top:auto; right:auto; bottom:52px; left:8px; max-width:calc(100% - 16px); padding:4px; }
+  .radar-panel .visualization { order:1; }
+  .radar-overlay-control { position:static; order:2; width:100%; max-width:none; padding:5px 8px; border-width:1px 0 0; border-radius:0; background:rgb(24 18 16 / .97); }
   .radar-overlay-control > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-  .radar-overlay-control select { min-height:28px; max-width:190px; }
+  .radar-overlay-control select { width:100%; min-height:30px; max-width:none; }
+  .recording-control { order:3; }
   .radar-panel > .fullscreen-button { top:8px; right:8px; bottom:auto; display:grid; width:34px; height:34px; padding:0; place-items:center; border-radius:9px; font-size:21px; line-height:1; }
   .radar-overlay-key { max-width:calc(100% - 54px); gap:5px 8px; padding:5px 7px; }
   .recording-pause[hidden] { display:none; }

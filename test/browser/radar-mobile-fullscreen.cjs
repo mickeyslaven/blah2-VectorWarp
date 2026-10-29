@@ -48,6 +48,8 @@ const server = http.createServer((request, response) => {
       'mobile marker key must not run underneath the fullscreen control');
     const markerBounds = await page.locator('.radar-overlay-control').boundingBox();
     const recordingBounds = await page.locator('.recording-control').boundingBox();
+    assert.ok(markerBounds && visualBounds && markerBounds.y >= visualBounds.y + visualBounds.height,
+      'mobile marker selector must stay outside the delay-Doppler plot');
     assert.ok(markerBounds && recordingBounds && markerBounds.y + markerBounds.height <= recordingBounds.y,
       'mobile marker selector must stay above the recording controls');
     await button.click();
