@@ -807,7 +807,8 @@
     const replayTruthDisabled = feed?.disabledForReplay === true;
     let aircraft = feed && typeof feed === 'object' && !replayTruthDisabled ?
       Object.entries(feed).map(([id, item]) => ({id, ...item})) : [];
-    aircraft = stabilizeAircraftSnapshots(aircraft, {scope: 'evaluation', graceMs: 10000});
+    aircraft = stabilizeAircraftSnapshots(aircraft,
+      {scope: 'evaluation', graceMs: enabled && !replayTruthDisabled ? 10000 : 0});
     const radar = detectionRows(detection);
     const truth = config?.truth?.adsb || {};
     renderHtml(document.getElementById('view-summary'), `${card(replayTruthDisabled ? 'Not replayed' : enabled ? (feedError ? 'Offline' : 'Online') : 'Disabled', 'ADS-B', feedError ? 'bad' : enabled && !replayTruthDisabled ? 'good' : '')}${card(aircraft.length, 'Aircraft')}${card(radar.length, 'Radar detections')}${card(finite(truth.display_range_km) === null ? 'Source range' : `${number(truth.display_range_km, 0)} km`, 'Range')}`);

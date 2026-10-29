@@ -200,11 +200,12 @@ var radarUpdates = startRadarPlot(urlMap, async function (data) {
   // detections onto a newly arrived map.
   detection = detected?.timestamp === data.timestamp ? detected : {delay: [], doppler: []};
   adsb = {delay: [], doppler: [], flight: [], customdata: [], hover: []};
-  const data_adsb = currentAdsbOverlay(runningConfig.truth?.adsb?.enabled === true,
+  const adsbEnabled = runningConfig.truth?.adsb?.enabled === true;
+  const data_adsb = currentAdsbOverlay(adsbEnabled,
     runningConfig.process?.data?.cpi);
   const stableAircraft = stabilizeAircraftSnapshots(Object.entries(data_adsb || {})
       .map(([hex, record]) => record?.hex ? record : {...record, hex}),
-    {scope: 'delay-doppler', graceMs: 10000});
+    {scope: 'delay-doppler', graceMs: adsbEnabled ? 10000 : 0});
   for (const aircraft of stableAircraft) {
       if (aircraft && 'doppler' in aircraft) {
         adsb.delay.push(aircraft.delay);
