@@ -1253,12 +1253,6 @@
       doppler: finite(track.doppler)
     })).filter(track => track.delay !== null && track.delay > 0 &&
       currentTrackStates.has(String(track.state || '').toUpperCase()));
-    const hiddenCoastingTracks = trackerRows.filter(track =>
-      String(track?.state || '').toUpperCase() === 'COASTING').length;
-    const hiddenTentativeTracks = trackerRows.filter(track =>
-      String(track?.state || '').toUpperCase() === 'TENTATIVE').length;
-    const hiddenAssociatedTracks = trackerRows.filter(track =>
-      String(track?.state || '').toUpperCase() === 'ASSOCIATED').length;
     let bearingLocations = null;
     if (config?.process?.bearing?.enable === true) {
       try { bearingLocations = await apiJson('/api/locations'); }
@@ -1348,7 +1342,6 @@
     // source below rather than rebuilding a Plotly scene every CPI.
     const allBearingRows = array(bearingLocations?.data).filter(item => item &&
       (item.location || item.estimate || array(item.candidates).length));
-    const hiddenStationary = showStationary ? 0 : allBearingRows.filter(item => item.publishable === false).length;
     const bearingRows = showStationary ? allBearingRows : allBearingRows.filter(item => item.publishable !== false);
     const configuredDelayBins = Math.max(0, finite(config?.process?.ambiguity?.delayMax) ?? 0);
     const configuredExcessKm = configuredDelayBins * resolution;
@@ -1369,14 +1362,8 @@
         zoom: Math.max(4, Math.min(12, 13 - Math.log2(spanKm)))
       };
     }
-    const resolvedBearings = bearingRows.filter(item => item.location).length;
-    const unresolvedBearings = bearingRows.length - resolvedBearings;
-    const filterDescription = adsbMapFilterMode === 'tracked' ? 'Only radar-tracked ADS-B/MLAT aircraft are shown.' :
-      adsbMapFilterMode === 'range' ? `Aircraft within ${number(adsbMapRangeKm, 0)} km ground range of the receiver are shown.` :
-      adsbMapFilterMode === 'radar' ? 'Aircraft inside supported sectors of the observed 24-hour radar boundary are shown.' :
-      'All fresh ADS-B/MLAT aircraft are shown.';
     renderHtml(document.getElementById('view-summary'), `${card(showRadarTracksOnMap ? visibleTracks.length : 'Off', 'Radar ellipses')}${card(mapAircraft.length, 'Aircraft shown')}${card(rawDetections.length, 'Detections')}${showRadarCoverageOnMap ? card(coverage?.supporting_passes ?? 0, 'Coverage passes') : card(bearingRows.length, 'Bearing estimates')}`);
-    renderDetail(`<details class="info-card location-map-notes"><summary>Map details</summary><div class="map-diagnostic-counts"><span><b>${bearingRows.length}</b> Bearing estimates</span><span><b>${resolvedBearings}</b> Resolved fixes</span><span><b>${unresolvedBearings}</b> Unresolved shown</span><span><b>${hiddenAssociatedTracks + hiddenTentativeTracks + hiddenCoastingTracks}</b> Hidden candidates</span></div><div class="view-note">${filterDescription} ${showRadarTracksOnMap ? `The ${visibleTracks.length} current confirmed radar tracks use orange delay-uncertainty ellipses.` : 'Radar uncertainty ellipses are hidden.'} ${showRadarCoverageOnMap ? `The cyan 24-hour boundary contains only positions associated with confirmed radar tracks (${coverage?.supporting_passes ?? 0} supporting passes across ${coverage?.supported_bins ?? 0}/${coverage?.bins ?? 72} bearing bins); online ADS-B/MLAT reach cannot expand it.` : ''} Aircraft icons are colored by altitude; a cyan ring means the aligned ADS-B prediction was uniquely matched to a confirmed native radar track inside the configured delay/Doppler gates. Bright gold fixes and corridors passed the strict bearing confidence test. Purple markers are best unresolved estimates, and translucent gold points are their alternate lobes. ${hiddenAssociatedTracks} associated candidates, ${hiddenTentativeTracks} tentative rows, and ${hiddenCoastingTracks} coasting rows are hidden from operational cages. Inspect candidates on Tracks. ${hiddenStationary} persistent stationary bearing row${hiddenStationary === 1 ? ' is' : 's are'} hidden by default but remain in the raw API and can be inspected with <code>?showStationary=1</code>. ${rawDetections.length} raw untracked detection${rawDetections.length === 1 ? ' is' : 's are'} hidden because delay alone does not define a unique map position. Array wiring and known-angle RF diagnostics are under Array calibration.</div></details>`);
+    renderDetail('');
     const map = await ensureLocationMap(locationMapViewport);
     syncBearingOverlayLayers(map, bearingRows);
     renderSelectedAircraftCard(mapAircraft);

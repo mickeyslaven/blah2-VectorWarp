@@ -30,6 +30,8 @@ vm.runInContext(fs.readFileSync(require.resolve('../../html/js/insights.js'), 'u
   assert.ok(controls && aircraft, 'map controls and aircraft details use separate drawers');
   assert.equal(controls.open, false, 'mobile starts with map controls collapsed');
   assert.equal(aircraft.open, false, 'mobile starts with aircraft details collapsed');
+  assert.equal(dom.window.document.querySelector('.location-map-notes'), null,
+    'map does not render a redundant explanatory details box');
   controls.open = true;
   controls.dispatchEvent(new dom.window.Event('toggle'));
   aircraft.open = true;
