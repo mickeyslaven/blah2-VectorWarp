@@ -1,8 +1,10 @@
 diff --git a/heimdall_v2/config.h b/heimdall_v2/config.h
-index 459f21a..cf9a71e 100644
 --- a/heimdall_v2/config.h
 +++ b/heimdall_v2/config.h
-@@ -161 +161,6 @@
+@@ -158,6 +158,11 @@
+ // can also force an immediate recalibration from the web UI at any time. These
+ // are only DEFAULTS - the enable flag and period are runtime-configurable from
+ // the web UI and persisted in heimdall_settings.conf.
 -#define PERIODIC_RECAL_DEFAULT_ENABLED  1      // default ON
 +//
 +// A check switches the calibration noise source into the antenna stream for
@@ -10,8 +12,9 @@ index 459f21a..cf9a71e 100644
 +// passive radar, so make the intrusive check opt-in. Startup calibration and
 +// transport-integrity recovery remain enabled and still recover sample loss.
 +#define PERIODIC_RECAL_DEFAULT_ENABLED  0      // opt-in; continuous stream by default
+ #define PERIODIC_RECAL_DEFAULT_MINUTES  5      // default 5 minute check period
+ // Thresholds for declaring the calibration "bad". Set well above the converged
 diff --git a/heimdall_v2/src/core/settings.hpp b/heimdall_v2/src/core/settings.hpp
-index e8ed765..116c1d5 100644
 --- a/heimdall_v2/src/core/settings.hpp
 +++ b/heimdall_v2/src/core/settings.hpp
 @@ -5,7 +5,7 @@
