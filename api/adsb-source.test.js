@@ -233,6 +233,27 @@ const {DelayDopplerHistory} = require('./adsb-geometry');
   await paced.get('aircraft');
   assert.equal(exchangePacedReads, 2, 'Public exchange sources refresh after their independent interval');
 
+  let presentationRelease;
+  let presentationReads = 0;
+  const presentationConfig = {...config, truth: {adsb: {...config.truth.adsb,
+    poll_interval: .1}}};
+  const nonblockingPresentation = createAdsbSource(presentationConfig, {now: () => clock,
+    fetchJson: async () => {
+      presentationReads += 1;
+      if (presentationReads > 1) await new Promise(resolve => { presentationRelease = resolve; });
+      return {now: clock / 1000, aircraft: [{hex: 'abc123', lat: 1, lon: 2,
+        alt_geom: 1000, gs: 0, track: 0, seen_pos: 0}]};
+    }});
+  await nonblockingPresentation.getPresentation('aircraft');
+  clock += 101;
+  const cachedPresentation = await Promise.race([
+    nonblockingPresentation.getPresentation('aircraft'),
+    new Promise((_, reject) => setTimeout(() => reject(new Error(
+      'Presentation waited for an upstream refresh')), 50))]);
+  assert.equal(cachedPresentation.aircraft.length, 1,
+    'Presentation reuses the last validated snapshot while upstream refreshes');
+  presentationRelease();
+
   const server = http.createServer((req, res) => {
     if (req.url === '/stall') { res.writeHead(200); res.write('{'); return; }
     if (req.url === '/large') return res.end('x'.repeat(200));

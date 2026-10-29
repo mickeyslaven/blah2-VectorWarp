@@ -225,8 +225,20 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
       .finally(() => { entry.pending = false; entry.at = now(); });
     cache.set('raw', entry); return entry.promise;
   }
-  async function rawAircraft(targetAtMs, fusionOptions = {}) {
-    const {healthy, failed} = await rawSnapshots();
+  async function presentationSnapshots() {
+    // Rendering must never wait behind a slow WAN request. Reuse every last
+    // validated source snapshot while a refresh proceeds independently; the
+    // fusion age limits naturally retire stale aircraft. This also prevents a
+    // transient 429/timeout from erasing an otherwise usable source between
+    // screen frames.
+    const refresh = rawSnapshots();
+    const healthy = slots.map(slot => slot.lastValue).filter(Boolean);
+    if (!healthy.length) return refresh;
+    void refresh.catch(() => {});
+    return {healthy, failed: slots.length - healthy.length};
+  }
+  async function rawAircraft(targetAtMs, fusionOptions = {}, snapshots = rawSnapshots) {
+    const {healthy, failed} = await snapshots();
     // Presentation callers intentionally omit a target. Stamp those snapshots
     // after I/O completes; otherwise source latency makes newly acquired local
     // positions look future-dated and distorts freshness diagnostics. Scoring
@@ -282,7 +294,8 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     // Accept any observation already allowed by max_position_age and project it
     // to now. This avoids the delayed-scoring request time rejecting otherwise
     // fresh feeder snapshots and making every aircraft flash on and off.
-    const data = await rawAircraft(undefined, {maxObservationOffsetSeconds: geometry.maxAge});
+    const data = await rawAircraft(undefined, {maxObservationOffsetSeconds: geometry.maxAge},
+      presentationSnapshots);
     if (kind === 'aircraft') return data;
     return presentationGeometry.update(data).data;
   }
@@ -292,7 +305,7 @@ function createAdsbSource(config, {preview = false, fetchJson = readJson, now = 
     if (preview) throw new Error('Preview: no live ADS-B connection');
     if (config.capture?.replay?.state) throw new Error('Replay: no live ADS-B connection');
     const data = await rawAircraft(targetAtMs,
-      {maxObservationOffsetSeconds: geometry.maxAge});
+      {maxObservationOffsetSeconds: geometry.maxAge}, presentationSnapshots);
     if (kind === 'aircraft') return data;
     return presentationGeometry.update(data).data;
   }
