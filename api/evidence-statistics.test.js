@@ -204,10 +204,10 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
     retentionClock += 1000;
   }
   const retained = retention.status().eligibility_events[0].truth_samples;
-  assert.equal(retained.length, 65);
+  assert.equal(retained.length, 30);
   assert.deepEqual(retained.map(item => item.timestamp_ms),
-    Array.from({length: 65}, (_, index) => 2_000_000_000_000 + index * 1000),
-    'The retained trajectory must remain continuous without a minute-wide middle gap');
+    Array.from({length: 30}, (_, index) => 2_000_000_035_000 + index * 1000),
+    'The recent trajectory must remain continuous while aggregate pass statistics retain the full outcome');
   retention.close();
 
   const timingFilename = path.join(directory, 'timing-provenance.json');
@@ -459,7 +459,23 @@ const source = {async get() { return {abc123: {...prediction, timestamp: clock /
   assert.equal(boundedState.state.rollup.tracked, 1);
   assert.equal(boundedState.state.passes.at(-1).cpiAudit.length, 16);
   assert.equal(boundedState.state.passes.at(-1).truthHistory.length, 16);
+  boundedState.state.active.abcdef = {id: 'active-pass', hex: 'abcdef',
+    siteKey: boundedState.key, startedAt: 1, lastAt: 2, frames: 1000,
+    sampledBuckets: Array.from({length: 1000}, (_, row) => row),
+    cpiAudit: Array.from({length: 1000}, (_, row) => ({timestamp_ms: row,
+      timing: {epoch: 1, first_epoch_sample: row * 1200000}}))};
+  boundedState.state.eligibilityEvents.push({id: 'active-event', state: 'pending',
+    truth_samples: Array.from({length: 1000}, (_, row) => ({timestamp_ms: row,
+      position: {latitude: 1, longitude: 2}})), capture_windows: [{
+      capture_id: 'clip-1', truth_samples: Array.from({length: 12}, (_, row) =>
+        ({timestamp_ms: row}))}]});
   boundedState.persist();
+  assert.equal(boundedState.state.active.abcdef.cpiAudit.length, 64,
+    'Active engineering detail must not make persistence block the API event loop');
+  assert.equal(boundedState.state.active.abcdef.sampledBuckets.length, 64);
+  assert.equal(boundedState.state.eligibilityEvents.at(-1).truth_samples.length, 30);
+  assert.equal(boundedState.state.eligibilityEvents.at(-1).capture_windows[0].truth_samples.length, 12,
+    'Compaction must preserve the exact truth bracket copied into a recording window');
   assert.ok(fs.statSync(path.join(directory, 'bounded-state.json')).size < 8 * 1024 * 1024,
     'Bounded synthetic state must remain well below the loader safety cap');
   boundedState.close();

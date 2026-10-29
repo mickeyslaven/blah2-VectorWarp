@@ -22,14 +22,25 @@ const MAX_STATE_INPUT_BYTES = 256 * 1024 * 1024;
 // diagnostics.  A rolling-only buffer loses the ADS-B trajectory associated
 // with an IQ clip when an aircraft remains eligible for more than 30 seconds.
 const TRIGGER_EVENT_TRUTH_SAMPLES = 30;
-const MAX_EVENT_TRUTH_SAMPLES = 256;
+// Capture windows copy their own exact truth brackets.  The parent event and
+// active pass therefore only need a short recent tail for the next automatic
+// clip; retaining hundreds of duplicated expanded aircraft records made the
+// 250-event ledger larger than 100 MiB.
+const MAX_EVENT_TRUTH_SAMPLES = TRIGGER_EVENT_TRUTH_SAMPLES;
 const TRUTH_SAMPLE_MS = 500;
 const MAX_ACTIVE_CAPTURE_TIMESTAMPS = 128;
 const MAX_CAPTURE_ASSOCIATIONS = 64;
 const MAX_TIMING_FRAMES = 2048;
 const MAX_RADAR_FRAMES = 256;
 const MAX_PENDING_SAMPLES = 32;
-const MAX_CPI_AUDIT = 1024;
+// Active passes used to retain 1,024 fully expanded CPI rows per aircraft.
+// A busy wide-area ADS-B feed can keep more than one hundred aircraft active,
+// turning the operational state into a 200+ MiB JSON document.  Serializing
+// that document blocks the API event loop and makes every browser appear to
+// freeze, even though the radar itself is healthy.  Eligibility counters,
+// extents, first/last truth, capture truth windows and lifetime rollups are
+// maintained separately; this is only the recent engineering tail.
+const MAX_CPI_AUDIT = 64;
 const TIMING_RETENTION_MS = 10 * 60 * 1000;
 const PASS_GAP_MS = 120000;
 const DEFAULT_PROVISIONAL_TIME_UNCERTAINTY_S = 1;
@@ -310,6 +321,24 @@ function compactFinalizedPass(pass) {
       pass.truthHistory.length > MAX_FINALIZED_TRUTH_SAMPLES)
     pass.truthHistory = pass.truthHistory.slice(-MAX_FINALIZED_TRUTH_SAMPLES);
   return pass;
+}
+
+function compactActivePass(pass) {
+  if (!pass || typeof pass !== 'object') return pass;
+  for (const key of ['cpiAudit', 'sampledBuckets'])
+    if (Array.isArray(pass[key]) && pass[key].length > MAX_CPI_AUDIT)
+      pass[key] = pass[key].slice(-MAX_CPI_AUDIT);
+  if (Array.isArray(pass.truthHistory) &&
+      pass.truthHistory.length > MAX_EVENT_TRUTH_SAMPLES)
+    pass.truthHistory = pass.truthHistory.slice(-MAX_EVENT_TRUTH_SAMPLES);
+  return pass;
+}
+
+function compactEligibilityEvent(event) {
+  if (Array.isArray(event?.truth_samples) &&
+      event.truth_samples.length > MAX_EVENT_TRUTH_SAMPLES)
+    event.truth_samples = event.truth_samples.slice(-MAX_EVENT_TRUTH_SAMPLES);
+  return event;
 }
 
 // A coverage outline is meaningful only where the radar itself produced a
@@ -818,6 +847,8 @@ class EvidenceStatistics {
       }
       for (const pass of [...this.state.passes, ...Object.values(this.state.active)])
         if (!pass.id) pass.id = passId(pass.siteKey, pass.hex, pass.startedAt);
+      for (const pass of Object.values(this.state.active)) compactActivePass(pass);
+      for (const event of this.state.eligibilityEvents) compactEligibilityEvent(event);
       this.trimEligibilityEvents();
       if (this.state.rollup?.siteKey !== this.key) this.state.rollup = {
         siteKey: this.key, passes: 0, eligible: 0, detected: 0, tracked: 0,
@@ -1296,6 +1327,11 @@ class EvidenceStatistics {
 
   persist() {
     try {
+      // Compact before stringify as well as during load.  This bounds both the
+      // live heap and the synchronous atomic-write pause if a source briefly
+      // adds aircraft faster than normal expiry can finalize them.
+      for (const pass of Object.values(this.state.active)) compactActivePass(pass);
+      for (const event of this.state.eligibilityEvents) compactEligibilityEvent(event);
       this.fs.mkdirSync(path.dirname(this.filename), {recursive: true});
       const temporary = `${this.filename}.tmp-${process.pid}`;
       this.fs.writeFileSync(temporary, `${JSON.stringify(this.state)}\n`, {mode: 0o640});
