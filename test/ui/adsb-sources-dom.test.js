@@ -71,6 +71,10 @@ window.eval(fs.readFileSync(path.join(__dirname, '../../html/js/config_ui.js'), 
     assert.equal(field.querySelector('[data-adsb-exchange="adsb-lol"]').checked, false);
     assert.match(field.textContent, /newest healthy observation wins/i);
     assert.match(field.textContent, /not averaged/i);
+    assert.match(field.textContent, /readsb commonly publishes.*once per second/i);
+    assert.match(field.textContent, /too slow for reliable CPI-level VectorWarp pass hit\/miss statistics/i);
+    assert.match(field.textContent, /--write-json-every 0\.25/i);
+    assert.match(field.textContent, /online source.*independent.*cross-check/i);
     const photoProvider = field.querySelector('[data-adsb-photo-provider]');
     assert.equal(photoProvider.value, 'disabled');
     assert.match(field.textContent, /loaded only after a map selection/i);

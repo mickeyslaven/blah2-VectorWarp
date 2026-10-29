@@ -967,6 +967,10 @@ function adsbSourcesInput(legacyValue, path) {
     const exchangeHeading = document.createElement('strong');
     exchangeHeading.textContent = 'Online sources';
     wrapper.appendChild(exchangeHeading);
+    const exchangeTimingNote = document.createElement('p');
+    exchangeTimingNote.className = 'adsb-source-note warning';
+    exchangeTimingNote.textContent = 'Why add an online source? Stock readsb commonly publishes its local aircraft.json only once per second. That default is too slow for reliable CPI-level VectorWarp pass hit/miss statistics. Configure readsb for 250 ms publishing (for example, --write-json-every 0.25) or use an online source as an independent coverage and observation-time cross-check. VectorWarp still selects the newest fresh position; an online source does not make estimated SDR timing exact.';
+    wrapper.appendChild(exchangeTimingNote);
     const hasSite = ADSB_PUBLIC_EXCHANGES.every(exchange => adsbPublicSource(exchange.id));
     for (const exchange of ADSB_PUBLIC_EXCHANGES) {
       const row = document.createElement('div');
